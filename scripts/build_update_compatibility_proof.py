@@ -65,7 +65,8 @@ MANUAL_REASONS = ('no_supported_signed_predecessor', 'suite_failed', 'suite_unru
                   'suite_timed_out', 'shipping_executor_unavailable',
                   'high_volume_reference_unavailable', 'migration_measurement_unavailable',
                   'witness_operation_unavailable', 'platform_not_rehearsed',
-                  'initialization_required', 'unsupported_installation')
+                  'initialization_required', 'unsupported_installation',
+                  'transfer_measurement_unavailable')
 MARKERS = ('qualification_policy', 'restore_procedure_id', 'backup_inventory_version',
            'host_observation_contract', 'runtime_activation_contract')
 MEASURED_FIELDS = ('migration_evidence', 'migration_measurements', 'backup_measurement',
@@ -265,13 +266,24 @@ def build(target: dict, policy: dict, evidence: Path, *, run_id: int,
                 # evidence artifact. Product metrics must reduce from retained
                 # raw samples; synthetic fixtures deliberately use no product data.
                 from scripts.rehearse_update_compatibility import (RehearsalError,
-                    validate_executed_measurements, witness_inventory)
+                    validate_executed_measurements, validate_scope_probe, validate_volume_role_transfers, witness_inventory)
                 require(all(re.fullmatch(r'[0-9]+-[a-z][a-z0-9_]{0,60}\.json', name) for name in documents))
                 require(all(type(value) is dict and set(value) == {'value'} for value in documents.values()))
                 corpus = {name.split('-', 1)[1][:-5]: value['value'] for name, value in documents.items()}
                 require(len(corpus) == len(documents) and {'source_witnesses', 'restored_witnesses'} <= set(corpus))
                 try:
                     validate_executed_measurements(row, corpus, target=frozen_candidate, predecessor_raw=raw)
+                    validate_volume_role_transfers(row, corpus)
+                    # A9's touched set comes only from the fixed in-target-image
+                    # probe, and product evidence only from the milestone-backed
+                    # QualificationSession of THIS run and checked-in driver.
+                    validate_scope_probe(row, corpus, frozen_candidate)
+                    driver = corpus.get('qualification_driver')
+                    require(type(driver) is dict and set(driver) == {'run_id', 'candidate_sha256', 'implementation_sha256'})
+                    require(type(driver['run_id']) is int and driver['run_id'] == run_id and
+                            driver['candidate_sha256'] == candidate_sha256 and
+                            driver['implementation_sha256'] == hashlib.sha256(read_bytes(
+                                ROOT / 'scripts/update_rehearsal_milestone.py', MAX_EVIDENCE_BYTES)).hexdigest())
                     require(witness_inventory(corpus['source_witnesses']) == witness_inventory(corpus['restored_witnesses']))
                 except RehearsalError:
                     require(False)

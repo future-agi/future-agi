@@ -24,6 +24,12 @@ from deploy.tests.update_e2e.oci_registry import DockerHubMirror, MIRROR_HOST, O
 from deploy.update.manifest import COMPONENT_REPOSITORIES, COMPONENT_TAG_SUFFIX, parse_image_ref, validate_manifest
 
 
+# Shape of `docker buildx inspect <name>` for setup-buildx-action's builder.
+BUILDER_INSPECTION=(b'Name:          builder-unit\nDriver:        docker-container\n'
+    b'Last Activity: 2026-10-29 22:26:10 +0000 UTC\n\nNodes:\nName:      builder-unit0\n'
+    b'Endpoint:  colima-fagi-update\nStatus:    running\nBuildkit:  v0.25.1\nPlatforms: linux/amd64\n')
+
+
 class AcceptancePlanTests(unittest.TestCase):
     def test_both_plans_are_isolated_daemon_free_CLI(self):
         for mode in ('upgrade','a-b-c'):
@@ -53,6 +59,8 @@ class AcceptancePlanTests(unittest.TestCase):
                 return (sha+'\n').encode()
             if 'info' in args:
                 return json.dumps(['http://'+MIRROR_HOST+'/']).encode()
+            if args[3:5] == ['buildx','inspect']:
+                return BUILDER_INSPECTION
             if 'inspect' in args:
                 rows=[]
                 for ref in args[5:]:
@@ -69,7 +77,8 @@ class AcceptancePlanTests(unittest.TestCase):
             with patch.object(driver,'command',side_effect=execute) as command, \
                  patch.object(DockerHubMirror,'publish',side_effect=lambda repo,*args:digest(repo)) as publish, \
                  patch.object(driver,'historical_chart',return_value=chart) as package_chart, \
-                 patch.dict(os.environ,{'GITHUB_RUN_ID':'123','GITHUB_RUN_ATTEMPT':'2'}):
+                 patch.dict(os.environ,{'GITHUB_RUN_ID':'123','GITHUB_RUN_ATTEMPT':'2',
+                                        'FAGI_UPDATE_E2E_BUILDER':'builder-unit'}):
                 candidate=driver.build_pr(previous,transport)
             self.assertEqual(validate_manifest(candidate),candidate)
             self.assertEqual(previous,original)
@@ -94,9 +103,12 @@ class AcceptancePlanTests(unittest.TestCase):
                 self.assertEqual(call.args[1:3],('v1.55.1','pr-'+sha+'-123-2'))
             calls=[list(map(str,call.args[0])) for call in command.call_args_list]
             builds=[argv for argv in calls if 'buildx' in argv]
+            self.assertEqual(builds[0],['docker','--context','colima-fagi-update','buildx','inspect','builder-unit'])
+            builds=builds[1:]
             self.assertEqual(len(builds),5)
             for argv in builds:
-                self.assertEqual(argv[:4],['docker','--context','colima-fagi-update','buildx'])
+                self.assertEqual(argv[:7],['docker','--context','colima-fagi-update','buildx','build',
+                                           '--builder','builder-unit'])
                 self.assertIn('--output',argv)
                 self.assertNotIn('--push',argv)
                 self.assertNotIn('--load',argv)
@@ -141,6 +153,52 @@ class AcceptancePlanTests(unittest.TestCase):
                     driver.build_pr(default_v2(),object())
             self.assertEqual(command.call_count,2)
             publish.assert_not_called()
+
+    def test_PR_build_names_only_a_verified_docker_container_builder_before_any_build(self):
+        from deploy.tests.test_update_automatic_release import default_v2
+        docker_driver=BUILDER_INSPECTION.replace(b'docker-container',b'docker')
+        mirrors=json.dumps(['http://'+MIRROR_HOST+'/']).encode()
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            for name,inspection,reason in (('',None,'explicit docker-container'),
+                    ('bad name;rm',None,'explicit docker-container'),
+                    ('builder-unit',docker_driver,'docker-container Buildx driver'),
+                    ('builder-unit',BUILDER_INSPECTION+BUILDER_INSPECTION,'docker-container Buildx driver')):
+                outputs=[b'a'*40,mirrors]+([inspection] if inspection is not None else [])
+                with self.subTest(name=name,inspection=inspection), \
+                     patch.object(driver,'command',side_effect=outputs) as command, \
+                     patch.object(DockerHubMirror,'publish') as publish, \
+                     patch.dict(os.environ,{'GITHUB_RUN_ID':'123','GITHUB_RUN_ATTEMPT':'2',
+                                            'FAGI_UPDATE_E2E_BUILDER':name}):
+                    with self.assertRaisesRegex(ValueError,reason):
+                        driver.build_pr(default_v2(),object())
+                    self.assertEqual(command.call_count,len(outputs))
+                    self.assertFalse(any('build' in list(map(str,c.args[0])) for c in command.call_args_list))
+                    publish.assert_not_called()
+
+    def test_cron_environment_probe_starts_the_launcher_closure_in_a_cleared_environment(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            tools=Path(temp)/'tools'; tools.mkdir()
+            for name in ('docker-compose','docker','cosign'):
+                (tools/name).write_text('#!/bin/sh\nexit 0\n'); (tools/name).chmod(0o700)
+            driver=acceptance.NativeAcceptance(Path(temp))
+            outputs=[b'',b'x86_64\n',b'',b'']
+            with patch.dict(os.environ,{'PATH':str(tools)+':/untrusted/ambient'}), \
+                 patch.object(driver,'command',side_effect=outputs) as command:
+                path=driver.cron_environment_probe()
+            self.assertEqual(path,str(tools)+':/usr/bin:/bin:/usr/sbin:/sbin')
+            calls=[list(map(str,c.args[0])) for c in command.call_args_list]
+            for argv in calls:
+                self.assertEqual(argv[:6],['/usr/bin/env','-i','HOME='+str(Path.home()),'PATH='+path,
+                                           'PYTHON='+sys.executable,'DOCKER_CONTEXT=colima-fagi-update'])
+                self.assertNotIn('untrusted',' '.join(argv))
+            self.assertEqual(calls[0][6:],['/bin/bash','--',str(ROOT/'bin/update'),'--help'])
+            self.assertEqual([c[6] for c in calls[1:]],['docker','docker-compose','cosign'])
+            self.assertEqual(json.loads((Path(temp)/'cron-environment.json').read_bytes())['status'],'passed')
+            with patch.dict(os.environ,{'PATH':str(tools)}), \
+                 patch.object(driver,'command',side_effect=[b'',b'aarch64\n']):
+                with self.assertRaisesRegex(ValueError,'native amd64'):
+                    driver.cron_environment_probe()
 
     def test_PR_build_requires_real_revision_and_run_identity_before_upload(self):
         from deploy.tests.test_update_automatic_release import default_v2
@@ -187,8 +245,10 @@ class AcceptancePlanTests(unittest.TestCase):
             driver=acceptance.NativeAcceptance(Path(temp))
             path=Path(temp)/'acceptance/fagi-upd-e2e-real-publisher-unit/v1.55.1/qualification/diagnostics.json'
             path.parent.mkdir(parents=True)
-            path.write_text(json.dumps(dict(failure=dict(refusal_code='shipping_executor_unavailable'),
-                                            private_fixture='NEVER-ECHO-THIS')))
+            path.write_text(json.dumps(dict(failure=dict(refusal_code='shipping_executor_unavailable',
+                phase='shipping_product_rehearsal',active_suite='NEVER-ECHO-SUITE',
+                suites=dict(source_snapshot='passed',target_readiness='failed',failure_restore='unrun'),
+                detail='NEVER-ECHO-DETAIL'),private_fixture='NEVER-ECHO-THIS')))
             with patch.object(driver,'published',return_value=({},Path(temp))), \
                  patch.object(acceptance.subprocess,'run',return_value=subprocess.CompletedProcess([],1)), \
                  patch.dict(os.environ,{'GITHUB_RUN_ID':'123'}),patch.object(acceptance.sys,'stderr',io.StringIO()) as stderr:
@@ -199,6 +259,10 @@ class AcceptancePlanTests(unittest.TestCase):
             self.assertEqual(failure['status'],'failed')
             self.assertEqual(failure['reason'],'shipping_executor_unavailable')
             self.assertFalse(failure['qualification_evidence'])
+            self.assertEqual(failure['target_version'],'v1.55.1')
+            self.assertEqual(failure['phase'],'shipping_product_rehearsal')
+            self.assertEqual(failure['suites']['target_readiness'],'failed')
+            self.assertNotIn('NEVER-ECHO',json.dumps(failure))
 
     def test_PR_chart_packages_real_source_with_private_version_metadata(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temp, OCIRegistry() as registry:
@@ -219,10 +283,15 @@ class AcceptancePlanTests(unittest.TestCase):
             self.assertEqual(chart['version'],'1.55.1')
             self.assertEqual(chart['digest'],root)
 
-    def test_full_shipping_factory_still_explicitly_refuses_unimplemented_suites(self):
-        from scripts import rehearse_update_compatibility as rehearsal
-        with self.assertRaisesRegex(rehearsal.ManualRelease,'shipping_executor_unavailable'):
-            rehearsal.shipping_factory()
+    def test_full_qualify_CLI_exposes_the_native_entrypoint_interface(self):
+        result=subprocess.run([sys.executable,'-I',str(ROOT/'scripts/rehearse_update_compatibility.py'),
+            'qualify','--help'],cwd=ROOT,capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        for name in ('--source-ref','--target-ref','--platform','--deployment-dir',
+                     '--reference-scale','--boot-timeout','--public-key','--docker-context','--out'):
+            self.assertIn(name,result.stdout)
+        # Integration availability is the producer lane's responsibility. Do not
+        # pin a negative test to its former shipping_executor_unavailable state.
 
     def test_execution_is_refused_outside_native_CI_before_provisioning(self):
         with patch.object(acceptance,'native_ci',return_value=False),patch.object(acceptance,'NativeAcceptance') as driver:
@@ -341,24 +410,31 @@ class AcceptancePlanTests(unittest.TestCase):
         self.assertIn("config['registry-mirrors'] = ['http://"+MIRROR_HOST+"']",job)
         self.assertIn('sudo systemctl restart docker.service',job)
         self.assertIn('-p 127.0.0.1:5000:5000',job)
-        self.assertIn('shipping_executor_unavailable',job)
+        self.assertIn('Full qualify/package must pass in this job',job)
         self.assertIn('pr-image-transport.json',job)
         self.assertLess(job.index('name: Ephemeral runner-only'),job.index('uses: docker/setup-buildx-action'))
         self.assertLess(job.index('uses: docker/setup-buildx-action'),job.index('acceptance.py --mode upgrade'))
+        # The step id feeds the explicit builder; the default-context `use` does not.
+        self.assertIn('- id: buildx\n        uses: docker/setup-buildx-action',job)
+        self.assertIn('FAGI_UPDATE_E2E_BUILDER: ${{ steps.buildx.outputs.name }}',job)
+        self.assertLess(job.index('FAGI_UPDATE_E2E_BUILDER'),job.index('acceptance.py --mode upgrade'))
         abc=workflow.split('\n  automatic-a-b-c:\n',1)[1].split('\n  backup:\n',1)[0]
         self.assertNotIn('daemon.json',abc)
         plan=acceptance.plan('upgrade')
         self.assertFalse(plan['image_transport']['proxy_mode'])
         self.assertEqual(plan['image_transport']['registry_image'],REGISTRY_IMAGE)
-        self.assertEqual(len(plan['known_blockers']),1)
-        self.assertIn('shipping_executor_unavailable',plan['known_blockers'][0])
+        self.assertEqual(plan['known_blockers'],[])
+        self.assertIn('every shipping suite',plan['qualification_contract'])
 
     def test_workflow_native_jobs_have_read_only_permissions_and_no_publication(self):
         text=(ROOT/'.github/workflows/update-ci.yml').read_text()
         for name in ('automatic-upgrade','automatic-a-b-c'):
             job=text.split('\n  '+name+':\n',1)[1]
             job=job.split('\n  automatic-',1)[0].split('\n  backup:',1)[0]
-            self.assertIn('timeout-minutes: 360',job)
+            self.assertIn('timeout-minutes: 355',job)
+            # Setup steps run before the deadline starts; keep >= 15 minutes.
+            self.assertLessEqual(acceptance.JOB_SECONDS, 340*60)
+            self.assertIn('systemctl is-enabled --quiet cron.service',job)
             self.assertIn('runs-on: ubuntu-24.04',job)
             self.assertIn('contents: read',job)
             self.assertNotIn('packages: write',job)

@@ -38,6 +38,7 @@ If you just want to try it on your laptop, jump to [Quick start](#quick-start).
 - [Configuring LLM providers](#configuring-llm-providers)
 - [Email](#email)
 - [Upgrading](#upgrading)
+  - [Automatic updates (opt-in)](#automatic-updates-opt-in)
 - [Backups](#backups)
 - [Troubleshooting](#troubleshooting)
 - [Production hardening](#production-hardening)
@@ -99,6 +100,7 @@ Useful flags:
 | `--wipe-volumes` | Stop this project and delete its volumes, then install fresh. **Deletes data.** The setup stays the same unless you also pass `--distributed`. |
 | `--new-instance` | Next to an existing install, start an isolated copy (`futureagi-2`, ...) instead. |
 | `-y` | Non-interactive. Reads `FAGI_ADMIN_EMAIL`, `FAGI_ADMIN_NAME` and `FAGI_ADMIN_PASSWORD` for the first account. |
+| `--auto-update MODE` | After the stack is ready, opt in once to automatic updates: `apply`, `download` or `notify` (Standalone with published images only; refused with `--no-up`, `--from-source` and `--distributed`). Runs `./bin/update setup --mode MODE --yes`. See [Automatic updates](#automatic-updates-opt-in). |
 | `--no-telemetry` | Turn deployment telemetry off: writes `FUTURE_AGI_TELEMETRY_DISABLED=true` to `.env` before anything starts. See [Telemetry](#telemetry-and-outbound-connections). |
 
 On Windows, `.\bin\install.ps1` takes the same options as `-Distributed`,
@@ -107,7 +109,8 @@ On Windows, `.\bin\install.ps1` takes the same options as `-Distributed`,
 
 `bin/install` exits `1` when the stack came up but your first account could not
 be created, so an unattended run fails loudly instead of pointing you at a login
-you cannot use. Skipping account creation still exits `0`.
+you cannot use. Skipping account creation still exits `0`. It exits `3` when the stack is up but an
+automatic-update opt-in could not be completed.
 
 When the installer prints **Future AGI is up**, it lists the next steps and:
 
@@ -994,38 +997,11 @@ always with your values file (never `--reuse-values` across versions);
 the bootstrap Job migrates before any Deployment is rolled. See the
 [chart README](deploy/helm/futureagi/README.md#upgrading).
 
-**Optional one-time automatic updates (Standalone).** Automation stays off unless you opt in after a supported
-published installation is ready:
-
-```bash
-./bin/install --auto-update apply        # one explicit choice; setup runs after readiness
-# Or on an existing installation:
-./bin/update setup --mode apply          # displays details and asks once
-```
-
-For unattended setup, add `--yes` to `bin/update setup`. `bin/install -y` alone does **not** opt in.
-Defaults are stable/minor releases, six-hour checks, a five-minute scheduler opportunity and a 02:00–06:00 UTC
-maintenance window. Cold backups cause downtime before replacement and are retained in a private HOME directory,
-not the checkout or app mounts. Customize once with `--window`, `--timezone`, `--check-interval`,
-`--backup-destination`, `--docker-context` and `--scheduler cron|systemd`. Notify/download modes are available
-without automatic replacement. A running supported scheduler, host Python 3.9+, Compose v2, cosign v3+, actual
-signed running image/digests, fixed state probes and qualified local storage/backup layout are prerequisites;
-setup never installs packages or changes global Docker/host permissions. Missing prerequisites return
-**incomplete**, not a successful activation. Existing optional status overlays/custom mounts and older images
-without the fixed state-probe contract are not currently qualified. Distributed (`--production`) retains its
-manual initialization boundary.
-
-Setup handles absent/`latest` pins only by matching actual images to authenticated release A, preserving unrelated
-env bytes and generating the private baseline itself. Later supported releases require no new customer evidence,
-backup scripts, re-enrollment or per-release command. Only genuinely certified compatible releases may apply;
-migrations/incompatible releases remain manual. The real product-image A→B→C and OS-manager qualification gates
-are separate from setup component tests.
-
-Use `./bin/update disable` or `pause --indefinite` to keep the owned schedule; `enable --yes`/`resume` do not
-re-enroll. Explicit `setup --deactivate --yes` disables first and removes only the owned schedule, preserving
-backups/audit records. That teardown retains a terminal removed ledger, not a silently reinstallable timer.
-See [one-time setup](deploy/update/README.md#one-time-automatic-update-setup) for limitations, immutable host policy,
-HTTPS trust choices, crash ordering and control semantics.
+**Automatic updates (Standalone, opt-in).** A Standalone install can opt in once to
+updates that run by themselves, migrations included, with a cold backup and an
+automatic restore if the new version fails. An install that opted in should not
+be upgraded with `git pull` and `./bin/install`: that stops its automatic updates.
+See [Automatic updates](#automatic-updates-opt-in) below.
 
 **Signed updates with rollback.** `./bin/update` applies a signed release to
 a Docker Compose install. It backs up first, verifies every image digest
@@ -1131,6 +1107,97 @@ Downtime is about the time the app (or backend) takes to restart. To roll
 back, set the bumped variable(s) to the previous tag and re-run the same two
 commands. To pin an exact image digest, use a `docker-compose.override.yml`,
 never `FUTURE_AGI_VERSION`; see [Verifying an image](https://docs.futureagi.com/docs/self-hosting/images#verifying-an-image).
+
+### Automatic updates (opt-in)
+
+A Standalone install can opt in, once, to updates that run by themselves. They
+are **off** unless you choose them:
+
+```bash
+./bin/install --auto-update apply   # during an install; setup runs after the stack is ready
+./bin/update setup --mode apply     # on an existing install: prints what it will do, then asks
+```
+
+An interactive `./bin/install` also asks once, after stack readiness and the
+first-account step:
+`Opt in once to supported automatic updates? [y/N]`. `-y` alone never opts in.
+Answering `y` there is your consent: setup then prints the disclosure below and
+goes ahead without asking again. To read the disclosure before you agree, answer
+`N` and run `./bin/update setup --mode apply`. For an unattended opt-in,
+`./bin/update setup --mode apply --yes` acknowledges the same text:
+
+> Automatic updates stop Future AGI, take a cold backup, and start the new
+> version, which may migrate the database. Future AGI is unavailable while this
+> happens (usually several minutes, longer for large databases). If the new
+> version doesn't pass its health checks, the updater restores that backup and
+> the previous version automatically. Anything written to the new version before
+> a failed update is rolled back is discarded, in-flight jobs and the Redis cache
+> are reset, and calls already made to outside services (webhooks, model
+> providers) can't be undone. Some failures still need manual recovery: the
+> updater stops and says so instead of guessing.
+
+After you opt in, an owned cron entry or systemd timer runs
+`./bin/update run` every five minutes. Every six hours by default, it checks for
+a newer signed release using the stable channel and minor-jump limit by default;
+`bin/update setup` can choose a different channel or version policy. When a
+release qualifies, during the configured maintenance window (02:00-06:00 UTC by
+default) it stops Future AGI, takes a cold backup of the Postgres, ClickHouse and
+app data volumes into a private directory, and starts the new version, which runs
+its own migrations. It keeps the new version only if its health checks pass and
+it stays stable. The app answers with 503 while B boots, but may serve during the
+stability period before success is durably decided; if B is then rejected, its
+writes are rolled back. A rollout failure after the sealed backup normally
+restores the backup and previous version, then quarantines that exact release
+until you review it and clear the latch with `./bin/update retry`. A recovery
+failure is direction-specific: an unsealed attempt reconciles quiescence, a
+success already durably decided is finalized on B, and an incomplete sealed
+restore is retried from retained evidence. If the updater cannot prove which
+state is safe, it stops for operator review rather than guessing. A remains
+stopped until B boots or the verified previous version is restored.
+
+**Today every release stays notify-only.** A release applies automatically only
+when it carries a signed proof that the upgrade from your exact version was
+rehearsed together with a restore, and no published release carries one yet.
+Releases without that proof, and releases whose estimated backup, migration and
+restore would not fit the remaining window or the free disk space, are reported
+and left for you to apply by hand.
+
+Requirements: the shipped Standalone layout with published images, no optional
+profile and no extra service, volume or mount (the optional host-status overlay
+adds one),
+Python 3.9 or newer, Docker Compose v2, `cosign` v3 or newer on the host, and a
+running cron daemon for the installer's default scheduler. On an existing
+installation, setup can instead use an already-usable systemd manager. `apply`
+and `download` also need a Linux host with a local Docker daemon whose storage
+the updater can measure: Docker Desktop and other VM-backed or remote contexts
+are refused. Setup installs nothing and
+changes no global Docker or host setting. When something is missing it prints
+`Setup incomplete` with the reason and exits `3`; `./bin/install` still finishes
+and exits `3`. Distributed, production, Helm and native Windows installs are not
+supported. Choose `--window`, `--timezone`, `--check-interval`,
+`--backup-destination`, `--docker-context` or `--scheduler systemd` at setup:
+they cannot be changed afterwards. `--mode notify` and `--mode download` check (and
+cache images) without ever stopping anything.
+
+Once set up, leave the checkout as it is. Editing `.env`, a `git pull` that
+changes the Compose or bootstrap files, or a manual `./bin/update apply` makes later automatic
+checks refuse with `configuration_changed`, and there is no command yet that
+records the installation again.
+
+```bash
+./bin/update status                    # installed versions, unfinished run, last update
+./bin/update disable                   # stop new work; enable --yes turns it back on
+./bin/update pause --indefinite        # resume clears the pause
+./bin/update setup --deactivate --yes  # remove the scheduler for good; keeps backups
+```
+
+Disable and pause never interrupt a restore that has already started. Backups
+and the evidence of failed attempts are never deleted automatically. The app's
+**Settings > Updates** page needs the optional host-status mount, which an install
+set up this way cannot use yet; use `./bin/update status` on the host.
+See [automatic updates](deploy/update/README.md#automatic-updates-standalone) for
+every reason a release stays notify-only, the time and disk estimates, what to do
+when status says `recovery_required`, the budgets and the full command reference.
 
 ## Backups
 

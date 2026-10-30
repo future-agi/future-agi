@@ -2056,38 +2056,52 @@ class Updater:
         except (Exception, Interrupted, KeyboardInterrupt) as exc:
             ledger = self.automatic_ledger
             if ledger is not None:
-                # Re-open authoritative immutable decisions even if a signal hit
-                # between their fsync and replacement of the current checkpoint.
                 supervisor.deadline = original_deadline
-                try:
-                    authority = self._open_automatic_ledger(ledger)
-                    if authority.backup_seal is not None and authority.direction != 'success_decided':
-                        reason = getattr(exc, 'reason_code', ReasonCode.READINESS_FAILED if isinstance(exc, NotReady)
-                                         else ReasonCode.OPERATION_INTERRUPTED if isinstance(exc, (Interrupted, KeyboardInterrupt))
-                                         else ReasonCode.PROCESS_FAILED)
-                        try:
-                            reason = ReasonCode(reason)
-                        except (ValueError, TypeError):
-                            reason = ReasonCode.PROCESS_FAILED
-                        authority.decide_restore(reason.value)
-                        authority.checkpoint(forward_failure={'reason_code': reason.value, 'failed_at': _now(),
-                            'interrupted': isinstance(exc, (Interrupted, KeyboardInterrupt)),
-                            'stage': (self.active_record or {}).get('stage', 'prepare')})
-                    ledger = authority
-                except (Exception, Interrupted, KeyboardInterrupt):
-                    # Diagnostic/checkpoint failure cannot turn the safety
-                    # action into env-only cleanup or erase the original seal.
-                    pass
-                try:
-                    self.resume_automatic_locked(lifecycle=lifecycle, ledger=ledger)
-                    if self.automatic_outcome == 'succeeded':
-                        return self.automatic_receipt
-                except (Exception, Interrupted, KeyboardInterrupt) as recovery_exc:
-                    guard.recovery_required = True
-                    raise GuardRefused(ReasonCode.RECOVERY_REQUIRED) from recovery_exc
+                if self.recover_automatic_failure_locked(exc, lifecycle=lifecycle, ledger=ledger) == 'succeeded':
+                    return self.automatic_receipt
             raise
         finally:
             supervisor.deadline = original_deadline
+
+    def recover_automatic_failure_locked(self, exc, *, lifecycle, ledger):
+        """The shipping post-reservation failure decision and recovery.
+
+        Shared by the enrolled transaction above and bounded producer
+        rehearsals, which cannot reach it through signed admission. Caller holds
+        runner.lock -> update.lock, has restored the original supervisor
+        deadline (the protected recovery reserve) and re-raises exc afterwards.
+        A sealed backup without a success decision gets a durable restore
+        decision carrying the forward failure's reason; resume_automatic_locked
+        then restores it. Returns automatic_outcome.
+        """
+        from .orchestrator import GuardRefused
+        # Re-open authoritative immutable decisions even if a signal hit
+        # between their fsync and replacement of the current checkpoint.
+        try:
+            authority = self._open_automatic_ledger(ledger)
+            if authority.backup_seal is not None and authority.direction != 'success_decided':
+                reason = getattr(exc, 'reason_code', ReasonCode.READINESS_FAILED if isinstance(exc, NotReady)
+                                 else ReasonCode.OPERATION_INTERRUPTED if isinstance(exc, (Interrupted, KeyboardInterrupt))
+                                 else ReasonCode.PROCESS_FAILED)
+                try:
+                    reason = ReasonCode(reason)
+                except (ValueError, TypeError):
+                    reason = ReasonCode.PROCESS_FAILED
+                authority.decide_restore(reason.value)
+                authority.checkpoint(forward_failure={'reason_code': reason.value, 'failed_at': _now(),
+                    'interrupted': isinstance(exc, (Interrupted, KeyboardInterrupt)),
+                    'stage': (self.active_record or {}).get('stage', 'prepare')})
+            ledger = authority
+        except (Exception, Interrupted, KeyboardInterrupt):
+            # Diagnostic/checkpoint failure cannot turn the safety
+            # action into env-only cleanup or erase the original seal.
+            pass
+        try:
+            self.resume_automatic_locked(lifecycle=lifecycle, ledger=ledger)
+        except (Exception, Interrupted, KeyboardInterrupt) as recovery_exc:
+            self.automation_guard.recovery_required = True
+            raise GuardRefused(ReasonCode.RECOVERY_REQUIRED) from recovery_exc
+        return self.automatic_outcome
 
     def apply(self, make_plan: Callable[[List[Dict[str, Any]]], Dict[str, Any]], manifest: Mapping[str, Any],
               *, allow_no_backup: bool = False, backup_command: Optional[str] = None,

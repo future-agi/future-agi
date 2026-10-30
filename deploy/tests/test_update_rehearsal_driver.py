@@ -245,19 +245,33 @@ class Wave4bDriverRegressionTests(unittest.TestCase):
         with self.assertRaises(rehearsal.RehearsalError):
             rehearsal.validate_reference_inventory(reference,pending_migration_tables=[],plan=[])
 
-    def test_protected_real_entrypoint_missing_executor_is_red_and_diagnosable(self):
+    def test_protected_product_entrypoint_reports_missing_executor_after_discovery(self):
         with tempfile.TemporaryDirectory(prefix='fagi-release-refusal-',dir=str(Path.home())) as temporary:
             root=Path(temporary).resolve()
             candidate=default_v2(); path=root/'candidate.json'; path.write_bytes(canonical_json(candidate))
-            env=dict(os.environ,GITHUB_REPOSITORY=rehearsal.REPOSITORY,GITHUB_RUN_ID='42',
+            env=dict(GITHUB_REPOSITORY=rehearsal.REPOSITORY,GITHUB_RUN_ID='42',
                      GITHUB_REF='refs/tags/'+candidate['version'],GITHUB_SHA=candidate['source_sha'],
                      GITHUB_EVENT_NAME='workflow_call')
-            result=subprocess.run([sys.executable,'-I',str(rehearsal.ROOT/'scripts/rehearse_update_compatibility.py'),
-                '--target',str(path),'--workspace',str(root/'work'),'--output',str(root/'out'),'--run-id','42',
-                '--docker-context','colima-fagi-update'],cwd=str(rehearsal.ROOT),env=env,
-                capture_output=True,text=True,timeout=30)
-            self.assertEqual(result.returncode,2,result.stdout+result.stderr)
-            self.assertIn('release rehearsal refused: shipping_executor_unavailable',result.stderr)
+            # Product dispatch selects an exact authenticated pair before it can
+            # determine whether a six-suite plan exists. These mocked trust and
+            # discovery boundaries are a CLI unit test, never qualification.
+            with mock.patch.dict(os.environ,env),mock.patch.object(rehearsal,'_validate_context'), \
+                 mock.patch.object(rehearsal,'Verifier') as verifier, \
+                 mock.patch.object(rehearsal,'ReleaseDiscovery') as discovery, \
+                 mock.patch.object(rehearsal,'select_predecessors',return_value=[]) as select, \
+                 mock.patch.object(rehearsal,'produce',side_effect=rehearsal.ManualRelease('shipping_executor_unavailable')) as produce, \
+                 mock.patch.object(rehearsal,'shipping_factory') as legacy, \
+                 mock.patch('sys.stderr') as stderr:
+                code=rehearsal.main(['--target',str(path),'--workspace',str(root/'work'),
+                    '--output',str(root/'out'),'--run-id','42','--docker-context','colima-fagi-update'])
+            self.assertEqual(code,2)
+            verifier.return_value.require_host.assert_called_once_with()
+            discovery.assert_called_once()
+            select.assert_called_once_with(candidate,discovery.return_value,platform='linux/amd64')
+            produce.assert_called_once(); legacy.assert_not_called()
+            self.assertEqual(produce.call_args.kwargs['purpose'],'product')
+            self.assertIn('release rehearsal refused: shipping_executor_unavailable',
+                          ''.join(str(call.args[0]) for call in stderr.write.call_args_list))
             data=json.loads((root/'out/failure.json').read_bytes())
             self.assertFalse(data['eligible'])
             self.assertEqual(data['reason'],'shipping_executor_unavailable')
@@ -305,20 +319,23 @@ class Wave4bDriverRegressionTests(unittest.TestCase):
     def test_failed_or_unrun_suites_always_exit_nonzero_with_an_explicit_reason(self):
         candidate=default_v2()
         for reason in ('suite_failed','suite_unrun','suite_timed_out','migration_measurement_unavailable','witness_operation_unavailable'):
-            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as temporary:
-                root=Path(temporary); path=root/'candidate.json'; path.write_bytes(canonical_json(candidate))
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory(dir=str(Path.home())) as temporary:
+                root=Path(temporary).resolve(); path=root/'candidate.json'; path.write_bytes(canonical_json(candidate))
                 env=dict(GITHUB_REPOSITORY=rehearsal.REPOSITORY,GITHUB_RUN_ID='42',
                          GITHUB_REF='refs/tags/'+candidate['version'],GITHUB_SHA=candidate['source_sha'],
                          GITHUB_EVENT_NAME='workflow_call')
                 with mock.patch.dict(os.environ,env),mock.patch.object(rehearsal,'_validate_context'), \
-                     mock.patch.object(rehearsal,'shipping_factory',side_effect=rehearsal.ManualRelease(reason)), \
+                     mock.patch.object(rehearsal,'Verifier') as verifier, \
                      mock.patch.object(rehearsal,'ReleaseDiscovery') as discovery, \
+                     mock.patch.object(rehearsal,'select_predecessors',return_value=[]), \
+                     mock.patch.object(rehearsal,'produce',side_effect=rehearsal.ManualRelease(reason)), \
                      mock.patch('sys.stderr') as stderr:
                     code=rehearsal.main(['--target',str(path),'--workspace',str(root/'work'),
                                          '--output',str(root/'out'),'--run-id','42'])
                 self.assertEqual(code,2)
                 self.assertIn(reason,''.join(str(call.args[0]) for call in stderr.write.call_args_list))
-                discovery.assert_not_called()
+                verifier.return_value.require_host.assert_called_once_with()
+                discovery.assert_called_once()
                 failure=json.loads((root/'out/failure.json').read_bytes())
                 self.assertEqual(failure['reason'],reason)
                 self.assertFalse((root/'out/evidence.json').exists())
@@ -429,10 +446,24 @@ class Wave4cDriverRegressionTests(unittest.TestCase):
             verified = SimpleNamespace(verified=True, method='cosign-key', signer='', issuer='',
                                       tool='cosign', public_key_sha256='a'*64)
             verifier = SimpleNamespace(verify=mock.Mock(return_value=verified))
+            from scripts.update_rehearsal_milestone import MILESTONES, plan as milestone_plan
+            def dispatch(name, args):
+                if args.dry_run:
+                    args.out.mkdir(mode=0o700)
+                    planned = milestone_plan(args.boot_timeout, name)
+                    planned.update(source_image=args.source_ref,target_image=args.target_ref,
+                                   platform=args.platform)
+                    planned['qualification_suites'] = {suite:('planned' if name==MILESTONES[0] else 'unrun')
+                        for suite in rehearsal.SUITES}
+                    (args.out/'job-plan.json').write_bytes(canonical_json(planned))
+                    return 0
+                raise rehearsal.ManualRelease('shipping_executor_unavailable')
             with mock.patch.object(rehearsal, '_validate_context'), \
                  mock.patch.object(rehearsal, 'select_retained_layout', return_value=(old['deployment'], ())), \
                  mock.patch.object(rehearsal, '_local_verifier', return_value=verifier), \
                  mock.patch.object(shipping, 'SHIPPING_TRANSACTION_INTEGRATED', False), \
+                 mock.patch('scripts.update_rehearsal_milestone.run_milestone',
+                     side_effect=dispatch) as milestone_entry, \
                  mock.patch.object(shipping.ShippingRehearsal, '__init__') as provision:
                 code = rehearsal.qualify(['--source-ref', old['components']['standalone']['image']+'@'+old['components']['standalone']['digest'],
                     '--target-ref', target['components']['standalone']['image']+'@'+target['components']['standalone']['digest'],
@@ -441,6 +472,13 @@ class Wave4cDriverRegressionTests(unittest.TestCase):
             self.assertEqual(code, 2)
             verifier.verify.assert_called_once()
             provision.assert_not_called()
+            self.assertEqual(milestone_entry.call_count,len(MILESTONES)+1)
+            plan_calls=milestone_entry.call_args_list[:len(MILESTONES)]
+            self.assertEqual([call.args[0] for call in plan_calls],list(MILESTONES))
+            self.assertTrue(all(call.args[1].dry_run for call in plan_calls))
+            actual_call=milestone_entry.call_args_list[-1]
+            self.assertEqual(actual_call.args[0],MILESTONES[0])
+            self.assertFalse(actual_call.args[1].dry_run)
             failure = json.loads((root/'out/proof-row.json').read_bytes())
             self.assertEqual(failure['phase'], 'shipping_product_rehearsal')
             self.assertEqual(failure['refusal_code'], 'shipping_executor_unavailable')
@@ -458,6 +496,7 @@ class Wave4cDriverRegressionTests(unittest.TestCase):
                     run_id=42, candidate_sha256=rehearsal.sha(canonical_json(candidate)))))
                 (root/'candidate.json').write_bytes(canonical_json(candidate))
                 (root/'test-private.pem').write_bytes(b'SYNTHETIC PRIVATE KEY NOT A REAL KEY')
+                (root/'test-public.pem').write_bytes(b'SYNTHETIC PUBLIC KEY NOT A REAL KEY')
                 (root/'rows').mkdir()
                 (root/'rows/policy.json').write_bytes(b'{}')
                 verifier = SimpleNamespace(verify=mock.Mock(return_value=SimpleNamespace(verified=accepted)))
@@ -571,7 +610,8 @@ class SourceSnapshotMilestoneTests(unittest.TestCase):
         result = subprocess.run([sys.executable, '-I', str(rehearsal.ROOT/'scripts/rehearse_update_compatibility.py'),
             'qualify', '--help'], capture_output=True, text=True, timeout=30, cwd=str(rehearsal.ROOT))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('--through {source_snapshot,target_readiness}', result.stdout)
+        from scripts.update_rehearsal_milestone import MILESTONES
+        self.assertIn('--through {'+','.join(MILESTONES)+'}', result.stdout)
         self.assertIn('--dry-run', result.stdout)
         with tempfile.TemporaryDirectory() as temporary:
             out = Path(temporary)/'absent'
@@ -924,7 +964,8 @@ class SourceSnapshotOperationTests(unittest.TestCase):
             driver.binding=SimpleNamespace(raw=b'not-used')
             driver.execution={'files':{'docker-compose.yml':'c'*64}}
             driver.image_inspections={'app':{'Id':'app-id'},'postgres':{'Id':'pg-id'},'clickhouse':{'Id':'ch-id'}}
-            driver.installation=SimpleNamespace(root=driver.root,runner=SimpleNamespace(policy=AutomationPolicy()))
+            driver.installation=SimpleNamespace(root=driver.root,runner=SimpleNamespace(policy=AutomationPolicy()),
+                config=lambda **kw:{'name':'synthetic-source-model'})
             backup=mock.Mock()
             def quiesced(expected,ledger,observation,*,proof_directory_fd):
                 self.assertEqual(expected.target_manifest_hash,rehearsal.manifest_hash(driver.intent))
@@ -1260,6 +1301,73 @@ class TargetReadinessMilestoneTests(unittest.TestCase):
                 self.assertTrue(driver.loader_cleanup_verified)
                 self.assertNotIn('row',state)
 
+    def test_target_loader_uses_real_supervisor_routing_stdin_and_attached_timeout_path(self):
+        from deploy.update.contracts import AutomationPolicy
+        from deploy.update.processes import ProcessSupervisor
+        from scripts import update_rehearsal_milestone as milestone
+        from scripts import update_rehearsal_shipping as shipping
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary).resolve(); state_path=root/'container.json'; command_path=root/'python-argv.json'
+            image_id='sha256:'+'b'*64; container_id='c'*64
+            docker=root/'docker'
+            fake='#!'+sys.executable+'\n'+'''import json, subprocess, sys
+from pathlib import Path
+args=sys.argv[1:]
+assert args[:2]==['--context','colima-fagi-update']
+state_path=Path(%r); command_path=Path(%r); image_id=%r; container_id=%r
+if args[2]=='create':
+    assert args[args.index('--entrypoint')+1]=='/usr/local/bin/python3'
+    assert args[args.index('--network')+1]=='none'
+    assert '--read-only' in args and args[args.index('--restart')+1]=='no'
+    index=args.index(image_id)
+    python_argv=args[index+1:]
+    assert python_argv[:2]==['-I','-B'] and python_argv[2].startswith('-c')
+    assert json.dumps({'applied':[['a','0001']]}) not in args
+    command_path.write_text(json.dumps(python_argv))
+    name=args[args.index('--name')+1]; token=args[args.index('--label')+1].split('=',1)[1]
+    row={'Id':container_id,'Name':'/'+name,'Image':image_id,
+         'Config':{'Labels':{'futureagi.rehearsal.measurement':token}},
+         'HostConfig':{'ReadonlyRootfs':True,'NetworkMode':'none','RestartPolicy':{'Name':'no'}},
+         'Mounts':[{'Type':'tmpfs'}], 'State':{'Running':False,'Status':'created'}}
+    state_path.write_text(json.dumps(row)); print(container_id)
+elif args[2]=='start':
+    assert args[3:5]==['-a','-i'] and args[5]==container_id
+    row=json.loads(state_path.read_text()); python_argv=json.loads(command_path.read_text())
+    child=subprocess.run([sys.executable,*python_argv],input=sys.stdin.buffer.read(),capture_output=True)
+    row['State'].update(ExitCode=child.returncode,OOMKilled=False,Running=False,Status='exited')
+    state_path.write_text(json.dumps(row)); sys.stdout.buffer.write(child.stdout); sys.stderr.buffer.write(child.stderr)
+    raise SystemExit(child.returncode)
+else: raise SystemExit(91)
+'''%(str(state_path),str(command_path),image_id,container_id)
+            docker.write_text(fake); docker.chmod(0o700)
+            driver=milestone.RestoreMilestone(root,context='colima-fagi-update',boot_timeout=4200)
+            driver.root=root; driver.source_migrations={'applied':[['a','0001']]}
+            driver.target_inspection={'Id':image_id,'Config':{'Volumes':{'/data':{}}}}
+            driver.installation=SimpleNamespace(docker=[str(docker),'--context','colima-fagi-update'],
+                subprocess_env=lambda:{},config=lambda **kw:{'services':{'app':{'environment':{'ENV_TYPE':'local'}}}})
+            driver.runner=ProcessSupervisor(AutomationPolicy(),docker_context='colima-fagi-update',environment={})
+            self.assertEqual(driver.runner._budget([*driver.installation.docker,'create'],30),30)
+            self.assertEqual(driver.runner._budget([*driver.installation.docker,'start','-a','-i',container_id],180),180)
+            driver._json=lambda *args:[json.loads(state_path.read_text())]
+            def cleanup_run(*args,**kwargs):
+                if args[0]=='ps': value=container_id if state_path.exists() else ''
+                elif args[0]=='inspect': value=json.dumps([json.loads(state_path.read_text())])
+                else:
+                    self.assertEqual(args,('rm','-f',container_id)); state_path.unlink(); value=''
+                return SimpleNamespace(stdout=value)
+            cleanup=SimpleNamespace(docker_run=cleanup_run)
+            source=('import json,sys\nassert sys.flags.isolated and sys.dont_write_bytecode\n'
+                    'value=json.load(sys.stdin)\nprint(json.dumps({"pending":[]} if value["applied"]==[["a","0001"]] else {"pending":["mismatch"]}))\n')
+            self.assertIn('settings.LOGGING_CONFIG=None',shipping.TARGET_LOADER_PLAN)
+            self.assertIn('django.setup()',shipping.TARGET_LOADER_PLAN)
+            with mock.patch.object(shipping,'TARGET_LOADER_PLAN',source), \
+                    mock.patch('deploy.update.docker_host.bounded_installation',return_value=cleanup):
+                self.assertEqual(driver.image_plan(),{'pending':[]})
+            self.assertTrue(driver.loader_cleanup_verified)
+            self.assertFalse(driver.runner.uncertain)
+            self.assertFalse(state_path.exists())
+            self.assertEqual(json.loads(command_path.read_text())[:2],['-I','-B'])
+
     def test_public_entry_refuses_missing_preimage_and_watermark_before_env_write(self):
         from deploy.tests.test_update_automation_boundaries import RuntimeComponentWorld
         from deploy.update.orchestrator import GuardRefused
@@ -1324,3 +1432,525 @@ class MilestoneImagePlatformTests(unittest.TestCase):
         self.assertEqual(milestone.DIGEST, self.LEAVES[milestone.VERSION][milestone.PLATFORM])
         self.assertEqual(milestone.TARGET_DIGEST, self.LEAVES[milestone.TARGET_VERSION][milestone.PLATFORM])
         self.assertTrue(milestone.TARGET_IMAGE.endswith('@' + milestone.TARGET_DIGEST))
+class RestoreMilestoneTests(unittest.TestCase):
+    """Daemon-free protocol regressions, NEVER product qualification evidence."""
+    def test_all_milestones_plan_and_cli_are_nonqualifying_and_use_fixed_native_leaf(self):
+        from scripts import update_rehearsal_milestone as m
+        self.assertEqual(m.RESTORE_DIGEST,'sha256:eab0d007debaf55ca2e45bcd936a143cbc95d2f61fd0324eaf8b4be7e0f5ccc9')
+        self.assertEqual(m.MILESTONES,('source_snapshot','target_readiness','failure_restore',
+                                      'interruption_restore','backup_integrity'))
+        for name in m.MILESTONES[2:]:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                out=Path(temporary)/'out'
+                with mock.patch.object(m,'RestoreMilestone') as construct, mock.patch.object(rehearsal,'command') as command:
+                    self.assertEqual(rehearsal.main(['qualify','--through',name,'--dry-run','--out',str(out)]),0)
+                construct.assert_not_called(); command.assert_not_called()
+                plan=json.loads((out/'job-plan.json').read_bytes())
+                self.assertEqual(plan['target_image'],m.RESTORE_IMAGE)
+                self.assertEqual(plan['resources_prefix'],'fagi-upd-e2e-m3-')
+                self.assertEqual(plan['stages'][-1],name)
+                self.assertFalse(plan['enrolled_baseline_commit_tested'])
+                for file in out.glob('*.json'):
+                    doc=json.loads(file.read_bytes())
+                    self.assertFalse(doc['eligible']); self.assertFalse(doc['qualification_evidence'])
+                    self.assertEqual(doc['completed_rows'],0)
+                self.assertEqual(set(plan['qualification_suites'].values()),{'unrun'})
+                self.assertFalse((out/'proof-row.json').exists())
+
+    def test_offline_django_setup_disables_file_logging_without_skipping_setup(self):
+        import io, logging.config
+        from types import ModuleType
+        settings=SimpleNamespace(LOGGING_CONFIG='logging.config.dictConfig',LOGGING={
+            'version':1,'handlers':{'file':{'class':'logging.FileHandler','filename':'/never/a/writable/file'}}})
+        django=ModuleType('django'); conf=ModuleType('django.conf'); conf.settings=settings
+        called=[]
+        def setup():
+            if settings.LOGGING_CONFIG is not None: logging.config.dictConfig(settings.LOGGING)
+            called.append(True)
+        django.setup=setup
+        with mock.patch.dict(sys.modules,{'django':django,'django.conf':conf}), \
+             mock.patch.object(sys,'path',list(sys.path)), mock.patch.object(sys,'stdin',io.StringIO('{}')), \
+             mock.patch.dict(os.environ):
+            exec(compile(shipping.OFFLINE_DJANGO_PREFIX,'<offline-setup>','exec'),{})
+        self.assertEqual(called,[True]); self.assertIsNone(settings.LOGGING_CONFIG)
+        self.assertIn('TARGET_LOADER_PLAN',vars(shipping))
+        self.assertIn('MigrationLoader(None',shipping.TARGET_LOADER_PLAN)
+
+    def test_restore_policy_reserves_fit_job_without_waiving_runtime_guards(self):
+        from scripts import update_rehearsal_milestone as m
+        with tempfile.TemporaryDirectory() as temporary:
+            driver=m.RestoreMilestone(Path(temporary),context='colima-fagi-update',boot_timeout=4200)
+            self.assertTrue(driver.project.startswith('fagi-upd-e2e-m3-'))
+            self.assertLess(driver.policy.required_cold_budget_seconds,m.TOTAL_SECONDS-600)
+            self.assertEqual(driver.policy.probe_timeout_seconds,90)
+            self.assertGreaterEqual(driver.policy.disk_watermark_reserve_bytes,1024**3)
+            self.assertGreater(driver.policy.stability_period_seconds,0)
+            self.assertLessEqual(driver.policy.migration_stall_timeout_seconds,driver.policy.migration_timeout_seconds)
+            self.assertEqual(driver.snapshot_timeout,driver.policy.backup_timeout_seconds)
+
+    def test_interruption_plan_budgets_every_boundary_and_leaves_runner_tail(self):
+        from scripts import update_rehearsal_milestone as m
+        plan=m.plan(4200,'interruption_restore')
+        policy=m.restore_policy()
+        self.assertEqual(plan['interruption_boundaries'],list(m.INTERRUPTION_BOUNDARIES))
+        self.assertEqual(plan['boundary_budget_seconds'],policy.required_cold_budget_seconds)
+        self.assertEqual(plan['all_boundaries_budget_seconds'],
+                         len(m.INTERRUPTION_BOUNDARIES)*policy.required_cold_budget_seconds)
+        self.assertEqual(plan['minimum_total_seconds'],4200+m.INTERRUPTION_SETUP_RESERVE_SECONDS+
+                         plan['all_boundaries_budget_seconds'])
+        self.assertLessEqual(plan['minimum_total_seconds'],plan['total_ceiling_seconds'])
+        self.assertEqual(plan['total_ceiling_seconds'],m.INTERRUPTION_TOTAL_SECONDS)
+        self.assertEqual(plan['job_timeout_minutes'],360)
+        self.assertEqual(plan['command_timeout_minutes'],354)
+        self.assertLess(plan['command_timeout_minutes'],plan['job_timeout_minutes'])
+
+    def test_interruption_success_requires_complete_restored_matrix(self):
+        from scripts import update_rehearsal_milestone as m
+        full=[dict(boundary=boundary,outcome='restored') for boundary in m.INTERRUPTION_BOUNDARIES]
+        self.assertIsNone(m.validate_interruption_results(full))
+        with self.assertRaisesRegex(rehearsal.RehearsalError,'interruption_boundaries_incomplete'):
+            m.validate_interruption_results(full[:1])
+        blocked=[dict(boundary=m.INTERRUPTION_BOUNDARIES[0],outcome='recovery_required',
+                      retained_evidence=True)]
+        with self.assertRaisesRegex(rehearsal.RehearsalError,'interruption_recovery_required'):
+            m.validate_interruption_results(blocked)
+        blocked[0]['retained_evidence']=False
+        with self.assertRaisesRegex(rehearsal.RehearsalError,'interruption_recovery_evidence_missing'):
+            m.validate_interruption_results(blocked)
+
+    def test_restore_milestones_execute_prerequisites_on_one_driver(self):
+        from scripts import update_rehearsal_milestone as m
+        for name in m.MILESTONES[2:]:
+            with self.subTest(name=name),tempfile.TemporaryDirectory(dir=str(Path.home())) as temporary:
+                calls=[]
+                driver=SimpleNamespace(deadline=time_limit(),cleanup_verified=False,
+                    _collect_diagnostics=lambda:None,diagnostics=lambda:{'qualification_evidence':False})
+                for method in ('assemble','install_and_boot','seed','observe_source','take_snapshot','verify_snapshot',
+                               'prefetch_target','prepare_target','failure_restore','interruption_restore','backup_integrity'):
+                    setattr(driver,method,mock.Mock())
+                driver._phase=lambda name,op:(calls.append(name),op())
+                driver.cleanup=lambda:setattr(driver,'cleanup_verified',True)
+                args=SimpleNamespace(out=Path(temporary)/'evidence',boot_timeout=4200,
+                    docker_context='colima-fagi-update',dry_run=False)
+                with mock.patch.object(m.sys,'platform','linux'), \
+                     mock.patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_ARCH':'X64'}), \
+                     mock.patch.object(m,'RestoreMilestone',return_value=driver) as construct:
+                    self.assertEqual(m.run_milestone(name,args),0)
+                construct.assert_called_once()
+                self.assertEqual(calls,m.plan(4200,name)['stages'])
+                if name=='interruption_restore':
+                    driver.take_snapshot.assert_not_called()
+                    self.assertEqual(construct.call_args.kwargs['total_seconds'],m.INTERRUPTION_TOTAL_SECONDS)
+                doc=json.loads((args.out/'milestone.json').read_bytes())
+                self.assertTrue(doc['cleanup_verified']); self.assertFalse(doc['eligible'])
+                self.assertEqual(doc['milestone'],name)
+
+    def test_target_fault_requires_executed_pending_migration_and_real_api_record(self):
+        from scripts import update_rehearsal_milestone as m
+        for executed in (False,True):
+            with self.subTest(executed=executed),tempfile.TemporaryDirectory() as temporary:
+                driver=m.RestoreMilestone(Path(temporary),context='colima-fagi-update',boot_timeout=4200)
+                driver.source_migrations={'applied':[['a','0001']]}
+                driver.target_plan={'pending':[dict(app_label='a',name='0002')]}
+                migration={'pending':[],'applied':[['a','0001']]+([['a','0002']] if executed else [])}
+                state={'Running':True,'Health':{'Status':'healthy'}}
+                docker=mock.Mock(side_effect=lambda *args:state.update(Running=False))
+                driver.installation=SimpleNamespace(docker_run=docker)
+                driver.witnesses=SimpleNamespace(_http=mock.Mock())
+                driver.app_python=mock.Mock(return_value={'exists':True})
+                runtime=SimpleNamespace(_exact=lambda r:{'State':state})
+                with mock.patch.object(m.ProductHarness,'migration_inventory',return_value=migration):
+                    if executed: driver.target_ready(runtime,{'app':{'Id':'a'*64}})
+                    else:
+                        with self.assertRaisesRegex(rehearsal.RehearsalError,'did not execute'):
+                            driver.target_ready(runtime,{'app':{'Id':'a'*64}})
+                self.assertEqual(driver.fault_injected,executed)
+                self.assertEqual(driver.target_only_created,executed)
+                if executed:
+                    docker.assert_called_once_with('stop','--time','60','a'*64)
+                    driver.witnesses._http.assert_called_once()
+                    evidence=json.loads((Path(temporary)/'target-only.private.json').read_bytes())
+                    self.assertTrue(evidence['independently_read']); self.assertFalse(evidence['eligible'])
+                else: docker.assert_not_called(); driver.witnesses._http.assert_not_called()
+
+    def test_any_post_backup_failure_restores_but_only_deliberate_fault_is_green(self):
+        from scripts import update_rehearsal_milestone as m
+        from deploy.update.orchestrator import GuardRefused
+        from deploy.update.contracts import ReasonCode
+        from deploy.update.receipt import StateDir
+        from contextlib import contextmanager
+        for expected in (False,True):
+            with self.subTest(expected=expected),tempfile.TemporaryDirectory() as temporary:
+                driver=m.RestoreMilestone(Path(temporary),context='colima-fagi-update',boot_timeout=4200)
+                driver.root.mkdir(); driver.runner=SimpleNamespace(deadline=driver.deadline)
+                original=driver.runner.deadline
+                driver._remember_resources=mock.Mock()
+                @contextmanager
+                def fail():
+                    self.assertLessEqual(driver.runner.deadline,original-driver.policy.required_recovery_budget_seconds)
+                    self.assertIsNotNone(StateDir(driver.root).lock_holder(automation=True))
+                    driver.fault_injected=expected
+                    if expected: raise GuardRefused(ReasonCode.READINESS_FAILED)
+                    raise rehearsal.RehearsalError('unexpected product failure')
+                    yield
+                driver.running_target=fail
+                driver.recover=mock.Mock(side_effect=lambda failure:self.assertEqual(driver.runner.deadline,original))
+                if expected: driver.failure_restore()
+                else:
+                    with self.assertRaisesRegex(rehearsal.RehearsalError,'unexpected product failure'):
+                        driver.failure_restore()
+                driver.recover.assert_called_once()
+                self.assertIsNotNone(driver.recover.call_args.args[0])
+                self.assertEqual(driver.runner.deadline,original)
+
+    @staticmethod
+    def registered_store(root, target, now):
+        from deploy.update.runner_state import RunnerStateStore, Registration, LauncherConfig
+        from deploy.update.contracts import InstallationBinding
+        store=RunnerStateStore(root,root/'.env')
+        binding=InstallationBinding('a'*32,store.selection_hash,'b'*64,root,root/'.env',root/'.env',
+            'standalone',False,'synthetic-milestone', (root/'docker-compose.yml',),(),
+            'colima-fagi-update','synthetic-daemon',os.geteuid())
+        registration=Registration(1,binding,LauncherConfig(Path(sys.executable).resolve(),Path.home(),os.defpath,'tester'),now)
+        store.register(registration)
+        return store,registration,store.reserve_attempt(target,'always',now)
+
+    def test_real_engine_resumption_uses_milestone_lifecycle_receipts_and_durable_latch(self):
+        from dataclasses import replace
+        from deploy.tests.test_update_automation_boundaries import RuntimeComponentWorld, RuntimeCrashCut
+        from deploy.update.apply import Updater
+        from deploy.update.runner_state import TargetIdentity
+        from scripts import update_rehearsal_milestone as m
+        world=RuntimeComponentWorld(self)
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                driver=m.RestoreMilestone(Path(temporary),context='colima-fagi-update',boot_timeout=4200)
+                driver.root=world.case.root.resolve(); driver.installation=world.case.inst
+                driver.policy=world.policy; driver.backup=world.backup
+                driver.store,driver.registration,driver.attempt=self.registered_store(driver.root,
+                    TargetIdentity('v1.1.0','f'*64),world.now)
+                world.expected=replace(world.expected,attempt_id=driver.attempt.attempt_id)
+                world.guard.expectation=world.expected
+                original=world.event
+                def cut(label):
+                    original(label)
+                    if label=='backup_after': raise RuntimeCrashCut(label)
+                world.event=cut
+                with self.assertRaises(RuntimeCrashCut): world.run()
+                world.event=original
+                driver.ledger=world.ledger; driver.descriptor={'unsigned':True}; driver.target_version='v1.1.0'
+                driver.verify_restored_source=mock.Mock(return_value=world.lifecycle._observation())
+                driver.record_genuine_tree=mock.Mock()  # Synthetic Docker/storage, not product evidence.
+                with mock.patch.object(Updater,'_automatic_runtime',side_effect=lambda life,ledger,backup:
+                    world.runtime(world.case.inst,ledger,backup.b)):
+                    with world.case.state.lock(automation=True): result=driver.recover()
+                    self.assertEqual(result.outcome,'restored')
+                    generation=driver.store.read_state().generation
+                    with world.case.state.lock(automation=True): driver.recover()
+                self.assertEqual(driver.ledger.direction,'restore_decided')
+                self.assertEqual(driver.ledger.phase,'restored')
+                self.assertEqual(driver.store.read_state().generation,generation)
+                self.assertEqual(world.extractions,1)
+                self.assertNotIn('v1.1.0',world.creates)
+                self.assertEqual(driver.store.read_state().failed_target_latch,driver.attempt.target)
+                driver.verify_restored_source.assert_called()
+        finally: world.close()
+
+    def test_known_failure_uses_updater_failure_handler_and_persists_noninterrupted_reason(self):
+        from dataclasses import replace
+        from deploy.tests.test_update_automation_boundaries import RuntimeComponentWorld, RuntimeCrashCut
+        from deploy.update.apply import Updater
+        from deploy.update.automatic_runtime import RuntimeRefused
+        from deploy.update.contracts import ReasonCode
+        from deploy.update.runner_state import TargetIdentity
+        from scripts import update_rehearsal_milestone as m
+        world=RuntimeComponentWorld(self)
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                driver=m.RestoreMilestone(Path(temporary),context='colima-fagi-update',boot_timeout=4200)
+                driver.root=world.case.root.resolve(); driver.installation=world.case.inst
+                driver.policy=world.policy; driver.backup=world.backup
+                driver.store,driver.registration,driver.attempt=self.registered_store(driver.root,
+                    TargetIdentity('v1.1.0','f'*64),world.now)
+                world.expected=replace(world.expected,attempt_id=driver.attempt.attempt_id)
+                world.guard.expectation=world.expected
+                original=world.event
+                def cut(label):
+                    original(label)
+                    if label=='backup_after': raise RuntimeCrashCut(label)
+                world.event=cut
+                with self.assertRaises(RuntimeCrashCut): world.run()
+                world.event=original
+                driver.ledger=world.ledger; driver.descriptor={'unsigned':True}; driver.target_version='v1.1.0'
+                driver.verify_restored_source=mock.Mock(return_value=world.lifecycle._observation())
+                driver.record_genuine_tree=mock.Mock()
+                with mock.patch.object(Updater,'_automatic_runtime',side_effect=lambda life,ledger,backup:
+                    world.runtime(world.case.inst,ledger,backup.b)):
+                    failure=RuntimeRefused(ReasonCode.READINESS_FAILED)
+                    with world.case.state.lock(automation=True): result=driver.recover(failure)
+                self.assertEqual(result,{'outcome':'restored'})
+                self.assertEqual(driver.ledger.snapshot['forward_failure']['reason_code'],'readiness_failed')
+                self.assertFalse(driver.ledger.snapshot['forward_failure']['interrupted'])
+                self.assertEqual(driver.ledger.direction,'restore_decided')
+                self.assertEqual(driver.ledger.phase,'restored')
+                self.assertEqual(world.extractions,1)
+                self.assertEqual(driver.store.read_state().failed_target_latch,driver.attempt.target)
+        finally: world.close()
+
+    def test_actual_sigkill_happens_after_each_real_durable_ledger_boundary(self):
+        from deploy.update.backup_proof import BackupExpectation
+        from deploy.update.contracts import BackupSeal
+        from deploy.update.recovery import RecoveryLedger
+        from scripts import update_rehearsal_milestone as m
+        for boundary in m.INTERRUPTION_BOUNDARIES:
+            with self.subTest(boundary=boundary),tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary).resolve(); output=root/'evidence'; output.mkdir(mode=0o700)
+                driver=m.RestoreMilestone(output,context='colima-fagi-update',boot_timeout=4200)
+                destination=root/'backups'; destination.mkdir(mode=0o700)
+                now=datetime.now(timezone.utc)
+                expected=BackupExpectation('a'*32,'b'*64,'c'*64,m.VERSION,now,('postgres_app',))
+                ledger=RecoveryLedger.reserve(destination,expected,operation_token='token',run_id='run',binding_sha256='d'*64)
+                seal=BackupSeal(expected.attempt_id,'token','run','d'*64,'c'*64,m.VERSION,
+                    'e'*64,'f'*64,'1'*64,'2'*64,now,now)
+                if boundary!='backup_sealed': ledger.seal_backup(seal)
+                if boundary=='extract_intent':
+                    ledger.decide_restore(); ledger.volume_phase('app-data','clear_intent'); ledger.volume_phase('app-data','empty')
+                def killed():
+                    with driver.kill_at(boundary):
+                        if boundary=='backup_sealed': ledger.seal_backup(seal)
+                        elif boundary=='env_selected': ledger.checkpoint('env_selected')
+                        elif boundary=='target_started': ledger.checkpoint('target_verifying')
+                        else: ledger.volume_phase('app-data','extract_intent')
+                pid=driver.child_process(killed,killed=True)
+                reopened=RecoveryLedger.open(ledger.directory,expected=expected)
+                self.assertEqual(reopened.backup_seal,seal)
+                evidence=json.loads((output/'kill-boundary.json').read_bytes())
+                self.assertEqual(evidence['pid'],pid); self.assertEqual(evidence['boundary'],boundary)
+                self.assertTrue(evidence['actual_durable_write_completed'])
+                def recover_direction():
+                    fresh=RecoveryLedger.open(ledger.directory,expected=expected)
+                    self.assertEqual(fresh.resume_direction(),'restore_decided')
+                recovery_pid=driver.child_process(recover_direction,result_name='fresh-test-process.json')
+                self.assertNotEqual(recovery_pid,pid)
+                self.assertEqual(RecoveryLedger.open(ledger.directory).direction,'restore_decided')
+                self.assertFalse(evidence['qualification_evidence'])
+
+    def test_no_interruption_case_is_claimed_when_job_budget_is_insufficient(self):
+        from scripts import update_rehearsal_milestone as m
+        with tempfile.TemporaryDirectory() as temporary:
+            driver=m.RestoreMilestone(Path(temporary),context='colima-fagi-update',boot_timeout=4200)
+            driver.deadline=0
+            driver.child_process=mock.Mock()
+            with self.assertRaisesRegex(rehearsal.RehearsalError,'interruption_job_budget_insufficient'):
+                driver.interruption_restore()
+            driver.child_process.assert_not_called()
+            doc=json.loads((Path(temporary)/'interruption-summary.json').read_bytes())
+            self.assertEqual(doc['boundaries'],[]); self.assertEqual(doc['unrun'],list(m.INTERRUPTION_BOUNDARIES))
+
+    def test_every_workflow_upload_file_excludes_generated_fixture_credentials(self):
+        import glob
+        from scripts import update_rehearsal_milestone as m
+        from deploy.tests.test_update_release_static import load
+        workflow=load(rehearsal.ROOT/'.github/workflows/update-rehearsal-milestones.yml')
+        secrets={key:'generated-'+key.lower()+'-fixture-value' for key in
+                 ('SECRET_KEY','PG_PASSWORD','CH_PASSWORD','MINIO_ROOT_PASSWORD')}
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary).resolve()
+            ledger=root/'private-ledger'; ledger.mkdir(mode=0o700)
+            (ledger/'recovery.json').write_bytes(canonical_json({'source_model':{
+                'services':{'app':{'environment':secrets}}}}))
+            for name in m.AUTHORITY_EVIDENCE_LEAVES | set(m.SNAPSHOT_EVIDENCE_LEAVES):
+                (ledger/name).write_bytes(canonical_json({'safe_projection':name}))
+            from deploy.update.standalone_backup import _identity
+            identity=_identity(dict(Id='a'*64,Image='sha256:'+'b'*64,Created='fixture',
+                Config={'Env':[key+'='+value for key,value in secrets.items()]},
+                HostConfig={},Mounts=[]))
+            operation=dict(kind='stop',identity=identity)
+            private_files={
+                'inventory.json':canonical_json({'containers':{'app':identity}}),
+                'op-0001-intent.json':canonical_json(operation),
+                'op-0001-result.json':canonical_json({'operation':operation,'result':{'stopped':True}}),
+            }
+            for name,raw in private_files.items():
+                (ledger/name).write_bytes(raw)
+                self.assertTrue(all(value.encode() in raw for value in secrets.values()))
+            self.assertTrue(all(value.encode() in (ledger/'recovery.json').read_bytes()
+                                for value in secrets.values()))
+
+            output_names={
+                'source-snapshot':'fagi-upd-e2e-driver-m1-42-1',
+                'target-readiness':'fagi-upd-e2e-m2-42-1',
+                'failure-restore':'fagi-upd-e2e-m3-failure-42-1',
+                'interruption-restore':'fagi-upd-e2e-m3-interruption-42-1',
+                'backup-integrity':'fagi-upd-e2e-m3-integrity-42-1',
+            }
+            for job_name, output_name in output_names.items():
+                output=root/output_name; output.mkdir(mode=0o700)
+                (output/'milestone.json').write_bytes(canonical_json({'safe':True}))
+                m.copy_snapshot_evidence(ledger,output)
+                (output/'snapshot-app-data.members.jsonl').write_text('{"safe":true}\\n')
+                if job_name in ('failure-restore','interruption-restore','backup-integrity'):
+                    authority=output/'authority'; authority.mkdir(mode=0o700)
+                    m.copy_authority_evidence(ledger,authority)
+                    (output/'authority-inventory.json').write_bytes(canonical_json({'safe':True}))
+                if job_name=='interruption-restore':
+                    nested=output/'interruption-backup_sealed'; nested.mkdir(mode=0o700)
+                    (nested/'milestone.json').write_bytes(canonical_json({'safe':True}))
+                    m.copy_snapshot_evidence(ledger,nested)
+                    (nested/'snapshot-app-data.members.jsonl').write_text('{"safe":true}\\n')
+                    nested_authority=nested/'authority'; nested_authority.mkdir(mode=0o700)
+                    m.copy_authority_evidence(ledger,nested_authority)
+                    (nested/'authority-inventory.json').write_bytes(canonical_json({'safe':True}))
+
+            # Drive the real backup_integrity producer against a synthetic
+            # ledger containing the same credential-bearing model as recovery.json.
+            from contextlib import nullcontext
+            from types import SimpleNamespace
+            from deploy.update.standalone_backup import BackupError
+            integrity_output=root/output_names['backup-integrity']
+            workspace=integrity_output/'workspace'; workspace.mkdir(mode=0o700)
+            driver=object.__new__(m.RestoreMilestone)
+            driver.output=integrity_output; driver.directory=workspace
+            driver.ledger=SimpleNamespace(directory=ledger)
+            driver.expected=SimpleNamespace(attempt_id='synthetic-integrity-attempt')
+            driver.policy=SimpleNamespace(disk_watermark_reserve_bytes=1)
+            driver.backup=SimpleNamespace(policy=object())
+            driver.installation=object(); driver.binding=object()
+            driver.locks=lambda:nullcontext()
+            driver.recover=mock.Mock(); driver._remember_resources=mock.Mock()
+            private_checkpoint=dict(phase='restore_decided',direction='restore_decided',pending=None,
+                backup_seal={'sealed':True},volumes={},source_model={'services':{'app':{'environment':secrets}}},
+                target_model={'services':{'app':{'environment':secrets}}})
+            fake_ledger=SimpleNamespace(snapshot=private_checkpoint,decide_restore=mock.Mock())
+            with mock.patch.object(m.RestoreMilestone,'corrupt_copy'), \
+                 mock.patch('deploy.update.recovery.RecoveryLedger.open',return_value=fake_ledger), \
+                 mock.patch('deploy.update.standalone_restore.StandaloneRestore') as adapter_class, \
+                 mock.patch.object(m.shutil,'disk_usage',return_value=SimpleNamespace(free=10**15)):
+                adapter_class.return_value.resume.side_effect=BackupError('archive_invalid')
+                driver.backup_integrity()
+            integrity_doc=json.loads((integrity_output/'integrity-truncated_archive.json').read_bytes())
+            self.assertEqual(integrity_doc['checkpoint'],dict(direction_is_restore=True,
+                operation_pending=False,backup_sealed=True,completed_volume_count=0))
+            self.assertNotIn('source_model',json.dumps(integrity_doc))
+            self.assertNotIn('target_model',json.dumps(integrity_doc))
+
+            for job_name in output_names:
+                upload=next(step for step in workflow['jobs'][job_name]['steps']
+                            if step.get('uses','').startswith('actions/upload-artifact@'))
+                path_lines=[line.strip() for line in upload['with']['path'].splitlines() if line.strip()]
+                includes=[line for line in path_lines if not line.startswith('!')]
+                excludes=[line[1:] for line in path_lines if line.startswith('!')]
+                self.assertIn('**/recovery.json',excludes)
+                self.assertIn('**/snapshot-recovery.json',excludes)
+                resolve=lambda pattern: pattern.replace('${{ github.run_id }}','42').replace(
+                    '${{ github.run_attempt }}','1').replace('~',str(root),1).replace(
+                    'interruption-*','interruption-backup_sealed')
+                for pattern in includes:
+                    resolved=resolve(pattern)
+                    parent,filename=resolved.rsplit('/',1)
+                    directory=Path(parent); directory.mkdir(mode=0o700,parents=True,exist_ok=True)
+                    if filename=='*.json':
+                        sample='evidence.json' if directory.name!='authority' else 'proof.json'
+                    elif filename=='snapshot-*.members.jsonl':
+                        sample='snapshot-clickhouse-data.members.jsonl'
+                    else:
+                        continue
+                    path=directory/sample
+                    if not path.exists(): path.write_bytes(canonical_json({'safe':True}))
+                uploaded=set()
+                for pattern in includes:
+                    uploaded.update(Path(path) for path in glob.glob(resolve(pattern),recursive=True) if Path(path).is_file())
+                excluded=set()
+                for pattern in excludes:
+                    excluded.update(Path(path) for path in glob.glob(resolve(pattern),recursive=True) if Path(path).is_file())
+                for path in uploaded-excluded:
+                    with self.subTest(job=job_name,path=path.relative_to(root)):
+                        raw=path.read_bytes()
+                        for value in secrets.values(): self.assertNotIn(value.encode(),raw)
+                self.assertFalse((root/output_names[job_name]/'snapshot-recovery.json').exists())
+                self.assertFalse((root/output_names[job_name]/'snapshot-inventory.json').exists())
+                if job_name in ('failure-restore','interruption-restore','backup-integrity'):
+                    authority=root/output_names[job_name]/'authority'
+                    self.assertFalse((authority/'recovery.json').exists())
+                    for name in private_files:
+                        self.assertFalse((authority/name).exists())
+            for name,raw in private_files.items():
+                self.assertEqual((ledger/name).read_bytes(),raw)
+
+    def test_corrupt_copies_are_rejected_by_real_restore_input_verifier_before_any_clear(self):
+        import shutil
+        from deploy.tests.test_update_standalone_restore import RestoreTests, LocalHelpers
+        from deploy.update.standalone_restore import StandaloneRestore
+        from deploy.update.standalone_backup import BackupError
+        from deploy.update.recovery import RecoveryLedger,RecoveryError
+        from scripts import update_rehearsal_milestone as m
+        fixture=RestoreTests('runTest'); fixture.setUp()
+        try:
+            original=fixture.ledger.directory
+            hashes={f.name:hashlib.sha256(f.read_bytes()).hexdigest() for f in original.iterdir() if f.is_file()}
+            for case in m.INTEGRITY_CASES:
+                with self.subTest(case=case),tempfile.TemporaryDirectory() as temporary:
+                    destination=Path(temporary).resolve(); destination.chmod(0o700)
+                    copied=destination/fixture.expected.attempt_id; shutil.copytree(original,copied)
+                    if case=='substituted_archive':
+                        # Model a DIFFERENT archive; this synthetic daemon uses
+                        # identical tar fixtures in all three roles by default.
+                        with (copied/'clickhouse-data.tar').open('ab') as f: f.write(b'\0'*512)
+                    m.RestoreMilestone.corrupt_copy(copied,case)
+                    ledger=RecoveryLedger.open(copied,expected=fixture.expected)
+                    adapter=StandaloneRestore(fixture.fixture.install,fixture.fixture.binding,destination,
+                        policy=fixture.fixture.adapter.policy,clock=lambda:fixture.fixture.adapter.clock())
+                    LocalHelpers.calls=[]
+                    try:
+                        with self.assertRaises((RecoveryError,BackupError)): adapter.resume(fixture.expected,ledger)
+                    finally: adapter.close()
+                    self.assertEqual(ledger.snapshot['volumes'],{})
+                    self.assertFalse(any(purpose in ('clear','extract') for _,purpose in LocalHelpers.calls))
+            self.assertEqual({f.name:hashlib.sha256(f.read_bytes()).hexdigest() for f in original.iterdir() if f.is_file()},hashes)
+        finally: fixture.doCleanups()
+
+    def test_genuine_tree_comparison_rejects_missing_or_modified_extracted_inventory(self):
+        from scripts import update_rehearsal_milestone as m
+        for invalid in (None,'missing','modified'):
+            with self.subTest(invalid=invalid),tempfile.TemporaryDirectory() as temporary:
+                driver=m.RestoreMilestone(Path(temporary),context='colima-fagi-update',boot_timeout=4200)
+                directory=driver.directory/'sealed'; directory.mkdir(mode=0o700)
+                raw=b'{"synthetic_tree":true}\n'
+                inventory={'archives':{role:dict(members_sha256=hashlib.sha256(raw).hexdigest(),members_bytes=len(raw))
+                    for role in rehearsal.VOLUME_ROLES}}
+                (directory/'inventory.json').write_bytes(canonical_json(inventory))
+                for role in rehearsal.VOLUME_ROLES:
+                    for index in range(2 if invalid!='missing' else 1):
+                        (directory/('verified-tree-'+role+'-'+str(index)+'.jsonl')).write_bytes(
+                            raw if invalid!='modified' else b'{"synthetic_tree":false}\n')
+                driver.ledger=SimpleNamespace(directory=directory)
+                if invalid is None: driver.record_genuine_tree()
+                else:
+                    with self.assertRaises(rehearsal.RehearsalError): driver.record_genuine_tree()
+
+    def test_all_restore_workflow_jobs_are_parallel_native_read_only_and_always_upload(self):
+        from deploy.tests.test_update_release_static import load
+        from scripts import update_rehearsal_milestone as m
+        workflow=load(rehearsal.ROOT/'.github/workflows/update-rehearsal-milestones.yml')
+        for name in m.MILESTONES[2:]:
+            with self.subTest(name=name):
+                job=workflow['jobs'][name.replace('_','-')]
+                self.assertNotIn('needs',job)
+                self.assertEqual(job['runs-on'],'ubuntu-24.04')
+                expected_timeout=360 if name=='interruption_restore' else 150
+                self.assertEqual(int(job['timeout-minutes']),expected_timeout)
+                self.assertEqual(job['permissions'],{'contents':'read'})
+                commands=[s['run'] for s in job['steps'] if 'run' in s]
+                actual=[c for c in commands if '--through '+name in c and '--dry-run' not in c]
+                self.assertEqual(len(actual),1)
+                for command in commands:
+                    result=subprocess.run(['bash','-n'],input=command,text=True,capture_output=True,timeout=10)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertNotIn('secrets.',command)
+                upload=next(s for s in job['steps'] if s.get('uses','').startswith('actions/upload-artifact@'))
+                self.assertEqual(upload['if'],'always()'); self.assertNotIn('workspace',upload['with']['path'])
+                self.assertIn('!**/recovery.json',upload['with']['path'])
+                self.assertIn('!**/snapshot-recovery.json',upload['with']['path'])
+                if name=='interruption_restore':
+                    self.assertIn('/interruption-*/*.json',upload['with']['path'])
+                    self.assertIn('timeout --signal=TERM --kill-after=180s 354m',''.join(commands))

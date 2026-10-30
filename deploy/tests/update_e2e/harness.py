@@ -995,7 +995,8 @@ class Harness:
         self._stopped = False
 
     def automatic_publisher(self, *, lane, versions, retained_layout, candidates,
-                            deployment_dirs, platform="linux/amd64", run_id=42):
+                            deployment_dirs, platform="linux/amd64", run_id=42, deadline=None,
+                            acceptance_reserve_seconds=0):
         """Real acceptance is independent of start(), registry and fake images.
 
         Immutable candidates and retained tag files are explicit inputs. The
@@ -1023,7 +1024,8 @@ class Harness:
 
         return AutomaticPublisher(directory, lane=lane, versions=versions, retained_layout=retained_layout,
             candidates=candidates, deployment_dirs=deployment_dirs, product_factory=product_factory,
-            docker_context=CONTEXT, platform=platform, run_id=run_id,
+            docker_context=CONTEXT, platform=platform, run_id=run_id, deadline=deadline,
+            acceptance_reserve_seconds=acceptance_reserve_seconds,
             cosign=os.environ.get('FUTURE_AGI_TEST_COSIGN') or shutil.which('cosign') or 'cosign')
 
     # ------------------------------------------------------------ lifecycle --

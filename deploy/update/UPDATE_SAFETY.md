@@ -8,10 +8,13 @@ the keyword scan's threat model. A reviewer still checks actual behavior.
 
 A passing PR or a declaration does not enable an update. The safety net is the
 real-data upgrade/restore rehearsal, signed exact-transition evidence, host
-capacity/time admission, runtime deadline/stall/disk guards, a sealed cold backup
-and automatic restoration of that backup and the previous images on failure.
-Unqualified releases remain notify-only. Some ambiguities require manual
-recovery rather than guessing. Legacy/manual CLI behavior is unchanged.
+capacity/time admission, runtime deadline/stall/disk guards and a sealed cold
+backup. A rollout failure before the durable success decision routes to
+restoration when retained evidence and host state allow it. `recovery_required`
+does not always mean “restore”: an unsealed attempt reconciles quiescence, an
+accepted B is finalized rather than reverted, and identity, capacity or integrity
+ambiguities stop for safe retry or operator review. Unqualified releases remain
+notify-only. Legacy/manual CLI behavior is unchanged.
 
 ## What fails and what to change
 
@@ -39,8 +42,7 @@ the working tree, including untracked files. Do not use `HEAD` to hide PR change
 ```sh
 # Repository root, Python 3.9+ stdlib, serial and daemon-free.
 python3 -m unittest discover -s deploy/tests -p test_update_safety_gate.py -v
-DOCKER_CONTEXT=colima-fagi-update python3 -I scripts/check_update_safety.py \
-  --static --base origin/dev --json
+python3 -I scripts/check_update_safety.py --static --base origin/dev --json
 
 # From futureagi/, in the frozen real backend environment.
 export DJANGO_SETTINGS_MODULE=tfc.settings.settings EE_LICENSE_KEY= ENV_TYPE=local
@@ -59,13 +61,20 @@ The required Backend CI aggregate depends on `update-safety`. That job installs
 `makemigrations --check --dry-run`, and checks real production `INSTALLED_APPS`
 and `MigrationLoader`. `tfc.settings.test` deliberately enables EE and is not the
 OSS app inventory. Python, Go, SQL, shell, bootstrap and deployment changes must
-trigger the job. Upgrade/restore E2E remains a separate requirement.
+trigger the job.
+
+The real upgrade/restore E2E is a separate requirement, not part of this gate:
+Update CI's `Real automatic latest-stable to PR and cold restore` job installs the
+latest stable release, seeds witnesses, upgrades to the PR's images through the
+real automatic path, then induces a failure after the migration and checks that
+the automatic restore brings back the previous version with every witness
+intact. A green gate is not evidence that this job passes.
 
 Layout validation renders all profiles with Compose >=2.30 `config` only,
 without shell or `.env` overrides. It does not start containers or use the daemon.
-`--compose-model FILE` accepts an equivalent pre-rendered model for fixtures;
-it is not runtime admission. Local Docker commands select only the dedicated
-`colima-fagi-update` context.
+A `DOCKER_CONTEXT` in the environment is passed to Compose; nothing else from the
+shell is. `--compose-model FILE` accepts an equivalent pre-rendered model for
+fixtures; it is not runtime admission.
 
 ## Migration declarations and schema risks
 

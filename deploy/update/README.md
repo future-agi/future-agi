@@ -374,10 +374,12 @@ FUTURE_AGI_UPDATE_POLICY=minor
 
 ### Scheduled runs
 
-These keys control the scheduled runner. bin/update checks them every time it
-loads its settings, but nothing runs unattended until you install a timer and
-explicitly enable policy (with `enable --yes` or `FUTURE_AGI_UPDATE_ENABLED=true`). With the defaults (`manual` and
-disabled) a scheduled run does nothing. Do not confuse
+These keys control scheduled runs. One-time setup reads them once (its flags
+first, then `update.conf`; exported variables are ignored) and keeps the result
+as private configuration, so later edits to `update.conf` do not reach an
+installation set up that way. A legacy `schedule init` registration instead reads
+`update.conf` (never exported variables) on every run. With the defaults
+(`manual` and disabled) a scheduled run does nothing. Do not confuse
 `FUTURE_AGI_UPDATE_AUTOMATION_MODE` with `FUTURE_AGI_UPDATE_MODE`: the backup
 hook receives the second one as the install type (Standalone, Distributed or
 production).
@@ -385,11 +387,11 @@ production).
 | Key | Default | What it does |
 | --- | ------- | ------------ |
 | `FUTURE_AGI_UPDATE_AUTOMATION_MODE` | `manual` | How far a scheduled run goes: `manual` (nothing), `notify` (check and report), `download` (also fetch and verify the images) or `apply` (also update, inside the maintenance window). |
-| `FUTURE_AGI_UPDATE_ENABLED` | `false` | Master switch for NEW forward work. Required recovery continues even when disabled or paused. |
+| `FUTURE_AGI_UPDATE_ENABLED` | `false` | Master switch for NEW forward work. Setup enables it through the private control only after the scheduler is verified. Required recovery continues even when disabled or paused. |
 | `FUTURE_AGI_UPDATE_INTERVAL_SECONDS` | `21600` | Time between scheduled release checks: 300 to 86400. |
 | `FUTURE_AGI_UPDATE_MAX_BACKOFF_SECONDS` | `86400` | Longest wait after repeated failures: 300 to 86400, and not less than the interval. |
 | `FUTURE_AGI_UPDATE_TIMEZONE` | `UTC` | IANA time zone name of the maintenance window (for example Europe/Berlin, written exactly as in the tz database). It must exist in the host's tzdata. |
-| `FUTURE_AGI_UPDATE_MAINTENANCE_WINDOW` | none | When a scheduled apply may start. Empty means never. Otherwise `always`, or `HH:MM-HH:MM` in the time zone above (two different times; it may cross midnight). |
+| `FUTURE_AGI_UPDATE_MAINTENANCE_WINDOW` | none | When a scheduled apply may start. Empty means never. Otherwise `always`, or `HH:MM-HH:MM` in the time zone above (two different times; it may cross midnight). `setup --mode apply` records `02:00-06:00` unless you pass `--window`. |
 | `FUTURE_AGI_UPDATE_MAINTENANCE_DAYS` | `MON,TUE,WED,THU,FRI,SAT,SUN` | Days a window may start on, from `MON` to `SUN`, comma-separated, each at most once. |
 | `FUTURE_AGI_UPDATE_MIN_START_BUDGET_SECONDS` | `900` | A scheduled apply starts only if at least this much of the window is left: 60 to 7200. |
 | `FUTURE_AGI_UPDATE_BACKUP_MAX_AGE_SECONDS` | `3600` | Oldest backup a scheduled apply accepts: 60 to 86400. |
@@ -398,7 +400,7 @@ production).
 | `FUTURE_AGI_UPDATE_PROBE_TIMEOUT_SECONDS` | `60` | Longest a single Docker or Compose status probe may take: 5 to 300. |
 | `FUTURE_AGI_UPDATE_PULL_TIMEOUT_SECONDS` | `1800` | Longest an image pull may take: 60 to 7200. |
 | `FUTURE_AGI_UPDATE_TICK_TIMEOUT_SECONDS` | `14400` | Whole scheduled run bound: 900–172800. Restore-backed apply must cover pull + the forward and protected recovery budgets below. Legacy/manual budget parsing is unchanged. |
-| `FUTURE_AGI_UPDATE_QUALIFICATION_POLICY` | none | Setup apply selects `standalone-cold-restore-v1`; old enrollments are not silently granted new migration/restore consent. |
+| `FUTURE_AGI_UPDATE_QUALIFICATION_POLICY` | none | `setup --mode apply` records `standalone-cold-restore-v1`, which selects the restore-backed transaction and the budgets below. An enrollment without it is never granted restore-backed automatic apply; setup does not add it to an older enrollment. |
 | `FUTURE_AGI_UPDATE_RESTORE_TIMEOUT_SECONDS` | `3600` | Cold restoration bound: 1–86400; independent of target startup. |
 | `FUTURE_AGI_UPDATE_RECOVERY_STARTUP_TIMEOUT_SECONDS` | `1200` | Previous-version readiness bound: 60–7200. |
 | `FUTURE_AGI_UPDATE_STABILITY_PERIOD_SECONDS` | `60` | Health and stable restart-count interval: 1–3600. |
@@ -421,99 +423,524 @@ localhost (unreachable from a container) and any kind your Docker client
 config (`~/.docker/config.json` › `proxies`) already gives containers.
 Windows is supported through WSL only.
 
-## Host automation and reporting
+## Automatic updates (Standalone)
 
-Run the source-checkout launcher, `./bin/update`, as the installation's original
-host user. Python runs isolated; the application never invokes this CLI, reads
-private automation state, runs a backup, or receives a Docker socket. Manual
-mode and disabled automation remain the defaults. The legacy backup-hook
-FUTURE_AGI_UPDATE_MODE still means installation type, not automation policy.
+Automatic updates are **off** unless you opt in once. After that, a scheduler
+on the Docker host runs `./bin/update run` every five minutes. The runner checks
+for a newer signed release every six hours by default and, when a release
+qualifies for this installation, applies it inside your maintenance window,
+database migrations included, without any further command. A release that does
+not qualify is reported and left for you to apply by hand. The application
+never starts, approves or retries an update: everything runs on the host, as
+the user who opted in.
+
+### Phase 1 status
+
+**No published release qualifies for automatic apply yet.** A release applies
+automatically only when its signed manifest carries a compatibility proof with a
+row for your exact installed version, topology, profiles, platform and
+deployment files, produced by a real upgrade-and-restore rehearsal. The release
+pipeline cannot produce that proof until its rehearsal executor is finished
+(today it refuses with `shipping_executor_unavailable`), and releases published
+before this feature carry no proof. Until then an opted-in installation checks,
+verifies and reports new releases, and every release stays notify-only with a
+reason such as `uncertified_release`.
+
+### Supported installations
+
+Setup accepts only a **Standalone** install (`docker-compose.yml`) on a host
+that is not native Windows; Distributed, production (`--production`) and Helm
+installs are refused, and `bin/install.ps1` has no automatic-update option.
+Setup runs the same read-only state probes in every mode, so these apply to
+`notify`, `download` and `apply` alike:
+
+- **Published images.** Images built from the checkout (`--from-source`) are
+  refused; the running images' registry digests must match the signed manifest
+  of the release they report.
+- **The shipped layout.** No optional profile (`ml`, `sandbox`), no build
+  section, and no extra service, named volume or mount: every one must match
+  `deploy/update/automatic-layout.json`. The optional host-status overlay adds a
+  mount that layout does not cover, so an install that uses it is refused with
+  `unsupported_installation`.
+- **Restart policies `unless-stopped` or `no`.** The shipped file uses
+  `unless-stopped`; `always` and `on-failure` are refused, never rewritten. Apply
+  also inspects each running container's actual policy.
+- **Host tools for the original host user:** Python 3.9 or newer, Docker Compose
+  v2, host `cosign` v3 or newer on `PATH`, and a running cron daemon or a usable
+  systemd manager. Setup never installs any of them.
+
+`download` and `apply` also need **measurable Docker storage**: a local Linux
+dockerd on its Unix socket using the overlay2 driver, or Docker's containerd
+image store at its default paths. Docker Desktop, other VM-backed contexts and
+remote contexts report unknown capacity and are refused. Only `apply` needs a
+backup directory.
 
 ### One-time automatic-update setup
 
-Automation remains **off by default**. After a supported published Standalone installation is ready, opt in once:
+**From the installer.** An interactive `./bin/install` of a published
+Standalone install asks once, after stack readiness and the first-account step,
+and only when this checkout has no automation state yet. It prints a
+four-line summary (six-hour checks, stable/minor releases, a 02:00-06:00 UTC
+window, cold-backup downtime, backups kept under your home directory, the tools
+it needs, `./bin/update disable` to stop) and asks
+`Opt in once to supported automatic updates? [y/N]`. Answering `y` runs
+`./bin/update setup --mode apply --yes`: your answer is the consent and setup
+does not ask again; it prints the full disclosure below as it starts. **To read
+the disclosure before agreeing, answer `N` and run `./bin/update setup --mode
+apply` yourself.**
+
+`./bin/install --auto-update apply` (or `notify`, `download`) opts in without
+the prompt, also together with `-y`; `-y` alone never opts in. `--auto-update`
+is refused with `--no-up`, `--from-source` and `--distributed`. When setup does
+not complete, the installer still finishes, warns that automatic-update setup is
+incomplete and exits 3 (1 still wins when the first account could not be
+created).
+
+**From an existing installation:**
 
 ```bash
-./bin/update setup --mode apply
-# Or explicitly consent noninteractively:
-./bin/update setup --mode apply --yes --docker-context my-install-context
-# During installation (only after readiness; -y alone never opts in):
-./bin/install --auto-update apply
+./bin/update setup --mode apply          # prints the summary and the disclosure, then asks
+./bin/update setup --mode apply --yes    # unattended: --yes acknowledges the same disclosure
 ```
 
-Setup displays the cadence, maintenance window, backup downtime/destination, Docker selection, original host
-user and disable command before confirmation. Defaults are stable channel, minor-version policy, a check every
-21600 seconds (six hours, with existing runner jitter/backoff), a five-minute scheduler opportunity and an apply
-window of **02:00–06:00 UTC**. Use `--channel stable|beta`, `--policy patch|minor|major`, `--window HH:MM-HH:MM`
-(or the explicit `always`), `--timezone IANA_ZONE`, and `--check-interval SECONDS` (minimum 300). A selected
-apply mode never retains an empty window or manual policy. Setup snapshots the host-only policy once;
-ambient updater exports are not a source of unattended settings. Its immutable private configuration, not
-later edits to `update.conf`, supplies subsequent scheduled runs. Changing that binding is not an implicit
-re-enrollment operation.
+The interactive question for `--mode apply` is
+`Acknowledge the disclosure and authorize automatic migration updates with mandatory restore? [y/N]`
+(other modes ask `Authorize this one-time host action? [y/N]`). Without a
+terminal and without `--yes`, setup declines, changes nothing and exits 3.
 
-`--mode notify` checks signed releases without pulling or restarting. `--mode download` also caches approved
-images without backup/recreation. `--mode manual` records disabled control without installing a scheduler.
-Apply selects the restore-backed transaction: **A remains stopped continuously from its cold backup until B starts**.
-B uses the normal Compose ports and unchanged restart policies, runs its migrations itself, then must pass health
-checks and a restart-count stability period. A post-backup failure restores the complete original snapshot and exact
-previous images automatically. The single disclosure constant is `enrollment.AUTOMATIC_UPDATE_DISCLOSURE` (A5):
-setup displays it before confirmation; interactive confirmation explicitly acknowledges it, and `--yes` acknowledges
-that same disclosure noninteractively. This includes discarded new-version writes, Redis/in-flight reset and irreversible
-outside-service calls. It is not a zero-loss guarantee. Unknown recovery evidence stops at `recovery_required`, never a guess. The default backup destination is a private named directory directly under
-HOME, outside the checkout. An explicit `--backup-destination /absolute/private/path` must also be outside all
-build contexts and application bind mounts. Backups/failed-attempt evidence are retained, never pruned or mounted
-into the app. Space exhaustion blocks work. Setup uses a 90-second probe timeout (the backup adapter requires at
-least 70), a 3600-second backup budget and the existing 14400-second whole-tick budget; it does not change legacy
-manual defaults. A backup is created for each authorized update attempt, not by a second backup schedule.
+**The disclosure.** Setup prints this text for `--mode apply` before it asks,
+and `--yes` acknowledges exactly this text. Its single copy is
+`AUTOMATIC_UPDATE_DISCLOSURE` in `deploy/update/enrollment.py`:
 
-The original host user needs Python 3.9+, Compose v2, host cosign v3+, local Docker access, qualified state/storage
-probes and normal scheduler authority. `--scheduler cron` (default) installs only a uniquely marked block in that
-user's crontab after verifying a running daemon. `--cron-service` can select an existing supported daemon.
-`--scheduler systemd --scheduler-scope system|user` installs only the named timer/service; a user manager requires
-already configured persistent operation (linger). Setup never uses sudo, installs packages, changes global Docker
-context/permissions, starts cron or enables linger. Missing authority/tools/probes are **incomplete**, not active.
-Native Windows, Distributed (`--production`), source builds, optional profiles not qualified by the fixed observer,
-remote Docker and custom mounts are refused. **The existing optional host-status overlay is not currently a
-qualified automatic-backup layout**; it is not an exemption for arbitrary extra mounts. Manual/status commands
-remain available. The reviewed `automatic-layout.json` is read-only shared data: setup refuses every service or
-observed container using `always` or `on-failure`; only `unless-stopped` and `no` are supported, without rewriting them.
-Missing layout/inspection evidence refuses. Runtime/migration observation, not an embedded format descriptor, qualifies A.
+> Automatic updates stop Future AGI, take a cold backup, and start the new
+> version, which may migrate the database. Future AGI is unavailable while this
+> happens (usually several minutes, longer for large databases). If the new
+> version doesn't pass its health checks, the updater restores that backup and
+> the previous version automatically. Anything written to the new version before
+> a failed update is rolled back is discarded, in-flight jobs and the Redis cache
+> are reset, and calls already made to outside services (webhooks, model
+> providers) can't be undone. Some failures still need manual recovery: the
+> updater stops and says so instead of guessing.
 
-For an empty or `latest` version pin, the actual running image's OCI version label is only a lookup hint. Setup
-verifies release A's signature and actual image digest, checks the authenticated physical deployment, then
-normalizes only approved same-image version pins and missing local aliases. It will not overwrite a conflicting
-tag, recreate an image, run migrations, or infer compatibility from consent. Unknown images refuse. Env changes
-use the preserving native env-commit protocol, retaining unrelated bytes/secrets and conflict evidence. No customer
-facts attestation, proof script or per-release command is needed. Future supported B/C must still carry genuine signed
-compatibility evidence; setup does not certify an incompatible release or promise every future version is eligible.
+The summary around it also states the mode, channel, version policy, check
+cadence, window and time zone, the forward and protected recovery budgets (6660
+and 5460 seconds with the defaults), the backup directory, the Docker target,
+the scheduler and the host user, and the commands that disable or remove
+automation.
 
-For a host-controlled HTTPS publisher, `--release-source HTTPS_ORIGIN --public-key PATH --ca-file PATH` pins the
-source and private copies/hashes of its public key/CA once. TLS certificate and hostname validation stay enabled.
-The ordinary default remains the canonical repository and exact keyless release-workflow identity. These options
-are setup-only; neither release assets nor the app can select a source, key, CA, command or path.
+**Choices**, fixed at setup:
 
-Setup writes disabled control first. Under runner then update locks it records the stable registration, generated
-baseline, backup/capacity prerequisites and private configuration. It releases both locks before installing the
-scheduler, verifies actual activation, then reacquires/revalidates and enables control **last**, with a generation
-CAS. A concurrent disable/pause wins. Partial setup/activation evidence is retained; retry the identical setup after
-repairing the prerequisite. Rerunning completed setup inspects the owned scheduler, preserves later baseline B/C
-and never clears operator disable/pause. A configured-but-disabled/paused result exits 3, not a successful
-activation. New active setup exits 0; incomplete setup exits 3. No active result is inferred from a file's existence.
+- `--mode`: `apply` (check, prefetch, back up and update inside the window),
+  `download` (check and cache verified images; never stops anything), `notify`
+  (check and report only) or `manual` (record disabled control; install no new
+  scheduler, and keep any existing owned scheduler).
+- `--channel stable` or `beta` (default `stable`); `--policy patch`, `minor` or
+  `major` (default `minor`): the largest version jump taken.
+- `--window HH:MM-HH:MM` or `--window always`, in `--timezone IANA_ZONE`
+  (default UTC). Apply always gets a window: `02:00-06:00` unless you pass one
+  (a window set in `update.conf` is not used). Start days come from
+  `FUTURE_AGI_UPDATE_MAINTENANCE_DAYS` (every day by default).
+- `--check-interval SECONDS`: 300 to 86400 (default 21600, six hours), plus up
+  to 10% jitter; failed checks back off up to
+  `FUTURE_AGI_UPDATE_MAX_BACKOFF_SECONDS`.
+- `--backup-destination /absolute/path` (apply only). The default is a private
+  directory named `~/.futureagi-backups-<id>` in your home directory. It must be
+  outside the checkout, every build context and every bind mount, and is created
+  owner-only (0700) on local ext4 or APFS.
+- `--docker-context NAME`: the context to record (default: the current one,
+  read once). A `DOCKER_HOST` or `DOCKER_CONFIG` in your shell is refused rather
+  than recorded.
+- `--scheduler cron` (default: a marked block in your own crontab, after
+  checking that a cron daemon runs; `--cron-service` names which) or
+  `--scheduler systemd` with `--scheduler-scope system` or `user` (a user
+  manager must already have lingering enabled).
+- `--release-source HTTPS_ORIGIN --public-key PATH --ca-file PATH` pins a
+  host-controlled HTTPS publisher and private copies of its key and CA once.
+  Certificate and hostname checks stay on. The default is this repository's
+  GitHub releases and the keyless identity of `release-update-manifest.yml`.
+- Budget flags named after the settings in lowercase with hyphens
+  (`--backup-timeout-seconds`, `--wait-timeout-seconds`,
+  `--migration-timeout-seconds`, ...), see [Budgets](#budgets).
+
+Setup reads its inputs once: flags first, then `update.conf` as it is at that
+moment, then the defaults. Exported `FUTURE_AGI_UPDATE_*` variables are ignored.
+It forces a 90-second probe timeout and no backup hook, and stores the result as
+private configuration that every later scheduled run uses. Editing `update.conf`
+afterwards changes nothing, and repeating setup with different choices is
+refused (`configuration_changed`); Phase 1 has no command that changes them
+after setup.
+
+**What setup does,** in order. It writes disabled control first. It proves that
+this checkout owns the running Compose project and records the Docker context,
+daemon ID, host user, interpreter, home directory and `PATH`. For apply it
+checks the layout and restart policies. It identifies the running release from
+the images' version label, verifies that release's signed manifest, checks that
+every running image has the signed digest and that the checkout's deployment
+files match the release, and runs the fixed read-only state probes against the
+running stack. Empty or `latest` version keys are pinned to the verified version
+of the same images (a missing local tag is added to the same image ID) through
+the preserving env-file commit; nothing is recreated or restarted. For download
+and apply it measures free space in Docker's image store; for apply it creates
+the backup directory, checks it has room for the protected restore reserve and
+records the backup binding. It then records a baseline of the installation,
+installs the scheduler, verifies that the scheduler is really active,
+revalidates everything and enables control **last**. A disable or pause that
+happens meanwhile wins.
+
+Setup never runs migrations, recreates containers, uses sudo, installs packages,
+starts cron, enables lingering or changes the global Docker context.
+
+**Results.** `Setup active` exits 0, followed by the next apply window and the
+verified Docker target. `Setup incomplete: <reason>` exits 3: nothing unattended
+was activated; fix what the reason names and run the identical command again
+(partial progress is kept and reused). `configured` exits 3 too: an earlier
+`disable` or `pause` is kept, because setup never re-enables. Rerunning a
+completed setup only inspects the scheduler. `--mode manual` exits 0.
+
+**After setup, leave the checkout as it is.** Automatic updates run from the
+checkout, `.env` and Compose files as setup recorded them and change only the
+version keys. Editing any line of `.env`, a `git pull` or `git checkout` that
+changes the Compose or bootstrap files, or applying a release with a manual
+`./bin/update apply` makes later automatic checks refuse with
+`configuration_changed` or `deployment_files_mismatch`. Phase 1 has no command
+that records a new baseline after such a change.
+
+### What happens on each scheduled check
+
+The scheduler runs `./bin/update run`, which performs one tick and exits; its
+output is discarded. Each tick:
+
+1. Takes the runner lock. If a manual `bin/update` command is running, the tick
+   does nothing.
+2. **Finishes unfinished work first.** If an earlier automatic attempt was
+   interrupted (killed process, reboot, Docker restart), the tick resumes it
+   from its durable record, either finishing an accepted success or completing a
+   restore, before anything else, even when automation is disabled or paused.
+3. Stops if automation is disabled, paused or `manual`.
+4. Stops unless a release check is due, or a release found earlier is waiting
+   for its window.
+5. **Discovers** the newest release the channel and version policy allow from
+   the GitHub release's `future-agi-update-manifest.json`, and verifies its
+   Sigstore signature with host cosign: it must have been signed by this
+   repository's `release-update-manifest.yml` at that release's tag.
+6. Refuses while a manual update is staged or unfinished.
+7. In `notify` mode it records the release as available (or the install as
+   current) and stops.
+8. **Qualifies the release for this installation.** The signed compatibility
+   proof must have a row for the exact installed version, Standalone, no
+   profiles, this platform and these deployment files, rehearsed together with
+   restoration. The running stack must still match the recorded baseline: same
+   configuration, `.env`, deployment files and images. Otherwise the release
+   stays notify-only and the tick records the reason.
+9. In `download` mode it pulls and verifies the images and stops.
+10. In `apply` mode it waits for the maintenance window: at most one attempt per
+    window occurrence, starting only with at least
+    `FUTURE_AGI_UPDATE_MIN_START_BUDGET_SECONDS` of the window left, and never
+    for a release whose earlier attempt failed (`failed_target_latched`).
+11. **Prefetches** the new images and verifies their digests while the running
+    version keeps serving.
+12. **Checks capacity and time (A6)** while the running version is still
+    healthy: it measures the tables the release's migrations touch, the three
+    data volumes and the free space where the backup and Docker's data live, and
+    estimates backup, migration and restore from the proof's measured rates (see
+    [Releases that stay notify-only](#releases-that-stay-notify-only)). If the
+    update does not fit, the release stays notify-only for this installation and
+    the estimates are reported.
+13. Runs the update transaction.
+
+### The update transaction
+
+Below, A is the running version and B the release being applied.
+
+1. Reserves the attempt and its private recovery ledger in the backup directory.
+2. **Stops A** and verifies that every container is stopped.
+3. **Takes a cold backup** of the `postgres-data`, `clickhouse-data` and
+   `app-data` volumes (archives with a hash inventory, written by a
+   network-less helper from the installed Postgres image) plus the private
+   configuration file the app mounts, then seals it. **From here on A stays
+   stopped** until B passes its checks or A is restored.
+4. Checks the cold hold again: the same containers, still stopped, with the
+   same restart counts.
+5. Writes B's version keys to `.env` (only those values change; the rest of the
+   file stays byte for byte).
+6. **Starts B directly** from the normal Compose model: same ports, same
+   restart policies, B's verified images, A's volumes. B runs its database
+   migrations itself while it boots. Until its boot finishes, the app answers
+   with a 503 "starting" page and accepts no writes.
+7. While B boots, three guards run: a migration deadline (the estimate times the
+   safety factor, capped by `FUTURE_AGI_UPDATE_MIGRATION_TIMEOUT_SECONDS`), a
+   no-progress limit (`migration_stalled` when neither the boot phase, the
+   current migration nor PostgreSQL's progress views move for
+   `FUTURE_AGI_UPDATE_MIGRATION_STALL_TIMEOUT_SECONDS`) and a disk watermark
+   (`disk_watermark_abort` as soon as free space falls below the protected
+   restore reserve).
+8. **Decides success** only after the health checks pass and stay passing for
+   `FUTURE_AGI_UPDATE_STABILITY_PERIOD_SECONDS` without any B container
+   restarting, and after B's images, configuration and storage match what was
+   expected. It then records B as the new baseline and writes a receipt.
+
+A is stopped at step 2 and remains unavailable until B boots successfully or A
+is restored. B may begin serving before the stability period in step 8 ends; if
+B then fails before the durable success decision, the restore discards everything
+B accepted after its API first answered. A failure before the backup is sealed
+is reconciled by aborting
+quiescence, not by restoring a snapshot. Once success is durably decided, recovery
+finishes B's metadata instead of restoring A.
+
+### When the new version fails: automatic restore
+
+If a failure, interruption or guard refusal occurs **after the backup is sealed
+and before success is durably decided**, the updater records the decision to
+restore and then, from that sealed backup:
+
+1. stops B's containers, checking each one's exact identity;
+2. restores the three volumes in place from the archives, verifying every hash;
+3. puts back the version keys of `.env` exactly as they were;
+4. starts A's exact previous images and waits for health and the stability
+   period;
+5. records `restored_after_update_failure` and quarantines the failed release
+   (`failed_target_latched`), so it is not attempted again until you clear it.
+
+The restore has its own protected time budget, which the forward attempt can
+never spend. Once decided, it is not stopped by the window closing, a pause, a
+disable or the backup's age. The tick reports the disposition `restored`.
+
+**What a restore loses.** Everything B wrote: data it accepted between its API
+first answering and the failure decision, and its own migration and bootstrap
+writes. In-flight jobs and the Redis cache are reset, and calls B already made
+to outside services (webhooks, model providers) cannot be undone. The sealed
+snapshot preserves A's persistent state at quiescence; A stays stopped while it
+is taken. This is not a guarantee against every kind of data loss. The status
+report gives the backup time as `snapshot_at` and as the start of the loss
+window (`loss_window_qualification` is `conservative`).
+
+To try the same release again, clear its quarantine:
 
 ```bash
-./bin/update disable                     # keep schedule and private state; stop future work
-./bin/update enable --yes                # requires previously completed, still-active setup
+./bin/update retry --target v1.55.0 --manifest-hash <hash> --yes
+```
+
+Use the failed attempt's retained identity for `retry`: its private attempt
+record holds the exact target version and manifest hash. Cross-check the attempt
+with `./bin/update status --format json` and the matching backup evidence.
+`./bin/update check --format json` fetches the
+currently configured manifest and may show a newer release, not the target that
+failed. `retry` only clears the exact quarantine: that release is attempted
+again at a later window if it still qualifies; the window already used stays
+used, and the failure evidence is kept.
+
+Backups and failed-attempt evidence are never deleted. Each attempt adds one
+full cold backup to the backup directory, and Phase 1 has no pruning command.
+Do not delete attempt directories by hand: the updater rereads the evidence of
+restored attempts. When the directory fills up, releases stay notify-only with
+`insufficient_disk_for_backup`.
+
+### Releases that stay notify-only
+
+A release that does not qualify is never applied automatically. The tick
+records why, and the release stays available to apply by hand (with your own
+backup, see [Update a Standalone or Distributed install](#update-a-standalone-or-distributed-install);
+afterwards automatic updates refuse with `configuration_changed`, see above).
+The codes below cover release discovery, proof selection and scheduled-apply
+preflight. They distinguish a release that cannot be verified from one that is
+verified but not qualified for this particular installation.
+
+| Reason | What it means |
+| --- | --- |
+| `manifest_unavailable`, `network_unavailable`, `rate_limited` | The release check could not fetch a complete manifest or proof. Fix connectivity or retry after the publisher's rate limit. |
+| `release_incomplete`, `discovery_incomplete` | The release is missing its signed manifest or bundle, or the updater could not complete discovery; it will not silently treat an incomplete check as current. |
+| `signature_rejected`, `host_verifier_required`, `unsupported_contract`, `immutable_release_changed` | The signature, required host verifier, manifest contract or immutable release bytes could not be trusted. Do not bypass verification. |
+| `channel_mismatch`, `version_policy_blocked` | The release is on another channel, or its version jump exceeds the configured policy. |
+| `uncertified_release`, `restore_not_certified`, `restore_procedure_unsupported`, `backup_inventory_mismatch` | No usable signed proof certifies the exact restore procedure and complete persistent-data coverage, or the setup predates restore-backed authorization. This includes every release today; see [Phase 1 status](#phase-1-status). |
+| `transition_not_rehearsed` | The proof has no row for the exact installed version, topology and profiles. |
+| `platform_not_rehearsed` | The exact transition was not rehearsed on this host's platform (for example arm64). |
+| `deployment_files_mismatch` | The checkout's Compose or bootstrap files differ from the authenticated retained deployment or the enrolled baseline. |
+| `unsupported_installation`, `ownership_unconfirmed` | The topology, profiles, restart policy, mount/volume layout or Docker-project ownership is outside the supported contract or cannot be proved. |
+| `required_env_missing` | The install's env file lacks a setting required by the candidate release. |
+| `configuration_changed` | `.env`, the Compose configuration, the running images or the recorded setup changed since setup or the last automatic update. |
+| `image_digest_mismatch` | A running or prefetched image does not match the digest authenticated by the signed manifest. |
+| `running_versions_unknown`, `mixed_running_versions` | The updater cannot establish one coherent version for the running app images. |
+| `migration_inventory_unsupported`, `migration_inventory_mismatch` | The applied migrations are not in a layout the fixed probe supports, or differ from the authenticated transition. |
+| `manual_stage_present`, `recovery_required`, `automatic_recovery_pending` | A manual stage or unfinished/ambiguous transaction needs to be resolved before a new release can start. |
+| `scheduler_unregistered`, `control_invalid` | The owned scheduler registration or private enable/pause controls are missing or invalid. Repair the named host state; do not invent a registration. |
+| `outside_window`, `insufficient_window`, `clock_skew`, `timezone_unavailable` | The configured maintenance window is closed, too little eligible time remains, the host clock conflicts with recorded observations, or the configured time zone is unavailable. |
+| `failed_target_latched` | An earlier attempt at this exact release failed and was restored; clear its quarantine with `retry` only after review. |
+| `backup_exceeds_window` | The measured backup or restore exceeds its configured timeout, or backup, startup/stability and protected recovery do not fit the remaining time. |
+| `migration_exceeds_window` | The measured migration exceeds `FUTURE_AGI_UPDATE_MIGRATION_TIMEOUT_SECONDS`, or the whole forward and protected recovery budgets do not fit. |
+| `restore_capacity_unknown` | Required size, filesystem or free-space data is missing/unsupported, a touched table is larger in rows or bytes than its rehearsal reference, or measurements are otherwise ambiguous. |
+| `restore_capacity_insufficient` | A data-volume filesystem lacks the required free-inode reserve for restoration. |
+| `insufficient_disk_for_backup` | The backup destination or Docker data filesystem cannot hold the measured backup and protected restore reserve. |
+| `insufficient_disk_for_migration` | Docker's data filesystem cannot also hold the migration's measured growth, WAL and temporary-space reserve. |
+| `disk_space_insufficient` | The image store cannot safely accommodate the required image download. |
+
+`outside_window` and `insufficient_window` are scheduling outcomes; the release
+may be reconsidered at a later eligible occurrence. A6 admission refusals are
+installation-specific, not permanent release failures. The public status report
+includes the estimates that explain them. After the transaction begins, other
+operational outcomes can include `migration_stalled`, `disk_watermark_abort`,
+`readiness_failed`, `operation_timeout`, `operation_interrupted`,
+`backup_failed`, `restore_verification_failed`, `restored_after_update_failure`
+and `status_reporting_unavailable`; these are not proof-qualification reasons.
+A failed target is quarantined after restoration, while ambiguous recovery stays
+`recovery_required` and requires operator attention.
+
+How the time and disk estimates (A6) work:
+
+- Rates come only from the signed proof row for your exact transition: backup
+  and restore throughput (measured in every rehearsal), and for each pending
+  migration its measured duration and throughput, peak disk amplification and
+  WAL and temporary bytes. Migrations that touch a registered high-volume table
+  are measured at reference scale; others are measured as executed in the normal
+  rehearsal.
+- Your sizes come from the running installation: the row counts and bytes of the
+  tables the migrations touch, the three volumes' sizes and the free bytes of the
+  backup directory and of Docker's data filesystem. A touched table with more
+  rows or bytes than the rehearsal's reference is not extrapolated: the release
+  stays notify-only (`restore_capacity_unknown`).
+- Every duration and growth figure is multiplied by
+  `FUTURE_AGI_UPDATE_ESTIMATE_SAFETY_FACTOR` (at least 2) and rounded up. Missing
+  data is never treated as zero.
+- The whole forward attempt plus the protected recovery must fit the smaller of
+  the window time left and the tick time left. A release too large for the window
+  is never started outside it; apply it by hand at a time you choose.
+
+When the host status report is set up (see
+[Status on the host and in the app](#status-on-the-host-and-in-the-app)), it
+carries the estimates as whole seconds and bytes: `backup_seconds`,
+`migration_seconds`, `restore_seconds`, `extra_disk_bytes`,
+`backup_required_free_bytes`, `docker_required_free_bytes`,
+`protected_restore_reserve_bytes`, `forward_seconds`, `recovery_seconds`,
+`total_seconds`, `migration_deadline_seconds` and
+`migration_stall_timeout_seconds`. The app's Updates page shows them as readable
+times and sizes.
+
+### Pause, disable and deactivate
+
+```bash
+./bin/update disable                      # stop new work; keep the scheduler and private state
+./bin/update enable --yes                 # turn it back on; needs a completed setup whose scheduler is active
+./bin/update pause --until 2026-12-01T00:00:00+00:00
 ./bin/update pause --indefinite
-./bin/update resume                      # clears pause only, never enables
-./bin/update setup --deactivate --yes     # disable FIRST, then remove only owned scheduler
+./bin/update resume                       # clears a pause only; never enables, never clears a quarantine
+./bin/update setup --deactivate --yes     # disable first, then remove only the owned scheduler
 ```
 
-Disable/pause/window closure block NEW forward work, not already-required safety recovery. Deactivation disables
-forward starts immediately, then returns `automatic_recovery_pending` and **keeps the safety scheduler** while an
-attempt/journal is unresolved (including unreadable recovery metadata). Repeat deactivation only after terminal recovery.
-The check is repeated under runner.lock before removing any owned scheduler asset. No backup or evidence is pruned.
+Disable, pause and a closed window stop **new** work only. An automatic attempt
+that already started still finishes its restore or its success, on the next
+ticks if needed. Deactivation disables first; while an attempt is unresolved
+(or its recovery metadata cannot be read) it keeps the scheduler, exits 3 with
+`automatic_recovery_pending`, and you repeat it after recovery has finished.
+Deactivation keeps backups, baselines, receipts and unrelated crontab lines. It
+is final for this registration: setup and `enable` refuse to reinstall a removed
+scheduler. Use `disable` or `pause` when you mean to turn automation back on
+later.
 
-Setup accepts explicit budget flags using the lowercase hyphenated setting names, for example:
+Every control exits 0 when recorded, 3 when its confirmation is missing or a
+short metadata lock stays busy (`busy; nothing recorded; retry the command`),
+and 2 when the private state is invalid. A manual `bin/update apply`, `stage`,
+or `rollback` started during an automatic attempt is refused with
+`automatic_recovery_pending`.
+
+### When status says recovery_required
+
+`recovery_required` (guidance `review_recovery`) means the updater could not
+safely finish or classify a retained transaction. It is **not** an instruction
+to restore the snapshot: the correct action depends on the authenticated
+attempt evidence. The installed version is reported as unknown, and Future AGI
+may stay down while recovery is unresolved.
+
+When retained authority is available, each tick reopens it before other work
+and retries the matching recovery branch with a fresh recovery-only budget, even
+while automation is disabled or paused. Missing or unreadable authority cannot
+select a recovery branch and remains blocked for operator review:
+
+- **No durable backup seal yet:** it reconciles the interrupted quiescence and
+  may start A only after proving the original container identities. There is no
+  sealed snapshot to restore.
+- **A durable success decision exists:** B has already been accepted. Recovery
+  only finalizes B's receipt and metadata; it must never restore A's snapshot.
+- **A backup is sealed and success was not decided:** recovery is directed to
+  restore A from that sealed backup. A temporary host problem can leave this
+  restore incomplete and eligible for another safe retry.
+- **The retained records or runtime identity cannot be authenticated, or
+  restored data cannot be verified:** the updater stops instead of guessing.
+  Do not infer the recovery direction from the displayed version alone.
+
+What to do:
+
+1. **Do not mutate the installation.** Do not run `docker compose up` or `down`,
+   `./bin/install`, manual `./bin/update apply` or `rollback`; do not start, stop,
+   remove or recreate containers; and do not delete or replace volumes, the
+   `.futureagi-updates/` directory, attempt evidence or anything in the backup
+   directory.
+2. **Inspect without changing state:** run `./bin/update status` and
+   `./bin/update status --format json`, then `docker compose ps -a` and
+   `docker compose logs app`. Preserve the attempt's directory in the backup
+   destination (named after its attempt ID), including the recovery ledger,
+   proof, hash inventory and bounded logs. The private attempt record and ledger
+   identify the target and the durable recovery direction; public status alone
+   may not expose every detail.
+3. **Fix only an independently confirmed transient host problem, then let
+   retained recovery retry.** For example, a host check may confirm that Docker
+   is stopped or that its filesystem has exhausted free bytes or inodes. Recovery
+   failures can be reported only as generic `recovery_required`; normal status
+   and the ledger do not necessarily retain the underlying capacity, permission
+   or integrity error. Do not infer a cause from that generic code. Ask for
+   support with the retained evidence when the cause is unclear. If capacity is
+   confirmed as the cause, add capacity or remove unrelated disposable data,
+   never the installation's volumes or retained backups. A prior restore pass
+   may already have restored some volumes; preserve its per-volume phases.
+   After the confirmed host problem is resolved, wait for the next tick or run
+   `./bin/update run` once to invoke the same recovery path.
+4. **Do not force a restore when evidence is ambiguous.** Missing or corrupt
+   attempt records, unverifiable backup contents or restored data, and unresolved
+   container or volume identity mismatches need evidence-based inspection.
+   Preserve all evidence and escalate with the JSON status and relevant
+   error/logs, even when the only reported code is `recovery_required`. Do not
+   start A on data that has not been verified, and do not restore A over a durable
+   accepted B. Phase 1 has no command that forces or completes an arbitrary
+   restore by hand; any manual recovery needs a plan for that exact state.
+
+### Status on the host and in the app
+
+- `./bin/update status` prints the installed versions, an unfinished run and the
+  last receipt. It works while Docker is down (running versions then show as
+  unknown and it exits 2).
+- `./bin/update status --format json` prints a host-only document
+  (`host_schema_version` 1) with versions, the pending transaction, the last run
+  and reason codes. It contains host paths: never serve it to the app.
+- `./bin/update reporting init --directory /absolute/dedicated/public-parent`
+  binds a dedicated host directory once. From then on every tick and control
+  writes a sanitized status report into its slot: versions, discovery, the
+  current operation and phase, the last run with its forward and restore
+  results, the effective installed version, the quarantined release, the backup
+  and loss-window times, the A6 estimates and a guidance ID (`none`,
+  `inspect_host` or `review_recovery`). Setup does not do this for you; it is
+  where the estimates and notify-only reasons are kept.
+- The app's **Settings > Updates** page (Owner and Admin members only) is
+  read-only. It shows the report only when the app container mounts the slot
+  through the host-status overlay
+  (`deploy/docker-compose.host-status.standalone.yml`; see
+  `./bin/install --host-status-help`). That overlay's mount is not part of the
+  qualified automatic layout, so on an install set up with `./bin/update setup`
+  (any mode) the page says reporting is not connected and the host commands above
+  are the way to see status. The page has no button that starts, approves or retries anything.
+
+### Budgets
+
+Setup records these bounds (defaults in [Scheduled runs](#scheduled-runs)):
+
+- forward = backup + migration + target startup + stability + quiescence +
+  metadata (6660 seconds with the defaults);
+- recovery = restore + previous-version startup + stability + quiescence +
+  metadata (5460 seconds);
+- a scheduled run (`FUTURE_AGI_UPDATE_TICK_TIMEOUT_SECONDS`, 14400) must cover
+  the image pull plus both.
+
+Before stopping A, the updater checks again that the run has at least
+max(forward + recovery, the A6 estimate) left; the forward attempt then runs
+with the recovery budget held back. Larger budgets can be chosen at setup, for
+example:
 
 ```bash
 ./bin/update setup --mode apply --wait-timeout-seconds 4200 \
@@ -521,55 +948,15 @@ Setup accepts explicit budget flags using the lowercase hyphenated setting names
   --restore-timeout-seconds 3600 --tick-timeout-seconds 43200
 ```
 
-These are bounded configuration examples, not measured product qualification or a promise of a 4200-second bootstrap.
-Forward = backup + migration + target startup + stability + quiescence + metadata. Recovery = restore + previous startup
-+ stability + quiescence + metadata. Tick includes pull + both budgets. Remaining maintenance-window and actual
-filesystem capacity preflight use signed measured rates with safety factor >=2 before A stops. Unknown measurements
-stay notify-only. Releases too large for the window never start automatically outside it; the admin chooses a manual time.
-Public status carries human-readable time/disk estimates and `migration_exceeds_window`, `backup_exceeds_window`,
-`insufficient_disk_for_migration`, `insufficient_disk_for_backup`, or unknown-capacity reasons. Runtime `migration_stalled`
-and `disk_watermark_abort` are failed forward outcomes leading to restore, not permission to retry B.
+These are examples of valid bounds, not measured product timings.
 
-Status separates `last_run.forward_result` from `last_run.restore_result`, the effective installed version from the failed
-target, the failed-target latch, `operation.phase`, snapshot/loss-window timestamps and fixed guidance IDs. While restoring
-or recovery is unverified the live installed version is unknown, not the historical A/B version. The application remains a
-read-only sanitized JSON consumer: no apply endpoint, host mount expansion, private paths, inventories or raw logs.
+## Host automation reference
 
-Deactivation preserves baselines, backups, receipts and unrelated jobs. The scheduler's removed ledger is terminal
-for this registration: setup/enable explicitly refuse to pretend it was reinstalled. Do not delete audit records to
-reset it. Use disable/pause (not teardown) when you intend a simple later enable/resume. Cron preserves unrelated
-bytes, but the OS crontab API has no atomic external CAS against noncooperating editors; setup does not claim one.
-The product-image A→B→C and real OS-manager/backend qualification remain separate acceptance gates; component
-fixture tests alone do not establish them.
-
-### Advanced identity-only enrollment and render-only diagnostics
-
-These legacy commands are **not** the automatic-update setup journey:
-
-```bash
-./bin/update schedule init --docker-context my-install-context
-./bin/update schedule render --backend cron
-./bin/update schedule render --backend systemd
-./bin/update reporting init --directory /absolute/dedicated/public-parent
-```
-
-Use the same `--production` and `--env-file` selection on every command for a
-production install. Enrollment reads Compose ownership and the selected daemon
-ID, records the original UID, absolute interpreter, HOME, PATH, ordered Compose
-files/profiles and canonical env target, and creates private durable metadata.
-The checkout, env and Compose paths must be owned/safe, not writable by other
-users or symlinked. Re-initialization must match the existing binding; it never
-adopts a different daemon or relocates an install. A missing tool or unknown
-owner is an operator action, not permission to repair modes or change context.
-
-Scheduled work needs host **cosign v3+** on the registered PATH. It never pulls
-or starts a verifier helper container. Legacy scheduled registrations load update.conf without
-ambient updater exports; one-time setup registrations use their private policy snapshot. Neither is sourced as shell. Both renderers
-print reviewable assets and narrowly scoped removal instructions only. They
-write no unit, crontab or timer and run no systemctl or sudo. Review and install
-only the named entry under your normal OS authority. Enable changes policy
-controls only: it neither installs nor starts a timer. No command changes git,
-merges env settings, installs dependencies or restores databases automatically.
+Run the source-checkout launcher, `./bin/update`, as the installation's original
+host user. Python runs isolated; the application never invokes this CLI, reads
+private automation state, runs a backup, or receives a Docker socket. Manual
+mode and disabled automation remain the defaults. The legacy backup-hook
+FUTURE_AGI_UPDATE_MODE still means installation type, not automation policy.
 
 ### Commands and exits
 
@@ -589,6 +976,8 @@ merges env settings, installs dependencies or restores databases automatically.
 | `status --format json` | Independent **host_schema_version=1** JSON: checkout, env_file, production, versions, pending_transaction, last_run and reason_codes. Host paths are private. This is NOT PublicStatusV1 and must never be served to the app. Zero when observed, 2 for unknown observations. |
 | `status --export-public` | Export only to the previously registered slot, never a caller-supplied destination. Does not recover or update. Zero only after publication; 2 for publication failure or an intervening-report conflict, 3 for missing registration or persistent short-lock contention. Cannot combine with --format. Optional reports attached to manual updates still never change the engine's exit code. |
 | `apply --acknowledge-stale-stage` | Host-only acknowledgment for an actual staged resume. Never accepted by run, or together with --stage/--dry-run. Absent a stage it exits 3. Other apply exit codes are unchanged. |
+| `setup --mode MODE` | One-time opt-in (Standalone only), see [One-time automatic-update setup](#one-time-automatic-update-setup). Prints the summary, and for apply the disclosure, then asks unless `--yes`. Zero when active or `manual`; 3 when declined, incomplete, or an earlier disable/pause was kept; usage errors exit 2. |
+| `setup --deactivate` | Disable first, then remove only the owned scheduler; asks unless `--yes`. Zero when removed; 3 with `automatic_recovery_pending` while an attempt is unresolved. Final for the registration. |
 
 All commands reject flags belonging to another command (usage exit 2). Explicit
 operator commands retry busy short metadata locks briefly (at most five attempts,
@@ -647,13 +1036,44 @@ unverifiable stored identity cannot be adopted by restaging. Finishing still
 requires the acknowledgment above for stale or absent proof; acknowledgment
 remains invalid together with --stage or --dry-run, and for scheduled run.
 
+### Advanced identity-only enrollment and render-only diagnostics
+
+These legacy commands are **not** the automatic-update setup journey:
+
+```bash
+./bin/update schedule init --docker-context my-install-context
+./bin/update schedule render --backend cron
+./bin/update schedule render --backend systemd
+./bin/update reporting init --directory /absolute/dedicated/public-parent
+```
+
+Use the same `--production` and `--env-file` selection on every command for a
+production install. Enrollment reads Compose ownership and the selected daemon
+ID, records the original UID, absolute interpreter, HOME, PATH, ordered Compose
+files/profiles and canonical env target, and creates private durable metadata.
+The checkout, env and Compose paths must be owned/safe, not writable by other
+users or symlinked. Re-initialization must match the existing binding; it never
+adopts a different daemon or relocates an install. A missing tool or unknown
+owner is an operator action, not permission to repair modes or change context.
+
+Scheduled work needs host **cosign v3+** on the registered PATH. It never pulls
+or starts a verifier helper container. Legacy scheduled registrations load update.conf without
+ambient updater exports; one-time setup registrations use their private policy snapshot. Neither is sourced as shell. Both renderers
+print reviewable assets and narrowly scoped removal instructions only. They
+write no unit, crontab or timer and run no systemctl or sudo. Review and install
+only the named entry under your normal OS authority. Enable changes policy
+controls only: it neither installs nor starts a timer. These commands never change
+git, merge env settings, install dependencies or restore databases.
+
 ### Restore qualification and daemon image capacity
 
-**Qualification remains incomplete in this development tree.** The shipping disposable rehearsal factory,
-representative product witnesses/table seeders and six native product suites are not implemented end to end.
-The producer therefore refuses to issue automatic eligibility; component/fake-Docker results are not product
-qualification. CI must execute the real product and scheduler acceptance before a release can supply qualifying
-signed evidence. The existing notify-only refusal must not be bypassed to make those jobs green.
+**Qualification is not finished in this development tree.** The release
+producer refuses to issue automatic eligibility (`shipping_executor_unavailable`)
+until its rehearsal executor runs the whole upgrade-and-restore rehearsal on the
+real product images. That executor is being built in milestones on native amd64
+GitHub runners. Component and fake-Docker results are not product
+qualification, and the notify-only refusal must not be bypassed to make those
+jobs green.
 
 Generated-baseline automatic apply uses authenticated contract-v2 transition evidence, the fixed
 `standalone-runtime-v2` observer, `automatic-layout.json`, and per-installation A6 estimates. It does not require
@@ -678,12 +1098,16 @@ silently resets a journal, starts A on B's migrated data, changes a volume ident
 
 Uncached pulls additionally require observed capacity on the **registered
 image filesystem**, never the checkout disk. The built-in read-only observer
-qualifies a directly connected native Linux dockerd Unix-socket peer in the
-same root/mount namespace using classic overlay2, and reads that image store's
-free bytes. Remote Docker, SSH contexts, macOS VM contexts, containerd snapshotters
-and other drivers have unknown capacity and refuse absent-image pulls. It does
-not SSH to a VM, start a helper container, change a context or guess from Docker
-system-df usage. Exact already-cached images can still be independently verified.
+supports two layouts. For a directly connected native Linux dockerd Unix-socket
+peer in the same root/mount namespace using classic overlay2, it reads that image
+store's free bytes. For Docker's containerd image store at its default paths
+(`/var/lib/containerd` behind `/run/containerd/containerd.sock`), it measures
+with a bounded, network-less, read-only helper container started from the
+installed app image by image ID, never pulled. Remote Docker, SSH contexts, macOS
+VM contexts and other drivers or paths have unknown capacity and refuse
+absent-image pulls. It does not SSH to a VM, change a context or guess from
+Docker system-df usage. Exact already-cached images can still be independently
+verified.
 The bounded child runner that executes every scheduled Docker command always pins
 the registered context and refuses `docker context` commands, with exactly one
 exception: the read-only inspection of the registered context itself, the

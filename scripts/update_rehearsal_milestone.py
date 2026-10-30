@@ -38,7 +38,11 @@ PLATFORM = 'linux/amd64'
 DIGEST = 'sha256:1bcaf9deccd6ff8b999a66e8ebd44657811d91419aeb5339a6d6327d1cbef7fd'
 IMAGE = 'futureagi/standalone:'+VERSION+'@'+DIGEST
 PREFIX = 'fagi-upd-e2e-driver-m1-'
-TOTAL_SECONDS = 7800  # Leaves 20 minutes of the 150-minute job for upload/teardown.
+TOTAL_SECONDS = 7800  # M1-M3/M5 leave 20 minutes of the 150-minute job for upload/teardown.
+INTERRUPTION_TOTAL_SECONDS = 21000  # 350 minutes; four cold cycles plus source setup reserve.
+INTERRUPTION_SETUP_RESERVE_SECONDS = 600
+INTERRUPTION_JOB_TIMEOUT_MINUTES = 360
+INTERRUPTION_COMMAND_TIMEOUT_MINUTES = 354
 STAGES = ('assemble_retained_a', 'install_and_boot_a', 'seed_and_enumerate',
           'observe_source', 'source_snapshot', 'verify_cold_hold')
 
@@ -47,6 +51,15 @@ TARGET_VERSION = 'v1.54.0'
 TARGET_DIGEST = 'sha256:c2b0f344b4e9f60435c6ce503764fbc5be793c9d44776cb6ff12b7c92bdd3492'
 TARGET_IMAGE = 'futureagi/standalone:'+TARGET_VERSION+'@'+TARGET_DIGEST
 TARGET_PREFIX = 'fagi-upd-e2e-m2-'
+MILESTONES = ('source_snapshot', 'target_readiness', 'failure_restore',
+              'interruption_restore', 'backup_integrity')
+RESTORE_VERSION = 'v1.55.0'
+RESTORE_DIGEST = 'sha256:eab0d007debaf55ca2e45bcd936a143cbc95d2f61fd0324eaf8b4be7e0f5ccc9'
+RESTORE_IMAGE = 'futureagi/standalone:'+RESTORE_VERSION+'@'+RESTORE_DIGEST
+RESTORE_PREFIX = 'fagi-upd-e2e-m3-'
+INTERRUPTION_BOUNDARIES = ('backup_sealed', 'env_selected', 'target_started', 'extract_intent')
+INTEGRITY_CASES = ('truncated_archive', 'substituted_archive', 'tampered_archive',
+                   'truncated_inventory', 'substituted_inventory', 'tampered_inventory', 'tampered_members')
 TARGET_STAGES = STAGES[:4] + ('prefetch_target',) + STAGES[4:] + ('prepare_target', 'target_readiness')
 
 
@@ -57,6 +70,32 @@ def label(*, milestone='source_snapshot', **values):
 
 
 def plan(boot_timeout=4200, through='source_snapshot'):
+    producer().need(through in MILESTONES, 'unknown milestone')
+    if through in MILESTONES[2:]:
+        result = plan(boot_timeout, 'target_readiness')
+        stages = (list(TARGET_STAGES[:5]) if through=='interruption_restore' else list(TARGET_STAGES[:-1])) + [through]
+        result.update(label(milestone=through), stages=stages, target_version=RESTORE_VERSION,
+            target_image=RESTORE_IMAGE, resources_prefix=RESTORE_PREFIX,
+            restore_api='Updater.resume_automatic_locked -> StandaloneRestore.resume',
+            qualification_suites={s:'unrun' for s in producer().SUITES},
+            unsigned_lifecycle=True, enrolled_baseline_commit_tested=False,
+            interruption_boundaries=list(INTERRUPTION_BOUNDARIES) if through=='interruption_restore' else [],
+            fault='stop exact target app after migrated state and target-only API record',
+            integrity_cases=list(INTEGRITY_CASES))
+        if through == 'interruption_restore':
+            policy = restore_policy()
+            attempts_budget = len(INTERRUPTION_BOUNDARIES) * policy.required_cold_budget_seconds
+            minimum_total = boot_timeout + INTERRUPTION_SETUP_RESERVE_SECONDS + attempts_budget
+            producer().need(INTERRUPTION_TOTAL_SECONDS >= minimum_total,
+                            'interruption_job_budget_configuration_invalid')
+            result.update(total_ceiling_seconds=INTERRUPTION_TOTAL_SECONDS,
+                boundary_budget_seconds=policy.required_cold_budget_seconds,
+                all_boundaries_budget_seconds=attempts_budget,
+                setup_reserve_seconds=INTERRUPTION_SETUP_RESERVE_SECONDS,
+                minimum_total_seconds=minimum_total,
+                job_timeout_minutes=INTERRUPTION_JOB_TIMEOUT_MINUTES,
+                command_timeout_minutes=INTERRUPTION_COMMAND_TIMEOUT_MINUTES)
+        return result
     if through == 'target_readiness':
         result = plan(boot_timeout)
         result.update(label(milestone=through), stages=list(TARGET_STAGES),
@@ -87,6 +126,76 @@ def record(directory, name, value):
     path = Path(directory)/name
     path.write_bytes(raw+b'\n')
     path.chmod(0o600)
+
+
+def restore_policy():
+    """One source of truth for restore-milestone runtime ceilings and planning."""
+    from deploy.update.contracts import AutomationPolicy
+    return AutomationPolicy(probe_timeout_seconds=90, wait_timeout_seconds=600,
+        recovery_startup_timeout_seconds=1200, stability_period_seconds=15,
+        qualification_policy='standalone-cold-restore-v1', backup_timeout_seconds=600,
+        restore_timeout_seconds=600, migration_timeout_seconds=600,
+        migration_stall_timeout_seconds=300, quiescence_reserve_seconds=120,
+        metadata_reserve_seconds=60)
+
+
+def validate_interruption_results(results, requested=INTERRUPTION_BOUNDARIES):
+    """Only the complete, restored boundary matrix is a successful rehearsal."""
+    p = producer()
+    for result in results:
+        if result.get('outcome') == 'recovery_required':
+            p.need(result.get('retained_evidence') is True,
+                   'interruption_recovery_evidence_missing')
+            p.need(False, 'interruption_recovery_required')
+        p.need(result.get('outcome') == 'restored', 'interruption_boundary_outcome_invalid')
+    completed = [result.get('boundary') for result in results]
+    p.need(completed == list(requested), 'interruption_boundaries_incomplete')
+
+
+def integrity_checkpoint_projection(snapshot):
+    """Export booleans/counts only, never interpolated models or env values."""
+    pending = snapshot.get('pending')
+    volumes = snapshot.get('volumes')
+    return dict(direction_is_restore=snapshot.get('direction') == 'restore_decided',
+        operation_pending=isinstance(pending, dict),
+        backup_sealed=snapshot.get('backup_seal') is not None,
+        completed_volume_count=len(volumes) if isinstance(volumes, dict) else 0)
+
+
+# Inventories and operation WAL retain complete container Config.Env identities.
+# Keep those originals beside recovery.json, never in CI-uploaded directories.
+SNAPSHOT_EVIDENCE_LEAVES = ('proof.json', 'backup-seal.json')
+AUTHORITY_EVIDENCE_LEAVES = frozenset({
+    'attempt-intent.json', 'backup-seal.json', 'restore-decision.json',
+    'previous-start-armed.json', 'proof.json',
+})
+
+
+def copy_snapshot_evidence(source_directory, destination, *, prefix='snapshot-'):
+    """Copy only non-secret backup projections; recovery.json contains secrets."""
+    source_directory, destination = Path(source_directory), Path(destination)
+    for name in SNAPSHOT_EVIDENCE_LEAVES:
+        source = source_directory/name
+        if source.is_file() and not source.is_symlink() and source.stat().st_size <= 16*1024*1024:
+            target = destination/(prefix+name)
+            shutil.copyfile(source, target)
+            target.chmod(0o600)
+
+
+def copy_authority_evidence(source_directory, destination):
+    """Retain bounded decision evidence without exporting the private recovery ledger."""
+    p = producer()
+    source_directory, destination = Path(source_directory), Path(destination)
+    names = [f for f in source_directory.iterdir() if f.name in AUTHORITY_EVIDENCE_LEAVES]
+    total = 0
+    for source in sorted(names):
+        p.need(source.is_file() and not source.is_symlink() and source.stat().st_size<=16*1024*1024,
+               'recovery evidence leaf exceeds bound')
+        total += source.stat().st_size
+        p.need(total<=32*1024*1024,'recovery evidence total exceeds bound')
+        target = destination/source.name
+        shutil.copyfile(source,target)
+        target.chmod(0o600)
 
 
 def archive_deployment(destination):
@@ -131,7 +240,7 @@ class SnapshotMilestone(ShippingRehearsal):
     transaction is claimed. ProductHarness supplies updater assembly and HTTP;
     ShippingRehearsal supplies container operations and exact-project cleanup.
     """
-    def __init__(self, output, *, context, boot_timeout):
+    def __init__(self, output, *, context, boot_timeout, total_seconds=TOTAL_SECONDS):
         from deploy.update.contracts import AutomationPolicy
         # Shared by boot and cold backup; shipping stop probes require >=70s.
         self.policy = AutomationPolicy(probe_timeout_seconds=90, wait_timeout_seconds=4200,
@@ -143,7 +252,8 @@ class SnapshotMilestone(ShippingRehearsal):
         self.root = self.directory/'installation'
         self.context = context
         self.project = PREFIX+uuid.uuid4().hex[:12]
-        self.deadline = time.monotonic()+TOTAL_SECONDS
+        self.total_seconds = total_seconds
+        self.deadline = time.monotonic()+total_seconds
         self.boot_timeout = boot_timeout
         self.source = producer().ROOT  # ProductHarness.install_updater source.
         self._secret_values = set()
@@ -317,11 +427,7 @@ class SnapshotMilestone(ShippingRehearsal):
                 sealed=checkpoint['backup_seal'] is not None)
             # Retain exact existing small leaves on failures too. Missing or
             # partial evidence is never synthesized into a successful snapshot.
-            for name in ('proof.json','inventory.json','backup-seal.json','recovery.json'):
-                source = self.ledger.directory/name
-                if source.is_file() and not source.is_symlink() and source.stat().st_size<=16*1024*1024:
-                    target = self.output/('snapshot-'+name)
-                    shutil.copyfile(source,target); target.chmod(0o600)
+            copy_snapshot_evidence(self.ledger.directory, self.output)
         record(self.output,'diagnostics.json',self.diagnostics())
 
     def seed(self):
@@ -444,30 +550,32 @@ print(json.dumps(rows))
         self.intent = label(kind='snapshot-only-intent-not-target-manifest', source=self.descriptor,
                             project=self.project)
         self.record('snapshot-intent.json',self.intent)
-        self.expected = BackupExpectation(uuid.uuid4().hex,self.registration.binding.installation_fingerprint,
-            p.manifest_hash(self.intent),VERSION,datetime.now(timezone.utc).replace(microsecond=0),
+        attempt = getattr(self, 'attempt', None)
+        self.expected = BackupExpectation(attempt.attempt_id if attempt else uuid.uuid4().hex,
+            self.registration.binding.installation_fingerprint,
+            attempt.target.manifest_hash if attempt else p.manifest_hash(self.intent), VERSION,
+            attempt.reserved_at if attempt else datetime.now(timezone.utc).replace(microsecond=0),
             p.topology_profile('standalone',()).backup_domains)
         self.destination, self.proofs = self.directory/'backups', self.directory/'proofs'
         create_destination(self.destination); create_destination(self.proofs)
         self.backup = StandaloneBackup(self.installation,self.binding,self.destination,
-            policy=BackupPolicy(timeout_seconds=2400,readiness_seconds=180))
+            policy=BackupPolicy(timeout_seconds=getattr(self,'snapshot_timeout',2400),readiness_seconds=180))
         # Fresh fixture only; runner -> update locks follow shipping ordering.
         # These are local lock files, not an enrolled scheduler or host service.
         with self.locks():
             self.ledger = RecoveryLedger.reserve(self.destination,self.expected,
-                operation_token=uuid.uuid4().hex,run_id=uuid.uuid4().hex,
+                operation_token=attempt.operation_token if attempt else uuid.uuid4().hex,run_id=uuid.uuid4().hex,
                 binding_sha256=self.source_observation.binding_sha256)
+            self.ledger.checkpoint(source_model=self.installation.config(refresh=True))
             fd = os.open(self.proofs,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
             try:
                 self.artifact = self.backup.run_quiesced(self.expected,self.ledger,self.source_observation,
                                                         proof_directory_fd=fd)
             finally: os.close(fd)
             self.backup.retire_helpers(self.ledger)
-        # Preserve exact proof/inventory bytes, NOT redacted or synthesized
-        # lookalikes. Config is generated disposable data; mark these PRIVATE.
-        for name in ('proof.json','inventory.json','backup-seal.json','recovery.json'):
-            shutil.copyfile(self.ledger.directory/name,self.output/('snapshot-'+name))
-            (self.output/('snapshot-'+name)).chmod(0o600)
+        # Only non-secret proofs/seals are exported. Complete inventories and
+        # operation WAL stay private; verification below reads those originals.
+        copy_snapshot_evidence(self.ledger.directory, self.output)
         members = {}
         for role in p.VOLUME_ROLES:
             source = self.ledger.directory/(role+'.members.jsonl')
@@ -480,8 +588,8 @@ print(json.dumps(rows))
     def verify_snapshot(self):
         p = producer()
         from deploy.update.backup_proof import validate_backup_proof
-        proof_raw = (self.output/'snapshot-proof.json').read_bytes()
-        inventory_raw = (self.output/'snapshot-inventory.json').read_bytes()
+        proof_raw = (self.ledger.directory/'proof.json').read_bytes()
+        inventory_raw = (self.ledger.directory/'inventory.json').read_bytes()
         proof = validate_backup_proof(proof_raw,self.expected,now=datetime.now(timezone.utc))
         inventory = json.loads(inventory_raw)
         p.equal(proof.inventory_sha256,p.sha(inventory_raw),'snapshot inventory is not proof-bound')
@@ -528,6 +636,9 @@ print(json.dumps(rows))
 
 class TargetMilestone(SnapshotMilestone):
     """Same A/backup/volume objects; unsigned producer runtime evidence only."""
+    target_version, target_digest, target_image = TARGET_VERSION, TARGET_DIGEST, TARGET_IMAGE
+    milestone = 'target_readiness'
+    allow_pending = False
     def __init__(self, *args, **kwargs):
         from dataclasses import replace
         super().__init__(*args, **kwargs)
@@ -547,7 +658,7 @@ class TargetMilestone(SnapshotMilestone):
 
     def record(self, name, value):
         if isinstance(value, dict) and value.get('milestone') == 'source_snapshot':
-            value.update(label(milestone='target_readiness'))
+            value.update(label(milestone=self.milestone))
         super().record(name, value)
 
     def _collect_diagnostics(self):
@@ -633,14 +744,14 @@ class TargetMilestone(SnapshotMilestone):
     def prefetch_target(self):
         p = producer()
         # Match production: registry I/O is entirely before downtime.
-        for ref in (TARGET_IMAGE,'futureagi/standalone:'+TARGET_VERSION):
+        for ref in (self.target_image,'futureagi/standalone:'+self.target_version):
             self.installation.docker_run('pull','--platform',PLATFORM,ref)
-        self.target_inspection = self._json('image','inspect',TARGET_IMAGE)[0]
-        tagged = self._json('image','inspect','futureagi/standalone:'+TARGET_VERSION)[0]
+        self.target_inspection = self._json('image','inspect',self.target_image)[0]
+        tagged = self._json('image','inspect','futureagi/standalone:'+self.target_version)[0]
         p.equal(tagged['Id'],self.target_inspection['Id'],'target tag differs from fixed digest')
         p.equal(self.target_inspection['Os']+'/'+self.target_inspection['Architecture'],PLATFORM,
                 'non-native target image')
-        p.need(any(ref.endswith('@'+TARGET_DIGEST) for ref in self.target_inspection['RepoDigests']),
+        p.need(any(ref.endswith('@'+self.target_digest) for ref in self.target_inspection['RepoDigests']),
                'target digest identity unavailable')
         self.record('target-image-inspection.json',label(image={k:self.target_inspection[k] for k in
             ('Id','Os','Architecture','RepoDigests')},prefetched_before_quiescence=True))
@@ -653,10 +764,10 @@ class TargetMilestone(SnapshotMilestone):
         p.need(self.target_plan['planned'] and self.target_plan['inventory'], 'empty target loader inventory')
         p.equal(self.target_plan['inventory_sha256'],p.manifest_hash(self.target_plan['inventory']),
                 'target loader inventory hash differs')
-        self.record('target-plan.json',label(target_version=TARGET_VERSION,target_image=TARGET_IMAGE,
+        self.record('target-plan.json',label(target_version=self.target_version,target_image=self.target_image,
             source_applied_sha256=self.source_migrations['applied_sha256'],
             measurement='B MigrationLoader/MigrationExecutor against independently observed cold A applied set',
-            plan=self.target_plan,expected_pending_count=0,assumed_pending_count=False))
+            plan=self.target_plan,expected_pending_count=None if self.allow_pending else 0,assumed_pending_count=False))
         # The real hold is checked again after the read-only loader.
         with self.locks():
             self.backup.verify_hold(self.ledger,self.source_observation)
@@ -691,7 +802,7 @@ class TargetMilestone(SnapshotMilestone):
         # This fixed historical pair normally has a measured empty plan. A
         # nonempty plan is recorded, never silently treated as measured zero.
         # Exact execution boundaries are a later migration_forward milestone.
-        if self.target_plan['pending']:
+        if self.target_plan['pending'] and not self.allow_pending:
             raise p.ManualRelease('migration_measurement_unavailable')
         rows = self.witnesses.read('source')
         n = self.witnesses.namespaces['source']
@@ -715,7 +826,11 @@ print(json.dumps(rows,default=str))
             gaps=self.corpus.get('witness_gaps',[])))
         return migration
 
-    def target_readiness(self):
+    def target_ready(self, runtime, roster):
+        pass
+
+    @contextmanager
+    def running_target(self):
         from deploy.update.apply import Updater
         from deploy.update.automatic_runtime import HostRuntimeObserver
         from deploy.update.contracts import AutomaticUpdateEstimate, ReasonCode
@@ -754,7 +869,7 @@ print(json.dumps(rows,default=str))
                 recovery = context.engine.active_record['env_recovery']
                 require(envfile.check_commit(driver.root/'.env',recovery,durable=True)=='accepted',ReasonCode.ENV_CONFLICT)
                 require(p.sha((driver.root/'.env').read_bytes())==recovery['after_sha256'],ReasonCode.ENV_CONFLICT)
-                driver.record('target-selection.json',label(env_value=TARGET_VERSION,target_image=TARGET_IMAGE,
+                driver.record('target-selection.json',label(env_value=driver.target_version,target_image=driver.target_image,
                     env_before_sha256=recovery['before_sha256'],env_after_sha256=recovery['after_sha256'],
                     native_commit='accepted',shipping_engine='Updater.start_automatic_target_locked'))
 
@@ -777,6 +892,7 @@ print(json.dumps(rows,default=str))
                 self.roster=roster
                 self.check()
                 driver.verify_target()
+                driver.target_ready(self.runtime,roster)
                 self.check()
 
         # These are explicitly UNSIGNED runtime ceilings, not invented A6
@@ -794,15 +910,20 @@ print(json.dumps(rows,default=str))
             built_in_backup=self.backup,runtime_observer=observer)
         self.engine.automatic_ledger = self.ledger
         self.engine.active_record = dict(kind='apply',run_id=self.ledger.snapshot['run_id'],
-            automatic_transaction=True,stage='prepare',status='running',target_version=TARGET_VERSION,
-            env_changes={'FUTURE_AGI_VERSION':TARGET_VERSION},**self.installation.identity())
-        plan = {'components':[dict(variable='FUTURE_AGI_VERSION',target_tag=TARGET_VERSION,
-            component='standalone',target_image='futureagi/standalone:'+TARGET_VERSION,target_digest=TARGET_DIGEST)]}
+            automatic_transaction=True,stage='prepare',status='running',target_version=self.target_version,
+            env_changes={'FUTURE_AGI_VERSION':self.target_version},**self.installation.identity())
+        plan = {'components':[dict(variable='FUTURE_AGI_VERSION',target_tag=self.target_version,
+            component='standalone',target_image='futureagi/standalone:'+self.target_version,target_digest=self.target_digest)]}
+        self.backup.verify_hold(self.ledger,self.source_observation)
+        self.backup.retire_helpers(self.ledger)
+        with self.engine.start_automatic_target_locked(ledger=self.ledger,plan=plan,
+                estimate=estimate,observe=ReadySession) as result:
+            yield result
+
+    def target_readiness(self):
+        p = producer()
         with self.locks():
-            self.backup.verify_hold(self.ledger,self.source_observation)
-            self.backup.retire_helpers(self.ledger)
-            with self.engine.start_automatic_target_locked(ledger=self.ledger,plan=plan,
-                    estimate=estimate,observe=ReadySession) as (runtime,roster,session):
+            with self.running_target() as (runtime,roster,session):
                 session.check()
                 expected = dict(self.backup.b['images'],app=self.target_inspection['Id'])
                 p.equal({s:r['Image'] for s,r in roster.items()},expected,'running target image IDs differ')
@@ -818,12 +939,545 @@ print(json.dumps(rows,default=str))
                 self.engine.active_record.update(status='succeeded')
                 self.ledger.decide_success(label(kind='unsigned-target-milestone-success-not-release-admission',
                     run_id=self.ledger.snapshot['run_id'],record=self.engine.active_record,
-                    target_image=TARGET_IMAGE,source_snapshot_seal=wire(self.artifact.seal)))
+                    target_image=self.target_image,source_snapshot_seal=wire(self.artifact.seal)))
             p.equal(self.ledger.direction,'success_decided','target success decision missing')
             self.record('target-success-decision.json',label(direction=self.ledger.direction,
                 phase=self.ledger.phase,seal=self.ledger.snapshot['success_seal'],
                 elapsed_seconds=time.monotonic()-self.target_started))
         self._remember_resources()
+
+
+class RestoreMilestone(TargetMilestone):
+    """Real storage/runtime, explicitly unsigned and never enrolled admission.
+
+    The small lifecycle supplies producer observations and a real RunnerStateStore
+    latch, NOT signed baseline evidence. Updater owns direction, StandaloneRestore,
+    previous start, receipts and restart barriers. No production fault flag exists.
+    """
+    target_version, target_digest, target_image = RESTORE_VERSION, RESTORE_DIGEST, RESTORE_IMAGE
+    milestone = 'failure_restore'
+    allow_pending = True
+    snapshot_timeout = 600
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.policy = restore_policy()
+        self.project = RESTORE_PREFIX + uuid.uuid4().hex[:12]
+        self.scenario = self.milestone
+        self.fault_injected = False
+        self.target_only_created = False
+        self._diagnostic_data.update(label(milestone=self.milestone))
+
+    def install_and_boot(self):
+        from dataclasses import replace
+        import getpass
+        from deploy.update.runner_state import RunnerStateStore, Registration, LauncherConfig
+        super().install_and_boot()
+        self.store = RunnerStateStore(self.root, self.root/'.env')
+        binding = replace(self.registration.binding, selection_hash=self.store.selection_hash)
+        self.registration = Registration(1, binding, LauncherConfig(Path(sys.executable).resolve(),
+            Path.home().resolve(), os.defpath, getpass.getuser()), datetime.now(timezone.utc))
+        self.store.register(self.registration)  # No scheduler, opt-in or signed baseline.
+
+    def take_snapshot(self):
+        from deploy.update.runner_state import TargetIdentity
+        p = producer()
+        intent = label(milestone=self.milestone, kind='unsigned-producer-attempt-not-release',
+            target_version=self.target_version, target_image=self.target_image,
+            project=self.project, scenario=self.scenario)
+        self.attempt = self.store.reserve_attempt(TargetIdentity(self.target_version,
+            p.manifest_hash(intent)), 'always', datetime.now(timezone.utc))
+        super().take_snapshot()
+
+    def prepare_target(self):
+        super().prepare_target()
+        producer().need(len(self.target_plan['pending']) >= 1, 'restore target must have a real pending migration')
+        self.record('migration-requirement.json', label(milestone=self.milestone,
+            source=VERSION, target=self.target_version, pending=self.target_plan['pending'],
+            minimum_pending=1, per_migration_metrics_claimed=False))
+
+    def target_ready(self, runtime, roster):
+        from scripts.update_rehearsal_shipping import DJANGO_PREFIX
+        p = producer()
+        actual = ProductHarness.migration_inventory(self)
+        pending = sorted([[r['app_label'], r['name']] for r in self.target_plan['pending']])
+        applied = sorted(n for n in actual['applied'] if n not in self.source_migrations['applied'])
+        p.equal(applied, pending, 'pending target migrations did not execute automatically')
+        p.need(bool(applied) and not actual['pending'], 'target did not reach migrated state')
+        namespace = self.project+'-target-only-'+uuid.uuid4().hex
+        account = dict(email=namespace+'@example.test', full_name=namespace, company_name=namespace,
+            password=secrets.token_urlsafe(32))
+        self._secret_values.add(account['password'])
+        self.witnesses._http('/accounts/signup/', payload=account)
+        exists = self.app_python(DJANGO_PREFIX+'''
+from django.contrib.auth import get_user_model
+print(json.dumps({'exists':get_user_model().objects.filter(email=a['email']).exists()}))
+''', {'email':account['email']})
+        p.equal(exists, {'exists':True}, 'target-only API record was not independently read')
+        self.target_only_created = True
+        self.record('target-only.private.json', label(milestone=self.milestone, email=account['email'],
+            product_operation='accounts/signup/', independently_read=True, applied_migrations=applied))
+        row = runtime._exact(roster['app'])
+        p.need(row['State']['Running'] and row['State']['Health']['Status']=='healthy',
+               'fault requires healthy migrated target')
+        # Real failure, after the migrations and B-only write. No runtime setting
+        # or shipping monkeypatch enables the fault: stop only this exact ID.
+        self.installation.docker_run('stop', '--time', '60', roster['app']['Id'])
+        p.need(not runtime._exact(roster['app'])['State']['Running'], 'target stop fault did not occur')
+        self.fault_injected = True
+        self.record('target-fault.json', label(milestone=self.milestone, kind='exact-target-app-stop',
+            app_id=roster['app']['Id'], after_migrations=True, target_only_record_created=True))
+        # ReadySession.check now observes the actual failed container and raises.
+
+    def verify_restored_source(self):
+        from scripts.update_rehearsal_shipping import DJANGO_PREFIX
+        from deploy.update.standalone_backup import capture_binding
+        p = producer()
+        before = self.source_migrations
+        actual = ProductHarness.migration_inventory(self)
+        p.equal(actual, before, 'restored migration inventory differs from A')
+        rows = self.witnesses.read('source')
+        n = self.witnesses.namespaces['source']
+        projects = self.app_python(DJANGO_PREFIX+'''
+from tracer.models.project import Project
+rows=list(Project.no_workspace_objects.filter(name=a['namespace'],organization_id=a['organization_id'],
+    workspace_id=a['workspace_id']).values('id','name','organization_id','workspace_id'))
+assert len(rows)==1
+print(json.dumps(rows,default=str))
+''', {'namespace':n['namespace'], 'organization_id':n['headers']['X-Organization-Id'],
+      'workspace_id':n['headers']['X-Workspace-Id']})
+        p.equal(projects, self.project_witnesses, 'restored A project differs')
+        rows.extend(dict(domain='postgres_app', origin='product_api', identity='project/'+r['id'],
+            payload_sha256=p.manifest_hash(r)) for r in projects)
+        p.equal(sorted(rows,key=lambda r:(r['domain'],r['identity'])), self.corpus['source_witnesses'],
+                'restored A witnesses differ')
+        target_only = self.output/'target-only.private.json'
+        p.equal(target_only.exists(), self.target_only_created,
+                'target-only witness evidence differs from the executed fault boundary')
+        if self.target_only_created:
+            p.need(target_only.is_file() and not target_only.is_symlink(),
+                   'target-only witness evidence unavailable')
+            email = json.loads(target_only.read_bytes())['email']
+            p.equal(self.app_python(DJANGO_PREFIX+'''
+from django.contrib.auth import get_user_model
+print(json.dumps({'exists':get_user_model().objects.filter(email=a['email']).exists()}))
+''', {'email':email}), {'exists':False}, 'target-only write survived restoration')
+        target_only_absent = True  # Either no write crossed the kill boundary, or its absence was read above.
+        # capture_binding checks the ACTUAL root st_dev/st_ino, volume CreatedAt,
+        # mountpoint, labels and dependency images against the pre-backup binding.
+        restored = capture_binding(self.installation,
+            installation_fingerprint=self.registration.binding.installation_fingerprint,
+            docker_context=self.context, daemon_id=self.daemon, project=self.project, profiles=(),
+            verified_images=self.backup.b['images'], deployment_hashes=self.execution['files'],
+            previous=self.binding)
+        p.equal(json.loads(restored.raw)['volumes'], self.backup.b['volumes'], 'source volumes replaced')
+        p.equal(json.loads(restored.raw)['volume_root_ids'], self.backup.b['volume_root_ids'], 'source roots replaced')
+        for port,path in (('BACKEND_PORT','/health/'),('FRONTEND_PORT','/')):
+            p.equal(ProductHarness.request(self,self.ports[port],path,timeout=5)[0],200,'restored A HTTP failed')
+        self.record('restored-oracle.private.json', label(milestone=self.milestone, migrations=actual,
+            witnesses=rows, volumes=self.backup.b['volumes'], volume_root_ids=self.backup.b['volume_root_ids'],
+            target_only_absent=target_only_absent, source_image_ids=self.backup.b['images'],
+            gaps=self.corpus.get('witness_gaps',[])))
+        # Re-observe current container identities, rather than reusing A's old
+        # runtime observation as if it described the newly started A containers.
+        self.observe_source()
+        return SimpleNamespace(facts=SimpleNamespace(now=datetime.now(timezone.utc),
+            runtime_observation=self.source_observation))
+
+    def lifecycle(self):
+        from dataclasses import replace
+        p, driver = producer(), self
+        life = SimpleNamespace(registration=self.registration, target=SimpleNamespace(version=self.target_version),
+            head=SimpleNamespace(release=self.descriptor), baseline=SimpleNamespace(evidence=lambda r:r),
+            clock=lambda:datetime.now(timezone.utc), backup=lambda inst:driver.backup,
+            backup_raw=(self.ledger.directory/'proof.json').read_bytes(), ledger=self.ledger,
+            backup_seal=self.ledger.backup_seal, observer=None)
+        def window(inst):
+            p.need(time.monotonic()<inst.runner.deadline, 'restore observation deadline exceeded')
+        def prepare(engine):
+            p.need(life.ledger.direction=='restore_decided' and life.backup_seal is not None,
+                   'shipping engine did not choose restore')
+            driver.record('restore-lifecycle.json', label(milestone=driver.milestone,
+                unsigned_producer_observation=True, enrolled_baseline_commit_tested=False,
+                attempt_id=life.ledger.snapshot['attempt_id'], seal=wire(life.backup_seal)))
+        def complete(engine, receipt):
+            attempt = driver.store.read_attempt(driver.attempt.attempt_id)
+            if attempt.outcome=='reserved':
+                attempt = replace(attempt, outcome='restored', finished_at=life.clock(),
+                    backup_proof_identity=life.backup_seal.proof_sha256,
+                    receipt_identity=p.sha(receipt.read_bytes()))
+            driver.store.finish_attempt(attempt)
+        life._verification_window, life.prepare_restore, life.complete_restore = window, prepare, complete
+        life._observation = lambda *args:driver.verify_restored_source()
+        return life
+
+    def make_recovery_engine(self):
+        from deploy.update.apply import Updater
+        from deploy.update.receipt import StateDir
+        life = self.lifecycle()
+        guard = SimpleNamespace(automatic=life, recovery_required=False)
+        engine = Updater(self.installation,SimpleNamespace(automation_policy=self.policy),StateDir(self.root),
+            out=io.StringIO(), automation_guard=guard, guard_context=lambda e:SimpleNamespace(),
+            built_in_backup=self.backup)
+        return engine, life
+
+    def recover(self, failure=None):
+        p = producer()
+        forward_engine = getattr(self, 'engine', None)
+        self.engine, life = self.make_recovery_engine()
+        if forward_engine is not None:
+            self.engine.active_record = getattr(forward_engine, 'active_record', None)
+            observer = getattr(forward_engine, 'runtime_observer', None)
+            if observer is not None:
+                self.engine.runtime_observer = observer
+        if self.engine.active_record is None:
+            self.engine.active_record = (self.engine.state.read_journal() or
+                self.ledger.snapshot.get('forward_record'))
+        self.engine.automatic_ledger = self.ledger
+        if failure is None:
+            # A fresh process resumes durable authority only; it never retries B.
+            result = self.engine.resume_automatic_locked(lifecycle=life, ledger=self.ledger)
+            outcome = result.outcome
+        else:
+            # The shipping failure handler records the real failure, decides
+            # restore, and drives the same StandaloneRestore/ledger path.
+            outcome = self.engine.recover_automatic_failure_locked(
+                failure, lifecycle=life, ledger=self.ledger)
+            result = dict(outcome=outcome)
+        self.ledger = self.engine.automatic_ledger
+        p.need(outcome=='restored' and self.engine.automatic_outcome=='restored'
+               and self.ledger.phase=='restored', 'shipping restore did not finish')
+        self.verify_latch()
+        self.record_genuine_tree()
+        self.retain_authority()
+        self.record('restore-result.json', label(milestone=self.milestone, result=wire(result),
+            direction=self.ledger.direction, phase=self.ledger.phase, automatic_outcome=self.engine.automatic_outcome,
+            same_volume_objects=True, enrolled_baseline_commit_tested=False))
+        return result
+
+    def verify_latch(self):
+        from deploy.update.runner_state import StoreError
+        p = producer()
+        state = self.store.read_state()
+        p.equal(state.failed_target_latch,self.attempt.target,'failed target not durably latched')
+        p.need(state.active_attempt_id is None,'restored attempt still active')
+        generation = state.generation
+        try:
+            self.store.reserve_attempt(self.attempt.target,'always',datetime.now(timezone.utc))
+        except StoreError as exc:
+            p.equal(exc.reason_code.value,'failed_target_latched','second forward blocked for wrong reason')
+        else:
+            raise p.RehearsalError('failed target was attempted twice')
+        p.equal(self.store.read_state().generation,generation,'rejected forward changed durable state')
+        self.record('failed-target-latch.json',label(milestone=self.milestone, target=wire(self.attempt.target),
+            reason='failed_target_latched', second_forward_attempt=False, state_generation=generation,
+            scope='real RunnerStateStore, unsigned milestone target identity, no enrolled baseline'))
+
+    def retain_authority(self):
+        """Bounded exact WAL/decision evidence; no env/config copies or tar payloads."""
+        p = producer()
+        destination = self.output/'authority'
+        destination.mkdir(mode=0o700,exist_ok=True)
+        copy_authority_evidence(self.ledger.directory, destination)
+        self.record('authority-inventory.json',label(milestone=self.milestone,
+            files={f.name:dict(sha256=p.sha(f.read_bytes()),bytes=f.stat().st_size)
+                   for f in destination.iterdir()},private_fixture_evidence=True))
+
+    def record_genuine_tree(self):
+        p = producer()
+        inventory = json.loads((self.ledger.directory/'inventory.json').read_bytes())
+        compared = {}
+        for role, entry in inventory['archives'].items():
+            files = list(self.ledger.directory.glob('verified-tree-'+role+'-*.jsonl'))
+            # Both the per-volume post-extract scan and final pre-start scan.
+            p.need(len(files)>=2,'genuine extracted tree evidence missing')
+            for f in files:
+                p.equal(f.stat().st_size,entry['members_bytes'],'extracted inventory size differs')
+                p.equal(p.sha(f.read_bytes()),entry['members_sha256'],'extracted tree differs from inventory')
+            compared[role] = dict(comparisons=len(files), members_sha256=entry['members_sha256'],
+                members_bytes=entry['members_bytes'])
+        self.record('genuine-tree-equality.json',label(milestone=self.milestone, roles=compared,
+            measurement='shipping read-only inventories before previous-start barrier'))
+
+    def failure_restore(self):
+        from deploy.update.automatic_runtime import RuntimeRefused
+        from deploy.update.orchestrator import GuardRefused
+        from deploy.update.apply import Interrupted
+        p = producer()
+        with self.locks():
+            original_deadline = self.runner.deadline
+            # The forward attempt cannot spend the protected restore reserve.
+            self.runner.deadline = min(original_deadline,
+                self.deadline-self.policy.required_recovery_budget_seconds)
+            try:
+                with self.running_target():
+                    raise p.RehearsalError('fault did not fail guarded readiness')
+            except (Exception, Interrupted, KeyboardInterrupt) as exc:
+                expected = (self.fault_injected and isinstance(exc,(RuntimeRefused,GuardRefused)) and
+                    exc.reason_code.value=='readiness_failed')
+                self.runner.deadline = original_deadline
+                self.recover(exc)  # Restore known failures too; unexpected failures still keep the run red.
+                if not expected: raise
+            finally:
+                self.runner.deadline = original_deadline
+        self._remember_resources()
+
+    def fresh_process_objects(self):
+        """New supervisor/installation/ledger; never reset uncertainty in place."""
+        from deploy.update.install import Installation, resolve_compose_command
+        from deploy.update.processes import ProcessSupervisor
+        from deploy.update.standalone_backup import StandaloneBackup
+        from deploy.update.backup_proof import BackupExpectation
+        from deploy.update.recovery import RecoveryLedger
+        env = dict(self.runner.environment)
+        self.runner = ProcessSupervisor(self.policy,docker_context=self.context,environment=env)
+        self.runner.deadline = self.deadline
+        self.installation = Installation(self.root,environ=env,runner=self.runner,
+            docker=['docker','--context',self.context],compose=resolve_compose_command())
+        self.destination, self.proofs = self.directory/'backups', self.directory/'proofs'
+        self.backup = StandaloneBackup(self.installation,self.binding,self.destination,
+            policy=__import__('deploy.update.standalone_backup',fromlist=['BackupPolicy']).BackupPolicy(
+                timeout_seconds=self.snapshot_timeout,readiness_seconds=180))
+        state = self.store.read_state()
+        attempt_id = state.active_attempt_id or self.attempt.attempt_id
+        self.attempt = self.store.read_attempt(attempt_id)
+        raw = json.loads((self.destination/attempt_id/'recovery.json').read_bytes())
+        e = dict(raw['expectation']); e['reserved_at']=datetime.fromisoformat(e['reserved_at'])
+        e['covered_domains']=tuple(e['covered_domains'])
+        self.expected = BackupExpectation(**e)
+        self.ledger = RecoveryLedger.open(self.destination/attempt_id,expected=self.expected,
+            operation_token=self.attempt.operation_token,run_id=raw['run_id'],
+            binding_sha256=self.source_observation.binding_sha256)
+        self.target_started = time.monotonic()
+
+    @contextmanager
+    def kill_at(self, boundary):
+        """Child-only instrumentation AFTER the actual durable write, no mocks."""
+        from deploy.update.recovery import RecoveryLedger
+        originals = {name:getattr(RecoveryLedger,name) for name in ('seal_backup','checkpoint','volume_phase')}
+        driver = self
+        def killed(ledger, name, args):
+            hit = ((boundary=='backup_sealed' and name=='seal_backup') or
+                (boundary=='env_selected' and name=='checkpoint' and args and args[0]=='env_selected') or
+                (boundary=='target_started' and name=='checkpoint' and args and args[0]=='target_verifying') or
+                (boundary=='extract_intent' and name=='volume_phase' and len(args)>1 and args[1]=='extract_intent'))
+            if not hit: return
+            driver.record('kill-boundary.json',label(milestone='interruption_restore',boundary=boundary,
+                pid=os.getpid(),phase=ledger.phase,operation_pending=ledger.snapshot['pending'] is not None,
+                volumes=ledger.snapshot['volumes'],direction=ledger.direction,
+                seal=wire(ledger.backup_seal),actual_durable_write_completed=True))
+            fd=os.open(driver.output/'kill-boundary.json',os.O_RDONLY|os.O_NOFOLLOW)
+            try: os.fsync(fd)
+            finally: os.close(fd)
+            os.kill(os.getpid(),signal.SIGKILL)
+        try:
+            for name, original in originals.items():
+                def wrapped(ledger,*args,_name=name,_original=original,**kwargs):
+                    value=_original(ledger,*args,**kwargs)
+                    killed(ledger,_name,args)
+                    return value
+                setattr(RecoveryLedger,name,wrapped)
+            yield
+        finally:
+            for name, original in originals.items(): setattr(RecoveryLedger,name,original)
+
+    def child_process(self, operation, *, killed=False, result_name='child-result.json'):
+        """Run actual updater/storage code in a process which can really SIGKILL."""
+        p = producer()
+        pid=os.fork()
+        if pid==0:
+            try:
+                operation()
+                self.record(result_name,label(milestone=self.milestone,status='passed',pid=os.getpid()))
+                os._exit(0)
+            except BaseException as exc:
+                self.record(result_name,label(milestone=self.milestone,status='failed',pid=os.getpid(),
+                    exception_type=type(exc).__name__,reason=p.failure_diagnostics(exc)['refusal_code']))
+                os._exit(2)
+        try:
+            while True:
+                waited,status=os.waitpid(pid,os.WNOHANG)
+                if waited: break
+                p.need(time.monotonic()<self.deadline,'child updater deadline exceeded')
+                time.sleep(.2)
+        except BaseException:
+            os.kill(pid,signal.SIGKILL); os.waitpid(pid,0)
+            raise
+        if killed:
+            p.need(os.WIFSIGNALED(status) and os.WTERMSIG(status)==signal.SIGKILL and
+                (self.output/'kill-boundary.json').exists(),'durable SIGKILL boundary was not reached')
+        else:
+            p.need(os.WIFEXITED(status) and os.WEXITSTATUS(status)==0,'fresh recovery process failed')
+        return pid
+
+    def interruption_restore(self):
+        from deploy.update.orchestrator import GuardRefused
+        p = producer()
+        original_output=self.output
+        results=[]
+        try:
+            for boundary in INTERRUPTION_BOUNDARIES:
+                # Reserve the complete remaining matrix before starting another
+                # independent attempt; partial boundary coverage is never green.
+                remaining_count = len(INTERRUPTION_BOUNDARIES)-len(results)
+                required_seconds = remaining_count*self.policy.required_cold_budget_seconds
+                p.need(self.deadline-time.monotonic() >= required_seconds,
+                       'interruption_job_budget_insufficient')
+                self.output=original_output/('interruption-'+boundary)
+                self.output.mkdir(mode=0o700)
+                self.scenario='interruption-'+boundary
+                if results:
+                    self.fresh_process_objects()
+                    self.observe_source()
+                def forward():
+                    self.fault_injected=False
+                    with self.kill_at(boundary):
+                        self.take_snapshot()
+                        self.verify_snapshot()
+                        if boundary=='extract_intent':
+                            with self.locks(): self.recover()
+                        else:
+                            self.prepare_target()
+                            self.failure_restore()
+                killed_pid=self.child_process(forward,killed=True)
+                self.fresh_process_objects()
+                sealed_before=producer().sha((self.ledger.directory/'backup-seal.json').read_bytes())
+                forward_ops_before=self.forward_operation_counts()
+                p.equal(forward_ops_before['archive'],len(p.VOLUME_ROLES),'interrupted attempt did not have one backup')
+                p.need(all(forward_ops_before[k]<=1 for k in ('compose_create','env_commit','start')),
+                       'forward attempt already duplicated before interruption')
+                attempts_before=sorted(f.name for f in self.store.path.joinpath('attempts').glob('*.json'))
+                def recovery():
+                    self.fresh_process_objects()
+                    try:
+                        with self.locks(): self.recover()
+                        outcome='restored'
+                    except GuardRefused as exc:
+                        p.equal(exc.reason_code.value,'recovery_required','unexpected fresh recovery refusal')
+                        self.ledger=self.engine._open_automatic_ledger(self.ledger)
+                        p.need(self.ledger.backup_seal is not None and self.ledger.snapshot['blocked_reason'],
+                               'recovery_required lost retained evidence')
+                        outcome='recovery_required'
+                        causes=[]; cause=exc
+                        while cause is not None and len(causes)<8:
+                            item=dict(exception_type=type(cause).__name__,reason=p.failure_diagnostics(cause)['refusal_code'])
+                            if isinstance(cause,p.RehearsalError): item['detail']=str(cause)[:512]
+                            causes.append(item); cause=cause.__cause__
+                        self.record('fresh-recovery-refusal.json',label(milestone='interruption_restore',causes=causes))
+                    self.retain_authority()
+                    self._collect_diagnostics()
+                    self.record('fresh-recovery.json',label(milestone='interruption_restore',
+                        outcome=outcome,pid=os.getpid(),phase=self.ledger.phase,direction=self.ledger.direction,
+                        retained_seal=wire(self.ledger.backup_seal),operation_pending=self.ledger.snapshot['pending'] is not None))
+                recovery_pid=self.child_process(recovery,result_name='recovery-process.json')
+                self.fresh_process_objects()
+                p.equal(p.sha((self.ledger.directory/'backup-seal.json').read_bytes()),sealed_before,
+                        'recovery replaced original snapshot seal')
+                p.equal(self.forward_operation_counts(),forward_ops_before,'recovery retried backup or forward')
+                p.equal(sorted(f.name for f in self.store.path.joinpath('attempts').glob('*.json')),
+                    attempts_before,'recovery reserved a second attempt')
+                recovery_record=json.loads((self.output/'fresh-recovery.json').read_bytes())
+                outcome=recovery_record['outcome']
+                results.append(dict(boundary=boundary,killed_pid=killed_pid,recovery_pid=recovery_pid,
+                    outcome=outcome,retained_evidence=(self.output/'authority-inventory.json').is_file(),
+                    one_backup=True,no_second_forward=True,
+                    forward_operations=forward_ops_before,backup_seal_sha256=sealed_before,
+                    attempt_id=self.expected.attempt_id))
+                if outcome!='restored': break  # Retain evidence; do not repair/guess a new attempt.
+            validate_interruption_results(results)
+        finally:
+            self.output=original_output
+            self.record('interruption-summary.json',label(milestone='interruption_restore',boundaries=results,
+                requested=list(INTERRUPTION_BOUNDARIES),unrun=[b for b in INTERRUPTION_BOUNDARIES
+                    if b not in {r['boundary'] for r in results}],fresh_process_per_recovery=True))
+        self._remember_resources()
+
+    def forward_operation_counts(self):
+        counts={name:0 for name in ('archive','compose_create','env_commit','start')}
+        for leaf in self.ledger.directory.glob('op-*-intent.json'):
+            op=json.loads(leaf.read_bytes())
+            kind=op['kind']
+            if kind=='helper_create' and op['identity'].get('purpose')=='archive': counts['archive']+=1
+            elif kind=='env_commit': counts[kind]+=1
+            elif kind=='compose_create' and op['identity']['images']['app']==self.target_inspection['Id']:
+                counts[kind]+=1
+            elif kind=='start' and op['identity']['Image']==self.target_inspection['Id']:
+                counts[kind]+=1
+        return counts
+
+    def backup_integrity(self):
+        from deploy.update.standalone_restore import StandaloneRestore
+        from deploy.update.recovery import RecoveryLedger, RecoveryError
+        from deploy.update.standalone_backup import BackupError
+        p=producer(); results=[]
+        cases=INTEGRITY_CASES
+        original=self.ledger.directory
+        size=sum(f.stat().st_size for f in original.iterdir() if f.is_file())
+        for case in cases:
+            p.need(shutil.disk_usage(original).free>=size+2*self.policy.disk_watermark_reserve_bytes,
+                   'integrity copy cannot fit protected reserve')
+            destination=self.directory/('integrity-'+case)
+            destination.mkdir(mode=0o700)
+            copied=destination/self.expected.attempt_id
+            shutil.copytree(original,copied)
+            for root,dirs,files in os.walk(copied):
+                Path(root).chmod(0o700)
+                for name in files: (Path(root)/name).chmod(0o600)
+            self.corrupt_copy(copied,case)
+            ledger=RecoveryLedger.open(copied,expected=self.expected)
+            ledger.decide_restore('integrity_test')
+            adapter=StandaloneRestore(self.installation,self.binding,destination,policy=self.backup.policy)
+            refused=None
+            try:
+                with self.locks(): adapter.resume(self.expected,ledger)
+            except (RecoveryError,BackupError) as exc:
+                refused=exc.code
+            finally: adapter.close()
+            p.need(refused in ('backup_inventory_mismatch','archive_invalid','archive_member_invalid',
+                'archive_incomplete','unsafe_archive_member','unsupported_archive_format','backup_metadata_invalid'),
+                'corrupted backup was not refused by input verification')
+            p.need(not ledger.snapshot['volumes'] and ledger.snapshot['pending'] is None,
+                   'corrupted backup reached destructive volume phases')
+            operations=[json.loads(f.read_bytes()) for f in copied.glob('op-*-intent.json')]
+            p.need(not any(op['kind'] in ('clear','extract') for op in operations),
+                   'corrupted backup was cleared or extracted')
+            results.append(dict(case=case,refusal=refused,before_first_clear=True,
+                inventory_sha256=p.sha((copied/'inventory.json').read_bytes()),
+                checkpoint=integrity_checkpoint_projection(ledger.snapshot)))
+            # These are deliberate corrupt test copies, not production evidence.
+            # Retain their bounded exact rejection checkpoints, never replace A's seal.
+            self.record('integrity-'+case+'.json',label(milestone=self.milestone,**results[-1]))
+            shutil.rmtree(destination)
+        with self.locks(): self.recover()
+        self.record('backup-integrity-result.json',label(milestone=self.milestone,cases=cases,
+            all_refused_before_clear=True,genuine_tree_equals_inventory=True,source_healthy=True))
+        self._remember_resources()
+
+    @staticmethod
+    def corrupt_copy(directory,case):
+        """Only caller-created owned copies; original sealed files never touched."""
+        archive=directory/'app-data.tar'
+        if case=='truncated_archive':
+            with archive.open('r+b') as f: f.truncate(max(1,archive.stat().st_size//2))
+        elif case=='substituted_archive': shutil.copyfile(directory/'clickhouse-data.tar',archive)
+        elif case=='tampered_archive':
+            with archive.open('r+b') as f:
+                f.seek(1024); old=f.read(1); f.seek(1024); f.write(bytes([old[0]^1]))
+        elif case=='truncated_inventory':
+            path=directory/'inventory.json'
+            with path.open('r+b') as f: f.truncate(max(1,path.stat().st_size//2))
+        elif case=='substituted_inventory': shutil.copyfile(directory/'proof.json',directory/'inventory.json')
+        elif case=='tampered_inventory':
+            with (directory/'inventory.json').open('ab') as f: f.write(b' ')
+        elif case=='tampered_members':
+            with (directory/'app-data.members.jsonl').open('ab') as f: f.write(b' ')
+        else: raise producer().RehearsalError('unknown integrity case')
+
+
+def run_milestone(name, args):
+    producer().need(name in MILESTONES, 'unknown milestone')
+    values = dict(vars(args)); values['through'] = name
+    return run(SimpleNamespace(**values))
 
 
 def run(args):
@@ -851,13 +1505,23 @@ def run(args):
                os.environ.get('RUNNER_ARCH')=='X64' and args.docker_context=='colima-fagi-update',
                'milestone requires isolated native amd64 Actions')
         p.need(output.resolve().is_relative_to(Path.home().resolve()),'home-backed milestone evidence required')
-        cls = TargetMilestone if through=='target_readiness' else SnapshotMilestone
-        driver = cls(output,context=args.docker_context,boot_timeout=args.boot_timeout)
+        cls = RestoreMilestone if through in MILESTONES[2:] else (
+            TargetMilestone if through=='target_readiness' else SnapshotMilestone)
+        total_seconds = INTERRUPTION_TOTAL_SECONDS if through=='interruption_restore' else TOTAL_SECONDS
+        driver = cls(output,context=args.docker_context,boot_timeout=args.boot_timeout,
+                     total_seconds=total_seconds)
         operations = list(zip(STAGES,(driver.assemble,driver.install_and_boot,driver.seed,
                               driver.observe_source,driver.take_snapshot,driver.verify_snapshot)))
-        if through=='target_readiness':
+        if through in MILESTONES[1:]:
+            if through in MILESTONES[2:]:
+                driver.milestone = through
+                driver.scenario = through
             operations.insert(4,('prefetch_target',driver.prefetch_target))
-            operations.extend((('prepare_target',driver.prepare_target),('target_readiness',driver.target_readiness)))
+            if through=='interruption_restore':
+                operations = operations[:5] + [(through,driver.interruption_restore)]
+            else:
+                operations.append(('prepare_target',driver.prepare_target))
+                operations.append((through,getattr(driver,through)))
         for phase, method in operations:
             p.need(time.monotonic()<driver.deadline,'milestone deadline exceeded')
             driver._phase(phase,method)

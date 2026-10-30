@@ -621,7 +621,7 @@ class StaticEntryPointTests(unittest.TestCase):
 
 
 class WorkflowWiringTests(unittest.TestCase):
-    def test_go_only_product_changes_run_required_safety_job(self):
+    def test_update_safety_filter_covers_every_scanned_source_change(self):
         import fnmatch
         import re
         text = (ROOT / ".github/workflows/backend-ci.yml").read_text()
@@ -640,9 +640,24 @@ class WorkflowWiringTests(unittest.TestCase):
         names = re.findall(r"needs\.changes\.outputs\.(\w+) == 'true'", condition)
         self.assertTrue(names, condition)
         self.assertEqual(condition, " || ".join("needs.changes.outputs." + name + " == 'true'" for name in names))
+        self.assertIn("update_safety", names)
         outputs = text.split("    outputs:\n", 1)[1].split("    steps:", 1)[0]
         for name in names:
             self.assertIn("steps.filter.outputs." + name, outputs)
+
+        # This path is outside the enumerated backend/bootstrap roots. Its
+        # extensionless Bash shebang and DDL make it a real gate-scanned source.
+        path = "docs/rebuild-catalog"
+        content = b'#!/usr/bin/env bash\nclickhouse-client --query "DROP TABLE spans"\n'
+        self.assertTrue(gate.source_blob(path, content))
+        self.assertTrue(gate.schema_statements(content))
+        # paths-filter uses picomatch, where '*.go' does not cross directories,
+        # unlike fnmatch below; the gate finds shell sources by shebang, which no
+        # path pattern can express. Only the catch-all is a sound trigger.
+        self.assertEqual(groups["update_safety"], ["**"])
+        self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for pattern in groups["update_safety"]),
+                        path + " skips the required update-safety job")
+
         for path in ("fi-collector/pkg/server/server.go", "agentcc-gateway/cmd/agentcc/main.go",
                      "agentcc-gateway/internal/server/server.go", "new/schema.sql", "new/bootstrap.sh", "new/module.py",
                      "deploy/new/start", "bin/new-start", "scripts/new-start"):

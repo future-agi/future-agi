@@ -24,6 +24,7 @@ import shutil
 import ssl
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -44,7 +45,7 @@ class AutomaticPublisher:
     def __init__(self, directory: Path, *, lane: str, versions, retained_layout,
                  candidates=None, synthetic_fixtures=None, cosign='cosign', openssl='openssl',
                  docker_context='colima-fagi-update', platform='linux/amd64', run_id=42,
-                 deployment_dirs=None, product_factory=None):
+                 deployment_dirs=None, product_factory=None, deadline=None, acceptance_reserve_seconds=0):
         rehearsal.need(lane in ('product','synthetic'), 'explicit publisher lane required')
         rehearsal.need(lane != 'product' or synthetic_fixtures is None, 'synthetic evidence is not product qualification')
         rehearsal.need(lane != 'synthetic' or candidates is None, 'synthetic lane accepts only labeled fixtures')
@@ -54,7 +55,10 @@ class AutomaticPublisher:
                        'invalid local release sequence')
         self.candidates = copy.deepcopy(candidates or {})
         self.deployment_dirs = {v: Path(p).resolve() for v, p in (deployment_dirs or {}).items()}
-        self.product_factory = product_factory
+        self.product_factory, self.deadline = product_factory, deadline
+        rehearsal.need(type(acceptance_reserve_seconds) is int and 0 <= acceptance_reserve_seconds < 21000,
+                       'invalid acceptance reserve')
+        self.acceptance_reserve_seconds = acceptance_reserve_seconds
         self.fixtures = copy.deepcopy(synthetic_fixtures or {})
         self.cosign = shutil.which(str(cosign)) or str(cosign)
         self.openssl, self.context, self.run_id = str(openssl), docker_context, run_id
@@ -72,6 +76,10 @@ class AutomaticPublisher:
         # package invokes the fixed host cosign by name in its child process.
         env = dict(os.environ, COSIGN_PASSWORD=self._password,
                    PATH=str(Path(self.cosign).parent) + os.pathsep + os.environ.get('PATH', os.defpath))
+        if self.deadline is not None:
+            remaining = self.deadline-time.monotonic()
+            rehearsal.need(remaining > 0, 'native acceptance qualification deadline exhausted')
+            timeout = min(timeout, remaining)
         return rehearsal.command(args, cwd=rehearsal.ROOT, env=env, timeout=timeout)
 
     def __enter__(self):
@@ -80,7 +88,12 @@ class AutomaticPublisher:
         try:
             self._command([self.cosign,'generate-key-pair','--output-key-prefix',self.directory/'key'])
             ca_key, leaf_key = self.directory/'ca.key', self.directory/'tls.key'
+            ca_config = self.directory/'ca.conf'
+            ca_config.write_text('[req]\ndistinguished_name=dn\n[dn]\n[ca]\n'
+                'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n'
+                'subjectKeyIdentifier=hash\n')
             self._command([self.openssl,'req','-x509','-newkey','rsa:2048','-nodes','-sha256','-days','2',
+                           '-config',ca_config,'-extensions','ca',
                            '-subj','/CN=Private updater test CA','-keyout',ca_key,'-out',self.ca_file])
             csr, certificate = self.directory/'tls.csr', self.directory/'tls.pem'
             self._command([self.openssl,'req','-new','-newkey','rsa:2048','-nodes','-sha256',
@@ -88,7 +101,8 @@ class AutomaticPublisher:
             extension = self.directory/'tls.ext'
             extension.write_text('subjectAltName=DNS:localhost,IP:127.0.0.1\n'
                                  'basicConstraints=critical,CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\n'
-                                 'extendedKeyUsage=serverAuth\n')
+                                 'extendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\n'
+                                 'authorityKeyIdentifier=keyid,issuer\n')
             self._command([self.openssl,'x509','-req','-in',csr,'-CA',self.ca_file,'-CAkey',ca_key,
                            '-CAcreateserial','-out',certificate,'-days','2','-sha256','-extfile',extension])
             for path in self.directory.iterdir():
@@ -198,6 +212,7 @@ class AutomaticPublisher:
         output = self.directory / version
         output.mkdir(mode=0o700)
         proof = None
+        qualification_seconds = None
         if self.lane == 'synthetic':
             rehearsal.need(set(inputs)=={'manifest','proof','purpose'} and inputs['purpose']=='SYNTHETIC-TRANSPORT-ONLY',
                            'synthetic fixture must be labeled')
@@ -225,13 +240,22 @@ class AutomaticPublisher:
                 target_component = manifest['components']['standalone']
                 script = rehearsal.ROOT/'scripts/rehearse_update_compatibility.py'
                 qualified = output/'qualification'
+                # Each in-job qualification leaves the installed-scheduler
+                # scenarios their reserve; an overrun fails here, attributably.
+                qualify_timeout = 19800
+                if self.deadline is not None:
+                    qualify_timeout = min(qualify_timeout,
+                        self.deadline-time.monotonic()-self.acceptance_reserve_seconds)
+                    rehearsal.need(qualify_timeout > 0, 'qualification would consume the acceptance reserve')
+                started = time.monotonic()
                 self._command([sys.executable,'-I',script,'qualify',
                     '--source-ref',source_component['image']+'@'+source_component['digest'],
                     '--target-ref',target_component['image']+'@'+target_component['digest'],
                     '--platform',self.platform,'--deployment-dir',retained,
                     '--reference-scale','registered-100k','--boot-timeout','4200',
                     '--docker-context',self.context,'--public-key',self.public_key,
-                    '--run-id',str(self.run_id),'--out',qualified], timeout=19800)
+                    '--run-id',str(self.run_id),'--out',qualified], timeout=qualify_timeout)
+                qualification_seconds = time.monotonic()-started
                 # A refusal is a hard error, never a synthetic/notify-only success.
                 packaged = output/'package'
                 self._command([sys.executable,'-I',script,'package','--rows',qualified,
@@ -261,6 +285,15 @@ class AutomaticPublisher:
         assets = ({PROOF_ASSET:proof} if proof is not None else {})
         assets.update({BUNDLE_ASSET:bundle.read_bytes(),MANIFEST_ASSET:path.read_bytes()})
         self._prepared[version] = dict(inputs=canonical_json(inputs), manifest=manifest, assets=assets)
+        if self.lane == 'product' and proof is not None:
+            row = self.transition(self.versions[position-1], version)
+            (output/'package-result.json').write_bytes(canonical_json(dict(schema_version=1,
+                status='passed', source_version=self.versions[position-1], target_version=version,
+                platform=self.platform, qualification_seconds=qualification_seconds,
+                manifest_sha256=hashlib.sha256(assets[MANIFEST_ASSET]).hexdigest(),
+                proof_sha256=hashlib.sha256(proof).hexdigest(),
+                migration_plan_count=row['migration_evidence']['target_pending_plan_count'],
+                full_product_qualification=True, test_key_only=True)))
 
     def transition(self, source_version, target_version):
         """Return the exact qualified row for this retained-layout transition."""

@@ -99,7 +99,15 @@ a=json.load(sys.stdin)
 
 # Offline REAL B loader against A's observed applied set. Runs only in an
 # isolated, networkless B image helper; never imports image code on the host.
-TARGET_LOADER_PLAN = DJANGO_PREFIX + """
+# Historical product logging opens /app/backend/tfc/logs/wsgi.log during
+# django.setup(). An offline, read-only loader has no writable product stores:
+# disable only logging configuration, not app loading or the migration graph.
+OFFLINE_DJANGO_PREFIX = DJANGO_PREFIX.replace('import django\ndjango.setup()',
+    'from django.conf import settings\nsettings.LOGGING_CONFIG=None\nimport django\ndjango.setup()')
+if OFFLINE_DJANGO_PREFIX.count('settings.LOGGING_CONFIG=None') != 1:
+    # Not an assert: -O must not silently reintroduce the read-only log open.
+    raise RuntimeError('offline loader logging seam no longer matches DJANGO_PREFIX')
+TARGET_LOADER_PLAN = OFFLINE_DJANGO_PREFIX + """
 from django.db.migrations.loader import MigrationLoader
 from django.db.migrations.executor import MigrationExecutor
 from pathlib import Path

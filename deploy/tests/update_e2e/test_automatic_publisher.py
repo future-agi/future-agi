@@ -70,6 +70,9 @@ class HTTPSAutomaticPublisherTests(unittest.TestCase):
         with self.assertRaises(Exception):
             urllib.request.urlopen(url,context=ssl.create_default_context(),timeout=5)
         context = ssl.create_default_context(cafile=str(self.publisher.ca_file))
+        # Python 3.13 enables this by default; enforce it on older CI versions
+        # too, without weakening the verifier to accommodate malformed fixtures.
+        context.verify_flags |= ssl.VERIFY_X509_STRICT
         with urllib.request.urlopen(url,context=context,timeout=5) as response:
             self.assertEqual(len(json.load(response)),3)
 
@@ -213,9 +216,41 @@ class HTTPSAutomaticPublisherTests(unittest.TestCase):
         self.assertIn('--public-key',argv)
         self.assertIn('--deployment-dir',argv)
         self.assertEqual(command.call_count,1,'package/sign cannot follow qualification refusal')
+        self.assertEqual(command.call_args.kwargs['timeout'],19800)
         self.assertNotIn(self.b['version'],publisher._prepared)
         self.assertEqual(publisher._assets,{})
         self.assertEqual(publisher._records,{})
+
+    def test_in_job_qualification_leaves_the_acceptance_reserve(self):
+        import time
+        from unittest.mock import patch
+        reserve=3744
+        for slack,allowed in ((1000,True),(-1,False)):
+            with self.subTest(slack=slack):
+                directory=self.root/('product-reserve-'+os.urandom(8).hex()); directory.mkdir()
+                publisher=AutomaticPublisher(directory,lane='product',versions=(self.a['version'],self.b['version']),
+                    retained_layout=self.a['version'],candidates={self.a['version']:self.a,self.b['version']:self.b},
+                    deployment_dirs={self.a['version']:self.root},cosign=self.publisher.cosign,
+                    deadline=time.monotonic()+reserve+slack,acceptance_reserve_seconds=reserve)
+                publisher._server=object()
+                prefix='/'+producer.REPOSITORY+'/releases/download/'+self.a['version']+'/'
+                publisher._prepared[self.a['version']]=dict(inputs=b'negative-control',manifest=self.a,
+                    assets={name:self.publisher._assets[prefix+name] for name in ('future-agi-update-manifest.json',
+                                                                                'future-agi-update-manifest.sigstore.json')})
+                with patch('scripts.update_rehearsal_shipping.copy_retained_files'), \
+                     patch.object(publisher,'_command',side_effect=RuntimeError('producer exit 2')) as command:
+                    with self.assertRaisesRegex(Exception,'producer exit 2' if allowed else 'acceptance reserve'):
+                        publisher.prepare(self.b['version'])
+                if allowed:
+                    self.assertLessEqual(command.call_args.kwargs['timeout'],slack)
+                    self.assertGreater(command.call_args.kwargs['timeout'],slack-60)
+                else:
+                    command.assert_not_called()
+        for value in (-1,21000,1.5,True):
+            with self.subTest(value=value),self.assertRaises(producer.RehearsalError):
+                AutomaticPublisher(self.root/'never',lane='product',versions=(self.a['version'],),
+                    retained_layout=self.a['version'],candidates={self.a['version']:self.a},
+                    acceptance_reserve_seconds=value)
 
     def test_product_lane_refuses_arbitrary_success_fixture(self):
         with self.assertRaises(producer.RehearsalError):

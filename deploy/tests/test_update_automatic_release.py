@@ -564,7 +564,7 @@ class MeasurementAndExecutorTests(unittest.TestCase):
             with mock.patch.object(producer,'_validate_context'), mock.patch.object(producer,'shipping_factory',
                     side_effect=producer.ManualRelease('shipping_executor_unavailable')):
                 with self.assertRaises(producer.ManualRelease):
-                    producer.produce(default_v2(),[],root,root/'evidence',run_id=42)
+                    producer.produce(default_v2(),[],root,root/'evidence',run_id=42,purpose='pr-validation')
             self.assertEqual({p.name for p in (root/'evidence').iterdir()},{'failure.json','diagnostics.json'})
             failed = json.loads((root/'evidence/failure.json').read_bytes())
             self.assertFalse(failed['eligible'])
@@ -639,12 +639,12 @@ class MeasurementAndExecutorTests(unittest.TestCase):
             candidate.write_bytes(canonical_json(target))
             env = {'GITHUB_REPOSITORY':producer.REPOSITORY,'GITHUB_RUN_ID':'42',
                    'GITHUB_REF':'refs/tags/'+target['version'],'GITHUB_SHA':target['source_sha'],
-                   'GITHUB_EVENT_NAME':'workflow_call'}
+                   'GITHUB_EVENT_NAME':'pull_request'}
             with mock.patch.dict(os.environ,env), mock.patch.object(producer,'_validate_context'), \
                  mock.patch.object(producer,'shipping_factory',side_effect=producer.ManualRelease('shipping_executor_unavailable')), \
                  mock.patch.object(producer,'ReleaseDiscovery',side_effect=AssertionError('network must not run')):
                 code = producer.main(['--target',str(candidate),'--workspace',str(root/'work'),
-                    '--output',str(root/'output'),'--run-id','42'])
+                    '--output',str(root/'output'),'--run-id','42','--purpose','pr-validation'])
             self.assertEqual(code,2)
             self.assertEqual({p.name for p in (root/'output').iterdir()},{'manual.json','failure.json','diagnostics.json'})
             decision = json.loads((root/'output/manual.json').read_bytes())
@@ -831,7 +831,8 @@ class ResourceCoverageRegressionTests(unittest.TestCase):
                      for d,o in origins.items()]
         for change in ('valid', 'missing_reference', 'inflated_reference', 'single_sample', 'three_field_snapshot',
                        'wrong_target', 'wrong_source', 'wrong_platform', 'wrong_image', 'wrong_dependency', 'wrong_layout',
-                       'missing_source', 'inflated_transfer', 'archive_counter_inflation', 'wrong_transfer_basis', 'wrong_transfer_generation'):
+                       'missing_source', 'inflated_transfer', 'archive_counter_inflation', 'wrong_transfer_basis', 'wrong_transfer_generation',
+                       'missing_scope_probe', 'name_derived_scope', 'missing_driver', 'other_run_driver', 'missing_role_transfers'):
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp)/'evidence'
                 candidate,policy,envelope,_,_ = fixture(path,pending_count=1)
@@ -851,7 +852,31 @@ class ResourceCoverageRegressionTests(unittest.TestCase):
                 for item in corpus['resource_samples']: item['snapshot_generation'] = generation
                 for role in ('backup','restore'): corpus[role+'_transfer']['snapshot_generation'] = generation
                 corpus.update(source_witnesses=witnesses,restored_witnesses=witnesses)
+                # Explicitly SYNTHETIC per-role timings for this validator-only
+                # fixture. No Docker/product qualification is implied.
+                corpus['volume_role_transfers'] = {action: dict(snapshot_generation=generation,
+                    measurement_basis=producer.TRANSFER_BASIS, roles={role: dict(
+                        started_monotonic=10, completed_monotonic=13, logical_bytes=size,
+                        throughput_bytes_per_second=size/3)
+                        for role,size in corpus[action+'_transfer']['reference_volume_bytes'].items()})
+                    for action in ('backup','restore')}
+                # SYNTHETIC record in the shape the fixed target-image probe binds.
+                corpus['pending_table_scope_probe'] = dict(
+                    program_sha256=producer.sha(producer.target_table_scope_probe().encode()),
+                    target_image_digest=candidate['components']['standalone']['digest'],
+                    target_inventory_sha256=row['migration_evidence']['target_inventory_sha256'],
+                    source_applied_sha256=row['migration_evidence']['source_applied_set_sha256'],
+                    database_schemas=dict(postgres='public',clickhouse='default'),
+                    pending_migration_tables=copy.deepcopy(corpus['pending_migration_tables']))
+                corpus['qualification_driver'] = dict(run_id=42, candidate_sha256=producer.sha(canonical_json(candidate)),
+                    implementation_sha256=producer.sha((producer.ROOT/'scripts/update_rehearsal_milestone.py').read_bytes()))
                 if change == 'missing_reference': del corpus['large_volume_reference']
+                elif change == 'missing_scope_probe': del corpus['pending_table_scope_probe']
+                elif change == 'name_derived_scope':
+                    corpus['pending_table_scope_probe']['program_sha256'] = 'e'*64
+                elif change == 'missing_driver': del corpus['qualification_driver']
+                elif change == 'other_run_driver': corpus['qualification_driver']['run_id'] = 41
+                elif change == 'missing_role_transfers': del corpus['volume_role_transfers']
                 elif change == 'inflated_reference':
                     item = corpus['resource_samples'][0]
                     item['tables'][0].update(reference_rows=1000000000,reference_bytes=1000000000)

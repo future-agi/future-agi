@@ -39,6 +39,11 @@ from deploy.update.manifest import (COMPONENT_REPOSITORIES, COMPONENT_TAG_SUFFIX
                                     read_deployment_file_list, read_upgrade_floor, parse_image_ref, validate_manifest)
 from scripts.generate_update_manifest import apply_release_policy
 
+# Counted from the acceptance step, not the job start: finish before the
+# 355-minute job ceiling while leaving the setup steps (checkout, mirror,
+# Buildx: a few minutes), deactivation/compose teardown and artifact upload.
+JOB_SECONDS = 20400
+
 BUILDS = (
     ('backend','futureagi','futureagi/Dockerfile.oss', ('IMAGE_VARIANT=slim',)),
     ('frontend','frontend','frontend/Dockerfile', ()),
@@ -69,12 +74,15 @@ def plan(mode):
             identity='normal docker.io names and genuine RepoDigests, checked against OCI export',
             unchanged='Docker Hub digests retained; mirror misses fall back to Hub') if mode == 'upgrade' else None,
         builds=[] if mode == 'a-b-c' else [dict(component=n,context=c,dockerfile=d,args=list(a)) for n,c,d,a in BUILDS],
+        builder=None if mode == 'a-b-c' else 'explicit --builder FAGI_UPDATE_E2E_BUILDER; docker-container driver verified first',
         qualification=['python -I scripts/rehearse_update_compatibility.py qualify',
                        '--reference-scale registered-100k','--boot-timeout 4200',
                        'python -I scripts/rehearse_update_compatibility.py package'],
         acceptance=['one-opt-in forward sequence','fresh A -> failing B -> automatically restored A'],
         fail_closed=True, product_qualification=False,
-        known_blockers=['shipping_executor_unavailable: full shipping rehearsal suites are incomplete'])
+        qualification_contract='full qualify/package must execute every shipping suite; no milestone proof',
+        fault_seam='test-only post-migration-stop-v1; no product image or updater fault switch',
+        wall_clock_seconds=JOB_SECONDS, known_blockers=[])
 
 
 class NativeAcceptance:
@@ -85,7 +93,7 @@ class NativeAcceptance:
         self._secret_values = {value for key, value in os.environ.items()
                                if re.search(r'PASSWORD|SECRET|TOKEN|KEY', key, re.I)}
         # Shared by qualification, bootstrap, forward/restore cases and teardown.
-        self.deadline = time.monotonic()+21000
+        self.deadline = time.monotonic()+JOB_SECONDS
 
     def command(self,args,*,timeout=1800):
         index=len(self.commands)+1
@@ -162,17 +170,43 @@ class NativeAcceptance:
         return directory
 
     def registry_digest(self, reference):
-        # Registry reads only. Resolve a real OCI descriptor; never create a
-        # stand-in digest, load/retag images, or depend on historical update assets.
-        raw = self.command(['docker','--context',CONTEXT,'buildx','imagetools','inspect',
-                            reference,'--format','{{json .Manifest}}'], timeout=180)
+        """Select the native leaf from registry DATA, not the multiarch index.
+
+        An index digest in a manifest but a platform-leaf RepoDigest on the
+        running app fails real enrollment/observation. Never pick the first
+        descriptor (v1.54.0's first leaf is arm64), or guess v1.55.0's digest.
+        """
+        raw = self.command(['docker','--context',CONTEXT,'manifest','inspect',reference], timeout=180)
         try:
-            descriptor = json.loads(raw)
-            digest = descriptor.get('digest') if isinstance(descriptor,dict) else None
+            document = json.loads(raw)
         except ValueError:
-            digest = None
-        if not isinstance(digest,str) or not re.fullmatch(r'sha256:[0-9a-f]{64}',digest):
+            raise ValueError('registry did not return an immutable descriptor') from None
+        if not isinstance(document, dict):
             raise ValueError('registry did not return an immutable descriptor')
+        if 'manifests' in document:
+            descriptors = document['manifests']
+        else:
+            verbose = json.loads(self.command(['docker','--context',CONTEXT,'manifest','inspect',
+                                               '--verbose',reference], timeout=180))
+            descriptors = [verbose.get('Descriptor', {})] if isinstance(verbose,dict) else []
+        if not isinstance(descriptors,list):
+            raise ValueError('registry manifest index is invalid')
+        selected = [row for row in descriptors if isinstance(row,dict) and
+            row.get('platform',{}).get('os') == 'linux' and
+            row.get('platform',{}).get('architecture') == 'amd64' and
+            row.get('platform',{}).get('variant','') in ('','v1')]
+        if len(selected) != 1:
+            raise ValueError('registry requires exactly one native linux/amd64 leaf')
+        descriptor = selected[0]
+        digest = descriptor.get('digest')
+        if (not isinstance(digest,str) or not re.fullmatch(r'sha256:[0-9a-f]{64}',digest) or
+                descriptor.get('mediaType') not in ('application/vnd.oci.image.manifest.v1+json',
+                    'application/vnd.docker.distribution.manifest.v2+json')):
+            raise ValueError('registry did not return an immutable native image descriptor')
+        path = self.out/'platform-images.json'
+        images = json.loads(path.read_bytes()) if path.exists() else {}
+        images[reference] = dict(platform='linux/amd64', digest=digest, descriptor=descriptor)
+        path.write_bytes(canonical_json(images))
         return digest
 
     def historical_chart(self, version, sha, registry, *, candidate=False):
@@ -299,6 +333,49 @@ class NativeAcceptance:
         return dict(image=image,digest=digest,pr_tag=pr_tag,image_id=rows[0]['Id'],
                     repo_digests=rows[0]['RepoDigests'],platform='linux/amd64')
 
+    def cron_environment_probe(self):
+        """Start what the installed cron entry starts, before any qualification.
+
+        The scheduler launches `env -i HOME PATH PYTHON DOCKER_CONTEXT /bin/bash
+        bin/update run` with the PATH registered at setup. If the interpreter,
+        Docker context, Compose launcher or cosign cannot start in that cleared
+        environment, every cron wake fails silently (output goes to /dev/null)
+        and the acceptance would only time out hours later. Fail here instead.
+        Read-only: --help/version/info only, no installation or daemon change.
+        """
+        from deploy.tests.update_e2e.real_automatic import native_launcher_path
+        path = native_launcher_path(os.environ)
+        base = ['/usr/bin/env','-i','HOME='+str(Path.home()),'PATH='+path,'PYTHON='+sys.executable,
+                'DOCKER_CONTEXT='+CONTEXT]
+        self.command([*base,'/bin/bash','--',ROOT/'bin/update','--help'], timeout=60)
+        if self.command([*base,'docker','info','--format','{{.Architecture}}'], timeout=60).decode().strip() \
+                not in ('x86_64','amd64'):
+            raise ValueError('cron-environment Docker context is not the native amd64 daemon')
+        self.command([*base,'docker-compose','version'], timeout=60)
+        self.command([*base,'cosign','version'], timeout=60)
+        (self.out/'cron-environment.json').write_bytes(canonical_json(dict(schema_version=1,
+            status='passed',path=path,python=sys.executable,context=CONTEXT,
+            probes=['bin/update --help','docker info','docker-compose version','cosign version'])))
+        return path
+
+    def pr_builder(self):
+        """The workflow's named docker-container builder, selected explicitly.
+
+        `buildx use` from setup-buildx-action is scoped to the default context,
+        so `docker --context colima-fagi-update buildx build` silently fell back
+        to that context's docker driver, which cannot export OCI layouts (CI run
+        40965747765). Never rely on the ambient builder; refuse any other driver
+        before building or uploading anything.
+        """
+        name = os.environ.get('FAGI_UPDATE_E2E_BUILDER', '')
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', name):
+            raise ValueError('explicit docker-container Buildx builder required')
+        raw = self.command(['docker','--context',CONTEXT,'buildx','inspect',name], timeout=120).decode('utf-8','replace')
+        drivers = re.findall(r'(?m)^Driver:[ \t]+(\S+)[ \t]*$', raw)
+        if drivers != ['docker-container']:
+            raise ValueError('PR OCI export requires the docker-container Buildx driver')
+        return name
+
     def build_pr(self,previous,registry):
         previous = validate_manifest(previous)
         parsed = parse_version(previous['version'])
@@ -316,6 +393,7 @@ class NativeAcceptance:
         if not isinstance(mirrors,list) or not any(value in mirrors for value in
                 ('http://'+MIRROR_HOST+'/', 'http://'+MIRROR_HOST)):
             raise ValueError('runner-local Docker Hub mirror is not configured')
+        builder = self.pr_builder()
         mirror = DockerHubMirror()
         created=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         layouts={}
@@ -329,7 +407,7 @@ class NativeAcceptance:
         observations={}
         for component,context,dockerfile,extra in BUILDS:
             layout=self.out/('oci-'+component)
-            args=['docker','--context',CONTEXT,'buildx','build','--platform','linux/amd64',
+            args=['docker','--context',CONTEXT,'buildx','build','--builder',builder,'--platform','linux/amd64',
                   '--provenance=false','--sbom=false','--file',ROOT/dockerfile,
                   '--output','type=oci,dest='+str(layout)+',tar=false']
             for value in ('VERSION='+version,'REVISION='+sha,'CREATED='+created,*extra):
@@ -405,10 +483,21 @@ class NativeAcceptance:
                 except (OSError,ValueError):
                     continue
                 failure=diagnostic.get('failure') if isinstance(diagnostic,dict) else None
-                if isinstance(failure,dict) and failure.get('refusal_code') == 'shipping_executor_unavailable':
-                    (self.out/'failure.json').write_bytes(canonical_json(dict(status='failed',
-                        reason='shipping_executor_unavailable',qualification_evidence=False)))
-                    print('real automatic acceptance refused: shipping_executor_unavailable',file=sys.stderr)
+                code=failure.get('refusal_code') if isinstance(failure,dict) else None
+                if isinstance(code,str) and re.fullmatch(r'[a-z][a-z0-9_]{0,63}',code):
+                    # Closed producer fields only: code, stage and per-suite state.
+                    summary=dict(status='failed',reason=code,qualification_evidence=False)
+                    if re.fullmatch(r'v[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}',path.parent.parent.name):
+                        summary['target_version']=path.parent.parent.name
+                    suites=failure.get('suites')
+                    if isinstance(suites,dict) and all(isinstance(k,str) and re.fullmatch(r'[a-z_]{1,40}',k)
+                            and v in ('passed','failed','incomplete','unrun') for k,v in suites.items()):
+                        summary['suites']=suites
+                    for key in ('phase','active_suite'):
+                        if isinstance(failure.get(key),str) and re.fullmatch(r'[a-z_]{1,64}',failure[key]):
+                            summary[key]=failure[key]
+                    (self.out/'failure.json').write_bytes(canonical_json(summary))
+                    print('real automatic acceptance refused by qualification: '+code,file=sys.stderr)
                     break
         return result.returncode
 
@@ -432,6 +521,7 @@ def main(argv=None):
         if run.command(['docker','--context',CONTEXT,'info','--format','{{.Architecture}}']).decode().strip() not in ('x86_64','amd64'):
             raise ValueError('native amd64 Docker required')
         run.command(['systemctl','is-active','--quiet','cron.service'])
+        run.cron_environment_probe()
         with OCIRegistry() as registry:
             status=run.run_tests(args.mode,registry)
     except Exception as error:

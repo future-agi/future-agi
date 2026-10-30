@@ -287,15 +287,34 @@ class HistoricalCandidateTests(unittest.TestCase):
                 urlopen(Request(base+'/blobs/uploads/',data=b'x',method='POST'))
             self.assertEqual(error.exception.code,501)
 
-    def test_registry_resolution_uses_the_shipping_workflow_JSON_descriptor_contract(self):
+    def test_registry_resolution_selects_native_leaf_not_first_leaf_or_index(self):
+        media='application/vnd.oci.image.manifest.v1+json'
+        arm=dict(mediaType=media,digest='sha256:'+'a'*64,platform={'os':'linux','architecture':'arm64'})
+        native=dict(mediaType=media,digest='sha256:'+'b'*64,platform={'os':'linux','architecture':'amd64'})
+        unknown=dict(mediaType=media,digest='sha256:'+'c'*64,platform={'os':'unknown','architecture':'unknown'})
+        index=dict(schemaVersion=2,manifests=[arm,unknown,native])
         with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
             driver=acceptance.NativeAcceptance(Path(temp))
-            digest='sha256:'+'a'*64
-            with patch.object(driver,'command',return_value=json.dumps({'digest':digest}).encode()) as command:
-                self.assertEqual(driver.registry_digest('docker.io/futureagi/standalone:v1.53.0'),digest)
-            argv=command.call_args.args[0]
-            self.assertEqual(argv[:4],['docker','--context',real.CONTEXT,'buildx'])
-            self.assertEqual(argv[-2:],['--format','{{json .Manifest}}'])
+            with patch.object(driver,'command',return_value=json.dumps(index).encode()) as command:
+                self.assertEqual(driver.registry_digest('docker.io/futureagi/standalone:v1.55.0'),native['digest'])
+            self.assertEqual(command.call_args.args[0],['docker','--context',real.CONTEXT,'manifest','inspect',
+                'docker.io/futureagi/standalone:v1.55.0'])
+            observed=json.loads((Path(temp)/'platform-images.json').read_bytes())
+            self.assertEqual(observed['docker.io/futureagi/standalone:v1.55.0']['descriptor'],native)
+            for bad in ([arm], [native,native], [dict(native,mediaType='application/vnd.oci.image.index.v1+json')]):
+                with self.subTest(bad=bad), patch.object(driver,'command',return_value=json.dumps({'manifests':bad}).encode()):
+                    with self.assertRaisesRegex(ValueError,'native'):
+                        driver.registry_digest('docker.io/futureagi/standalone:v1.55.0')
+
+    def test_single_manifest_requires_real_verbose_native_descriptor(self):
+        descriptor=dict(mediaType='application/vnd.docker.distribution.manifest.v2+json',
+            digest='sha256:'+'b'*64,platform={'os':'linux','architecture':'amd64'})
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            with patch.object(driver,'command',side_effect=[b'{"schemaVersion":2}',
+                    json.dumps({'Descriptor':descriptor}).encode()]) as command:
+                self.assertEqual(driver.registry_digest('docker.io/futureagi/standalone:v1.55.0'),descriptor['digest'])
+            self.assertIn('--verbose',command.call_args.args[0])
 
     def test_absent_registry_descriptor_fails_without_making_a_candidate(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
@@ -341,9 +360,12 @@ class AcceptanceSequenceTests(unittest.TestCase):
                  patch.object(case, 'exercise') as exercise:
                 case.test_one_opt_in_scheduled_A_B_C()
             self.assertEqual([c.args for c in publisher.prepare.call_args_list], [(v,) for v in versions])
-            self.assertEqual(publisher.hide_releases.call_count, 2)
-            self.assertEqual([c.args[1] for c in exercise.call_args_list], [versions, versions[:2]])
-            self.assertEqual([c.kwargs['restore'] for c in exercise.call_args_list], [False, True])
+            self.assertEqual(publisher.hide_releases.call_count, 1)
+            self.assertEqual([c.args[1] for c in exercise.call_args_list], [versions])
+            self.assertEqual([c.kwargs['restore'] for c in exercise.call_args_list], [False])
+            self.assertEqual(harness.automatic_publisher.call_args.kwargs['deadline'],inputs['deadline_monotonic'])
+            self.assertEqual(harness.automatic_publisher.call_args.kwargs['acceptance_reserve_seconds'],
+                             real.acceptance_reserve_seconds('a-b-c'))
             policy.assert_called_once_with(['measured-A-B', 'measured-B-C'])
 
     def test_actual_forward_acceptance_checks_B_then_C_and_preserves_B_generation(self):
@@ -364,15 +386,16 @@ class AcceptanceSequenceTests(unittest.TestCase):
                 manifest = versioned(default_v2(), version)
                 manifest['components']['standalone']['digest'] = 'sha256:'+str(index)*64
                 manifests[version] = manifest
-                names = [['app', '000'+str(n)] for n in range(1, index+1)]
+                count = 1 if index < 3 else 2
+                names = [['app', '000'+str(n)] for n in range(1, count+1)]
                 inventories[version] = dict(planned=names, applied=names, pending=[],
                     inventory_sha256=str(index)*64, applied_sha256=str(index+3)*64)
                 if index > 1:
                     before = inventories[versions[index-2]]
                     rows[version] = dict(migration_evidence=dict(source_inventory_sha256=before['inventory_sha256'],
                         source_applied_set_sha256=before['applied_sha256'], target_inventory_sha256=str(index)*64,
-                        target_applied_set_sha256=str(index+3)*64, target_pending_plan_count=1),
-                        migration_measurements=[dict(app_label='app', name='000'+str(index))])
+                        target_applied_set_sha256=str(index+3)*64, target_pending_plan_count=0 if index == 2 else 1),
+                        migration_measurements=[] if index == 2 else [dict(app_label='app', name='0002')])
             current = [versions[0]]
             receipts, attempts = [], {}
             state_path = root/'state'
@@ -380,6 +403,7 @@ class AcceptanceSequenceTests(unittest.TestCase):
             h = real.ProductHarness(root, ROOT, 'fagi-upd-e2e-real-unit')
             h.ports = {'BACKEND_PORT': 1234}
             h._witness_generations = {}
+            h.corpus = {}
             verified_generations = []
             def seed(generation='acceptance-a'):
                 h._witness_generations[generation] = []
@@ -409,6 +433,7 @@ class AcceptanceSequenceTests(unittest.TestCase):
                 receipts.append(dict(kind='apply', status='succeeded', target_version=version, run_id='run-'+version,
                     manifest_hash=manifest_hash(manifests[version]), target_image_ids={'app': 'app-'+version}))
             h.install, h.record, h.collect_logs, h.collect_diagnostics, h.cleanup = (Mock() for _ in range(5))
+            h.install.return_value = {'seconds': 280}
             h.bin_update = Mock(return_value=SimpleNamespace(stdout=automatic.AUTOMATIC_UPDATE_DISCLOSURE.encode()))
             h.containers, h.docker, h.seed_and_check = containers, image, seed
             h.migration_inventory = lambda: inventories[current[0]]
@@ -421,6 +446,7 @@ class AcceptanceSequenceTests(unittest.TestCase):
             publisher._prepared = {v: {'manifest': m} for v, m in manifests.items()}
             store = Mock(path=state_path)
             store.read_registration.return_value = 'unchanged-registration'
+            store.read_state.return_value = SimpleNamespace(active_attempt_id=None)
             store.read_attempt.side_effect = lambda key: attempts[key]
             baseline = Mock()
             baseline.current.side_effect = lambda: SimpleNamespace(release=SimpleNamespace(version=current[0]))
@@ -431,10 +457,12 @@ class AcceptanceSequenceTests(unittest.TestCase):
                  patch.object(automatic, 'load_setup_configuration', return_value=config), \
                  patch.object(automatic, 'inspect_activation', return_value=SimpleNamespace(active=True)), \
                  patch.object(automatic, 'read_attempt_ledger', side_effect=lambda path: (
-                     {'run_id': 'run-'+current[0]}, set())), \
+                     {'run_id': 'run-'+current[0], 'direction': 'success_decided'}, {'success-decision.json'})), \
+                 patch.object(automatic, 'acceptance_policy', return_value=SimpleNamespace(
+                     tick_timeout_seconds=1200, check_interval_seconds=300, required_tick_budget_seconds=1200)), \
                  patch.object(automatic, 'policy_cli_arguments', return_value=()), \
                  patch.object(h, 'verify_installed_release', wraps=h.verify_installed_release) as installed:
-                case.exercise(dict(deadline_monotonic=time.monotonic()+100000), versions, publisher, rows,
+                case.exercise(dict(mode='a-b-c', deadline_monotonic=time.monotonic()+100000), versions, publisher, rows,
                     SimpleNamespace(tick_timeout_seconds=1200, check_interval_seconds=300, required_tick_budget_seconds=1200),
                     restore=False)
             self.assertEqual([c.args[0]['version'] for c in installed.call_args_list], list(versions[1:]))
@@ -599,6 +627,444 @@ class CIDiagnosticTests(unittest.TestCase):
                 self.assertNotIn('witness-', path)
         unit = text.split('\n  unit:\n', 1)[1].split('\n  compose:\n', 1)[0]
         self.assertIn('timeout-minutes: 30', unit)
+
+
+class RestoreSequenceTests(unittest.TestCase):
+    """Restore branch of exercise() against REAL runner/contract record shapes.
+
+    Finite orchestration fixture only, not product qualification evidence. The
+    scheduler is simulated with the exact records the shipped restore path
+    writes (apply.py restore receipt, baseline.commit_restore latch/attempt,
+    runner._finish event), never a synthetic acceptance shortcut.
+    """
+
+    def _exercise_restore_fixture(self, *, latch_event=True, extra_proof=False, latch=True):
+        import time
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import Mock
+        from deploy.tests import test_update_e2e_automatic as automatic
+        from deploy.tests.update_e2e import harness as e2e
+        from deploy.update.contracts import InstallationBinding, OperationEvent, ReasonCode
+        from deploy.update.runner_state import AttemptRecord, EventRecord, RunnerState, RunnerStateStore, TargetIdentity
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            root = Path(temp)
+            versions = ('v1.55.0', 'v1.55.1')
+            manifests, inventories = {}, {}
+            for index, version in enumerate(versions, 1):
+                manifest = versioned(default_v2(), version)
+                manifest['components']['standalone']['digest'] = 'sha256:'+str(index)*64
+                manifests[version] = manifest
+                names = [['app', '000'+str(n)] for n in range(1, index+1)]
+                inventories[version] = dict(planned=names, applied=names, pending=[],
+                    inventory_sha256=str(index)*64, applied_sha256=str(index+3)*64)
+            rows = {versions[1]: dict(migration_evidence=dict(
+                source_inventory_sha256=inventories[versions[0]]['inventory_sha256'],
+                source_applied_set_sha256=inventories[versions[0]]['applied_sha256'],
+                target_inventory_sha256=inventories[versions[1]]['inventory_sha256'],
+                target_applied_set_sha256=inventories[versions[1]]['applied_sha256'], target_pending_plan_count=1),
+                migration_measurements=[dict(app_label='app', name='0002')])}
+            target = TargetIdentity(versions[1], manifest_hash(manifests[versions[1]]))
+            binding = InstallationBinding('1'*32, 'a'*64, '2'*64, root, root/'.env', root/'.env', 'standalone',
+                False, 'fagi-upd-e2e-real-unit', (root/'docker-compose.yml',), (), real.CONTEXT, 'daemon', os.geteuid())
+            state_path = root/'state'
+            (state_path/'attempts').mkdir(parents=True)
+            state, receipts, attempts = [RunnerState()], [], {}
+            reserved = datetime(2026, 10, 29, 22, tzinfo=timezone.utc)
+            finished = reserved+timedelta(minutes=14)
+            h = real.ProductHarness(root, ROOT, 'fagi-upd-e2e-real-unit')
+            h.ports = {'BACKEND_PORT': 1234}
+            h._witness_generations = {}
+            h.corpus = {'witness_gaps': [{'domain': 'shared_files'}]}
+            verified = []
+            def seed(generation='acceptance-a'):
+                h._witness_generations[generation] = [{'domain': 'postgres_app'}]
+                def verify():
+                    verified.append(sorted(h._witness_generations))
+                verify()
+                return verify
+            def containers():
+                return [dict(Image=name+'-'+versions[0], State={'Running': True, 'Health': {'Status': 'healthy'}},
+                             Config={'Labels': {'com.docker.compose.service': name}})
+                        for name in ('app', 'postgres', 'clickhouse')]
+            def scheduler_restores(manifest, *, timeout):
+                # What ONE installed-scheduler forward tick leaves after the
+                # target migrated, then failed, then was restored.
+                self.assertEqual(manifest['version'], versions[1])
+                self.assertGreater(timeout, 0)
+                attempt = AttemptRecord(1, 'b'*32, 'c'*32, binding, target, 'always', reserved, 'restored',
+                                        finished, 'd'*64, 'e'*64)
+                attempts[attempt.attempt_id] = attempt
+                (state_path/'attempts'/(attempt.attempt_id+'.json')).write_text('{}')
+                for number in range(2 if extra_proof else 1):
+                    proof = root/'backups'/(attempt.attempt_id+str(number or ''))/'proof.json'
+                    proof.parent.mkdir(parents=True)
+                    proof.write_text('component backup identity')
+                receipts.append(dict(kind='apply', status='failed_during_rollout', target_version=versions[1],
+                                     run_id='run-B', from_version=versions[0]))
+                receipts.append(dict(kind='restore', status='restored', stage='rollout', run_id='run-B',
+                                     from_version=versions[0], target_version=versions[1],
+                                     manifest_hash=target.manifest_hash, target_image_ids={'app': 'app-'+versions[0]}))
+                state[0] = RunnerState(failed_target_latch=target if latch else None)
+                leaves = [EventRecord(1, 0, OperationEvent('restored', 'restore', 'rollout', finished, 'c'*32,
+                    (ReasonCode.RESTORED_AFTER_UPDATE_FAILURE,)), target)]
+                if latch_event:
+                    # runner._finish after the next due/not-due tick refuses B.
+                    leaves.append(EventRecord(1, 1, OperationEvent('blocked', 'check', None,
+                        finished+timedelta(minutes=5), 'f'*32, (ReasonCode.FAILED_TARGET_LATCHED,)), target))
+                # Written by the store's own atomic writer, read back lock-free.
+                (state_path/'events').mkdir(mode=0o700)
+                fd = os.open(str(state_path/'events'), os.O_RDONLY)
+                try:
+                    for record in leaves:
+                        RunnerStateStore._write(fd, '%020d.json' % record.sequence, record)
+                finally:
+                    os.close(fd)
+                return inventories[versions[1]]
+            h.install, h.record, h.collect_logs, h.collect_diagnostics, h.cleanup = (Mock() for _ in range(5))
+            h.install.return_value = {'seconds': 280}
+            h.verify_candidate_only_absent = Mock()
+            h.fail_after_migrations = Mock(side_effect=scheduler_restores)
+            h.bin_update = Mock(return_value=SimpleNamespace(stdout=automatic.AUTOMATIC_UPDATE_DISCLOSURE.encode()))
+            h.containers, h.seed_and_check = containers, seed
+            h.migration_inventory = lambda: inventories[versions[0]]
+            h.receipts = lambda: receipts
+            publisher = Mock()
+            publisher.new_checkout.return_value = h
+            publisher.seed_and_check.side_effect = lambda checkout: checkout.seed_and_check()
+            publisher._prepared = {v: {'manifest': m} for v, m in manifests.items()}
+            store = Mock(path=state_path)
+            store.read_registration.return_value = 'unchanged-registration'
+            store.read_state.side_effect = lambda: state[0]
+            store.read_events.side_effect = AssertionError('state.lock reader would contend with the updater')
+            store.read_attempt.side_effect = lambda key: attempts[key]
+            source_head = SimpleNamespace(release=SimpleNamespace(version=versions[0], manifest_hash='a'*64))
+            baseline = Mock()
+            baseline.current.return_value = source_head
+            config = SimpleNamespace(policy='unchanged-policy', scheduler_options={})
+            policy = SimpleNamespace(tick_timeout_seconds=1200, check_interval_seconds=300,
+                required_tick_budget_seconds=1200, probe_timeout_seconds=30, stability_period_seconds=180)
+            wait = e2e.wait_for
+            case = automatic.AutomaticLifecycleE2E('test_one_opt_in_scheduled_A_B_C')
+            with patch.object(automatic, 'selected_store', return_value=store), \
+                 patch.object(automatic, 'BaselineStore', return_value=baseline), \
+                 patch.object(automatic, 'load_setup_configuration', return_value=config), \
+                 patch.object(automatic, 'inspect_activation', return_value=SimpleNamespace(active=True)), \
+                 patch.object(automatic, 'read_attempt_ledger', return_value=(
+                     {'run_id': 'run-B', 'direction': 'restore_decided'}, {'restore-decision.json', 'recovery.json'})), \
+                 patch.object(automatic, 'acceptance_policy', return_value=policy), \
+                 patch.object(automatic, 'policy_cli_arguments', return_value=()), \
+                 patch.object(automatic.e2e, 'wait_for', side_effect=lambda predicate, *, timeout, interval, what:
+                              wait(predicate, timeout=min(timeout, .2), interval=.01, what=what)):
+                case.exercise(dict(mode='upgrade', deadline_monotonic=time.monotonic()+100000), versions,
+                              publisher, rows, policy, restore=True)
+            self.assertEqual(h.fail_after_migrations.call_count, 1)
+            h.verify_candidate_only_absent.assert_called_once_with()
+            self.assertEqual(h.bin_update.call_count, 2, 'exactly one setup plus deactivation, no driven ticks')
+            self.assertEqual(verified[-1], ['acceptance-a'])
+            recorded = {c.args[0]: c.args[1] for c in h.record.call_args_list}
+            restored = recorded['restored-source.json']
+            self.assertEqual((restored['source_version'], restored['failed_target_version']), versions)
+            self.assertEqual(restored['fault_seam'], real.FAULT_SEAM)
+            self.assertTrue(restored['failed_target_latched'] and restored['subsequent_real_cron_tick'])
+            result = recorded['acceptance-result.json']
+            self.assertEqual((result['scenario'], result['automatic_runs'], result['backups']), ('restore', 1, 1))
+            self.assertEqual(result['witness_gaps'], [{'domain': 'shared_files'}])
+            h.cleanup.assert_called_once()
+
+    def test_restore_branch_accepts_only_the_real_restore_records_and_a_later_latched_cron_wake(self):
+        self._exercise_restore_fixture()
+
+    def test_restore_without_a_later_latched_wake_is_not_accepted(self):
+        with self.assertRaisesRegex(AssertionError, 'blocked by restored target latch'):
+            self._exercise_restore_fixture(latch_event=False)
+
+    def test_restore_without_the_failed_target_latch_is_not_accepted(self):
+        with self.assertRaises(AssertionError):
+            self._exercise_restore_fixture(latch=False)
+
+    def test_event_oracle_reads_atomic_leaves_without_taking_state_lock(self):
+        import fcntl
+        from datetime import datetime, timezone
+        from deploy.update.contracts import OperationEvent, ReasonCode
+        from deploy.update.runner_state import EventRecord, RunnerStateStore, StoreError, TargetIdentity
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            store = SimpleNamespace(path=Path(temp))
+            self.assertEqual(real.read_event_records(store), ())
+            events = Path(temp)/'events'; events.mkdir(mode=0o700)
+            record = EventRecord(1, 7, OperationEvent('blocked', 'check', None, datetime(2026, 10, 29, tzinfo=timezone.utc),
+                'f'*32, (ReasonCode.FAILED_TARGET_LATCHED,)), TargetIdentity('v1.55.1', 'a'*64))
+            fd = os.open(str(events), os.O_RDONLY)
+            try:
+                RunnerStateStore._write(fd, '%020d.json' % 7, record)
+            finally:
+                os.close(fd)
+            (events/'.00000000000000000008.json.0123.tmp').write_text('partial')
+            lock = os.open(str(Path(temp)/'state.lock'), os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                # The real updater holds state.lock: the oracle must still read.
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.assertEqual(real.read_event_records(store), (record,))
+            finally:
+                os.close(lock)
+            os.rename(events/('%020d.json' % 7), events/('%020d.json' % 9))
+            with self.assertRaisesRegex(AssertionError, 'identity differs'):
+                real.read_event_records(store)
+            (events/('%020d.json' % 9)).write_text('{"schema_version":1,"sequence":9,"sequence":9}')
+            with self.assertRaises(StoreError):
+                real.read_event_records(store)
+
+    def test_restore_must_take_exactly_one_cold_backup(self):
+        with self.assertRaisesRegex(AssertionError, 'exactly one cold backup'):
+            self._exercise_restore_fixture(extra_proof=True)
+
+
+class NativeBoundaryTests(unittest.TestCase):
+    def test_source_prepare_is_installer_shaped_and_real_normalization_accepts_it(self):
+        from deploy.update import enrollment as en
+        from deploy.update.envfile import read_env
+        from deploy.update.runner_state import RunnerStateStore
+        from deploy.tests.update_e2e.test_real_automatic_harness import model
+        manifest=versioned(default_v2(),'v1.53.0')
+        component=manifest['components']['standalone']
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            root=Path(temp)
+            h=real.ProductHarness(root,ROOT,'fagi-upd-e2e-real-unit')
+            h.root.mkdir(mode=0o700)
+            (h.root/'docker-compose.yml').write_text('retained data fixture, no daemon')
+            resolved=model(h.project)
+            resolved['services']['app']['image']=component['image']
+            with patch.object(h,'install_updater'),patch.object(h,'docker',return_value=SimpleNamespace(stdout=b'')), \
+                 patch.object(h,'dc',return_value=SimpleNamespace(stdout=json.dumps(resolved).encode())),patch.object(h,'record'):
+                h.prepare(component['digest'],version=manifest['version'])
+            env=read_env(h.root/'.env')
+            self.assertEqual(env['FUTURE_AGI_VERSION'],manifest['version'])
+            store=RunnerStateStore(h.root,h.root/'.env')
+            image_id='sha256:'+'d'*64
+            installation=SimpleNamespace(env=env,env_file=h.root/'.env',
+                futureagi_services=lambda:[dict(service='app',component='standalone',image=component['image'],buildable=False)],
+                containers=lambda:[dict(service='app',status='running',image_id=image_id)],
+                image=lambda ref:dict(id=image_id,repo_digests=[component['image'].split(':v')[0]+'@'+component['digest']]))
+            before=installation.env_file.read_bytes()
+            fingerprint=hashlib.sha256(before).hexdigest()
+            release=SimpleNamespace(version=manifest['version'],manifest=manifest,manifest_sha256=manifest_hash(manifest))
+            self.assertEqual(en.normalize_pins(store,installation,release,
+                render_config=lambda installation,raw:hashlib.sha256(raw).hexdigest()),fingerprint)
+            self.assertEqual(installation.env_file.read_bytes(),before,'setup must not undo or change source installation data')
+
+    def test_source_install_pulls_native_pin_then_aliases_without_plain_app_pull(self):
+        manifest=versioned(default_v2(),'v1.53.0')
+        component=manifest['components']['standalone']
+        h=real.ProductHarness(Path.home()/'fagi-unit-source-install',ROOT,'fagi-upd-e2e-real-unit')
+        h.source_manifest=manifest
+        h.model={'services':{'app':{'image':component['image']},'postgres':{'image':'postgres:17'},
+                            'clickhouse':{'image':'clickhouse/clickhouse-server:24.8'}}}
+        image=dict(Id='sha256:'+'d'*64,Os='linux',Architecture='amd64',
+                   RepoDigests=[component['image'].split(':v')[0]+'@'+component['digest']])
+        def docker(*args,**kwargs):
+            return SimpleNamespace(stdout=json.dumps([image]).encode() if args[:2] == ('image','inspect') else b'')
+        with patch.object(h,'prepare'),patch.object(h,'docker',side_effect=docker) as command, \
+             patch.object(h,'boot_source',return_value={'seconds':280}):
+            self.assertEqual(h.install(),{'seconds':280})
+        calls=[c.args for c in command.call_args_list]
+        pinned=component['image']+'@'+component['digest']
+        self.assertEqual(calls[0],('pull','--platform','linux/amd64',pinned))
+        self.assertIn(('image','tag',pinned,component['image']),calls)
+        self.assertNotIn(('pull',component['image']),calls)
+        self.assertEqual(sum(c[0] == 'pull' for c in calls),3)
+        image['Architecture']='arm64'
+        with patch.object(h,'prepare'),patch.object(h,'docker',side_effect=docker) as command,patch.object(h,'boot_source') as boot:
+            with self.assertRaisesRegex(AssertionError,'frozen native RepoDigest'):
+                h.install()
+            boot.assert_not_called()
+            self.assertFalse(any(c.args[:2] == ('image','tag') for c in command.call_args_list))
+
+    def test_measured_source_boot_sizes_bounded_waits_with_real_policy_and_clock_rules(self):
+        from datetime import datetime,timezone
+        from deploy.update.schedule import successful_check_deadline
+        with tempfile.TemporaryDirectory() as temp:
+            *_,proof=fixture(Path(temp)/'measurements')
+            policy=real.acceptance_policy(proof['predecessors'],source_boot_seconds=280)
+            self.assertEqual(policy.wait_timeout_seconds,620)
+            self.assertEqual(policy.recovery_startup_timeout_seconds,620)
+            self.assertEqual(policy.pull_timeout_seconds,300)
+            self.assertGreaterEqual(policy.stability_period_seconds,180)
+            self.assertEqual(policy.required_tick_budget_seconds,policy.tick_timeout_seconds)
+            required=real.scheduler_wait_budget(policy,100000,now=1)
+            self.assertEqual(required,policy.tick_timeout_seconds+660)
+            with self.assertRaisesRegex(TimeoutError,'remaining native job time'):
+                real.scheduler_wait_budget(policy,required,now=1)
+            start=datetime(2026,10,29,tzinfo=timezone.utc)
+            # Positive-only production jitter can defer a nominal five-minute
+            # check to the SECOND cron delivery. Cover the real due function.
+            due=successful_check_deadline(policy,start,'native-acceptance')
+            self.assertLessEqual((due-start).total_seconds(),330)
+            self.assertLess(2*real.CRON_PERIOD_SECONDS+60,required)
+            for value in (0,-1,float('nan'),float('inf'),True,4201):
+                with self.subTest(value=value),self.assertRaisesRegex(ValueError,'source boot measurement'):
+                    real.acceptance_policy(proof['predecessors'],source_boot_seconds=value)
+
+    def test_measured_source_boot_clamps_at_startup_policy_boundary(self):
+        from deploy.update.contracts import AUTOMATIC_POLICY_BOUNDS, POLICY_BOUNDS
+        startup_limit=min(POLICY_BOUNDS['wait_timeout_seconds'][1],
+                          AUTOMATIC_POLICY_BOUNDS['recovery_startup_timeout_seconds'][1])
+        source_at_limit=(startup_limit-60)/2
+        with tempfile.TemporaryDirectory() as temp:
+            *_,proof=fixture(Path(temp)/'measurements')
+            for source_boot_seconds in (source_at_limit,source_at_limit+.5):
+                with self.subTest(source_boot_seconds=source_boot_seconds):
+                    policy=real.acceptance_policy(proof['predecessors'],source_boot_seconds=source_boot_seconds)
+                    self.assertEqual(policy.wait_timeout_seconds,startup_limit)
+                    self.assertEqual(policy.recovery_startup_timeout_seconds,startup_limit)
+
+    def test_actual_cron_install_inspect_and_remove_use_real_renderer_with_fake_OS_only(self):
+        from deploy.tests.test_update_scheduler_install import ActivationTests
+        from deploy.update import scheduler_install as si
+        case=ActivationTests('test_renderer_and_enable_flag_are_not_activation')
+        case.setUp()
+        try:
+            before=case.manager.tab
+            result=case.call(si.install_scheduler,backend='cron',cron_service='cron.service')
+            self.assertTrue(result.active,result)
+            tab=case.manager.tab.decode('utf-8',errors='replace')
+            owned=[line for line in tab.splitlines() if line.startswith('*/5 ')]
+            self.assertEqual(len(owned),1)
+            self.assertLess(len(owned[0].encode()),1000)
+            self.assertIn('/usr/bin/env -i',owned[0])
+            self.assertIn('DOCKER_CONTEXT='+case.reg.binding.docker_context,owned[0])
+            self.assertIn(' run --env-file ',owned[0])
+            self.assertTrue(case.call(si.inspect_activation,backend='cron').active)
+            self.assertEqual(case.call(si.remove_scheduler,backend='cron').state,'removed')
+            self.assertEqual(case.manager.tab,before)
+            self.assertEqual(case.manager.effects,['crontab','crontab'])
+        finally:
+            case.doCleanups()
+
+    def test_real_cron_renderer_fits_CI_shaped_paths_with_margin(self):
+        """The real renderer with the LONGEST native-CI path shapes, not fake-OS ones.
+
+        Only the host filesystem/pwd checks are replaced (these paths exist on the
+        runner, not here); the registration/launcher contract checks still run.
+        """
+        from datetime import datetime, timezone
+        from deploy.update import scheduler_assets
+        from deploy.update.contracts import AutomationPolicy, InstallationBinding
+        from deploy.update.runner_state import LauncherConfig, Registration
+        home = Path('/home/runner')
+        checkout = (home/'fagi-upd-e2e-real-upgrade-99999999999-99'/'acceptance'/
+                    ('fagi-upd-e2e-real-one-opt-in-'+'f'*12)/'installation')
+        # native_launcher_path order: compose wrapper dir, docker dir, cosign dir
+        # (cosign-installer's default $HOME/.cosign), then fixed system dirs.
+        path = ':'.join(['/home/runner/fagi-upd-e2e-real-tools.AbCdEf', '/usr/bin', '/home/runner/.cosign',
+                         '/bin', '/usr/sbin', '/sbin'])
+        python = Path('/opt/hostedtoolcache/Python/3.12.12/x64/bin/python3')
+        binding = InstallationBinding('1'*32, 'a'*64, '2'*64, checkout, checkout/'.env', checkout/'.env',
+            'standalone', False, 'fagi-upd-e2e-real-one-opt-in-'+'f'*12, (checkout/'docker-compose.yml',), (),
+            real.CONTEXT, 'daemon', os.geteuid())
+        registration = Registration(1, binding, LauncherConfig(python, home, path, 'runner'),
+                                    datetime(2026, 10, 29, tzinfo=timezone.utc))
+        def contract_only(value):
+            value.__post_init__()
+            value.launcher.__post_init__()
+        store = SimpleNamespace(read_registration=lambda: registration)
+        with patch.object(scheduler_assets, '_validate', side_effect=contract_only) as validate:
+            assets = scheduler_assets.render_scheduler(store, AutomationPolicy(), backend='cron')
+        validate.assert_called_once_with(registration)
+        (content,) = assets.files.values()
+        (line,) = [row for row in content.splitlines() if row.startswith('*/5 ')]
+        self.assertLess(len(line.encode()), 1000-200, 'cron entry must keep margin under the 1000-byte bound')
+        for value in ('HOME=/home/runner', 'PATH='+path, 'PYTHON='+str(python), 'DOCKER_CONTEXT='+real.CONTEXT,
+                      str(checkout/'bin/update')+' run --env-file '+str(checkout/'.env')):
+            self.assertIn(value, line)
+
+    def test_acceptance_reserve_is_derived_from_measured_boot_cron_and_stability(self):
+        boot=2*real.MEASURED_FIRST_BOOT_SECONDS+60
+        update=2*real.CRON_PERIOD_SECONDS+60+boot+real.STABILITY_SECONDS
+        self.assertEqual(real.acceptance_reserve_seconds('a-b-c'),boot+2*update)
+        self.assertEqual(real.acceptance_reserve_seconds('upgrade'),2*(boot+update)+boot+2*real.CRON_PERIOD_SECONDS+60)
+        # Two A->B->C qualifications plus the reserve must fit the job deadline;
+        # the reserve is a bound on qualification, not a guard on acceptance.
+        self.assertLess(real.acceptance_reserve_seconds('upgrade'),acceptance.JOB_SECONDS//3)
+        with self.assertRaises(ValueError):
+            real.acceptance_reserve_seconds('restore')
+
+    def test_product_operations_use_the_runner_proven_isolated_invocation(self):
+        h=real.ProductHarness(Path.home()/'fagi-unit-app-python',ROOT,'fagi-upd-e2e-real-unit')
+        output=b'Django startup log line\n{"identity":"bucket/key","payload_sha256":"'+b'a'*64+b'"}\n'
+        with patch.object(h,'service_id',return_value='c'*64), \
+             patch.object(h,'docker',return_value=SimpleNamespace(stdout=output)) as docker:
+            self.assertEqual(h.app_python('print(1)',{'k':'v'}),{'identity':'bucket/key','payload_sha256':'a'*64})
+        self.assertEqual(docker.call_args.args,('exec','-i','c'*64,'python','-I','-B','-cprint(1)'))
+        self.assertEqual(docker.call_args.kwargs['input'],b'{"k":"v"}')
+        self.assertNotIn('-c',docker.call_args.args)
+        with patch.object(h,'service_id',return_value='c'*64), \
+             patch.object(h,'docker',return_value=SimpleNamespace(stdout=b'{"a":1,"a":2}\n')):
+            with self.assertRaises(Exception):
+                h.app_python('print(1)',{})
+
+    def test_native_PATH_drops_ambient_entries_but_keeps_actual_host_tools(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            directory=Path(temp)
+            for name in ('docker-compose','docker','cosign'):
+                path=directory/name
+                path.write_text('#!/bin/sh\nexit 99\n')
+                path.chmod(0o700)
+            path=real.native_launcher_path({'PATH':str(directory)+':/untrusted/irrelevant/path'})
+            self.assertEqual(path,str(directory)+':/usr/bin:/bin:/usr/sbin:/sbin')
+            self.assertNotIn('untrusted',path)
+            (directory/'cosign').unlink()
+            with self.assertRaisesRegex(ValueError,'cosign'):
+                real.native_launcher_path({'PATH':str(directory)})
+
+    def test_upgrade_qualifies_once_and_reuses_exact_candidate_for_fresh_forward_and_restore(self):
+        from contextlib import nullcontext
+        from unittest.mock import Mock
+        from deploy.tests import test_update_e2e_automatic as automatic
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            versions=('v1.55.0','v1.55.1')
+            inputs=dict(mode='upgrade',versions=versions,base=temp,candidates={v:{} for v in versions},
+                deployment_dirs={},run_id=123,deadline_monotonic=9999999999)
+            path=Path(temp)/'inputs.json'; path.write_text(json.dumps(inputs))
+            publisher=Mock()
+            publisher.transition.return_value='measured-stable-pr'
+            harness=Mock()
+            harness.automatic_publisher.return_value=nullcontext(publisher)
+            case=automatic.AutomaticLifecycleE2E('test_one_opt_in_scheduled_A_B_C')
+            with patch.dict(os.environ,{'FAGI_UPDATE_ACCEPTANCE_INPUTS':str(path)}), \
+                 patch.object(automatic.e2e,'Harness',return_value=harness), \
+                 patch.object(automatic,'acceptance_policy',return_value='measured-policy'),patch.object(case,'exercise') as exercise:
+                case.test_one_opt_in_scheduled_A_B_C()
+            self.assertEqual([c.args for c in publisher.prepare.call_args_list],[(v,) for v in versions])
+            self.assertEqual([c.kwargs['restore'] for c in exercise.call_args_list],[False,True])
+            self.assertEqual([c.args[1] for c in exercise.call_args_list],[versions,versions])
+            self.assertEqual(publisher.hide_releases.call_count,2)
+
+    def test_test_only_fault_stops_only_exact_pre_success_candidate_after_migrations(self):
+        h=real.ProductHarness(Path.home()/'fagi-unit-fixed-fault',ROOT,'fagi-upd-e2e-real-unit')
+        h.ports={'BACKEND_PORT':1234}
+        manifest=versioned(default_v2(),'v1.54.0')
+        component=manifest['components']['standalone']
+        container=dict(Id='a'*64,Image='sha256:'+'d'*64,State={'Running':True},Config={'Labels':{
+            'com.docker.compose.project':h.project,'com.docker.compose.service':'app'}})
+        image=dict(RepoDigests=[component['image'].split(':v')[0]+'@'+component['digest']])
+        migrations=dict(planned=[['app','0002']],applied=[['app','0002']],pending=[])
+        def docker(*args,**kwargs):
+            return SimpleNamespace(stdout=json.dumps([image if args[0]=='image' else container]).encode())
+        for foreign in (False,True):
+            with self.subTest(foreign=foreign),patch.object(h,'containers',return_value=[container]), \
+                 patch.object(h,'docker',side_effect=docker) as command,patch.object(h,'request',return_value=(200,{})), \
+                 patch.object(h,'migration_inventory',return_value=migrations),patch.object(h,'pending_forward_attempt',return_value='run'), \
+                 patch.object(h,'create_candidate_only_witness',return_value={'identity':'S3-private'}),patch.object(h,'record') as record:
+                container['Config']['Labels']['com.docker.compose.project']='foreign' if foreign else h.project
+                if foreign:
+                    with self.assertRaisesRegex(AssertionError,'identity changed'):
+                        h.fail_after_migrations(manifest,timeout=2)
+                    self.assertFalse(any(c.args[0]=='stop' for c in command.call_args_list))
+                else:
+                    self.assertEqual(h.fail_after_migrations(manifest,timeout=2),migrations)
+                    self.assertEqual(command.call_args.args,('stop','--time','10',container['Id']))
+                    self.assertEqual(record.call_args.args[1]['fault_seam'],real.FAULT_SEAM)
+        from scripts.build_update_compatibility_proof import implementation_inventory
+        self.assertTrue(all(real.FAULT_SEAM not in (ROOT/name).read_text() for name in implementation_inventory()))
 
 
 if __name__ == '__main__':

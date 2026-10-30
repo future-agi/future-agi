@@ -4,10 +4,16 @@
 Only frozen candidates and authenticated predecessors are inputs. No external
 success report, command, customer bypass, trial startup or image rollback is
 accepted. Qualification requires six executed shipping-transaction suites.
-Current integration is INCOMPLETE: the checked-in primitive driver does not yet
-invoke the complete Updater transaction, resolve/seed the A9 touched subset, or
-provide real per-migration boundaries and all six assertion sets. Its factory
-therefore refuses BEFORE provisioning. Current real product runs CANNOT qualify.
+Full qualify first dry-runs EVERY MILESTONES entry through run_milestone (no
+Docker) and binds each job plan's pinned source/target digests and platform to
+the requested pair. Only a milestone that plans all six suites for exactly that
+pair is then dispatched for real, once, with an in-process QualificationSession
+sink at args.qualification; otherwise it refuses before provisioning
+(shipping_executor_unavailable, or suite_unrun for a six-suite plan of another
+pair). A zero stage exit, JSON verdict or healthy image is not six-suite
+evidence: rows hold only assertions the sink itself executed. The historical
+protected release factory remains unavailable until its shipping transaction
+is integrated.
 Missing integration, witnesses, measurements or assertions produce a bounded
 notify-only decision, NEVER an affirmative row. Unit fixtures are not product
 qualification. Full runs belong on native amd64 Actions, not the local Mac.
@@ -19,7 +25,8 @@ Actions runner it assembles v1.53.0's retained deployment with the current host
 updater, boots its fixed published digest, enumerates A4 witnesses/gaps and
 calls StandaloneBackup.run_quiesced, leaving A cold until disposable teardown.
 It never creates proof-row.json, policy.json, a release proof or passing suites.
-Full qualification still refuses shipping_executor_unavailable.
+All --through choices are derived from the milestone module's MILESTONES tuple;
+each dispatches run_milestone(name, args). No bounded run can certify a release.
 
   python3 -I scripts/rehearse_update_compatibility.py qualify \\
     --through source_snapshot --boot-timeout 4200 \\
@@ -52,20 +59,24 @@ matching retained execution layout from that signed proof (so B -> C may keep
 A's files); it never substitutes B's published deployment map. These are DATA,
 not executed or imported. The standalone image pins must equal the explicit refs. For a test-key predecessor,
 pass --public-key <test-public.pem>; host verification is still mandatory.
-Use --docker-context default only on a native amd64 Actions runner; the Mac
-always requires colima-fagi-update and HOME-backed files. Each failure writes
+Milestone-backed full qualify requires the private colima-fagi-update routing
+on a native amd64 Actions runner. The historical protected producer may use its
+isolated native default context; the Mac always requires colima-fagi-update and HOME-backed files. Each failure writes
 failure.json and proof-row.json with eligible=false, and exits NONZERO. A row
 never reports passed suites that did not execute. registered-100k is the reviewed
 100000-row workload, not a user-controlled bypass of the A6 reference envelope.
 
   python3 -I scripts/rehearse_update_compatibility.py package --rows <out> \\
-    --target <candidate.json> --public-key <test-public.pem> \\
-    --key <test-private.pem> --out <new-package-dir> --run-id <same-run-id>
+    --target <candidate.json> --public-key <predecessor-public.pem> \\
+    --ephemeral-key --out <new-package-dir> --run-id <same-run-id>
 
 Packaging reuses the strict product packager, revalidates all raw evidence and
-source trust, and cosign-signs ONLY with the explicit local test key, with
---tlog-upload=false. No keyless signing, real keys, registry writes or release
-publication. The historical protected release CLI below remains available.
+source trust, and signs using --tlog-upload=false. CI must use a fresh ephemeral
+key; the legacy --key option accepts an explicitly supplied local test key only.
+No keyless signing, registry writes or release publication. --evidence
+<same-job-evidence> also accepts strict raw evidence directly. Private .key files
+are NEVER upload artifacts.
+The historical protected release CLI below remains available.
 The checked-in disposable driver calls StandaloneBackup.run_quiesced,
 AutomaticRuntime.start_and_wait and StandaloneRestore with RecoveryLedger;
 manual migrate, ad-hoc backup hooks and prewritten success rows are forbidden.
@@ -126,6 +137,7 @@ import hashlib
 import importlib
 import importlib.machinery
 import importlib.util
+import json
 import math
 import os
 import re
@@ -152,6 +164,7 @@ from deploy.update.compatibility import (  # noqa: E402
     SUITES, decode_document, inputs_hash,
     topology_profile, transition_measurements, validate_release_proof,
 )
+from deploy.update.apply import Interrupted  # noqa: E402
 from deploy.update.contracts import pending_migration_plan_hash  # noqa: E402
 from deploy.update.discovery import ReleaseDiscovery  # noqa: E402
 from deploy.update.httpcache import HttpCache  # noqa: E402
@@ -349,7 +362,16 @@ class ExecutedCases:
                                      duration_seconds=time.monotonic() - start))
         self.cases[suite][name] = self.timings[-1]['duration_seconds']
 
+    def complete(self):
+        """A failed assertion cannot be erased by retrying it in the same run."""
+        if self.failed is not None:
+            raise ManualRelease('suite_failed')
+        layout = topology_profile('standalone', ())
+        if any(set(self.cases[s]) != required_cases(s, layout) for s in SUITES):
+            raise ManualRelease('suite_unrun')
+
     def render(self, suite, layout, properties):
+        need(self.failed is None, 'failed assertion in qualification run')
         need(set(self.cases[suite]) == required_cases(suite, layout), 'unrun required assertions')
         root = ET.Element('testsuite', name=suite, tests=str(len(self.cases[suite])), failures='0', errors='0', skipped='0')
         props = ET.SubElement(root, 'properties')
@@ -420,6 +442,197 @@ def select_reference_registry(registry, pending_migration_tables, *, plan=None):
     if plan is not None:
         equal(identities, plan, 'pending migration table analysis plan differs')
     return tuple(copy.deepcopy(row) for row in registry if (row['database'], row['table']) in touched)
+
+
+# Appended to TARGET_LOADER_PLAN inside the isolated target image, not executed
+# on the host. a['database_schemas'] MUST come from a read-only source DB probe.
+# Tables come from Django's real loader, the historical ProjectState and each
+# real operation object, never from a migration filename, number or app name.
+# Related effects are a conservative SUPERSET: an FK/M2M field adds its related
+# and through tables; PK/unique, rename and delete changes add every inbound
+# relation. RunPython/RunSQL use the gate's reviewed literal UPDATE_SAFETY
+# tables. Unresolvable relations, custom operations and undeclared code refuse.
+PENDING_TABLE_SCOPE = r'''
+from django.db import migrations
+from django.db.backends.utils import strip_quotes, truncate_name
+try:
+    from django.db.migrations.utils import resolve_relation
+except ImportError:
+    from django.db.migrations.operations.utils import resolve_relation
+import ast, re
+schemas=a['database_schemas']
+assert type(schemas) is dict and set(schemas)=={'postgres','clickhouse'}
+assert all(type(v) is str and re.fullmatch(r'[a-z_][a-z0-9_]{0,62}',v) for v in schemas.values())
+IDENT=r'[a-z_][a-z0-9_]{0,62}'
+def resolved(engine, table):
+    assert type(table) is str
+    quoted=re.fullmatch('"('+IDENT+')"\\."('+IDENT+')"',table)
+    if quoted: table=quoted.group(1)+'.'+quoted.group(2)
+    elif re.fullmatch(IDENT,table): table=schemas[engine]+'.'+table
+    assert re.fullmatch(IDENT+'\\.'+IDENT,table), 'unresolved_table_identity'
+    return (engine,table)
+def raw_table(state, app, name):
+    key=(app,name.lower())
+    assert key in state.models, 'unresolved_model_table_scope_unavailable'
+    return state.models[key].options.get('db_table') or truncate_name(app+'_'+name.lower(),63)
+def model_table(state, app, name):
+    return resolved('postgres',raw_table(state,app,name))
+# ModelState fields are not contributed to a class: field.name is None, so
+# the state's own field key names an auto-created M2M table, as Django does.
+def relation_tables(state, app, model, field, field_name):
+    remote=getattr(field,'remote_field',None)
+    if field is None or remote is None:
+        return set()
+    target=resolve_relation(remote.model,app,model)
+    tables={model_table(state,*target)}
+    if getattr(field,'many_to_many',False):
+        through=getattr(remote,'through',None)
+        if through is not None:
+            tables.add(model_table(state,*resolve_relation(through,app,model)))
+        else:
+            name=getattr(field,'db_table',None) or truncate_name(
+                '%s_%s'%(strip_quotes(raw_table(state,app,model)),field_name),63)
+            tables.add(resolved('postgres',name))
+    return tables
+def inbound(state, app, model):
+    wanted=(app,model.lower()); tables=set()
+    for (other_app,other),state_model in state.models.items():
+        for name,field in state_model.fields.items():
+            remote=getattr(field,'remote_field',None)
+            if remote is None: continue
+            if resolve_relation(remote.model,other_app,other)==wanted:
+                tables.add(model_table(state,other_app,other))
+                tables|=relation_tables(state,other_app,other,field,name)
+    return tables
+def declared(migration):
+    source=Path(inspect.getsourcefile(migration.__class__)).read_text()
+    tree=ast.parse(source)
+    values=[node.value for node in tree.body if isinstance(node,(ast.Assign,ast.AnnAssign)) and
+        any(isinstance(t,ast.Name) and t.id=='UPDATE_SAFETY' for t in
+            (node.targets if isinstance(node,ast.Assign) else [node.target]))]
+    assert len(values)==1, 'opaque_operation_table_scope_unavailable'
+    declaration=ast.literal_eval(values[0])
+    assert type(declaration) is dict and declaration.get('schema_version')==1
+    assert type(declaration.get('tables')) is list
+    result=set()
+    for table in declaration['tables']:
+        assert type(table) is str and re.fullmatch(r'(postgres|clickhouse):[A-Za-z_][A-Za-z_0-9]*',table)
+        engine,table=table.split(':',1)
+        result.add(resolved(engine,table))
+    return result
+NO_TABLE={'AlterModelOptions','AlterModelManagers','CreateExtension','BloomExtension','BtreeGinExtension',
+    'BtreeGistExtension','CITextExtension','CryptoExtension','HStoreExtension','TrigramExtension',
+    'UnaccentExtension','CreateCollation','RemoveCollation'}
+MODEL_OPS={'AddField','RemoveField','AlterField','RenameField','AddIndex','RemoveIndex','RenameIndex',
+    'AddIndexConcurrently','RemoveIndexConcurrently','AddConstraint','RemoveConstraint',
+    'AddConstraintNotValid','ValidateConstraint','AlterConstraint','AlterModelTable',
+    'AlterModelTableComment','AlterUniqueTogether','AlterIndexTogether','AlterOrderWithRespectTo'}
+def touched(operation, migration, state):
+    app=migration.app_label
+    if type(operation) is migrations.SeparateDatabaseAndState:
+        physical=state.clone(); tables=set()
+        for child in operation.database_operations:
+            tables|=touched(child,migration,physical)
+            child.state_forwards(app,physical)
+        return tables
+    if type(operation) is migrations.RunPython:
+        return set() if operation.code is migrations.RunPython.noop else declared(migration)
+    if type(operation) is migrations.RunSQL:
+        return set() if type(operation.sql) is str and operation.sql==migrations.RunSQL.noop else declared(migration)
+    kind=type(operation).__name__
+    assert type(operation).__module__.startswith(('django.db.migrations.operations.',
+        'django.contrib.postgres.operations')), 'custom_operation_table_scope_unavailable'
+    if kind in NO_TABLE:
+        return set()
+    after=state.clone(); operation.state_forwards(app,after)
+    if kind=='CreateModel':
+        return {model_table(after,app,operation.name)}
+    if kind=='DeleteModel':
+        return {model_table(state,app,operation.name)}|inbound(state,app,operation.name)
+    if kind=='RenameModel':
+        return ({model_table(state,app,operation.old_name),model_table(after,app,operation.new_name)}|
+                inbound(state,app,operation.old_name)|inbound(after,app,operation.new_name))
+    assert kind in MODEL_OPS, 'unclassified_operation_table_scope_unavailable'
+    model=getattr(operation,'model_name',None) or getattr(operation,'name',None)
+    assert type(model) is str and model, 'unclassified_operation_table_scope_unavailable'
+    tables={model_table(state,app,model),model_table(after,app,model)}
+    if kind in ('AddField','AlterField','RemoveField','RenameField'):
+        names=(operation.name,) if kind!='RenameField' else (operation.old_name,operation.new_name)
+        for current in (state,after):
+            fields=current.models[(app,model.lower())].fields
+            for name in names:
+                field=fields.get(name)
+                tables|=relation_tables(current,app,model,field,name)
+                if field is not None and (getattr(field,'primary_key',False) or getattr(field,'unique',False)):
+                    tables|=inbound(current,app,model)
+    return tables
+state=loader.project_state(nodes=sorted(loader.applied_migrations),at_end=True)
+scopes=[]
+for migration, backwards in plan:
+    assert not backwards
+    tables=set()
+    for operation in migration.operations:
+        tables|=touched(operation,migration,state)
+        operation.state_forwards(migration.app_label,state)
+    scopes.append(dict(app_label=migration.app_label,name=migration.name,
+        tables=[dict(engine=engine,table=table) for engine,table in sorted(tables)]))
+# ONE final line (decode_product_output reads only the last line): the same
+# real-loader plan as TARGET_LOADER_PLAN plus its pre-start table scope.
+print(json.dumps(dict(planned=sorted([list(node) for node in loader.graph.nodes]),
+    inventory=inventory,inventory_sha256=hashlib.sha256(json.dumps(inventory,sort_keys=True,
+    separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()).hexdigest(),
+    pending=[dict(app_label=migration.app_label,name=migration.name) for migration,backwards in plan],
+    database_schemas=schemas,pending_migration_tables=scopes)))
+'''
+
+
+def target_table_scope_probe():
+    """Fixed read-only target-image program; never import target Django on host."""
+    from scripts.update_rehearsal_shipping import TARGET_LOADER_PLAN
+    return TARGET_LOADER_PLAN + PENDING_TABLE_SCOPE
+
+
+def pending_table_scope_record(result, *, target_image_digest, source_applied_sha256):
+    """Corpus record from ONE run of target_table_scope_probe() in exact B.
+
+    The stage driver runs the fixed program (not TARGET_LOADER_PLAN alone) in
+    its networkless read-only B loader with stdin {'applied': A's observed
+    applied set, 'database_schemas': {'postgres','clickhouse'} read from cold A},
+    decodes the final line, and stores this as private evidence
+    'pending_table_scope_probe' plus 'pending_migration_tables' = its scope.
+    """
+    _keys(result, ('planned', 'inventory', 'inventory_sha256', 'pending', 'database_schemas',
+                   'pending_migration_tables'), 'incomplete target migration table probe output')
+    equal(result['inventory_sha256'], sha(json.dumps(result['inventory'], sort_keys=True, separators=(',', ':'),
+          ensure_ascii=False, allow_nan=False).encode()), 'table scope inventory hash differs')
+    equal([{k: item[k] for k in ('app_label', 'name')} for item in result['pending_migration_tables']],
+          result['pending'], 'table scope does not cover the exact pending plan')
+    return dict(program_sha256=sha(target_table_scope_probe().encode()), target_image_digest=target_image_digest,
+                target_inventory_sha256=result['inventory_sha256'], source_applied_sha256=source_applied_sha256,
+                database_schemas=copy.deepcopy(result['database_schemas']),
+                pending_migration_tables=copy.deepcopy(result['pending_migration_tables']))
+
+
+def validate_scope_probe(fields, corpus, target):
+    """Bind pre-start scope to the fixed program, actual B inventory and cold A."""
+    probe = corpus.get('pending_table_scope_probe')
+    if type(probe) is not dict:
+        raise ManualRelease('migration_measurement_unavailable')
+    _keys(probe, ('program_sha256', 'target_image_digest', 'target_inventory_sha256',
+                  'source_applied_sha256', 'database_schemas', 'pending_migration_tables'),
+          'incomplete target migration table probe')
+    equal(probe['program_sha256'], sha(target_table_scope_probe().encode()), 'table scope probe implementation differs')
+    equal(probe['target_image_digest'], target['components']['standalone']['digest'], 'table scope target digest differs')
+    equal(probe['target_inventory_sha256'], fields['migration_evidence']['target_inventory_sha256'],
+          'table scope target inventory differs')
+    equal(probe['source_applied_sha256'], fields['migration_evidence']['source_applied_set_sha256'],
+          'table scope source applied set differs')
+    _keys(probe['database_schemas'], ('postgres', 'clickhouse'), 'missing independently observed database schemas')
+    need(all(type(v) is str and re.fullmatch(r'[a-z_][a-z0-9_]{0,62}', v)
+             for v in probe['database_schemas'].values()), 'invalid independently observed database schemas')
+    equal(probe['pending_migration_tables'], corpus['pending_migration_tables'], 'table probe scope differs')
+    select_reference_registry(load_high_volume_registry(), probe['pending_migration_tables'],
+                              plan=corpus['target_pending_plan'])
 
 
 def seed_reference_tables(registry, seed_one, measure_one, *, reference_rows=REFERENCE_ROWS):
@@ -1100,6 +1313,77 @@ def measure_transfer(operation, capture_snapshot, *, clock=time.monotonic):
                     'throughput_bytes_per_second': sum(volume_bytes.values()) / duration}, raw
 
 
+class VolumeRoleTransfers:
+    """Time actual per-role shipping transfers, not a divided aggregate duration.
+
+    The backup/restore adapter wraps each archive/extraction operation with
+    measure(). finish() obtains its byte numerator from the sealed complete tree.
+    Failed, repeated or absent roles have no measurement. These private rows do
+    not extend the public schema: the signed aggregate remains conservative and
+    host preflight already scales by the largest per-role volume ratio.
+    """
+    def __init__(self, *, clock=time.monotonic):
+        self.clock, self.timings, self.failed = clock, {}, False
+
+    def measure(self, role, operation):
+        need(role in VOLUME_ROLES and role not in self.timings and callable(operation),
+             'duplicate or unknown volume transfer')
+        self.timings[role] = None
+        started = self.clock()
+        try:
+            result = operation()
+            completed = self.clock()
+            need(_positive(completed - started), 'unmeasured volume transfer duration')
+            self.timings[role] = dict(started_monotonic=started, completed_monotonic=completed)
+            return result
+        except BaseException:
+            self.failed = True
+            raise
+
+    def finish(self, snapshot, members):
+        need(not self.failed and set(self.timings) == set(VOLUME_ROLES) and
+             all(value is not None for value in self.timings.values()), 'unrun volume role transfers')
+        sizes = _snapshot_volume_bytes(snapshot, members)
+        return dict(snapshot_generation=sha(canonical_json(snapshot)), measurement_basis=TRANSFER_BASIS,
+            roles={role: dict(self.timings[role], logical_bytes=sizes[role],
+                throughput_bytes_per_second=sizes[role] / (self.timings[role]['completed_monotonic'] -
+                                                         self.timings[role]['started_monotonic']))
+                for role in VOLUME_ROLES})
+
+
+def validate_volume_role_transfers(fields, corpus):
+    """A9 requires independently timed backup AND restore for every volume role."""
+    records = corpus.get('volume_role_transfers')
+    if type(records) is not dict or set(records) != {'backup', 'restore'}:
+        raise ManualRelease('transfer_measurement_unavailable')
+    snapshot = corpus['source_snapshot_inventory']
+    sizes = _snapshot_volume_bytes(snapshot, corpus['source_snapshot_members'])
+    generation = sha(canonical_json(snapshot))
+    for action in ('backup', 'restore'):
+        record, aggregate = records[action], corpus[action + '_transfer']
+        _keys(record, ('snapshot_generation', 'measurement_basis', 'roles'), 'invalid volume transfer evidence')
+        equal((record['snapshot_generation'], record['measurement_basis']), (generation, TRANSFER_BASIS),
+              'volume transfer generation or basis differs')
+        _keys(record['roles'], VOLUME_ROLES, 'incomplete volume transfer roles')
+        for role in VOLUME_ROLES:
+            item = record['roles'][role]
+            _keys(item, ('started_monotonic', 'completed_monotonic', 'logical_bytes',
+                         'throughput_bytes_per_second'), 'invalid per-role transfer measurement')
+            start, end = item['started_monotonic'], item['completed_monotonic']
+            need(type(start) in (int, float) and math.isfinite(start) and start >= 0 and
+                 type(end) in (int, float) and math.isfinite(end) and end > start,
+                 'invalid per-role transfer interval')
+            need(aggregate['started_monotonic'] <= start < end <= aggregate['completed_monotonic'],
+                 'volume transfer outside actual shipping operation')
+            equal(item['logical_bytes'], sizes[role], 'volume transfer bytes differ from sealed trees')
+            rate = sizes[role] / (end - start)
+            need(type(item['throughput_bytes_per_second']) in (int, float) and
+                 math.isfinite(item['throughput_bytes_per_second']) and
+                 item['throughput_bytes_per_second'] == rate, 'volume transfer rate differs from execution')
+        equal(fields[action + '_measurement']['reference_volume_bytes'], sizes,
+              'signed transfer volume roles differ')
+
+
 def interrupt_updater(process, *, boundary, checkpoint, restart):
     """Actually SIGKILL the updater and require a fresh recovery process.
 
@@ -1186,6 +1470,7 @@ def exercise(executor, *, deadline):
             cases.check(suite, name, assertion)
             if time.monotonic() >= deadline:
                 raise ManualRelease('suite_timed_out')
+    cases.complete()
     return cases
 
 
@@ -1267,6 +1552,313 @@ def retain_diagnostics(output, executor=None, *, failure=None):
     write_pair(((output / 'diagnostics.json', raw),))
 
 
+def collect_executed_row(row, target, executor, cases, output, *, index, registry, scope,
+                         reference, executor_sha, require_product_measurements=True):
+    """One private, complete row; never promote stage-status JSON to assertions."""
+    cases.complete()
+    from deploy.update.apply import Updater
+    from deploy.update.standalone_restore import StandaloneRestore
+    need(executor.shipping_executor_class is Updater and executor.shipping_restore_class is StandaloneRestore,
+         'shipping executor/restore required')
+    fields = copy.deepcopy(executor.measurements())
+    need(set(fields) == set(MEASURED_FIELDS) - {'executor_sha256', 'evidence_inventory_sha256'},
+         'incomplete measurements')
+    transition_measurements(fields)
+    binding = row.binding()
+    binding.update(fields, executor_sha256=executor_sha, dependencies=list(executor.dependencies))
+    corpus = executor.private_evidence()
+    need(type(corpus) is dict and {'source_witnesses', 'restored_witnesses', 'resource_samples'} <= set(corpus),
+         'incomplete private evidence')
+    equal(corpus.get('pending_migration_tables'), scope, 'pre-start table analysis changed during rehearsal')
+    measured_reference = validate_reference_inventory(corpus.get('large_volume_reference'), registry=registry,
+        pending_migration_tables=scope, plan=corpus.get('target_pending_plan'))
+    for table in reference:
+        equal(measured_reference.get((table['engine'], table['table'])), table,
+              'seed measurement differs from snapshot reference')
+    validate_executed_measurements(binding, corpus, target=target, predecessor_raw=row.release.raw_manifest)
+    if require_product_measurements:
+        validate_scope_probe(fields, corpus, target)
+        validate_volume_role_transfers(fields, corpus)
+    source = witness_inventory(corpus['source_witnesses'])
+    equal(witness_inventory(corpus['restored_witnesses']), source, 'restored witness namespace differs')
+    inventory = {}
+    total = 0
+    for key, value in corpus.items():
+        need(type(key) is str and re.fullmatch(r'[a-z][a-z0-9_]{0,60}', key), 'invalid private evidence key')
+        name, raw = str(index) + '-' + key + '.json', canonical_json({'value': value})
+        total += len(raw)
+        need(total <= MAX_EVIDENCE_BYTES, 'private evidence too large')
+        write_pair(((output / name, raw),))
+        inventory[name] = sha(raw)
+    binding.update(evidence_inventory=inventory, evidence_inventory_sha256=inventory_hash(inventory))
+    return binding
+
+
+def publish_executed_rows(target, rows, bindings, results, output, *, run_id, implementation,
+                          purpose='product', executor=None):
+    """The only affirmative writer. All cases, measurements and cleanup precede it."""
+    need(len(rows) == len(bindings) == len(results) and bool(rows), 'unrun predecessor matrix')
+    need(executor is not None and executor.cleanup_verified is True, 'disposable resource cleanup unverified')
+    for result in results:
+        result.complete()
+    equal(implementation_inventory(), implementation, 'executor changed during rehearsal')
+    policy = measured_policy(bindings, target)
+    approved = copy.deepcopy(target)
+    approved.update(compatibility=policy['compatibility'])
+    common = {'inputs_hash': inputs_hash(approved), 'repository': REPOSITORY, 'run_id': str(run_id),
+        'lane': 'product' if purpose == 'product' else 'pr-validation',
+        'candidate_sha256': sha(canonical_json(target)), 'producer_sha256': sha(Path(__file__).read_bytes()),
+        'executor_sha256': inventory_hash(implementation),
+        'high_volume_registry_sha256': sha(read_bytes(ROOT / 'deploy/update/high-volume-tables.json', MAX_EVIDENCE_BYTES))}
+    evidence_rows = []
+    for index, (row, binding, result) in enumerate(zip(rows, bindings, results)):
+        properties, reports = dict(common, binding_hash=manifest_hash(binding)), {}
+        for suite in SUITES:
+            raw = result.render(suite, topology_profile('standalone', ()), properties)
+            name = str(index) + '-' + suite + '.xml'
+            write_pair(((output / name, raw),))
+            reports[suite] = {'path': name, 'sha256': sha(raw)}
+        evidence_rows.append(dict(binding, reports=reports))
+        key = binding['predecessor']['raw_manifest_sha256']
+        write_pair(((output / (key + '.json'), row.release.raw_manifest),
+                    (output / (key + '.sigstore.json'), row.release.raw_bundle)))
+    envelope = dict(common, schema_version=2, run_id=run_id, rows=evidence_rows, executor_inventory=implementation)
+    retain_diagnostics(output, executor)
+    write_pair(((output / 'policy.json', canonical_json(policy)), (output / 'evidence.json', canonical_json(envelope))))
+    return policy
+
+
+def milestone_api():
+    """The parallel lane's sole dispatch contract; never hardcode CLI choices."""
+    module = importlib.import_module('scripts.update_rehearsal_milestone')
+    names = getattr(module, 'MILESTONES', None)
+    need(type(names) is tuple and names and len(set(names)) == len(names) and
+         all(type(n) is str and re.fullmatch(r'[a-z][a-z0-9_]{0,63}', n) for n in names),
+         'milestone dispatch contract differs')
+    if not callable(getattr(module, 'run_milestone', None)):
+        raise ManualRelease('shipping_executor_unavailable')
+    return module
+
+
+SIX_SUITES_PLANNED = {suite: 'planned' for suite in SUITES}
+
+
+def milestone_plans(module, args, directory):
+    """Daemon-free job plan of EVERY milestone, through run_milestone only.
+
+    Each dry run writes its own new directory; nothing is provisioned. The
+    plans are DATA about what a real dispatch would execute, never evidence.
+    """
+    directory.mkdir(mode=0o700)
+    plans = {}
+    for name in module.MILESTONES:
+        planned = argparse.Namespace(**vars(args))
+        planned.through, planned.dry_run, planned.out = name, True, directory / name
+        code = module.run_milestone(name, planned)
+        need(type(code) is int and code == 0, 'milestone plan unavailable')
+        plan = decode_document(read_bytes(directory / name / 'job-plan.json', MAX_EVIDENCE_BYTES), MAX_EVIDENCE_BYTES)
+        need(type(plan) is dict and plan.get('milestone') == name, 'milestone plan identity differs')
+        plans[name] = plan
+    return plans
+
+
+def select_qualification_milestone(plans, *, source_ref, target_ref, platform):
+    """(name, None, summary) only for ONE milestone planning all six suites on this pair.
+
+    A milestone qualifies for real dispatch only when its own job plan pins
+    exactly the requested source and target digests and platform AND plans all
+    six suites in that one session (qualification_suites == 'planned' for each).
+    Otherwise (None, reason, summary) refuses BEFORE any Docker work: no six-
+    suite plan at all is shipping_executor_unavailable; a six-suite plan pinned
+    to another pair is suite_unrun for the requested pair.
+    """
+    from deploy.update.manifest import parse_image_ref
+
+    def pin(ref):
+        try:
+            parsed = parse_image_ref(ref)
+        except Exception:
+            return None
+        return (parsed.repository, parsed.digest) if parsed.digest else None
+
+    requested = (pin(source_ref), pin(target_ref), platform)
+    need(None not in requested, 'requested pair must be digest pinned')
+    summary, six, matching = {}, [], []
+    for name, plan in plans.items():
+        pinned = (pin(plan.get('source_image')), pin(plan.get('target_image')), plan.get('platform'))
+        suites = plan.get('qualification_suites')
+        summary[name] = dict(source_image=plan.get('source_image'), target_image=plan.get('target_image'),
+            platform=plan.get('platform'), qualification_suites=copy.deepcopy(suites),
+            pins_requested_pair=pinned == requested, plans_six_suites=suites == SIX_SUITES_PLANNED)
+        if suites == SIX_SUITES_PLANNED:
+            six.append(name)
+            if pinned == requested:
+                matching.append(name)
+    if not six:
+        return None, 'shipping_executor_unavailable', summary
+    if len(matching) != 1:
+        return None, 'suite_unrun', summary
+    return matching[0], None, summary
+
+
+class QualificationSession:
+    """In-process six-suite sink for run_milestone(name, args) -> int.
+
+    Full qualify dispatches ONE milestone for real: the one whose job plan pins
+    the requested pair and plans all six suites (see select_qualification_
+    milestone). It passes this sink at args.qualification, with args.row/target/
+    budgets/registry/deadline/workspace. A milestone status file or zero exit is
+    NOT evidence. In that one runner session the stage driver must:
+      1. prepare_reference(executor) BEFORE its cold snapshot (A9 scope + seed);
+      2. check(suite, case, callable) AT each actual assertion, in SUITES order,
+         for every required_cases(suite, standalone) name, raising on failure;
+      3. capture(executor) after all six suites, while its stack still exists;
+      4. keep the executor until its verified cleanup (cleanup_verified=True).
+    The executor exposes shipping_executor_class=Updater, shipping_restore_class=
+    StandaloneRestore, dependencies, pending_migration_tables(), seed_reference_
+    table(entry, rows), measure_reference_table(entry), measurements() and
+    private_evidence() (including pending_table_scope_probe from
+    pending_table_scope_record() and volume_role_transfers from
+    VolumeRoleTransfers). finish() runs only after run_milestone returns 0;
+    cleanup, every assertion and raw A9 measurements are revalidated before any
+    proof row. Bounded --through runs never receive this sink.
+    """
+    def __init__(self, row, target, output, *, run_id, deadline, registry, index=0, output_exists=False):
+        self.row, self.target, self.output = row, copy.deepcopy(target), output
+        self.run_id, self.deadline, self.registry, self.index = run_id, deadline, registry, index
+        self.executed_cases = ExecutedCases()
+        self.implementation = implementation_inventory()
+        self.milestone_sha256 = sha(read_bytes(ROOT / 'scripts/update_rehearsal_milestone.py', MAX_EVIDENCE_BYTES))
+        self.executor = self.binding = self.scope = self.reference = None
+        self.shipping_executor_available = False
+        if not output_exists:
+            output.mkdir(mode=0o700)
+        else:
+            need(output.is_dir() and not output.is_symlink(), 'qualification output unavailable')
+
+    def _budget(self):
+        if time.monotonic() >= self.deadline:
+            raise ManualRelease('suite_timed_out')
+
+    def prepare_reference(self, executor):
+        self._budget()
+        need(self.executor is None, 'qualification executor is single use')
+        self.executor = executor
+        executor.executed_cases = self.executed_cases
+        self.scope = copy.deepcopy(executor.pending_migration_tables())
+        selected = select_reference_registry(self.registry, self.scope)
+        self.reference = seed_reference_tables(selected, executor.seed_reference_table, executor.measure_reference_table)
+        self._budget()
+
+    def check(self, suite, name, assertion):
+        self._budget()
+        need(self.executor is not None and self.binding is None, 'qualification assertion outside execution')
+        layout = topology_profile('standalone', ())
+        need(suite in SUITES and name in required_cases(suite, layout), 'unknown qualification assertion')
+        index = SUITES.index(suite)
+        need(all(set(self.executed_cases.cases[s]) == required_cases(s, layout) for s in SUITES[:index]) and
+             not any(self.executed_cases.cases[s] for s in SUITES[index + 1:]), 'qualification suite order differs')
+        self.executed_cases.active_suite = suite
+        self.executed_cases.check(suite, name, assertion)
+        self._budget()
+
+    def capture(self, executor):
+        self._budget()
+        need(executor is self.executor and self.binding is None, 'qualification executor changed')
+        self.executed_cases.complete()
+        self.binding = collect_executed_row(self.row, self.target, executor, self.executed_cases,
+            self.output, index=self.index, registry=self.registry, scope=self.scope, reference=self.reference,
+            executor_sha=inventory_hash(self.implementation))
+        # Bind the exact stage adapter as private hash-bound provenance in
+        # addition to the installed shipping executor's independently known hash.
+        raw = canonical_json({'value': dict(run_id=self.run_id, candidate_sha256=sha(canonical_json(self.target)),
+            implementation_sha256=self.milestone_sha256)})
+        name = str(self.index) + '-qualification_driver.json'
+        need(name not in self.binding['evidence_inventory'], 'duplicate qualification driver evidence')
+        write_pair(((self.output / name, raw),))
+        self.binding['evidence_inventory'][name] = sha(raw)
+        self.binding['evidence_inventory_sha256'] = inventory_hash(self.binding['evidence_inventory'])
+
+    def diagnostics(self):
+        result = dict(shipping_executor_available=self.shipping_executor_available,
+                      stage_sink_connected=self.executor is not None,
+                      measurements_captured=self.binding is not None)
+        if self.executor is not None and callable(getattr(self.executor, 'diagnostics', None)):
+            result['product'] = self.executor.diagnostics()
+        return result
+
+    def validate_finished(self):
+        self._budget()
+        self.executed_cases.complete()
+        if self.binding is None or self.executor is None:
+            raise ManualRelease('migration_measurement_unavailable')
+        need(self.executor.cleanup_verified is True, 'disposable resource cleanup unverified')
+        equal(sha(read_bytes(ROOT / 'scripts/update_rehearsal_milestone.py', MAX_EVIDENCE_BYTES)),
+              self.milestone_sha256, 'milestone implementation changed during qualification')
+        equal(implementation_inventory(), self.implementation, 'executor changed during rehearsal')
+
+    def finish(self):
+        self.validate_finished()
+        policy = publish_executed_rows(self.target, [self.row], [self.binding], [self.executed_cases], self.output,
+            run_id=self.run_id, implementation=self.implementation, executor=self.executor)
+        self.shipping_executor_available = True
+        return policy
+
+
+def produce_product(target, rows, workspace, output, *, run_id, docker_context, budgets, deadline, registry, progress):
+    """Dispatch each authenticated row through the same six-suite sink as qualify.
+
+    All plans are checked before provisioning. No policy or envelope is written
+    until every row, assertion, measurement, cleanup and implementation seal passes.
+    """
+    from deploy.update.manifest import parse_image_ref
+
+    def image_pin(manifest):
+        component = manifest['components']['standalone']
+        image = component['image']
+        return image if parse_image_ref(image).digest else image + '@' + component['digest']
+
+    need(0 < len(rows) <= ROW_LIMIT, 'unrun predecessor matrix')
+    module = milestone_api()
+    plans_root = workspace / 'product-plans'
+    plans_root.mkdir(mode=0o700)
+    dispatches = []
+    for index, row in enumerate(rows):
+        args = argparse.Namespace(source_ref=image_pin(row.release.manifest), target_ref=image_pin(target),
+            platform=row.platform, deployment_dir=row.deployment_directory, reference_scale='registered-100k',
+            boot_timeout=budgets.startup_seconds, docker_context=docker_context, run_id=run_id)
+        plans = milestone_plans(module, args, plans_root / str(index))
+        selected, reason, _ = select_qualification_milestone(plans, source_ref=args.source_ref,
+            target_ref=args.target_ref, platform=args.platform)
+        if selected is None:
+            raise ManualRelease(reason)
+        dispatches.append((row, args, selected))
+    sessions = []
+    for index, (row, args, selected) in enumerate(dispatches):
+        session = QualificationSession(row, target, output, run_id=run_id, deadline=deadline,
+            registry=registry, index=index, output_exists=True)
+        progress['session'] = session
+        args.through, args.dry_run = selected, False
+        args.out = workspace / ('product-milestone-' + str(index))
+        args.qualification, args.row, args.target = session, row, copy.deepcopy(target)
+        args.workspace = workspace / ('product-row-' + str(index))
+        args.workspace.mkdir(mode=0o700)
+        args.registry, args.budgets, args.deadline = registry, budgets, deadline
+        code = module.run_milestone(selected, args)
+        need(type(code) is int, 'invalid milestone exit status')
+        if code != 0:
+            raise ManualRelease('suite_failed')
+        session.validate_finished()
+        sessions.append(session)
+        progress['completed_rows'] = len(sessions)
+    for session in sessions:
+        session.validate_finished()
+        equal(session.implementation, sessions[0].implementation, 'executor changed between rows')
+    return publish_executed_rows(target, rows, [s.binding for s in sessions],
+        [s.executed_cases for s in sessions], output, run_id=run_id,
+        implementation=sessions[0].implementation, executor=sessions[-1].executor)
+
+
 def produce(target, rows, workspace, output, *, run_id, docker_context='colima-fagi-update',
             cosign='cosign', budgets=None, purpose='product'):
     """Publish no affirmative bytes until ALL exact rows and cleanup pass."""
@@ -1282,18 +1874,19 @@ def produce(target, rows, workspace, output, *, run_id, docker_context='colima-f
     budgets = budgets or Budgets()
     deadline = time.monotonic() + budgets.total_seconds
     bindings, results, qualified_rows = [], [], []
-    executor = None
+    executor, progress = None, {}
     try:
         registry = load_high_volume_registry()
-        factory = shipping_factory()  # fail BEFORE provisioning if integration is absent
+        if purpose == 'product':
+            return produce_product(target, rows, workspace, output, run_id=run_id,
+                docker_context=docker_context, budgets=budgets, deadline=deadline, registry=registry, progress=progress)
+        factory = shipping_factory()  # PR-only synthetic execution remains ineligible
         need(0 < len(rows) <= ROW_LIMIT, 'unrun predecessor matrix')
         implementation = implementation_inventory()
         executor_sha = inventory_hash(implementation)
-        registry_sha = sha(read_bytes(ROOT / 'deploy/update/high-volume-tables.json', MAX_EVIDENCE_BYTES))
         for index, row in enumerate(rows):
             if time.monotonic() >= deadline:
                 raise ManualRelease('suite_timed_out')
-            binding = row.binding()
             executor = factory(workspace, row, target, docker_context=docker_context,
                                resource_prefix=RESOURCE_PREFIX, budgets=budgets, deadline=deadline, registry=registry)
             # Keep the object when __enter__ fails, so first-boot diagnostics
@@ -1307,69 +1900,24 @@ def produce(target, rows, workspace, output, *, run_id, docker_context='colima-f
                 selected = select_reference_registry(registry, scope)
                 reference = seed_reference_tables(selected, executor.seed_reference_table, executor.measure_reference_table)
                 cases = exercise(executor, deadline=deadline)
-                fields = copy.deepcopy(executor.measurements())
-                need(set(fields) == set(MEASURED_FIELDS) - {'executor_sha256', 'evidence_inventory_sha256'}, 'incomplete measurements')
-                # This shared helper validates identity/order/count/hash, including positively measured zero.
-                transition_measurements(fields)
-                binding.update(fields, executor_sha256=executor_sha, dependencies=list(executor.dependencies))
-                corpus = executor.private_evidence()
-                need(type(corpus) is dict and {'source_witnesses', 'restored_witnesses', 'resource_samples'} <= set(corpus),
-                     'incomplete private evidence')
-                # The executor captures the source generation independently
-                # BEFORE any target migration. Do not append/replace reference
-                # evidence after metric validation (that used to permit invented
-                # denominators to enter the signed rate).
-                equal(corpus.get('pending_migration_tables'), scope, 'pre-start table analysis changed during rehearsal')
-                measured_reference = validate_reference_inventory(corpus.get('large_volume_reference'), registry=registry,
-                    pending_migration_tables=scope, plan=corpus.get('target_pending_plan'))
-                for table in reference:
-                    equal(measured_reference.get((table['engine'], table['table'])), table,
-                          'seed measurement differs from snapshot reference')
-                validate_executed_measurements(binding, corpus, target=target, predecessor_raw=row.release.raw_manifest)
-                source = witness_inventory(corpus['source_witnesses'])
-                equal(witness_inventory(corpus['restored_witnesses']), source, 'restored witness namespace differs')
-                inventory = {}
-                for key, value in corpus.items():
-                    need(type(key) is str and re.fullmatch(r'[a-z][a-z0-9_]{0,60}', key), 'invalid private evidence key')
-                    name, raw = str(index) + '-' + key + '.json', canonical_json({'value': value})
-                    need(len(raw) <= MAX_EVIDENCE_BYTES, 'private evidence too large')
-                    write_pair(((output / name, raw),))
-                    inventory[name] = sha(raw)
-                binding.update(evidence_inventory=inventory, evidence_inventory_sha256=inventory_hash(inventory))
+                binding = collect_executed_row(row, target, executor, cases, output, index=index,
+                    registry=registry, scope=scope, reference=reference, executor_sha=executor_sha,
+                    require_product_measurements=(purpose == 'product'))
             need(executor.cleanup_verified is True, 'disposable resource cleanup unverified')
             if time.monotonic() >= deadline:
                 raise ManualRelease('suite_timed_out')
             equal(implementation_inventory(), implementation, 'executor changed during rehearsal')
             bindings.append(binding); results.append(cases); qualified_rows.append(row)
-        # A PR run cannot be repackaged at the protected shipping boundary.
-        lane = 'product' if purpose == 'product' else 'pr-validation'
-        policy = measured_policy(bindings, target)
-        approved = copy.deepcopy(target)
-        approved.update(compatibility=policy['compatibility'])
-        common = {'inputs_hash': inputs_hash(approved), 'repository': REPOSITORY, 'run_id': str(run_id),
-            'lane': lane, 'candidate_sha256': sha(canonical_json(target)), 'producer_sha256': sha(Path(__file__).read_bytes()),
-            'executor_sha256': executor_sha, 'high_volume_registry_sha256': registry_sha}
-        evidence_rows = []
-        for index, (row, binding, result) in enumerate(zip(qualified_rows, bindings, results)):
-            properties, reports = dict(common, binding_hash=manifest_hash(binding)), {}
-            for suite in SUITES:
-                raw = result.render(suite, topology_profile('standalone', ()), properties)
-                name = str(index) + '-' + suite + '.xml'
-                write_pair(((output / name, raw),))
-                reports[suite] = {'path': name, 'sha256': sha(raw)}
-            evidence_rows.append(dict(binding, reports=reports))
-            key = binding['predecessor']['raw_manifest_sha256']
-            write_pair(((output / (key + '.json'), row.release.raw_manifest),
-                        (output / (key + '.sigstore.json'), row.release.raw_bundle)))
-        envelope = dict(common, schema_version=2, run_id=run_id, rows=evidence_rows, executor_inventory=implementation)
-        retain_diagnostics(output, executor)
-        write_pair(((output / 'policy.json', canonical_json(policy)), (output / 'evidence.json', canonical_json(envelope))))
-        return policy
-    except Exception as exc:
-        failure = failure_diagnostics(exc, executor, completed_rows=len(results))
+        # PR evidence remains deliberately ineligible at the product boundary.
+        return publish_executed_rows(target, qualified_rows, bindings, results, output, run_id=run_id,
+            implementation=implementation, purpose=purpose, executor=executor)
+    except (Exception, Interrupted, KeyboardInterrupt) as exc:
+        diagnostics_source = progress.get('session', executor)
+        failure = failure_diagnostics(exc, diagnostics_source,
+            completed_rows=progress.get('completed_rows', len(results)))
         failure['candidate_sha256'] = sha(canonical_json(target))
         write_pair(((output / 'failure.json', canonical_json(failure)),))
-        retain_diagnostics(output, executor, failure=failure)
+        retain_diagnostics(output, diagnostics_source, failure=failure)
         if isinstance(exc, ManualRelease):
             raise
         raise ManualRelease('suite_failed') from None
@@ -1463,10 +2011,26 @@ def select_retained_layout(source, proof_raw, directory, platform):
     return matches[0]
 
 
+def _milestone_outcome(directory):
+    """Bounded stage/failure labels from the dispatched milestone, never evidence."""
+    try:
+        record = decode_document(read_bytes(directory / 'milestone.json', MAX_EVIDENCE_BYTES), MAX_EVIDENCE_BYTES)
+    except Exception:
+        return None
+    failure = record.get('failure') if type(record.get('failure')) is dict else None
+    return dict(status=record.get('status') if record.get('status') in ('passed', 'failed') else None,
+        executed_stages=[s for s in record.get('executed_stages', []) if type(s) is str][:64]
+            if type(record.get('executed_stages')) is list else [],
+        cleanup_verified=record.get('cleanup_verified') is True,
+        failure=None if failure is None else {k: str(failure[k])[:512] for k in
+            ('stage', 'reason', 'exception_type', 'detail') if k in failure})
+
+
 def qualify(argv):
     """Single native pair, with a nonzero failure exit even for notify-only rows."""
+    module = importlib.import_module('scripts.update_rehearsal_milestone')
     parser = argparse.ArgumentParser(prog='rehearse_update_compatibility.py qualify')
-    parser.add_argument('--through', choices=('source_snapshot', 'target_readiness'),
+    parser.add_argument('--through', choices=module.MILESTONES,
                         help='Bounded milestone only; never writes a qualification/proof row')
     parser.add_argument('--dry-run', action='store_true', help='Write the milestone job plan without Docker')
     parser.add_argument('--source-ref')
@@ -1480,7 +2044,7 @@ def qualify(argv):
     parser.add_argument('--docker-context')
     parser.add_argument('--run-id', type=int, default=int(os.environ.get('GITHUB_RUN_ID', '1')))
     args = parser.parse_args(argv)
-    args.docker_context = args.docker_context or ('colima-fagi-update' if args.through or sys.platform=='darwin' else 'default')
+    args.docker_context = args.docker_context or 'colima-fagi-update'
     if args.through:
         if any((args.source_ref, args.target_ref, args.deployment_dir, args.reference_scale, args.public_key)):
             parser.error('milestones use fixed release tags/pins, not qualification or trust inputs')
@@ -1488,10 +2052,12 @@ def qualify(argv):
             parser.error('Milestones run only on native linux/amd64 Actions')
         if not 1 <= args.boot_timeout <= 4200:
             parser.error('source boot ceiling must be between 1 and 4200 seconds')
-        from scripts.update_rehearsal_milestone import run
-        return run(args)
+        module = milestone_api()
+        code = module.run_milestone(args.through, args)
+        need(type(code) is int and code in (0, 2), 'invalid milestone exit status')
+        return code
     if args.dry_run:
-        parser.error('--dry-run requires --through source_snapshot or target_readiness')
+        parser.error('--dry-run requires --through')
     for name in ('source_ref', 'target_ref', 'platform', 'deployment_dir', 'reference_scale'):
         if getattr(args, name) is None:
             parser.error('--'+name.replace('_', '-')+' is required for full qualification')
@@ -1499,8 +2065,9 @@ def qualify(argv):
     need(not args.out.exists() and not args.out.is_symlink(), 'qualification output must be new')
     args.out.mkdir(mode=0o700, parents=True)
     output, workspace = args.out / 'rows', args.out / 'workspace'
-    phase = 'context_validation'
+    phase, session, dispatch, selected, milestone = 'context_validation', None, None, None, None
     try:
+        need(type(args.run_id) is int and 0 < args.run_id <= 9007199254740991, 'invalid run identity')
         _validate_context(args.docker_context, args.out)
         from deploy.update.manifest import parse_image_ref, hash_path
         from deploy.update.trust import FetchedManifest
@@ -1534,24 +2101,53 @@ def qualify(argv):
         release = DiscoveredRelease(raw, bundle_raw, manifest_hash(old), sha(canonical_json(
             dict(method=checked.method, signer=checked.signer, public_key_sha256=checked.public_key_sha256))), snapshot,
             release_proof=proof_raw or b'')
-        workspace.mkdir(mode=0o700)
         row = Row(release, execution, old['source_sha'], dependencies, args.platform, args.deployment_dir.resolve())
+        # Plan every milestone through the stated dispatch contract, daemon-free,
+        # and refuse BEFORE provisioning unless ONE plans all six suites for
+        # exactly this pair. A bounded milestone of another pair is not evidence.
+        phase = 'plan_milestones'
+        module = milestone_api()
+        plans = milestone_plans(module, args, args.out / 'milestone-plans')
+        selected, reason, dispatch = select_qualification_milestone(plans, source_ref=args.source_ref,
+            target_ref=args.target_ref, platform=args.platform)
+        if selected is None:
+            raise ManualRelease(reason)
         phase = 'shipping_product_rehearsal'
-        produce(target, [row], workspace, output, run_id=args.run_id, docker_context=args.docker_context,
-                budgets=Budgets(startup_seconds=args.boot_timeout), purpose='product')
+        workspace.mkdir(mode=0o700)
+        budgets = Budgets(startup_seconds=args.boot_timeout)
+        deadline = time.monotonic() + budgets.total_seconds
+        registry = load_high_volume_registry()
+        session = QualificationSession(row, target, output, run_id=args.run_id, deadline=deadline, registry=registry)
+        milestone_args = argparse.Namespace(**vars(args))
+        milestone_args.through, milestone_args.dry_run = selected, False
+        milestone_args.out = args.out / 'milestones' / selected
+        milestone_args.qualification = session
+        milestone_args.row, milestone_args.target = row, copy.deepcopy(target)
+        milestone_args.workspace, milestone_args.registry = workspace, registry
+        milestone_args.budgets, milestone_args.deadline = budgets, deadline
+        # One synchronous call owns the one stack that runs all six suites.
+        code = module.run_milestone(selected, milestone_args)
+        need(type(code) is int, 'invalid milestone exit status')
+        milestone = _milestone_outcome(milestone_args.out)
+        if code != 0:
+            raise ManualRelease('suite_failed')
+        session.finish()
         envelope = decode_document(read_bytes(output / 'evidence.json', MAX_EVIDENCE_BYTES), MAX_EVIDENCE_BYTES)
         equal(len(envelope['rows']), 1, 'single-pair row count differs')
         result = dict(schema_version=1, eligible=True, rows_directory='rows', row=envelope['rows'][0],
+                      shipping_executor_available=session.shipping_executor_available,
+                      milestone_dispatched=selected, milestone_outcome=milestone,
                       candidate_sha256=sha(canonical_json(target)), run_id=args.run_id)
         write_pair(((args.out / 'proof-row.json', canonical_json(result)),))
         return 0
-    except Exception as exc:
-        diagnostics = failure_diagnostics(exc)
+    except (Exception, Interrupted, KeyboardInterrupt) as exc:
+        diagnostics = failure_diagnostics(exc, session)
         reason = diagnostics['reason']
-        counts = {s: 0 for s in SUITES}
-        failed = None
+        counts = diagnostics['executed_assertions']
+        failed = diagnostics['failed_assertion']
         if (output / 'failure.json').is_file():
             diagnostics = decode_document(read_bytes(output / 'failure.json'))
+            reason = diagnostics['reason']
             counts = diagnostics['executed_assertions']
             failed = diagnostics['failed_assertion']
         layout = topology_profile('standalone', ())
@@ -1559,15 +2155,19 @@ def qualify(argv):
                       'passed' if counts[s] == len(required_cases(s, layout)) else
                       'incomplete' if counts[s] else 'unrun') for s in SUITES}
         result = dict(diagnostics, schema_version=1, eligible=False, reason=reason, completed_rows=0,
+            shipping_executor_available=False,
             phase=phase, suites=suites, executed_assertions=counts, failed_assertion=failed,
-            candidate_sha256=sha(canonical_json(target)) if target else None)
+            candidate_sha256=sha(canonical_json(target)) if target else None,
+            milestone_dispatch=dispatch, milestone_dispatched=selected, milestone_outcome=milestone or
+            (_milestone_outcome(args.out / 'milestones' / selected) if selected else None))
         write_pair(((args.out / 'proof-row.json', canonical_json(result)),))
         if not (args.out / 'failure.json').exists():
             write_pair(((args.out / 'failure.json', canonical_json(result)),))
         if (output / 'diagnostics.json').is_file():
             write_pair(((args.out / 'diagnostics.json', read_bytes(output / 'diagnostics.json', MAX_EVIDENCE_BYTES)),))
         else:
-            retain_diagnostics(args.out, failure=failure_diagnostics(exc))
+            # CI uploads only diagnostics.json: keep reason, phase and milestone pins.
+            retain_diagnostics(args.out, session, failure=result)
         print('qualification refused: ' + reason, file=sys.stderr)
         return 2
 
@@ -1575,47 +2175,74 @@ def qualify(argv):
 def package(argv):
     """Strict executed product evidence -> local test-key signed package only."""
     parser = argparse.ArgumentParser(prog='rehearse_update_compatibility.py package')
-    parser.add_argument('--rows', type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--rows', type=Path, help='single-pair qualify output')
+    source.add_argument('--evidence', type=Path, help='same-job protected producer evidence, not an external verdict')
     parser.add_argument('--target', type=Path, required=True)
-    parser.add_argument('--key', type=Path, required=True)
-    parser.add_argument('--public-key', type=Path, required=True)
+    signing = parser.add_mutually_exclusive_group(required=True)
+    signing.add_argument('--key', type=Path, help='explicit LOCAL TEST private key only')
+    signing.add_argument('--ephemeral-key', action='store_true', help='generate a fresh private local-test key in the new output')
+    parser.add_argument('--public-key', type=Path, help='test predecessor public key; also the --key verification key')
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--run-id', type=int, required=True)
     args = parser.parse_args(argv)
     phase = 'read_qualification_row'
     created = False
     try:
-        result = decode_document(read_bytes(args.rows / 'proof-row.json', MAX_EVIDENCE_BYTES), MAX_EVIDENCE_BYTES)
-        need(result.get('eligible') is True and result.get('rows_directory') == 'rows'
-             and result.get('run_id') == args.run_id, 'unqualified rows cannot be packaged')
         target = validate_manifest(decode_document(read_bytes(args.target)))
-        equal(result['candidate_sha256'], sha(canonical_json(target)), 'package candidate differs')
-        need(not args.out.exists(), 'package output must be new')
+        if args.rows is not None:
+            result = decode_document(read_bytes(args.rows / 'proof-row.json', MAX_EVIDENCE_BYTES), MAX_EVIDENCE_BYTES)
+            need(result.get('eligible') is True and result.get('rows_directory') == 'rows'
+                 and result.get('run_id') == args.run_id, 'unqualified rows cannot be packaged')
+            equal(result['candidate_sha256'], sha(canonical_json(target)), 'package candidate differs')
+            evidence = args.rows / 'rows'
+        else:
+            # This is not a bypass: build() independently verifies the lane,
+            # frozen candidate/run, every report, raw measurement and source trust.
+            evidence = args.evidence
+        need(not args.out.exists() and not args.out.is_symlink(), 'package output must be new')
+        need(not (evidence / 'failure.json').exists() and not (evidence / 'manual.json').exists(),
+             'failed qualification cannot be packaged')
+        need(args.ephemeral_key or args.public_key is not None, 'explicit test-key pair required')
         from scripts.build_update_compatibility_proof import build
-        evidence = args.rows / 'rows'
         phase = 'validate_executed_evidence'
         proof, manifest = build(target, decode_document(read_bytes(evidence / 'policy.json')), evidence,
             run_id=args.run_id, verifier=_local_verifier(args.public_key))
-        # Require an explicit readable private key; there is no keyless fallback.
-        phase = 'read_local_test_key'
-        key_bytes = read_bytes(args.key, 65536)
-        need(b'PRIVATE KEY' in key_bytes, 'explicit local test private key required')
+        # Key generation is AFTER all strict evidence checks. It never reads a
+        # production secret and never invokes keyless signing or a transparency log.
         args.out.mkdir(mode=0o700, parents=True)
         created = True
+        phase = 'read_local_test_key'
+        key, signing_public_key = args.key, args.public_key
+        if args.ephemeral_key:
+            phase = 'generate_ephemeral_test_key'
+            prefix = args.out.resolve() / 'local-test-key'
+            command(['cosign', 'generate-key-pair', '--output-key-prefix', prefix], timeout=60,
+                    env=dict(os.environ, COSIGN_PASSWORD=''))
+            key, signing_public_key = Path(str(prefix) + '.key'), Path(str(prefix) + '.pub')
+            key.chmod(0o600)
+        key_bytes = read_bytes(key, 65536)
+        need(b'PRIVATE KEY' in key_bytes, 'explicit local test private key required')
+        read_bytes(signing_public_key, 65536)
         from deploy.update.compatibility import PROOF_ASSET
         write_pair(((args.out / PROOF_ASSET, proof), (args.out / MANIFEST_ASSET, manifest)))
         phase = 'sign_local_test_manifest'
-        command(['cosign', 'sign-blob', '--yes', '--key', args.key.resolve(), '--tlog-upload=false',
+        command(['cosign', 'sign-blob', '--yes', '--key', key.resolve(), '--tlog-upload=false',
                  '--use-signing-config=false', '--bundle', args.out / BUNDLE_ASSET, args.out / MANIFEST_ASSET],
-                timeout=60, env=dict(os.environ, COSIGN_PASSWORD=os.environ.get('COSIGN_PASSWORD', '')))
+                timeout=60, env=dict(os.environ, COSIGN_PASSWORD='' if args.ephemeral_key else os.environ.get('COSIGN_PASSWORD', '')))
         phase = 'verify_local_test_package'
         from deploy.update.trust import FetchedManifest
-        verified = _local_verifier(args.public_key).verify(FetchedManifest(
+        verified = _local_verifier(signing_public_key).verify(FetchedManifest(
             'local-test-package', args.out, args.out / MANIFEST_ASSET,
             manifest, validate_manifest(decode_document(manifest)), args.out / BUNDLE_ASSET))
         need(verified.verified is True, 'local test package signature rejected')
+        write_pair(((args.out / 'local-test.json', canonical_json(dict(schema_version=1,
+            purpose='LOCAL TEST ONLY; not release trust or product qualification by itself',
+            ephemeral_key=bool(args.ephemeral_key), run_id=args.run_id,
+            candidate_sha256=sha(canonical_json(target)), manifest_sha256=sha(manifest), proof_sha256=sha(proof),
+            public_key_sha256=sha(read_bytes(signing_public_key, 65536))))),))
         return 0
-    except Exception as exc:
+    except (Exception, Interrupted, KeyboardInterrupt) as exc:
         failure = dict(failure_diagnostics(exc), phase=phase)
         if created:
             # A partially signed directory is never a usable package. Keep a
@@ -1657,7 +2284,8 @@ def main(argv=None):
         _validate_context(args.docker_context, args.workspace)
         need(not args.workspace.exists() and not args.output.exists(), 'workspace/output must be new')
         args.workspace.mkdir(mode=0o700, parents=True)
-        shipping_factory()  # no discovery/network/Docker if the shipping executor is not integrated
+        if args.purpose == 'pr-validation':
+            shipping_factory()  # no discovery/network/Docker if PR integration is absent
         verifier = Verifier(load_settings(ROOT, environ={}), host_only=True)
         verifier.require_host()
         discovery = ReleaseDiscovery(HttpCache(args.workspace / 'discovery'), verifier)

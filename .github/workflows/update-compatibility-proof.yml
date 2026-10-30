@@ -13,6 +13,8 @@ on:
       - scripts/build_update_compatibility_proof.py
       - scripts/rehearse_update_compatibility.py
       - scripts/update_rehearsal_shipping.py
+      - scripts/update_rehearsal_milestone.py
+      - deploy/tests/test_update_qualify_assembly.py
       - deploy/standalone/**
       - deploy/update/high-volume-tables.json
       - .github/workflows/build-image-multiarch.yml
@@ -63,6 +65,7 @@ jobs:
           umask 022
           python3 -m unittest discover -s deploy/tests -p 'test_update*release*.py' -v
           python3 -m unittest discover -s deploy/tests -p 'test_update_rehearsal_driver.py' -v
+          python3 -m unittest discover -s deploy/tests -p 'test_update_qualify_assembly.py' -v
           python3 -m unittest deploy.tests.update_e2e.test_automatic_publisher -v
           python3 -m unittest deploy.tests.test_update_standalone_state -v
 
@@ -103,6 +106,9 @@ jobs:
           # and packaging inside this 360-minute job. Startup is 4200s, not 900s.
           # Wave-3 PR CI may call the same entrypoint with --purpose pr-validation;
           # that evidence is deliberately ineligible for this product packager.
+          # The product producer selects a matching six-suite milestone for
+          # every authenticated predecessor/layout and connects its in-process
+          # QualificationSession. Until that plan exists this job refuses.
           # A new workspace is mandatory. No artifact is executed or imported.
           python3 -I scripts/rehearse_update_compatibility.py \
             --target "$RUNNER_TEMP/candidate/future-agi-update-manifest.json" \

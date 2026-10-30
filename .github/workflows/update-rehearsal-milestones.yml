@@ -70,13 +70,18 @@ jobs:
             ~/fagi-upd-e2e-driver-m1-plan-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ~/fagi-upd-e2e-driver-m1-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ~/fagi-upd-e2e-driver-m1-${{ github.run_id }}-${{ github.run_attempt }}/snapshot-*.members.jsonl
+            !**/recovery.json
+            !**/snapshot-recovery.json
+            !**/inventory.json
+            !**/snapshot-inventory.json
+            !**/op-*-intent.json
+            !**/op-*-result.json
           if-no-files-found: warn
           retention-days: 7
           compression-level: 6
-          # Never upload workspace: archives, generated env/private config, API
-          # credentials and raw command logs stay on the ephemeral runner. The
-          # exact snapshot inventory includes generated fixture container config;
-          # treat this test artifact as private, not production qualification.
+          # Never upload workspace or recovery.json: it contains the
+          # interpolated Compose model and generated credentials. Private recovery
+          # data stays on the ephemeral runner; this is not qualification evidence.
 
   target-readiness:
     name: M2 retained A snapshot then v1.54.0 target readiness (not qualification)
@@ -128,10 +133,210 @@ jobs:
             ~/fagi-upd-e2e-m2-plan-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ~/fagi-upd-e2e-m2-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ~/fagi-upd-e2e-m2-${{ github.run_id }}-${{ github.run_attempt }}/snapshot-*.members.jsonl
+            !**/recovery.json
+            !**/snapshot-recovery.json
+            !**/inventory.json
+            !**/snapshot-inventory.json
+            !**/op-*-intent.json
+            !**/op-*-result.json
           if-no-files-found: warn
           retention-days: 7
           compression-level: 6
-          # Never upload workspace: archives, generated env/private config, API
-          # credentials and raw command logs stay on the ephemeral runner. The
-          # exact snapshot inventory includes generated fixture container config;
-          # treat this test artifact as private, not production qualification.
+          # Never upload workspace or recovery.json: it contains the
+          # interpolated Compose model and generated credentials. Private recovery
+          # data stays on the ephemeral runner; this is not qualification evidence.
+
+  failure-restore:
+    name: M3 migrated target fails then shipping restore (not qualification)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Daemon-free driver safety tests
+        run: |
+          set -euo pipefail
+          PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s deploy/tests -p test_update_rehearsal_driver.py -v
+      - name: Isolated native daemon context in private runner config
+        run: |
+          set -euo pipefail
+          umask 077
+          dir="$(mktemp -d "$HOME/fagi-upd-e2e-m3-failure-docker.XXXXXX")"
+          docker --config "$dir" context create colima-fagi-update --docker host=unix:///var/run/docker.sock
+          printf 'DOCKER_CONFIG=%s\n' "$dir" >> "$GITHUB_ENV"
+      - name: Milestone job plan (no Docker mutations)
+        run: |
+          set -euo pipefail
+          umask 077
+          python -I scripts/rehearse_update_compatibility.py qualify --through failure_restore \
+            --dry-run --boot-timeout 4200 --docker-context colima-fagi-update \
+            --out "$HOME/fagi-upd-e2e-m3-failure-plan-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Same-session real stores and shipping failure restore
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(uname -m)" = x86_64
+          timeout --signal=TERM --kill-after=180s 135m \
+            python -I scripts/rehearse_update_compatibility.py qualify --through failure_restore \
+              --boot-timeout 4200 --docker-context colima-fagi-update \
+              --out "$HOME/fagi-upd-e2e-m3-failure-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Retain milestone evidence and bounded diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-restore-m3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ~/fagi-upd-e2e-m3-failure-plan-${{ github.run_id }}-${{ github.run_attempt }}/*.json
+            ~/fagi-upd-e2e-m3-failure-${{ github.run_id }}-${{ github.run_attempt }}/*.json
+            ~/fagi-upd-e2e-m3-failure-${{ github.run_id }}-${{ github.run_attempt }}/authority/*.json
+            ~/fagi-upd-e2e-m3-failure-${{ github.run_id }}-${{ github.run_attempt }}/snapshot-*.members.jsonl
+            !**/recovery.json
+            !**/snapshot-recovery.json
+            !**/inventory.json
+            !**/snapshot-inventory.json
+            !**/op-*-intent.json
+            !**/op-*-result.json
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 6
+          # Never upload workspace or recovery.json: it contains the
+          # interpolated Compose model and generated credentials. Private recovery
+          # data stays on the ephemeral runner; this is not qualification evidence.
+
+  interruption-restore:
+    name: M4 SIGKILL and fresh-process shipping recovery (not qualification)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Daemon-free driver safety tests
+        run: |
+          set -euo pipefail
+          PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s deploy/tests -p test_update_rehearsal_driver.py -v
+      - name: Isolated native daemon context in private runner config
+        run: |
+          set -euo pipefail
+          umask 077
+          dir="$(mktemp -d "$HOME/fagi-upd-e2e-m3-interruption-docker.XXXXXX")"
+          docker --config "$dir" context create colima-fagi-update --docker host=unix:///var/run/docker.sock
+          printf 'DOCKER_CONFIG=%s\n' "$dir" >> "$GITHUB_ENV"
+      - name: Milestone job plan (no Docker mutations)
+        run: |
+          set -euo pipefail
+          umask 077
+          python -I scripts/rehearse_update_compatibility.py qualify --through interruption_restore \
+            --dry-run --boot-timeout 4200 --docker-context colima-fagi-update \
+            --out "$HOME/fagi-upd-e2e-m3-interruption-plan-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Same-session real stores and shipping interruption restore
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(uname -m)" = x86_64
+          timeout --signal=TERM --kill-after=180s 354m \
+            python -I scripts/rehearse_update_compatibility.py qualify --through interruption_restore \
+              --boot-timeout 4200 --docker-context colima-fagi-update \
+              --out "$HOME/fagi-upd-e2e-m3-interruption-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Retain milestone evidence and bounded diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interruption-restore-m3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ~/fagi-upd-e2e-m3-interruption-plan-${{ github.run_id }}-${{ github.run_attempt }}/*.json
+            ~/fagi-upd-e2e-m3-interruption-${{ github.run_id }}-${{ github.run_attempt }}/*.json
+            ~/fagi-upd-e2e-m3-interruption-${{ github.run_id }}-${{ github.run_attempt }}/authority/*.json
+            ~/fagi-upd-e2e-m3-interruption-${{ github.run_id }}-${{ github.run_attempt }}/snapshot-*.members.jsonl
+            ~/fagi-upd-e2e-m3-interruption-${{ github.run_id }}-${{ github.run_attempt }}/interruption-*/*.json
+            ~/fagi-upd-e2e-m3-interruption-${{ github.run_id }}-${{ github.run_attempt }}/interruption-*/authority/*.json
+            ~/fagi-upd-e2e-m3-interruption-${{ github.run_id }}-${{ github.run_attempt }}/interruption-*/snapshot-*.members.jsonl
+            !**/recovery.json
+            !**/snapshot-recovery.json
+            !**/inventory.json
+            !**/snapshot-inventory.json
+            !**/op-*-intent.json
+            !**/op-*-result.json
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 6
+          # Never upload workspace or recovery.json: it contains the
+          # interpolated Compose model and generated credentials. Private recovery
+          # data stays on the ephemeral runner; this is not qualification evidence.
+
+  backup-integrity:
+    name: M5 sealed backup corruption refusal and tree equality (not qualification)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Daemon-free driver safety tests
+        run: |
+          set -euo pipefail
+          PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s deploy/tests -p test_update_rehearsal_driver.py -v
+      - name: Isolated native daemon context in private runner config
+        run: |
+          set -euo pipefail
+          umask 077
+          dir="$(mktemp -d "$HOME/fagi-upd-e2e-m3-integrity-docker.XXXXXX")"
+          docker --config "$dir" context create colima-fagi-update --docker host=unix:///var/run/docker.sock
+          printf 'DOCKER_CONFIG=%s\n' "$dir" >> "$GITHUB_ENV"
+      - name: Milestone job plan (no Docker mutations)
+        run: |
+          set -euo pipefail
+          umask 077
+          python -I scripts/rehearse_update_compatibility.py qualify --through backup_integrity \
+            --dry-run --boot-timeout 4200 --docker-context colima-fagi-update \
+            --out "$HOME/fagi-upd-e2e-m3-integrity-plan-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Same-session real stores and shipping backup integrity
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(uname -m)" = x86_64
+          timeout --signal=TERM --kill-after=180s 135m \
+            python -I scripts/rehearse_update_compatibility.py qualify --through backup_integrity \
+              --boot-timeout 4200 --docker-context colima-fagi-update \
+              --out "$HOME/fagi-upd-e2e-m3-integrity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Retain milestone evidence and bounded diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-integrity-m3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ~/fagi-upd-e2e-m3-integrity-plan-${{ github.run_id }}-${{ github.run_attempt }}/*.json
+            ~/fagi-upd-e2e-m3-integrity-${{ github.run_id }}-${{ github.run_attempt }}/*.json
+            ~/fagi-upd-e2e-m3-integrity-${{ github.run_id }}-${{ github.run_attempt }}/authority/*.json
+            ~/fagi-upd-e2e-m3-integrity-${{ github.run_id }}-${{ github.run_attempt }}/snapshot-*.members.jsonl
+            !**/recovery.json
+            !**/snapshot-recovery.json
+            !**/inventory.json
+            !**/snapshot-inventory.json
+            !**/op-*-intent.json
+            !**/op-*-result.json
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 6
+          # Never upload workspace or recovery.json: it contains the
+          # interpolated Compose model and generated credentials. Private recovery
+          # data stays on the ephemeral runner; this is not qualification evidence.

@@ -59,20 +59,12 @@ jobs:
               - 'scripts/docs_site.py'
               - 'scripts/check_update_safety.py'
               - '.github/workflows/update-ci.yml'
-            # These ship bootstrap/schema logic but Go-only PRs need not run
-            # all backend test shards. The required aggregate still depends on
-            # update-safety, so source-only collector/gateway changes cannot skip it.
+            # The gate also discovers shell sources by reading shebangs, which
+            # paths-filter cannot express (for example docs/rebuild-catalog).
+            # Run this daemon-free gate for every changed path without widening
+            # the separate backend filter that controls the heavy test shards.
             update_safety:
-              - '**/*.py'
-              - '**/*.go'
-              - '**/*.sql'
-              - '**/*.sh'
-              - 'fi-collector/**'
-              - 'agentcc-gateway/**'
-              - 'bin/**'
-              - 'scripts/**'
-              - 'deploy/**'
-              - 'docker-compose*.yml'
+              - '**'
             executor_base:
               - 'futureagi/code-executor/Dockerfile.base'
               - 'futureagi/code-executor/requirements.sandbox.txt'

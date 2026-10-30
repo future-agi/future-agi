@@ -31,14 +31,11 @@ HOME = Path.home().resolve()
 def native_ci():
     return sys.platform == 'linux' and os.environ.get('GITHUB_ACTIONS') == 'true'
 READINESS_SECONDS = 4200
-RELEASES = {
-    "v1.53.0": "sha256:c88acf35821b4b78d1406ec03c86c072381738429ffeaaa2175103c5c23fd863",
-    "v1.54.0": "sha256:22be1ed65d5e67f361ac9e99dc4c49873bbf7daf4a193c906d1689aa1249c056",
-    "v1.55.0": "sha256:5bd485f6952c395521745ca5e61a6cf6cd706e0076d8bb113bb073c613895187",
-}
+CRON_PERIOD_SECONDS = 300
+FAULT_SEAM = 'post-migration-stop-v1'  # Defined ONLY in deploy/tests, never in shipped runtime.
 
 
-def acceptance_policy(rows):
+def acceptance_policy(rows, *, source_boot_seconds=None):
     """Size CI timeouts from real signed rehearsal measurements, never fixtures.
 
     Runtime host-size admission remains mandatory; these are configured ceilings,
@@ -48,7 +45,8 @@ def acceptance_policy(rows):
     from fractions import Fraction
     from math import ceil
     from deploy.update.compatibility import transition_measurements
-    from deploy.update.contracts import AutomationPolicy
+    from deploy.update.contracts import (AUTOMATIC_POLICY_BOUNDS, POLICY_BOUNDS,
+                                         AutomationPolicy)
     measurements = [transition_measurements(row) for row in rows]
     if not measurements:
         raise ValueError('measured transition rows required')
@@ -63,12 +61,88 @@ def acceptance_policy(rows):
             total += max(Fraction(str(item.duration_seconds)), Fraction(work)/Fraction(str(item.throughput.value)))
         return ceil(2*total)+60
     migration = max(300, max(migration_seconds(m) for m in measurements))
+    startup = READINESS_SECONDS
+    if source_boot_seconds is not None:
+        import math
+        if (isinstance(source_boot_seconds,bool) or not isinstance(source_boot_seconds,(int,float)) or
+                not math.isfinite(source_boot_seconds) or not 0 < source_boot_seconds <= READINESS_SECONDS):
+            raise ValueError('genuine bounded source boot measurement required')
+        # The source's first boot includes ALL migrations (about 280 s on native
+        # runners). Twice that measured cold boot plus 60 s is conservative for
+        # startup/recovery; signed pending-migration work has its own budget.
+        # The qualify CLI still gets its independent full 4200 s boot ceiling.
+        # Keep a slow but valid measurement within both product policy fields'
+        # documented maxima instead of delegating an over-limit value to the
+        # generic AutomationPolicy malformed-policy error.
+        startup_limit = min(POLICY_BOUNDS['wait_timeout_seconds'][1],
+                            AUTOMATIC_POLICY_BOUNDS['recovery_startup_timeout_seconds'][1])
+        startup = min(startup_limit, max(300, ceil(2*source_boot_seconds)+60))
     policy = AutomationPolicy(qualification_policy='standalone-cold-restore-v1',
-        wait_timeout_seconds=READINESS_SECONDS, recovery_startup_timeout_seconds=READINESS_SECONDS,
+        wait_timeout_seconds=startup, recovery_startup_timeout_seconds=startup,
         migration_timeout_seconds=migration, backup_timeout_seconds=transfer('backup_measurement'),
-        restore_timeout_seconds=transfer('restore_measurement'), check_interval_seconds=300)
+        restore_timeout_seconds=transfer('restore_measurement'), check_interval_seconds=CRON_PERIOD_SECONDS,
+        pull_timeout_seconds=300, stability_period_seconds=STABILITY_SECONDS)
     return replace(policy, mode='apply', enabled=True,
                    tick_timeout_seconds=max(900, policy.required_tick_budget_seconds))
+
+
+# Native ubuntu-24.04 first boot of retained v1.53.0 including ALL migrations:
+# 314 s in CI run 40965747774 (M2 startup-result.json), about 280 s in M1 runs.
+# Used only to reserve acceptance time BEFORE A exists; once A boots, the job's
+# own measurement sizes every updater policy (acceptance_policy above).
+MEASURED_FIRST_BOOT_SECONDS = 314
+STABILITY_SECONDS = 180
+
+
+def acceptance_reserve_seconds(mode):
+    """LOWER bound on job time qualification must leave for the scenarios.
+
+    Not an updater budget and not a guard waiver: it only bounds each in-job
+    qualify so a hopeless overrun fails as qualification, with its diagnostics,
+    instead of the acceptance stage being killed by the job clock. It is a lower
+    bound on purpose: it must never cut short a qualification that could still
+    be followed by a passing acceptance. The stricter per-update guard
+    (scheduler_wait_budget, full measured tick plus cron delivery) still runs
+    before every wait. Per fresh A install: one measured first boot (2x+60).
+    Per update: a cron pickup (2 periods+60), a target start (2x boot+60) and
+    the stability period. A restore adds the restored A start and the later
+    latched cron wake.
+    """
+    boot = 2*MEASURED_FIRST_BOOT_SECONDS+60
+    update = 2*CRON_PERIOD_SECONDS+60 + boot + STABILITY_SECONDS
+    if mode == 'a-b-c':
+        return boot + 2*update
+    if mode == 'upgrade':
+        return (boot + update) + (boot + update + boot + 2*CRON_PERIOD_SECONDS+60)
+    raise ValueError('unknown acceptance mode')
+
+
+def scheduler_wait_budget(policy, deadline, *, now=None):
+    """One real cron delivery, a possible not-due delivery, and protected recovery."""
+    now = time.monotonic() if now is None else now
+    required = policy.tick_timeout_seconds + 2*CRON_PERIOD_SECONDS + 60
+    if deadline-now <= required:
+        raise TimeoutError('measured acceptance budgets exceed remaining native job time')
+    return required
+
+
+def native_launcher_path(environ):
+    """Short, explicit host PATH; cron rejects commands >=1000 bytes.
+
+    Actions' kitchen-sink PATH can be both too long and contain irrelevant
+    untrusted directories. Keep the actual installed tools and system utilities,
+    not links/shims in a permissive scratch directory. Production path/ancestry
+    validation and scheduler installation remain untouched.
+    """
+    paths = []
+    for name in ('docker-compose','docker','cosign'):
+        executable = shutil.which(name, path=environ.get('PATH',os.defpath))
+        if executable is None:
+            raise ValueError('native acceptance host tool missing: '+name)
+        directory = str(Path(executable).resolve(strict=True).parent)
+        if directory not in paths:
+            paths.append(directory)
+    return os.pathsep.join(dict.fromkeys([*paths, '/usr/bin', '/bin', '/usr/sbin', '/sbin']))
 
 
 def policy_cli_arguments(policy):
@@ -105,6 +179,37 @@ def read_attempt_ledger(directory):
     if doc.get('schema_version') != 2 or doc.get('attempt_id') != Path(directory).name:
         raise AssertionError('automatic ledger identity differs')
     return doc, leaves
+
+
+def read_event_records(store):
+    """Lock-free, read-only oracle for the installed scheduler's event leaves.
+
+    RunnerStateStore.read_events() takes state.lock NON-blocking. Polling it
+    while the real updater runs could make the updater's own state write fail
+    StoreBusy (a busy tick, or a contended restore commit), so the test would
+    perturb the transaction it observes. Event leaves are written atomically
+    (temp + rename, dot-prefixed temps), so read them without any lock; a leaf
+    pruned between listing and opening is skipped, never invented.
+    """
+    from deploy.update.runner_state import MAX_DOCUMENT_BYTES, EventRecord, _decode
+    directory = Path(store.path) / 'events'
+    try:
+        names = sorted(name for name in os.listdir(directory) if re.fullmatch(r'[0-9]{20}\.json', name))
+    except FileNotFoundError:
+        return ()
+    records = []
+    for name in names:
+        try:
+            fd = os.open(str(directory / name), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        except FileNotFoundError:
+            continue
+        with os.fdopen(fd, 'rb') as handle:
+            raw = handle.read(MAX_DOCUMENT_BYTES + 1)
+        record = _decode(EventRecord, raw)
+        if name != '%020d.json' % record.sequence:
+            raise AssertionError('scheduler event leaf identity differs')
+        records.append(record)
+    return tuple(records)
 
 
 def canonical(value: Any) -> bytes:
@@ -250,6 +355,8 @@ class ProductHarness:
         # Never inherit an operator's provider keys, Compose overlays or profiles.
         self.env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR") if key in os.environ}
         self.env["DOCKER_CONTEXT"] = CONTEXT
+        if native_ci():
+            self.env['PATH'] = native_launcher_path(self.env)
         self.sequence = max((int(p.stem.split("-")[1]) for p in self.evidence.glob("command-*.json")), default=0)
         self.model: Optional[dict] = None
         self.ports: dict = {}
@@ -272,10 +379,31 @@ class ProductHarness:
     def install(self):
         if self.source_manifest is None:
             raise ValueError('retained source manifest required')
+        from deploy.update.manifest import parse_image_ref
         component = self.source_manifest['components']['standalone']
         self.prepare(component['digest'], version=self.source_manifest['version'])
-        for service in self.model['services'].values():
-            self.docker('pull', service['image'], timeout=1800)
+        # Enrollment normalizes an installer-shaped VERSION, not VERSION@digest.
+        # Pull the immutable native leaf first (real RepoDigest), then establish
+        # only its ordinary installer alias. Never pull the index/plain app tag
+        # over it: an index digest would change the observed signed identity.
+        pinned = component['image']+'@'+component['digest']
+        self.docker('pull','--platform','linux/amd64',pinned,timeout=1800)
+        image = json.loads(self.docker('image','inspect',pinned).stdout)[0]
+        expected = parse_image_ref(component['image'])
+        if (image.get('Os'), image.get('Architecture')) != ('linux','amd64') or not any(
+                parse_image_ref(ref).name == expected.name and parse_image_ref(ref).digest == component['digest']
+                for ref in image.get('RepoDigests', [])):
+            raise AssertionError('source pull lacks the frozen native RepoDigest')
+        app_image = self.model['services']['app']['image']
+        if parse_image_ref(app_image).name != expected.name:
+            raise AssertionError('retained app repository differs from source release')
+        self.docker('image','tag',pinned,app_image)
+        alias = json.loads(self.docker('image','inspect',app_image).stdout)[0]
+        if alias['Id'] != image['Id']:
+            raise AssertionError('source installer alias differs from frozen image')
+        for name, service in self.model['services'].items():
+            if name != 'app':
+                self.docker('pull', service['image'], timeout=1800)
         return self.boot_source()
 
     def bin_update(self, *args, check=True):
@@ -298,9 +426,14 @@ class ProductHarness:
         return [state.load_receipt(path) for path in state.receipts()]
 
     def app_python(self, code, data):
-        result = self.docker('exec', '-i', self.service_id('app'), 'python', '-c', code,
+        # The exact invocation and strict final-line decoder that seeded the
+        # witnesses on a real runner in milestone 1 (shipping driver): isolated
+        # interpreter, -c joined to its source (a bare -c is Docker's context
+        # flag to the production process guard), JSON on stdin.
+        from scripts.update_rehearsal_shipping import decode_product_output
+        result = self.docker('exec', '-i', self.service_id('app'), 'python', '-I', '-B', '-c' + code,
                               input=canonical(data), timeout=180)
-        return json.loads(result.stdout.splitlines()[-1])
+        return decode_product_output(result.stdout)
 
     def clickhouse(self, sql, *, params=None):
         from deploy.update.envfile import read_env
@@ -493,9 +626,16 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
                             if self.pending_forward_attempt(manifest) != run_id:
                                 raise AssertionError('automatic attempt changed before fault')
                             current = json.loads(self.docker('inspect',app[0]['Id']).stdout)[0]
-                            if current['Image'] != app[0]['Image'] or not current['State']['Running']:
+                            labels = current['Config']['Labels']
+                            if (current['Id'] != app[0]['Id'] or current['Image'] != app[0]['Image'] or
+                                    not current['State']['Running'] or
+                                    labels.get('com.docker.compose.project') != self.project or
+                                    labels.get('com.docker.compose.service') != 'app'):
                                 raise AssertionError('target identity changed before fault')
-                            self.record('failure-after-migrations.json', dict(target=manifest['version'], run_id=run_id,
+                            if self.pending_forward_attempt(manifest) != run_id:
+                                raise AssertionError('target crossed the success decision before fault')
+                            self.record('failure-after-migrations.json', dict(fault_seam=FAULT_SEAM,
+                                target=manifest['version'], run_id=run_id,
                                 image_id=current['Image'], container_id=current['Id'], migrations=migrations,
                                 candidate_only=candidate_only))
                             self.docker('stop','--time','10',current['Id'],timeout=60)
@@ -611,7 +751,7 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
             for sock in sockets:
                 sock.close()
         values = dict(self.ports, COMPOSE_PROJECT_NAME=self.project,
-                      FUTURE_AGI_VERSION=version + "@" + digest,
+                      FUTURE_AGI_VERSION=version,
                       GOOGLE_APPLICATION_CREDENTIALS='/dev/null' if native_ci() else str(credentials),
                       FUTURE_AGI_TELEMETRY_DISABLED="true", COMPOSE_PROFILES="")
         import secrets
