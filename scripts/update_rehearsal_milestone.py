@@ -570,7 +570,7 @@ print(json.dumps(rows))
             fd = os.open(self.proofs,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
             try:
                 self.artifact = self.backup.run_quiesced(self.expected,self.ledger,self.source_observation,
-                                                        proof_directory_fd=fd)
+                    proof_directory_fd=fd,proof_filename=self.expected.attempt_id+'.json')
             finally: os.close(fd)
             self.backup.retire_helpers(self.ledger)
         # Only non-secret proofs/seals are exported. Complete inventories and
