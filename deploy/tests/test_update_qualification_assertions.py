@@ -3,7 +3,10 @@
 These tests execute validators/assertion wiring, not Docker or qualification.
 """
 import copy
+from contextlib import redirect_stdout
+import io
 import json
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -158,6 +161,70 @@ class QualificationAssertionTests(unittest.TestCase):
              self.assertRaisesRegex(p.RehearsalError, 'restored witness namespace changed'):
             driver.restore_assertions('failure_restore')
         self.assertEqual(cases.failed, ('failure_restore', 'restored_namespace_complete'))
+
+
+class TargetApplicationMappingTests(unittest.TestCase):
+    def setUp(self):
+        from deploy.update.standalone_state import load_migration_mapping
+        self.mapping = load_migration_mapping()
+        self.active = [(row, Path('/app/backend')/row['source_root']) for row in self.mapping['apps']
+                       if row['location']=='backend' and row['condition']=='always']
+        self.actual = [SimpleNamespace(label=row['label'], name=row['module'], path=str(root))
+                       for row, root in self.active]
+
+    def run_registry_check(self, actual):
+        from deploy.update.docker_host import fixed_source
+        from scripts.update_rehearsal_shipping import DJANGO_PREFIX
+        fixed = fixed_source('standalone.py').decode('utf-8')
+        self.assertEqual(q.target_app_mapping_probe(), DJANGO_PREFIX+fixed+q.TARGET_APP_MAPPING_CHECK)
+        # The fixed AST-based active_apps probe has its own source-fixture tests.
+        # Here exercise the real comparison/digest code against a Django registry
+        # double, without importing application code into the test host.
+        namespace = {'a':self.mapping}
+        exec(compile(fixed, 'fixed-standalone-probe', 'exec'), namespace)
+        namespace['active_apps'] = mock.Mock(return_value=self.active)
+        django_apps = SimpleNamespace(apps=SimpleNamespace(get_app_configs=lambda:actual))
+        output = io.StringIO()
+        with mock.patch.dict('sys.modules', {'django.apps':django_apps}), redirect_stdout(output):
+            exec(compile(q.TARGET_APP_MAPPING_CHECK, 'target-app-mapping-check', 'exec'), namespace)
+        namespace['active_apps'].assert_called_once_with(self.mapping)
+        return json.loads(output.getvalue())
+
+    def test_real_registry_check_hashes_the_same_structured_mapping_as_the_host(self):
+        result = self.run_registry_check(list(reversed(self.actual)))
+        self.assertEqual(result, {'active_app_mapping_sha256':p.manifest_hash(self.mapping)})
+        raw_configs = [vars(row) for row in self.actual]
+        self.assertNotEqual(result['active_app_mapping_sha256'], p.manifest_hash(raw_configs))
+
+    def test_registry_label_module_path_presence_and_duplicates_must_match(self):
+        for change in ('label','name','path','extra','missing','duplicate'):
+            actual = copy.deepcopy(self.actual)
+            if change in ('label','name','path'): setattr(actual[0], change, 'different')
+            elif change == 'extra': actual.append(SimpleNamespace(label='unknown',name='unknown',path='/other'))
+            elif change == 'missing': actual.pop()
+            else: actual.append(copy.deepcopy(actual[0]))
+            with self.subTest(change=change), self.assertRaisesRegex(AssertionError, 'registry differs'):
+                self.run_registry_check(actual)
+
+    def test_target_ready_checks_the_fixed_mapping_and_source_binding(self):
+        driver, _ = driver_fixture()
+        driver.corpus['source_runtime_observation']['active_app_mapping_sha256'] = p.manifest_hash(self.mapping)
+        def execute(source, argument):
+            self.assertEqual(source, q.target_app_mapping_probe())
+            self.assertEqual(argument, self.mapping)
+            return self.run_registry_check(self.actual)
+        driver.app_python = mock.Mock(side_effect=execute)
+        migrations = dict(applied=[],pending=[],planned=[])
+        with mock.patch.object(ProductHarness, 'migration_inventory', return_value=migrations):
+            self.assertIsNone(driver.target_ready(object(), {}))
+            self.assertEqual(driver._target_migrations, migrations)
+            driver.corpus['source_runtime_observation']['active_app_mapping_sha256'] = 'f'*64
+            with self.assertRaisesRegex(p.RehearsalError, 'differs from source'):
+                driver.target_ready(object(), {})
+            driver.app_python.side_effect = None
+            driver.app_python.return_value = {'active_app_mapping_sha256':'e'*64}
+            with self.assertRaisesRegex(p.RehearsalError, 'fixed host contract'):
+                driver.target_ready(object(), {})
 
 
 if __name__ == '__main__':

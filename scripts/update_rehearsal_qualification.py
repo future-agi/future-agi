@@ -7,6 +7,24 @@ import json
 from pathlib import Path
 
 
+TARGET_APP_MAPPING_CHECK = '''
+from django.apps import apps
+expected=sorted([{'label':row['label'],'name':row['module'],'path':str(root)}
+    for row,root in active_apps(a)],key=lambda row:row['label'])
+actual=sorted([{'label':app.label,'name':app.name,'path':app.path}
+    for app in apps.get_app_configs()],key=lambda row:row['label'])
+assert actual == expected, 'target Django registry differs from the fixed app mapping'
+print(json.dumps({'active_app_mapping_sha256':digest(a)}))
+'''
+
+
+def target_app_mapping_probe():
+    """Cross-check real Django against the same fixed mapping as the host probe."""
+    from deploy.update.docker_host import fixed_source
+    from scripts.update_rehearsal_shipping import DJANGO_PREFIX
+    return DJANGO_PREFIX + fixed_source('standalone.py').decode('utf-8') + TARGET_APP_MAPPING_CHECK
+
+
 def reference_scope(plan, scope, references):
     """Select only the independently established registered-table intersection."""
     from scripts import rehearse_update_compatibility as p
@@ -337,15 +355,15 @@ print(json.dumps({'postgres':schema}))
 
     def target_ready(self, runtime, roster):
         # Fault injection follows the independently recorded readiness suites.
-        from scripts.update_rehearsal_shipping import DJANGO_PREFIX
+        from deploy.update.standalone_state import load_migration_mapping
         self.runtime = runtime
         self._target_migrations = ProductHarness.migration_inventory(self)
-        mapping = self.app_python(DJANGO_PREFIX + '''
-from django.apps import apps
-rows=sorted([{'label':app.label,'name':app.name,'path':app.path} for app in apps.get_app_configs()],key=lambda r:r['label'])
-print(json.dumps(rows))
-''', {})
-        p.equal(p.manifest_hash(mapping), self.corpus['source_runtime_observation']['active_app_mapping_sha256'],
+        mapping = load_migration_mapping()
+        observed = self.app_python(target_app_mapping_probe(), mapping)
+        p.equal(observed, {'active_app_mapping_sha256': p.manifest_hash(mapping)},
+                'target active application mapping differs from the fixed host contract')
+        p.equal(observed['active_app_mapping_sha256'],
+                self.corpus['source_runtime_observation']['active_app_mapping_sha256'],
                 'target active application mapping differs from source')
 
     def current_source_witnesses(self):
