@@ -188,6 +188,19 @@ describe("AnnotationLabelsView", () => {
     expect(selects.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("tabs from search through the archive toggle before the type filter", async () => {
+    const user = userEvent.setup();
+    render(<AnnotationLabelsView />);
+
+    await user.click(screen.getByPlaceholderText("Search labels..."));
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Active" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Archived" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByText("All Types")).toHaveFocus();
+  });
+
   it("opens create drawer on Create Label click", async () => {
     const user = userEvent.setup();
     render(<AnnotationLabelsView />);

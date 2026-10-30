@@ -89861,7 +89861,9 @@
                     "title": "Config",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 }
             }
@@ -89877,7 +89879,9 @@
                     "items": {
                         "type": "object",
                         "additionalProperties": {
-                            "type": "object"
+                            "type": "object",
+                            "x-json-value": true,
+                            "description": "Any valid JSON value."
                         }
                     }
                 },
@@ -89955,7 +89959,9 @@
                     "title": "Arguments",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     },
                     "default": {}
                 }
@@ -90151,91 +90157,117 @@
                     "title": "Guardrails",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "routing": {
                     "title": "Routing",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "cache": {
                     "title": "Cache",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "rate_limiting": {
                     "title": "Rate limiting",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "budgets": {
                     "title": "Budgets",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "cost_tracking": {
                     "title": "Cost tracking",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "ip_acl": {
                     "title": "Ip acl",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "alerting": {
                     "title": "Alerting",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "privacy": {
                     "title": "Privacy",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "tool_policy": {
                     "title": "Tool policy",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "mcp": {
                     "title": "Mcp",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "a2a": {
                     "title": "A2a",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "audit": {
                     "title": "Audit",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "model_database": {
@@ -90249,7 +90281,9 @@
                     "title": "Model map",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 }
             }
@@ -90287,7 +90321,9 @@
                     "title": "Config",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 }
             }
@@ -90308,7 +90344,9 @@
                     "title": "Config",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object"
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 }
             }

@@ -56,7 +56,12 @@ export function compareUrl(envId, selected, baselineId) {
   return `${paths.dashboard.simulate.environments.compare(envId)}?runs=${ordered.join(",")}`;
 }
 
-export default function RunsSummary({ env, envState, onOpenRun }) {
+export default function RunsSummary({
+  env,
+  envState,
+  scenarioCount: scenarioCountProp,
+  onOpenRun,
+}) {
   const navigate = useNavigate();
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(RUNS_PAGE_SIZE);
@@ -91,7 +96,7 @@ export default function RunsSummary({ env, envState, onOpenRun }) {
   // fallback only serves mock runs and environments with no run-test.
   const scenarioCount =
     coveredScenarioCount ??
-    countCoveredScenarios(rows, envState.scenarios?.length ?? 0);
+    countCoveredScenarios(rows, scenarioCountProp ?? envState.scenarios?.length ?? 0);
   const baseline = overview.baseline;
   // The headline and chips read the latest run against the chosen baseline,
   // or the run before it when there's none (or the baseline is the latest).
@@ -366,6 +371,6 @@ RunsSummary.propTypes = {
     versioning: PropTypes.object,
   }).isRequired,
   envState: PropTypes.shape({ scenarios: PropTypes.array }).isRequired,
+  scenarioCount: PropTypes.number,
   onOpenRun: PropTypes.func,
-  onGo: PropTypes.func,
 };

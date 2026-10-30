@@ -18,9 +18,9 @@ export function gapsByTab(env, envState) {
 // The numeric badges the rail shows next to a tab label. Runs is resolved from
 // the live executions hook inside WorkspacePanels (envState.runs is empty for a
 // harness env), so it is intentionally left out of this client-state count.
-export function counts(envState) {
+export function counts(envState, scenarioCount) {
   return {
-    scenarios: envState?.scenarios?.length ?? 0,
+    scenarios: scenarioCount ?? envState?.scenarios?.length ?? 0,
     evals: envState?.evals?.length ?? 0,
   };
 }

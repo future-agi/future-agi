@@ -63,13 +63,14 @@ export default function EvalsStep({
   locked = false,
   backed = false,
   grading = false,
+  scenarioCount,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   // The id of the eval open for editing, or null.
   const [editingId, setEditingId] = useState(null);
   // The workspace routes away from this tab when there are no scenarios; this
   // is the backstop if it is ever rendered directly without them.
-  const needsScenarios = (envState?.scenarios?.length || 0) === 0;
+  const needsScenarios = (scenarioCount ?? (envState?.scenarios?.length || 0)) === 0;
 
   const store = useAppliedEvals(envState, patch);
   // Env-level "enable tool call evaluation". A backed env persists it through
@@ -604,6 +605,7 @@ export default function EvalsStep({
 }
 
 EvalsStep.propTypes = {
+  scenarioCount: PropTypes.number,
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE.isRequired,
   patch: PropTypes.func.isRequired,

@@ -47,6 +47,7 @@ export default function WorkspaceHeader({
   onStartRun,
   selectionActive = false,
   onGo,
+  scenarioCount: serverScenarioCount,
 }) {
   const navigate = useNavigate();
   const [renameOpen, setRenameOpen] = useState(false);
@@ -56,7 +57,7 @@ export default function WorkspaceHeader({
   // Scenarios tab takes over the primary Run, so the header yields while one is
   // active.
   const [repeats, setRepeats] = useRunRepeats(envState, patch);
-  const scenarioCount = envState?.scenarios?.length ?? 0;
+  const scenarioCount = serverScenarioCount ?? envState?.scenarios?.length ?? 0;
   // Cancel is offered only while the build is actually running (not once it has
   // failed/canceled). CancelBuildControl self-hides otherwise.
   const building =
@@ -291,4 +292,5 @@ WorkspaceHeader.propTypes = {
   selectionActive: PropTypes.bool,
   // Switches the workspace tab (Needs input links into a tab).
   onGo: PropTypes.func,
+  scenarioCount: PropTypes.number,
 };

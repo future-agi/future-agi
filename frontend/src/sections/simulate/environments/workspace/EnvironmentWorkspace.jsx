@@ -104,6 +104,11 @@ export default function EnvironmentWorkspace() {
   // Shares the ["harness-environment", id] cache the Evals tab already uses.
   const backed = source === "harness";
   const evalDetailQuery = useQuery(harnessEnvironmentQuery(envId, { enabled: backed }));
+  // The scenario count comes from the detail, not the client store
+  // (seeded once, so it would stay at the first set of scenarios).
+  const backedScenarioCount = backed
+    ? (evalDetailQuery.data?.overview?.scenario_count ?? undefined)
+    : undefined;
   // While the job is still deriving, the harness bootstrap is only a placeholder
   // (an endpoint-agent stub with whatever scenarios the run has emitted so far, if
   // any) — and useEnvState seeds byEnv once, so seeding it now would freeze that
@@ -409,7 +414,13 @@ export default function EnvironmentWorkspace() {
     navigate(paths.dashboard.simulate.environments.detail(fork.env.id));
   };
 
-  const runnable = canRunHeader(source, env, canRun);
+  // A backed env's run gate reads the server scenario count, not the seeded
+  // client list, which keeps the count from first load.
+  const runnable = canRunHeader(
+    source,
+    env,
+    backedScenarioCount != null ? !!envState.agent && backedScenarioCount > 0 : canRun,
+  );
 
 
   // A scenario selection on the Scenarios tab owns the primary Run — the header
@@ -499,13 +510,14 @@ export default function EnvironmentWorkspace() {
         envState={envState}
         patch={patch}
         canRun={runnable && !runMutation.isPending && !detailBlock}
-        runBlockedReason={detailBlock || blockedReason(envState, env, backed, runMutation.isPending)}
+        runBlockedReason={detailBlock || blockedReason(envState, env, backed, runMutation.isPending, backedScenarioCount)}
         locked={locked}
         backed={source === "harness"}
         onFork={onFork}
         onStartRun={startRun}
         selectionActive={selectionActive}
         onGo={setTab}
+        scenarioCount={backedScenarioCount}
       />
       {creditBanner}
       {refusalLine}
@@ -594,13 +606,13 @@ export default function EnvironmentWorkspace() {
             backed={source === "harness"}
             onFork={onFork}
             gapsByTab={sampleGaps ? gapsByTab(env, serverEnvState) : undefined}
-            counts={counts(serverEnvState)}
+            counts={counts(serverEnvState, backedScenarioCount)}
             overviewCounts={overviewCounts}
             overviewWorld={overviewWorld}
             graphData={graphData}
             onStartRun={startRun}
             canRun={runnable && !runMutation.isPending}
-            runBlockedReason={blockedReason(envState, env, backed, runMutation.isPending)}
+            runBlockedReason={blockedReason(envState, env, backed, runMutation.isPending, backedScenarioCount)}
           />
           )}
         </ChatSplitPane>

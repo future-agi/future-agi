@@ -653,6 +653,14 @@ describe("WorkspaceHeader", () => {
     expect(onStartRun).toHaveBeenCalledWith(undefined, 5);
   });
 
+  it("counts scenarios from the server count, not the seeded client list", async () => {
+    const user = userEvent.setup();
+    render(withRouter(<WorkspaceHeader {...baseProps} canRun scenarioCount={7} />));
+
+    await user.click(screen.getByRole("button", { name: "Repeats: 3" }));
+    expect(screen.getAllByText(/7 scenarios × 3 repeats/).length).toBeGreaterThan(0);
+  });
+
   it("hides the header Run + Repeats while a scenario selection is active", () => {
     render(
       withRouter(<WorkspaceHeader {...baseProps} canRun selectionActive />),
