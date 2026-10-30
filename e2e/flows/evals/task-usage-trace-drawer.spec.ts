@@ -33,7 +33,7 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
       'click Open trace and read the drawer',
       'press Esc to close the drawer, then Esc again to close the run panel'],
     backendChecks: ['the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored',
-      'the Usage runs response carries exactly those two runs with the seeded trace and span IDs',
+      'the Usage runs response carries only the completed run, with the seeded trace and span IDs',
       'the run panel shows the seeded trace and span IDs',
       'the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open',
       'the first Esc closes only the drawer and the second closes the run panel'],
@@ -101,7 +101,7 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
       return { evaluated: bySpan.get(evaluatedSpanId)!.id, root: bySpan.get(seeded.spanIds[0])!.id };
     });
     const runId = runs.evaluated;
-    let position = '';
+    const position = '1 / 1';
 
     await test.step('Usage: the run panel shows the seeded trace and span', async () => {
       await page.goto(`/dashboard/tasks/${taskId}`);
@@ -115,14 +115,12 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
       expect(response.status()).toBe(200);
       const body = await response.json() as UsageBody;
       await testInfo.attach('usage-runs.json', { contentType: 'application/json', body: JSON.stringify(body) });
-      const listed = body.result.logs.results;
-      expect(listed.map(run => ({ id: run.id, eval_name: run.eval_name, trace_id: run.trace_id, span_id: run.span_id }))
-        .sort((a, b) => a.id.localeCompare(b.id)))
-        .toEqual([{ id: runId, eval_name: evalName, trace_id: seeded.traceId, span_id: evaluatedSpanId },
-          { id: runs.root, eval_name: evalName, trace_id: seeded.traceId, span_id: seeded.spanIds[0] }]
-          .sort((a, b) => a.id.localeCompare(b.id)));
-      // The run panel counts runs in the list's own (newest-first) order.
-      position = `${listed.findIndex(run => run.id === runId) + 1} / 2`;
+      // Usage lists successful runs only; the errored root stays in the task
+      // logs (futureagi/tracer/views/eval_task.py:_successful_usage_queryset).
+      expect(body.result.logs.results.map(run => ({ id: run.id, eval_name: run.eval_name,
+        trace_id: run.trace_id, span_id: run.span_id })))
+        .toEqual([{ id: runId, eval_name: evalName, trace_id: seeded.traceId, span_id: evaluatedSpanId }]);
+      expect(body.result.logs.results.map(run => run.id)).not.toContain(runs.root);
 
       // MUI DataGrid keys each row by getRowId (the run id) as data-id.
       await page.locator(`.MuiDataGrid-row[data-id="${runId}"]`).click({ timeout: UI_READY });

@@ -976,7 +976,7 @@
 **Backend state verified:**
 
 - the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored
-- the Usage runs response carries exactly those two runs with the seeded trace and span IDs
+- the Usage runs response carries only the completed run, with the seeded trace and span IDs
 - the run panel shows the seeded trace and span IDs
 - the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open
 - the first Esc closes only the drawer and the second closes the run panel
