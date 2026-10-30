@@ -745,7 +745,6 @@ const LogsTab = ({ gatewayId }) => {
     queryKey: ["agentcc-guardrail-logs", gatewayId],
     queryFn: async () => {
       const qs = createQueryString({
-        gateway_id: gatewayId,
         guardrail_triggered: true,
         limit: 50,
       });
