@@ -332,14 +332,17 @@ def prepare_simulation_analysis_input(test_execution_id: str) -> dict | None:
 
         if test_execution.eval_explanation_summary is None:
             # The analysis step relies on clustered eval explanations.
-            from simulate.tasks.eval_summary_tasks import run_eval_summary_task
+            from simulate.tasks.eval_summary_tasks import build_eval_summary
 
             logger.info(
                 "sim_analysis_input_eval_summary_missing",
                 test_execution_id=test_execution_id,
             )
-            run_eval_summary_task(str(test_execution.id))
-            test_execution.refresh_from_db(fields=["eval_explanation_summary"])
+            # Use the summary built here even if a refresh that started
+            # meanwhile kept it from being stored.
+            test_execution.eval_explanation_summary = build_eval_summary(
+                str(test_execution.id)
+            )
 
         input_data = {
             "test_execution_id": test_execution_id,

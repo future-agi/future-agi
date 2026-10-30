@@ -53,8 +53,9 @@ def _set_summary(test_execution, *, status, last_updated, summary=None):
 
 def _run_dispatched(mock_apply_async, index=-1):
     """Run the summary job exactly as the given dispatch queued it."""
+    queued = mock_apply_async.call_args_list[index].kwargs
     run_eval_summary_task._original_func(
-        *mock_apply_async.call_args_list[index].kwargs["args"]
+        *queued["args"], **(queued.get("kwargs") or {})
     )
 
 
@@ -110,10 +111,10 @@ class TestSummaryPoll:
         assert response.json()["result"]["status"] == (
             EvalExplanationSummaryStatus.PENDING
         )
-        mock_apply_async.assert_called_once()
-        args = mock_apply_async.call_args.kwargs["args"]
-        assert args[0] == str(test_execution.id)
-        assert len(args) == 2
+        # The poll's job only builds a summary that is still pending.
+        mock_apply_async.assert_called_once_with(
+            args=(str(test_execution.id),), kwargs={"pending_only": True}
+        )
         test_execution.refresh_from_db()
         assert (
             test_execution.eval_explanation_summary_status
@@ -310,37 +311,79 @@ class TestSummaryAttempt:
             == EvalExplanationSummaryStatus.PENDING
         )
 
-    def test_queued_attempt_replaced_before_start_does_not_run(
-        self, auth_client, test_execution
-    ):
+    def test_two_queued_jobs_build_the_summary_once(self, auth_client, test_execution):
         with (
             patch(APPLY_ASYNC) as mock_apply_async,
             patch(BUILD_SUMMARY, return_value={"eval": []}) as mock_build,
         ):
             auth_client.get(SUMMARY_URL.format(test_execution.id))
             auth_client.post(REFRESH_URL.format(test_execution.id), {}, format="json")
-            refreshed_at = TestExecution.objects.get(
-                id=test_execution.id
-            ).eval_explanation_summary_last_updated
 
-            # The poll's job starts after the refresh queued a newer one.
+            # Whichever job starts first builds the pending summary...
             _run_dispatched(mock_apply_async, index=0)
+            # ...and the other finds it built and does nothing.
+            _run_dispatched(mock_apply_async, index=1)
 
-            mock_build.assert_not_called()
+        assert mock_apply_async.call_count == 2
+        mock_build.assert_called_once()
+        test_execution.refresh_from_db()
+        assert test_execution.eval_explanation_summary == {"eval": []}
+        assert (
+            test_execution.eval_explanation_summary_status
+            == EvalExplanationSummaryStatus.COMPLETED
+        )
+
+    def test_job_slow_to_start_still_builds_after_requeue(
+        self, auth_client, test_execution
+    ):
+        url = SUMMARY_URL.format(test_execution.id)
+
+        with (
+            patch(APPLY_ASYNC) as mock_apply_async,
+            patch(BUILD_SUMMARY, return_value={"eval": []}) as mock_build,
+        ):
+            auth_client.get(url)
+            # The queue is backed up: the job has waited past the stale time,
+            # so the next poll queues another one.
+            TestExecution.objects.filter(id=test_execution.id).update(
+                eval_explanation_summary_last_updated=timezone.now() - LONG_AGO
+            )
+            auth_client.get(url)
+
+            # The first job finally starts; it must not be locked out by the
+            # second, or a queue that stays slow would never build the summary.
+            _run_dispatched(mock_apply_async, index=0)
             test_execution.refresh_from_db()
             assert (
                 test_execution.eval_explanation_summary_status
-                == EvalExplanationSummaryStatus.PENDING
-            )
-            assert test_execution.eval_explanation_summary_last_updated == (
-                refreshed_at
+                == EvalExplanationSummaryStatus.COMPLETED
             )
 
             _run_dispatched(mock_apply_async, index=1)
 
+        assert mock_apply_async.call_count == 2
         mock_build.assert_called_once()
+
+    def test_replaced_attempt_still_returns_what_it_built(
+        self, auth_client, test_execution
+    ):
+        # The optimiser builds the summary inline and uses what it built.
+        from simulate.tasks.eval_summary_tasks import build_eval_summary
+
+        def build_while_refreshed(*args, **kwargs):
+            auth_client.post(REFRESH_URL.format(test_execution.id), {}, format="json")
+            return {"eval": [{"theme": "inline"}]}
+
+        with (
+            patch(APPLY_ASYNC),
+            patch(BUILD_SUMMARY, side_effect=build_while_refreshed),
+        ):
+            built = build_eval_summary(str(test_execution.id))
+
+        assert built == {"eval": [{"theme": "inline"}]}
         test_execution.refresh_from_db()
+        assert test_execution.eval_explanation_summary is None
         assert (
             test_execution.eval_explanation_summary_status
-            == EvalExplanationSummaryStatus.COMPLETED
+            == EvalExplanationSummaryStatus.PENDING
         )

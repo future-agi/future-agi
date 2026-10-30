@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import structlog
 from django.utils import timezone
@@ -11,8 +11,10 @@ from tfc.temporal.drop_in import temporal_activity
 logger = structlog.get_logger(__name__)
 
 EVAL_SUMMARY_TIME_LIMIT = 1800
-# A summary attempt still pending or running this long after it was queued or
-# started has outlived the activity's time limit: its worker is gone.
+# A summary still running this long after its attempt started has outlived the
+# activity's time limit, so its worker is gone. A summary still pending this
+# long after it was queued is queued again: whichever job starts first builds
+# it, so a job that was only slow to start is not lost.
 EVAL_SUMMARY_STALE_AFTER = timedelta(seconds=EVAL_SUMMARY_TIME_LIMIT + 300)
 EVAL_SUMMARY_IN_FLIGHT = (
     EvalExplanationSummaryStatus.PENDING,
@@ -35,13 +37,13 @@ def eval_summary_in_flight(test_execution):
 
 
 def dispatch_eval_summary(test_execution, *, if_unchanged=False):
-    """Queue a summary attempt for the run, identified by its queueing time.
+    """Mark the run's summary pending at the current time and queue its job.
 
-    The summary is marked pending at that time and the attempt carries it, so
-    the attempt starts only if no later one was queued or started since. With
-    ``if_unchanged`` the summary is marked only if it still holds the status
-    and time ``test_execution`` was read with, so two requests that both found
-    no live attempt queue one between them. Returns whether one was queued.
+    The job builds the summary only if it is still pending when the job
+    starts. With ``if_unchanged`` the summary is marked only if it still holds
+    the status and time ``test_execution`` was read with, so two requests that
+    both found no live attempt queue one job between them. Returns whether a
+    job was queued.
 
     If queueing fails, the time is cleared so that the next request finds no
     live attempt and queues one, and the error is raised.
@@ -66,7 +68,7 @@ def dispatch_eval_summary(test_execution, *, if_unchanged=False):
     test_execution.eval_explanation_summary_last_updated = queued_at
     try:
         run_eval_summary_task.apply_async(
-            args=(str(test_execution.id), queued_at.isoformat())
+            args=(str(test_execution.id),), kwargs={"pending_only": True}
         )
     except Exception:
         TestExecution.objects.filter(
@@ -79,28 +81,17 @@ def dispatch_eval_summary(test_execution, *, if_unchanged=False):
     return True
 
 
-@temporal_activity(
-    time_limit=EVAL_SUMMARY_TIME_LIMIT,
-    max_retries=0,
-    queue="tasks_l",
-)
-def run_eval_summary_task(test_execution_id, queued_at=None):
-    """
-    Temporal activity to calculate and store evaluation explanation summary for a test execution.
+def build_eval_summary(test_execution_id, pending_only=False):
+    """Build the run's summary as one attempt and store it while that holds.
 
-    The attempt claims the summary when it starts and writes its result or its
-    failure only while that claim holds; a later queueing or start moves the
-    summary's status or last-updated time, and this attempt's writes are dropped.
+    The attempt claims the summary when it starts, as running at its start
+    time, and writes its result or its failure only while that claim holds.
+    Queueing or starting a later attempt moves the summary's status or time,
+    and this attempt's writes are then dropped. With ``pending_only`` the
+    attempt starts only if the summary is pending; otherwise (run completion,
+    late verdicts, the optimiser) it takes the summary over.
 
-    Args:
-        test_execution_id: UUID of the TestExecution to calculate summary for
-        queued_at: ISO time ``dispatch_eval_summary`` queued this attempt at.
-            Such an attempt starts only if no later one was queued or started.
-            Without it (run completion, late verdicts, the optimiser) the
-            attempt takes the summary over when it starts.
-
-    Returns:
-        dict: Summary result or error information
+    Returns the summary built, also when it was dropped, or None.
     """
     claimed = None
     try:
@@ -112,19 +103,18 @@ def run_eval_summary_task(test_execution_id, queued_at=None):
 
         started_at = timezone.now()
         claim = TestExecution.objects.filter(id=test_execution_id)
-        if queued_at is not None:
+        if pending_only:
             claim = claim.filter(
-                eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING,
-                eval_explanation_summary_last_updated=datetime.fromisoformat(queued_at),
+                eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING
             )
         if not claim.update(
             eval_explanation_summary_status=EvalExplanationSummaryStatus.RUNNING,
             eval_explanation_summary_last_updated=started_at,
         ):
             logger.info(
-                f"Eval explanation summary attempt replaced before it started for test_execution: {test_execution_id}"
+                f"Eval explanation summary no longer pending, attempt skipped for test_execution: {test_execution_id}"
             )
-            return
+            return None
         claimed = TestExecution.objects.filter(
             id=test_execution_id,
             eval_explanation_summary_status=EvalExplanationSummaryStatus.RUNNING,
@@ -143,15 +133,16 @@ def run_eval_summary_task(test_execution_id, queued_at=None):
             logger.info(
                 f"Eval explanation summary attempt replaced while running, result dropped for test_execution: {test_execution_id}"
             )
-            return
+            return summary
 
         logger.info(
             f"Successfully calculated and stored eval explanation summary for test_execution: {test_execution_id}"
         )
+        return summary
 
     except TestExecution.DoesNotExist:
         logger.error(f"TestExecution {test_execution_id} not found")
-        return
+        return None
     except Exception as e:
         if claimed is not None:
             claimed.update(
@@ -159,4 +150,24 @@ def run_eval_summary_task(test_execution_id, queued_at=None):
                 eval_explanation_summary_last_updated=timezone.now(),
             )
         logger.exception(f"Error calculating eval explanation summary: {e}")
-        return
+        return None
+
+
+@temporal_activity(
+    time_limit=EVAL_SUMMARY_TIME_LIMIT,
+    max_retries=0,
+    queue="tasks_l",
+)
+def run_eval_summary_task(test_execution_id, pending_only=False):
+    """
+    Temporal activity to calculate and store evaluation explanation summary for a test execution.
+
+    Args:
+        test_execution_id: UUID of the TestExecution to calculate summary for
+        pending_only: Build the summary only if it is still pending when the
+            job starts (set by ``dispatch_eval_summary``).
+
+    Returns:
+        dict: Summary result or error information
+    """
+    build_eval_summary(test_execution_id, pending_only=pending_only)
