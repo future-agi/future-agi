@@ -339,10 +339,13 @@ def prepare_simulation_analysis_input(test_execution_id: str) -> dict | None:
                 test_execution_id=test_execution_id,
             )
             # Use the summary built here even if a refresh that started
-            # meanwhile kept it from being stored.
-            test_execution.eval_explanation_summary = build_eval_summary(
-                str(test_execution.id)
-            )
+            # meanwhile kept it from being stored; if none was built, use
+            # whatever another attempt stored.
+            built = build_eval_summary(str(test_execution.id))
+            if built is None:
+                test_execution.refresh_from_db(fields=["eval_explanation_summary"])
+            else:
+                test_execution.eval_explanation_summary = built
 
         input_data = {
             "test_execution_id": test_execution_id,
