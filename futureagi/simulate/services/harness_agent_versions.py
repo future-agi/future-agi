@@ -1862,8 +1862,9 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
     skipped when the version was discarded meanwhile, a newer version is already its
     default, or the version is not one it can pick. A rerun's version, asked for by
     none, moves no environment. A connected agent's version becomes production only
-    when the agent has none yet; a later one waits to be made production by hand.
-    Returns the environments moved.
+    when the agent has none yet; a later one is offered to each environment that
+    tests the agent, which moves only when its rebuild lands, and waits to be made
+    production by hand. Returns the environments moved.
     """
     from simulate.services.harness_versioning.assembly import legacy_runtime
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
@@ -1896,6 +1897,16 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
             .exclude(id=version.id)
             .exists()
         ):
+            offered = [
+                str(environment.id)
+                for environment in bound_environments(version.agent_definition_id)
+                if environment.agent_version_id != version.id
+            ]
+            _record_activation(version.id, dict.fromkeys(offered, "not_requested"))
+            for environment_id in offered:
+                schedule_environment_nudge(
+                    environment_id, version.id, default_moved=False
+                )
             return []
         return _activate_production(version, runtime)
     others = []
@@ -2229,6 +2240,8 @@ def _activate_production(
     document = stored_document(version)
     following, pinned, offered = [], [], {}
     for environment in bound_environments(version.agent_definition_id):
+        if environment.agent_version_id == version.id:
+            continue
         if environment_policy(environment) != POLICY_FOLLOW:
             pinned.append(str(environment.id))
             continue

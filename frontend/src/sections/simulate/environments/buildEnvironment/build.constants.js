@@ -28,15 +28,12 @@ export const DERIVING_LABEL = {
 // Runs and Versions are left out — an environment that is still building (or
 // failed to build) has no runs and no versions yet.
 const NOT_WHILE_BUILDING = new Set(["runs", "versions"]);
-export const BUILDING_TABS = WORKSPACE_TABS.filter(
-  (t) => !NOT_WHILE_BUILDING.has(t.id),
-);
+export const BUILDING_TABS = WORKSPACE_TABS.filter((t) => !NOT_WHILE_BUILDING.has(t.id));
 
 export const CONSOLE_COPY = {
   working: "Working on your last message…",
   idle: "Ask, correct, or steer what it builds",
-  empty:
-    "Answer the questions below to kick things off. You can also just start typing.",
+  empty: "Answer the questions below to kick things off. You can also just start typing.",
   placeholder: "Reply to the builder…",
   attach: "Attach a dataset, CSV or file",
   attachAccept: ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf",
@@ -53,14 +50,6 @@ export const PIPELINE_CHECKS_COPY = {
 
 // The nudge card in the chat: what changed (names only, never values) and
 // whether to rebuild the environment or its scenarios.
-export const PENDING_COMMIT_COPY = {
-  title: (sha, ref) => `New commit ${sha} on ${ref}`,
-  defaultBranch: "the default branch",
-  question: "Sync it as a new agent version?",
-  sync: "Sync",
-  skip: "Skip",
-};
-
 export const NUDGE_COPY = {
   changed: (label) => `Agent ${label} changed`,
   available: (label) => `Agent ${label} is available`,

@@ -64,10 +64,6 @@ const answerNudgePath = (envId, nudgeId) =>
     id: envId,
     nudge_id: nudgeId,
   });
-const pendingCommitPath = (envId) =>
-  apiPath("/simulate/api/harness-environments/{id}/pending-commit/", {
-    id: envId,
-  });
 const stopNudgePath = (envId, nudgeId) =>
   apiPath("/simulate/api/harness-environments/{id}/nudges/{nudge_id}/stop/", {
     id: envId,
@@ -155,9 +151,6 @@ export const answerNudge = async (envId, nudgeId, answer) =>
 
 export const stopNudge = async (envId, nudgeId) =>
   (await axios.post(stopNudgePath(envId, nudgeId), {})).data;
-
-export const answerPendingCommit = async (envId, answer) =>
-  (await axios.post(pendingCommitPath(envId), { answer })).data;
 
 export const getDrafts = async (envId) =>
   (await axios.get(draftsPath(envId))).data;
@@ -391,20 +384,6 @@ export const refreshDrafts = (queryClient, envId) => {
     queryKey: [...environmentVersionsKey(envId), "members"],
   });
 };
-
-// Sync the new commit offered to the environment as its next agent version, or
-// skip it. A sync's version is checked next, then raises the rebuild card.
-export function useAnswerPendingCommit(envId) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    meta: { errorHandled: true },
-    mutationFn: (answer) => answerPendingCommit(envId, answer),
-    onSettled: () => {
-      refreshFollowers(queryClient, envId);
-      queryClient.invalidateQueries({ queryKey: nudgesKey(envId) });
-    },
-  });
-}
 
 // Make a version the default. The answer is every version, so it seeds the list;
 // what follows the default is asked again too. A conflict means the default

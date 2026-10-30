@@ -515,7 +515,7 @@ class TestRequestedAgent:
         assert job.agent_version.agent_definition_id == definition_id
         assert "requested_agent_definition_id" not in job.payload["metadata"]
 
-    def test_a_customer_agent_is_not_bound_yet(
+    def test_a_customer_agent_is_bound_and_left_untouched(
         self, client, user, workspace, gates, caplog
     ):
         customer = AgentDefinition.no_workspace_objects.create(
@@ -542,11 +542,11 @@ class TestRequestedAgent:
         with caplog.at_level(logging.INFO):
             job = _job(_post(client, workspace, body))
 
-        assert job.agent_version.agent_definition_id != customer.id
+        assert job.agent_version.agent_definition_id == customer.id
         metadata = job.payload["metadata"]
-        assert metadata["requested_agent_definition_id"] == str(customer.id)
-        assert metadata["agent_definition_id"] != str(customer.id)
-        assert "reason=connected_unavailable" in caplog.text
+        assert metadata["agent_definition_id"] == str(customer.id)
+        assert metadata["agent_definition_owner"] == "connected"
+        assert "harness_environment_agent_bound" in caplog.text
         customer.refresh_from_db()
         assert (customer.description, customer.assistant_id) == ("theirs", "asst-1")
         assert before == list(

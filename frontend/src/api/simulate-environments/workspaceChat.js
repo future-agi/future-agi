@@ -280,19 +280,8 @@ export function useWorkspaceChat(env, { source } = {}) {
     }
   }, [nudges, conversation, jobId, queryClient]);
 
-  const pendingCommit = env?.pendingCommit || null;
   const turns = useMemo(() => {
     const projected = projectConversation(conversation);
-    // The commit waiting for Sync or Skip is the newest turn until answered.
-    if (jobId && pendingCommit) {
-      projected.push({
-        id: `pending-commit-${pendingCommit.commitSha}`,
-        role: "system",
-        kind: "commit",
-        envId: jobId,
-        commit: pendingCommit,
-      });
-    }
     // Attach the reply callback to open `ask` steps (the projector stays pure).
     // A resolved question renders its summary from props, so it needs no handler.
     return projected.map((turn) => {
@@ -337,8 +326,6 @@ export function useWorkspaceChat(env, { source } = {}) {
     });
   }, [
     conversation,
-    pendingCommit,
-    jobId,
     send,
     nudges,
     nudgesEnabled,

@@ -93,8 +93,6 @@ _PROMPT_KINDS = (SourceKind.PROVIDER, SourceKind.PHONE, SourceKind.LIVEKIT)
 _SEEN_KEY = "agent_source_seen"
 # Environment metadata: GitHub's id for a source whose version doesn't record one.
 _REPOSITORY_ID_KEY = "agent_source_repository_id"
-_PENDING_KEY = "agent_source_pending"
-_SKIPPED_KEY = "agent_source_skipped"
 
 
 @dataclass(frozen=True)
@@ -354,27 +352,6 @@ def _seen(environment: HostedHarnessJob) -> Mapping[str, Any]:
     return metadata.get(_SEEN_KEY) or {}
 
 
-def pending_commit(environment: HostedHarnessJob) -> Mapping[str, Any]:
-    """The new commit offered to the environment and not yet answered, else empty."""
-    metadata = (environment.payload or {}).get("metadata") or {}
-    return metadata.get(_PENDING_KEY) or {}
-
-
-def pending_commit_item(environment: HostedHarnessJob) -> dict[str, Any] | None:
-    """What the environment shows of its offered commit, or None."""
-    notice = pending_commit(environment)
-    if not notice:
-        return None
-    return {
-        name: notice.get(name) for name in ("repository", "ref", "commit_sha", "at")
-    }
-
-
-def _skipped(environment: HostedHarnessJob) -> Mapping[str, Any]:
-    metadata = (environment.payload or {}).get("metadata") or {}
-    return metadata.get(_SKIPPED_KEY) or {}
-
-
 def _record_metadata(
     environment: HostedHarnessJob,
     key: str,
@@ -539,36 +516,6 @@ def _observe_one(
             environment.id,
         )
         return "skipped_not_runnable", None
-    if head in (
-        pending_commit(environment).get("commit_sha"),
-        _skipped(environment).get("commit_sha"),
-    ):
-        return "unchanged", None
-    recorded = _record_metadata(
-        environment,
-        _PENDING_KEY,
-        {
-            "repository": watched.repository,
-            "ref": watched.ref,
-            "commit_sha": head,
-            "repository_id": watched.repository_id,
-            "at": timezone.now().isoformat(),
-        },
-    )
-    if recorded is None:
-        return "default_moved", None
-    logger.info(
-        "harness_agent_head_offered environment=%s head=%s",
-        environment.id,
-        head[:12],
-    )
-    return "offered", None
-
-
-def _push_version(
-    environment: HostedHarnessJob, notice: Mapping[str, Any]
-) -> tuple[str, AgentVersion]:
-    """The agent version for an offered commit, made as a push always made it."""
     # Built on a change still on its way to the default: neither undoes the other.
     parent = (
         _outstanding_request(environment, environment.agent_version)
@@ -583,84 +530,17 @@ def _push_version(
         env=environment,
         source={
             "kind": "github",
-            "repository": notice["repository"],
-            "ref": notice.get("ref"),
-            "commit_sha": notice["commit_sha"],
+            "repository": watched.repository,
+            "ref": watched.ref,
+            "commit_sha": head,
             "visibility": "public",
-            "repository_id": notice.get("repository_id"),
+            "repository_id": watched.repository_id,
         },
         trigger=Trigger.PUSH,
         user=None,
         explicit_reuse=False,
     )
     return ("created" if version.version_number >= first_new else "reused"), version
-
-
-def answer_pending_commit(
-    environment_id: Any, *, sync: bool
-) -> tuple[str, AgentVersion | None]:
-    """Sync the commit offered to an environment as its next agent version, or skip
-    it so it is not offered again. Returns ``created``, ``reused`` or ``skipped``
-    and the version a sync made or reused."""
-    from simulate.services.harness_agent_versions import _busy
-    from simulate.services.harness_versioning.assembly import certify_enabled
-
-    environment = (
-        HostedHarnessJob.no_workspace_objects.select_related(
-            "agent_version__agent_definition"
-        )
-        .filter(id=environment_id, environment__isnull=True, deleted=False)
-        .first()
-    )
-    if environment is None:
-        raise HostedHarnessError(
-            "environment_not_found", "Environment not found", status_code=404
-        )
-    notice = pending_commit(environment)
-    head = notice.get("commit_sha")
-    if not head:
-        raise HostedHarnessError(
-            "no_pending_commit", "There is no new commit to sync", status_code=409
-        )
-    outcome, version = "skipped", None
-    if sync:
-        if _busy(environment):
-            raise HostedHarnessError(
-                "environment_busy",
-                "The environment is being built; sync once it finishes",
-                status_code=409,
-            )
-        if not certify_enabled() or environment.agent_version_id is None:
-            raise HostedHarnessError(
-                "sync_unavailable",
-                "This environment can't take a new agent version right now",
-                status_code=409,
-            )
-        outcome, version = _push_version(environment, notice)
-    with transaction.atomic():
-        locked = (
-            HostedHarnessJob.no_workspace_objects.select_for_update()
-            .filter(id=environment.id, environment__isnull=True, deleted=False)
-            .first()
-        )
-        if locked is not None and pending_commit(locked).get("commit_sha") == head:
-            metadata = dict((locked.payload or {}).get("metadata") or {})
-            metadata.pop(_PENDING_KEY, None)
-            if not sync:
-                metadata[_SKIPPED_KEY] = {
-                    "commit_sha": head,
-                    "at": timezone.now().isoformat(),
-                }
-            locked.payload = {**(locked.payload or {}), "metadata": metadata}
-            locked.save(update_fields=["payload", "updated_at"])
-    logger.info(
-        "harness_agent_head_answered environment=%s head=%s answer=%s version=%s",
-        environment.id,
-        head[:12],
-        "sync" if sync else "skip",
-        getattr(version, "id", None),
-    )
-    return outcome, version
 
 
 def observe_repository_head(
@@ -670,9 +550,8 @@ def observe_repository_head(
     heads: dict[tuple[str, str | None], HeadResult] | None = None,
     purpose: str = "poll",
 ) -> dict[str, str]:
-    """Offer the new head to each environment watching this definition's GitHub
-    source that has not observed it; returns {environment_id: outcome}. A version is
-    made only when the environment's offer is answered with a sync.
+    """Make the next agent version for each environment watching this definition's
+    GitHub source whose head it has not observed; returns {environment_id: outcome}.
 
     With ``heads`` only the (repository, ref) pairs it holds are looked at; without,
     each pair's head is read once.

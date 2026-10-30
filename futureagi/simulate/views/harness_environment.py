@@ -12,8 +12,6 @@ from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentPolicyResponseSerializer,
     HarnessAgentPolicySerializer,
-    HarnessPendingCommitAnswerSerializer,
-    HarnessPendingCommitResponseSerializer,
     HarnessAgentVersionCreateSerializer,
     HarnessCompareQuerySerializer,
     HarnessCompareSerializer,
@@ -348,35 +346,6 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                     if version is not None
                     else None
                 ),
-            }
-        )
-
-    @validated_request(
-        request_serializer=HarnessPendingCommitAnswerSerializer,
-        responses={200: HarnessPendingCommitResponseSerializer},
-        reject_unknown_fields=True,
-    )
-    @action(detail=True, methods=["post"], url_path="pending-commit")
-    def pending_commit(self, request, pk=None):
-        """Answer the new commit offered to this environment: sync it as the next
-        agent version, or skip it."""
-        from simulate.services.harness_agent_changes import answer_pending_commit
-
-        version_reads.require_versioning()
-        job = self._job(request, pk)
-        if job is None:
-            return self._not_found()
-        _, version = answer_pending_commit(
-            job.id, sync=request.validated_data["answer"] == "sync"
-        )
-        job.refresh_from_db(fields=["agent_version"])
-        return Response(
-            {
-                "agent_version": (
-                    version_reads.agent_version_item(job, version)
-                    if version is not None
-                    else None
-                )
             }
         )
 

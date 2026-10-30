@@ -218,8 +218,11 @@ def test_production_offers_an_environment_that_never_chose_to_follow(agent):
     )
     with patch(
         "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
-    ) as nudge:
+    ):
         _preflight(second)
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ) as nudge:
         set_production(second)
 
     unchosen.refresh_from_db()
@@ -234,7 +237,7 @@ def test_production_offers_an_environment_that_never_chose_to_follow(agent):
     }
 
 
-def test_a_later_version_that_passes_waits_to_be_made_production(agent):
+def test_a_later_version_that_passes_is_offered_and_waits_for_production(agent):
     first = _connect(agent)
     with patch(
         "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
@@ -260,7 +263,14 @@ def test_a_later_version_that_passes_waits_to_be_made_production(agent):
     assert first.status == "active"
     assert second.status != "active"
     assert following.agent_version_id == first.id
-    assert nudge.call_count == 0
+    assert [
+        (str(call.args[0]), str(call.args[1]), call.kwargs.get("default_moved"))
+        for call in nudge.call_args_list
+    ] == [(str(following.id), str(second.id), False)]
+    report = _runtime(second).preflight_report["activation"]
+    assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
+        str(following.id): "not_requested",
+    }
 
 
 def test_activating_a_connected_version_again_moves_nothing_twice(agent):

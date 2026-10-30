@@ -645,8 +645,6 @@ import type {
   HarnessManifestApi,
   HarnessNudgeAnswerApi,
   HarnessNudgeApi,
-  HarnessPendingCommitAnswerApi,
-  HarnessPendingCommitResponseApi,
   HarnessPreflightApi,
   HarnessPreflightResponseApi,
   HarnessResultReceiptApi,
@@ -60462,55 +60460,6 @@ export const simulateApiHarnessEnvironmentsNudgesStopNudge = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(emptyRequestApi),
-    },
-  );
-};
-
-export type simulateApiHarnessEnvironmentsPendingCommitResponse200 = {
-  data: HarnessPendingCommitResponseApi;
-  status: 200;
-};
-
-export type simulateApiHarnessEnvironmentsPendingCommitResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
-};
-
-export type simulateApiHarnessEnvironmentsPendingCommitResponseSuccess =
-  simulateApiHarnessEnvironmentsPendingCommitResponse200 & {
-    headers: Headers;
-  };
-export type simulateApiHarnessEnvironmentsPendingCommitResponseError =
-  simulateApiHarnessEnvironmentsPendingCommitResponseDefault & {
-    headers: Headers;
-  };
-
-export type simulateApiHarnessEnvironmentsPendingCommitResponse =
-  | simulateApiHarnessEnvironmentsPendingCommitResponseSuccess
-  | simulateApiHarnessEnvironmentsPendingCommitResponseError;
-
-export const getSimulateApiHarnessEnvironmentsPendingCommitUrl = (
-  id: string,
-) => {
-  return `/simulate/api/harness-environments/${id}/pending-commit/`;
-};
-
-/**
- * Answer the new commit offered to this environment: sync it as the next
-agent version, or skip it.
- */
-export const simulateApiHarnessEnvironmentsPendingCommit = async (
-  id: string,
-  harnessPendingCommitAnswerApi: HarnessPendingCommitAnswerApi,
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsPendingCommitResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsPendingCommitResponse>(
-    getSimulateApiHarnessEnvironmentsPendingCommitUrl(id),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(harnessPendingCommitAnswerApi),
     },
   );
 };

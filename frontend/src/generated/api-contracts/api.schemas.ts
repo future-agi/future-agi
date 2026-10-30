@@ -18934,22 +18934,6 @@ export interface HarnessNudgeAnswerApi {
   answer: HarnessNudgeAnswerApiAnswer;
 }
 
-export type HarnessPendingCommitAnswerApiAnswer =
-  (typeof HarnessPendingCommitAnswerApiAnswer)[keyof typeof HarnessPendingCommitAnswerApiAnswer];
-
-export const HarnessPendingCommitAnswerApiAnswer = {
-  sync: "sync",
-  skip: "skip",
-} as const;
-
-export interface HarnessPendingCommitAnswerApi {
-  answer: HarnessPendingCommitAnswerApiAnswer;
-}
-
-export interface HarnessPendingCommitResponseApi {
-  agent_version?: HarnessVersionApi;
-}
-
 export type HarnessRunWarningApiPiece =
   (typeof HarnessRunWarningApiPiece)[keyof typeof HarnessRunWarningApiPiece];
 
@@ -19320,16 +19304,6 @@ export interface HarnessVersioningFlagsApi {
   nudges_enabled: boolean;
 }
 
-export interface HarnessPendingCommitApi {
-  /** @minLength 1 */
-  repository: string;
-  /** @minLength 1 */
-  ref: string;
-  /** @minLength 1 */
-  commit_sha: string;
-  at: string;
-}
-
 export interface HarnessJobReadApi {
   job: HarnessJobInfoApi;
   status: HarnessJobStatusApi;
@@ -19344,7 +19318,6 @@ export interface HarnessJobReadApi {
   consumption?: HarnessConsumptionApi;
   usage_limit?: HarnessJobReadApiUsageLimit;
   versioning?: HarnessVersioningFlagsApi;
-  pending_commit?: HarnessPendingCommitApi;
 }
 
 export type HarnessJobCreateApiSchemaVersion =

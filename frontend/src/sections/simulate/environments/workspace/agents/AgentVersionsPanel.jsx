@@ -24,7 +24,6 @@ import {
   VERSIONS_COPY,
 } from "../workspace.constants";
 import { NudgeStateLine } from "../../buildEnvironment/console/NudgeCard";
-import PendingCommitCard from "../../buildEnvironment/console/PendingCommitCard";
 import { refusalText } from "../evals/refusalText";
 import MakeDefaultConfirm from "../versions/MakeDefaultConfirm";
 import VersionHeader from "../versions/VersionHeader";
@@ -308,11 +307,6 @@ export default function AgentVersionsPanel({ env }) {
         >
           {COPY.title}
         </Typography>
-        {env.pendingCommit && (
-          <Box sx={{ mb: 1 }}>
-            <PendingCommitCard envId={envId} commit={env.pendingCommit} />
-          </Box>
-        )}
         {versions.length ? (
           <Stack spacing={1}>
             {versions.map((version) => {
@@ -407,10 +401,6 @@ AgentVersionsPanel.propTypes = {
     versioning: PropTypes.shape({
       enabled: PropTypes.bool,
       nudges_enabled: PropTypes.bool,
-    }),
-    pendingCommit: PropTypes.shape({
-      commitSha: PropTypes.string,
-      ref: PropTypes.string,
     }),
   }).isRequired,
 };
