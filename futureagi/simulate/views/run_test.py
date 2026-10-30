@@ -48,10 +48,7 @@ from simulate.models import (
 from simulate.models.agent_version import AgentVersion
 from simulate.models.run_test import CreateCallExecution
 from simulate.models.scenario_graph import ScenarioGraph
-from simulate.models.test_execution import (
-    CallExecutionSnapshot,
-    EvalExplanationSummaryStatus,
-)
+from simulate.models.test_execution import CallExecutionSnapshot
 from simulate.serializers.requests.call_execution import (
     CallExecutionFilterSerializer,
     CallExecutionStatusUpdateSerializer,
@@ -171,7 +168,11 @@ from simulate.services.test_executor import (
     build_eval_configs_map,
     run_new_evals_on_call_executions_task,
 )
-from simulate.tasks.eval_summary_tasks import run_eval_summary_task
+from simulate.tasks.eval_summary_tasks import (
+    EVAL_SUMMARY_IN_FLIGHT,
+    dispatch_eval_summary,
+    eval_summary_in_flight,
+)
 from simulate.utils.agent_optimiser import (
     create_optimiser_run_for_test_execution,
     get_latest_optimiser_result,
@@ -6421,13 +6422,23 @@ class RunTestEvalExplanationSummaryView(APIView):
                 run_test__deleted=False,
             )
 
-            if test_execution.eval_explanation_summary is None:
-                test_execution.eval_explanation_summary_status = (
-                    EvalExplanationSummaryStatus.PENDING
-                )
-                test_execution.save(update_fields=["eval_explanation_summary_status"])
+            # A missing summary, or one whose attempt was lost while pending
+            # or running, is queued again unless a live attempt has it.
+            if (
+                test_execution.eval_explanation_summary is None
+                or test_execution.eval_explanation_summary_status
+                in EVAL_SUMMARY_IN_FLIGHT
+            ) and not eval_summary_in_flight(test_execution):
                 try:
-                    run_eval_summary_task.apply_async(args=(str(test_execution.id),))
+                    if not dispatch_eval_summary(test_execution, if_unchanged=True):
+                        # Another request moved the summary since it was read.
+                        test_execution.refresh_from_db(
+                            fields=[
+                                "eval_explanation_summary",
+                                "eval_explanation_summary_last_updated",
+                                "eval_explanation_summary_status",
+                            ]
+                        )
                 except Exception as dispatch_error:
                     logger.exception(
                         "eval_summary_fetch_dispatch_failed",
@@ -6435,10 +6446,19 @@ class RunTestEvalExplanationSummaryView(APIView):
                         error=str(dispatch_error),
                     )
 
+            last_updated = test_execution.eval_explanation_summary_last_updated
+            if (
+                test_execution.eval_explanation_summary is None
+                and test_execution.eval_explanation_summary_status
+                in EVAL_SUMMARY_IN_FLIGHT
+            ):
+                # The time is the attempt's queueing or start, not a summary's.
+                last_updated = None
+
             return self._gm.success_response(
                 {
                     "response": test_execution.eval_explanation_summary,
-                    "last_updated": test_execution.eval_explanation_summary_last_updated,
+                    "last_updated": last_updated,
                     "status": test_execution.eval_explanation_summary_status,
                 }
             )
@@ -6487,12 +6507,8 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
                 run_test__organization=organization,
                 run_test__deleted=False,
             )
-            test_execution.eval_explanation_summary_status = (
-                EvalExplanationSummaryStatus.PENDING
-            )
-            test_execution.save(update_fields=["eval_explanation_summary_status"])
             try:
-                run_eval_summary_task.apply_async(args=(str(test_execution.id),))
+                dispatch_eval_summary(test_execution)
                 message = "Summary refresh initiated successfully"
             except Exception as dispatch_error:
                 logger.exception(

@@ -243,7 +243,7 @@ class TestCallExecutionActionScope:
         assert response.status_code == status.HTTP_404_NOT_FOUND
         mock_test_executor.assert_not_called()
 
-    @patch("simulate.views.run_test.run_eval_summary_task.apply_async")
+    @patch("simulate.tasks.eval_summary_tasks.run_eval_summary_task.apply_async")
     def test_eval_summary_refresh_rejects_other_workspace_test_execution(
         self, mock_apply_async, auth_client, other_workspace_text_call_execution
     ):

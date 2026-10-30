@@ -1419,7 +1419,7 @@ class TestTestExecutionRuntimeContracts:
         assert response.data["details"]["legacy_extra"] == ["Unknown field."]
 
     @patch(
-        "simulate.views.run_test.run_eval_summary_task.apply_async",
+        "simulate.tasks.eval_summary_tasks.run_eval_summary_task.apply_async",
         side_effect=TimeoutError("temporal dispatch timed out"),
     )
     def test_eval_summary_refresh_tolerates_dispatch_failure(
@@ -1435,7 +1435,10 @@ class TestTestExecutionRuntimeContracts:
         assert response.status_code == status.HTTP_200_OK
         assert response.data["status"] is True
         assert "marked pending" in response.data["result"]["message"]
-        mock_apply_async.assert_called_once_with(args=(str(test_execution.id),))
+        mock_apply_async.assert_called_once()
+        # The job carries the time it was queued at, which fences it.
+        job_id, _queued_at = mock_apply_async.call_args.kwargs["args"]
+        assert job_id == str(test_execution.id)
         test_execution.refresh_from_db()
         assert (
             test_execution.eval_explanation_summary_status
@@ -2738,7 +2741,7 @@ class TestEvalExplanationSummaryRefreshView:
     )
 
     @patch(
-        "simulate.views.run_test.run_eval_summary_task.apply_async",
+        "simulate.tasks.eval_summary_tasks.run_eval_summary_task.apply_async",
         side_effect=TimeoutError("temporal dispatch timed out"),
     )
     def test_eval_explanation_refresh_marks_failed_when_dispatch_fails(
@@ -2757,7 +2760,8 @@ class TestEvalExplanationSummaryRefreshView:
         assert response.status_code == status.HTTP_200_OK
         assert response.data["status"] is True
         assert "marked pending" in response.data["result"]["message"]
-        mock_apply_async.assert_called_once_with(args=(str(test_execution.id),))
+        mock_apply_async.assert_called_once()
+        assert mock_apply_async.call_args.kwargs["args"][0] == str(test_execution.id)
 
         test_execution.refresh_from_db()
         # Should be PENDING or FAILED; must not be stuck in a live state like
