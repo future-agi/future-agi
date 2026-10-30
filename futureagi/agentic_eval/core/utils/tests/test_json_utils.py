@@ -1,6 +1,45 @@
-"""Tests for strip_code_fence — the shared Markdown-fence unwrapper."""
+"""Tests for JSON extraction and Markdown-fence unwrapping."""
 
-from agentic_eval.core.utils.json_utils import strip_code_fence
+import json
+
+import pytest
+
+from agentic_eval.core.utils.json_utils import (
+    extract_dict_from_string,
+    strip_code_fence,
+)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("wrapper", ["{}", "```json\n{}\n```", "Response:\n{}\nDone."])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "left\tright",
+        "left\rright",
+        "left\r\nright",
+        r"C:\temp\report.txt",
+        r"\r?\t+",
+        r"\text{answer}",
+        "plain text",
+        "left\nright",
+    ],
+)
+def test_extract_dict_preserves_json_strings(text, wrapper):
+    expected = {"reason": text, "details": {"values": [text]}, "score": 0.75}
+    payload = wrapper.format(json.dumps(expected, indent=2))
+    assert extract_dict_from_string(payload) == expected
+
+
+@pytest.mark.unit
+def test_extract_dict_keeps_single_quoted_object_fallback():
+    assert extract_dict_from_string("Response: {'score': 0.75}") == {"score": 0.75}
+
+
+@pytest.mark.unit
+def test_extract_dict_rejects_text_without_an_object():
+    with pytest.raises(ValueError, match="Unable to generate a response"):
+        extract_dict_from_string("No JSON object here")
 
 
 def test_multiline_json_fence():
