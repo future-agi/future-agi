@@ -316,6 +316,24 @@ class Wave4bDriverRegressionTests(unittest.TestCase):
         self.assertEqual(sum(data['executed_assertions'].values()),0)
         self.assertNotIn('PRIVATE',json.dumps(rehearsal.failure_diagnostics(RuntimeError('PRIVATE PASSWORD'))))
 
+    def test_diagnostics_preserve_only_bounded_typed_backup_and_recovery_codes(self):
+        from deploy.update.recovery import RecoveryError
+        from deploy.update.standalone_backup import BackupError
+
+        for error in (BackupError('backup_clock_skew'), RecoveryError('recovery_required')):
+            with self.subTest(error=type(error).__name__):
+                data = rehearsal.failure_diagnostics(error)
+                self.assertEqual(data['refusal_code'], error.code)
+                self.assertFalse(data['eligible'])
+        for error in (BackupError('PRIVATE PASSWORD'), RecoveryError('a' * 81)):
+            with self.subTest(error=type(error).__name__):
+                data = rehearsal.failure_diagnostics(error)
+                self.assertEqual(data['refusal_code'], 'suite_failed')
+                self.assertNotIn('PRIVATE', json.dumps(data))
+        arbitrary = RuntimeError('PRIVATE PASSWORD')
+        arbitrary.code = 'looks_safe'
+        self.assertEqual(rehearsal.failure_diagnostics(arbitrary)['refusal_code'], 'suite_failed')
+
     def test_failed_or_unrun_suites_always_exit_nonzero_with_an_explicit_reason(self):
         candidate=default_v2()
         for reason in ('suite_failed','suite_unrun','suite_timed_out','migration_measurement_unavailable','witness_operation_unavailable'):
@@ -967,7 +985,8 @@ class SourceSnapshotOperationTests(unittest.TestCase):
             driver.installation=SimpleNamespace(root=driver.root,runner=SimpleNamespace(policy=AutomationPolicy()),
                 config=lambda **kw:{'name':'synthetic-source-model'})
             backup=mock.Mock()
-            def quiesced(expected,ledger,observation,*,proof_directory_fd):
+            def quiesced(expected,ledger,observation,*,proof_directory_fd,proof_filename):
+                self.assertEqual(proof_filename,expected.attempt_id+'.json')
                 self.assertEqual(expected.target_manifest_hash,rehearsal.manifest_hash(driver.intent))
                 self.assertEqual(ledger.snapshot['direction'],'forward_pending')
                 self.assertEqual(ledger.snapshot['phase'],'attempt_reserved')
@@ -1842,6 +1861,7 @@ class RestoreMilestoneTests(unittest.TestCase):
                 excludes=[line[1:] for line in path_lines if line.startswith('!')]
                 self.assertIn('**/recovery.json',excludes)
                 self.assertIn('**/snapshot-recovery.json',excludes)
+                self.assertNotIn('members.jsonl',upload['with']['path'])
                 resolve=lambda pattern: pattern.replace('${{ github.run_id }}','42').replace(
                     '${{ github.run_attempt }}','1').replace('~',str(root),1).replace(
                     'interruption-*','interruption-backup_sealed')

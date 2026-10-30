@@ -43,6 +43,7 @@ class MilestoneAttemptProofTests(unittest.TestCase):
                 for container in f.daemon.containers.values():
                     container['State']['Running'] = True
                 driver.take_snapshot()
+                self.assertFalse(list(driver.output.glob('*.members.jsonl')))
                 proof = driver.proofs / (driver.expected.attempt_id + '.json')
                 self.assertEqual(json.loads(proof.read_bytes())['attempt_id'], driver.expected.attempt_id)
                 self.assertEqual(proof.read_bytes(), (driver.ledger.directory / 'proof.json').read_bytes())

@@ -1513,7 +1513,11 @@ def failure_diagnostics(exc, executor=None, *, completed_rows=0):
     if reason not in MANUAL_REASONS:
         reason = 'suite_failed'
     from deploy.update.apply import Interrupted
+    from deploy.update.recovery import RecoveryError
+    from deploy.update.standalone_backup import BackupError
     code = getattr(exc, 'reason_code', getattr(exc, 'refusal_code', None))
+    if code is None and isinstance(exc, (BackupError, RecoveryError)):
+        code = exc.code
     code = getattr(code, 'value', code)
     if isinstance(exc, (Interrupted, KeyboardInterrupt)):
         code = 'operation_interrupted'

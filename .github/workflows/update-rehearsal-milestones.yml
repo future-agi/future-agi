@@ -69,7 +69,6 @@ jobs:
           path: |
             ~/fagi-upd-e2e-driver-m1-plan-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ~/fagi-upd-e2e-driver-m1-${{ github.run_id }}-${{ github.run_attempt }}/*.json
-            ~/fagi-upd-e2e-driver-m1-${{ github.run_id }}-${{ github.run_attempt }}/snapshot-*.members.jsonl
             !**/recovery.json
             !**/snapshot-recovery.json
             !**/inventory.json
@@ -132,7 +131,6 @@ jobs:
           path: |
             ~/fagi-upd-e2e-m2-plan-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ~/fagi-upd-e2e-m2-${{ github.run_id }}-${{ github.run_attempt }}/*.json
-            ~/fagi-upd-e2e-m2-${{ github.run_id }}-${{ github.run_attempt }}/snapshot-*.members.jsonl
             !**/recovery.json
             !**/snapshot-recovery.json
             !**/inventory.json
@@ -196,7 +194,6 @@ jobs:
             ~/fagi-upd-e2e-m3-failure-plan-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ~/fagi-upd-e2e-m3-failure-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ~/fagi-upd-e2e-m3-failure-${{ github.run_id }}-${{ github.run_attempt }}/authority/*.json
-            ~/fagi-upd-e2e-m3-failure-${{ github.run_id }}-${{ github.run_attempt }}/snapshot-*.members.jsonl
             !**/recovery.json
             !**/snapshot-recovery.json
             !**/inventory.json
@@ -260,10 +257,8 @@ jobs:
             ~/fagi-upd-e2e-m3-interruption-plan-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ~/fagi-upd-e2e-m3-interruption-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ~/fagi-upd-e2e-m3-interruption-${{ github.run_id }}-${{ github.run_attempt }}/authority/*.json
-            ~/fagi-upd-e2e-m3-interruption-${{ github.run_id }}-${{ github.run_attempt }}/snapshot-*.members.jsonl
             ~/fagi-upd-e2e-m3-interruption-${{ github.run_id }}-${{ github.run_attempt }}/interruption-*/*.json
             ~/fagi-upd-e2e-m3-interruption-${{ github.run_id }}-${{ github.run_attempt }}/interruption-*/authority/*.json
-            ~/fagi-upd-e2e-m3-interruption-${{ github.run_id }}-${{ github.run_attempt }}/interruption-*/snapshot-*.members.jsonl
             !**/recovery.json
             !**/snapshot-recovery.json
             !**/inventory.json
@@ -327,7 +322,6 @@ jobs:
             ~/fagi-upd-e2e-m3-integrity-plan-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ~/fagi-upd-e2e-m3-integrity-${{ github.run_id }}-${{ github.run_attempt }}/*.json
             ~/fagi-upd-e2e-m3-integrity-${{ github.run_id }}-${{ github.run_attempt }}/authority/*.json
-            ~/fagi-upd-e2e-m3-integrity-${{ github.run_id }}-${{ github.run_attempt }}/snapshot-*.members.jsonl
             !**/recovery.json
             !**/snapshot-recovery.json
             !**/inventory.json

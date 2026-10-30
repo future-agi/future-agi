@@ -580,9 +580,8 @@ print(json.dumps(rows))
         for role in p.VOLUME_ROLES:
             source = self.ledger.directory/(role+'.members.jsonl')
             p.need(source.stat().st_size<=16*1024*1024,'snapshot member evidence bound exceeded')
-            target = self.output/('snapshot-'+role+'.members.jsonl')
-            shutil.copyfile(source,target); target.chmod(0o600)
-            members[role] = dict(sha256=p.sha(target.read_bytes()),bytes=target.stat().st_size)
+            raw = source.read_bytes()
+            members[role] = dict(sha256=p.sha(raw),bytes=len(raw),count=len(raw.splitlines()))
         self.record('snapshot-members.json',label(roles=members))
 
     def verify_snapshot(self):
@@ -1531,8 +1530,7 @@ def run(args):
     except (Exception, Interrupted, KeyboardInterrupt) as exc:
         # ProcessSupervisor temporarily installs the shipping signal handler,
         # whose Interrupted derives from BaseException, not Exception.
-        code = getattr(exc,'code',getattr(exc,'reason_code',None))
-        code = getattr(code,'value',code) or p.failure_diagnostics(exc)['refusal_code']
+        code = p.failure_diagnostics(exc)['refusal_code']
         failure = dict(stage=phase,reason=code,exception_type=type(exc).__name__)
         # Only fixed producer assertions, never raw product/subprocess errors.
         if isinstance(exc,p.RehearsalError): failure['detail'] = str(exc)[:512]
