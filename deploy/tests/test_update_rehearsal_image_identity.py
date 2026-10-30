@@ -114,6 +114,7 @@ class ImageIdentityTests(unittest.TestCase):
             row['GraphDriver']['Name'] = 'overlay2'
             row['HostConfig']['RestartPolicy'] = {'Name':'unless-stopped'}
             row['State'] = dict(Status='created', Pid=0)
+            row['LogPath'] = ''  # Docker initializes json-file logging on first start.
             role = {'app':'app-data', 'postgres':'postgres-data', 'clickhouse':'clickhouse-data'}[service]
             volume = binding['volumes'][role]
             row['Mounts'] = [dict(Type='volume', Name=volume['Name'], Source=volume['Mountpoint'], RW=True,
@@ -128,10 +129,37 @@ class ImageIdentityTests(unittest.TestCase):
              mock.patch.object(resources.NormalBootstrapEnvelopeSampler, '_docker_json', side_effect=docker_json), \
              mock.patch.object(resources.NormalBootstrapEnvelopeSampler, '_daemon_info',
                                return_value=(binding['daemon'], '/var/lib/docker', 'unix:///unit')):
-            return resources.NormalBootstrapEnvelopeSampler(
+            sampler = resources.NormalBootstrapEnvelopeSampler(
                 SimpleNamespace(runner=SimpleNamespace(docker_context='colima-fagi-update')),
                 binding=binding, roster=rows, target_image=dict(image=target_ref, digest=DIGEST),
                 snapshot_generation='a'*64, pending_plan=[], tables=[], migration_tables=[])
+        sampler._unit_rows = rows
+        sampler._docker_json = docker_json
+        return sampler
+
+    def test_created_json_log_sink_is_bound_then_verified_against_running_inspection(self):
+        sampler = self.sampler_fixture(IMAGE)
+        for service, row in sampler._unit_rows.items():
+            expected = '/var/lib/docker/containers/'+row['Id']+'/'+row['Id']+'-json.log'
+            self.assertEqual(row['LogPath'], '')
+            self.assertEqual(sampler._initial_identity['containers'][service]['log_path'], expected)
+            row['LogPath'] = expected
+            row['State'] = dict(Status='running', Pid=100+len(service))
+        observed = sampler._verify_identity(check_ready=True, check_daemon=False)
+        for service in sampler._unit_rows:
+            self.assertEqual(observed['containers'][service]['log_path'],
+                             sampler._initial_identity['containers'][service]['log_path'])
+        app = sampler._unit_rows['app']
+        expected = app['LogPath']
+        for path in ('', expected+'.other', '/var/lib/docker/containers/'+'f'*64+'/foreign-json.log'):
+            app['LogPath'] = path
+            with self.subTest(path=path), self.assertRaises(resources.ResourceObservationError):
+                sampler._verify_identity(check_ready=True, check_daemon=False)
+        app['LogPath'] = ''
+        app['State'] = dict(Status='created', Pid=0)
+        app['HostConfig']['LogConfig']['Type'] = 'local'
+        with self.assertRaises(resources.ResourceObservationError):
+            sampler._verify_identity(check_ready=False, check_daemon=False)
 
     def test_live_sampler_uses_canonical_config_image_and_exact_repo_digest(self):
         for name in ALIASES:

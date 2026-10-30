@@ -59,6 +59,18 @@ class QualificationDiagnosticsTests(unittest.TestCase):
                 self.assertFalse(result['qualification_evidence'])
                 self.assertEqual(set(result['failure']['suites'].values()), {'unrun'})
 
+    def test_resource_refusal_retains_only_its_fixed_source_line_not_locals_or_paths(self):
+        try:
+            resources.validate_plan_and_tables([], [{'PRIVATE TOKEN': 'never publish'}], [])
+        except resources.ResourceObservationError as error:
+            data = p.failure_diagnostics(error)
+        else:
+            self.fail('invalid resource input was accepted')
+        self.assertRegex(data['assertion_detail'], r'^update_rehearsal_resources\.py:[1-9][0-9]*$')
+        self.assertNotIn('PRIVATE', json.dumps(data))
+        self.assertNotIn(str(Path.home()), json.dumps(data))
+        self.assertEqual(data['refusal_code'], 'resource_input_invalid')
+
     def test_spool_error_vocabulary_is_closed_and_covers_all_fixed_refusals(self):
         tree = ast.parse(Path(spool.__file__).read_text())
         messages = set()

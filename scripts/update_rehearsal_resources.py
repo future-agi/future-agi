@@ -17,7 +17,8 @@ between samples.
 Counter contract (all byte counters are bytes):
 * disk_bytes: sum of allocated st_blocks * 512 under each exact enrolled named
   volume root, each exact target container overlay2 UpperDir, and each exact
-  Docker-reported local log path plus numeric rotations. Hardlinks are counted
+  local log path plus numeric rotations. json-file's fixed sink is bound before
+  first start and must match Docker's reported path once running. Hardlinks are counted
   once. Unrelated filesystem activity cannot offset owned growth. Symlinks,
   special files, filesystem-device crossings, omitted roots, or unreadable roots refuse.
 * wal_bytes: allocated st_blocks * 512 for regular files directly in the exact
@@ -516,6 +517,15 @@ class NormalBootstrapEnvelopeSampler:
             _need(type(log_driver) is str and type(log_path) is str, "resource_identity_ambiguous")
             if log_driver in ("json-file", "local"):
                 prefix = "/var/lib/docker/containers/" + self.expected_container_ids[service] + "/"
+                if log_driver == 'json-file':
+                    expected_log = prefix + self.expected_container_ids[service] + '-json.log'
+                    if (not log_path and state.get('Status') == 'created'
+                            and type(state.get('Pid')) is int and state['Pid'] == 0):
+                        # Docker initializes LogPath in StartLogger, not create.
+                        # Bind its fixed json-file sink before startup; subsequent
+                        # running inspections must report this exact same path.
+                        log_path = expected_log
+                    _need(log_path == expected_log, 'resource_identity_ambiguous')
                 _need(log_path.startswith(prefix) and log_path != prefix
                       and os.path.normpath(log_path) == log_path
                       and all(part not in ("", ".", "..") for part in log_path[len(prefix):].split("/")),

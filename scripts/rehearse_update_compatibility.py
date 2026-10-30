@@ -1555,6 +1555,15 @@ def failure_diagnostics(exc, executor=None, *, completed_rows=0):
         result['assertion_detail'] = str(exc)[:512]
     if isinstance(exc, ObservedSpoolWitnessError):
         result['assertion_detail'] = exc.safe_detail
+    if isinstance(exc, ResourceObservationError):
+        # Only a line in our own fixed reader, never frame locals or host paths.
+        trace = exc.__traceback__
+        while trace is not None:
+            frame_code = trace.tb_frame.f_code
+            if (frame_code.co_filename == ResourceObservationError.__init__.__code__.co_filename
+                    and frame_code.co_name not in ('_need', '__init__')):
+                result['assertion_detail'] = 'update_rehearsal_resources.py:'+str(trace.tb_lineno)
+            trace = trace.tb_next
     if isinstance(exc, CommandError):
         result['command'] = dict(executable=exc.command_name, exit_code=exc.returncode)
     if reason == 'shipping_executor_unavailable':

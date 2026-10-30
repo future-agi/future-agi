@@ -370,6 +370,16 @@ print(json.dumps(rows))
     def check(self, suite, name, assertion):
         self.sink.check(suite, name, assertion)
 
+    def assert_reference_inventory(self):
+        measured = p.validate_reference_inventory(self.corpus['large_volume_reference'], registry=self.registry,
+            pending_migration_tables=self.corpus['pending_migration_tables'], plan=self.corpus['target_pending_plan'])
+        p.equal(measured, {(row['engine'], row['table']): row for row in self.sink.reference},
+                'reference inventory differs from the prepared reference')
+
+    def assert_restored_source_ready(self):
+        observed = self.verify_restored_source().facts.runtime_observation
+        p.need(observed.ready and observed.stable, 'restored source is not ready and stable')
+
     def source_suite(self):
         suite = 'source_snapshot'
         self.check(suite, 'source_identity', lambda: p.equal(
@@ -381,10 +391,10 @@ print(json.dumps(rows))
         self.check(suite, 'snapshot_sealed', lambda: p.equal(self.ledger.backup_seal, self.artifact.seal, 'snapshot seal differs'))
         self.check(suite, 'persistent_domain_mapping', lambda: p.equal(
             set(self.artifact.proof.covered_domains), set(p.topology_profile('standalone', ()).backup_domains), 'snapshot domain coverage differs'))
-        self.check(suite, 'witness_namespace_complete', lambda: p.witness_inventory(self.corpus['source_witnesses_rechecked']))
-        self.check(suite, 'large_volume_reference', lambda: p.validate_reference_inventory(
-            self.corpus['large_volume_reference'], registry=self.registry,
-            pending_migration_tables=self.corpus['pending_migration_tables'], plan=self.corpus['target_pending_plan']))
+        self.check(suite, 'witness_namespace_complete', lambda: p.equal(
+            p.witness_inventory(self.corpus['source_witnesses_rechecked']), self.corpus['source_witnesses'],
+            'source witness namespace changed'))
+        self.check(suite, 'large_volume_reference', self.assert_reference_inventory)
         for domain in p.topology_profile('standalone', ()).backup_domains:
             self.check(suite, 'source_witness:'+domain, lambda d=domain: self.domain_equal(
                 self.corpus['source_witnesses_rechecked'], self.corpus['source_witnesses'], d))
@@ -421,11 +431,10 @@ print(json.dumps(rows))
             self._target_migrations['inventory_sha256'] == self.target_plan['inventory_sha256'],
             'target recorder/inventory differs from the measured target plan'))
         references = {(row['engine'], row['table']): row for row in self.sink.reference}
-        self.check(suite, 'migration_resource_measurements', lambda: validate_bootstrap_envelope(
-            fields, self.corpus, self.target, references))
-        self.check(suite, 'large_volume_migrations', lambda: p.validate_reference_inventory(
-            self.corpus['large_volume_reference'], registry=self.registry,
-            pending_migration_tables=self.corpus['pending_migration_tables'], plan=self.corpus['target_pending_plan']))
+        self.check(suite, 'migration_resource_measurements', lambda: p.equal(validate_bootstrap_envelope(
+            fields, self.corpus, self.target, references), fields['migration_measurements'],
+            'validated bootstrap measurement differs'))
+        self.check(suite, 'large_volume_migrations', self.assert_reference_inventory)
         old = self.current_source_witnesses()
         for domain in p.topology_profile('standalone', ()).backup_domains:
             self.check(suite, 'new_reads_old:'+domain,
@@ -512,11 +521,13 @@ print(json.dumps(rows))
             'restore replaced original volume objects or roots'))
         self.check(suite, 'shipping_restore', lambda: p.need(self.engine.automatic_outcome == 'restored' and
             self.ledger.phase == 'restored', 'shipping recovery did not reach restored'))
-        self.check(suite, 'source_ready', self.verify_restored_source)
+        self.check(suite, 'source_ready', self.assert_restored_source_ready)
         self.check(suite, 'source_migrations_exact', lambda: p.equal(
             ProductHarness.migration_inventory(self), self._source_migrations, 'source migrations not restored'))
         self.check(suite, 'candidate_only_absent', lambda: self.witnesses.assert_absent('target'))
-        self.check(suite, 'restored_namespace_complete', lambda: p.witness_inventory(self.current_source_witnesses()))
+        self.check(suite, 'restored_namespace_complete', lambda: p.equal(
+            p.witness_inventory(self.current_source_witnesses()), self.corpus['source_witnesses'],
+            'restored witness namespace changed'))
         for domain in p.topology_profile('standalone', ()).backup_domains:
             self.check(suite, 'restored_witness:'+domain, lambda d=domain: self.domain_equal(
                 self.current_source_witnesses(), self.corpus['source_witnesses'], d))
