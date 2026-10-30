@@ -699,6 +699,7 @@ def test_server_cancels_slow_discovery_before_it_returns_cursors(store):
             self.client = client
             self.cap_ms = None
             self.elapsed = None
+            self.query_id = "metric-b04-timeout-" + uuid4().hex
 
         def execute_ch_query(
             self,
@@ -713,7 +714,9 @@ def test_server_cancels_slow_discovery_before_it_returns_cursors(store):
             started = time.monotonic()
             try:
                 return self.client.execute(
-                    "SELECT sleep(3)",
+                    "SELECT sum(cityHash64(SHA256(toString(number)))) "
+                    "FROM numbers_mt(100000000)",
+                    query_id=self.query_id,
                     settings={
                         **settings,
                         "max_execution_time": server_execution_cap_ms / 1000,
@@ -725,7 +728,10 @@ def test_server_cancels_slow_discovery_before_it_returns_cursors(store):
                 self.elapsed = time.monotonic() - started
 
     analytics = SlowAnalytics(store.client)
-    budget = MetricReadBudget(deadline_seconds=0.4)
+    # ClickHouse stops a capped scan cooperatively, a few ms past the cap
+    # (25.3.14.14: 102-104 ms at a ~100 ms cap). The 0.4 s client bound below
+    # leaves room for that polling and the round trip.
+    budget = MetricReadBudget(deadline_seconds=0.1)
     cursors = {
         "watermark_ns": ns(NOW),
         "eval_watermark_ns": ns(NOW),
@@ -742,9 +748,20 @@ def test_server_cancels_slow_discovery_before_it_returns_cursors(store):
             ceiling=NOW + timedelta(seconds=1),
             budget=budget,
         )
-    assert 0 < analytics.cap_ms < 400
+    assert 0 < analytics.cap_ms <= 100
     assert analytics.elapsed < 0.4
     assert cursors == original
+    # The server itself stopped the scan at the cap, not just the client.
+    server_cap_overshoot_ms = 50
+    store.client.execute("SYSTEM FLUSH LOGS")
+    rows = store.client.execute(
+        "SELECT exception_code, query_duration_ms FROM system.query_log "
+        "WHERE query_id = %(query_id)s AND type = 'ExceptionWhileProcessing'",
+        {"query_id": analytics.query_id},
+    )
+    assert len(rows) == 1
+    assert rows[0][0] == 159
+    assert rows[0][1] <= analytics.cap_ms + server_cap_overshoot_ms
 
 
 @pytest.mark.unit
