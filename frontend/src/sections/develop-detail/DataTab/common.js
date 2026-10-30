@@ -461,15 +461,19 @@ const menuOrder = [
   "Reset Columns",
 ];
 
-const DynamicColumnOriginTypes = [
-  "vector_db",
-  "extracted_entities",
-  "extracted_json",
-  "python_code",
-  "classification",
-  "api_call",
-  "conditional",
-];
+export const DynamicColumnOriginTypeToOperationType = {
+  vector_db: "vector_db",
+  extracted_entities: "extract_entities",
+  extracted_json: "extract_json",
+  python_code: "execute_code",
+  classification: "classify",
+  api_call: "api_call",
+  conditional: "conditional",
+};
+
+export const DynamicColumnOriginTypes = Object.keys(
+  DynamicColumnOriginTypeToOperationType,
+);
 
 const getMainMenuItems =
   (currentDataset, isViewerRole = false) =>
@@ -816,10 +820,6 @@ export const normalizeEvalCellValue = (value) => {
 export const cleanChoiceLabel = (value) => {
   const parsed = parsePythonReprIfNeeded(value);
   if (Array.isArray(parsed)) return parsed.map((v) => String(v)).join(", ");
-  // Scored choices evals emit {score, choice} / {score, choices} as the bucket
-  // key, which would otherwise stringify to "[object Object]".
-  const choiceLabel = extractChoiceLabel(parsed);
-  if (choiceLabel !== null) return choiceLabel;
   return String(parsed ?? value);
 };
 
@@ -906,14 +906,9 @@ export const normalizeEvalResult = (value, outputType) => {
       items = [v];
     }
     items = items
-      .flatMap((x) => {
-        if (!x || typeof x !== "object") return [x];
-        return (
-          extractChoiceArray(x) ?? [
-            extractChoiceLabel(x) ?? x.label ?? x.value ?? "",
-          ]
-        );
-      })
+      .map((/** @type {any} */ x) =>
+        x && typeof x === "object" ? x.choice ?? x.label ?? x.value ?? "" : x,
+      )
       .map((/** @type {any} */ x) => String(x ?? ""))
       .filter(Boolean);
     if (items.length === 0) return { kind: "empty" };
