@@ -141,7 +141,14 @@ describe("useBaseNodeStyles", () => {
   it("includes hover styles when idle and not preview", () => {
     const { result } = renderWithTheme(defaultProps);
     expect(result.current.boxSx["&:hover"]).toBeDefined();
-    expect(result.current.boxSx["&:hover .node-delete-btn"]).toBeDefined();
+    expect(
+      result.current.boxSx[
+        "&:hover .node-delete-btn, &:focus-within .node-delete-btn"
+      ],
+    ).toEqual({
+      opacity: 1,
+      pointerEvents: "auto",
+    });
   });
 
   it("excludes hover styles in preview mode", () => {

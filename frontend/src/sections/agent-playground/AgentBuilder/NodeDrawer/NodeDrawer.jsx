@@ -296,7 +296,7 @@ export default function NodeDrawer({
 
   // Delete node — follows the same pattern as useBaseNodeActions.handleDeleteClick
   const handleDeleteNode = useCallback(async () => {
-    if (!activeNode || isWorkflowRunning || isReadOnly) return;
+    if (!activeNode || isWorkflowRunning) return;
     setShowDeleteDialog(false);
 
     const nodeId = activeNode.id;
@@ -324,7 +324,7 @@ export default function NodeDrawer({
     try {
       await deleteNodeApi({
         graphId: agent?.id,
-        versionId: agent?.version_id,
+        versionId: agent?.versionId,
         nodeId,
       });
     } catch {
@@ -334,7 +334,6 @@ export default function NodeDrawer({
   }, [
     activeNode,
     isWorkflowRunning,
-    isReadOnly,
     deleteNode,
     onClose,
     ensureDraft,
@@ -404,54 +403,60 @@ export default function NodeDrawer({
             >
               <NodeCard node={NODE_TYPE_CONFIG[activeNode?.type]} readOnly />
               <Stack direction="row" spacing={0.25} alignItems="center">
-                {!isReadOnly && (
-                  <>
-                    <CustomTooltip
-                      show
-                      title="Delete node"
-                      size="small"
-                      arrow
-                      placement="bottom"
-                    >
-                      <span>
-                        <IconButton
-                          size="small"
-                          onClick={() => setShowDeleteDialog(true)}
-                          disabled={isWorkflowRunning}
-                          sx={{
-                            color: "red.500",
-                            "&:hover": {
-                              bgcolor: (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(255,70,70,0.08)"
-                                  : "red.50",
-                            },
-                          }}
-                        >
-                          <SvgColor
-                            src="/assets/icons/ic_delete.svg"
-                            sx={{ height: 18, width: 18 }}
-                          />
-                        </IconButton>
-                      </span>
-                    </CustomTooltip>
-                    <Divider
-                      orientation="vertical"
-                      flexItem
-                      sx={{ mx: 0.25, height: 20, alignSelf: "center" }}
-                    />
-                  </>
-                )}
-                <IconButton
+                <CustomTooltip
+                  show
+                  title="Delete node"
                   size="small"
-                  onClick={handleClose}
-                  sx={{ color: "text.primary" }}
+                  arrow
+                  placement="bottom"
                 >
-                  <SvgColor
-                    src="/assets/icons/ic_close.svg"
-                    sx={{ height: 20, width: 20 }}
-                  />
-                </IconButton>
+                  <span>
+                    <IconButton
+                      size="small"
+                      aria-label="Delete node"
+                      onClick={() => setShowDeleteDialog(true)}
+                      disabled={isWorkflowRunning}
+                      sx={{
+                        color: "red.500",
+                        "&:hover": {
+                          bgcolor: (theme) =>
+                            theme.palette.mode === "dark"
+                              ? "rgba(255,70,70,0.08)"
+                              : "red.50",
+                        },
+                      }}
+                    >
+                      <SvgColor
+                        src="/assets/icons/ic_delete.svg"
+                        sx={{ height: 18, width: 18 }}
+                      />
+                    </IconButton>
+                  </span>
+                </CustomTooltip>
+                <Divider
+                  orientation="vertical"
+                  flexItem
+                  sx={{ mx: 0.25, height: 20, alignSelf: "center" }}
+                />
+                <CustomTooltip
+                  show
+                  title="Close"
+                  size="small"
+                  arrow
+                  placement="bottom"
+                >
+                  <IconButton
+                    size="small"
+                    aria-label="Close node editor"
+                    onClick={handleClose}
+                    sx={{ color: "text.primary" }}
+                  >
+                    <SvgColor
+                      src="/assets/icons/ic_close.svg"
+                      sx={{ height: 20, width: 20 }}
+                    />
+                  </IconButton>
+                </CustomTooltip>
               </Stack>
             </Stack>
             <Divider
