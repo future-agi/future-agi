@@ -521,6 +521,10 @@ func TestMockPipelineOverEveryEncoding(t *testing.T) {
 	}{{EncodingJSON, false}, {EncodingProtobuf, false}, {EncodingProtobuf, true}, {EncodingJSON, true}, {EncodingGRPC, false}} {
 		t.Run(fmt.Sprintf("%s-gzip-%t", tc.encoding, tc.gzip), func(t *testing.T) {
 			c := mockRunConfig()
+			// This is a protocol/accounting fixture, not a throughput test. Preserve
+			// exactly twelve spans and three requests while allowing race-instrumented
+			// first-use payload construction on two CPUs.
+			c.Rate, c.Duration = 4, 3*time.Second
 			c.Encoding, c.Gzip = tc.encoding, tc.gzip
 			c.RunID = NewRunID()
 			c.DirectProbes.Enabled = false
@@ -644,7 +648,7 @@ func runOverBudgetCase(t *testing.T, chURL string, headers http.Header, writer c
 	c.Rate, c.Duration, c.BatchSize, c.VerifyChunk = 256, time.Second, 128, 64
 	c.Payload, c.Settle = "small", time.Second
 	c.DirectProbes.Enabled = false
-	fixture := startCollector(t, writer, server.Config{IngestBudgetMiB: 2, IngestMaxWait: time.Millisecond, InsertConcurrency: 1, BatchMaxRows: 16})
+	fixture := startCollector(t, writer, server.Config{IngestBudgetMiB: 2, InsertConcurrency: 1, BatchMaxRows: 16})
 	c.ClickHouseURL, c.Endpoint = chURL, fixture.endpoint(encoding)
 	c = prepare(c)
 	r, err := Run(context.Background(), c, Options{ClickHouseHeaders: headers})

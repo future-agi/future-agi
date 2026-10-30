@@ -237,7 +237,9 @@ func assertBlockedInterrupt(t *testing.T, c *exec.Cmd, twice bool) {
 			<-done
 			t.Fatal(err)
 		}
-	case <-time.After(5 * time.Second):
+	// Parsing the intentionally 6 MiB receipt under -race is startup, not
+	// the interrupt assertion. Keep the strict post-signal 2 s bound below.
+	case <-time.After(30 * time.Second):
 		c.Process.Kill()
 		<-done
 		t.Fatal("no output")
