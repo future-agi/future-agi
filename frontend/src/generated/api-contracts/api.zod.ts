@@ -34235,6 +34235,9 @@ export const simulateApiAgentFixEngineCheckRunsBodyScenarioKeysItemMax = 255;
 
 export const simulateApiAgentFixEngineCheckRunsBodyTrialsMax = 20;
 
+export const simulateApiAgentFixEngineCheckRunsBodyRepeatDefault = 1;
+export const simulateApiAgentFixEngineCheckRunsBodyRepeatMax = 20;
+
 export const SimulateApiAgentFixEngineCheckRunsBody = zod.object({
   label: zod
     .string()
@@ -34253,6 +34256,11 @@ export const SimulateApiAgentFixEngineCheckRunsBody = zod.object({
     .number()
     .min(1)
     .max(simulateApiAgentFixEngineCheckRunsBodyTrialsMax),
+  repeat: zod
+    .number()
+    .min(1)
+    .max(simulateApiAgentFixEngineCheckRunsBodyRepeatMax)
+    .default(simulateApiAgentFixEngineCheckRunsBodyRepeatDefault),
 });
 
 /**

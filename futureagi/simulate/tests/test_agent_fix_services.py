@@ -17,6 +17,7 @@ from simulate.models import (
     AgentFixRun,
     AgentVersion,
     HarnessAgentVersionRuntime,
+    HostedHarnessAttempt,
     HostedHarnessExecution,
     HostedHarnessJob,
 )
@@ -232,7 +233,9 @@ def _candidate(fix_run, attempt=1, *, tree=None, patch_body=PATCH):
         )[0]
 
 
-def _check(fix_run, *, label="base", version_id=None, keys=(KEYS[0],), trials=1):
+def _check(
+    fix_run, *, label="base", version_id=None, keys=(KEYS[0],), trials=1, repeat=1
+):
     # A check run is dispatched once its transaction commits.
     with TestCase.captureOnCommitCallbacks(execute=True):
         return engine.start_check_run(
@@ -242,6 +245,7 @@ def _check(fix_run, *, label="base", version_id=None, keys=(KEYS[0],), trials=1)
                 agent_version_id=str(version_id or fix_run.base_agent_version_id),
                 scenario_keys=list(keys),
                 trials=trials,
+                repeat=repeat,
             ),
         )
 
@@ -492,6 +496,47 @@ class TestRetry:
         ) == [rerun.id]
         # Another trial count is another check: it runs.
         assert _check(retried, label="baseline", trials=2).id != baseline.id
+
+    def test_a_retry_runs_again_a_check_finished_at_another_parallelism(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks, settings
+    ):
+        failed = _fix_run(source_run, token_hash=hash_secret("t"))
+        baseline = _check(failed, label="baseline")
+        HostedHarnessJob.no_workspace_objects.filter(id=baseline.id).update(
+            state="completed"
+        )
+        close_fix_run(failed.id, State.FAILED, failure={"code": "x", "message": "m"})
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(
+                AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
+            )
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.RUNNING
+        )
+        retried.refresh_from_db()
+        settings.AGENT_FIX_CHECK_RUN_PARALLELISM += 1
+
+        assert _check(retried, label="baseline").id != baseline.id
+
+    def test_a_retry_keeps_the_seeds_of_the_fix_it_retries(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks
+    ):
+        failed = _fix_run(source_run, token_hash=hash_secret("t"))
+        first = _check(failed, label="c1-target", repeat=2)
+        close_fix_run(failed.id, State.FAILED, failure={"code": "x", "message": "m"})
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(
+                AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
+            )
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.RUNNING
+        )
+        retried.refresh_from_db()
+
+        again = _check(retried, label="c1-target", repeat=2)
+
+        assert again.id != first.id
+        assert again.seed == first.seed
 
 
 class TestAddCandidate:
@@ -795,7 +840,80 @@ class TestCheckRuns:
         temporal.start_run.assert_not_called()
 
 
+class TestCheckRunSeeds:
+    def test_a_repeat_has_one_seed_in_both_arms_and_repeats_differ(self, source_run):
+        fix_run = _fix_run(source_run, token_hash=hash_secret("t"))
+        candidate = _candidate(fix_run)
+
+        base = [_check(fix_run, label=f"b-r{k}", repeat=k) for k in (1, 2)]
+        tried = [
+            _check(
+                fix_run,
+                label=f"c-r{k}",
+                repeat=k,
+                version_id=candidate.agent_version_id,
+            )
+            for k in (1, 2)
+        ]
+
+        assert [run.seed for run in base] == [run.seed for run in tried]
+        assert base[0].seed != base[1].seed
+
+    def test_a_check_run_asks_for_the_fix_parallelism(self, source_run, settings):
+        settings.AGENT_FIX_CHECK_RUN_PARALLELISM = 3
+
+        run = _check(_fix_run(source_run, token_hash=hash_secret("t")))
+
+        assert run.payload["runtime"]["parallelism"] == 3
+
+
 class TestCheckRunStatus:
+    def test_a_trial_says_how_long_its_conversation_took(self, source_run):
+        fix_run = _fix_run(source_run, token_hash=hash_secret("t"))
+        run = _check(fix_run)
+        call = HostedHarnessExecution.no_workspace_objects.get(job=run).call_execution
+        call.call_metadata = {
+            "hosted_harness_receipt": {
+                "sub_goals": [{"name": "refunded", "held": True}],
+                "call": {"duration_ms": 36100},
+            }
+        }
+        call.save(update_fields=["call_metadata"])
+
+        [record] = check_run_status(run).records
+
+        assert record.duration_s == 36.1
+
+    @pytest.mark.parametrize(
+        ("attempt", "clamped", "expected"),
+        [
+            pytest.param(1, None, 1, id="degraded in its attempt"),
+            pytest.param(None, None, 3, id="never degraded: as it asked"),
+            pytest.param(None, {"requested": 3, "admitted": 2}, 2, id="clamped"),
+        ],
+    )
+    def test_a_finished_run_says_the_parallelism_it_really_had(
+        self, source_run, settings, attempt, clamped, expected
+    ):
+        settings.AGENT_FIX_CHECK_RUN_PARALLELISM = 3
+        run = _check(_fix_run(source_run, token_hash=hash_secret("t")))
+        assert check_run_status(run).parallelism is None  # Still going.
+        run.payload["metadata"]["parallelism_clamped"] = clamped
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            state="completed", payload=run.payload
+        )
+        run.refresh_from_db()
+        HostedHarnessAttempt.no_workspace_objects.create(
+            job=run,
+            attempt_number=1,
+            token_hash=hash_secret("a"),
+            fence_hash=hash_secret("b"),
+            expires_at=timezone.now(),
+            effective_parallelism=attempt,
+        )
+
+        assert check_run_status(run).parallelism == expected
+
     @pytest.mark.parametrize(
         ("receipt", "status", "error", "sub_goals"),
         [
@@ -994,13 +1112,13 @@ class TestCheckRunStatus:
                 speaker_role="user",
                 content=key,
             )
-        # A finished run, so the transcripts are read too.
+        # A finished run, so the transcripts and its last attempt are read too.
         HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
             state="completed"
         )
         run.refresh_from_db()
 
-        with django_assert_num_queries(2):
+        with django_assert_num_queries(3):
             status = check_run_status(run)
 
         assert len(status.records) == status.total == 10

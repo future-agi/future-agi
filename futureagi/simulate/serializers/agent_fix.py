@@ -320,6 +320,7 @@ class AgentFixCheckRunRequestSerializer(serializers.Serializer):
         child=serializers.CharField(max_length=255), min_length=1
     )
     trials = serializers.IntegerField(min_value=1, max_value=20)
+    repeat = serializers.IntegerField(min_value=1, max_value=20, default=1)
 
 
 class AgentFixCheckRunCreatedSerializer(serializers.Serializer):
