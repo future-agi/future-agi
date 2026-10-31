@@ -22,9 +22,9 @@ type hiddenlayerRequest struct {
 }
 
 type hiddenlayerResponse struct {
-	Flagged    bool                  `json:"flagged"`
-	RiskScore  float64               `json:"risk_score"`
-	Detections []hiddenlayerDetect   `json:"detections"`
+	Flagged    bool                `json:"flagged"`
+	RiskScore  float64             `json:"risk_score"`
+	Detections []hiddenlayerDetect `json:"detections"`
 }
 
 type hiddenlayerDetect struct {
@@ -32,7 +32,7 @@ type hiddenlayerDetect struct {
 	Score float64 `json:"score"`
 }
 
-func newHiddenlayerAdapter(cfg map[string]interface{}) *hiddenlayerAdapter {
+func newHiddenlayerAdapter(cfg adapterConfig) *hiddenlayerAdapter {
 	return &hiddenlayerAdapter{
 		apiKey:   getStringConfig(cfg, "api_key", ""),
 		endpoint: getStringConfig(cfg, "endpoint", "https://api.hiddenlayer.ai/api/v2/submit/text"),

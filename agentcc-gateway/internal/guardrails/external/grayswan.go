@@ -35,11 +35,11 @@ type grayswanMessage struct {
 }
 
 type grayswanResponse struct {
-	Violation                float64                    `json:"violation"`
-	ViolatedRules            []int                      `json:"violated_rules"`
-	Mutation                 bool                       `json:"mutation"`
-	IPI                      bool                       `json:"ipi"`
-	ViolatedRuleDescriptions []grayswanRuleDescription  `json:"violated_rule_descriptions"`
+	Violation                float64                   `json:"violation"`
+	ViolatedRules            []int                     `json:"violated_rules"`
+	Mutation                 bool                      `json:"mutation"`
+	IPI                      bool                      `json:"ipi"`
+	ViolatedRuleDescriptions []grayswanRuleDescription `json:"violated_rule_descriptions"`
 }
 
 type grayswanRuleDescription struct {
@@ -48,9 +48,9 @@ type grayswanRuleDescription struct {
 	Description string `json:"description"`
 }
 
-func newGrayswanAdapter(cfg map[string]interface{}) *grayswanAdapter {
+func newGrayswanAdapter(cfg adapterConfig) *grayswanAdapter {
 	var rules map[string]string
-	if raw, ok := cfg["rules"].(map[string]interface{}); ok {
+	if raw, ok := cfg.values["rules"].(map[string]interface{}); ok {
 		rules = make(map[string]string, len(raw))
 		for k, v := range raw {
 			if s, ok := v.(string); ok {

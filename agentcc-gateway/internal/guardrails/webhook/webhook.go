@@ -76,7 +76,14 @@ func New(name string, cfg map[string]interface{}) *WebhookGuardrail {
 	return g
 }
 
-func (g *WebhookGuardrail) Name() string           { return g.name }
+// NewTenant guards connections to tenant-selected webhook URLs.
+func NewTenant(name string, cfg map[string]interface{}, allowPrivate bool) *WebhookGuardrail {
+	g := New(name, cfg)
+	g.client = guardrails.TenantHTTPClient(g.client.Timeout, allowPrivate)
+	return g
+}
+
+func (g *WebhookGuardrail) Name() string            { return g.name }
 func (g *WebhookGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check calls the webhook endpoint.

@@ -948,7 +948,8 @@ type OrgProvidersConfig struct {
 	// as Docker service names that resolve to them): a local Ollama or vLLM.
 	// Off by default, since on a shared gateway it lets any org reach
 	// internal hosts. Loopback, link-local, cloud metadata, multicast and
-	// unspecified addresses stay refused regardless.
+	// unspecified addresses stay refused regardless. Also applies to tenant
+	// guardrail webhooks and evaluators, not trusted static guardrail rules.
 	AllowPrivateURLs bool `yaml:"allow_private_urls" json:"allow_private_urls"`
 }
 

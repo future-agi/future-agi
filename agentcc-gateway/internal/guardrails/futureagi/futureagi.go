@@ -16,15 +16,16 @@ import (
 
 // FutureAGIGuardrail calls Future AGI's evaluation API for ML-based guardrail checks.
 type FutureAGIGuardrail struct {
-	name      string
-	evalIDs   []string
-	apiKey    string
-	secretKey string
-	baseURL   string
-	callType  string
-	maxTokens int
-	retry     int
-	client    *http.Client
+	name               string
+	evalIDs            []string
+	apiKey             string
+	secretKey          string
+	baseURL            string
+	callType           string
+	maxTokens          int
+	retry              int
+	client             *http.Client
+	requireCredentials bool
 }
 
 // evalRequest is the payload sent to the evaluation API.
@@ -62,8 +63,21 @@ type evaluation struct {
 	EvalID     string      `json:"evalId"`
 }
 
-// New creates a FutureAGIGuardrail from rule config.
+// New creates a FutureAGIGuardrail from trusted operator rule config.
 func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
+	return newGuardrail(name, cfg, true)
+}
+
+// NewTenant uses literal tenant credentials without gateway environment fallbacks.
+// Its destination is not egress-guarded yet: the backend pushes the platform's own
+// BASE_URL, which is loopback or private on many self-hosted installs.
+func NewTenant(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
+	g := newGuardrail(name, cfg, false)
+	g.requireCredentials = true
+	return g
+}
+
+func newGuardrail(name string, cfg map[string]interface{}, operator bool) *FutureAGIGuardrail {
 	g := &FutureAGIGuardrail{
 		name:      name,
 		baseURL:   "https://api.futureagi.com",
@@ -99,13 +113,13 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 		}
 	}
 	if v, ok := cfg["api_key"].(string); ok {
-		g.apiKey = expandEnv(v)
+		g.apiKey = v
 	}
 	if v, ok := cfg["secret_key"].(string); ok {
-		g.secretKey = expandEnv(v)
+		g.secretKey = v
 	}
 	if v, ok := cfg["base_url"].(string); ok && v != "" {
-		g.baseURL = expandEnv(v)
+		g.baseURL = v
 	}
 	if v, ok := cfg["call_type"].(string); ok && v != "" {
 		g.callType = v
@@ -132,13 +146,19 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 		}
 	}
 
-	// Fallback to env vars for keys.
-	if g.apiKey == "" {
-		g.apiKey = os.Getenv("FI_API_KEY")
+	if operator {
+		g.apiKey = expandEnv(g.apiKey)
+		g.secretKey = expandEnv(g.secretKey)
+		g.baseURL = expandEnv(g.baseURL)
+		// Fallback to env vars for operator keys only.
+		if g.apiKey == "" {
+			g.apiKey = os.Getenv("FI_API_KEY")
+		}
+		if g.secretKey == "" {
+			g.secretKey = os.Getenv("FI_SECRET_KEY")
+		}
 	}
-	if g.secretKey == "" {
-		g.secretKey = os.Getenv("FI_SECRET_KEY")
-	}
+	// The operator's platform URL is not a secret, so tenant checks use it too.
 	if g.baseURL == "https://api.futureagi.com" {
 		if envURL := os.Getenv("FI_BASE_URL"); envURL != "" {
 			g.baseURL = envURL
@@ -148,7 +168,7 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 	return g
 }
 
-func (g *FutureAGIGuardrail) Name() string           { return g.name }
+func (g *FutureAGIGuardrail) Name() string            { return g.name }
 func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check evaluates text against the Future AGI evaluation API.
@@ -157,6 +177,14 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 		return &guardrails.CheckResult{Pass: true}
 	}
 	if g.apiKey == "" || g.secretKey == "" {
+		if g.requireCredentials {
+			return &guardrails.CheckResult{
+				Pass:             false,
+				Score:            1.0,
+				OperationalError: true,
+				Message:          "futureagi guardrail: missing api_key or secret_key",
+			}
+		}
 		return &guardrails.CheckResult{
 			Pass:    true,
 			Message: "futureagi guardrail: missing api_key or secret_key, skipping",

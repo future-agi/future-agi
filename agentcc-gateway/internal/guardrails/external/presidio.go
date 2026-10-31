@@ -31,7 +31,7 @@ type presidioEntity struct {
 	End        int     `json:"end"`
 }
 
-func newPresidioAdapter(cfg map[string]interface{}) *presidioAdapter {
+func newPresidioAdapter(cfg adapterConfig) *presidioAdapter {
 	return &presidioAdapter{
 		endpoint:       getStringConfig(cfg, "endpoint", "http://localhost:5001"),
 		apiKey:         getStringConfig(cfg, "api_key", ""),

@@ -28,8 +28,8 @@ type aporiaMessage struct {
 }
 
 type aporiaResponse struct {
-	Action   string          `json:"action"`
-	Explain  []aporiaExplain `json:"explain_log"`
+	Action  string          `json:"action"`
+	Explain []aporiaExplain `json:"explain_log"`
 }
 
 type aporiaExplain struct {
@@ -38,7 +38,7 @@ type aporiaExplain struct {
 	Result   string `json:"result"`
 }
 
-func newAporiaAdapter(cfg map[string]interface{}) *aporiaAdapter {
+func newAporiaAdapter(cfg adapterConfig) *aporiaAdapter {
 	return &aporiaAdapter{
 		apiKey:    getStringConfig(cfg, "api_key", ""),
 		endpoint:  getStringConfig(cfg, "endpoint", "https://gr-prd.aporia.com"),
@@ -87,7 +87,7 @@ func (a *aporiaAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 		Score:   1.0,
 		Message: msg,
 		Details: map[string]interface{}{
-			"action":     resp.Action,
+			"action":      resp.Action,
 			"explain_log": resp.Explain,
 		},
 	}

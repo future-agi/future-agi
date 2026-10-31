@@ -29,19 +29,39 @@ type ExternalGuardrail struct {
 	client  *http.Client
 }
 
-// New creates an ExternalGuardrail from rule config.
+type adapterConfig struct {
+	values    map[string]interface{}
+	expandEnv bool
+}
+
+// New creates an ExternalGuardrail from trusted operator rule config.
 func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
+	return newGuardrail(name, adapterConfig{values: cfg, expandEnv: true}, &http.Client{Timeout: 5 * time.Second})
+}
+
+// NewTenant treats tenant values literally and guards all outbound connections.
+func NewTenant(name string, cfg map[string]interface{}, allowPrivate bool) *ExternalGuardrail {
+	g := newGuardrail(name, adapterConfig{values: cfg}, &http.Client{Timeout: 5 * time.Second})
+	// Construct guarded dialers only after the effective timeouts are known.
+	g.client = guardrails.TenantHTTPClient(g.client.Timeout, allowPrivate)
+	if a, ok := g.adapter.(*crowdstrikeAdapter); ok {
+		a.client = guardrails.TenantHTTPClient(a.client.Timeout, allowPrivate)
+	}
+	return g
+}
+
+func newGuardrail(name string, cfg adapterConfig, client *http.Client) *ExternalGuardrail {
 	g := &ExternalGuardrail{
 		name:   name,
 		retry:  0,
-		client: &http.Client{Timeout: 5 * time.Second},
+		client: client,
 	}
 
-	if cfg == nil {
+	if cfg.values == nil {
 		return g
 	}
 
-	if v, ok := cfg["retry"]; ok {
+	if v, ok := cfg.values["retry"]; ok {
 		switch n := v.(type) {
 		case int:
 			g.retry = n
@@ -49,13 +69,13 @@ func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
 			g.retry = int(n)
 		}
 	}
-	if v, ok := cfg["timeout"].(string); ok {
+	if v, ok := cfg.values["timeout"].(string); ok {
 		if d, err := time.ParseDuration(v); err == nil {
 			g.client.Timeout = d
 		}
 	}
 
-	provider, _ := cfg["provider"].(string)
+	provider, _ := cfg.values["provider"].(string)
 	switch provider {
 	case "lakera":
 		g.adapter = newLakeraAdapter(cfg)
@@ -80,7 +100,11 @@ func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
 	case "zscaler":
 		g.adapter = newZscalerAdapter(cfg)
 	case "crowdstrike":
-		g.adapter = newCrowdstrikeAdapter(cfg)
+		a := newCrowdstrikeAdapter(cfg)
+		tokenClient := *client
+		tokenClient.Timeout = 10 * time.Second
+		a.client = &tokenClient
+		g.adapter = a
 	case "aporia":
 		g.adapter = newAporiaAdapter(cfg)
 	case "lasso":
@@ -92,7 +116,7 @@ func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
 	return g
 }
 
-func (g *ExternalGuardrail) Name() string           { return g.name }
+func (g *ExternalGuardrail) Name() string            { return g.name }
 func (g *ExternalGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check evaluates text against the external provider.
@@ -247,15 +271,18 @@ func expandEnv(s string) string {
 	return s
 }
 
-func getStringConfig(cfg map[string]interface{}, key, defaultVal string) string {
-	if v, ok := cfg[key].(string); ok && v != "" {
-		return expandEnv(v)
+func getStringConfig(cfg adapterConfig, key, defaultVal string) string {
+	if v, ok := cfg.values[key].(string); ok && v != "" {
+		if cfg.expandEnv {
+			return expandEnv(v)
+		}
+		return v
 	}
 	return defaultVal
 }
 
-func getStringSliceConfig(cfg map[string]interface{}, key string) []string {
-	raw, ok := cfg[key]
+func getStringSliceConfig(cfg adapterConfig, key string) []string {
+	raw, ok := cfg.values[key]
 	if !ok {
 		return nil
 	}
@@ -274,8 +301,8 @@ func getStringSliceConfig(cfg map[string]interface{}, key string) []string {
 	return nil
 }
 
-func getFloatConfig(cfg map[string]interface{}, key string, defaultVal float64) float64 {
-	if v, ok := cfg[key]; ok {
+func getFloatConfig(cfg adapterConfig, key string, defaultVal float64) float64 {
+	if v, ok := cfg.values[key]; ok {
 		switch n := v.(type) {
 		case float64:
 			return n
@@ -286,8 +313,8 @@ func getFloatConfig(cfg map[string]interface{}, key string, defaultVal float64) 
 	return defaultVal
 }
 
-func getIntConfig(cfg map[string]interface{}, key string, defaultVal int) int {
-	if v, ok := cfg[key]; ok {
+func getIntConfig(cfg adapterConfig, key string, defaultVal int) int {
+	if v, ok := cfg.values[key]; ok {
 		switch n := v.(type) {
 		case int:
 			return n
