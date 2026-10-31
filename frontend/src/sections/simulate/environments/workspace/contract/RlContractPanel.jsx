@@ -8,6 +8,7 @@ import SectionCard from "../../components/SectionCard";
 // import ActorsPanel from "./ActorsPanel";
 import CapabilityGraph from "../overview/CapabilityGraph";
 import SubActorsPanel from "./SubActorsPanel";
+import WorldActorsPanel from "./WorldActorsPanel";
 import WorldInternalsSection from "./WorldInternalsSection";
 import { CONTRACT_COPY } from "./contract.constants";
 
@@ -149,6 +150,8 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
 
       {env.subActors?.length > 0 && <SubActorsPanel subActors={env.subActors} />}
 
+      {env.versioning?.enabled && env.id && <WorldActorsPanel envId={env.id} locked={locked} />}
+
       {/*
         Actors section removed — it was a dummy cast from the fixture
         ACTOR_LIBRARY (not backed by §6), and actors were also dropped from the
@@ -161,6 +164,8 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
 }
 
 const ENV_SHAPE = PropTypes.shape({
+  id: PropTypes.string,
+  versioning: PropTypes.shape({ enabled: PropTypes.bool }),
   surface: PropTypes.string,
   tools: PropTypes.arrayOf(PropTypes.shape({ name: PropTypes.string, desc: PropTypes.string })),
   rules: PropTypes.arrayOf(PropTypes.string),

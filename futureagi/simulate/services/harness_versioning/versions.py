@@ -212,6 +212,7 @@ def prepare_pieces(
         "contract": contract,
         "sub_goals": sub_goals,
         "sub_goal_digests": hashing.sub_goal_digests(sub_goals),
+        "actor_digests": hashing.actor_digests(split.environment),
         "file_digests": _file_digests(split.environment),
         "stage_outputs": [
             one for one in outputs if one.get("kind") not in SUITE_OUTPUT_KINDS
@@ -494,6 +495,8 @@ def environment_change(
             sub_goals=documents.get("sub_goal_digests") or {},
             previous_files=previous.get("file_digests"),
             files=documents.get("file_digests") or {},
+            previous_actors=previous.get("actor_digests"),
+            actors=documents.get("actor_digests"),
         )
     return diff, diffs.summarize_environment(diff)
 

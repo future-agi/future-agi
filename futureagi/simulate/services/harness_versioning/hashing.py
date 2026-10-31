@@ -296,6 +296,21 @@ def sub_goal_digests(sub_goals: Iterable[Mapping[str, Any]]) -> dict[str, str]:
     }
 
 
+def actor_digests(environment: Mapping[str, bytes]) -> dict[str, str]:
+    """A digest of each actor's record in the environment's `actors.json`, keyed by its id; who last set it is left
+    out, so only a change to the actor itself reads as a change."""
+    raw = environment.get("actors.json")
+    try:
+        body = json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
+    return {
+        str(actor["id"]): canonical_digest({key: value for key, value in actor.items() if key != "provenance"})
+        for actor in (body.get("actors") if isinstance(body, dict) else None) or []
+        if isinstance(actor, dict) and actor.get("id")
+    }
+
+
 def organization_credential_key(organization_id: object) -> bytes:
     return HKDF(
         algorithm=hashes.SHA256(),

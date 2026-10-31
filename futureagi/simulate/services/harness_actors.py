@@ -47,21 +47,10 @@ def _error(code: str, message: str, status_code: int) -> HostedHarnessError:
     return HostedHarnessError(code, message, status_code=status_code)
 
 
-def _head(environment: HostedHarnessJob) -> HostedHarnessJob:
-    return HostedHarnessJob.no_workspace_objects.select_related("environment_version", "suite_version").get(
-        id=environment.id
-    )
-
-
-def _sides(head: HostedHarnessJob) -> tuple[dict[str, bytes], dict[str, bytes], Any]:
-    """The environment and suite files the next edit builds on (each piece's draft, else its saved version), and
-    the environment draft, if any."""
-    draft = drafts.fresh_draft(head, "environment")
-    environment_files = drafts._piece_files(head, "environment", draft or head.environment_version)
-    suite_files = drafts._piece_files(
-        head, "suite", drafts.fresh_draft(head, "suite") or head.suite_version
-    )
-    return environment_files, suite_files, draft
+def _sides(environment: HostedHarnessJob) -> tuple[dict[str, bytes], dict[str, bytes], Any]:
+    """The environment and suite files the next edit builds on, and the open environment draft, if any."""
+    sides = drafts.edit_sides(environment)
+    return sides["environment"], sides["suite"], drafts.fresh_draft(environment, "environment")
 
 
 def _listing(files: dict[str, bytes]) -> list[dict[str, Any]]:
@@ -74,8 +63,7 @@ def _listing(files: dict[str, bytes]) -> list[dict[str, Any]]:
 
 def read_actors(environment: HostedHarnessJob) -> dict[str, Any]:
     """The cast the next run would use: the draft's when there is one, else the saved version's."""
-    head = _head(environment)
-    environment_files, _, draft = _sides(head)
+    environment_files, _, draft = _sides(environment)
     return {
         "actors": _listing(environment_files),
         "source": "draft" if draft is not None else "saved",
@@ -138,8 +126,7 @@ def write_actor_edit(
 ) -> dict[str, Any]:
     """Create, replace or delete one actor in the environment draft. `expected_revision` is the draft revision the
     caller read; an edit made elsewhere since is refused rather than overwritten."""
-    head = _head(environment)
-    environment_files, suite_files, draft = _sides(head)
+    environment_files, suite_files, draft = _sides(environment)
     current_revision = draft.revision if draft is not None else 0
     if expected_revision is not None and expected_revision != current_revision:
         raise _error("draft_changed", "the actors were edited elsewhere since you read them; read them again", 409)
@@ -201,8 +188,7 @@ def actor_view(
     sees; optionally in one scenario."""
     from simulate.services.harness_versioning.versions import suite_documents
 
-    head = _head(environment)
-    environment_files, suite_files, _ = _sides(head)
+    environment_files, suite_files, _ = _sides(environment)
     actors = _listing(environment_files)
     actor = next((one for one in actors if one.get("id") == actor_id), None)
     if actor is None:

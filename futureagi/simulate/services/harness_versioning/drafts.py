@@ -793,6 +793,17 @@ def record_draft(
     )
 
 
+def edit_sides(environment: HostedHarnessJob) -> dict[str, dict[str, bytes]]:
+    """The files the next edit builds on, per piece: its open draft, else its saved default."""
+    head = HostedHarnessJob.no_workspace_objects.select_related(
+        "environment_version", "suite_version"
+    ).get(id=environment.id)
+    return {
+        piece: _piece_files(head, piece, fresh_draft(head, piece) or getattr(head, f"{piece}_version"))
+        for piece in DRAFT_PIECES
+    }
+
+
 def write_suite_edit(
     environment: HostedHarnessJob, suite: list[dict[str, Any]], *, user: Any
 ) -> DraftWrite | None:
@@ -802,13 +813,7 @@ def write_suite_edit(
         _rewritten_authoring_archive,
     )
 
-    head = HostedHarnessJob.no_workspace_objects.select_related(
-        "environment_version", "suite_version"
-    ).get(id=environment.id)
-    sides = {}
-    for piece in DRAFT_PIECES:
-        version = fresh_draft(head, piece) or getattr(head, f"{piece}_version")
-        sides[piece] = _piece_files(head, piece, version)
+    sides = edit_sides(environment)
     rewritten = _rewritten_authoring_archive(
         archives.pack_archive(sides["suite"]), suite
     )

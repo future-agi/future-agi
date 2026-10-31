@@ -93,6 +93,39 @@ export const CONTRACT_COPY = {
     scenarios: (n) => `In ${n} scenario${n === 1 ? "" : "s"}`,
   },
 
+  worldActors: {
+    title: (n) => `Actors (${n})`,
+    subtitle:
+      "People and systems the agent deals with in the world, each with what it may do there. Edits wait in the draft until you save.",
+    unsaved: "Unsaved changes: saved with the environment's other changes",
+    add: "Add actor",
+    edit: "Edit",
+    remove: "Remove",
+    empty: "No actors yet. Add one, or ask the builder chat.",
+    wants: "Wants",
+    mayDo: "May do",
+    nothing: "Nothing in the world",
+    sees: "Sees",
+    neverSees: "Never sees",
+    form: {
+      createTitle: "Add actor",
+      editTitle: (name) => `Edit ${name}`,
+      id: "Id",
+      idHelp: "Lowercase letters, digits and underscores. It never changes.",
+      name: "Name",
+      role: "Role",
+      goal: "What they want",
+      mayAgree: "May agree to (one per line)",
+      private: "Keeps to themselves (one per line)",
+      permitted: "World actions they may take (comma separated, service.action)",
+      trigger: "Comes in when the agent calls (service.action, optional)",
+      fallback: "If they do not answer",
+      fallbacks: { silent: "Stay silent", decline: "Decline" },
+      cancel: "Cancel",
+      save: "Save to draft",
+    },
+  },
+
   actors: {
     heading: "Actors",
     headingBlurb:

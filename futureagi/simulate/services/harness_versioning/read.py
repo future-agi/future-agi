@@ -598,6 +598,8 @@ def _environment_diff(
         sub_goals=_digests(goals, current_id, "sub_goal_digests") or {},
         previous_files=previous_files if known else None,
         files=files or {},
+        previous_actors=previous.get("actor_digests"),
+        actors=current.get("actor_digests"),
     )
 
 

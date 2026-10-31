@@ -189,3 +189,26 @@ def test_in_a_scenario_others_see_the_caller_s_situation_and_the_caller_does_not
 
     assert "caller.situation" in {one["input"] for one in manager["sees"]}
     assert "caller.situation" not in {one["input"] for one in caller["sees"]}
+
+
+def test_an_actor_edit_shows_in_review_as_that_actor_added_changed_or_removed(user, workspace, storage, auth_client):
+    from simulate.services.harness_versioning.drafts import fresh_draft
+
+    environment = _built(user, workspace, "actors-diff")
+    _add(auth_client, environment, MANAGER)
+    added = fresh_draft(environment, "environment")
+    auth_client.put(f"{BASE}/{environment.id}/actors/manager/", {"actor": {**MANAGER, "goal": "Approve fast"}}, format="json")
+    changed = fresh_draft(environment, "environment")
+
+    assert added.diff["actors"] == {"added": ["manager"], "removed": [], "changed": []}
+    assert "1 actor added" in added.summary
+    assert changed.diff["actors"]["added"] == ["manager"] and changed.diff["actors"]["changed"] == []
+    # Against the saved version the actor is still new; only a saved actor can read as changed.
+    from simulate.services.harness_versioning import hashing
+
+    before = hashing.actor_digests({"actors.json": json.dumps({"actors": [MANAGER]}).encode()})
+    after = hashing.actor_digests({"actors.json": json.dumps({"actors": [{**MANAGER, "goal": "Approve fast"}]}).encode()})
+    restamped = hashing.actor_digests(
+        {"actors.json": json.dumps({"actors": [{**MANAGER, "provenance": {"origin": "chat"}}]}).encode()}
+    )
+    assert before != after and before == restamped
