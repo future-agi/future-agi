@@ -37247,6 +37247,7 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
       fix_type: zod.string().min(1),
       needed_by: zod.number(),
       affected: zod.number(),
+      affected_scenarios: zod.array(zod.string().min(1)),
     }),
   ),
   selection: zod.object({

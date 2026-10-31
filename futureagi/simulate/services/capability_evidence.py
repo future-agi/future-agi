@@ -147,13 +147,14 @@ def _scenario_state(row: dict[str, Any], tools: set[str]) -> str:
 
 def affected_scenarios(rows: list[dict[str, Any]], requirements: dict[str, Any]) -> dict[str, Any]:
     """Counts from what each scenario actually needs: never estimated. Each row gains `needed_by` and `affected`
-    (the scenarios it blocks); every scenario lands in exactly one of eligible, blocked and untested, blocked
-    winning over untested."""
+    (the scenarios it blocks, named in `affected_scenarios`); every scenario lands in exactly one of eligible, blocked
+    and untested, blocked winning over untested."""
     by_id = {row["id"]: row for row in rows}
     for row in rows:
         row["needed_by"] = row["affected"] = 0
+        row["affected_scenarios"] = []
     counts = {"requested": 0, "eligible": 0, "blocked": 0, "untested": 0}
-    for value in (requirements or {}).values():
+    for key, value in sorted((requirements or {}).items()):
         tools = set(((value or {}).get("tools") or {}).get("required") or [])
         states = set()
         for capability in (value or {}).get("capabilities") or []:
@@ -162,7 +163,9 @@ def affected_scenarios(rows: list[dict[str, Any]], requirements: dict[str, Any])
             states.add(state)
             if row is not None:
                 row["needed_by"] += 1
-                row["affected"] += state in _BLOCKING
+                if state in _BLOCKING:
+                    row["affected"] += 1
+                    row["affected_scenarios"].append(key)
         counts["requested"] += 1
         if states & _BLOCKING:
             counts["blocked"] += 1

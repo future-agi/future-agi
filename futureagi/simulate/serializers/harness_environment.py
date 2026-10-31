@@ -784,6 +784,7 @@ class HarnessCapabilityRowSerializer(serializers.Serializer):
     fix_type = serializers.CharField(allow_null=True)
     needed_by = serializers.IntegerField()
     affected = serializers.IntegerField()
+    affected_scenarios = serializers.ListField(child=serializers.CharField())
 
 
 class HarnessCapabilitySelectionSerializer(serializers.Serializer):

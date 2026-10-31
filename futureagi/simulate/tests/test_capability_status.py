@@ -121,6 +121,7 @@ def test_a_production_only_refund_tool_blocks_only_the_cases_that_need_it_with_t
     counts = affected_scenarios(rows, requirements)
     assert (counts["blocked"], counts["eligible"]) == (4, 6)
     assert (routing["needed_by"], routing["affected"]) == (10, 4)
+    assert routing["affected_scenarios"] == ["refund_0", "refund_1", "refund_2", "refund_3"]
 
     # After the tool is redirected and re-checked, nothing is affected.
     evidence["capabilities"]["tool_routing"] = {"finding": "passed", "checks": []}

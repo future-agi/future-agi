@@ -18564,6 +18564,7 @@ export interface HarnessCapabilityRowApi {
   fix_type: string;
   needed_by: number;
   affected: number;
+  affected_scenarios: string[];
 }
 
 export interface HarnessCapabilitySelectionApi {

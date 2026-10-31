@@ -128987,7 +128987,8 @@
                 "fix",
                 "fix_type",
                 "needed_by",
-                "affected"
+                "affected",
+                "affected_scenarios"
             ],
             "type": "object",
             "properties": {
@@ -129072,6 +129073,13 @@
                 "affected": {
                     "title": "Affected",
                     "type": "integer"
+                },
+                "affected_scenarios": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 }
             }
         },
