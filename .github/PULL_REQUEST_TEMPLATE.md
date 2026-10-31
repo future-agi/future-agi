@@ -52,6 +52,15 @@ AI use:
 
 E2E:
 
+## Docs
+
+<!-- Required, one line; CI fails without it. Does a user see or do anything differently?
+     Then raise the docs PR now and link it:
+       Docs: future-agi/docs#<n>    the docs PR for this change (or its full URL)
+       Docs: none (<reason>)        e.g. none (internal refactor), none (tests only) -->
+
+Docs:
+
 ---
 
 ## 1) What changes were done
