@@ -218,3 +218,13 @@ def test_a_run_keeps_the_capability_report_it_was_created_with(user, workspace, 
     evidence.save(update_fields=["capabilities"])
     run.refresh_from_db()
     assert run.capability_snapshot == snapshot
+
+
+def test_evidence_that_names_no_agent_version_is_never_stale_on_the_agent(job, organization, workspace):
+    from simulate.services.capability_evidence import environment_capability_report
+
+    first, _ = _versions(organization, workspace)
+    record_capability_evidence(job, _archive({"generic-harness/capability-evidence.json": json.dumps(_DOCUMENT).encode()}))
+    job.agent_version = first
+    job.save(update_fields=["agent_version"])
+    assert environment_capability_report(job)["capabilities"][0]["status"] == "supported"
