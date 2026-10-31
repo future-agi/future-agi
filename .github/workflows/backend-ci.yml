@@ -41,6 +41,7 @@ jobs:
             backend:
               - 'futureagi/**'
               - 'api_contracts/gateway/provider-url-policy.json'
+              - 'api_contracts/gateway/guardrail-providers.json'
               - 'docker-compose*.yml'
               - 'fi-collector/Dockerfile'
               - 'bin/install*'
