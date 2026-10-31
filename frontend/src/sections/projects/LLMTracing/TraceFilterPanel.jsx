@@ -1704,6 +1704,38 @@ export function mergeRetainedAttributeProperties(
   return [...nonAttributes, ...retainedAttributes, ...catalogAttributeFallback];
 }
 
+export function shouldUseLegacyAttributeSearchFallback({
+  unifiedCatalogActive,
+  open,
+  hasScope,
+  source,
+  search,
+  searchSettled,
+  catalog,
+}) {
+  // The current property catalog is authoritative when it returns a matching
+  // definition. During rollout, however, the observed-key projection can be
+  // healthy enough to return HTTP 200 while still missing a key that the
+  // bounded legacy reader can discover from the live trace data. Restrict the
+  // compatibility read to a settled, terminal, empty search so ordinary
+  // browsing remains on the catalog and a genuine catalog error keeps its
+  // existing retry behavior.
+  return Boolean(
+    unifiedCatalogActive &&
+      open &&
+      hasScope &&
+      (source === "traces" || source === "spans") &&
+      String(search || "").trim() &&
+      searchSettled &&
+      catalog?.isSuccess &&
+      !catalog?.isFetching &&
+      !catalog?.isError &&
+      !catalog?.cursorChainStopped &&
+      !catalog?.hasNextPage &&
+      (catalog?.metrics || []).length === 0,
+  );
+}
+
 export function shouldUseRetainedAttributePages({
   enabled,
   source,
@@ -1945,6 +1977,16 @@ function PropertyPicker({
       ? catalogProperties.filter(propertyFilter)
       : catalogProperties;
   }, [isSimulator, propertyFilter, searchedCatalog.metrics, source]);
+  const legacyAttributeSearchFallbackRequested =
+    shouldUseLegacyAttributeSearchFallback({
+      unifiedCatalogActive,
+      open,
+      hasScope: Boolean(projectId || allowWorkspaceScope),
+      source,
+      search: debouncedCatalogSearch,
+      searchSettled: catalogSearchSettled,
+      catalog: searchedCatalog,
+    });
   const allSearchCatalogHasExactCounts = Boolean(
     allSearchCatalog.categoryCountsExact &&
       allSearchCatalog.categoryCounts &&
@@ -2077,6 +2119,7 @@ function PropertyPicker({
       (projectId || allowWorkspaceScope) &&
       (source === "traces" || source === "spans") &&
       ((searchedCatalog.legacyFallbackRequired && catalogSearchSettled) ||
+        legacyAttributeSearchFallbackRequested ||
         (!unifiedCatalogActive &&
           (allowWorkspaceScope ||
             !enableExactAttributeLookup ||
