@@ -17,6 +17,7 @@ import Iconify from "src/components/iconify";
 import { fDateTime, fToNowStrict } from "src/utils/format-time";
 import AnnotationHistory from "./annotation-history";
 import { ALL_ANNOTATORS } from "./annotation-view-mode";
+import { shortId } from "../constants";
 
 const VALUE_COLORS = {
   positive: "success",
@@ -241,12 +242,6 @@ function reviewThreadStatusColor(status) {
       resolved: "success",
     }[status] || "default"
   );
-}
-
-function shortId(value) {
-  if (!value) return "";
-  const text = String(value);
-  return text.length > 8 ? text.slice(0, 8) : text;
 }
 
 function itemContextLabel(item, itemId) {

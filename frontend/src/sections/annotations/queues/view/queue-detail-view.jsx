@@ -544,7 +544,10 @@ export default function QueueDetailView() {
       )}
       {currentTab === "agreement" && (
         <Box sx={{ px: 3, overflow: "auto", flex: 1 }}>
-          <QueueAgreementTab queueId={queueId} />
+          <QueueAgreementTab
+            queueId={queueId}
+            canViewSubmissions={canViewSubmissions}
+          />
         </Box>
       )}
       {currentTab === "rules" && (
