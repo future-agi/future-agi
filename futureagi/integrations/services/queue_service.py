@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from typing import Any, Optional
 
 from integrations.services.base import BaseIntegrationService, register_service
@@ -169,6 +170,12 @@ class QueueService(BaseIntegrationService):
         return {"sent": 0, "error": f"Unknown queue type: {sub_platform}"}
 
     def _publish_sqs(self, credentials: dict, logs: list[dict]) -> dict:
+        """Require every acknowledgement; retry only rejected transient entries.
+
+        Delivery remains at-least-once: a transport timeout or a later sync retry
+        can replay accepted messages. Consumers should deduplicate by request_id
+        from the unchanged message body, not the batch-local SQS entry Id.
+        """
         import boto3
 
         client = boto3.client(
@@ -203,8 +210,36 @@ class QueueService(BaseIntegrationService):
                     }
                 )
 
-            resp = client.send_message_batch(QueueUrl=queue_url, Entries=entries)
-            sent += len(resp.get("Successful", []))
+            for attempt in range(4):
+                resp = client.send_message_batch(QueueUrl=queue_url, Entries=entries)
+                successful = resp.get("Successful", [])
+                failed = resp.get("Failed", [])
+                expected_ids = {entry["Id"] for entry in entries}
+                response_ids = [entry.get("Id") for entry in successful + failed]
+                if set(response_ids) != expected_ids or len(response_ids) != len(
+                    expected_ids
+                ):
+                    raise RuntimeError("SQS returned incomplete batch acknowledgements")
+
+                sent += len(successful)
+                if not failed:
+                    break
+
+                # HTTP 200 does not mean every entry was delivered. Never let a
+                # partial batch advance the sync checkpoint, or resend successes
+                # during these entry-level retries.
+                if (
+                    any(entry.get("SenderFault", True) for entry in failed)
+                    or attempt == 3
+                ):
+                    codes = sorted({entry.get("Code", "Unknown") for entry in failed})
+                    raise RuntimeError(
+                        f"SQS batch delivery failed for {len(failed)} entries "
+                        f"({', '.join(codes)})"
+                    )
+                failed_ids = {entry["Id"] for entry in failed}
+                entries = [entry for entry in entries if entry["Id"] in failed_ids]
+                time.sleep(0.25 * (2**attempt))
 
         return {"sent": sent}
 
