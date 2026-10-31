@@ -1683,6 +1683,18 @@ def _turned_down(
     return None
 
 
+def make_default(
+    version: AgentVersion, environment: HostedHarnessJob, *, user: Any
+) -> str:
+    """Make a passed version the environment's default because a user asked for it.
+
+    Returns the outcome: ``activated``, ``already_default``, or why it did not move.
+    """
+    outcome = _activate_on(environment.id, version, explicit=True, user=user)
+    _record_activation(version.id, {str(environment.id): outcome})
+    return outcome
+
+
 def _activate_on(
     environment_id: Any,
     version: AgentVersion,

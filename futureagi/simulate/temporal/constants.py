@@ -84,6 +84,12 @@ HOSTED_RUNNER_CHAT_TIMEOUT_SECONDS = 65 * 60
 HOSTED_RUNNER_CHAT_MODE = "chat"
 
 
+# "Fix my agent": the watch activity looks at the engine every tick and returns after a
+# window, so a fix that runs for a day keeps a short workflow history.
+AGENT_FIX_WATCH_TICK_SECONDS = 30
+AGENT_FIX_WATCH_WINDOW_SECONDS = 30 * 60
+
+
 # =============================================================================
 # Rate Limits (Defaults)
 # =============================================================================

@@ -133,6 +133,7 @@ from simulate.models.run_test import CreateCallExecution
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import SimulationCallType
+from simulate.selectors.runs import user_executions
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
 from simulate.services.harness_evals import (
     effective_simulation_mapping,
@@ -2740,7 +2741,8 @@ class TestExecutor:
             # Check database for completed/failed test executions
             try:
                 test_execution = (
-                    TestExecution.objects.filter(run_test_id=run_test_id)
+                    user_executions()
+                    .filter(run_test_id=run_test_id)
                     .order_by("-created_at")
                     .first()
                 )

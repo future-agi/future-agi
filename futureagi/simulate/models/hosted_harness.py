@@ -121,6 +121,22 @@ class HostedHarnessJob(BaseModel):
         blank=True,
         related_name="+",
     )
+    # Set on a Run that a "Fix my agent" run started to check a candidate; such Runs are
+    # kept out of the environment's run history.
+    fix_run = models.ForeignKey(
+        "simulate.AgentFixRun",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="check_runs",
+    )
+    # The name the engine gave a check run ("baseline", "c2-target"); empty on other Runs.
+    fix_label = models.CharField(max_length=64, blank=True, default="")
+    # What a fix's check run billed, in US dollars, set once its usage is sealed; until
+    # then the fix holds a worst case for it.
+    fix_cost_usd = models.DecimalField(
+        max_digits=10, decimal_places=4, null=True, blank=True
+    )
 
     class Meta:
         db_table = "simulate_hosted_harness_job"

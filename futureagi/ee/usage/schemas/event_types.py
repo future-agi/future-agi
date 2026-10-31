@@ -12,7 +12,7 @@ from __future__ import annotations
 from enum import Enum
 
 
-class BillingEventType(str, Enum):
+class BillingEventType(str, Enum):  # noqa: UP042 - StrEnum changes str() of every member
     """Event types for the usage metering pipeline.
 
     Each member maps to an `api_call_types` key in billing.yaml,
@@ -35,6 +35,7 @@ class BillingEventType(str, Enum):
     EVAL_EXPLANATION = "eval_explanation"
     FALCON_AI_CHAT = "falcon_ai_chat"
     HARNESS_AUTHORING = "harness_authoring"
+    AGENT_FIX = "agent_fix"
 
     # ── Storage ──
     OBSERVE_ADD = "observe_add"
