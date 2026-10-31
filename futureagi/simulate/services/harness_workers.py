@@ -1,19 +1,24 @@
 """Which of a multi-agent app's workers did what in one call, from the spans its own process exported.
 
 Generic over frameworks: a delegation is an agent-kind span nested under another agent-kind span, keyed by the tool call
-that launched it when there is one; a tool call belongs to its nearest agent-kind ancestor. Declared worker names are
-not proof: a worker counts as observed only when its own spans arrive. Spans are written by the customer's process, so
+that launched it when there is one; a tool call belongs to its nearest agent-kind ancestor. An agent-kind span that only
+wraps one other agent (no model or tool call of its own) is a framework's container, such as the OpenAI Agents SDK's
+workflow span, and is skipped. Declared worker names are not proof: a worker counts as observed only when its own spans
+arrive. Spans are written by the customer's process, so
 everything here is `reported` attribution; simulated actors never appear, because they are never in the agent's spans.
 """
 
 from __future__ import annotations
 
+import json
 import re
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any
 
 AGENT_KIND = "agent"
 TOOL_KIND = "tool"
+_WORK_KINDS = {TOOL_KIND, "llm"}
 # What the runtime calls an agent instance, when it names one (OpenInference / traceAI graph node).
 _NODE_ID = "graph.node.id"
 _SUMMARY_CHARS = 500
@@ -27,8 +32,18 @@ def _kind(span: Mapping[str, Any]) -> str:
     return str(span.get("observation_type") or "").strip().lower()
 
 
-def _summary(value: Any) -> str | None:
+def _summary(value: Any, *, argument: bool = False) -> str | None:
     text = str(value or "").strip()
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        parsed = None
+    # An agent span with no input or output of its own is written as an empty object; a worker run as a tool takes its
+    # task as that tool's one argument.
+    if parsed == {}:
+        return None
+    if argument and isinstance(parsed, dict) and len(parsed) == 1:
+        text = str(next(iter(parsed.values()))).strip()
     return text[:_SUMMARY_CHARS] or None
 
 
@@ -45,14 +60,39 @@ def worker_timeline(
             if key:
                 declared_by_key[_slug(str(key))] = one
 
-    def agent_ancestor(span: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    def ancestors(span: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
         seen, parent = set(), by_id.get(str(span.get("parent_span_id") or ""))
         while parent is not None and parent["span_id"] not in seen:
-            if _kind(parent) == AGENT_KIND:
-                return parent
+            yield parent
             seen.add(parent["span_id"])
             parent = by_id.get(str(parent.get("parent_span_id") or ""))
+
+    def nearest_agent(span: Mapping[str, Any], among: Any = None) -> Mapping[str, Any] | None:
+        return next(
+            (one for one in ancestors(span) if _kind(one) == AGENT_KIND and (among is None or one["span_id"] in among)),
+            None,
+        )
+
+    def launcher_of(agent: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        # The tool call that launched the worker, when the framework runs workers as tools.
+        for one in ancestors(agent):
+            if _kind(one) == AGENT_KIND:
+                return None
+            if _kind(one) == TOOL_KIND:
+                return one
         return None
+
+    agents = [span for span in by_id.values() if _kind(span) == AGENT_KIND]
+    busy: set[str] = set()
+    for span in by_id.values():
+        owner = nearest_agent(span) if _kind(span) in _WORK_KINDS else None
+        if owner is not None:
+            busy.add(owner["span_id"])
+    children = Counter(parent["span_id"] for parent in map(nearest_agent, agents) if parent is not None)
+    participants = {span["span_id"] for span in agents if span["span_id"] in busy or children[span["span_id"]] != 1}
+
+    def agent_ancestor(span: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        return nearest_agent(span, participants)
 
     def name_of(agent: Mapping[str, Any]) -> str:
         return str((agent.get("attributes") or {}).get(_NODE_ID) or agent.get("name") or "agent")
@@ -85,12 +125,10 @@ def worker_timeline(
     events: list[dict[str, Any]] = []
     delegating = set()
     for span in by_id.values():
-        if _kind(span) != AGENT_KIND or agent_ancestor(span) is None:
+        if span["span_id"] not in participants or agent_ancestor(span) is None:
             continue
         worker_id = worker_of(span)
-        parent = by_id.get(str(span.get("parent_span_id") or ""))
-        # The tool call that launched the worker, when the framework runs workers as tools; else the worker's span.
-        launcher = parent if parent is not None and _kind(parent) == TOOL_KIND else None
+        launcher = launcher_of(span)
         if launcher is not None:
             delegating.add(launcher["span_id"])
         delegation_id = str((launcher or span)["span_id"])
@@ -101,7 +139,7 @@ def worker_timeline(
                 "worker_id": worker_id,
                 "by": by,
                 "delegation_id": delegation_id,
-                "task": _summary(span.get("input") or (launcher or {}).get("input")),
+                "task": _summary(span.get("input")) or _summary((launcher or {}).get("input"), argument=True),
                 "at": span.get("start_time"),
                 "attribution": "reported",
             }
@@ -112,7 +150,7 @@ def worker_timeline(
                     "type": "returned",
                     "worker_id": worker_id,
                     "delegation_id": delegation_id,
-                    "result": _summary(span.get("output") or (launcher or {}).get("output")),
+                    "result": _summary(span.get("output")) or _summary((launcher or {}).get("output")),
                     "status": "error" if str(span.get("status") or "").upper() == "ERROR" else "ok",
                     "at": span.get("end_time"),
                     "attribution": "reported",

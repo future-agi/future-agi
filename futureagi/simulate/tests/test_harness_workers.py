@@ -87,6 +87,7 @@ def test_the_same_spans_give_the_same_ids_on_a_retry_of_the_trial():
 def test_a_worker_nested_without_a_launching_tool_call_and_an_undeclared_one_are_still_seen():
     spans = [
         _span("a", None, "agent", "coordinator", "t1", "t9"),
+        _span("al", "a", "llm", "generation", "t1", "t1"),
         _span("b", "a", "agent", "researcher", "t2", None),
         _span("c", "b", "tool", "search", "t3", "t3"),
     ]
@@ -207,6 +208,7 @@ def test_a_declared_worker_not_seen_yet_gets_one_more_read_later():
 def test_when_times_tie_a_hand_off_comes_first_and_its_return_last():
     spans = [
         _span("a", None, "agent", "coordinator", "t1", "t1"),
+        _span("al", "a", "llm", "generation", "t1", "t1"),
         _span("b", "a", "agent", "researcher", "t1", "t1"),
         _span("c", "b", "tool", "search", "t1", "t1"),
     ]
@@ -239,3 +241,44 @@ def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(user
     assert found.status_code == 200, found.content
     assert [one["type"] for one in found.json()["events"]][:2] == ["delegated", "tool_call"]
     assert {one["id"] for one in found.json()["workers"]} == {"order_lookup", "refund", "audit"}
+
+
+def test_framework_containers_and_empty_agent_inputs_as_the_openai_agents_instrumentation_writes_them():
+    # traceAI's OpenAI Agents nesting: the SDK's workflow is an agent span above the coordinator, a chain sits between
+    # each delegating tool call and its worker, and agent spans carry an empty object for input and output.
+    spans = [
+        _span("w", None, "agent", "Agent workflow", "t00", "t30"),
+        _span("wc", "w", "chain", "Agent workflow", "t00", "t30", input="{}"),
+        _span("c", "wc", "agent", "Returns coordinator", "t01", "t29", input="{}"),
+        _span("ct", "c", "chain", "turn", "t02", "t10"),
+        _span("cl", "ct", "llm", "generation", "t02", "t03"),
+        _span("d", "ct", "tool", "order_lookup", "t04", "t09", input='{"input": "Order 1043"}', output="1043 is eligible"),
+        _span("dc", "d", "chain", "Agent workflow", "t04", "t09", input="{}"),
+        _span("o", "dc", "agent", "Order-lookup worker", "t05", "t08", input="{}", output="{}"),
+        _span("ot", "o", "chain", "turn", "t05", "t07"),
+        _span("og", "ot", "tool", "get_order", "t06", "t06"),
+    ]
+    timeline = worker_timeline(spans, DECLARED[:1], run_key=RUN)
+
+    assert [(one["id"], one["undeclared"]) for one in timeline["workers"]] == [("order_lookup", False)]
+    assert [(one["type"], one["worker_id"], one.get("tool")) for one in timeline["events"]] == [
+        ("delegated", "run-1/order_lookup", None),
+        ("tool_call", "run-1/order_lookup", "get_order"),
+        ("returned", "run-1/order_lookup", None),
+    ]
+    delegated, _, returned = timeline["events"]
+    assert delegated["delegation_id"] == returned["delegation_id"] == "d"
+    assert delegated["by"] is None
+    assert (delegated["task"], returned["result"]) == ("Order 1043", "1043 is eligible")
+
+
+def test_a_parent_running_several_agents_is_their_coordinator_even_without_work_of_its_own():
+    spans = [
+        _span("crew", None, "agent", "crew", "t1", "t9"),
+        _span("r", "crew", "agent", "researcher", "t2", "t4"),
+        _span("rl", "r", "llm", "generation", "t2", "t3"),
+        _span("w", "crew", "agent", "writer", "t5", "t8"),
+        _span("wl", "w", "llm", "generation", "t5", "t6"),
+    ]
+    workers = worker_timeline(spans, [], run_key=RUN)["workers"]
+    assert [one["id"] for one in workers] == ["researcher", "writer"]
