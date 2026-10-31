@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "id": "github-copilot-cli-1.0.98",
+      "scope_name": "github.copilot",
+      "scope_versions": [
+        "1.0.98"
+      ],
+      "operations": {
+        "invoke_agent": "agent",
+        "execute_hook": "chain"
+      },
+      "session_fallback": "gen_ai.conversation.id",
+      "summary_operations": [
+        "invoke_agent"
+      ],
+      "evidence": "CLI 1.0.98 native fixture: invoke_agent summarizes chat usage; github.copilot.cost is a multiplier, not USD. No VS Code or other CLI version qualification."
+    },
+    {
+      "id": "gemini-cli-tracer-v1",
+      "scope_name": "gemini-cli",
+      "scope_versions": [
+        "v1"
+      ],
+      "operations": {
+        "llm_call": "llm",
+        "tool_call": "tool",
+        "agent_call": "agent",
+        "schedule_tool_calls": "chain"
+      },
+      "session_fallback": "gen_ai.conversation.id",
+      "summary_operations": [],
+      "evidence": "google-gemini/gemini-cli 6814e00d6b148c3a1d57244d5d7040f7c541009d: trace.ts TRACER_NAME=gemini-cli/TRACER_VERSION=v1. Scope version is the schema version, NOT a released CLI support claim."
+    }
+  ],
+  "usage_prefixes": [
+    "gen_ai.usage.",
+    "gen_ai.cost.",
+    "llm.token_count.",
+    "llm.usage.",
+    "llm.cost."
+  ],
+  "usage_keys": [
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "input_tokens",
+    "output_tokens"
+  ],
+  "event_attribute_keys": [
+    "exception.type",
+    "exception.escaped",
+    "error.type",
+    "error.code",
+    "fi.agent.outcome",
+    "fi.capture.missing_reason"
+  ],
+  "link_attribute_keys": [
+    "fi.agent.caused_by.work_id",
+    "fi.capture.source_work.id",
+    "fi.agent.turn.id"
+  ],
+  "reserved_admission_keys": [
+    "fi.capture.source_work.id",
+    "fi.capture.identity.profile",
+    "fi.usage.plan.id",
+    "fi.usage.fact.id",
+    "fi.usage.revision"
+  ],
+  "admission_error": "FI_IMMUTABLE_ADMISSION_UNAVAILABLE"
+}

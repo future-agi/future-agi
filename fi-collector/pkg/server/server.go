@@ -490,6 +490,9 @@ func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder, h
 		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rej)
 	}
 	ctx, req := prepared.ctx, prepared.req
+	if prepared.ingestionHold != "" {
+		return ingestionHoldResponse(prepared.originalSpans, prepared.ingestionHold), false, nil
+	}
 	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
 		return partialSuccessResponse(prepared.routed), false, nil
 	}
@@ -607,6 +610,10 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, req := prepared.ctx, prepared.req
+	if prepared.ingestionHold != "" {
+		writeExportResponse(w, ct, ingestionHoldResponse(prepared.originalSpans, prepared.ingestionHold))
+		return
+	}
 	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
 		writeExportResponse(w, ct, partialSuccessResponse(prepared.routed))
 		return
@@ -1022,4 +1029,13 @@ func (s *Server) releaseDrained(seq uint64, leases []*lease) {
 		delete(s.drained, s.releaseNext)
 		leases = next
 	}
+}
+
+// Fail closed for the entire original batch, without storing unsupported
+// immutable work or representing unknown detailed costs as numeric zero.
+func ingestionHoldResponse(count int64, reason string) ptraceotlp.ExportResponse {
+	resp := ptraceotlp.NewExportResponse()
+	resp.PartialSuccess().SetRejectedSpans(count)
+	resp.PartialSuccess().SetErrorMessage(reason)
+	return resp
 }

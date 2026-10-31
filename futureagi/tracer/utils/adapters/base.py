@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import structlog
+from tracer.utils.normalization import normalize_span
 
 logger = structlog.get_logger(__name__)
 
@@ -291,13 +292,15 @@ def normalize_span_attributes(otel_data_list: list[dict[str, Any]]) -> None:
     fields that the bulk converter reads from (e.g. metadata, session_name).
     """
     for span_data in otel_data_list:
-        attributes = span_data.get("attributes")
-        if not attributes:
+        if not span_data.get("attributes"):
             continue
+        attributes = normalize_span(span_data)
 
         adapter = _detect_adapter(attributes)
         if adapter is not None:
             span_data["attributes"] = adapter.normalize(attributes)
+
+        normalize_span(span_data)  # legacy adapters must not restore summary aliases
 
         # Propagate adapter-set attributes to top-level fields that the bulk
         # converter reads from otel_span (not from attributes).

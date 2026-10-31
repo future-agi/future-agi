@@ -32,7 +32,28 @@ from accounts.authentication import APIKeyAuthentication, LangfuseBasicAuthentic
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.payload_storage import PAYLOAD_DEFAULT_TTL, payload_storage
+from tracer.utils.normalization import CONTRACT, requires_immutable_admission
 from tracer.utils.trace_ingestion import bulk_create_observation_span_task
+
+
+def _requires_immutable_admission(request: ExportTraceServiceRequest) -> bool:
+    return any(
+        requires_immutable_admission({attr.key: attr.value.string_value})
+        for resource in request.resource_spans
+        for scope in resource.scope_spans
+        for span in scope.spans
+        for attr in span.attributes
+    )
+
+
+def _ingestion_hold(request: ExportTraceServiceRequest) -> str:
+    if _requires_immutable_admission(request):
+        return CONTRACT["admission_error"]
+    # Producer qualification is not opt-in to new accounting semantics. Native
+    # exporters do not retry OTLP partial_success; refusing cache/reasoning usage
+    # here would permanently lose existing exports, including unrelated spans.
+    return ""
+
 
 logger = structlog.get_logger(__name__)
 
@@ -83,7 +104,7 @@ class OTLPExportResult:
 
     @property
     def has_partial_success(self) -> bool:
-        return self.rejected_spans > 0 and self.accepted_spans > 0
+        return self.rejected_spans > 0
 
     @property
     def has_error(self) -> bool:
@@ -178,6 +199,17 @@ class OTLPTraceView(APIView):
 
             # Count spans for response
             span_count = self._count_spans(request_dict)
+
+            hold_reason = _ingestion_hold(otlp_request)
+            if hold_reason:
+                # Reject the entire mixed batch before async acceptance/storage.
+                return self._success_response(
+                    request,
+                    OTLPExportResult(
+                        rejected_spans=span_count,
+                        error_message=hold_reason,
+                    ),
+                )
 
             # Store payload in Redis and queue for async processing
             request_json = json.dumps(request_dict)
