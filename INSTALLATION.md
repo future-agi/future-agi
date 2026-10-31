@@ -46,10 +46,20 @@ If you just want to try it on your laptop, jump to [Quick start](#quick-start).
 
 ## Quick start
 
+macOS / Linux / WSL:
+
 ```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
-./bin/install          # Windows (PowerShell): .\bin\install.ps1
+./bin/install
+```
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/future-agi/future-agi.git
+cd future-agi
+.\bin\install.ps1
 ```
 
 This installs the **Standalone** setup: three containers (the app, Postgres

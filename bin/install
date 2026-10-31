@@ -948,9 +948,20 @@ backend_port=$(env_value BACKEND_PORT 8000)
 frontend_port=$(env_value FRONTEND_PORT 3000)
 deadline=$(( $(date +%s) + ready_timeout ))
 hard_deadline=$(( $(date +%s) + ready_max ))
+wait_started_at=$(date +%s)
 ready_since=0
 last_ready_signature=""
 last_migrations_applied=$(count_applied_migrations)
+
+# Readiness heartbeat — the wait used to print only when the migration
+# count ticked, leaving ~90s of silence before the first migration and
+# ~100s after the last. Report the current phase on an interval instead.
+heartbeat_seconds=15
+last_heartbeat=0
+migration_total=0
+migration_total_tries=0
+migration_started_at=0
+migrations_applied=0
 pending_gate="$GATE_CONTAINERS"
 first_app_restarts=""
 declare -a catalog_jobs=(
@@ -1050,9 +1061,20 @@ while true; do
     migrations_applied=$(count_applied_migrations)
     if (( migrations_applied > last_migrations_applied )); then
       last_migrations_applied="$migrations_applied"
-      say "  ${DIM}migrations in progress (${migrations_applied} applied), extending the readiness window${RESET}"
+      (( migration_started_at == 0 )) && migration_started_at=$now
       deadline=$(( now + ready_timeout ))
       (( deadline > hard_deadline )) && deadline=$hard_deadline
+    fi
+    # Learn the migration total once — showmigrations --plan lists every
+    # planned node. exec is retried while the container's Django is still
+    # coming up; if it never answers, progress falls back to a bare count.
+    if (( migration_total == 0 && migrations_applied > 0 \
+          && migration_total_tries < 40 )); then
+      ((migration_total_tries++))
+      migration_total=$($DC exec -T "$APP_SVC" \
+        python manage.py showmigrations --plan 2>/dev/null \
+        | grep -cE '^[A-Za-z_][A-Za-z0-9_]*\.[0-9]+' || true)
+      [[ "$migration_total" =~ ^[0-9]+$ ]] || migration_total=0
     fi
   fi
 
@@ -1078,6 +1100,30 @@ while true; do
   else
     ready_since=0
     last_ready_signature=""
+  fi
+
+  if (( all_ready == 0 && now - last_heartbeat >= heartbeat_seconds )); then
+    last_heartbeat=$now
+    if (( backend_healthy == 0 && migrations_applied > 0 )); then
+      if (( migration_total > 0 && migrations_applied < migration_total )); then
+        if (( migration_started_at > 0 && now - migration_started_at > 0 )); then
+          eta=$(( (migration_total - migrations_applied) \
+                  * (now - migration_started_at) / migrations_applied ))
+          progress="applying migrations ${migrations_applied}/${migration_total} (~$((eta / 60))m $((eta % 60))s remaining)"
+        else
+          progress="applying migrations ${migrations_applied}/${migration_total}"
+        fi
+      elif (( migration_total > 0 )); then
+        progress="migrations applied (${migration_total}/${migration_total}), backend booting"
+      else
+        progress="applying migrations (${migrations_applied} applied)"
+      fi
+    elif (( backend_healthy == 0 )); then
+      progress="backend starting (loading, no migrations yet)"
+    else
+      progress="waiting on ${pending_gate:-the stack}"
+    fi
+    say "  ${DIM}${progress} ($(( now - wait_started_at ))s elapsed)${RESET}"
   fi
 
   if (( now >= deadline )); then
