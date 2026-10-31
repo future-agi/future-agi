@@ -3,7 +3,13 @@ import json
 import jsonpatch
 import pytest
 
-from simulate.services.harness_versioning.review import compute_changes, item_index
+from simulate.services.harness_versioning.review import (
+    ReviewRefused,
+    compose_accepted,
+    compute_changes,
+    item_index,
+    review_digest,
+)
 
 
 def _tree(contract=None, **files):
@@ -87,8 +93,6 @@ def test_suite_indexes_sealed_bundles_and_session_files_are_never_review_items()
     )
     assert set(item_index(tree)) == set()
 
-
-from simulate.services.harness_versioning.review import ReviewRefused, compose_accepted, review_digest  # noqa: E402
 
 
 def _pair():
