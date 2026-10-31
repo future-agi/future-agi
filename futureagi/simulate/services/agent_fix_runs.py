@@ -14,7 +14,11 @@ from simulate.models import (
     AgentFixRun,
     HostedHarnessJob,
 )
-from simulate.pydantic_schemas.agent_fix import FixRequest, Surface
+from simulate.pydantic_schemas.agent_fix import (
+    HELD_BACK_VERIFIED_MIN,
+    FixRequest,
+    Surface,
+)
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     failing_sub_goals_by_scenario,
@@ -37,10 +41,9 @@ from simulate.temporal.client import (
 logger = structlog.get_logger(__name__)
 
 
-# A third of the failing cases are held back, once there are enough for a third to tell:
-# 4 held back pass a large real fix 87% of the time, 2 only 56%.
+# A third of the failing cases are held back, once there are enough for a third to tell.
 HELD_BACK_SHARE = 3
-HELD_BACK_MIN_CASES = 12
+HELD_BACK_MIN_CASES = HELD_BACK_VERIFIED_MIN * HELD_BACK_SHARE
 
 
 def split_held_back(seed: str, failing: Mapping[str, list[str]]) -> list[str]:

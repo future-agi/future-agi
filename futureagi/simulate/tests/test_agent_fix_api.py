@@ -1285,6 +1285,27 @@ class TestUserApi:
         )
 
 
+@pytest.mark.parametrize(
+    "held_back, limited", [(0, True), (3, True), (4, False), (6, False)]
+)
+def test_too_few_held_back_cases_limit_a_fix_s_validation(
+    auth_client, environment, source_run, held_back, limited
+):
+    fix_run = _fix_run(source_run)
+    AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+        request={
+            **fix_run.request,
+            "held_back_scenario_keys": [f"held-{n}" for n in range(held_back)],
+        }
+    )
+
+    read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+    listed = auth_client.get(f"{BASE}/", {"environment_id": str(environment.id)}).json()
+
+    assert read["limited_validation"] is limited
+    assert listed["results"][0]["limited_validation"] is limited
+
+
 def _judged(run, config, *, passes=0, status="completed"):
     """Stores an eval on each of a run's calls, the first ``passes`` of them passing."""
     for index, execution in enumerate(_executions(run)):

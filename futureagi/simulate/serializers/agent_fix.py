@@ -17,6 +17,7 @@ from simulate.selectors.agent_fix import (
     base_check_runs,
     eval_warnings,
     is_retryable,
+    limited_validation,
 )
 from simulate.services.harness_environment import environment_name
 
@@ -210,10 +211,16 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     # The failed fix this one starts again, and whether this one may be started again.
     retried_from_id = serializers.UUIDField(allow_null=True)
     retryable = serializers.SerializerMethodField()
+    # Too few held-back cases to call the fix verified, whatever its verdict says.
+    limited_validation = serializers.SerializerMethodField()
 
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
     def get_retryable(self, fix_run: AgentFixRun) -> bool:
         return is_retryable(fix_run)
+
+    @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
+    def get_limited_validation(self, fix_run: AgentFixRun) -> bool:
+        return limited_validation(fix_run)
 
     @swagger_serializer_method(
         serializer_or_field=serializers.ChoiceField(
@@ -270,6 +277,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "failure",
             "retried_from_id",
             "retryable",
+            "limited_validation",
             "check_runs",
             "candidates",
             "started_at",

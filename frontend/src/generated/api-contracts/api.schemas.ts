@@ -17143,6 +17143,7 @@ export interface AgentFixRunApi {
   failure: AgentFixFailureApi;
   retried_from_id: string;
   readonly retryable?: boolean;
+  readonly limited_validation?: boolean;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
@@ -17339,6 +17340,7 @@ export interface AgentFixRunDetailApi {
   failure: AgentFixFailureApi;
   retried_from_id: string;
   readonly retryable?: boolean;
+  readonly limited_validation?: boolean;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];

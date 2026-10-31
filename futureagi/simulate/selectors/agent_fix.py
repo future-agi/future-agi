@@ -37,6 +37,7 @@ from simulate.models import (
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
+    HELD_BACK_VERIFIED_MIN,
     MAX_MINUTES_MAX,
     SCENARIOS_MAX,
     AgentIdentity,
@@ -450,6 +451,12 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
             Prefetch("check_runs", queryset=check_runs, to_attr="check_run_list"),
         )
     )
+
+
+def limited_validation(fix_run: AgentFixRun) -> bool:
+    """Whether too few cases were held back to call this fix verified, however it scored."""
+    held_back = fix_run.request.get("held_back_scenario_keys") or []
+    return len(held_back) < HELD_BACK_VERIFIED_MIN
 
 
 def is_retryable(fix_run: AgentFixRun) -> bool:
