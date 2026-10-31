@@ -491,11 +491,11 @@ func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder, h
 		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rej)
 	}
 	ctx, req := prepared.ctx, prepared.req
+	if prepared.immutableAdmission {
+		return immutableAdmissionHold(prepared.originalSpans), false, nil
+	}
 	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
 		return partialSuccessResponse(prepared.routed), false, nil
-	}
-	if normalization.RequiresAdmission(req.Traces()) {
-		return immutableAdmissionHold(int64(req.Traces().SpanCount()) + prepared.rejectedSpans), false, nil
 	}
 	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), h.s.pricer)
 	if err != nil {
@@ -611,12 +611,12 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, req := prepared.ctx, prepared.req
-	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
-		writeExportResponse(w, ct, partialSuccessResponse(prepared.routed))
+	if prepared.immutableAdmission {
+		writeExportResponse(w, ct, immutableAdmissionHold(prepared.originalSpans))
 		return
 	}
-	if normalization.RequiresAdmission(req.Traces()) {
-		writeExportResponse(w, ct, immutableAdmissionHold(int64(req.Traces().SpanCount())+prepared.rejectedSpans))
+	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
+		writeExportResponse(w, ct, partialSuccessResponse(prepared.routed))
 		return
 	}
 	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), s.pricer)

@@ -140,3 +140,48 @@ func TestPreparedNormalizationPriceIncludesDetails(t *testing.T) {
 		}
 	}
 }
+
+// The immutable flag and rejected count must describe the ORIGINAL request,
+// even if routing removes the reserved-contract span before normalization.
+func TestImmutableHoldSurvivesRoutingDrop(t *testing.T) {
+	for _, transport := range []string{"grpc", "json", "protobuf"} {
+		t.Run(transport, func(t *testing.T) {
+			s := newRouteServer(t, &routeFake{dropReason: "deleted-agent"})
+			req := routeRequest("customer-prod")
+			req.Traces().ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes().PutStr("fi.capture.source_work.id", "opaque")
+			var response ptraceotlp.ExportResponse
+			if transport == "grpc" {
+				var err error
+				response, err = s.export(sandboxKey(), req)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				ct := "application/x-protobuf"
+				if transport == "json" {
+					ct = "application/json"
+				}
+				rec := s.post(t, sandboxKey(), req, ct)
+				if rec.Code != 200 {
+					t.Fatal(rec.Body)
+				}
+				response = ptraceotlp.NewExportResponse()
+				var err error
+				if transport == "json" {
+					err = response.UnmarshalJSON(rec.Body.Bytes())
+				} else {
+					err = response.UnmarshalProto(rec.Body.Bytes())
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if response.PartialSuccess().ErrorMessage() != normalization.AdmissionError() || response.PartialSuccess().RejectedSpans() != 2 {
+				t.Fatal("routing hid immutable-contract hold")
+			}
+			if len(s.events.snapshot()) != 0 {
+				t.Fatal("rejected work billed")
+			}
+		})
+	}
+}
