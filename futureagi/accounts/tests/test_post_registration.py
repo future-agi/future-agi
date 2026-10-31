@@ -76,6 +76,48 @@ class TestRunPostRegistration:
         mock_hubspot.assert_called_once()
         mock_slack.assert_called_once()
 
+    @patch("accounts.utils.get_user_organization")
+    @patch("accounts.utils.send_slack_notification")
+    @patch("accounts.utils.send_hubspot_notification")
+    @patch("accounts.utils.send_signup_email")
+    @patch("accounts.models.User.objects.get")
+    @patch.dict("os.environ", {"ENV_TYPE": "prod"})
+    def test_probe_signup_sends_email_but_skips_side_effects(
+        self,
+        mock_user_get,
+        mock_send_email,
+        mock_hubspot,
+        mock_slack,
+        mock_get_org,
+    ):
+        """A sentinel probe signup gets its activation email (that is what the
+        probe verifies) but must not ping Slack, create a HubSpot contact, or
+        build demo data."""
+        from accounts.utils import _run_post_registration
+
+        mock_user = MagicMock()
+        mock_user.id = "user-123"
+        mock_user.email = "hc-probe+1730300000@futureagi.com"
+        mock_user.name = "Healthcheck Probe"
+        mock_user_get.return_value = mock_user
+
+        _run_post_registration("user-123", "password123")
+
+        mock_send_email.assert_called_once()
+        mock_hubspot.assert_not_called()
+        mock_slack.assert_not_called()
+        mock_get_org.assert_not_called()
+
+    def test_is_monitoring_probe_email_matches_only_probe_pattern(self):
+        from accounts.utils import is_monitoring_probe_email
+
+        assert is_monitoring_probe_email("hc-probe+1730300000@futureagi.com")
+        assert is_monitoring_probe_email("HC-PROBE+x@FUTUREAGI.COM")
+        assert not is_monitoring_probe_email("hc-probe+x@gmail.com")
+        assert not is_monitoring_probe_email("customer@futureagi.com")
+        assert not is_monitoring_probe_email("")
+        assert not is_monitoring_probe_email(None)
+
     @patch("accounts.models.User.objects.get")
     def test_raises_on_user_not_found(self, mock_user_get):
         """Test that function raises when user not found (no error handling)."""
