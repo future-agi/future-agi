@@ -1301,10 +1301,17 @@ def validate_executed_measurements(fields, corpus, *, target, predecessor_raw):
                 risk_class=item['risk_class'], duration_seconds=item['duration_seconds'],
                 started_monotonic=item['started_monotonic'], completed_monotonic=item['completed_monotonic']))
         equal(reduced, fields['migration_measurements'], 'signed migration metrics differ from raw samples')
+    volume_members = _snapshot_volume_members(snapshot, corpus.get('source_snapshot_members'))
     for role in ('backup', 'restore'):
         raw = corpus[role + '_transfer']
-        _keys(raw, ('reference_volume_bytes', 'started_monotonic', 'completed_monotonic', 'snapshot_generation', 'measurement_basis'),
+        # Pathname counts are optional evidence: when present they must equal the
+        # sealed trees; without them the host estimator keeps its conservative basis.
+        timing = ('reference_volume_bytes', 'started_monotonic', 'completed_monotonic', 'snapshot_generation',
+                  'measurement_basis')
+        _keys(raw, timing + (('reference_volume_members',) if 'reference_volume_members' in raw else ()),
               'incomplete transfer timing')
+        if 'reference_volume_members' in raw:
+            equal(raw['reference_volume_members'], volume_members, 'transfer members differ from independently captured trees')
         equal(raw['snapshot_generation'], reference['snapshot_generation'], 'transfer belongs to another snapshot generation')
         equal(raw['measurement_basis'], TRANSFER_BASIS, 'transfer measurement basis differs')
         _keys(raw['reference_volume_bytes'], VOLUME_ROLES, 'incomplete transfer byte measurements')
@@ -1315,8 +1322,22 @@ def validate_executed_measurements(fields, corpus, *, target, predecessor_raw):
              and type(end) in (int, float) and math.isfinite(end) and end > start, 'invalid transfer timing')
         expected = {'reference_volume_bytes': raw['reference_volume_bytes'],
                     'throughput_bytes_per_second': sum(raw['reference_volume_bytes'].values()) / (end - start)}
+        if 'reference_volume_members' in fields[role + '_measurement']:
+            # A signed count needs the raw evidence that was checked against the trees.
+            need('reference_volume_members' in raw, 'signed transfer members lack captured evidence')
+            expected['reference_volume_members'] = raw['reference_volume_members']
         equal(expected, fields[role + '_measurement'], 'signed transfer rate differs from executed timing')
     transition_measurements(fields)
+
+
+def _snapshot_volume_members(snapshot, members):
+    """Pathnames per role, root included, in the same validated sealed trees.
+
+    Transfer work grows with file count as well as payload; the host probe
+    counts members on this basis, so the estimator can bound both.
+    """
+    _snapshot_volume_bytes(snapshot, members)
+    return {role: len(members[role]) for role in VOLUME_ROLES}
 
 
 def measure_transfer(operation, capture_snapshot, *, clock=time.monotonic):
@@ -1336,9 +1357,11 @@ def measure_transfer(operation, capture_snapshot, *, clock=time.monotonic):
     snapshot, members = capture_snapshot()
     _keys(snapshot.get('archives'), VOLUME_ROLES, 'incomplete snapshot archives')
     volume_bytes = _snapshot_volume_bytes(snapshot, members)
-    raw = dict(reference_volume_bytes=volume_bytes, started_monotonic=started, completed_monotonic=completed,
+    volume_members = _snapshot_volume_members(snapshot, members)
+    raw = dict(reference_volume_bytes=volume_bytes, reference_volume_members=volume_members,
+               started_monotonic=started, completed_monotonic=completed,
                snapshot_generation=sha(canonical_json(snapshot)), measurement_basis=TRANSFER_BASIS)
-    return result, {'reference_volume_bytes': dict(volume_bytes),
+    return result, {'reference_volume_bytes': dict(volume_bytes), 'reference_volume_members': dict(volume_members),
                     'throughput_bytes_per_second': sum(volume_bytes.values()) / duration}, raw
 
 

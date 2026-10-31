@@ -473,3 +473,47 @@ class ArchiveInventoryV2Tests(unittest.TestCase):
         for root in ('/data', '/var/lib/postgresql/data'):
             with self.assertRaises(backup.BackupError):
                 self.verify([self.member('link', tarfile.SYMTYPE, root + '/other')], root=root)
+
+
+class RestoreScanHardlinkTests(unittest.TestCase):
+    def scan(self, root, **limits):
+        from deploy.update.probes import restore_fs
+        reads = []
+        real_read = os.read
+
+        def counted(fd, size):
+            chunk = real_read(fd, size)
+            reads.append(len(chunk))
+            return chunk
+        with mock.patch.object(restore_fs, 'metadata', return_value=({}, {})), \
+                mock.patch.object(restore_fs.os, 'read', side_effect=counted):
+            return restore_fs.scan(root, **limits), sum(reads)
+
+    def test_hardlink_group_is_read_once_and_capped_on_logical_bytes(self):
+        payload = os.urandom(4096)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'links'
+            root.mkdir()
+            (root / 'f00').write_bytes(payload)
+            names = ['f%02d' % index for index in range(64)]
+            for name in names[1:]:
+                os.link(root / 'f00', root / name)
+            rows, read = self.scan(root, max_bytes=len(payload))
+        self.assertEqual(read, len(payload))
+        files = [row for row in rows if row['type'] == 'file']
+        self.assertEqual([row['name'] for row in files], names)
+        self.assertEqual({row['sha256'] for row in files}, {hashlib.sha256(payload).hexdigest()})
+        self.assertTrue(all(row['hardlinks'] == names for row in files))
+
+    def test_distinct_inodes_still_count_toward_the_read_cap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'copies'
+            root.mkdir()
+            for name in ('a', 'b'):
+                (root / name).write_bytes(b'x' * 4096)
+            from deploy.update.probes.restore_fs import FilesystemError
+            with self.assertRaises(FilesystemError):
+                self.scan(root, max_bytes=4096)
+            rows, read = self.scan(root, max_bytes=8192)
+        self.assertEqual(read, 8192)
+        self.assertEqual([row['hardlinks'] for row in rows if row['type'] == 'file'], [[], []])

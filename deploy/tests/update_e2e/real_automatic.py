@@ -65,7 +65,11 @@ def acceptance_policy(rows, *, source_boot_seconds=None):
     if not measurements:
         raise ValueError('measured transition rows required')
     def transfer(name):
-        return max(60, max(ceil(2 * Fraction(sum(getattr(m, name).reference_volume_bytes.values())) /
+        # The installed A keeps running (ClickHouse system logs, WAL) for an hour
+        # or more past the qualification snapshot. The estimator scales by host
+        # logical bytes per role, so leave room for that growth; it still
+        # refuses a host that has outgrown even this ceiling.
+        return max(60, max(ceil(2 * HOST_GROWTH_ALLOWANCE * Fraction(sum(getattr(m, name).reference_volume_bytes.values())) /
             Fraction(str(getattr(m, name).throughput_bytes_per_second))) + 60 for m in measurements))
     def migration_seconds(measured):
         if isinstance(measured.migration_measurements, BootstrapEnvelopeMeasurement):
@@ -130,6 +134,8 @@ def pending_migration_names(measurements):
 # own measurement sizes every updater policy (acceptance_policy above).
 MEASURED_FIRST_BOOT_SECONDS = 314
 STABILITY_SECONDS = 180
+# Host logical growth per volume role the acceptance backup/restore ceilings allow.
+HOST_GROWTH_ALLOWANCE = 3
 # enrollment.configuration installs this probe timeout for every setup.
 SETUP_PROBE_TIMEOUT_SECONDS = 90
 # Healthy-source StandaloneStateObserver passes before the pre-stop cold gate:
@@ -406,6 +412,16 @@ try:
                 "reason_code": getattr(getattr(exc, "reason_code", None), "value", None), "frames": frames[-12:]}), flush=True)
             raise
     standalone_state.StandaloneStateObserver.measure_update_sizes = measure
+    original_sizes = standalone_state.StandaloneStateObserver._measure_sizes
+    def sizes(self, *args, **kwargs):
+        result = original_sizes(self, *args, **kwargs)
+        try:
+            print("FAGI-VOLUMES " + json.dumps({v.role: {"logical": v.logical_bytes, "used": v.used_bytes,
+                "members": v.members} for v in result[1].volumes}), flush=True)
+        except Exception:
+            pass
+        return result
+    standalone_state.StandaloneStateObserver._measure_sizes = sizes
 except (ImportError, AttributeError):
     pass  # optional facts; the refusal hook alone still applies
 from futureagi_update.__main__ import main
@@ -460,6 +476,12 @@ def closed_replay_result(returncode, output):
                     estimate={k: estimate[k] for k in estimate_fields if type(estimate.get(k)) is int},
                     tick_remaining_seconds=row.get('tick_remaining_seconds')
                     if type(row.get('tick_remaining_seconds')) is int else None))
+            elif line.startswith('FAGI-VOLUMES '):
+                row = json.loads(line[len('FAGI-VOLUMES '):])
+                result['volumes'] = {role: {k: row[role][k] for k in ('logical', 'used', 'members')
+                                            if type(row[role].get(k)) is int}
+                                     for role in ('app-data', 'postgres-data', 'clickhouse-data')
+                                     if isinstance(row.get(role), dict)}
             elif line.startswith('FAGI-SIZES '):
                 row = json.loads(line[len('FAGI-SIZES '):])
                 result.setdefault('sizes', []).append(dict(
@@ -767,8 +789,8 @@ class ProductHarness:
 
     def bin_update(self, *args, check=True, timeout=600):
         # Tests may enroll/deactivate, never drive scheduler run/tick/apply.
-        if not args or args[0] != 'setup':
-            raise ValueError('acceptance may only call one-time setup/deactivation')
+        if not args or args[0] not in ('setup', 'reporting'):
+            raise ValueError('acceptance may only call one-time setup/deactivation or status reporting')
         # Resolve real launcher prerequisites at the setup boundary, not when a
         # daemon-free unit fixture merely constructs a harness. Native acceptance
         # also probes this cleared environment before expensive qualification.

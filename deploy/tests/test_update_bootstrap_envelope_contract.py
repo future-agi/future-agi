@@ -30,7 +30,8 @@ def fixture(count=1, tables=True):
 
 def host(rows=100, size=500, include=True):
     return HostSizeObservation((HostTableSize('postgres', 'public.synthetic_table', rows, size),) if include else (),
-                               {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+                               {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False,
+                               {name: 1000 for name in AUTOMATIC_VOLUMES}, transfer_members={role: 1 for role in AUTOMATIC_VOLUMES})
 
 
 def estimate(row, observation=None, **kwargs):

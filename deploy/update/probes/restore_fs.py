@@ -79,7 +79,7 @@ def stable(info):
 
 def scan(root, *, max_members=1000000, max_bytes=274877906944):
     root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    rows, groups, total = {}, {}, 0
+    rows, groups, hashed, total = {}, {}, {}, 0
     device = os.fstat(root_fd).st_dev
 
     def visit(parent, leaf, name):
@@ -103,19 +103,27 @@ def scan(root, *, max_members=1000000, max_bytes=274877906944):
                 need(stable(os.fstat(fd)) == stable(before))
                 row['xattrs'], row['acls'] = metadata(fd=fd)
                 if typ == 'file':
-                    total += before.st_size
-                    need(total <= max_bytes)
-                    digest = hashlib.sha256()
-                    size = 0
-                    while True:
-                        chunk = os.read(fd, 65536)
-                        if not chunk:
-                            break
-                        digest.update(chunk)
-                        size += len(chunk)
-                    need(size == before.st_size)
-                    row['sha256'] = digest.hexdigest()
-                    groups.setdefault((before.st_dev, before.st_ino), []).append(name)
+                    inode = (before.st_dev, before.st_ino)
+                    if inode in hashed:
+                        # Another link to an unchanged inode: one payload read per
+                        # hardlink group, as the signed logical-bytes basis counts it.
+                        identity, row['sha256'] = hashed[inode]
+                        need(identity == stable(before))
+                    else:
+                        total += before.st_size
+                        need(total <= max_bytes)
+                        digest = hashlib.sha256()
+                        size = 0
+                        while True:
+                            chunk = os.read(fd, 65536)
+                            if not chunk:
+                                break
+                            digest.update(chunk)
+                            size += len(chunk)
+                        need(size == before.st_size)
+                        row['sha256'] = digest.hexdigest()
+                        hashed[inode] = (stable(before), row['sha256'])
+                    groups.setdefault(inode, []).append(name)
                 else:
                     for child in sorted(os.listdir(fd)):
                         need(child not in ('.', '..') and '/' not in child)

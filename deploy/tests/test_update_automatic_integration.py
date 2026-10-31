@@ -345,8 +345,10 @@ class FixedObserver:
     def measure_update_sizes(self, installation, *, measurements, backup_destination):
         tables = {(m.engine, t.table): HostTableSize(m.engine, t.table, t.reference_rows, t.reference_bytes)
                   for m in measurements.migration_measurements for t in m.tables}
-        return HostSizeObservation(tuple(tables.values()), dict(measurements.backup_measurement.reference_volume_bytes),
-                                   10**15, 10**15)
+        volumes = dict(measurements.backup_measurement.reference_volume_bytes)
+        members = measurements.backup_measurement.reference_volume_members
+        return HostSizeObservation(tuple(tables.values()), volumes, 10**15, 10**15, True, volumes,
+                                   dict(members) if members is not None else None)
 
 
 def render(inst, raw):

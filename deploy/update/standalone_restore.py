@@ -28,7 +28,7 @@ from .standalone_backup import (BackupBinding, BackupPolicy, VOLUMES, CONFIG_FIL
     _command, _directory, _files, _file_identity, _hash, _identity, _ID, _IMAGE, _json,
     _new, _private, _read, _volume, _all_containers, sync_file)
 
-RESTORE_FS_SHA256 = '3439e946a0869ed618ea33b881da9cd5c3bc85bd3ff86a7c1ef9660327e53db6'
+RESTORE_FS_SHA256 = '80f32b1acaeec3910c992fe2ed01e74a7b36cfddfcfb83e1624f7a741e086c7b'
 HELPER_LABEL = 'ai.futureagi.restore-attempt'
 
 

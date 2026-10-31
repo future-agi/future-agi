@@ -471,7 +471,9 @@ class AcceptanceSequenceTests(unittest.TestCase):
                     restore=False)
             self.assertEqual([c.args[0]['version'] for c in installed.call_args_list], list(versions[1:]))
             self.assertIn((versions[2], {'acceptance-a', 'acceptance-'+versions[1]}), verified_generations)
-            self.assertEqual(h.bin_update.call_count, 2, 'exactly one setup plus deactivation, no driven ticks')
+            # One setup, its status reporting, one deactivation; never a driven run/tick/apply.
+            self.assertEqual([c.args[:2] for c in h.bin_update.call_args_list],
+                             [('setup', '--mode'), ('reporting', 'init'), ('setup', '--deactivate')])
             h.cleanup.assert_called_once()
 
     def test_ledger_oracle_never_runs_recovery_or_reconciles_a_stale_checkpoint(self):
@@ -763,7 +765,9 @@ class RestoreSequenceTests(unittest.TestCase):
                               publisher, rows, policy, restore=True)
             self.assertEqual(h.fail_after_migrations.call_count, 1)
             h.verify_candidate_only_absent.assert_called_once_with()
-            self.assertEqual(h.bin_update.call_count, 2, 'exactly one setup plus deactivation, no driven ticks')
+            # One setup, its status reporting, one deactivation; never a driven run/tick/apply.
+            self.assertEqual([c.args[:2] for c in h.bin_update.call_args_list],
+                             [('setup', '--mode'), ('reporting', 'init'), ('setup', '--deactivate')])
             self.assertEqual(verified[-1], ['acceptance-a'])
             recorded = {c.args[0]: c.args[1] for c in h.record.call_args_list}
             restored = recorded['restored-source.json']

@@ -1273,6 +1273,26 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "required": ["backup_measurement"],
+                  "properties": {"backup_measurement": {"required": ["reference_volume_members"]}}
+                },
+                "then": {
+                  "properties": {"restore_measurement": {"required": ["reference_volume_members"]}}
+                }
+              },
+              {
+                "if": {
+                  "required": ["restore_measurement"],
+                  "properties": {"restore_measurement": {"required": ["reference_volume_members"]}}
+                },
+                "then": {
+                  "properties": {"backup_measurement": {"required": ["reference_volume_members"]}}
+                }
+              }
+            ],
             "required": [
               "predecessor",
               "predecessor_components",
@@ -2261,6 +2281,32 @@
                     "type": "number",
                     "exclusiveMinimum": 0,
                     "maximum": 1e+18
+                  },
+                  "reference_volume_members": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "app-data",
+                      "postgres-data",
+                      "clickhouse-data"
+                    ],
+                    "properties": {
+                      "app-data": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "postgres-data": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "clickhouse-data": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      }
+                    }
                   }
                 }
               },
@@ -2325,6 +2371,32 @@
                     "type": "number",
                     "exclusiveMinimum": 0,
                     "maximum": 1e+18
+                  },
+                  "reference_volume_members": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "app-data",
+                      "postgres-data",
+                      "clickhouse-data"
+                    ],
+                    "properties": {
+                      "app-data": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "postgres-data": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "clickhouse-data": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      }
+                    }
                   }
                 }
               }

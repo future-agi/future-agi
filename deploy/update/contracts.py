@@ -629,6 +629,9 @@ class BootstrapEnvelopeMeasurement:
 class VolumeTransferMeasurement:
     reference_volume_bytes: Mapping[str, int]
     throughput_bytes_per_second: float
+    # Pathnames per role in the same sealed trees. Transfer work grows with file
+    # count as well as payload (archive, extract, fsync, inventory every member).
+    reference_volume_members: Optional[Mapping[str, int]] = None
 
     def __post_init__(self) -> None:
         _require(isinstance(self.reference_volume_bytes, Mapping)
@@ -637,6 +640,12 @@ class VolumeTransferMeasurement:
         _require(sum(sizes.values()) > 0)
         _measurement_number(self.throughput_bytes_per_second, exclusive=True)
         object.__setattr__(self, "reference_volume_bytes", MappingProxyType(sizes))
+        if self.reference_volume_members is not None:
+            _require(isinstance(self.reference_volume_members, Mapping)
+                     and set(self.reference_volume_members) == set(AUTOMATIC_VOLUMES))
+            members = {name: _wire_integer(value) for name, value in self.reference_volume_members.items()}
+            _require(all(value >= 1 for value in members.values()))  # every tree has its root
+            object.__setattr__(self, "reference_volume_members", MappingProxyType(members))
 
 
 def pending_migration_plan_hash(identities: Any) -> str:
@@ -683,6 +692,9 @@ class TransitionMeasurements:
             _require(isinstance(item, VolumeTransferMeasurement))
             object.__setattr__(self, name, item)
         _require(dict(self.backup_measurement.reference_volume_bytes) == dict(self.restore_measurement.reference_volume_bytes))
+        members = [m.reference_volume_members for m in (self.backup_measurement, self.restore_measurement)]
+        _require(members[0] is None and members[1] is None or
+                 None not in members and dict(members[0]) == dict(members[1]))
         object.__setattr__(self, "migration_evidence", evidence)
         object.__setattr__(self, "migration_measurements", measurements)
 
@@ -709,6 +721,12 @@ class HostSizeObservation:
     backup_free_bytes: int
     # Unknown co-location must be treated conservatively as the SAME filesystem.
     backup_shares_docker_filesystem: bool = True
+    # Per-role logical bytes and pathnames on the SAME basis as the signed
+    # transfer measurements (snapshot-logical-payload-bytes-v1 trees). Time
+    # scales by these; space keeps the conservative volume_bytes. If either
+    # side lacks them, time also uses volume_bytes.
+    transfer_bytes: Optional[Mapping[str, int]] = None
+    transfer_members: Optional[Mapping[str, int]] = None
 
     def __post_init__(self) -> None:
         _require(isinstance(self.table_sizes, (tuple, list)))
@@ -720,6 +738,17 @@ class HostSizeObservation:
         for name in ("docker_free_bytes", "backup_free_bytes"):
             object.__setattr__(self, name, _wire_integer(getattr(self, name)))
         _require(type(self.backup_shares_docker_filesystem) is bool)
+        if self.transfer_bytes is not None:
+            _require(isinstance(self.transfer_bytes, Mapping) and set(self.transfer_bytes) == set(AUTOMATIC_VOLUMES))
+            transfer = {k: _wire_integer(v) for k, v in self.transfer_bytes.items()}
+            # Logical payload never exceeds the restore workload that includes it.
+            _require(all(transfer[k] <= self.volume_bytes[k] for k in transfer))
+            object.__setattr__(self, "transfer_bytes", MappingProxyType(transfer))
+        if self.transfer_members is not None:
+            _require(isinstance(self.transfer_members, Mapping) and set(self.transfer_members) == set(AUTOMATIC_VOLUMES))
+            members = {k: _wire_integer(v) for k, v in self.transfer_members.items()}
+            _require(all(value >= 1 for value in members.values()))
+            object.__setattr__(self, "transfer_members", MappingProxyType(members))
         object.__setattr__(self, "table_sizes", tables)
 
 

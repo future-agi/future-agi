@@ -514,6 +514,11 @@ class RuntimeBindingTests(unittest.TestCase):
             sizes = observer.measure_update_sizes(self.inst, measurements=measurements, backup_destination=self.inst.root)
             self.assertEqual(sizes.table_sizes, ())
             self.assertEqual(sizes.docker_free_bytes, 999999)
+            # Time compares the probe's payload and pathnames with the signed trees;
+            # space keeps the restore workload (max(used, logical) + 8 KiB per pathname).
+            self.assertEqual(dict(sizes.transfer_bytes), {role: 200 for role in host.VOLUME_ROLES})
+            self.assertEqual(dict(sizes.transfer_members), {role: 2 for role in host.VOLUME_ROLES})
+            self.assertEqual(dict(sizes.volume_bytes), {role: 200 + 2 * 8192 for role in host.VOLUME_ROLES})
 
     def test_envelope_size_requests_use_each_table_engine(self):
         from deploy.update.contracts import (MigrationEvidence, TransitionMeasurements, VolumeTransferMeasurement,
@@ -611,7 +616,8 @@ class RuntimeBindingTests(unittest.TestCase):
         observer, observed, storage, _ = self.make_observation()
         migration = MigrationEvidence("a" * 64, "b" * 64, "c" * 64, "d" * 64, "e" * 64,
                                       pending_migration_plan_hash([]), 0)
-        transfer = VolumeTransferMeasurement({role: 10 for role in host.VOLUME_ROLES}, 1024 ** 3)
+        transfer = VolumeTransferMeasurement({role: 10 for role in host.VOLUME_ROLES}, 1024 ** 3,
+                                             {role: 1 for role in host.VOLUME_ROLES})
         measurements = TransitionMeasurements(migration, (), transfer, transfer)
         for logical, members in ((8 * 1024 ** 3, 2), (0, 300000)):
             with self.subTest(logical=logical, members=members):
@@ -658,7 +664,8 @@ class RuntimeBindingTests(unittest.TestCase):
         observer, observed, _, _ = self.make_observation(storage=storage)
         migration = MigrationEvidence("a" * 64, "b" * 64, "c" * 64, "d" * 64, "e" * 64,
                                       pending_migration_plan_hash([]), 0)
-        transfer = VolumeTransferMeasurement({role: 10000 for role in host.VOLUME_ROLES}, 1024 ** 3)
+        transfer = VolumeTransferMeasurement({role: 10000 for role in host.VOLUME_ROLES}, 1024 ** 3,
+                                             {role: 1 for role in host.VOLUME_ROLES})
         measurements = TransitionMeasurements(migration, (), transfer, transfer)
         with patch.object(state, "bounded_installation", side_effect=lambda obj, *args: obj), patch.object(state, "check_binding"), \
                 patch.object(state, "inspect_volume_storage", return_value=storage), \

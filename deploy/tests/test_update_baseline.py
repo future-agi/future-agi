@@ -588,7 +588,9 @@ class BaselineCoreTests(unittest.TestCase):
         measurements = transition_measurements(json.loads(self.b_proof)['predecessors'][0])
         sizes = HostSizeObservation(tuple(HostTableSize(m.engine, t.table, t.reference_rows, t.reference_bytes)
             for m in measurements.migration_measurements for t in m.tables),
-            {'app-data': 1000, 'postgres-data': 1000, 'clickhouse-data': 1000}, 10**15, 10**15)
+            {'app-data': 1000, 'postgres-data': 1000, 'clickhouse-data': 1000}, 10**15, 10**15, True,
+            {'app-data': 1000, 'postgres-data': 1000, 'clickhouse-data': 1000},
+            {'app-data': 1, 'postgres-data': 1, 'clickhouse-data': 1})
         measured = mock.Mock()
         measured.measure_update_sizes.return_value = sizes
         factory = mock.Mock(return_value=measured)

@@ -19,7 +19,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from deploy.tests.update_e2e import harness as e2e
 from deploy.tests.update_e2e.real_automatic import (
-    CRON_PERIOD_SECONDS, FAULT_SEAM, acceptance_policy, acceptance_reserve_seconds, policy_cli_arguments,
+    CRON_PERIOD_SECONDS, FAULT_SEAM, PRE_COLD_SOURCE_OBSERVATIONS, SETUP_PROBE_TIMEOUT_SECONDS,
+    acceptance_policy, acceptance_reserve_seconds, policy_cli_arguments,
     pending_migration_names, read_attempt_ledger, read_event_records, scheduler_wait_budget,
     replacement_tolerant, scheduler_history, diagnostic_scheduler_replay, setup_timeout_seconds)
 from deploy.update.baseline import BaselineStore
@@ -108,6 +109,17 @@ class AutomaticLifecycleE2E(unittest.TestCase):
             self.assertIn(AUTOMATIC_UPDATE_DISCLOSURE, setup.stdout.decode())
             enrolled = True
             store = selected_store(checkout.root)
+            # Operator status reporting: the runner's own public projection is the
+            # only record of a preflight refusal (a skipped run writes no event).
+            public_dir = checkout.evidence/'public-status'
+            # Diagnostics only: a refused reporting init must not cost the journey.
+            reporting = checkout.bin_update('reporting', 'init', '--directory', str(public_dir), check=False)
+            def public_status():
+                try:
+                    slot = store.read_registration().binding.slot_id
+                    return json.loads((public_dir/slot/'status.json').read_bytes())
+                except (OSError, ValueError):
+                    return None
             baseline = BaselineStore(store)
             # Cron atomically replaces state.json while we poll it.
             read_state = lambda: replacement_tolerant(store.read_state, [store.path/'state.json'])
@@ -141,6 +153,8 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                     except Exception:
                         activation = None
                     history = scheduler_history(store, destination, checkout.containers(), activation=activation)
+                    checkout.record('public-status.json', dict(reporting_init_returncode=reporting.returncode,
+                                                               status=public_status()))
                     if not history.get('attempts'):
                         # Every tick refused before an attempt: name the refusing check.
                         history['diagnostic_replay'] = diagnostic_scheduler_replay(store)
@@ -176,13 +190,22 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                     # No attempt within delivery plus a few healthy-source observations
                     # means every tick is refusing; stop waiting and keep the history.
                     published, started = time.monotonic(), []
-                    attempt_start_seconds = (2*CRON_PERIOD_SECONDS + 60 + 600
-                                             + 4*(policy.probe_timeout_seconds + policy.stability_period_seconds))
+                    # One run makes up to PRE_COLD_SOURCE_OBSERVATIONS healthy-source
+                    # observations before it reserves an attempt; allow two such runs.
+                    attempt_start_seconds = (2*CRON_PERIOD_SECONDS + 60 + 600 + 2*PRE_COLD_SOURCE_OBSERVATIONS*(
+                        max(policy.probe_timeout_seconds, SETUP_PROBE_TIMEOUT_SECONDS) + policy.stability_period_seconds))
+                    admission = {'backup_exceeds_window', 'migration_exceeds_window',
+                                 'insufficient_disk_for_backup', 'insufficient_disk_for_migration'}
                     def stalled():
                         state = read_state()
                         if state.active_attempt_id is not None:
                             started.append(True)
-                        return state.retry_count >= 3 or (not started
+                        discovery = (public_status() or {}).get('discovery') or {}
+                        # The same host and policy refuse the same estimate on every run.
+                        refused = (not started and discovery.get('state') == 'blocked'
+                                   and discovery.get('candidate_version') == version
+                                   and bool(admission & set(discovery.get('reason_codes') or [])))
+                        return refused or state.retry_count >= 3 or (not started
                             and time.monotonic() - published > attempt_start_seconds)
                     scheduler_wait(lambda: current_head().release.version == version and any(
                         r.get('kind') == 'apply' and r.get('status') == 'succeeded' and r.get('target_version') == version

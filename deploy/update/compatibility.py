@@ -646,9 +646,15 @@ def estimate_automatic_update(measurements: TransitionMeasurements, host_sizes: 
         f = policy.estimate_safety_factor
         sizes = {(item.engine, item.table): item for item in host_sizes.table_sizes}
         volume_bytes = sum(host_sizes.volume_bytes.values())
+        # Time scales on the signed sealed-tree basis, payload AND pathnames. The
+        # restore workload (bytes + per-pathname allowance) is not a time bound
+        # for pathname growth, so a side without that basis cannot be estimated.
+        # Space below always keeps volume_bytes.
         for transfer in (measurements.backup_measurement, measurements.restore_measurement):
+            require(None not in (host_sizes.transfer_bytes, host_sizes.transfer_members,
+                                 transfer.reference_volume_members), ReasonCode.RESTORE_CAPACITY_UNKNOWN)
             require(all(not size or transfer.reference_volume_bytes[volume] > 0
-                        for volume, size in host_sizes.volume_bytes.items()), ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+                        for volume, size in host_sizes.transfer_bytes.items()), ReasonCode.RESTORE_CAPACITY_UNKNOWN)
 
         def ceiling(value):
             return -(-value.numerator // value.denominator)
@@ -657,8 +663,12 @@ def estimate_automatic_update(measurements: TransitionMeasurements, host_sizes: 
             # Aggregate throughput hides differences between volume roles. Scale
             # the whole reference duration by the largest role ratio, so every
             # role's contribution is covered even when the data mix changes.
-            scale = max([Fraction(1)] + [Fraction(host_sizes.volume_bytes[role], reference)
-                        for role, reference in transfer.reference_volume_bytes.items() if reference])
+            # Archive, extract, fsync and inventory run per pathname; payload is
+            # read once per hardlink group. Bound both by the largest role ratio.
+            scale = max([Fraction(1)] + [Fraction(host_sizes.transfer_bytes[role], reference)
+                        for role, reference in transfer.reference_volume_bytes.items() if reference]
+                        + [Fraction(host_sizes.transfer_members[role], reference)
+                           for role, reference in transfer.reference_volume_members.items()])
             reference_duration = (Fraction(sum(transfer.reference_volume_bytes.values()))
                                   / Fraction(transfer.throughput_bytes_per_second))
             return ceiling(f * reference_duration * scale)

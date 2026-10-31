@@ -506,6 +506,17 @@ class StandaloneHostSizeObservation(HostSizeObservation):
                 and {v.role for v in storage} == set(VOLUME_ROLES)
                 and dict(self.volume_bytes) == {v.role: v.restore_work_bytes for v in storage},
                 ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+        # Transfer time compares like with like: the probe's logical payload and
+        # pathnames (root included) are the signed reference's sealed-tree basis
+        # (hardlinked payload once, sparse at apparent size). The per-member
+        # restore allowance remains a space reserve.
+        logical = {v.role: v.logical_bytes for v in storage}
+        members = {v.role: v.members for v in storage}
+        require((self.transfer_bytes is None or dict(self.transfer_bytes) == logical)
+                and (self.transfer_members is None or dict(self.transfer_members) == members),
+                ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+        object.__setattr__(self, "transfer_bytes", MappingProxyType(dict(logical)))
+        object.__setattr__(self, "transfer_members", MappingProxyType(dict(members)))
         groups = {}
         for volume in storage:
             require(type(volume.device) is str and re.fullmatch(r"[0-9]+:[0-9]+", volume.device)

@@ -218,6 +218,10 @@ def complete_snapshot_fields(fields):
     for name in CONFIG_FILES[1:]:
         fields['execution_deployment']['files'].setdefault(name, producer.sha(('SYNTHETIC-'+name).encode()))
     fields['predecessor']['execution_deployment_hash'] = manifest_hash(fields['execution_deployment'])
+    for transfer in ('backup_measurement', 'restore_measurement'):
+        # Schema-only placeholder counts are not these trees' pathname counts;
+        # tests that bind counts derive them from the sealed snapshot.
+        fields[transfer].pop('reference_volume_members', None)
     return fields
 
 
@@ -510,8 +514,11 @@ class MeasurementAndExecutorTests(unittest.TestCase):
             return corpus['source_snapshot_inventory'], corpus['source_snapshot_members']
         result, measured, raw = producer.measure_transfer(lambda: events.append('executed') or 'snapshot',capture,clock=lambda:next(times))
         self.assertEqual((result,events),('snapshot',['executed']))
-        self.assertEqual(measured,{'reference_volume_bytes':volumes,'throughput_bytes_per_second':150})
-        self.assertEqual(raw, dict(reference_volume_bytes=volumes,started_monotonic=10,completed_monotonic=12,
+        members = {role: entry['members'] for role, entry in corpus['source_snapshot_inventory']['archives'].items()}
+        self.assertEqual(measured,{'reference_volume_bytes':volumes,'reference_volume_members':members,
+                                   'throughput_bytes_per_second':150})
+        self.assertEqual(raw, dict(reference_volume_bytes=volumes,reference_volume_members=members,
+            started_monotonic=10,completed_monotonic=12,
             snapshot_generation=producer.sha(canonical_json(corpus['source_snapshot_inventory'])),measurement_basis=producer.TRANSFER_BASIS))
         with self.assertRaises(producer.RehearsalError):
             producer.measure_transfer(lambda:None,{'docker_volume_name':100})
@@ -1067,6 +1074,25 @@ class SnapshotTransferRegressionTests(unittest.TestCase):
             corpus['source_observation_preimages'][section]['unexpected'] = 'substituted'
             with self.subTest(changed=section),self.assertRaises(producer.RehearsalError):
                 validate_measurements(fields,corpus)
+
+    def test_signed_pathname_counts_are_bound_to_the_sealed_trees(self):
+        fields, corpus = self.valid()
+        members = producer._snapshot_volume_members(corpus['source_snapshot_inventory'], corpus['source_snapshot_members'])
+        def signed(fields, corpus, raw_members=members, signed_members=members):
+            fields, corpus = copy.deepcopy(fields), copy.deepcopy(corpus)
+            for transfer in ('backup', 'restore'):
+                if raw_members is not None:
+                    corpus[transfer+'_transfer']['reference_volume_members'] = dict(raw_members)
+                if signed_members is not None:
+                    fields[transfer+'_measurement']['reference_volume_members'] = dict(signed_members)
+            return fields, corpus
+        validate_measurements(*signed(fields, corpus))
+        inflated = dict(members, **{'app-data': members['app-data'] + 1})
+        for raw, sign, message in ((inflated, inflated, 'transfer members differ'),
+                                   (members, inflated, 'signed transfer rate differs'),
+                                   (None, members, 'lack captured evidence')):
+            with self.subTest(message=message), self.assertRaisesRegex(producer.RehearsalError, message):
+                validate_measurements(*signed(fields, corpus, raw, sign))
 
     def test_every_role_and_transfer_rejects_jointly_inflated_claims(self):
         for role in producer.VOLUME_ROLES:

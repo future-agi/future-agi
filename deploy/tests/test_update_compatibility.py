@@ -471,6 +471,7 @@ def restore_release(pending_count=3):
     row["migration_evidence"]["target_pending_plan_sha256"] = pending_migration_plan_hash(
         [{"app_label": m["app_label"], "name": m["name"]} for m in row["migration_measurements"]])
     row["backup_measurement"] = {"reference_volume_bytes": {name: 1000 for name in AUTOMATIC_VOLUMES},
+                                 "reference_volume_members": {name: 1 for name in AUTOMATIC_VOLUMES},
                                  "throughput_bytes_per_second": 1000}
     row["restore_measurement"] = copy.deepcopy(row["backup_measurement"])
     proof = {key: copy.deepcopy(legacy_proof[key]) for key in legacy_proof if key != "state_domains"}
@@ -580,6 +581,24 @@ class RestoreContractTests(unittest.TestCase):
             raw = bind_proof(target, proof)
             with self.subTest(field=field, value=value), self.assertRaises(ManifestError):
                 validate_release_proof(raw, target, repository="future-agi/future-agi")
+
+    @needs_jsonschema
+    def test_transfer_pathname_counts_are_paired_in_schema_and_runtime(self):
+        from jsonschema import Draft202012Validator
+        validator = Draft202012Validator(schema("compatibility-proof.schema.json"))
+        for backup, restore in ((True, True), (False, False), (True, False), (False, True)):
+            target, _, proof, _ = restore_release()
+            row = proof["predecessors"][0]
+            for present, field in ((backup, "backup_measurement"), (restore, "restore_measurement")):
+                if not present:
+                    del row[field]["reference_volume_members"]
+            with self.subTest(backup=backup, restore=restore):
+                self.assertEqual(validator.is_valid(proof), backup == restore)
+                if backup == restore:
+                    validate_release_proof(bind_proof(target, proof), target, repository="future-agi/future-agi")
+                else:
+                    with self.assertRaises(ManifestError):
+                        validate_release_proof(bind_proof(target, proof), target, repository="future-agi/future-agi")
 
     def test_v2_schema_runtime_parity_for_every_closed_object(self):
         from jsonschema import Draft202012Validator
@@ -829,7 +848,8 @@ def a6_context():
     measured = transition_measurements(row)
     host = HostSizeObservation(tuple(HostTableSize(m.engine, m.tables[0].table, 100, 1000)
         for m in measured.migration_measurements),
-        {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+        {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False,
+        {name: 1000 for name in AUTOMATIC_VOLUMES}, transfer_members={role: 1 for role in AUTOMATIC_VOLUMES})
     policy = AutomationPolicy(mode="apply", qualification_policy="standalone-cold-restore-v1")
     return measured, host, policy
 
@@ -916,7 +936,8 @@ class AmendmentA6Tests(unittest.TestCase):
         separate = self.estimate(measured, host).estimate
         same = self.estimate(measured, replace(host, backup_shares_docker_filesystem=True)).estimate
         self.assertEqual(same.docker_required_free_bytes, separate.docker_required_free_bytes + same.backup_required_free_bytes)
-        unknown = HostSizeObservation(host.table_sizes, host.volume_bytes, host.docker_free_bytes, host.backup_free_bytes)
+        unknown = HostSizeObservation(host.table_sizes, host.volume_bytes, host.docker_free_bytes, host.backup_free_bytes,
+                                      transfer_bytes=host.transfer_bytes, transfer_members=host.transfer_members)
         self.assertEqual(self.estimate(measured, unknown).estimate, same)
 
     def test_missing_table_unknown_engine_and_unmeasured_reference_capacity_refuse(self):
@@ -1049,6 +1070,95 @@ class AmendmentA6Tests(unittest.TestCase):
         self.assertIn(ReasonCode.BACKUP_EXCEEDS_WINDOW, result.reason_codes)
 
 
+class TransferBasisA6Tests(unittest.TestCase):
+    """Transfer time compares the signed sealed-tree basis with the host's.
+
+    Native: a fresh installation whose restore workload (logical + 8 KiB per
+    member) was ~31x a small role's logical payload estimated 13,482 s to
+    restore data the qualification restored in ~215 s, so every run refused.
+    Time now scales by host payload AND pathnames against the signed reference;
+    space keeps the conservative restore workload.
+    """
+    estimate = AmendmentA6Tests.estimate
+    MEMBERS = {"app-data": 10, "postgres-data": 10, "clickhouse-data": 10}
+
+    def measured(self, members=MEMBERS):
+        measured = a6_context()[0]
+        return replace(measured, backup_measurement=replace(measured.backup_measurement, reference_volume_members=members),
+                       restore_measurement=replace(measured.restore_measurement, reference_volume_members=members))
+
+    def host(self, restore_work, transfer=None, members=None, free=10**12):
+        measured = a6_context()[0]
+        return HostSizeObservation(tuple(HostTableSize(m.engine, m.tables[0].table, 100, 1000)
+            for m in measured.migration_measurements), restore_work, free, free, False, transfer, members)
+
+    def seconds(self, host, members=MEMBERS):
+        result = self.estimate(self.measured(members), host)
+        return result, (result.estimate.backup_seconds, result.estimate.restore_seconds)
+
+    def test_member_metadata_allowance_does_not_scale_time_for_the_same_trees(self):
+        work = {"app-data": 31000, "postgres-data": 1000, "clickhouse-data": 1000}
+        result, seconds = self.seconds(self.host(work, {n: 1000 for n in AUTOMATIC_VOLUMES}, self.MEMBERS))
+        self.assertTrue(result.allowed, result.reason_codes)
+        self.assertEqual(seconds, (6, 6))
+
+    def test_pathname_growth_scales_time_even_with_constant_payload(self):
+        # Review finding: 300x more (empty) files with the same payload.
+        members = dict(self.MEMBERS, **{"app-data": 3000})
+        work = {"app-data": 1000 + 3000 * 8192, "postgres-data": 1000, "clickhouse-data": 1000}
+        _, seconds = self.seconds(self.host(work, {n: 1000 for n in AUTOMATIC_VOLUMES}, members))
+        self.assertEqual(seconds, (1800, 1800))
+
+    def test_zero_payload_role_still_scales_by_its_pathnames(self):
+        measured = self.measured()
+        rows = dict(measured.backup_measurement.reference_volume_bytes, **{"app-data": 0})
+        transfer = replace(measured.backup_measurement, reference_volume_bytes=rows)
+        measured = replace(measured, backup_measurement=transfer, restore_measurement=transfer)
+        members = dict(self.MEMBERS, **{"app-data": 500})
+        host = self.host({n: 10**6 for n in AUTOMATIC_VOLUMES}, {"app-data": 0, "postgres-data": 1000,
+                         "clickhouse-data": 1000}, members)
+        self.assertEqual(self.estimate(measured, host).estimate.backup_seconds, 4 * 50)
+
+    def test_logical_growth_still_scales_by_the_largest_role_ratio(self):
+        transfer = {"app-data": 5000, "postgres-data": 1000, "clickhouse-data": 1000}
+        _, seconds = self.seconds(self.host({n: 9000 for n in AUTOMATIC_VOLUMES}, transfer, self.MEMBERS))
+        self.assertEqual(seconds, (30, 30))
+
+    def test_space_still_uses_the_conservative_restore_workload(self):
+        policy = a6_context()[2]
+        work = {"app-data": 31000, "postgres-data": 1000, "clickhouse-data": 1000}
+        transfer = {n: 1000 for n in AUTOMATIC_VOLUMES}
+        result, _ = self.seconds(self.host(work, transfer, self.MEMBERS))
+        self.assertEqual(result.estimate.backup_required_free_bytes, 2 * 33000 + policy.disk_watermark_reserve_bytes)
+        tight = self.host(work, transfer, self.MEMBERS, free=2 * 3000 + policy.disk_watermark_reserve_bytes)
+        self.assertIn(ReasonCode.INSUFFICIENT_DISK_FOR_BACKUP, self.estimate(self.measured(), tight).reason_codes)
+
+    def test_missing_pathname_basis_on_either_side_refuses(self):
+        # Review: restore workload bytes are not a time bound for pathname
+        # growth, so neither side may fall back to them.
+        work = {"app-data": 31000, "postgres-data": 1000, "clickhouse-data": 1000}
+        transfer = {n: 1000 for n in AUTOMATIC_VOLUMES}
+        for host, members in ((self.host(work), self.MEMBERS), (self.host(work, transfer), self.MEMBERS),
+                              (self.host(work, transfer, self.MEMBERS), None)):
+            with self.subTest(host=host.transfer_members, reference=members):
+                result = self.estimate(self.measured(members), host)
+                self.assertFalse(result.allowed)
+                self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+
+    def test_bases_must_cover_every_role_and_stay_within_the_workload(self):
+        work = {name: 1000 for name in AUTOMATIC_VOLUMES}
+        for transfer, members in (({"app-data": 1000}, None), (dict(work, **{"app-data": 1001}), None),
+                                  (work, {"app-data": 1}), (work, dict(self.MEMBERS, **{"app-data": 0}))):
+            with self.subTest(transfer=transfer, members=members), self.assertRaises(ValueError):
+                self.host(work, transfer, members)
+        measured = a6_context()[0]
+        with self.assertRaises(ValueError):
+            replace(measured.backup_measurement, reference_volume_members=dict(self.MEMBERS, **{"app-data": 0}))
+        with self.assertRaises(ValueError):
+            replace(measured, backup_measurement=replace(measured.backup_measurement,
+                    reference_volume_members=self.MEMBERS))
+
+
 class ReviewerA6RegressionTests(unittest.TestCase):
     """Pure synthetic counterexamples, never product qualification."""
 
@@ -1072,7 +1182,8 @@ class ReviewerA6RegressionTests(unittest.TestCase):
         measured = self.measured_row(target, proof)
         policy = replace(a6_context()[2], disk_watermark_reserve_bytes=1)
         host = HostSizeObservation((HostTableSize("postgres", "public.synthetic_table", 1000, 10000),),
-            {"app-data": 1, "postgres-data": 10000, "clickhouse-data": 1}, 380005, 10**9, False)
+            {"app-data": 1, "postgres-data": 10000, "clickhouse-data": 1}, 380005, 10**9, False,
+            {"app-data": 1, "postgres-data": 10000, "clickhouse-data": 1}, transfer_members={role: 1 for role in AUTOMATIC_VOLUMES})
         for free in (380005, 10**12):
             result = self.estimate(measured, replace(host, docker_free_bytes=free), policy)
             self.assertFalse(result.allowed)
@@ -1092,7 +1203,8 @@ class ReviewerA6RegressionTests(unittest.TestCase):
                     measured = self.measured_row(target, proof)
                     host = HostSizeObservation(tuple(HostTableSize(engine, name, 100, 1000)
                         for name in ("public.synthetic_table", "public.unrelated_table")),
-                        {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+                        {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False,
+        {name: 1000 for name in AUTOMATIC_VOLUMES}, transfer_members={role: 1 for role in AUTOMATIC_VOLUMES})
                     with self.subTest(engine=engine, risk=risk, separation=separation):
                         result = self.estimate(measured, host)
                         self.assertFalse(result.allowed)
@@ -1109,7 +1221,8 @@ class ReviewerA6RegressionTests(unittest.TestCase):
             measured = self.measured_row(target, proof)
             host = HostSizeObservation(tuple(HostTableSize(m.engine, m.tables[0].table, 100, 1000)
                 for m in measured.migration_measurements),
-                {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+                {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False,
+        {name: 1000 for name in AUTOMATIC_VOLUMES}, transfer_members={role: 1 for role in AUTOMATIC_VOLUMES})
             result = self.estimate(measured, host)
             self.assertTrue(result.allowed, result.reason_codes)
             self.assertEqual((result.estimate.migration_seconds, result.estimate.extra_disk_bytes), (20, 4600))
@@ -1122,7 +1235,8 @@ class ReviewerA6RegressionTests(unittest.TestCase):
             peak_disk_amplification_factor=1.1, wal_bytes=0, temp_bytes=0, risk_class="index_build")
         measured = self.measured_row(target, proof)
         host = HostSizeObservation((HostTableSize("postgres", "public.synthetic_table", 1000, 100000),),
-            {"app-data": 1, "postgres-data": 100000, "clickhouse-data": 1}, 220006, 10**9, False)
+            {"app-data": 1, "postgres-data": 100000, "clickhouse-data": 1}, 220006, 10**9, False,
+            {"app-data": 1, "postgres-data": 100000, "clickhouse-data": 1}, transfer_members={role: 1 for role in AUTOMATIC_VOLUMES})
         policy = replace(a6_context()[2], disk_watermark_reserve_bytes=1)
         # The current contract has no scaling bound, including for index_build.
         # Refusal is required even if the host offers ample time and disk.
@@ -1160,7 +1274,8 @@ class ReviewerA6RegressionTests(unittest.TestCase):
                                                 throughput=replace(original.throughput, unit=unit))
                             candidate = replace(measured, migration_measurements=(migration,))
                             host = HostSizeObservation((HostTableSize(engine, "public.synthetic_table", rows, byte_count),),
-                                {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+                                {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False,
+        {name: 1000 for name in AUTOMATIC_VOLUMES}, transfer_members={role: 1 for role in AUTOMATIC_VOLUMES})
                             result = self.estimate(candidate, host)
                             with self.subTest(engine=engine, unit=unit, rows=rows, bytes=byte_count, amplification=amplification):
                                 if rows > 100 or byte_count > 1000:
@@ -1180,7 +1295,8 @@ class ReviewerA6RegressionTests(unittest.TestCase):
         measured = self.measured_row(target, proof)
         host = HostSizeObservation((HostTableSize("postgres", "public.synthetic_table", 1000, 1000),
                                    HostTableSize("postgres", "public.second_table", 100, 5000)),
-            {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+            {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False,
+        {name: 1000 for name in AUTOMATIC_VOLUMES}, transfer_members={role: 1 for role in AUTOMATIC_VOLUMES})
         result = self.estimate(measured, host)
         self.assertFalse(result.allowed)
         self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
@@ -1199,10 +1315,11 @@ class ReviewerA6RegressionTests(unittest.TestCase):
         rate = float(Fraction(sum(reference.values())) / reference_duration)
         for field in ("backup_measurement", "restore_measurement"):
             proof["predecessors"][0][field] = {"reference_volume_bytes": reference,
+                                             "reference_volume_members": {role: 1 for role in AUTOMATIC_VOLUMES},
                                              "throughput_bytes_per_second": rate}
         measured = self.measured_row(target, proof)
-        host = HostSizeObservation((), {"app-data": 9998 * mib, "postgres-data": mib, "clickhouse-data": mib},
-                                   10**12, 10**12, False)
+        sizes = {"app-data": 9998 * mib, "postgres-data": mib, "clickhouse-data": mib}
+        host = HostSizeObservation((), sizes, 10**12, 10**12, False, sizes, transfer_members={role: 1 for role in AUTOMATIC_VOLUMES})
         policy = replace(a6_context()[2], backup_timeout_seconds=60, restore_timeout_seconds=60)
         result = self.estimate(measured, host, policy)
         actual_duration = Fraction(9998) + Fraction(2, 1000)
@@ -1222,7 +1339,7 @@ class ReviewerA6RegressionTests(unittest.TestCase):
             previous = 0
             for multiple in (0, 1, 2, 10, 1000):
                 sizes = {role: value if role != growing_role else value * multiple for role, value in reference.items()}
-                host = HostSizeObservation((), sizes, 10**12, 10**12, False)
+                host = HostSizeObservation((), sizes, 10**12, 10**12, False, sizes, transfer_members={role: 1 for role in AUTOMATIC_VOLUMES})
                 result = self.estimate(measured, host)
                 expected = Fraction(2 * sum(reference.values()) * max(1, multiple), 100)
                 self.assertGreaterEqual(result.estimate.backup_seconds, expected)
@@ -1238,11 +1355,12 @@ class ReviewerA6RegressionTests(unittest.TestCase):
             reference = {role: 0 if role == missing_role else 1000 for role in AUTOMATIC_VOLUMES}
             transfer = replace(measured.backup_measurement, reference_volume_bytes=reference)
             candidate = replace(measured, backup_measurement=transfer, restore_measurement=transfer)
-            host = HostSizeObservation((), {role: 1000 for role in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+            host = HostSizeObservation((), {role: 1000 for role in AUTOMATIC_VOLUMES}, 10**12, 10**12, False,
+                                       {role: 1000 for role in AUTOMATIC_VOLUMES}, transfer_members={role: 1 for role in AUTOMATIC_VOLUMES})
             result = self.estimate(candidate, host)
             self.assertFalse(result.allowed)
             self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
-            host = replace(host, volume_bytes=reference)
+            host = replace(host, volume_bytes=reference, transfer_bytes=reference)
             self.assertTrue(self.estimate(candidate, host).allowed)
 
 
@@ -1265,7 +1383,8 @@ class NonlinearA6RegressionTests(unittest.TestCase):
         host = HostSizeObservation((HostTableSize("postgres", "public.left_input", 1000, 10000),
                                    HostTableSize("postgres", "public.right_input", 1000, 10000),
                                    HostTableSize("postgres", "public.pairs", 0, 0)),
-            {"app-data": 1, "postgres-data": 20000, "clickhouse-data": 1}, 2040005, 10**12, False)
+            {"app-data": 1, "postgres-data": 20000, "clickhouse-data": 1}, 2040005, 10**12, False,
+            {"app-data": 1, "postgres-data": 20000, "clickhouse-data": 1}, transfer_members={role: 1 for role in AUTOMATIC_VOLUMES})
         policy = replace(a6_context()[2], disk_watermark_reserve_bytes=1)
         for free in (2040005, 10**12):
             with self.subTest(docker_free_bytes=free):
