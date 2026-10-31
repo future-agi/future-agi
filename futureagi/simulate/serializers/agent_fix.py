@@ -37,6 +37,12 @@ class AgentFixLaunchSerializer(serializers.Serializer):
         min_length=1,
         max_length=SCENARIOS_MAX,
     )
+    protected_scenario_keys = serializers.ListField(
+        child=serializers.CharField(max_length=255),
+        max_length=SCENARIOS_MAX,
+        required=False,
+        default=list,
+    )
     surfaces = serializers.ListField(
         child=serializers.ChoiceField(choices=[one.value for one in Surface]),
         min_length=1,
@@ -58,6 +64,10 @@ class AgentFixListQuerySerializer(serializers.Serializer):
 
 class AgentFixRequestSerializer(serializers.Serializer):
     target_scenario_keys = serializers.ListField(child=serializers.CharField())
+    # A fix started before protected cases existed has none.
+    protected_scenario_keys = serializers.ListField(
+        child=serializers.CharField(), default=list
+    )
     # The targets the worker never sees; a fix started before the split has none.
     held_back_scenario_keys = serializers.ListField(
         child=serializers.CharField(), default=list

@@ -17059,6 +17059,7 @@ export const AgentFixRunApiStep = {
 
 export interface AgentFixRequestApi {
   target_scenario_keys: string[];
+  protected_scenario_keys?: string[];
   held_back_scenario_keys?: string[];
   failing_sub_goals: string[];
   surfaces: string[];
@@ -17179,6 +17180,8 @@ export interface AgentFixLaunchApi {
    * @maxItems 200
    */
   target_scenario_keys: string[];
+  /** @maxItems 200 */
+  protected_scenario_keys?: string[];
   /** @minItems 1 */
   surfaces: AgentFixLaunchApiSurfacesItem[];
   locked_paths?: string[];

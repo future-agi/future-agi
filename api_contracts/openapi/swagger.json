@@ -124840,6 +124840,14 @@
                         "minLength": 1
                     }
                 },
+                "protected_scenario_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "default": []
+                },
                 "held_back_scenario_keys": {
                     "type": "array",
                     "items": {
@@ -125256,6 +125264,16 @@
                     },
                     "maxItems": 200,
                     "minItems": 1
+                },
+                "protected_scenario_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "default": [],
+                    "maxItems": 200
                 },
                 "surfaces": {
                     "type": "array",

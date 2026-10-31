@@ -34476,6 +34476,8 @@ export const simulateApiAgentFixRunsListResponseResultsItemPlanBaselineSpreadPts
 export const simulateApiAgentFixRunsListResponseResultsItemDiagnosisCausesDefault =
   [];
 
+export const simulateApiAgentFixRunsListResponseResultsItemRequestProtectedScenarioKeysDefault =
+  [];
 export const simulateApiAgentFixRunsListResponseResultsItemRequestHeldBackScenarioKeysDefault =
   [];
 
@@ -34580,6 +34582,11 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
       }),
       request: zod.object({
         target_scenario_keys: zod.array(zod.string().min(1)),
+        protected_scenario_keys: zod
+          .array(zod.string().min(1))
+          .default(
+            simulateApiAgentFixRunsListResponseResultsItemRequestProtectedScenarioKeysDefault,
+          ),
         held_back_scenario_keys: zod
           .array(zod.string().min(1))
           .default(
@@ -34695,6 +34702,11 @@ export const simulateApiAgentFixRunsCreateBodyTargetScenarioKeysItemMax = 255;
 
 export const simulateApiAgentFixRunsCreateBodyTargetScenarioKeysMax = 200;
 
+export const simulateApiAgentFixRunsCreateBodyProtectedScenarioKeysItemMax = 255;
+
+export const simulateApiAgentFixRunsCreateBodyProtectedScenarioKeysDefault = [];
+export const simulateApiAgentFixRunsCreateBodyProtectedScenarioKeysMax = 200;
+
 export const simulateApiAgentFixRunsCreateBodyLockedPathsItemMax = 512;
 
 export const simulateApiAgentFixRunsCreateBodyLockedPathsDefault = [];
@@ -34713,6 +34725,15 @@ export const SimulateApiAgentFixRunsCreateBody = zod.object({
     )
     .min(1)
     .max(simulateApiAgentFixRunsCreateBodyTargetScenarioKeysMax),
+  protected_scenario_keys: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiAgentFixRunsCreateBodyProtectedScenarioKeysItemMax),
+    )
+    .max(simulateApiAgentFixRunsCreateBodyProtectedScenarioKeysMax)
+    .default(simulateApiAgentFixRunsCreateBodyProtectedScenarioKeysDefault),
   surfaces: zod.array(zod.enum(["prompt", "tools", "settings", "code"])).min(1),
   locked_paths: zod
     .array(
@@ -34822,6 +34843,8 @@ export const simulateApiAgentFixRunsReadResponsePlanBaselineSpreadPtsMin = 0;
 
 export const simulateApiAgentFixRunsReadResponseDiagnosisCausesDefault = [];
 
+export const simulateApiAgentFixRunsReadResponseRequestProtectedScenarioKeysDefault =
+  [];
 export const simulateApiAgentFixRunsReadResponseRequestHeldBackScenarioKeysDefault =
   [];
 
@@ -34909,6 +34932,11 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
   }),
   request: zod.object({
     target_scenario_keys: zod.array(zod.string().min(1)),
+    protected_scenario_keys: zod
+      .array(zod.string().min(1))
+      .default(
+        simulateApiAgentFixRunsReadResponseRequestProtectedScenarioKeysDefault,
+      ),
     held_back_scenario_keys: zod
       .array(zod.string().min(1))
       .default(
@@ -35097,6 +35125,8 @@ export const simulateApiAgentFixRunsStopResponsePlanBaselineSpreadPtsMin = 0;
 
 export const simulateApiAgentFixRunsStopResponseDiagnosisCausesDefault = [];
 
+export const simulateApiAgentFixRunsStopResponseRequestProtectedScenarioKeysDefault =
+  [];
 export const simulateApiAgentFixRunsStopResponseRequestHeldBackScenarioKeysDefault =
   [];
 
@@ -35184,6 +35214,11 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
   }),
   request: zod.object({
     target_scenario_keys: zod.array(zod.string().min(1)),
+    protected_scenario_keys: zod
+      .array(zod.string().min(1))
+      .default(
+        simulateApiAgentFixRunsStopResponseRequestProtectedScenarioKeysDefault,
+      ),
     held_back_scenario_keys: zod
       .array(zod.string().min(1))
       .default(

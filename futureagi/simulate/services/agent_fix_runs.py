@@ -1,7 +1,7 @@
 """Start, stop and close "Fix my agent" runs, and make a candidate the default."""
 
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from typing import Any
 
@@ -75,6 +75,7 @@ def launch_fix_run(
     budget_usd: float,
     max_minutes: int,
     user: Any,
+    protected_scenario_keys: Sequence[str] = (),
 ) -> AgentFixRun:
     """Start fixing the agent of a finished run on the scenarios the user chose."""
     environment = source_run.environment
@@ -98,10 +99,17 @@ def launch_fix_run(
             "source_scenario__scenario_key", flat=True
         )
     )
-    if unknown := [key for key in target_scenario_keys if key not in ran]:
+    chosen = [*target_scenario_keys, *protected_scenario_keys]
+    if unknown := [key for key in chosen if key not in ran]:
         raise HostedHarnessError(
             "fix_targets_unknown",
             f"these scenarios were not in the run: {', '.join(unknown)}",
+            status_code=400,
+        )
+    if both := sorted(set(target_scenario_keys) & set(protected_scenario_keys)):
+        raise HostedHarnessError(
+            "fix_protected_is_target",
+            f"a scenario to fix cannot also be protected: {', '.join(both)}",
             status_code=400,
         )
     by_scenario = failing_sub_goals_by_scenario(source_run, target_scenario_keys)
@@ -116,6 +124,7 @@ def launch_fix_run(
         )
     request = FixRequest(
         target_scenario_keys=target_scenario_keys,
+        protected_scenario_keys=list(protected_scenario_keys),
         held_back_scenario_keys=split_held_back(str(source_run.id), by_scenario),
         failing_sub_goals=failing,
         surfaces=surfaces,
