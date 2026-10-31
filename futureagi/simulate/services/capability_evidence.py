@@ -130,7 +130,12 @@ def _short(check: dict[str, Any]) -> bool:
 
 def _scenario_state(row: dict[str, Any], tools: set[str]) -> str:
     """How one capability stands for one scenario. A Partial capability holds only when none of its failed targets
-    is a tool the scenario needs; when the failed targets were never recorded, it is unmeasured, not passed."""
+    is a tool the scenario needs; when the failed targets were never recorded, it is unmeasured, not passed. A
+    Blocked capability whose failure names its tools blocks only the scenarios that need one of them."""
+    if row["status"] == "blocked":
+        targets = {check["target"] for check in row.get("checks") or [] if check.get("result") == "failed"
+                   and check.get("target")}
+        return "blocked" if not targets or targets & tools else "supported"
     if row["status"] != "partial":
         return row["status"]
     short = [check for check in row.get("checks") or [] if _short(check)]
@@ -168,6 +173,29 @@ def affected_scenarios(rows: list[dict[str, Any]], requirements: dict[str, Any])
     return {**counts, "requirements_recorded": bool(requirements)}
 
 
+def structural_findings(contract: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """What the current contract alone shows cannot work, with no run: a tool the build recorded as unreachable, or
+    a service-backed tool that names no service, cannot be routed to the world."""
+    unroutable = [
+        str(entry.get("tool") or "")
+        for entry in (contract or {}).get("tool_entrypoints") or []
+        if isinstance(entry, dict)
+        and (entry.get("mode") == "unreachable" or (entry.get("mode") == "service" and not entry.get("service")))
+    ]
+    if not unroutable:
+        return {}
+    return {
+        "tool_routing": {
+            "finding": "failed",
+            "reason_code": "tool_unreachable",
+            "reason": "No reachable implementation for: " + ", ".join(sorted(unroutable)),
+            "fix": "Bind each listed tool to its implementation in the agent's source, or to a service the "
+            "environment runs, then rebuild",
+            "checks": [{"target": tool, "result": "failed"} for tool in sorted(unroutable)],
+        }
+    }
+
+
 def environment_capability_report(job: HostedHarnessJob, agent_version_id: Any = None) -> dict[str, Any]:
     """The capability report for an environment and an agent version (the environment's own when none is named): its
     latest build evidence, Stale once the environment version moved on or the agent is not the one it was checked
@@ -197,7 +225,9 @@ def environment_capability_report(job: HostedHarnessJob, agent_version_id: Any =
         if evidence is not None
         else None
     )
-    rows = capability_statuses(evidence.catalogue if evidence is not None else [], document, current)
+    version = job.environment_version
+    structural = structural_findings((version.documents or {}).get("contract") if version is not None else None)
+    rows = capability_statuses(evidence.catalogue if evidence is not None else [], document, current, structural)
     selection = affected_scenarios(rows, evidence.scenario_requirements if evidence is not None else {})
     return {
         "environment_version_id": current["environment_version_id"] or None,

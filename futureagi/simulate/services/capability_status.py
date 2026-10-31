@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-RULES_VERSION = "1"
+RULES_VERSION = "2"
 
 SUPPORTED = "supported"
 PARTIAL = "partial"
@@ -33,24 +33,29 @@ def capability_statuses(
     catalogue: list[dict[str, Any]],
     evidence: dict[str, Any] | None,
     current_inputs: dict[str, Any],
+    structural: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """One row per catalogue capability, in catalogue order.
 
-    Rules, first match wins: inputs changed since capture -> Stale; a capability it depends on is not Supported or
-    Partial -> Untested, naming the gate; then the finding: failed -> Blocked, unavailable -> Unavailable,
-    passed_with_limits -> Partial, passed -> Supported; anything else, or no evidence -> Untested.
+    Rules, first match wins: a structural failure, read from the current contract, -> Blocked (it describes what
+    exists now, so it outranks older evidence); inputs changed since capture -> Stale; a capability it depends on is
+    not Supported or Partial -> Untested, naming the gate; then the finding: failed -> Blocked, unavailable ->
+    Unavailable, passed_with_limits -> Partial, passed -> Supported; anything else, or no evidence -> Untested.
     """
     found = (evidence or {}).get("capabilities", {})
+    structural = structural or {}
     stale_because = _stale_because((evidence or {}).get("inputs", {}), current_inputs) if evidence else None
     status_by_id: dict[str, str] = {}
     rows = []
     for entry in catalogue:
         key = entry["id"]
-        reading = found.get(key, {})
+        reading = structural.get(key) or found.get(key, {})
         finding = reading.get("finding")
         gates = [gate for gate in entry.get("depends_on", []) if gate in status_by_id]
         closed = [gate for gate in gates if status_by_id[gate] not in _GATE_OPEN]
-        if stale_because:
+        if key in structural:
+            status = BLOCKED
+        elif stale_because:
             status = STALE
         elif closed:
             status = UNTESTED
@@ -66,6 +71,9 @@ def capability_statuses(
                 "checks": reading.get("checks", []),
                 "blocked_by": closed[0] if status == UNTESTED and closed else None,
                 "stale_because": stale_because if status == STALE else None,
+                "reason_code": reading.get("reason_code") if status == BLOCKED else None,
+                "reason": reading.get("reason") if status == BLOCKED else None,
+                "fix": reading.get("fix") if status == BLOCKED else None,
                 "fix_type": entry.get("fix_type"),
             }
         )

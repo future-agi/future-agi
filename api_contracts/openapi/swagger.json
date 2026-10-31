@@ -128982,6 +128982,9 @@
                 "checks",
                 "blocked_by",
                 "stale_because",
+                "reason_code",
+                "reason",
+                "fix",
                 "fix_type",
                 "needed_by",
                 "affected"
@@ -129034,6 +129037,24 @@
                 },
                 "stale_because": {
                     "title": "Stale because",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "reason_code": {
+                    "title": "Reason code",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "fix": {
+                    "title": "Fix",
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true

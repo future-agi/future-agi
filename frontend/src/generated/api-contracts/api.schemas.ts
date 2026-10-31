@@ -18555,6 +18555,12 @@ export interface HarnessCapabilityRowApi {
   /** @minLength 1 */
   stale_because: string;
   /** @minLength 1 */
+  reason_code: string;
+  /** @minLength 1 */
+  reason: string;
+  /** @minLength 1 */
+  fix: string;
+  /** @minLength 1 */
   fix_type: string;
   needed_by: number;
   affected: number;
