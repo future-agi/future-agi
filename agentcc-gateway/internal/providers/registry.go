@@ -271,11 +271,14 @@ func (r *Registry) ListAllModels() []models.ModelObject {
 	return all
 }
 
-// Close shuts down all providers.
+// Close shuts down the router's background tasks and all providers.
 func (r *Registry) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if r.router != nil {
+		r.router.Close()
+	}
 	for name, p := range r.providers {
 		if err := p.Close(); err != nil {
 			slog.Warn("error closing provider", "name", name, "error", err)
@@ -417,27 +420,39 @@ func connectivityCheck(name, baseURL, pathPrefix string) {
 }
 
 // ReloadRouter rebuilds the load balancing router from new routing config.
-func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig) error {
+func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig, health ...*routing.HealthMonitor) error {
 	r.mu.RLock()
 	providerIDs := make(map[string]bool, len(r.providers))
 	for id := range r.providers {
 		providerIDs[id] = true
 	}
 	modelProviders := r.modelProviders
+	var sharedHealth *routing.HealthMonitor
+	if r.router != nil {
+		sharedHealth = r.router.GetHealthMonitor()
+	}
+	if len(health) > 0 && health[0] != nil {
+		sharedHealth = health[0]
+	}
 	r.mu.RUnlock()
 
-	// Build new router (may be nil if no routing config).
+	// Build a replacement before changing the active router. Keep the same
+	// health monitor across reloads so in-flight request results still count.
 	var newRouter *routing.Router
 	if routingCfg.DefaultStrategy != "" || len(routingCfg.Targets) > 0 {
 		var err error
-		newRouter, err = routing.NewRouter(routingCfg, providerIDs, modelProviders)
+		newRouter, err = routing.NewRouter(routingCfg, providerIDs, modelProviders, sharedHealth)
 		if err != nil {
 			return err
 		}
 	}
 
 	r.mu.Lock()
+	oldRouter := r.router
 	r.router = newRouter
 	r.mu.Unlock()
+	if oldRouter != nil {
+		oldRouter.Close()
+	}
 	return nil
 }

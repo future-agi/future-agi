@@ -48,6 +48,17 @@ func NewHealthMonitor(tracker *LatencyTracker, cbReg *CircuitBreakerRegistry) *H
 	}
 }
 
+// SetCircuitBreakerRegistry refreshes the active circuit-breaker view on
+// startup and config reload without losing collected provider statistics.
+func (hm *HealthMonitor) SetCircuitBreakerRegistry(cbReg *CircuitBreakerRegistry) {
+	if hm == nil {
+		return
+	}
+	hm.mu.Lock()
+	hm.cbReg = cbReg
+	hm.mu.Unlock()
+}
+
 // getOrCreate returns the stats for a provider, creating if necessary.
 func (hm *HealthMonitor) getOrCreate(providerID string) *providerStats {
 	hm.mu.RLock()
@@ -142,9 +153,12 @@ func (hm *HealthMonitor) GetHealth(providerID string) ProviderHealth {
 		h.LatencyEWMAMs = int64(hm.tracker.Get(providerID))
 	}
 
-	// Circuit breaker state.
-	if hm.cbReg != nil && hm.cbReg.IsEnabled() {
-		cb := hm.cbReg.Get(providerID)
+	// Circuit breaker state. The registry may change on config reload.
+	hm.mu.RLock()
+	cbReg := hm.cbReg
+	hm.mu.RUnlock()
+	if cbReg != nil && cbReg.IsEnabled() {
+		cb := cbReg.Get(providerID)
 		state := cb.State()
 		switch state {
 		case StateClosed:

@@ -232,8 +232,18 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 	}
 
 	// Rebuild router in registry.
-	if err := registry.ReloadRouter(cfg.Routing); err != nil {
+	if err := registry.ReloadRouter(cfg.Routing, h.healthMonitor); err != nil {
 		return fmt.Errorf("reload router: %w", err)
+	}
+
+	// The monitor is shared across routing reloads; refresh its breaker view
+	// once the replacement router is installed.
+	if h.healthMonitor != nil {
+		var activeBreaker *routing.CircuitBreakerRegistry
+		if cfg.Routing.CircuitBreaker.Enabled && registry.Router() != nil {
+			activeBreaker = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, registry.Router().SetHealthy)
+		}
+		h.healthMonitor.SetCircuitBreakerRegistry(activeBreaker)
 	}
 
 	// Rebuild conditional router.

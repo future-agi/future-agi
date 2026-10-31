@@ -175,13 +175,22 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 	}
 
-	// Create health monitor.
+	// Share the router's monitor so adaptive weights are driven by actual
+	// request outcomes. A separate monitor would stay empty forever.
 	var healthMonitor *routing.HealthMonitor
 	var latencyTracker *routing.LatencyTracker
-	if registry.Router() != nil {
-		latencyTracker = registry.Router().GetLatencyTracker()
+	if router := registry.Router(); router != nil {
+		latencyTracker = router.GetLatencyTracker()
+		healthMonitor = router.GetHealthMonitor()
 	}
-	healthMonitor = routing.NewHealthMonitor(latencyTracker, cbReg)
+	if healthMonitor == nil {
+		if latencyTracker == nil {
+			latencyTracker = routing.NewLatencyTracker(0.3)
+		}
+		healthMonitor = routing.NewHealthMonitor(latencyTracker, cbReg)
+	} else {
+		healthMonitor.SetCircuitBreakerRegistry(cbReg)
+	}
 
 	// Create traffic mirror.
 	var mirror *routing.Mirror
