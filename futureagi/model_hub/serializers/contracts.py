@@ -3251,20 +3251,41 @@ class DatasetSdkRowsRequestSerializer(serializers.Serializer):
     dataset_id = serializers.UUIDField(required=False, allow_null=True)
 
 
-class DatasetRowCellRequestSerializer(serializers.Serializer):
+class DatasetRowCellRequestSerializer(StrictInputSerializer):
     column_name = serializers.CharField()
     value = JsonValueField(required=False, allow_null=True)
 
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
 
-class DatasetRowRequestSerializer(serializers.Serializer):
+
+class DatasetRowRequestSerializer(StrictInputSerializer):
     id = serializers.UUIDField(required=False)
+    order = serializers.IntegerField(
+        required=False,
+        help_text="Legacy input accepted for compatibility; rows are appended in request order.",
+    )
     # A row without cells is valid and creates an empty row; the endpoint has
     # always accepted ``{"rows": [{}]}`` so the contract must keep it optional.
     cells = DatasetRowCellRequestSerializer(many=True, required=False, default=list)
 
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
 
-class DatasetAddRowsRequestSerializer(serializers.Serializer):
+    def validate_cells(self, cells):
+        names = [cell["column_name"] for cell in cells]
+        if len(names) != len(set(names)):
+            raise serializers.ValidationError(
+                "Each column may appear only once per row."
+            )
+        return cells
+
+
+class DatasetAddRowsRequestSerializer(StrictInputSerializer):
     rows = DatasetRowRequestSerializer(many=True, allow_empty=False)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
 
 
 class DatasetAddRowsFromExistingRequestSerializer(serializers.Serializer):
