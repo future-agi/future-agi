@@ -95431,6 +95431,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Reason",
           type: "string",
         },
+        subject: {
+          title: "Subject",
+          type: "string",
+          minLength: 1,
+        },
       },
     },
     TrialState: {
@@ -104339,6 +104344,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Verdict",
           type: "string",
           enum: ["pass", "fail", "not_applicable", "inconclusive"],
+        },
+        subject: {
+          title: "Subject",
+          type: "string",
+          pattern: "^(task|worker:\\S+)$",
+          maxLength: 255,
+          minLength: 1,
         },
       },
     },

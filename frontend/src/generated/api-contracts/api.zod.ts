@@ -43769,6 +43769,10 @@ export const simulateApiHarnessAttemptsResultsBodyWorldIndexMax = 7;
 
 export const simulateApiHarnessAttemptsResultsBodySubGoalsItemNameMax = 255;
 
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectMax = 255;
+
+export const simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectRegExp =
+  new RegExp("^(task|worker:\\S+)$");
 export const simulateApiHarnessAttemptsResultsBodyCallDurationMsMin = 0;
 
 export const simulateApiHarnessAttemptsResultsBodyCallTurnsMin = 0;
@@ -43850,6 +43854,12 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       judged: zod.boolean(),
       verdict: zod
         .enum(["pass", "fail", "not_applicable", "inconclusive"])
+        .optional(),
+      subject: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectMax)
+        .regex(simulateApiHarnessAttemptsResultsBodySubGoalsItemSubjectRegExp)
         .optional(),
     }),
   ),
@@ -53169,6 +53179,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       passed: zod.boolean().nullable(),
       result: zod.enum(["not_applicable", "inconclusive"]).optional(),
       reason: zod.string().optional(),
+      subject: zod.string().min(1).optional(),
     }),
   ),
   outcome: zod.enum([
@@ -54415,6 +54426,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
           passed: zod.boolean().nullable(),
           result: zod.enum(["not_applicable", "inconclusive"]).optional(),
           reason: zod.string().optional(),
+          subject: zod.string().min(1).optional(),
         }),
       ),
       harness_outcome_status: zod.string().min(1),

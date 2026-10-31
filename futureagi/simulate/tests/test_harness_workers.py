@@ -1644,3 +1644,22 @@ def test_a_nested_hand_off_from_spans_names_the_hand_off_its_maker_ran_in():
     tool = next(e for e in events if e["type"] == "tool_call")
     assert (nested["delegation_id"], nested["parent_delegation_id"]) == ("c", "b")
     assert (tool["delegation_id"], tool["trace_id"]) == ("c", "tr1")
+
+
+def test_a_receipt_sub_goal_names_the_task_or_one_worker_as_its_subject():
+    from simulate.serializers.hosted_harness import HarnessSubGoalSerializer
+
+    worker = {
+        "name": "lookup_read_only",
+        "held": False,
+        "reason": "wrote an order",
+        "judged": False,
+        "verdict": "fail",
+        "subject": "worker:order_lookup",
+    }
+    task = {"name": "reply_truthful", "held": True, "reason": None, "judged": False}
+    for goal in (worker, task):
+        assert HarnessSubGoalSerializer(data=goal).is_valid()
+    assert not HarnessSubGoalSerializer(
+        data={**task, "subject": "order_lookup"}
+    ).is_valid()

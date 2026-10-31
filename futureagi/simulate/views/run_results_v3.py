@@ -301,6 +301,8 @@ class SubGoalResultSerializer(serializers.Serializer):
         choices=["not_applicable", "inconclusive"], required=False
     )
     reason = serializers.CharField(required=False, allow_blank=True)
+    # `worker:<id>` for a worker's own check, reported beside the task verdict; absent for the task's.
+    subject = serializers.CharField(required=False)
 
 
 class RunCallSerializer(serializers.Serializer):

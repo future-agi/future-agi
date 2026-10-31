@@ -697,6 +697,8 @@ def build_call_rows(
             }
             if result in ("not_applicable", "inconclusive"):
                 entry.update(result=result, reason=str(item.get("reason") or ""))
+            if isinstance(item, dict) and item.get("subject") not in (None, "task"):
+                entry["subject"] = str(item["subject"])
             sub_goal_results.append(entry)
         ideal_outcome = (
             row_data.get("outcome")

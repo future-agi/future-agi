@@ -21251,6 +21251,12 @@ export interface HarnessSubGoalApi {
   reason?: string;
   judged: boolean;
   verdict?: HarnessSubGoalApiVerdict;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^(task|worker:\S+)$
+   */
+  subject?: string;
 }
 
 export type HarnessTargetMetricsApiProvider =
@@ -25134,6 +25140,8 @@ export interface SubGoalResultApi {
   passed: boolean | null;
   result?: SubGoalResultApiResult;
   reason?: string;
+  /** @minLength 1 */
+  subject?: string;
 }
 
 export interface CostBreakdownApi {
