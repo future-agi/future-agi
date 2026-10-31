@@ -7550,9 +7550,8 @@ with using_attributes(
     user_id="newuser@example.com",
 ):
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-6.1-terra",
         messages=[{{"role": "user", "content": "Write a haiku."}}],
-        max_tokens=20,
     )
         """
         return self._gm.success_response(code_example)
