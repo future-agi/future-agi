@@ -318,3 +318,32 @@ class TransferSpanTests(unittest.TestCase):
                          {role: {'clear', 'extract', 'sync'} for role in p.VOLUME_ROLES})
         self.assertTrue(all(value >= 0 for row in seconds.values() for value in row.values()))
         self.assertIs(_StorageHelpers.execute, original)
+
+
+class AppDataReferencePayloadTests(unittest.TestCase):
+    def run_operation(self, root, name, size):
+        import subprocess, sys
+        source = q.APP_DATA_REFERENCE_OPERATION.replace("os.path.join('/data', a['name'])",
+                                                        "os.path.join(%r, a['name'])" % str(root))
+        self.assertNotEqual(source, q.APP_DATA_REFERENCE_OPERATION)
+        return subprocess.run([sys.executable, '-I', '-B', '-c', source], input=json.dumps(
+            dict(name=name, bytes=size)).encode(), capture_output=True, timeout=60)
+
+    def test_payload_is_a_real_fully_written_file_and_never_overwrites(self):
+        import hashlib
+        self.assertEqual(q.APP_DATA_REFERENCE_BYTES, 256 * 1024 * 1024)
+        self.assertTrue(q.APP_DATA_REFERENCE_NAME.startswith('.') and '/' not in q.APP_DATA_REFERENCE_NAME)
+        self.assertNotIn(q.APP_DATA_REFERENCE_NAME, ('.bootstrap-ok', 'temporal', 'objects', 'collector', 'telemetry'))
+        with tempfile.TemporaryDirectory() as directory:
+            size = 3 * 1024 * 1024 + 17
+            result = self.run_operation(directory, q.APP_DATA_REFERENCE_NAME, size)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout.decode().strip().splitlines()[-1])
+            payload = (Path(directory) / q.APP_DATA_REFERENCE_NAME).read_bytes()
+            self.assertEqual((report['bytes'], len(payload)), (size, size))
+            self.assertGreaterEqual(report['allocated'], size)
+            self.assertEqual(report['sha256'], hashlib.sha256(payload).hexdigest())
+            self.assertNotEqual(payload[:4096], bytes(4096))
+            again = self.run_operation(directory, q.APP_DATA_REFERENCE_NAME, size)
+            self.assertNotEqual(again.returncode, 0)
+            self.assertEqual((Path(directory) / q.APP_DATA_REFERENCE_NAME).read_bytes(), payload)

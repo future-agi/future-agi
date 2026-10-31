@@ -133,6 +133,38 @@ from scripts.update_rehearsal_shipping import (
 )
 from deploy.tests.update_e2e.real_automatic import ProductHarness
 
+# Interim reference workload for the app-data volume role (not a model change).
+# Admission scales the qualified transfer time by each role's host/reference
+# growth. A fresh snapshot holds about 6.6 MB of app-data, while native CI saw
+# the product grow it to 165 MB within about an hour of uptime (about
+# 150 MB/hour), so every scheduled run was refused. Qualifying with a real,
+# fully written payload makes the signed reference honestly include that
+# transfer work: hosts up to about 270 MB of app-data stay at scale 1, and the
+# acceptance's 3x ceiling admits up to about 800 MB. Larger hosts scale or
+# refuse as before; this is a finite envelope, not unbounded uptime.
+APP_DATA_REFERENCE_NAME = '.fagi-qualification-reference-payload'
+APP_DATA_REFERENCE_BYTES = 256 * 1024 * 1024
+APP_DATA_REFERENCE_OPERATION = r"""
+import hashlib, json, os, sys
+a = json.load(sys.stdin)
+path = os.path.join('/data', a['name'])
+digest, written = hashlib.sha256(), 0
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+try:
+    while written < a['bytes']:
+        chunk = os.urandom(min(1 << 20, a['bytes'] - written))
+        view = memoryview(chunk)
+        while view:
+            view = view[os.write(fd, view):]
+        digest.update(chunk)
+        written += len(chunk)
+    os.fsync(fd)
+finally:
+    os.close(fd)
+info = os.stat(path, follow_symlinks=False)
+print(json.dumps({'bytes': info.st_size, 'allocated': info.st_blocks * 512, 'sha256': digest.hexdigest()}))
+"""
+
 
 class QualificationRehearsal(RestoreMilestone):
     """One authenticated pair, real product operations, and an in-process sink."""
@@ -205,6 +237,12 @@ class QualificationRehearsal(RestoreMilestone):
         p.equal(self.app_python(REDIS_OPERATION, dict(action='seed', key=self.redis_key,
             value=uuid.uuid4().hex)), {'seeded': True}, 'source Redis witness was not read')
         self.corpus['redis_source_seeded'] = True
+        payload = self.app_python(APP_DATA_REFERENCE_OPERATION,
+                                  dict(name=APP_DATA_REFERENCE_NAME, bytes=APP_DATA_REFERENCE_BYTES))
+        p.need(type(payload) is dict and payload.get('bytes') == APP_DATA_REFERENCE_BYTES
+               and type(payload.get('allocated')) is int and payload['allocated'] >= APP_DATA_REFERENCE_BYTES,
+               'app-data reference payload was not fully written')
+        self.corpus['app_data_reference_payload'] = dict(name=APP_DATA_REFERENCE_NAME, **payload)
 
     def seed_reference_table(self, entry, rows):
         if (entry['database'], entry.get('app_label'), entry.get('model'), entry['table']) != (
