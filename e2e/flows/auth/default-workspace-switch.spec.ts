@@ -1,9 +1,10 @@
-import type { Request, Response } from '@playwright/test';
+import type { Frame, Request, Response } from '@playwright/test';
 import { test, expect } from '../../lib/scope-actors';
 import type { ScopeUserInfo } from '../../lib/scope-actors';
 import { authInitScript } from '../../lib/auth';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
+import { acquireReceipt, receiptFromHeaders, type WireReceipt } from '../../lib/request-receipts';
 
 // accounts/serializers/workspace.py:SwitchWorkspaceSerializer and
 // accounts/views/workspace_management.py:SwitchWorkspaceAPIView.
@@ -35,12 +36,6 @@ interface Preference {
   default_workspace: string;
   organization_workspace: string;
 }
-interface WireReceipt {
-  phase: string; method: string; path: string; afterPrime: boolean;
-  organization: string | null; workspace: string | null; workspaceQuery: string | null;
-  sameBearer: boolean; headerReadFailed: boolean;
-}
-
 test('AUTH-E2E-002: workspace switching updates implicit scope without replacing the signed-in session', {
   tag: ['@flow'],
   annotation: flowAnnotation({
@@ -70,8 +65,14 @@ test('AUTH-E2E-002: workspace switching updates implicit scope without replacing
   const prefix = `e2e-auth2-${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const projects: Project[] = [];
   const receipts: unknown[] = [];
-  const observed: { request: Request; phase: string; afterPrime: boolean }[] = [];
-  let phase = 'setup', primed = false;
+  interface Tracked {
+    request: Request; phase: string; afterPrime: boolean; navGen: number;
+    sawResponse: boolean; finished: boolean; navigationSuperseded: boolean;
+    failureErrorText: string | null; headersSettled: boolean; headersRejected: boolean;
+    headers: Record<string, string> | null;
+  }
+  const observed: Tracked[] = [];
+  let phase = 'setup', primed = false, navGen = 0;
   let finalWire: WireReceipt[] = [];
   const apiOrigin = new URL(E2E.apiUrl).origin;
   const attach = (name: string, value: unknown) => testInfo.attach(name, {
@@ -79,20 +80,54 @@ test('AUTH-E2E-002: workspace switching updates implicit scope without replacing
   });
   const watch = (request: Request) => {
     const url = new URL(request.url());
-    if (url.origin === apiOrigin && request.method() !== 'OPTIONS') {
-      observed.push({ request, phase, afterPrime: primed });
+    if (url.origin !== apiOrigin || request.method() === 'OPTIONS') return;
+    const record: Tracked = {
+      request, phase, afterPrime: primed, navGen, sawResponse: false, finished: false,
+      navigationSuperseded: false, failureErrorText: null, headersSettled: false,
+      headersRejected: false, headers: null,
+    };
+    // Start the raw-header read while the request is alive. Do not await it here:
+    // an unfinished pre-prime request never delivers headers until page close.
+    void request.allHeaders().then(
+      (headers: Record<string, string>) => { record.headersSettled = true; record.headers = headers; },
+      () => { record.headersSettled = true; record.headersRejected = true; },
+    );
+    observed.push(record);
+  };
+  const onResponse = (response: Response) => {
+    const record = observed.find(row => row.request === response.request());
+    if (record) record.sawResponse = true;
+  };
+  const onFinished = (request: Request) => {
+    const record = observed.find(row => row.request === request);
+    if (record) record.finished = true;
+  };
+  const onFailed = (request: Request) => {
+    const record = observed.find(row => row.request === request);
+    if (record) record.failureErrorText = request.failure()?.errorText ?? 'failed';
+  };
+  const onNavigated = (frame: Frame) => {
+    if (frame !== page.mainFrame()) return;
+    navGen += 1;
+    const gen = navGen;
+    for (const record of observed) {
+      if (record.navGen < gen && !record.sawResponse && !record.headersSettled) {
+        record.navigationSuperseded = true;
+      }
     }
   };
   // Record actual requests without altering headers, fulfilling routes or changing app state.
   page.on('request', watch);
+  page.on('response', onResponse);
+  page.on('requestfinished', onFinished);
+  page.on('requestfailed', onFailed);
+  page.on('framenavigated', onNavigated);
   const wire = async (request: Request, label: string, afterPrime: boolean): Promise<WireReceipt> => {
     const url = new URL(request.url());
-    const headers = await request.allHeaders();
-    return { phase: label, method: request.method(), path: url.pathname, afterPrime,
-      organization: headers['x-organization-id'] ?? null,
-      workspace: headers['x-workspace-id'] ?? null,
-      workspaceQuery: url.searchParams.get('workspace_id'),
-      sameBearer: headers.authorization === `Bearer ${member.tokens.access}`, headerReadFailed: false };
+    return receiptFromHeaders({
+      phase: label, method: request.method(), pathname: url.pathname, search: url.search, afterPrime,
+      originalBearer: member.tokens.access, headers: await request.allHeaders(),
+    });
   };
   const requestScope = async (response: Response, workspace: string | null) => {
     const receipt = await wire(response.request(), phase, primed);
@@ -289,24 +324,58 @@ test('AUTH-E2E-002: workspace switching updates implicit scope without replacing
     }, { timeout: UI_READY });
   } finally {
     page.off('request', watch);
+    page.off('response', onResponse);
+    page.off('requestfinished', onFinished);
+    page.off('requestfailed', onFailed);
+    page.off('framenavigated', onNavigated);
+    // Do not await allHeaders() for a request a later navigation superseded before
+    // any response. That pending raw-header promise is what held this test until
+    // the suite timeout. Completed requests still use the full allHeaders() map.
     finalWire = await Promise.all(observed.map(async record => {
-      try { return await wire(record.request, record.phase, record.afterPrime); }
-      catch {
+      const url = new URL(record.request.url());
+      try {
+        return await acquireReceipt({
+          phase: record.phase,
+          method: record.request.method(),
+          pathname: url.pathname,
+          search: url.search,
+          afterPrime: record.afterPrime,
+          originalBearer: member.tokens.access,
+          sawResponse: record.sawResponse,
+          finished: record.finished,
+          navigationSuperseded: record.navigationSuperseded,
+          failureErrorText: record.failureErrorText,
+          headersSettled: record.headersSettled,
+          headersRejected: record.headersRejected,
+          headers: record.headers,
+        }, () => record.request.allHeaders());
+      } catch {
         // Never attach exception bodies or raw headers; a missing receipt fails closed below.
-        return { phase: record.phase, method: record.request.method(), path: new URL(record.request.url()).pathname,
-          afterPrime: record.afterPrime, organization: null, workspace: null, workspaceQuery: null,
-          sameBearer: false, headerReadFailed: true };
+        return {
+          phase: record.phase, method: record.request.method(), path: url.pathname,
+          afterPrime: record.afterPrime, organization: null, workspace: null,
+          workspaceQuery: url.searchParams.get('workspace_id'), sameBearer: false,
+          headerReadFailed: true, headersRead: false, lifecycle: 'unreadable' as const,
+        };
       }
     }));
     await attach('default-workspace-receipts', { prefix, projects, receipts, requests: finalWire,
       limitations: ['Same-token warmed requests; Redis cache hits are not directly inspected',
-        'No cross-tab, no-organization-header, revocation or catalog-family parity claim'],
+        'No cross-tab, no-organization-header, revocation or catalog-family parity claim',
+        'A pre-response navigation cancel has no raw header set; it is a canceled-navigation receipt, not bearer proof'],
       // Standard Playwright traces still contain authenticated network traffic; keep them local/private.
       fixtureLimitations: scopes.limitations });
   }
-  expect(finalWire.filter(row => row.headerReadFailed), 'all request receipts must be readable').toEqual([]);
+  expect(finalWire, 'every observed request remains a receipt').toHaveLength(observed.length);
+  expect(finalWire.filter(row => row.headerReadFailed), 'completed or unclassified request receipts must be readable').toEqual([]);
+  expect(finalWire.filter(row => !row.headersRead && row.lifecycle !== 'canceled-navigation'),
+    'an unread receipt must be a proven canceled navigation').toEqual([]);
+  expect(finalWire.filter(row => row.lifecycle === 'canceled-navigation' && row.headersRead),
+    'a canceled navigation must not claim header proof').toEqual([]);
   expect(finalWire.filter(row => row.afterPrime && TOKEN_PATHS.includes(row.path)),
     'no login or refresh-token request may replace the primed bearer').toEqual([]);
+  expect(finalWire.filter(row => row.afterPrime && [PROJECTS, ME, SWITCH].includes(row.path) && !row.headersRead),
+    'every protected request after priming must have complete headers').toEqual([]);
   expect(finalWire.filter(row => row.afterPrime && [PROJECTS, ME, SWITCH].includes(row.path) && !row.sameBearer),
     'every protected request after priming must use the same bearer').toEqual([]);
 });
