@@ -1,0 +1,9 @@
+{
+  "provider": "openai",
+  "model": "gpt-3.5-turbo-instruct",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28), POST /completions: CreateCompletionResponse and the operation's \"No streaming\" example verbatim. gpt-3.5-turbo-instruct is the legacy-only completions model the adapter's TextCompletion exists for (CreateCompletionRequest.model lists it with davinci-002 and babbage-002). The gateway never streams /v1/completions upstream (TextCompletion sets stream false).",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

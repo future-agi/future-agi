@@ -1,0 +1,24 @@
+{
+  "provider": "together",
+  "format": "openapi",
+  "url": "https://raw.githubusercontent.com/togethercomputer/together-py/3428f80887121c5715f670f3cffa71b2ed482c12/scripts/mock",
+  "repo": "togethercomputer/together-py",
+  "path": "scripts/mock",
+  "commit": "3428f80887121c5715f670f3cffa71b2ed482c12",
+  "decode": "embedded-mock",
+  "spec_version": {
+    "info.version": "2.0.0",
+    "openapi": "3.1.0"
+  },
+  "sha256": "7d29cce8d71108bf83b658890d72819e7a6f6f40b252879d837062d9884d0287",
+  "decoded_sha256": "e6039e188729010792d483afce6c8f433065dbc7ff78bb2bb3e39fb5e77bc129",
+  "fetched_at": "2026-10-28T21:03:25Z",
+  "license": "MIT (info.license)",
+  "roots": [
+    "chat",
+    "chat_stream",
+    "embeddings",
+    "errors",
+    "images"
+  ]
+}

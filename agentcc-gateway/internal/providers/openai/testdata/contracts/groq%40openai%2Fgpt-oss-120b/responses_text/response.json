@@ -1,0 +1,57 @@
+{
+  "id": "resp_01k1x6w9ane6d8rfxm05cb45yk",
+  "object": "response",
+  "status": "completed",
+  "created_at": 1754400695,
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_01k1x6w9ane6eb0650crhawwyy",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "When the stars blinked awake, Luna the unicorn curled her mane and whispered wishes to the sleeping pine trees. She galloped through a field of moonlit daisies, gathering dew like tiny silver pearls. With a gentle sigh, she tucked her hooves beneath a silver cloud so the world slept softly, dreaming of her gentle hooves until the morning.",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "previous_response_id": null,
+  "model": "llama-3.3-70b-versatile",
+  "reasoning": {
+    "effort": null,
+    "summary": null
+  },
+  "max_output_tokens": null,
+  "instructions": null,
+  "text": {
+    "format": {
+      "type": "text"
+    }
+  },
+  "tools": [],
+  "tool_choice": "auto",
+  "truncation": "disabled",
+  "metadata": {},
+  "temperature": 1,
+  "top_p": 1,
+  "user": null,
+  "service_tier": "default",
+  "error": null,
+  "incomplete_details": null,
+  "usage": {
+    "input_tokens": 82,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 266,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 348
+  },
+  "parallel_tool_calls": true,
+  "store": false
+}

@@ -1,0 +1,15 @@
+{
+  "model": "gemini-3.8-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Who won Euro 2024?"
+    }
+  ],
+  "tools": [
+    {
+      "google_search": {}
+    }
+  ],
+  "stream": true
+}

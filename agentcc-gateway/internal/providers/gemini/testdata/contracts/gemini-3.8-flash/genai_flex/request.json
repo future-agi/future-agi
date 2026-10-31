@@ -1,0 +1,13 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "List three prime numbers greater than 100."
+        }
+      ]
+    }
+  ],
+  "serviceTier": "flex"
+}

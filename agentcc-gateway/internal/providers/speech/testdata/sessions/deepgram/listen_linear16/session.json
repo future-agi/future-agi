@@ -1,0 +1,45 @@
+{
+  "source": "Deepgram AsyncAPI (github.com/deepgram/deepgram-api-specs asyncapi.yml at 417dbdd7): channel /v1/listen, its query (model, encoding, sample_rate, interim_results, smart_format) and client messages ListenV1Media (binary audio), ListenV1KeepAlive, ListenV1Configure, ListenV1Finalize, ListenV1CloseStream",
+  "path": "/v1/listen",
+  "query": "model=nova-3&encoding=linear16&sample_rate=16000&interim_results=true&smart_format=true",
+  "headers": {
+    "Authorization": "Token gateway-key"
+  },
+  "messages": [
+    {
+      "binary": 3200,
+      "repeat": 5
+    },
+    {
+      "json": {
+        "type": "KeepAlive"
+      }
+    },
+    {
+      "json": {
+        "type": "Configure",
+        "keyterms": [
+          "Deepgram"
+        ],
+        "features": {
+          "numerals": true
+        }
+      }
+    },
+    {
+      "binary": 3200,
+      "repeat": 5
+    },
+    {
+      "json": {
+        "type": "Finalize"
+      }
+    },
+    {
+      "json": {
+        "type": "CloseStream"
+      }
+    }
+  ],
+  "notes": "One second of mono 16 kHz linear16 (32000 bytes) in 100 ms frames; the control messages are not metered."
+}

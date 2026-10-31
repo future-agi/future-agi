@@ -1,0 +1,22 @@
+{
+  "provider": "azure",
+  "model": "dall-e-3",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored from github.com/Azure/azure-rest-api-specs at 7b9f1ff0714627e3680552703174ffe11538d5c5, specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json (generateImagesResponse, imageResult with content_filter_results and prompt_filter_results, dalleErrorResponse / dalleInnerError) and its example image_generation.json, whose request and response are kept as they are. DALL-E 3 is the model the 2024-10-21 images API is written for. learn.microsoft.com was not reachable from the authoring session.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.data[].content_filter_results",
+      "reason": "known gap A3: each image's content filter verdicts (hate, self_harm, sexual, violence: filtered, severity) are dropped; models.ImageData has no field for them and models.ImageResponse no Extra, so a client cannot see why an image was filtered"
+    },
+    {
+      "path": "$.data[].prompt_filter_results",
+      "reason": "known gap A3: each image's prompt filter verdicts (including jailbreak and profanity) are dropped, as content_filter_results"
+    },
+    {
+      "path": "error:$.error.inner_error",
+      "reason": "known gap A4: an image content-filter rejection's inner_error (code ResponsibleAIPolicyViolation, the per-category verdicts and the revised_prompt that was rejected) is dropped; parseProviderError keeps message, type and code"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

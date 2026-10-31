@@ -1,0 +1,25 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Write a complete, production-ready compiler in Python for a statically typed expression language, including lexer, parser, type checker, bytecode emitter, virtual machine, and test suite."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "maxOutputTokens": 262144
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-4-argon:streamGenerateContent",
+  "query": "alt=sse"
+}

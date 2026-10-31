@@ -1,0 +1,12 @@
+{
+  "endpoint": "responses",
+  "status": 400,
+  "recordable": false,
+  "notes": "The SDK's \"uses a string error field as the message\" body verbatim (test/errors.test.ts), status 400 as there: xAI's flat error form (gap XA3). It concerns a file the request does not send, so a recording of this request could not reproduce it.",
+  "sanity_gaps": [
+    {
+      "failure": "a client error turned into a retryable server error",
+      "reason": "known gap XA3: xAI's flat error body {\"code\", \"error\": \"<message>\"}, the form its SDK parses beside OpenAI's, does not decode: error is a string where models.ErrorResponse expects an object, so parseProviderError falls back to a 502 with the raw body as the message, and a 400 is retried, failed over and counted against the circuit breaker"
+    }
+  ]
+}

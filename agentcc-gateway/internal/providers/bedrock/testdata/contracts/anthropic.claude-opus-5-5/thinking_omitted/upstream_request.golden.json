@@ -1,0 +1,26 @@
+{
+  "body": {
+    "anthropic_version": "bedrock-2023-05-31",
+    "max_tokens": 4096,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Is 2^31 - 1 prime?",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "application/json",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-amz-content-sha256": "f0a4de6dfb37c0b4a54822fe016735e9331478bb9d6c700d86b77b39dbf3efdf",
+    "x-amz-date": "VOLATILE"
+  },
+  "method": "POST",
+  "path": "/model/anthropic.claude-opus-5-5/invoke"
+}

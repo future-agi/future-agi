@@ -1,0 +1,11 @@
+{
+  "model": "global.anthropic.claude-sonnet-4-6",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Say hello."
+    }
+  ],
+  "max_tokens": 64,
+  "stream": true
+}

@@ -1,0 +1,4 @@
+data: {"id":"gen-1793170600-Pz7wKc2NvQ8mT4rL1xJb","object":"chat.completion.chunk","created":1793170600,"model":"anthropic/claude-4.5-sonnet","choices":[{"index":0,"delta":{"role":"assistant","content":"The capital"},"finish_reason":null}]}
+
+data: {"id":"gen-1793170600-Pz7wKc2NvQ8mT4rL1xJb","object":"chat.completion.chunk","created":1793170600,"model":"anthropic/claude-4.5-sonnet","choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}],"error":{"code":502,"message":"Provider returned error","metadata":{"error_type":"provider_unavailable","provider_code":"529"}}}
+

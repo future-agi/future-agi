@@ -1,0 +1,17 @@
+{
+  "canonical_error": {
+    "code": "provider_0",
+    "message": "bedrock exception: {\"message\":\"Model has timed out in processing the request. Try your request again.\"}",
+    "status": 502,
+    "type": "upstream_error"
+  },
+  "stream": {
+    "assembled": {
+      "content": "",
+      "finish_reason": "",
+      "usage": null
+    },
+    "chunks": [],
+    "error": "provider_0: bedrock exception: {\"message\":\"Model has timed out in processing the request. Try your request again.\"}"
+  }
+}

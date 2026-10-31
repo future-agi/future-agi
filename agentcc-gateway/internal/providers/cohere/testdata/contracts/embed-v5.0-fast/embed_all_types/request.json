@@ -1,0 +1,7 @@
+{
+  "model": "embed-v5.0-fast",
+  "input": [
+    "hello",
+    "goodbye"
+  ]
+}

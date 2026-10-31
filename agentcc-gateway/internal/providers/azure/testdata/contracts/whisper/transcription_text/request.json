@@ -1,0 +1,5 @@
+{
+  "model": "whisper",
+  "file": "audio.mp3",
+  "response_format": "text"
+}

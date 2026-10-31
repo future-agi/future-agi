@@ -1,0 +1,14 @@
+{
+  "status": 429,
+  "headers": {
+    "retry-after": "2"
+  },
+  "recordable": false,
+  "notes": "Synthetic: as error_rate_limit, for a streaming request, so the pre-stream error path of StreamChatCompletion is pinned. Not recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "carries no retry hint",
+      "reason": "known gap O6: the retry-after header is dropped (and retry-after-ms and x-request-id, which openai-python reads too); models.APIError has no retry field, so the gateway retries and fails over on its own schedule instead of when OpenAI says, and the client loses the hint"
+    }
+  ]
+}

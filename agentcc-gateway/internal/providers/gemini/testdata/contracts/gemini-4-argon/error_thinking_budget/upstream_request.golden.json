@@ -1,0 +1,26 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Explain why B-trees stay balanced."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "thinkingConfig": {
+        "includeThoughts": true,
+        "thinkingBudget": 2048
+      }
+    }
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-4-argon:generateContent"
+}

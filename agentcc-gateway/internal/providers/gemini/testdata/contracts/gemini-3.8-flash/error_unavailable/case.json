@@ -1,0 +1,5 @@
+{
+  "status": 503,
+  "recordable": false,
+  "notes": "503 UNAVAILABLE, the overloaded answer (the message the gemini-4-argon stream_error chunk carries; the shape google-gemini/cookbook quickstarts/Error_handling.ipynb raises). Not recordable. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28)."
+}

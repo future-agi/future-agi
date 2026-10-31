@@ -1,0 +1,9 @@
+{
+  "status": 500,
+  "headers": {
+    "x-amzn-ErrorType": "InternalServerException",
+    "x-amzn-RequestId": "2a5f8d1c-4e7b-4c90-a6d3-8b1f0e9c5d72"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from the Bedrock Runtime Smithy model (github.com/aws/api-models-aws bedrock-runtime 2023-09-30, commit e10d6a1c5ac36af7c0c61d1f67b3c3ebbe41de49: the exception's @httpError status and members, and the operation's error list) and the restJson1 protocol (smithy-lang/smithy docs/source-2.0/aws/protocols/aws-restjson1-protocol.rst: the exception name in the X-Amzn-Errortype header, the members in the JSON body). InternalServerException is 500. Not recordable: a server failure cannot be induced. Message invented."
+}

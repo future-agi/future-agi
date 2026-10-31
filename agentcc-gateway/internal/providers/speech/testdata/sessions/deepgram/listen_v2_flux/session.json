@@ -1,0 +1,14 @@
+{
+  "source": "Deepgram AsyncAPI (github.com/deepgram/deepgram-api-specs asyncapi.yml at 417dbdd7): channel /v2/listen, as the Deepgram Python SDK README's real-time example opens it",
+  "path": "/v2/listen",
+  "query": "model=flux-general-en&encoding=linear16&sample_rate=16000",
+  "headers": {
+    "Authorization": "Token gateway-key"
+  },
+  "sanity_gaps": [
+    {
+      "failure": "deepgram documents /v2/listen",
+      "reason": "known gap DG2: Deepgram's Flux /v2/listen is not relayed: 404 unknown_endpoint"
+    }
+  ]
+}

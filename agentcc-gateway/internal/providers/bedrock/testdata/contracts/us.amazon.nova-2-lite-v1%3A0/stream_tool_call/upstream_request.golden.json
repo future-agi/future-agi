@@ -1,0 +1,57 @@
+{
+  "body": {
+    "inferenceConfig": {
+      "maxTokens": 512
+    },
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "What's the weather like in San Francisco right now?"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "toolConfig": {
+      "tools": [
+        {
+          "toolSpec": {
+            "description": "Get the current weather in a given location",
+            "inputSchema": {
+              "json": {
+                "properties": {
+                  "location": {
+                    "description": "The city and state, e.g. San Francisco, CA",
+                    "type": "string"
+                  },
+                  "unit": {
+                    "enum": [
+                      "celsius",
+                      "fahrenheit"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "location"
+                ],
+                "type": "object"
+              }
+            },
+            "name": "get_weather"
+          }
+        }
+      ]
+    }
+  },
+  "headers": {
+    "accept": "application/vnd.amazon.eventstream",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-amz-content-sha256": "1313a80c9cf73b5e2ee6eb7a8aa84e28a8d3096130aff379a02b11eccc21b56e",
+    "x-amz-date": "VOLATILE"
+  },
+  "method": "POST",
+  "path": "/model/us.amazon.nova-2-lite-v1:0/converse-stream"
+}

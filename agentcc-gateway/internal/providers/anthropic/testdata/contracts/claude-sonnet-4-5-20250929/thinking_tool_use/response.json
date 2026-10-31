@@ -1,0 +1,35 @@
+{
+  "id": "msg_01QbJ8n6ZJbqGdEU7aSHkxWg",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5-20250929",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "Whether to bring an umbrella depends on the forecast. I should call get_weather for Paris, France in celsius.",
+      "signature": "EuYBCkQYAiJAgCs1le6/Pol5Z4/JMomVOouGrWdhYNsH3ukzUECbB6iWrSQtsQuRHJID6lWV7XRk+Z6eVPXWJ+YGkO4ld4XNgEgy1nZ1eI3AsxiM6kHwaDGcxmYnnZtTrvEjpYCIwKfsU8aXdl3P8kHlOGdLBLq5iMZ7HfzGSzbBUf+eTmA0qfbVWG0ASBgdd2/a3kxfYKiJM4AQdK8JdRWYQyoGWFS9Zv4YOcR6oKN2jP1+uSjxCxwP5pFC0GAE="
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_01CYdJ8wB8rZD9xzX4K2Pkqn",
+      "name": "get_weather",
+      "input": {
+        "location": "Paris, France",
+        "unit": "celsius"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 498,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 0
+    },
+    "output_tokens": 103,
+    "service_tier": "standard"
+  }
+}

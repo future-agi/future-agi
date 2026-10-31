@@ -1,0 +1,8 @@
+{
+  "type": "error",
+  "error": {
+    "type": "request_too_large",
+    "message": "Request exceeds the maximum allowed number of bytes."
+  },
+  "request_id": "req_011CVnAG5cXp7Rb3Mf9tUv1k"
+}

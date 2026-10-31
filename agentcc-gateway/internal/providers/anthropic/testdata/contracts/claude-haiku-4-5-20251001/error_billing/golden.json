@@ -1,0 +1,6 @@
+{
+  "code": "provider_billing_error",
+  "message": "There's an issue with your billing or payment information. Check your payment details in the Claude Console.",
+  "status": 502,
+  "type": "upstream_error"
+}

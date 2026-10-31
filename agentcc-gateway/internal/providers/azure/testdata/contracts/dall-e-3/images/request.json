@@ -1,0 +1,7 @@
+{
+  "model": "dall-e-3",
+  "prompt": "In the style of WordArt, Microsoft Clippy wearing a cowboy hat.",
+  "n": 1,
+  "style": "natural",
+  "quality": "standard"
+}

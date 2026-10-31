@@ -1,0 +1,4 @@
+{
+  "endpoint": "responses",
+  "notes": "The /v1/responses passthrough (StreamResponse): the cookbook's recorded events (see meta.json). The server reads usage from response.completed. Recordable."
+}

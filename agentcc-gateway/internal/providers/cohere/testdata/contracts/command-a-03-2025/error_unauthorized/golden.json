@@ -1,0 +1,6 @@
+{
+  "code": "provider_401",
+  "message": "invalid api token",
+  "status": 401,
+  "type": "authentication_error"
+}

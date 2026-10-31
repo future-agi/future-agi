@@ -1,0 +1,51 @@
+{
+  "body": {
+    "max_tokens": 512,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "What's the weather like in San Francisco?",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "stream": true,
+    "tools": [
+      {
+        "description": "Get the current weather in a given location",
+        "input_schema": {
+          "properties": {
+            "location": {
+              "description": "The city and state, e.g. San Francisco, CA",
+              "type": "string"
+            },
+            "unit": {
+              "enum": [
+                "celsius",
+                "fahrenheit"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "location"
+          ],
+          "type": "object"
+        },
+        "name": "get_weather"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+    "x-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1/messages"
+}

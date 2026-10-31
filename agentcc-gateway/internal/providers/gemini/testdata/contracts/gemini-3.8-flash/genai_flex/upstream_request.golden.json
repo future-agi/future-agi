@@ -1,0 +1,21 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "List three prime numbers greater than 100."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "serviceTier": "flex"
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.8-flash:generateContent"
+}

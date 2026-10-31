@@ -1,0 +1,8 @@
+{
+  "status": 529,
+  "headers": {
+    "request-id": "req_011CVmXq4b2Hn8sJwz7RtYpK"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/errors (529 overloaded_error: the API is temporarily overloaded) and its error-shape example; request_id invented. Nothing a client sends induces a 529, so it cannot be recorded. A streaming request, so the pre-stream error path of StreamChatCompletion is pinned."
+}

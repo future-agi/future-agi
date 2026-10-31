@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "provider": "openai",
+  "root": "models",
+  "format": "openapi",
+  "select": "GET /models -> 200 application/json",
+  "description": "list-models response, decoded by ListModels and by contractwatch's listers (new-model detection)",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.data": {"kinds":["array"]},
+    "$.data[]": {"kinds":["object"]},
+    "$.data[].created": {"kinds":["integer"]},
+    "$.data[].id": {"kinds":["string"]},
+    "$.data[].object": {"kinds":["string"],"enum":["model"]},
+    "$.data[].owned_by": {"kinds":["string"]},
+    "$.data[].shutdown_date": {"kinds":["string"],"nullable":true},
+    "$.object": {"kinds":["string"],"enum":["list"]}
+  }
+}

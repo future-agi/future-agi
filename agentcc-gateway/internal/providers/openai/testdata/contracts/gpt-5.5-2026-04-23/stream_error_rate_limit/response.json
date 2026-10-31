@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "Your request rate increased too quickly. Please reduce the request rate and gradually increase it again.",
+    "type": "rate_limit_error",
+    "param": null,
+    "code": "slow_down"
+  }
+}

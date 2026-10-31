@@ -1,0 +1,6 @@
+{
+  "code": "provider_PERMISSION_DENIED",
+  "message": "Permission 'aiplatform.endpoints.predict' denied on resource '//aiplatform.googleapis.com/projects/test-project/locations/global/publishers/google/models/gemini-3.8-flash' (or it may not exist).",
+  "status": 403,
+  "type": "permission_error"
+}

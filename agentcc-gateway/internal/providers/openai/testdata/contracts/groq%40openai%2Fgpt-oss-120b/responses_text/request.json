@@ -1,0 +1,4 @@
+{
+  "model": "openai/gpt-oss-120b",
+  "input": "Tell me a three sentence bedtime story about a unicorn."
+}

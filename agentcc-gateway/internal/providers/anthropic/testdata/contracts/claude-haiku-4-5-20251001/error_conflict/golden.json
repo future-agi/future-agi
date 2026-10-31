@@ -1,0 +1,6 @@
+{
+  "code": "provider_conflict_error",
+  "message": "The request conflicts with the current state of a resource.",
+  "status": 502,
+  "type": "upstream_error"
+}

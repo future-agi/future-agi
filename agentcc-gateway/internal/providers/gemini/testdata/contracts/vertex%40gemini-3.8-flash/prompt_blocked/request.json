@@ -1,0 +1,9 @@
+{
+  "model": "gemini-3.8-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": "[a prompt the safety filters block]"
+    }
+  ]
+}

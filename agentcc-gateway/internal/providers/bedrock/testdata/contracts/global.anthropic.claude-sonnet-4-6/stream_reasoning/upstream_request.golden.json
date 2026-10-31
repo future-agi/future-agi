@@ -1,0 +1,26 @@
+{
+  "body": {
+    "inferenceConfig": {
+      "maxTokens": 4096
+    },
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "What is the greatest common divisor of 1071 and 462?"
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "application/vnd.amazon.eventstream",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-amz-content-sha256": "6d41e3213e6e7996641c5061c762cc84b78dd0630dab4d36bca8cd871d7e8df3",
+    "x-amz-date": "VOLATILE"
+  },
+  "method": "POST",
+  "path": "/model/global.anthropic.claude-sonnet-4-6/converse-stream"
+}

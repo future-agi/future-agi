@@ -1,0 +1,34 @@
+{
+  "id": "gen-1793170700-Tm5qWz9KcR3vN8pL2xYb",
+  "object": "chat.completion",
+  "created": 1793170700,
+  "model": "anthropic/claude-4.5-sonnet",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "tool_calls",
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "refusal": null,
+        "tool_calls": [
+          {
+            "id": "toolu_01A09q90qw90lq917835lq9",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\": \"Paris\"}"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 412,
+    "completion_tokens": 54,
+    "total_tokens": 466,
+    "cost": 0.002046,
+    "is_byok": false
+  }
+}

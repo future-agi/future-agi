@@ -1,0 +1,4 @@
+{
+  "endpoint": "completions",
+  "notes": "CompletionCreateResponse ending with stop (see meta.json). Recordable."
+}

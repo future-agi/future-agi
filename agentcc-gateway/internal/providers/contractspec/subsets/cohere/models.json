@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "provider": "cohere",
+  "root": "models",
+  "format": "openapi",
+  "select": "GET /v1/models -> 200 application/json",
+  "description": "list-models response, decoded by contractwatch's CohereLister (the adapter's ListModels returns nil)",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.models": {"kinds":["array"]},
+    "$.models[]": {"kinds":["object"]},
+    "$.models[].context_length": {"kinds":["number"]},
+    "$.models[].default_endpoints": {"kinds":["array"]},
+    "$.models[].default_endpoints[]": {"kinds":["string"],"enum":["chat","classify","embed","generate","rate","rerank","summarize"]},
+    "$.models[].endpoints": {"kinds":["array"]},
+    "$.models[].endpoints[]": {"kinds":["string"],"enum":["chat","classify","embed","generate","rate","rerank","summarize"]},
+    "$.models[].features": {"kinds":["array"]},
+    "$.models[].features[]": {"kinds":["string"]},
+    "$.models[].finetuned": {"kinds":["boolean"]},
+    "$.models[].is_deprecated": {"kinds":["boolean"]},
+    "$.models[].name": {"kinds":["string"]},
+    "$.models[].sampling_defaults": {"kinds":["object"]},
+    "$.models[].sampling_defaults.frequency_penalty": {"kinds":["number"]},
+    "$.models[].sampling_defaults.k": {"kinds":["integer"]},
+    "$.models[].sampling_defaults.max_tokens_per_doc": {"kinds":["integer"]},
+    "$.models[].sampling_defaults.p": {"kinds":["number"]},
+    "$.models[].sampling_defaults.presence_penalty": {"kinds":["number"]},
+    "$.models[].sampling_defaults.temperature": {"kinds":["number"]},
+    "$.models[].tokenizer_url": {"kinds":["string"]},
+    "$.next_page_token": {"kinds":["string"]}
+  }
+}

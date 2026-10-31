@@ -1,0 +1,5 @@
+{
+  "status": 422,
+  "recordable": false,
+  "notes": "Synthetic, from cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28) (422 UnprocessableEntity: the request is not well formed, e.g. an invalid combination of fields); the docs give no 422 message, so it is invented, as is the id. Not recordable: no canonical request is known to induce it."
+}

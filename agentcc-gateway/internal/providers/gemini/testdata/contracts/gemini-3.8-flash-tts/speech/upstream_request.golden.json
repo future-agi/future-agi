@@ -1,0 +1,32 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Have a wonderful day!"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "responseModalities": [
+        "AUDIO"
+      ],
+      "speechConfig": {
+        "voiceConfig": {
+          "prebuiltVoiceConfig": {
+            "voiceName": "Kore"
+          }
+        }
+      }
+    }
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.8-flash-tts:generateContent"
+}

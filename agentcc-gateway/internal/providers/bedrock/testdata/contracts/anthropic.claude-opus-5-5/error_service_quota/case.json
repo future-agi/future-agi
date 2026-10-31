@@ -1,0 +1,9 @@
+{
+  "status": 400,
+  "headers": {
+    "x-amzn-ErrorType": "ServiceQuotaExceededException",
+    "x-amzn-RequestId": "f3a9c6e1-2d8b-4b57-a0f4-6e1c9d3b8a20"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from the Bedrock Runtime Smithy model (github.com/aws/api-models-aws bedrock-runtime 2023-09-30, commit e10d6a1c5ac36af7c0c61d1f67b3c3ebbe41de49: the exception's @httpError status and members, and the operation's error list) and the restJson1 protocol (smithy-lang/smithy docs/source-2.0/aws/protocols/aws-restjson1-protocol.rst: the exception name in the X-Amzn-Errortype header, the members in the JSON body). ServiceQuotaExceededException is 400 and is in InvokeModel's error list (not Converse's). Not recordable: it needs an account over its service quota. The message is the exception's documentation string. The golden pins type invalid_request_error with nothing telling it from a ValidationException: gap B15 (the exception name is in x-amzn-ErrorType only)."
+}

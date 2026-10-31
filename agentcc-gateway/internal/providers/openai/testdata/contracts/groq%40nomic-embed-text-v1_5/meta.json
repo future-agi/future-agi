@@ -1,0 +1,9 @@
+{
+  "provider": "openai",
+  "model": "groq@nomic-embed-text-v1_5",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from Groq's OpenAPI spec as embedded in its official SDK, github.com/groq/groq-python scripts/mock at 55066d94acca028c3cb74e050f2711b80ade6298 (2026-09-04; pinned as contractspec/subsets/groq), POST /openai/v1/embeddings: CreateEmbeddingRequest (model nomic-embed-text-v1_5, the one model its enum lists; input its example) and CreateEmbeddingResponse / Embedding (object, model, data[] {index, object, embedding}, usage {prompt_tokens, total_tokens}). The operation has no response example: the three vector values and the token counts are placeholders of the schema's shape (a real nomic-embed-text-v1_5 vector has 768 floats). No error case: the spec defines ErrorResponse / Error (message, type, param, code, failed_generation, schema_*, debug) but no operation lists an error response, and no Groq source (spec, SDK, cookbook) gives a value for its type or code, so an error body would be invented. console.groq.com was not reachable from the authoring sandbox.",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

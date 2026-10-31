@@ -1,0 +1,30 @@
+{
+  "provider": "openai",
+  "model": "gpt-image-2-2026-04-21",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28), POST /images/generations: ImagesResponse (created, data[].b64_json, background, output_format, quality, size, usage{input_tokens, input_tokens_details{text_tokens,image_tokens}, output_tokens, output_tokens_details{image_tokens,text_tokens}, total_tokens}) and the operation's \"Generate image\" example (usage verbatim), with the model set to the dated gpt-image-2 snapshot CreateImageRequest.model lists. GPT image models always return base64 (no url); b64_json is a 1x1 PNG. images_request_params sends the GPT-image-only request parameters (background, output_format, quality, moderation); the response is what the API answers when they are not forwarded.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.background",
+      "reason": "known gap O19: models.ImageResponse has no field for it, so the client loses what the image was rendered as"
+    },
+    {
+      "path": "$.output_format",
+      "reason": "known gap O19: models.ImageResponse has no field for it, so the client loses what the image was rendered as"
+    },
+    {
+      "path": "$.quality",
+      "reason": "known gap O19: models.ImageResponse has no field for it, so the client loses what the image was rendered as"
+    },
+    {
+      "path": "$.size",
+      "reason": "known gap O19: models.ImageResponse has no field for it, so the client loses what the image was rendered as"
+    },
+    {
+      "path": "$.usage.output_tokens_details",
+      "reason": "known gap O19: the output token split into image_tokens and text_tokens is dropped (models.ImageUsage has no output details); GPT image models price the two differently, so the cost plugin cannot price output exactly"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

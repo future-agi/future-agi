@@ -1,0 +1,367 @@
+{
+  "provider": "vertex",
+  "note": "Spec paths, blobs, enum values and events the adapter does not map, with why. Checked by TestSpecCoverage (internal/providers/contractspec).",
+  "unmapped": [
+    {
+      "subset": "vertex/embed_content",
+      "path": "$.truncated",
+      "reason": "known gap V3: truncated is dropped, so a client cannot tell its input was cut to the model's limit before embedding"
+    },
+    {
+      "subset": "vertex/embed_content",
+      "path": "$.usageMetadata",
+      "reason": "known gap G23: the embedding usage the API reports (usageMetadata.promptTokenCount) is dropped; the canonical usage is hard-coded 0, so embeddings are never billed"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].avgLogprobs",
+      "reason": "known gap G29: logprobs are neither requested (logprobs / top_logprobs are not sent as responseLogprobs / logprobs) nor translated (logprobsResult, avgLogprobs), although the canonical choice has a logprobs field"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].citationMetadata",
+      "reason": "known gap G30: citation metadata (recitation sources with spans, URIs and licenses; citationSources on the Gemini API, citations on Vertex AI) is dropped; code recitations carry license information a client may be required to show"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].audioTranscription",
+      "reason": "known gap G31: audioTranscription (the text of generated audio) is dropped; the canonical audio content part has no transcript, though OpenAI's message audio carries one"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].codeExecutionResult",
+      "reason": "known gap G10: executableCode and codeExecutionResult parts are dropped; the caller gets the final text without the code that was run or its output"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].executableCode",
+      "reason": "known gap G10: executableCode and codeExecutionResult parts are dropped; the caller gets the final text without the code that was run or its output"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].fileData.displayName",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].functionCall.id",
+      "reason": "known gap G32: the upstream functionCall.id is dropped; the gateway numbers calls call_N itself and never sends functionResponse.id back, so parallel calls to the same function are matched by order alone"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].functionCall.partialArgs",
+      "reason": "no content: streamed function-call arguments are sent only when the request asks for them (functionCallingConfig.streamFunctionCallArguments), which the gateway never does; whole args arrive in args"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].functionCall.willContinue",
+      "reason": "no content: marks a partial function call when the request streams function-call arguments, which the gateway never asks for"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].functionResponse.id",
+      "reason": "no content: functionResponse is the client's tool result, a request part; a response that carried one would be reported as unknown_block functionResponse"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].functionResponse.parts",
+      "reason": "no content: functionResponse is the client's tool result, a request part; a response that carried one would be reported as unknown_block functionResponse"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].functionResponse.scheduling",
+      "reason": "no content: functionResponse is the client's tool result, a request part; a response that carried one would be reported as unknown_block functionResponse"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].inlineData.displayName",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].mediaProcessing",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].mediaResolution",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].speechMetadata",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].videoMetadata",
+      "reason": "no content: a request-side Part field (input media hints, speech direction, client metadata) that model output does not set"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].continuationToken",
+      "reason": "known gap G2: the long-decode continuationToken is dropped; the gateway neither follows it nor lets a client send it back, so output past the per-request cap is unreachable"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishMessage",
+      "reason": "known gap G3: finishMessage, the text explaining why generation stopped (a malformed call, a blocked term), is dropped"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].groundingMetadata.googleMapsWidgetContextToken",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].groundingMetadata.groundingChunks[].image",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].groundingMetadata.groundingChunks[].maps",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].groundingMetadata.groundingChunks[].retrievedContext",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].groundingMetadata.groundingChunks[].web.domain",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].groundingMetadata.groundingSupports",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].groundingMetadata.imageSearchQueries",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].groundingMetadata.retrievalMetadata",
+      "reason": "no canonical field: retrievalMetadata only carries googleSearchDynamicRetrievalScore, populated by the googleSearchRetrieval dynamic threshold"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].groundingMetadata.retrievalQueries",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].groundingMetadata.searchEntryPoint",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].groundingMetadata.sourceFlaggingUris",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].groundingMetadata.webSearchQueries",
+      "reason": "known gap G7: grounding detail beyond web groundingChunks (which become url_citation annotations spanning the whole answer) is dropped: which span each source supports, the search queries and the Search suggestions widget that Grounding with Google Search requires apps to show, and image, Maps and File Search sources"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].index",
+      "reason": "no content: the candidate's position; the gateway never sets candidateCount, so it is always 0, which becomes choice 0"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].logprobsResult",
+      "reason": "known gap G29: logprobs are neither requested (logprobs / top_logprobs are not sent as responseLogprobs / logprobs) nor translated (logprobsResult, avgLogprobs), although the canonical choice has a logprobs field"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].safetyRatings",
+      "reason": "known gap G11: per-category safety ratings, including which category blocked the answer, are dropped; finish_reason content_filter says only that something was filtered"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].urlContextMetadata",
+      "reason": "known gap G8: url_context retrieval status per URL is dropped, so a caller cannot tell whether the model read the page"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.createTime",
+      "reason": "no canonical field: when Vertex AI received the request; the canonical created is the gateway's own clock, seconds apart at most"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.promptFeedback",
+      "reason": "known gap G4: a blocked prompt's promptFeedback (blockReason, safetyRatings; on Vertex AI also blockReasonMessage) is dropped; with no candidates the response has an empty choices array and the stream emits nothing"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.responseId",
+      "reason": "known gap G12: responseId is dropped; the canonical id is a gateway-generated gen-<nanos>"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.usageMetadata.cacheTokensDetails",
+      "reason": "known gap G13: the per-modality token breakdowns (prompt, candidates, cache) are dropped; audio and image tokens are priced differently from text and OpenAI's *_tokens_details have slots for audio"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.usageMetadata.candidatesTokensDetails",
+      "reason": "known gap G13: the per-modality token breakdowns (prompt, candidates, cache) are dropped; audio and image tokens are priced differently from text and OpenAI's *_tokens_details have slots for audio"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.usageMetadata.promptTokensDetails",
+      "reason": "known gap G13: the per-modality token breakdowns (prompt, candidates, cache) are dropped; audio and image tokens are priced differently from text and OpenAI's *_tokens_details have slots for audio"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.usageMetadata.toolUsePromptTokenCount",
+      "reason": "known gap G9: toolUsePromptTokenCount (tool results fed back as input, billed as input) is not added to prompt_tokens, so usage and cost under-count the request"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.usageMetadata.toolUsePromptTokensDetails",
+      "reason": "known gap G9: toolUsePromptTokenCount (tool results fed back as input, billed as input) is not added to prompt_tokens, so usage and cost under-count the request"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.usageMetadata.trafficType",
+      "reason": "known gap V1: trafficType (ON_DEMAND, ON_DEMAND_PRIORITY, ON_DEMAND_FLEX, PROVISIONED_THROUGHPUT, ...) is dropped, so provisioned-throughput, priority and flex requests are priced as pay-as-you-go on-demand"
+    },
+    {
+      "subset": "vertex/predict",
+      "path": "$.deployedModelId",
+      "reason": "no canonical field: deployment metadata of an Endpoint's DeployedModel; Imagen is called as a publisher model, not through a deployment"
+    },
+    {
+      "subset": "vertex/predict",
+      "path": "$.metadata",
+      "reason": "no canonical field: model-specific request-level metadata; Imagen publisher models document none"
+    },
+    {
+      "subset": "vertex/predict",
+      "path": "$.model",
+      "reason": "no canonical field: the resource name of an Endpoint's DeployedModel; publisher-model calls have none"
+    },
+    {
+      "subset": "vertex/predict",
+      "path": "$.modelDisplayName",
+      "reason": "no canonical field: the display name of an Endpoint's DeployedModel; publisher-model calls have none"
+    },
+    {
+      "subset": "vertex/predict",
+      "path": "$.modelVersionId",
+      "reason": "no canonical field: the version of an Endpoint's DeployedModel; publisher-model calls have none"
+    }
+  ],
+  "opaque": [
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].functionCall.args",
+      "reason": "tool arguments: whatever the model passed the function, re-encoded as the canonical tool call's JSON arguments"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].content.parts[].functionResponse.response",
+      "reason": "no content: functionResponse is the client's tool result, a request part; a response that carried one would be reported as unknown_block functionResponse"
+    }
+  ],
+  "enums": [
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "BLOCKLIST",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "CONTINUATION",
+      "reason": "known gap G1: CONTINUATION (the per-request output cap was hit with budget left) falls back to \"stop\", so a truncated answer looks complete; \"length\" is the honest canonical reason"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "FINISH_REASON_UNSPECIFIED",
+      "reason": "no content: the default value, which the spec documents as unused"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "IMAGE_OTHER",
+      "reason": "known gap G28: a failed generation (UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MISSING_THOUGHT_SIGNATURE, MALFORMED_RESPONSE, NO_IMAGE, IMAGE_OTHER) falls back to \"stop\": the caller sees a normal, often empty, completion with no sign the model failed"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "IMAGE_PROHIBITED_CONTENT",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "IMAGE_RECITATION",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "IMAGE_SAFETY",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "MALFORMED_FUNCTION_CALL",
+      "reason": "known gap G3: the model's function call was invalid; the reason falls back to \"stop\" with no content and no tool call, so the caller sees an empty, normal-looking completion"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "MALFORMED_RESPONSE",
+      "reason": "known gap G28: a failed generation (UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MISSING_THOUGHT_SIGNATURE, MALFORMED_RESPONSE, NO_IMAGE, IMAGE_OTHER) falls back to \"stop\": the caller sees a normal, often empty, completion with no sign the model failed"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "MODEL_ARMOR",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "NO_IMAGE",
+      "reason": "known gap G28: a failed generation (UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MISSING_THOUGHT_SIGNATURE, MALFORMED_RESPONSE, NO_IMAGE, IMAGE_OTHER) falls back to \"stop\": the caller sees a normal, often empty, completion with no sign the model failed"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "PROHIBITED_CONTENT",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "SPII",
+      "reason": "known gap G27: a policy stop (BLOCKLIST, PROHIBITED_CONTENT, SPII, LANGUAGE, IMAGE_SAFETY, IMAGE_PROHIBITED_CONTENT, IMAGE_RECITATION, ESCALATION, PUP_LIMITED_DISABLED; MODEL_ARMOR on Vertex AI) falls back to \"stop\" instead of \"content_filter\", so a filtered, cut-off answer looks complete (translation/finish_reason.go googleFinishReasons already maps most of them)"
+    },
+    {
+      "subset": "vertex/generate_content",
+      "path": "$.candidates[].finishReason",
+      "value": "UNEXPECTED_TOOL_CALL",
+      "reason": "known gap G28: a failed generation (UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MISSING_THOUGHT_SIGNATURE, MALFORMED_RESPONSE, NO_IMAGE, IMAGE_OTHER) falls back to \"stop\": the caller sees a normal, often empty, completion with no sign the model failed"
+    }
+  ],
+  "events": [],
+  "kinds": [
+    {
+      "subset": "vertex/predict",
+      "path": "$.predictions[]",
+      "reason": "the spec leaves predictions untyped (any) because Vertex AI and the Gemini API serve every predict model through it; Imagen predictions are objects (bytesBase64Encoded, mimeType, raiFilteredReason, safetyAttributes: googleapis/go-genai generatedImageFromVertex), which geminiPrediction decodes"
+    }
+  ]
+}

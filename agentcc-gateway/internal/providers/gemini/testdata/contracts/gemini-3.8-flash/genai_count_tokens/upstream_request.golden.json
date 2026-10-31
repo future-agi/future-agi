@@ -1,0 +1,20 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "The quick brown fox jumps over the lazy dog."
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.8-flash:countTokens"
+}

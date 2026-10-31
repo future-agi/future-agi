@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "unmeterable_audio",
+    "message": "transcription through the gateway is metered by audio length, so it needs a raw encoding (linear16, pcm_s16le, mulaw, ...), sample_rate and, for more than one channel, channels",
+    "status": 400,
+    "type": "invalid_request_error"
+  }
+}

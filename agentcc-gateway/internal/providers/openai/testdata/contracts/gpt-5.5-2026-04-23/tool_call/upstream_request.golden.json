@@ -1,0 +1,46 @@
+{
+  "body": {
+    "messages": [
+      {
+        "content": "Is it warmer in Boston or in Tokyo right now?",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-5.5-2026-04-23",
+    "reasoning_effort": "medium",
+    "tools": [
+      {
+        "function": {
+          "description": "Get the current weather in a given location",
+          "name": "get_current_weather",
+          "parameters": {
+            "properties": {
+              "location": {
+                "description": "The city and state, e.g. San Francisco, CA",
+                "type": "string"
+              },
+              "unit": {
+                "enum": [
+                  "celsius",
+                  "fahrenheit"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "location"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

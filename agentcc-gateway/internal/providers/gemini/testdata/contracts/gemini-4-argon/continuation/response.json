@@ -1,0 +1,32 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "# CalcLang: a statically typed expression compiler\n\n## Stage 1: Lexical analysis\n\n```python\nclass TokenKind(Enum):\n    INT_LIT = auto()\n    FLOAT_LIT = auto()\n    IDENT = auto()\n```\n\n## Stage 2: Pratt parser\n\nThe parser assigns each token a binding power and",
+            "thoughtSignature": "I3HApwaZ6xdj3m/oCteYyhXrkYTScIjUBRqORMf8hA+9977+BckhgKuEYHTnPL6u/+mArQmlu/oBH7vctMikvCCKQZxbAcTMyvcL2U4jHDXZ5iZhVnsPYRpc8hb8IubS"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "CONTINUATION",
+      "index": 0,
+      "continuationToken": "8qt1Yow/z23AsKVxYW/CxXcB/zZ7rkgX441P+JcigDy4PmFws7Jw8j+ct3eOdaDd"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 41,
+    "candidatesTokenCount": 21470,
+    "thoughtsTokenCount": 11298,
+    "totalTokenCount": 32809,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 41
+      }
+    ]
+  },
+  "modelVersion": "gemini-4-argon",
+  "responseId": "IWFWHkoSWiYI5pLBXZ08wDM"
+}

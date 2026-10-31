@@ -1,0 +1,6 @@
+{
+  "prompt": "A cat in a tree",
+  "model": "grok-imagine-image",
+  "response_format": "url",
+  "n": 2
+}

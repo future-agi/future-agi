@@ -1,0 +1,6 @@
+{
+  "code": "slow_down",
+  "message": "Your request rate increased too quickly. Please reduce the request rate and gradually increase it again.",
+  "status": 429,
+  "type": "rate_limit_error"
+}

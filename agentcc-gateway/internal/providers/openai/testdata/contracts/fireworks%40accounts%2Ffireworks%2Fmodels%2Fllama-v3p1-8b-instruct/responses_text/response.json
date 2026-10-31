@@ -1,0 +1,50 @@
+{
+  "id": "resp_33e3f57dd17e449690a44903430ab192",
+  "created_at": 1750216722.0,
+  "error": null,
+  "incomplete_details": null,
+  "instructions": null,
+  "metadata": {},
+  "model": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+  "object": "response",
+  "output": [
+    {
+      "id": "msg_b9061182b68143d791dd6144cfea8e02",
+      "content": [
+        {
+          "annotations": null,
+          "text": "Here's a 20-word poem about a sunflower, one word at a time:\n\n1. Towering\n2. yellow\n3. petals\n4. unfold\n5. like\n6. trumpets\n7. stretching\n8. towards\n9. radiant\n10. sunbeams\n11. drinking\n12. in\n13. pure\n14. golden\n15. light\n16. that\n17. nourishes\n18. its\n19. vibrant\n20. spirit.",
+          "type": "output_text",
+          "logprobs": null
+        }
+      ],
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "temperature": 1.0,
+  "tool_choice": "auto",
+  "tools": [],
+  "top_p": 1.0,
+  "background": null,
+  "max_output_tokens": null,
+  "previous_response_id": null,
+  "reasoning": null,
+  "service_tier": null,
+  "status": "completed",
+  "text": null,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": null,
+    "input_tokens_details": null,
+    "output_tokens": null,
+    "output_tokens_details": null,
+    "total_tokens": 131,
+    "prompt_tokens": 27,
+    "completion_tokens": 104
+  },
+  "user": null,
+  "store": true
+}

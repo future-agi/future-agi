@@ -1,0 +1,4 @@
+{
+  "status": 400,
+  "notes": "Gemini 4 Argon rejects thinkingBudget (it takes thinkingLevel only; docs/models/gemini-4-argon), and the gateway sends thinking_budget as thinkingBudget, so a real request induces this 400. Known gap GR2: request side: a client's thinking_budget always becomes thinkingConfig.thinkingBudget, whatever the model, so on a model that takes thinkingLevel only (Gemini 4 Argon) every request with a thinking budget fails with this 400. Message text is invented. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28)."
+}

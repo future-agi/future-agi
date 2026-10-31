@@ -1,0 +1,63 @@
+{
+  "assembled": {
+    "content": "The greatest common divisor of 1071 and 462 is **21**.",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 156,
+      "prompt_tokens": 48,
+      "total_tokens": 204
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Pe8hKyZ1rQh8fQwhnfHZDE",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "The greatest common divisor of 1071 and 462 is **21**."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Pe8hKyZ1rQh8fQwhnfHZDE",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Pe8hKyZ1rQh8fQwhnfHZDE",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 156,
+        "prompt_tokens": 48,
+        "total_tokens": 204
+      }
+    }
+  ],
+  "error": null
+}

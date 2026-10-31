@@ -1,0 +1,28 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "How many times does the letter r appear in the word strawberry?"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "thinkingConfig": {
+        "includeThoughts": true,
+        "thinkingLevel": "medium"
+      }
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.8-flash:streamGenerateContent",
+  "query": "alt=sse"
+}

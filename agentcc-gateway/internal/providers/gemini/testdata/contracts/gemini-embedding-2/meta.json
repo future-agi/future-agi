@@ -1,0 +1,18 @@
+{
+  "provider": "gemini",
+  "model": "gemini-embedding-2",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand, 2026-10-28; ai.google.dev and cloud.google.com were blocked, so field names and enums come from the machine-readable references named per case in case.json notes. Values (ids, signatures, token counts, vectors, audio, text) are invented. Model: gemini-embedding-2, the current Gemini API embedding model (multimodal; google-gemini/cookbook quickstarts/Embeddings.ipynb). Cases cover the canonical /v1/embeddings path (embedContent for one input, batchEmbedContents for several) and the native embedContent passthrough.",
+  "allowed_unknown_fields": [
+    {
+      "path": "batch_embed:$.usageMetadata",
+      "reason": "known gap G23: the embedding usage the API reports (usageMetadata.promptTokenCount, what embeddings are priced in) is dropped; the canonical usage is hard-coded 0, so embeddings through /v1/embeddings are never billed"
+    },
+    {
+      "path": "embed:$.usageMetadata",
+      "reason": "known gap G23: the embedding usage the API reports (usageMetadata.promptTokenCount, what embeddings are priced in) is dropped; the canonical usage is hard-coded 0, so embeddings through /v1/embeddings are never billed"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

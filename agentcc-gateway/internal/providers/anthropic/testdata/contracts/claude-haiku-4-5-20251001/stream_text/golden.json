@@ -1,0 +1,93 @@
+{
+  "assembled": {
+    "content": "Hello! How can I help you today?",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 12,
+      "prompt_tokens": 11,
+      "total_tokens": 23
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Jx3sZrBVUQfX8bD7mo3uGe",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Hello"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Jx3sZrBVUQfX8bD7mo3uGe",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "! How can I"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Jx3sZrBVUQfX8bD7mo3uGe",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " help you today?"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Jx3sZrBVUQfX8bD7mo3uGe",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Jx3sZrBVUQfX8bD7mo3uGe",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 12,
+        "prompt_tokens": 11,
+        "total_tokens": 23
+      }
+    }
+  ],
+  "error": null
+}

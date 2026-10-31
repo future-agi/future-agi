@@ -1,0 +1,25 @@
+{
+  "id": "msg_01Wd2pT9xHj6Gq2qUeZkY4vB",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5-20250929",
+  "content": [
+    {
+      "type": "text",
+      "text": "...and the clocks were striking thirteen as she turned the corner onto the empty boulevard, the wind carrying"
+    }
+  ],
+  "stop_reason": "model_context_window_exceeded",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 196412,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 0
+    },
+    "output_tokens": 3588,
+    "service_tier": "standard"
+  }
+}

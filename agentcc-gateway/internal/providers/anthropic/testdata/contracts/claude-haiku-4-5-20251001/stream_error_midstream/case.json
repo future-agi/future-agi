@@ -1,0 +1,4 @@
+{
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/build-with-claude/streaming (\"Error events\": during periods of high usage the stream can carry an overloaded_error event, which would be an HTTP 529 in a non-streaming context; its data line is the page's). The events before it are the page's basic stream. Not recordable: nothing a client sends induces it."
+}

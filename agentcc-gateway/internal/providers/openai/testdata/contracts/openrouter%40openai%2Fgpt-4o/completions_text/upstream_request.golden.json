@@ -1,0 +1,13 @@
+{
+  "body": {
+    "max_tokens": 32,
+    "model": "openai/gpt-4o",
+    "prompt": "Write a haiku about the sea."
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/completions"
+}

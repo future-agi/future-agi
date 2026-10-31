@@ -1,0 +1,25 @@
+{
+  "body": {
+    "messages": [
+      {
+        "content": "Be precise and concise.",
+        "role": "system"
+      },
+      {
+        "content": "When was the James Webb Space Telescope launched?",
+        "role": "user"
+      }
+    ],
+    "model": "sonar",
+    "search_mode": "web",
+    "web_search_options": {
+      "search_context_size": "low"
+    }
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

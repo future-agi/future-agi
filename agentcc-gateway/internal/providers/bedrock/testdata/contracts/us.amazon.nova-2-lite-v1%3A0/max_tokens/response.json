@@ -1,0 +1,21 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "text": "On a rocky spit of the Breton coast, old Yann tended the lamp every"
+        }
+      ]
+    }
+  },
+  "stopReason": "max_tokens",
+  "usage": {
+    "inputTokens": 14,
+    "outputTokens": 16,
+    "totalTokens": 30
+  },
+  "metrics": {
+    "latencyMs": 344
+  }
+}

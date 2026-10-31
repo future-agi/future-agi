@@ -1,0 +1,25 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Name three primary colors."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "maxOutputTokens": 256
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.1-flash-lite:streamGenerateContent",
+  "query": "alt=sse"
+}

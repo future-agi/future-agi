@@ -1,0 +1,11 @@
+{
+  "model": "accounts/fireworks/models/kimi-k2-instruct-0905",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Say this is a test."
+    }
+  ],
+  "max_tokens": 64,
+  "stream": true
+}

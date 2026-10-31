@@ -1,0 +1,11 @@
+{
+  "model": "gpt-5.6-sol",
+  "messages": [
+    {
+      "role": "user",
+      "content": "How much wood would a woodchuck chuck?"
+    }
+  ],
+  "reasoning_effort": "high",
+  "stream": true
+}

@@ -1,0 +1,3 @@
+{
+  "notes": "A signed function call on Vertex AI (FunctionCall, v1beta1). Recordable through cmd/contract-recorder's Vertex AI upstream (VERTEX_PROJECT and VERTEX_ACCESS_TOKEN, optional VERTEX_LOCATION); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record it locally."
+}

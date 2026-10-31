@@ -1,0 +1,8 @@
+{
+  "status": 404,
+  "headers": {
+    "apim-request-id": "6e1b8f3c-9d2a-4a71-b5c0-3f7e2d9a8b16"
+  },
+  "recordable": false,
+  "notes": "Synthetic. Body: the errorResponse shape (github.com/Azure/azure-rest-api-specs at 7b9f1ff0714627e3680552703174ffe11538d5c5, specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json) with code DeploymentNotFound, as the service answers a deployment name it does not know; wording from memory of the service's message, unverified here. learn.microsoft.com was not reachable from the authoring session. Not recordable here: this directory is the deployment the request names, which exists. The golden pins type \"\" (gap A6)."
+}

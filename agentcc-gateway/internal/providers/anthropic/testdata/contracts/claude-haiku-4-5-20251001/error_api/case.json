@@ -1,0 +1,8 @@
+{
+  "status": 500,
+  "headers": {
+    "request-id": "req_011CVnAK8eYr2Sd4Ng1vWx3p"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/errors (500 api_error: an unexpected error internal to Anthropic) and its error-shape example; request_id invented. Not recordable: nothing a client sends induces it."
+}

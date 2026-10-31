@@ -1,0 +1,12 @@
+{
+  "model": "gpt-oss-120b",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Why is fast inference important?"
+    }
+  ],
+  "max_tokens": 256,
+  "reasoning_effort": "low",
+  "stream": true
+}

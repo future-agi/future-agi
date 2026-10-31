@@ -1,0 +1,10 @@
+{
+  "endpoint": "list_models",
+  "notes": "Synthetic, from github.com/Azure/azure-rest-api-specs main, specification/cognitiveservices/data-plane/OpenAIAuthoring/stable/2024-10-21/azureopenai.json (Models_List: ModelList, Model, Capabilities, Deprecation, LifeCycleStatus) and its example get_models.json: ListModels calls GET /openai/models?api-version=<the provider's> on the resource (base models the resource can deploy, not deployments). Field names as the example; ids, times and capability flags invented for current models. Filed under the chat deployment because the call names no deployment. Recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "has no created time",
+      "reason": "known gap A8: Azure's model list carries created_at, which models.ModelObject (created, owned_by) does not read, so every listed model has created 0; capabilities, lifecycle_status and deprecation are dropped too (allowed_unknown_fields)"
+    }
+  ]
+}

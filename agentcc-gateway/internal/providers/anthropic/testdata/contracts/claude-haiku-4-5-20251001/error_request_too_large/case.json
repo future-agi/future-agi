@@ -1,0 +1,14 @@
+{
+  "status": 413,
+  "headers": {
+    "request-id": "req_011CVnAG5cXp7Rb3Mf9tUv1k"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/errors (413 request_too_large: the Messages API takes at most 128 MB; the message is the page's description of it); request_id invented. Not recordable: it needs a body over 128 MB.",
+  "sanity_gaps": [
+    {
+      "failure": "upstream status 413 became 502",
+      "reason": "known gap X4: mapAnthropicStatus maps by error type and ignores the HTTP status, so an error type it does not list falls back to 502 upstream_error, which the router retries, fails over and counts against the circuit breaker: a request too large for Anthropic is too large for any retry too"
+    }
+  ]
+}

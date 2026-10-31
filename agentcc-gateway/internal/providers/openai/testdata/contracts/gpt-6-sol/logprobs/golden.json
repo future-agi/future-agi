@@ -1,0 +1,311 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": {
+        "content": [
+          {
+            "bytes": [
+              72,
+              101,
+              108,
+              108,
+              111
+            ],
+            "logprob": -0.31725305,
+            "token": "Hello",
+            "top_logprobs": [
+              {
+                "bytes": [
+                  72,
+                  101,
+                  108,
+                  108,
+                  111
+                ],
+                "logprob": -0.31725305,
+                "token": "Hello"
+              },
+              {
+                "bytes": [
+                  72,
+                  105
+                ],
+                "logprob": -1.3190403,
+                "token": "Hi"
+              }
+            ]
+          },
+          {
+            "bytes": [
+              33
+            ],
+            "logprob": -0.02380986,
+            "token": "!",
+            "top_logprobs": [
+              {
+                "bytes": [
+                  33
+                ],
+                "logprob": -0.02380986,
+                "token": "!"
+              },
+              {
+                "bytes": [
+                  32,
+                  116,
+                  104,
+                  101,
+                  114,
+                  101
+                ],
+                "logprob": -3.787621,
+                "token": " there"
+              }
+            ]
+          },
+          {
+            "bytes": [
+              32,
+              72,
+              111,
+              119
+            ],
+            "logprob": -5.4669687e-05,
+            "token": " How",
+            "top_logprobs": [
+              {
+                "bytes": [
+                  32,
+                  72,
+                  111,
+                  119
+                ],
+                "logprob": -5.4669687e-05,
+                "token": " How"
+              },
+              {
+                "bytes": null,
+                "logprob": -10.953937,
+                "token": "<|end|>"
+              }
+            ]
+          },
+          {
+            "bytes": [
+              32,
+              99,
+              97,
+              110
+            ],
+            "logprob": -0.015801601,
+            "token": " can",
+            "top_logprobs": [
+              {
+                "bytes": [
+                  32,
+                  99,
+                  97,
+                  110
+                ],
+                "logprob": -0.015801601,
+                "token": " can"
+              },
+              {
+                "bytes": [
+                  32,
+                  109,
+                  97,
+                  121
+                ],
+                "logprob": -4.161023,
+                "token": " may"
+              }
+            ]
+          },
+          {
+            "bytes": [
+              32,
+              73
+            ],
+            "logprob": -3.7697225e-06,
+            "token": " I",
+            "top_logprobs": [
+              {
+                "bytes": [
+                  32,
+                  73
+                ],
+                "logprob": -3.7697225e-06,
+                "token": " I"
+              },
+              {
+                "bytes": [
+                  32,
+                  97,
+                  115,
+                  115,
+                  105,
+                  115,
+                  116
+                ],
+                "logprob": -13.596657,
+                "token": " assist"
+              }
+            ]
+          },
+          {
+            "bytes": [
+              32,
+              97,
+              115,
+              115,
+              105,
+              115,
+              116
+            ],
+            "logprob": -0.04571125,
+            "token": " assist",
+            "top_logprobs": [
+              {
+                "bytes": [
+                  32,
+                  97,
+                  115,
+                  115,
+                  105,
+                  115,
+                  116
+                ],
+                "logprob": -0.04571125,
+                "token": " assist"
+              },
+              {
+                "bytes": [
+                  32,
+                  104,
+                  101,
+                  108,
+                  112
+                ],
+                "logprob": -3.1089056,
+                "token": " help"
+              }
+            ]
+          },
+          {
+            "bytes": [
+              32,
+              121,
+              111,
+              117
+            ],
+            "logprob": -5.4385737e-06,
+            "token": " you",
+            "top_logprobs": [
+              {
+                "bytes": [
+                  32,
+                  121,
+                  111,
+                  117
+                ],
+                "logprob": -5.4385737e-06,
+                "token": " you"
+              },
+              {
+                "bytes": [
+                  32,
+                  116,
+                  111,
+                  100,
+                  97,
+                  121
+                ],
+                "logprob": -12.807695,
+                "token": " today"
+              }
+            ]
+          },
+          {
+            "bytes": [
+              32,
+              116,
+              111,
+              100,
+              97,
+              121
+            ],
+            "logprob": -0.0040071653,
+            "token": " today",
+            "top_logprobs": [
+              {
+                "bytes": [
+                  32,
+                  116,
+                  111,
+                  100,
+                  97,
+                  121
+                ],
+                "logprob": -0.0040071653,
+                "token": " today"
+              },
+              {
+                "bytes": [
+                  63
+                ],
+                "logprob": -5.5247097,
+                "token": "?"
+              }
+            ]
+          },
+          {
+            "bytes": [
+              63
+            ],
+            "logprob": -0.0008108172,
+            "token": "?",
+            "top_logprobs": [
+              {
+                "bytes": [
+                  63
+                ],
+                "logprob": -0.0008108172,
+                "token": "?"
+              },
+              {
+                "bytes": [
+                  63,
+                  10
+                ],
+                "logprob": -7.184561,
+                "token": "?\n"
+              }
+            ]
+          }
+        ],
+        "refusal": null
+      },
+      "message": {
+        "content": "Hello! How can I assist you today?",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "chatcmpl-123",
+  "model": "gpt-6-sol",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 9,
+    "completion_tokens_details": {
+      "accepted_prediction_tokens": 0,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": 0
+    },
+    "prompt_tokens": 9,
+    "total_tokens": 18
+  }
+}

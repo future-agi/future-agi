@@ -1,0 +1,34 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Have a wonderful day!"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "responseModalities": [
+        "AUDIO"
+      ],
+      "speechConfig": {
+        "voiceConfig": {
+          "prebuiltVoiceConfig": {
+            "voiceName": "Kore"
+          }
+        }
+      }
+    }
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-gcp-location": "global",
+    "x-gcp-project": "test-project"
+  },
+  "method": "POST",
+  "path": "/v1beta1/projects/test-project/locations/global/publishers/google/models/gemini-3.8-flash-tts:generateContent"
+}

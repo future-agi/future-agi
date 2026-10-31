@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Chapter 1 introduces the narrator, a lighthouse keeper on the Breton coast, and",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "bedrock-<generated>",
+  "model": "global.anthropic.claude-sonnet-4-6",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 188,
+    "prompt_tokens": 999812,
+    "total_tokens": 1000000
+  }
+}

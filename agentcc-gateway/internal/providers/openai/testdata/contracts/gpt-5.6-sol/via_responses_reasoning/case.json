@@ -1,0 +1,4 @@
+{
+  "endpoint": "chat_via_responses",
+  "notes": "The spec's \"Reasoning\" example but for the model, plus the reasoning output item a reasoning model returns first (ReasoningItem: id, summary[] of summary_text, encrypted_content, status) and a cached prefix (input_tokens_details.cached_tokens). Recordable with reasoning.summary \"auto\" in the upstream request, which the translator does not send (summaries are opt-in), so a recording returns an empty summary."
+}

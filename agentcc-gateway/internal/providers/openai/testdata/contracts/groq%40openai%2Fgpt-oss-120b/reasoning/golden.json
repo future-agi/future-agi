@@ -1,0 +1,37 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "There are 6 primes between 10 and 30: 11, 13, 17, 19, 23 and 29.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "chatcmpl-2ov6mm6RrYijzkVovdkvfayfUd",
+  "model": "openai/gpt-oss-120b",
+  "object": "chat.completion",
+  "service_tier": "on_demand",
+  "system_fingerprint": "fp_4ab56c60b5",
+  "usage": {
+    "completion_time": 0.317421,
+    "completion_tokens": 112,
+    "completion_tokens_details": {
+      "reasoning_tokens": 71
+    },
+    "prompt_time": 0.004126,
+    "prompt_tokens": 84,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "queue_time": 0.054813,
+    "total_time": 0.321547,
+    "total_tokens": 196
+  },
+  "usage_breakdown": null,
+  "x_groq": {
+    "id": "req_692mt0r43dytnkht6rm5k143c8"
+  }
+}

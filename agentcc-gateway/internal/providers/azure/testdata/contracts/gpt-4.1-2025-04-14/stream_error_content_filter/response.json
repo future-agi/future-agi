@@ -1,0 +1,31 @@
+{
+  "error": {
+    "code": "content_filter",
+    "message": "The response was filtered due to the prompt triggering Azure OpenAI's content management policy. Please modify your prompt and retry. To learn more about our content filtering policies please read our documentation: https://go.microsoft.com/fwlink/?linkid=2198766",
+    "innererror": {
+      "code": "ResponsibleAIPolicyViolation",
+      "content_filter_result": {
+        "hate": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "jailbreak": {
+          "filtered": false,
+          "detected": false
+        },
+        "self_harm": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "sexual": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "violence": {
+          "filtered": true,
+          "severity": "medium"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "endpoint": "genai_embed",
+  "notes": "Native google-genai passthrough on Vertex AI: request.json is the raw body a google-genai client sends to the gateway's /v1beta/models/{model}:{action} route; the gateway resolves the model to a provider configured for Vertex AI and doGenAIRequest / StreamGenerateContent relay it to the publisher-model URL (.../v1beta1/projects/<p>/locations/<l>/publishers/google/models/<model>:<action>), returning the upstream status and body untouched. embedContent is relayed byte for byte; the server bills it by the request's characters (genaifmt.EmbedInputCharacters). The request is what googleapis/go-genai models.go sends Vertex AI for a Gemini embedding model other than gemini-embedding-001 (tIsVertexEmbedContentModel, embeddingApiType EMBED_CONTENT: content plus embedContentConfig.outputDimensionality; aiplatform v1beta1 EmbedContentRequest). The body is the v1beta1 EmbedContentResponse {embedding {values}, usageMetadata, truncated} of this model's embeddings_single, the same input embedded the same way; vector values are invented. Recordable through cmd/contract-recorder's Vertex AI upstream (VERTEX_PROJECT and VERTEX_ACCESS_TOKEN, optional VERTEX_LOCATION); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record it locally.",
+  "sanity_gaps": [
+    {
+      "failure": "embedding usage",
+      "reason": "known gap G23: the native embedContent route bills request characters and ignores the promptTokenCount the response reports, which is what Vertex AI embeddings are priced in"
+    }
+  ]
+}

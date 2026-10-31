@@ -1,0 +1,12 @@
+{
+  "endpoint": "list_models",
+  "status": 429,
+  "recordable": false,
+  "notes": "replicate-go's retry tests' 429 body (see meta.json). Not recordable on demand.",
+  "sanity_gaps": [
+    {
+      "failure": "not a *models.APIError",
+      "reason": "known gap O33: ListModels drops an upstream error: on any status but 200 it returns a plain error (\"list models returned status N\") that is not a models.APIError and reads no body, so the status class, type, code and message are lost and a caller cannot tell a bad key from a rate limit or an outage. ListModels has no production caller today (cmd/contract-recorder's dispatch is the only one), so nothing serves this error to a client yet"
+    }
+  ]
+}

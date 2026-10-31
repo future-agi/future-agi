@@ -1,0 +1,30 @@
+{
+  "id": "msg_01XFUDYJgAACzvnptvVoYEL",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-opus-5-5",
+  "content": [],
+  "stop_reason": "refusal",
+  "stop_sequence": null,
+  "stop_details": {
+    "type": "refusal",
+    "category": "cyber",
+    "explanation": "This request was declined because it could enable cyber harm."
+  },
+  "usage": {
+    "input_tokens": 412,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 0
+    },
+    "output_tokens": 0,
+    "output_tokens_details": {
+      "thinking_tokens": 0
+    },
+    "service_tier": "standard",
+    "speed": "standard",
+    "inference_geo": "global"
+  }
+}

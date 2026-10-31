@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 400,
+    "message": "thinking_budget is not supported by this model. Use thinking_level instead.",
+    "status": "INVALID_ARGUMENT"
+  }
+}

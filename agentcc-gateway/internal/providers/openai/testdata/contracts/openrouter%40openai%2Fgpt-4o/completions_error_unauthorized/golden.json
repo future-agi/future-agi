@@ -1,0 +1,6 @@
+{
+  "code": "provider_401",
+  "message": "provider error (HTTP 401): {\n  \"error\": {\n    \"code\": 401,\n    \"message\": \"Missing Authentication header\"\n  }\n}\n",
+  "status": 502,
+  "type": "upstream_error"
+}

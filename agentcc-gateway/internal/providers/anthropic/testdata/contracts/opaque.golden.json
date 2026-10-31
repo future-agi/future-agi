@@ -1,0 +1,20 @@
+[
+  "$.content[].content",
+  "content_block_delta:$.delta [type=citations_delta]",
+  "content_block_delta:$.delta [type=signature_delta]",
+  "content_block_delta:$.delta [type=thinking_delta]",
+  "content_block_start:$.content_block [type=server_tool_use]",
+  "content_block_start:$.content_block [type=thinking]",
+  "content_block_start:$.content_block [type=web_search_tool_result]",
+  "count_tokens:$",
+  "models:$",
+  "native/content_block_delta:$",
+  "native/content_block_start:$",
+  "native/content_block_stop:$",
+  "native/error:$",
+  "native/message_delta:$",
+  "native/message_start:$",
+  "native/message_stop:$",
+  "native/ping:$",
+  "native:$"
+]

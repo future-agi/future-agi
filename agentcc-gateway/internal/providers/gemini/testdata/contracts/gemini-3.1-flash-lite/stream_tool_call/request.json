@@ -1,0 +1,38 @@
+{
+  "model": "gemini-3.1-flash-lite",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What's the weather like in Tokyo?"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the current weather in a given location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The city and country, e.g. Paris, France"
+            },
+            "unit": {
+              "type": "string",
+              "enum": [
+                "celsius",
+                "fahrenheit"
+              ]
+            }
+          },
+          "required": [
+            "location"
+          ]
+        }
+      }
+    }
+  ],
+  "stream": true
+}

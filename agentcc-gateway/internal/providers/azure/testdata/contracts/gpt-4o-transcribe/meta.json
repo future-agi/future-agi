@@ -1,0 +1,9 @@
+{
+  "provider": "azure",
+  "model": "gpt-4o-transcribe",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored from github.com/Azure/azure-rest-api-specs at 7b9f1ff0714627e3680552703174ffe11538d5c5, specification/cognitiveservices/data-plane/OpenAIInference/preview/2025-04-01-preview/inference.json (audio/transcriptions: audioResponse) and its example audio_transcription_object.json, whose body is kept; the test calls 2025-04-01-preview, the gpt-4o-transcribe deployments' api-version. The preview spec documents no usage object on this response. learn.microsoft.com was not reachable from the authoring session.",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

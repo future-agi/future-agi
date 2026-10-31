@@ -1,0 +1,27 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "toolUse": {
+            "toolUseId": "tooluse_3oC8mGv7SV2cXn6Fw0aY1Q",
+            "name": "get_weather",
+            "input": {
+              "location": "San Francisco, CA"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "stopReason": "tool_use",
+  "usage": {
+    "inputTokens": 431,
+    "outputTokens": 41,
+    "totalTokens": 472
+  },
+  "metrics": {
+    "latencyMs": 702
+  }
+}

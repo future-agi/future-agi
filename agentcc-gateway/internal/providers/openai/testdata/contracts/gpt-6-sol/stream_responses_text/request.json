@@ -1,0 +1,6 @@
+{
+  "model": "gpt-6-sol",
+  "instructions": "You are a helpful assistant.",
+  "input": "Hello!",
+  "stream": true
+}

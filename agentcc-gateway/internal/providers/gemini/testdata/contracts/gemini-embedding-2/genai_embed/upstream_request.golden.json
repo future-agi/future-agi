@@ -1,0 +1,20 @@
+{
+  "body": {
+    "content": {
+      "parts": [
+        {
+          "text": "The jetpack is cool"
+        }
+      ]
+    },
+    "embedContentConfig": {
+      "outputDimensionality": 128
+    }
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-embedding-2:embedContent"
+}

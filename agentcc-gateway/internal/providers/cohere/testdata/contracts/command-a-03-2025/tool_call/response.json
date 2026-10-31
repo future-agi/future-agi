@@ -1,0 +1,29 @@
+{
+  "id": "5a3c9d8e-7f21-4b6a-9e0d-2c4f8a1b3e57",
+  "message": {
+    "role": "assistant",
+    "tool_plan": "I will look up the current weather in San Francisco.",
+    "tool_calls": [
+      {
+        "id": "get_weather_1byjy32y4hvq",
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "arguments": "{\"location\":\"San Francisco, CA\",\"unit\":\"fahrenheit\"}"
+        }
+      }
+    ]
+  },
+  "finish_reason": "TOOL_CALL",
+  "usage": {
+    "billed_units": {
+      "input_tokens": 37,
+      "output_tokens": 28
+    },
+    "tokens": {
+      "input_tokens": 913,
+      "output_tokens": 83
+    },
+    "cached_tokens": 0
+  }
+}

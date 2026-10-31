@@ -1168,7 +1168,7 @@ func TestTranslateResponse_TextResponse(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp)
+	result := translateResponse(resp, nil)
 
 	if result.ID != "msg_01XFDUDYJgAACzvnptvVoYEL" {
 		t.Errorf("ID = %q, want %q", result.ID, "msg_01XFDUDYJgAACzvnptvVoYEL")
@@ -1224,7 +1224,7 @@ func TestTranslateResponse_ToolUse(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp)
+	result := translateResponse(resp, nil)
 
 	if result.Choices[0].FinishReason != "tool_calls" {
 		t.Errorf("finish_reason = %q, want %q", result.Choices[0].FinishReason, "tool_calls")
@@ -1275,7 +1275,7 @@ func TestTranslateResponse_UsageMapping(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp)
+	result := translateResponse(resp, nil)
 
 	if result.Usage == nil {
 		t.Fatal("usage should not be nil")
@@ -1326,7 +1326,7 @@ func TestTranslateResponse_EmptyContent(t *testing.T) {
 		Usage:      bedrockUsage{InputTokens: 5, OutputTokens: 0},
 	}
 
-	result := translateResponse(resp)
+	result := translateResponse(resp, nil)
 
 	if len(result.Choices) != 1 {
 		t.Fatalf("expected 1 choice, got %d", len(result.Choices))

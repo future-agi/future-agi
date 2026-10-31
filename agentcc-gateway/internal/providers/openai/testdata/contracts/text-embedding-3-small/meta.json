@@ -1,0 +1,9 @@
+{
+  "provider": "openai",
+  "model": "text-embedding-3-small",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28), POST /embeddings: CreateEmbeddingResponse / Embedding and the operation's example (float, dimensions 3) verbatim. embeddings_base64 is the same vector as encoding_format \"base64\" (Embedding.embedding: \"a list of floats or a base64 string\"; the bytes are the little-endian float32s).",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

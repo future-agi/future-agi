@@ -1,0 +1,27 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Prove that there are infinitely many primes congruent to 3 mod 4."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "maxOutputTokens": 4096,
+      "thinkingConfig": {
+        "includeThoughts": true,
+        "thinkingLevel": "high"
+      }
+    }
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-4-argon:generateContent"
+}

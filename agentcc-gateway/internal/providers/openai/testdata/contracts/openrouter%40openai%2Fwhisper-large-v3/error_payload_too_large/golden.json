@@ -1,0 +1,6 @@
+{
+  "code": "provider_413",
+  "message": "provider error (HTTP 413): {\n  \"error\": {\n    \"code\": 413,\n    \"message\": \"Request payload too large\"\n  }\n}\n",
+  "status": 502,
+  "type": "upstream_error"
+}

@@ -1,0 +1,19 @@
+{
+  "body": {
+    "max_tokens": 64,
+    "messages": [
+      {
+        "content": "Say hello.",
+        "role": "user"
+      }
+    ],
+    "model": "command-a-03-2025",
+    "temperature": 1.5
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v2/chat"
+}

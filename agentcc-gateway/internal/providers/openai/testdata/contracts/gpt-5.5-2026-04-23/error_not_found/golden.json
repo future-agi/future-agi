@@ -1,0 +1,6 @@
+{
+  "code": "",
+  "message": "The model `gpt-5.5-2026-04-23` does not exist or you do not have access to it.",
+  "status": 404,
+  "type": "invalid_request_error"
+}

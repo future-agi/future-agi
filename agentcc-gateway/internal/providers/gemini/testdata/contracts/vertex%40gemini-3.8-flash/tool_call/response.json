@@ -1,0 +1,43 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "location": "Paris, France"
+              }
+            },
+            "thoughtSignature": "hvxWxVJ+Qtd/qF3O7JXBrZD72PbXi2CztFQ3JrPNUaPleltBf54iyl8/9mJdtnUXOi4Ca3wZPXoNpUkUUeBlq5D75Q/GZ2Bp1MjM/m8DZQ/QVjg36YkGgDSMwaiW5Jfw"
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 58,
+    "candidatesTokenCount": 17,
+    "thoughtsTokenCount": 66,
+    "totalTokenCount": 141,
+    "trafficType": "ON_DEMAND",
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 58
+      }
+    ],
+    "candidatesTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 17
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.8-flash",
+  "createTime": "2026-10-28T09:14:03.218734Z",
+  "responseId": "sU5Yb9gLZysY9_rgxZSUIgk"
+}

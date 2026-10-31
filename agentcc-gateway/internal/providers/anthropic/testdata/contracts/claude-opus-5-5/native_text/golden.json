@@ -1,0 +1,9 @@
+{
+  "billing": {
+    "input_tokens": 2048,
+    "model": "claude-opus-5-5",
+    "output_tokens": 503
+  },
+  "body": "unchanged",
+  "status": 200
+}

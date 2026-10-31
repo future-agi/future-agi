@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "There is no single best one, but Comté, Roquefort and Brie de Meaux are often named.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "cmpl-e5cc70bb28c444948073e77776eb30ef",
+  "model": "mistral-large-latest",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 34,
+    "prompt_tokens": 16,
+    "total_tokens": 50
+  }
+}

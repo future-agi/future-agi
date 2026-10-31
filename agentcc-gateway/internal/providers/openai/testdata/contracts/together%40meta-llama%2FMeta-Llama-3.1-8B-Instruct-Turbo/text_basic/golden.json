@@ -1,0 +1,22 @@
+{
+  "choices": [
+    {
+      "finish_reason": "eos",
+      "index": 0,
+      "message": {
+        "content": "This is a test!",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "8f2c3a1b7d9e4f05-SJC",
+  "model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+  "object": "chat.completion",
+  "prompt": [],
+  "usage": {
+    "completion_tokens": 6,
+    "prompt_tokens": 14,
+    "total_tokens": 20
+  }
+}

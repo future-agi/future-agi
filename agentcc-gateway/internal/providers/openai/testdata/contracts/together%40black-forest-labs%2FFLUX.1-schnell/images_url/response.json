@@ -1,0 +1,12 @@
+{
+  "id": "91f2a3b4c5d6e7f8-SJC",
+  "model": "black-forest-labs/FLUX.1-schnell",
+  "object": "list",
+  "data": [
+    {
+      "index": 0,
+      "url": "https://example.com/together/cat-floating-in-space.jpeg",
+      "type": "url"
+    }
+  ]
+}

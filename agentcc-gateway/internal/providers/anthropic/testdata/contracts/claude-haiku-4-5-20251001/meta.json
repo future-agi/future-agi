@@ -1,0 +1,58 @@
+{
+  "provider": "anthropic",
+  "model": "claude-haiku-4-5-20251001",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand from the official Anthropic docs (platform.claude.com/docs/en/api/messages, build-with-claude/streaming, build-with-claude/thinking, build-with-claude/extended-thinking, agents-and-tools/tool-use/web-search-tool, build-with-claude/handling-stop-reasons, build-with-claude/refusals-and-fallback, build-with-claude/citations), read 2026-10-28. Field names, event types and stop reasons are the documented ones; ids, signatures, token counts and text are invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs. No thinking requested: pins the plain text, tool_use and stop_sequence shapes and the 2025-era usage block (cache_creation breakdown, service_tier). Streams use the minimal message_delta usage form ({output_tokens}) from the basic streaming example. Error cases (case.json): stream_error_overloaded (529) and error_rate_limit (429, with retry-after and anthropic-ratelimit-* headers) are not recordable; error_invalid_request (400, max_tokens above the model's limit) is. Error cases added from platform.claude.com/docs/en/api/errors and docs/en/api/rate-limits (read 2026-10-28): every documented status (401, 402, 403, 404, 409, 413, 429 spend cap, 500, 504), Cloudflare's own 413 and 502 pages (response.txt), and a mid-stream overloaded_error event (stream_error_midstream); only error_not_found (upstream_patch.json asks for a model that does not exist) and error_invalid_request are recordable.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.stop_sequence",
+      "reason": "no canonical field: OpenAI has no slot for which stop sequence matched; finish_reason \"stop\" carries the outcome"
+    },
+    {
+      "path": "$.usage.cache_creation",
+      "reason": "known gap U2: the per-TTL cache-write breakdown (5m / 1h), needed to price 1h cache writes, is dropped"
+    },
+    {
+      "path": "$.usage.cache_creation_input_tokens",
+      "reason": "known gap U1: prompt-cache write tokens are not added to prompt_tokens (Anthropic's input_tokens excludes them), so usage and cost under-count cached requests. Usually 0 on the canonical path today, which rebuilds content blocks without cache_control"
+    },
+    {
+      "path": "$.usage.cache_read_input_tokens",
+      "reason": "known gap U1: prompt-cache read tokens are dropped instead of counted in prompt_tokens and prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "path": "$.usage.service_tier",
+      "reason": "known gap U3: the tier that served the request (standard / priority / batch) is dropped; ChatCompletionResponse.service_tier exists but the adapter never sets it"
+    },
+    {
+      "path": "error:$.error.details",
+      "reason": "known gap X5: error.details (the machine-readable error_code, such as enforced_spend_limit_reached, and appeal_url) is dropped; a spend-cap 429, which keeps failing until next month, reaches the router and the client as an ordinary rate limit, so it is retried and failed over"
+    },
+    {
+      "path": "error:$.request_id",
+      "reason": "known gap X2: the request_id of an error body is dropped (anthropicErrorResponse has no field for it, and the request-id header is not read either), so a failed request cannot be traced back to Anthropic in logs or a support ticket"
+    },
+    {
+      "path": "message_delta:$.delta.stop_sequence",
+      "reason": "no canonical field: OpenAI has no slot for which stop sequence matched; finish_reason \"stop\" carries the outcome"
+    },
+    {
+      "path": "message_start:$.message.usage.cache_creation",
+      "reason": "known gap U2: the per-TTL cache-write breakdown (5m / 1h), needed to price 1h cache writes, is dropped"
+    },
+    {
+      "path": "message_start:$.message.usage.cache_creation_input_tokens",
+      "reason": "known gap U1: prompt-cache write tokens are not added to prompt_tokens (Anthropic's input_tokens excludes them), so usage and cost under-count cached requests. Usually 0 on the canonical path today, which rebuilds content blocks without cache_control"
+    },
+    {
+      "path": "message_start:$.message.usage.cache_read_input_tokens",
+      "reason": "known gap U1: prompt-cache read tokens are dropped instead of counted in prompt_tokens and prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "path": "message_start:$.message.usage.service_tier",
+      "reason": "known gap U3: the tier that served the request (standard / priority / batch) is dropped; ChatCompletionResponse.service_tier exists but the adapter never sets it"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

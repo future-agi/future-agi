@@ -1,0 +1,13 @@
+{
+  "body": {
+    "encoding_format": "float",
+    "input": "The quick brown fox jumped over the lazy dog",
+    "model": "nomic-embed-text-v1_5"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/embeddings"
+}

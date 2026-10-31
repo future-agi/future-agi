@@ -1,0 +1,6 @@
+{
+  "code": "provider_OUT_OF_RANGE",
+  "message": "Request contains an argument outside its valid range.",
+  "status": 502,
+  "type": "upstream_error"
+}

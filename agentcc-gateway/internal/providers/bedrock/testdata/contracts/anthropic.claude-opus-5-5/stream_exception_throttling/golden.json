@@ -1,0 +1,17 @@
+{
+  "canonical_error": {
+    "code": "provider_0",
+    "message": "bedrock exception: {\"message\":\"Too many tokens, please wait before trying again.\"}",
+    "status": 502,
+    "type": "upstream_error"
+  },
+  "stream": {
+    "assembled": {
+      "content": "",
+      "finish_reason": "",
+      "usage": null
+    },
+    "chunks": [],
+    "error": "provider_0: bedrock exception: {\"message\":\"Too many tokens, please wait before trying again.\"}"
+  }
+}

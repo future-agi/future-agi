@@ -1,0 +1,41 @@
+{
+  "assembled": {
+    "content": "Hello",
+    "finish_reason": "",
+    "role": "assistant",
+    "usage": null
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Kp4hQ2rLmV8sTn3cWbXy6J",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Hello"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01Kp4hQ2rLmV8sTn3cWbXy6J",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    }
+  ],
+  "error": "provider_overloaded_error: Overloaded"
+}

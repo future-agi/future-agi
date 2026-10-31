@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "provider": "cohere",
+  "root": "errors",
+  "format": "openapi",
+  "select": "POST /v2/chat -> 400,401,403,404,422,429,498,499,500,501,503,504 application/json",
+  "description": "error bodies of /v2/chat, decoded by the adapter's error parser",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.id": {"kinds":["string"]},
+    "$.message": {"kinds":["string"]}
+  }
+}

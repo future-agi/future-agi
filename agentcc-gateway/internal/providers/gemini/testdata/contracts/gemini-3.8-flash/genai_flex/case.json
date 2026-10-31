@@ -1,0 +1,11 @@
+{
+  "endpoint": "genai_generate",
+  "recordable": false,
+  "notes": "Native google-genai passthrough: request.json is the raw generateContent body a google-genai client sends to the gateway's /v1beta/models/{model}:{action} route; the adapter relays the upstream body untouched and the server bills from it with genaifmt.ExtractUsageMetadata / StreamUsageScanner (server/handlers_genai.go applyGenAIUsage). The flex service tier, requested with GenerateContentRequest.serviceTier and echoed in UsageMetadata.serviceTier (v1beta discovery; enum unspecified/standard/flex/priority). Not recordable until the drift job's key has access to the flex tier.",
+  "sanity_gaps": [
+    {
+      "failure": "serviceTier",
+      "reason": "known gap G25: the service tier is not read, so a flex (discounted) or priority (premium) request is priced at the standard rate"
+    }
+  ]
+}

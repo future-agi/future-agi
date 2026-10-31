@@ -1,0 +1,9 @@
+{
+  "provider": "openai",
+  "model": "xai@grok-4.6",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: the /v1/responses passthrough's stream, from the official SDK's stream test (github.com/xai-org/xai-sdk-ts at 51bfc686c74310226d601e6037fa6c2e562244f7, test/stream.test.ts \"yields SSE events, then done() resolves right away with the final response\"), verbatim: its request (test/helpers.ts createBody: model grok-4.6, input \"Say hello\", plus stream), its six events with completedResponse and usageFixture (test/helpers.ts: a reasoning item and a message, and usage with num_sources_used, num_server_side_tools_used, cost_in_nano_usd and cost_in_usd_ticks), framed as the test's sseResponse frames them: data lines alone, then data: [DONE] (src/sse.ts ends the stream there). The spec has no stream event schema; the event types are src/types.ts ResponseStreamEvent's. Its usage counts reasoning in total_tokens and not in output_tokens (32 + 9 + 110 reasoning = 151), gap XA1, which the server prices from (internal/server).",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

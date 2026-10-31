@@ -1,0 +1,9 @@
+{
+  "provider": "openai",
+  "model": "together@openai/whisper-large-v3",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from Together's OpenAPI spec as embedded in its official SDK, github.com/togethercomputer/together-py scripts/mock at 3428f80887121c5715f670f3cffa71b2ed482c12 (2026-10-28; pinned as contractspec/subsets/together): POST /v1/audio/transcriptions and POST /v1/audio/translations with openai/whisper-large-v3, the one model their requests' enums list, as multipart uploads; the answers are AudioTranscriptionJsonResponse and AudioTranslationJsonResponse ({text}), with no example, so each text is what the suite's upload says. The adapter lifts text and passes the body through. Error cases: the operation's 4xx answers are ErrorData ({error: {message, type, param, code}}), whose type and code are free strings; their values are the ones the same spec documents for Together's errors: the error categories of the queue endpoints' QueueError (\"invalid_request_error\", \"not_found_error\") and the error codes of its realtime endpoints (invalid_api_key \"Invalid API key provided (401)\", model_not_available \"Invalid or unavailable model (400)\"), each message being its code's documented description. docs.together.ai was not reachable from the authoring sandbox.",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

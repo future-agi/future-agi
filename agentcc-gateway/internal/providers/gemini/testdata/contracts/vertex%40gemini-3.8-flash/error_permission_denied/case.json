@@ -1,0 +1,5 @@
+{
+  "recordable": false,
+  "notes": "403 PERMISSION_DENIED with ErrorInfo IAM_PERMISSION_DENIED (google/api/error_reason.proto, whose example is an aiplatform permission): the service account lacks aiplatform.endpoints.predict. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28). Not recordable: no request the recorder sends, with working credentials, induces it.",
+  "status": 403
+}

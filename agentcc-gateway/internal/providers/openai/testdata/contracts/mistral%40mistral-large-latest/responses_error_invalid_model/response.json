@@ -1,0 +1,7 @@
+{
+  "object": "error",
+  "message": "Invalid model: nonexistent-model",
+  "type": "invalid_model",
+  "param": null,
+  "code": "1500"
+}

@@ -1,0 +1,6 @@
+{
+  "model": "canopylabs/orpheus-3b-0.1-ft",
+  "input": "Today is a wonderful day to build something people love!",
+  "voice": "tara",
+  "response_format": "mp3"
+}

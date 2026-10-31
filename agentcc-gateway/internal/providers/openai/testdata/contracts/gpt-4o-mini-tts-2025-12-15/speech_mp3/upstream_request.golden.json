@@ -1,0 +1,14 @@
+{
+  "body": {
+    "input": "The quick brown fox jumped over the lazy dog.",
+    "model": "gpt-4o-mini-tts-2025-12-15",
+    "response_format": "mp3",
+    "voice": "alloy"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/audio/speech"
+}

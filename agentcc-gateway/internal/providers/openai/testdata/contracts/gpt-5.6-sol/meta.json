@@ -1,0 +1,140 @@
+{
+  "provider": "openai",
+  "model": "gpt-5.6-sol",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored from the OpenAI OpenAPI spec as published in github.com/openai/openai-python api_reference/openapi.transformed.yml and the types generated from it (src/openai/types/chat/chat_completion.py, chat_completion_chunk.py, completion_usage.py, shared/chat_model.py), commit 35fc9f3 of 2026-10-28; SSE framing and per-chunk field order follow the live-recorded stream snapshots in that repo (.inline-snapshot/external/*.bin, recorded from api.openai.com). platform.openai.com and developers.openai.com were not reachable from the authoring sandbox. GPT-5.6 is documented there as gpt-5.6-sol / -terra / -luna (ChatModel; no dated snapshot is listed, so the alias is the model ID). Pins what the spec documents as gpt-5.6-and-later: prompt_cache_options (PromptCacheOptionsParam: \"Supported for gpt-5.6 and later models\") and the cache_write_tokens counter it reports in usage.prompt_tokens_details, plus fast mode (service_tier \"fast\" in the request, \"priority\" in the response, per ServiceTier) and reasoning_effort \"xhigh\". custom_tool_call pins a GPT-5-family custom tool (ChatCompletionCustomToolParam in the request, ChatCompletionMessageCustomToolCall in the response, with custom.name and custom.input instead of function). Otherwise the Chat Completions response shape is the same as gpt-5.5's. stream_text also pins a request-side loss. Known gap O5: request side: the client's stream_options.include_obfuscation false is dropped (models.StreamOptions only has include_usage), so the upstream keeps sending obfuscation padding. Cases with endpoint chat_via_responses (case.json) drive ChatCompletionViaResponses / StreamChatCompletionViaResponses (responses_chat.go): the gateway translates the chat request to the Responses API and the Response back to a chat completion, which is how a gpt-5.6 request with tools and reasoning is served. Their responses are the /responses examples of the spec named above (via_responses_text, _tool_call and stream_via_responses_text are verbatim but for the model), plus the reasoning item and reasoning summary events of ReasoningItem / ResponseStreamEvent, an incomplete response, and failed / error streams.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.access_programs",
+      "reason": "no canonical field: the organization's access programs (null unless enrolled), nothing a chat completion carries"
+    },
+    {
+      "path": "$.choices[].message.refusal",
+      "reason": "known gap O1: message.refusal is dropped (models.Message has no refusal field). A structured-outputs refusal arrives as content null plus a refusal string, so the client receives content null, no refusal and finish_reason \"stop\": an empty answer it cannot tell from a refusal. null in every case without a refusal"
+    },
+    {
+      "path": "$.choices[].message.tool_calls[].custom",
+      "reason": "known gap O4: a custom tool call's payload (custom.name and custom.input) is dropped: models.ToolCall only has function, so the client receives a tool call of type \"custom\" with an empty name and empty arguments and cannot act on it. The request side forwards custom tools (models.Tool keeps their raw bytes), so this hits every client that uses them"
+    },
+    {
+      "path": "$.completed_at",
+      "reason": "no canonical field: when the response finished; a chat completion has only created"
+    },
+    {
+      "path": "$.output[].content[].annotations",
+      "reason": "known gap O13: output_text annotations (url_citation, file_citation) are dropped; models.Message.annotations exists but the translator never fills it, so web-search citations vanish. Empty in these cases"
+    },
+    {
+      "path": "$.output[].content[].logprobs",
+      "reason": "known gap O14: output_text logprobs are dropped, so a chat request with logprobs served on the Responses API returns none. Empty unless requested"
+    },
+    {
+      "path": "$.output[].encrypted_content",
+      "reason": "known gap O10: the Responses translator drops reasoning output items (responsesOutputItem has no summary or encrypted_content, and toChat skips the item), so a chat client of a gpt-5.6 tool route gets no reasoning summary (Message.reasoning_content stays empty) and cannot pass encrypted reasoning back on the next turn"
+    },
+    {
+      "path": "$.output[].summary",
+      "reason": "known gap O10: the Responses translator drops reasoning output items (responsesOutputItem has no summary or encrypted_content, and toChat skips the item), so a chat client of a gpt-5.6 tool route gets no reasoning summary (Message.reasoning_content stays empty) and cannot pass encrypted reasoning back on the next turn"
+    },
+    {
+      "path": "$.usage.input_tokens_details.cache_write_tokens",
+      "reason": "known gap O11: input_tokens_details.cache_write_tokens is dropped (responsesUsage reads cached_tokens only), so prompt-cache writes, which gpt-5.6 and later bill separately, never reach prompt_tokens_details and cannot be priced"
+    },
+    {
+      "path": "chunk:$.choices[].delta.refusal",
+      "reason": "known gap O2: delta.refusal is dropped (models.Delta has no refusal field), so a streamed refusal reaches the client as empty deltas. null on the first chunk of an ordinary stream"
+    },
+    {
+      "path": "chunk:$.choices[].logprobs",
+      "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client; the non-stream path keeps them. null unless logprobs were requested"
+    },
+    {
+      "path": "error:$.param",
+      "reason": "known gap O30: a failed Responses stream keeps only the message: the error event's param (and code, and a response.failed error's type) is dropped and the stream ends with a generic 502. Null here"
+    },
+    {
+      "path": "response.completed:$.response.access_programs",
+      "reason": "no canonical field: the organization's access programs (null unless enrolled), nothing a chat completion carries"
+    },
+    {
+      "path": "response.completed:$.response.completed_at",
+      "reason": "no canonical field: when the response finished; a chat completion has only created"
+    },
+    {
+      "path": "response.completed:$.response.output[].content[].annotations",
+      "reason": "known gap O13: output_text annotations (url_citation, file_citation) are dropped; models.Message.annotations exists but the translator never fills it, so web-search citations vanish. Empty in these cases"
+    },
+    {
+      "path": "response.completed:$.response.output[].content[].logprobs",
+      "reason": "known gap O14: output_text logprobs are dropped, so a chat request with logprobs served on the Responses API returns none. Empty unless requested"
+    },
+    {
+      "path": "response.completed:$.response.output[].encrypted_content",
+      "reason": "known gap O10: the Responses translator drops reasoning output items (responsesOutputItem has no summary or encrypted_content, and toChat skips the item), so a chat client of a gpt-5.6 tool route gets no reasoning summary (Message.reasoning_content stays empty) and cannot pass encrypted reasoning back on the next turn"
+    },
+    {
+      "path": "response.completed:$.response.output[].summary",
+      "reason": "known gap O10: the Responses translator drops reasoning output items (responsesOutputItem has no summary or encrypted_content, and toChat skips the item), so a chat client of a gpt-5.6 tool route gets no reasoning summary (Message.reasoning_content stays empty) and cannot pass encrypted reasoning back on the next turn"
+    },
+    {
+      "path": "response.completed:$.response.usage.input_tokens_details.cache_write_tokens",
+      "reason": "known gap O11: input_tokens_details.cache_write_tokens is dropped (responsesUsage reads cached_tokens only), so prompt-cache writes, which gpt-5.6 and later bill separately, never reach prompt_tokens_details and cannot be priced"
+    },
+    {
+      "path": "response.created:$.response.access_programs",
+      "reason": "no canonical field: the organization's access programs (null unless enrolled), nothing a chat completion carries"
+    },
+    {
+      "path": "response.created:$.response.completed_at",
+      "reason": "no canonical field: when the response finished; a chat completion has only created"
+    },
+    {
+      "path": "response.failed:$.response.access_programs",
+      "reason": "no canonical field: the organization's access programs (null unless enrolled), nothing a chat completion carries"
+    },
+    {
+      "path": "response.failed:$.response.completed_at",
+      "reason": "no canonical field: when the response finished; a chat completion has only created"
+    },
+    {
+      "path": "response.output_item.added:$.item.encrypted_content",
+      "reason": "known gap O10: the Responses translator drops reasoning output items (responsesOutputItem has no summary or encrypted_content, and toChat skips the item), so a chat client of a gpt-5.6 tool route gets no reasoning summary (Message.reasoning_content stays empty) and cannot pass encrypted reasoning back on the next turn"
+    },
+    {
+      "path": "response.output_item.added:$.item.summary",
+      "reason": "known gap O10: the Responses translator drops reasoning output items (responsesOutputItem has no summary or encrypted_content, and toChat skips the item), so a chat client of a gpt-5.6 tool route gets no reasoning summary (Message.reasoning_content stays empty) and cannot pass encrypted reasoning back on the next turn"
+    },
+    {
+      "path": "response.output_text.delta:$.logprobs",
+      "reason": "known gap O14: output_text logprobs are dropped, so a chat request with logprobs served on the Responses API returns none. Empty unless requested"
+    }
+  ],
+  "allowed_unknown_shapes": [
+    {
+      "kind": "unknown_block",
+      "value": "reasoning",
+      "reason": "known gap O10: the Responses translator drops reasoning output items (responsesOutputItem has no summary or encrypted_content, and toChat skips the item), so a chat client of a gpt-5.6 tool route gets no reasoning summary (Message.reasoning_content stays empty) and cannot pass encrypted reasoning back on the next turn"
+    },
+    {
+      "kind": "unknown_event",
+      "value": "response.reasoning_summary_part.added",
+      "reason": "known gap O10: the Responses translator drops reasoning output items (responsesOutputItem has no summary or encrypted_content, and toChat skips the item), so a chat client of a gpt-5.6 tool route gets no reasoning summary (Message.reasoning_content stays empty) and cannot pass encrypted reasoning back on the next turn"
+    },
+    {
+      "kind": "unknown_event",
+      "value": "response.reasoning_summary_part.done",
+      "reason": "known gap O10: the Responses translator drops reasoning output items (responsesOutputItem has no summary or encrypted_content, and toChat skips the item), so a chat client of a gpt-5.6 tool route gets no reasoning summary (Message.reasoning_content stays empty) and cannot pass encrypted reasoning back on the next turn"
+    },
+    {
+      "kind": "unknown_event",
+      "value": "response.reasoning_summary_text.delta",
+      "reason": "known gap O10: the Responses translator drops reasoning output items (responsesOutputItem has no summary or encrypted_content, and toChat skips the item), so a chat client of a gpt-5.6 tool route gets no reasoning summary (Message.reasoning_content stays empty) and cannot pass encrypted reasoning back on the next turn"
+    },
+    {
+      "kind": "unknown_event",
+      "value": "response.reasoning_summary_text.done",
+      "reason": "known gap O10: the Responses translator drops reasoning output items (responsesOutputItem has no summary or encrypted_content, and toChat skips the item), so a chat client of a gpt-5.6 tool route gets no reasoning summary (Message.reasoning_content stays empty) and cannot pass encrypted reasoning back on the next turn"
+    }
+  ]
+}

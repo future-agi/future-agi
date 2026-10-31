@@ -1,0 +1,48 @@
+{
+  "body": {
+    "max_tokens": 512,
+    "messages": [
+      {
+        "content": "What's the weather like in San Francisco right now?",
+        "role": "user"
+      }
+    ],
+    "model": "command-a-03-2025",
+    "stream": true,
+    "tools": [
+      {
+        "function": {
+          "description": "Get the current weather in a given location",
+          "name": "get_weather",
+          "parameters": {
+            "properties": {
+              "location": {
+                "description": "The city and state, e.g. San Francisco, CA",
+                "type": "string"
+              },
+              "unit": {
+                "enum": [
+                  "celsius",
+                  "fahrenheit"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "location"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v2/chat"
+}

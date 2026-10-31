@@ -1,0 +1,11 @@
+{
+  "endpoint": "list_models",
+  "recordable": false,
+  "notes": "Synthetic, from cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28) (GET /v1/models: ListModelsResponse {models, next_page_token}, GetModelResponse and CompatibleEndpoint); the reference has no response example, so the models are the current ones docs/models lists (fern/pages/models/models.mdx), and the context lengths, features and tokenizer URLs are illustrative. Pins that ListModels never calls GET /v1/models (gap K10). Not recordable while ListModels sends nothing upstream (gap K10): the recorder fails a case whose adapter makes no request. Make it recordable when ListModels calls GET /v1/models.",
+  "sanity_gaps": [
+    {
+      "failure": "ListModels returned 0 models",
+      "reason": "known gap K10: ListModels returns nil without calling GET /v1/models, so the gateway cannot list or validate the models a key can use"
+    }
+  ]
+}

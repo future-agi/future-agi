@@ -1,0 +1,13 @@
+{
+  "body": {
+    "max_tokens": 32,
+    "model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    "prompt": "<s>[INST] What is the capital of France? [/INST]"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/completions"
+}

@@ -1,0 +1,125 @@
+{
+  "provider": "together",
+  "note": "The together preset's spec (contractspec/subsets/together) against what the openai adapter decodes; see spec_allowlist.json for the official API. Its contract fixtures are the together@<model> directories under testdata/contracts.",
+  "unmapped": [
+    {
+      "subset": "together/chat",
+      "path": "$.choices[].message.reasoning",
+      "reason": "known gap TG1: Together's reasoning (message.reasoning, which its reasoning models fill) is dropped; models.Message has reasoning_content, which Together also documents, but nothing maps reasoning to it"
+    },
+    {
+      "subset": "together/chat",
+      "path": "$.choices[].message.tool_calls[].index",
+      "reason": "no canonical field: the call's position, which its place in tool_calls already gives"
+    },
+    {
+      "subset": "together/chat",
+      "path": "$.choices[].seed",
+      "reason": "no canonical field: the sampling seed used, echoed per choice"
+    },
+    {
+      "subset": "together/chat",
+      "path": "$.choices[].text",
+      "reason": "no canonical field: a completions-style text Together's ChatCompletionChoicesData also allows; chat responses carry the text in message.content"
+    },
+    {
+      "subset": "together/chat",
+      "path": "$.choices[].top_logprobs",
+      "reason": "known gap TG3: Together reports top_logprobs beside the choice (not inside logprobs as OpenAI does), and models.Choice has no slot for it, so requested top logprobs are dropped"
+    },
+    {
+      "subset": "together/chat_stream",
+      "path": "chunk:$.choices[].delta.reasoning",
+      "reason": "known gap TG2: streamed reasoning (delta.reasoning) is dropped, as TG1"
+    },
+    {
+      "subset": "together/chat_stream",
+      "path": "chunk:$.choices[].delta.token_id",
+      "reason": "no canonical field: the sampled token's id"
+    },
+    {
+      "subset": "together/chat_stream",
+      "path": "chunk:$.choices[].logprobs",
+      "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client"
+    },
+    {
+      "subset": "together/chat_stream",
+      "path": "chunk:$.choices[].seed",
+      "reason": "no canonical field: the sampling seed used, echoed per choice"
+    },
+    {
+      "subset": "together/chat_stream",
+      "path": "chunk:$.choices[].top_logprobs",
+      "reason": "known gap TG3: as on the non-stream path"
+    },
+    {
+      "subset": "together/images",
+      "path": "$.data[].index",
+      "reason": "no canonical field: models.ImageData has no index; the position in data gives it"
+    },
+    {
+      "subset": "together/images",
+      "path": "$.data[].type",
+      "reason": "no canonical field: whether the image is a url or b64_json, which the field set says"
+    },
+    {
+      "subset": "together/images",
+      "path": "$.id",
+      "reason": "no canonical field: models.ImageResponse has no id, so a generated image cannot be traced in Together's logs"
+    },
+    {
+      "subset": "together/images",
+      "path": "$.model",
+      "reason": "no canonical field: models.ImageResponse has no model; the request names it"
+    },
+    {
+      "subset": "together/images",
+      "path": "$.object",
+      "reason": "no canonical field: always \"list\""
+    }
+  ],
+  "opaque": [
+    {
+      "subset": "together/chat",
+      "path": "$.choices[].logprobs",
+      "reason": "forwarded verbatim: the canonical type keeps this as raw JSON and the client receives it unchanged"
+    },
+    {
+      "subset": "together/embeddings",
+      "path": "$.data[].embedding",
+      "reason": "the vector (a float array, or base64 text for encoding_format base64) is kept as raw JSON and forwarded unchanged"
+    }
+  ],
+  "enums": [
+    {
+      "subset": "together/chat",
+      "path": "$.choices[].finish_reason",
+      "value": "eos",
+      "reason": "known gap TG4: Together's \"eos\" (end of sequence, its natural stop) passes through unmapped: it is not a canonical finish reason, so the inbound translators (Anthropic, Gemini) fall back to a default and clients that switch on finish_reason miss it. reportFinishReason reports it"
+    },
+    {
+      "subset": "together/chat_stream",
+      "path": "chunk:$.choices[].finish_reason",
+      "value": "eos",
+      "reason": "known gap TG4: Together's \"eos\" (end of sequence, its natural stop) passes through unmapped: it is not a canonical finish reason, so the inbound translators (Anthropic, Gemini) fall back to a default and clients that switch on finish_reason miss it. reportFinishReason reports it"
+    }
+  ],
+  "events": [],
+  "kinds": [
+    {
+      "subset": "together/chat_stream",
+      "path": "chunk:$",
+      "reason": "the stream's \"[DONE]\" sentinel, which the spec models as a string chunk; the parser ends the stream on it before decoding"
+    },
+    {
+      "subset": "together/chat_stream",
+      "path": "chunk:$.choices[].delta.tool_calls[].index",
+      "reason": "Together types the index as a number; it is a position, an integer in practice. A fractional value would fail the chunk's decode (malformed_payload)"
+    },
+    {
+      "subset": "together/chat_stream",
+      "path": "chunk:$.usage",
+      "reason": "the spec types usage as UsageData or null via allOf, which flattens to any; it is an object or null"
+    }
+  ]
+}

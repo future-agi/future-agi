@@ -1,0 +1,10 @@
+{
+  "error": {
+    "code": "provider_429",
+    "message": "{\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Resource has been exhausted (e.g. check quota).\",\n    \"status\": \"RESOURCE_EXHAUSTED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.RetryInfo\",\n        \"retryDelay\": \"12s\"\n      }\n    ]\n  }\n}\n",
+    "status": 502,
+    "type": "upstream_error"
+  },
+  "relayed": false,
+  "status": 429
+}

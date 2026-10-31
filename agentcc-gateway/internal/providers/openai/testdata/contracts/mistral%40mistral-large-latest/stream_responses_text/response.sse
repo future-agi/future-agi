@@ -1,0 +1,30 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_6b2c0e5d4f1a4c8e9d7a3b2c1d0e9f8a","object":"response","created_at":1793212800,"model":"mistral-large-latest","status":"in_progress","output":[],"parallel_tool_calls":true,"tool_choice":"auto","tools":[],"error":null,"incomplete_details":null,"completed_at":null}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_6b2c0e5d4f1a4c8e9d7a3b2c1d0e9f8a","object":"response","created_at":1793212800,"model":"mistral-large-latest","status":"in_progress","output":[],"parallel_tool_calls":true,"tool_choice":"auto","tools":[],"error":null,"incomplete_details":null,"completed_at":null}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"msg_0a1b2c3d4e5f","type":"message","role":"assistant","status":"in_progress","content":[]}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","sequence_number":3,"item_id":"msg_0a1b2c3d4e5f","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":4,"item_id":"msg_0a1b2c3d4e5f","output_index":0,"content_index":0,"delta":"The capital of France","logprobs":[]}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":5,"item_id":"msg_0a1b2c3d4e5f","output_index":0,"content_index":0,"delta":" is Paris.","logprobs":[]}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","sequence_number":6,"item_id":"msg_0a1b2c3d4e5f","output_index":0,"content_index":0,"text":"The capital of France is Paris.","logprobs":[]}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","sequence_number":7,"item_id":"msg_0a1b2c3d4e5f","output_index":0,"content_index":0,"part":{"type":"output_text","text":"The capital of France is Paris.","annotations":[]}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":8,"output_index":0,"item":{"id":"msg_0a1b2c3d4e5f","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"The capital of France is Paris.","annotations":[]}]}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":9,"response":{"id":"resp_6b2c0e5d4f1a4c8e9d7a3b2c1d0e9f8a","object":"response","created_at":1793212800,"model":"mistral-large-latest","status":"completed","output":[{"id":"msg_0a1b2c3d4e5f","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"The capital of France is Paris.","annotations":[]}]}],"parallel_tool_calls":true,"tool_choice":"auto","tools":[],"error":null,"incomplete_details":null,"completed_at":1793212801,"usage":{"input_tokens":10,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":8,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":18}}}
+

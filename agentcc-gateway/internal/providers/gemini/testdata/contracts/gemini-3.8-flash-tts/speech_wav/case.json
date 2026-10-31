@@ -1,0 +1,10 @@
+{
+  "endpoint": "speech",
+  "notes": "Gemini TTS through generateContent with responseModalities [AUDIO]: one inlineData part of 16-bit mono PCM, mimeType audio/L16;codec=pcm;rate=24000 (ai.google.dev/gemini-api/docs/speech-generation; the adapter's speech.go expects the same). gemini-3.8-flash-tts is the current TTS model (google-gemini/cookbook quickstarts/Get_started_TTS.ipynb, which shows 24 kHz mono L16 output); usage carries AUDIO candidatesTokensDetails (ModalityTokenCount, v1beta discovery). The audio is 20 ms of a 440 Hz tone, invented. response_format wav: the adapter wraps the PCM in a 44-byte WAV header.",
+  "sanity_gaps": [
+    {
+      "failure": "speech usage",
+      "reason": "known gap G24: TTS usage dropped (see speech)"
+    }
+  ]
+}

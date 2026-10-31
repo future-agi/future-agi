@@ -1,0 +1,38 @@
+{
+  "body": {
+    "messages": [
+      {
+        "content": "What is the weather in Paris?",
+        "role": "user"
+      }
+    ],
+    "model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+    "tool_choice": "auto",
+    "tools": [
+      {
+        "function": {
+          "description": "Get the current weather for a city.",
+          "name": "get_weather",
+          "parameters": {
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

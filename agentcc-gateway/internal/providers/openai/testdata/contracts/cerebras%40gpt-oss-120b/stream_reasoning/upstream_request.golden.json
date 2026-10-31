@@ -1,0 +1,24 @@
+{
+  "body": {
+    "max_tokens": 256,
+    "messages": [
+      {
+        "content": "Why is fast inference important?",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-oss-120b",
+    "reasoning_effort": "low",
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

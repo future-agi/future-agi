@@ -1,0 +1,10 @@
+{
+  "endpoint": "speech",
+  "notes": "Gemini TTS on Vertex AI: generateContent on the publisher model with generationConfig.responseModalities [AUDIO] and speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName (aiplatform v1beta1 discovery, revision 20261012: GenerationConfig.speechConfig, SpeechConfig, VoiceConfig, PrebuiltVoiceConfig), answered with a v1beta1 GenerateContentResponse (createTime, responseId, modelVersion; no candidate index, proto3 JSON's default; UsageMetadata with trafficType and per-modality details) whose one part is inlineData (Blob {mimeType, data}). The audio part, 20 ms of an invented 440 Hz tone as 16-bit mono PCM with mimeType audio/L16;codec=pcm;rate=24000, is the Gemini API fixture's (gemini-3.8-flash-tts/speech): the discovery document types Blob.mimeType as a free string, so that Vertex AI names the same PCM format is unverified until a recording. response_format wav: the adapter wraps the PCM in a 44-byte WAV header. Recordable through cmd/contract-recorder's Vertex AI upstream (VERTEX_PROJECT and VERTEX_ACCESS_TOKEN, optional VERTEX_LOCATION); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record it locally.",
+  "sanity_gaps": [
+    {
+      "failure": "speech usage",
+      "reason": "known gap G24: TTS usage dropped (see speech)"
+    }
+  ]
+}

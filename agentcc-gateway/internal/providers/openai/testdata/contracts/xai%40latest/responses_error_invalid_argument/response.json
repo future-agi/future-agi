@@ -1,0 +1,4 @@
+{
+  "code": "invalid-argument",
+  "error": "Public URLs are not supported for files with content type 'text/plain'."
+}

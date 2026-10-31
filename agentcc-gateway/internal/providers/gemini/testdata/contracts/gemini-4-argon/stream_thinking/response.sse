@@ -1,0 +1,8 @@
+data: {"candidates":[{"content":{"parts":[{"text":"**Taking logarithms**\n\nWrite y = x^x, so ln y = x ln x. Differentiating both sides gives y'/y = ln x + 1.","thought":true}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":10,"thoughtsTokenCount":1204,"totalTokenCount":1214,"promptTokensDetails":[{"modality":"TEXT","tokenCount":10}]},"modelVersion":"gemini-4-argon","responseId":"8Q6ilYRj9J_GVzWtTYLGOU0"}
+
+data: {"candidates":[{"content":{"parts":[{"text":"The derivative of x^x is"}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":7,"thoughtsTokenCount":1204,"totalTokenCount":1221,"promptTokensDetails":[{"modality":"TEXT","tokenCount":10}]},"modelVersion":"gemini-4-argon","responseId":"8Q6ilYRj9J_GVzWtTYLGOU0"}
+
+data: {"candidates":[{"content":{"parts":[{"text":" x^x (ln x + 1), for x > 0."}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":19,"thoughtsTokenCount":1204,"totalTokenCount":1233,"promptTokensDetails":[{"modality":"TEXT","tokenCount":10}]},"modelVersion":"gemini-4-argon","responseId":"8Q6ilYRj9J_GVzWtTYLGOU0"}
+
+data: {"candidates":[{"content":{"parts":[{"text":"","thoughtSignature":"TfGUOul0Yq6abv83K1wn/Ikw3EBXgymx4d154OvvqO7kmDPd1cTvFbyuWXB7nAUPED15ZHR557gvhMMO0ZUTpIMF4rXKLhmDmn6E35827TC4bst0o8vuKyjxJgjQ5ggX"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":19,"thoughtsTokenCount":1204,"totalTokenCount":1233,"promptTokensDetails":[{"modality":"TEXT","tokenCount":10}]},"modelVersion":"gemini-4-argon","responseId":"8Q6ilYRj9J_GVzWtTYLGOU0"}
+

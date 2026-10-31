@@ -1,0 +1,62 @@
+[
+  {
+    "event": "messageStart",
+    "payload": {
+      "role": "assistant"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "text": "Hello"
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "text": "! How can I help"
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "text": " you today?"
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "messageStop",
+    "payload": {
+      "stopReason": "end_turn"
+    }
+  },
+  {
+    "event": "metadata",
+    "payload": {
+      "usage": {
+        "inputTokens": 10,
+        "outputTokens": 12,
+        "totalTokens": 22,
+        "cacheReadInputTokens": 0,
+        "cacheWriteInputTokens": 0
+      },
+      "metrics": {
+        "latencyMs": 402
+      }
+    }
+  }
+]

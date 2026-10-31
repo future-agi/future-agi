@@ -1,0 +1,23 @@
+{
+  "body": {
+    "logprobs": true,
+    "messages": [
+      {
+        "content": "Say foo",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-4.1-2025-04-14",
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

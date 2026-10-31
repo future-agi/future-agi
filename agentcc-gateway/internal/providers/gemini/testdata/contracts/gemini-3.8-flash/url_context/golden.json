@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "RFC 9110 defines the semantics of HTTP: the architecture, terminology, request methods, status codes and header fields shared by every HTTP version. It obsoletes the earlier HTTP/1.1 semantics documents so that HTTP/1.1, HTTP/2 and HTTP/3 build on one common definition.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "gen-<generated>",
+  "model": "gemini-3.8-flash",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 291,
+    "prompt_tokens": 31,
+    "total_tokens": 9956
+  }
+}

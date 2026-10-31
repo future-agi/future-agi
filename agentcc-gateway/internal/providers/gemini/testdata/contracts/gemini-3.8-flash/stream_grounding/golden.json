@@ -1,0 +1,54 @@
+{
+  "assembled": {
+    "content": "Spain won Euro 2024, defeating England 2-1 in the final. This was Spain's fourth European Championship title.",
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 171,
+      "prompt_tokens": 9,
+      "total_tokens": 180
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Spain won Euro 2024, defeating England 2-1 in the final."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 158,
+        "prompt_tokens": 9,
+        "total_tokens": 167
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " This was Spain's fourth European Championship title."
+          },
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 171,
+        "prompt_tokens": 9,
+        "total_tokens": 180
+      }
+    }
+  ],
+  "error": null
+}

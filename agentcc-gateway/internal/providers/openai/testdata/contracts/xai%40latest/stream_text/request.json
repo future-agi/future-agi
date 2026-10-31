@@ -1,0 +1,14 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant that can answer questions and help with tasks."
+    },
+    {
+      "role": "user",
+      "content": "What is 101*3?"
+    }
+  ],
+  "model": "latest",
+  "stream": true
+}

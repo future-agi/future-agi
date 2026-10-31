@@ -1,0 +1,6 @@
+{
+  "code": "provider_400",
+  "message": "provider error (HTTP 400): {\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Invalid request parameters\"\n  }\n}\n",
+  "status": 502,
+  "type": "upstream_error"
+}

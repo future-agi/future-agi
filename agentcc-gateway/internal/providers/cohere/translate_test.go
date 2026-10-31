@@ -305,7 +305,7 @@ func TestTranslateResponse_TextContent(t *testing.T) {
 		FinishReason: "COMPLETE",
 	}
 
-	result := translateResponse(resp, "command-r-plus")
+	result := translateResponse(resp, "command-r-plus", nil)
 
 	if result.ID != "resp-123" {
 		t.Errorf("ID: got %q, want %q", result.ID, "resp-123")
@@ -353,7 +353,7 @@ func TestTranslateResponse_MultipleTextParts(t *testing.T) {
 		FinishReason: "COMPLETE",
 	}
 
-	result := translateResponse(resp, "command-r")
+	result := translateResponse(resp, "command-r", nil)
 
 	var content string
 	if err := json.Unmarshal(result.Choices[0].Message.Content, &content); err != nil {
@@ -391,7 +391,7 @@ func TestTranslateResponse_ToolCalls(t *testing.T) {
 		FinishReason: "TOOL_CALL",
 	}
 
-	result := translateResponse(resp, "command-r-plus")
+	result := translateResponse(resp, "command-r-plus", nil)
 
 	if len(result.Choices) != 1 {
 		t.Fatalf("Choices length: got %d, want 1", len(result.Choices))
@@ -451,7 +451,7 @@ func TestTranslateResponse_UsageWithTokens(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp, "command-r")
+	result := translateResponse(resp, "command-r", nil)
 
 	if result.Usage == nil {
 		t.Fatal("Usage is nil")
@@ -483,7 +483,7 @@ func TestTranslateResponse_UsageWithBilledUnits(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp, "command-r")
+	result := translateResponse(resp, "command-r", nil)
 
 	if result.Usage == nil {
 		t.Fatal("Usage is nil")
@@ -519,7 +519,7 @@ func TestTranslateResponse_UsageTokensPreferredOverBilledUnits(t *testing.T) {
 		},
 	}
 
-	result := translateResponse(resp, "command-r")
+	result := translateResponse(resp, "command-r", nil)
 
 	// Tokens should take precedence because of the if-else structure
 	if result.Usage.PromptTokens != 10 {
@@ -540,7 +540,7 @@ func TestTranslateResponse_NoUsage(t *testing.T) {
 		FinishReason: "COMPLETE",
 	}
 
-	result := translateResponse(resp, "command-r")
+	result := translateResponse(resp, "command-r", nil)
 
 	if result.Usage != nil {
 		t.Errorf("Usage should be nil, got %+v", result.Usage)
@@ -557,7 +557,7 @@ func TestTranslateResponse_EmptyContent(t *testing.T) {
 		FinishReason: "COMPLETE",
 	}
 
-	result := translateResponse(resp, "command-r")
+	result := translateResponse(resp, "command-r", nil)
 
 	if result.Choices[0].Message.Content != nil {
 		t.Errorf("Content should be nil for empty content, got %s", result.Choices[0].Message.Content)

@@ -1,0 +1,4 @@
+{
+  "endpoint": "list_models",
+  "notes": "GET /models (ListModels): the spec's example (ListModelsResponse, Model with shutdown_date) with real model ids. Filed under gpt-6-sol because the request names no model. Recordable."
+}

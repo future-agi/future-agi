@@ -1,0 +1,65 @@
+event: message-start
+data: {"id":"fba98ad3-e5a1-413c-a8de-84fbf9baabf7","type":"message-start","delta":{"message":{"role":"assistant","content":[],"tool_plan":"","tool_calls":[],"citations":[]}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":"I"}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" will"}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" look"}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" up"}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" the"}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" weather"}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" in"}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":" San Francisco"}}}
+
+event: tool-plan-delta
+data: {"type":"tool-plan-delta","delta":{"message":{"tool_plan":"."}}}
+
+event: tool-call-start
+data: {"type":"tool-call-start","index":0,"delta":{"message":{"tool_calls":{"id":"get_weather_p1t92w7gfgq7","type":"function","function":{"name":"get_weather","arguments":""}}}}}
+
+event: tool-call-delta
+data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"{\n    \""}}}}}
+
+event: tool-call-delta
+data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"location"}}}}}
+
+event: tool-call-delta
+data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"\":"}}}}}
+
+event: tool-call-delta
+data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":" \""}}}}}
+
+event: tool-call-delta
+data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"San Francisco, CA"}}}}}
+
+event: tool-call-delta
+data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"\""}}}}}
+
+event: tool-call-delta
+data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"\n"}}}}}
+
+event: tool-call-delta
+data: {"type":"tool-call-delta","index":0,"delta":{"message":{"tool_calls":{"function":{"arguments":"}"}}}}}
+
+event: tool-call-end
+data: {"type":"tool-call-end","index":0}
+
+event: message-end
+data: {"type":"message-end","delta":{"finish_reason":"TOOL_CALL","usage":{"billed_units":{"input_tokens":37,"output_tokens":28},"tokens":{"input_tokens":913,"output_tokens":83},"cached_tokens":0}}}
+
+data: [DONE]
+

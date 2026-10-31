@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "provider": "groq",
+  "root": "transcription",
+  "format": "openapi",
+  "select": "POST /openai/v1/audio/transcriptions -> 200 application/json",
+  "description": "transcription response; the gateway lifts text and passes the body through; OpenAI-compatible preset served by the openai adapter",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.text": {"kinds":["string"]}
+  }
+}

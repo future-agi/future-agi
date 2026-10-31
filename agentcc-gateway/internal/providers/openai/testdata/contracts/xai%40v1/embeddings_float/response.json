@@ -1,0 +1,19 @@
+{
+  "object": "list",
+  "model": "v1",
+  "data": [
+    {
+      "index": 0,
+      "embedding": [
+        0.01567895,
+        0.063257694,
+        0.045925662
+      ],
+      "object": "embedding"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1,
+    "total_tokens": 1
+  }
+}

@@ -1,0 +1,380 @@
+# Daily check for provider models the contract tests do not cover yet, plus
+# a daily re-record of the newest covered model of each family.
+#
+# 1. `model-watch -check` lists every provider's models through its official
+#    list-models API (each provider whose secret is set), diffs them against
+#    agentcc-gateway/internal/providers/contractwatch/known_models.json, and
+#    picks, for each NEW model, the covered model whose cases to clone.
+# 2. Each NEW model (up to max_new_models, spread across providers) is
+#    recorded with `contract-recorder -from <template> -as <new> -out`, then
+#    checked by the provider's contract test in live mode. The recorder
+#    writes `cloned_from` into its meta.json, so the harness also diffs its
+#    shape against the template.
+# 3. The newest covered model of every family (up to max_newest_models,
+#    rotating daily) is re-recorded and live-tested, so drift on the latest
+#    models shows within a day instead of at the weekly drift job.
+# 4. A separate job, the only one that can write issues, opens or updates one
+#    tracking issue per NEW model (deduped by title), with the steps to bring
+#    it under contract.
+#
+# The job fails while any model is NEW, a listing fails, the registry and the
+# fixtures disagree, or a recording drifts. To clear a NEW model, add it to
+# known_models.json (covered, alias or ignored). Recordings, plan and logs are
+# uploaded on every run.
+#
+# Not run on pull requests: it calls paid APIs and needs secrets. The
+# registry is checked against the fixtures on every PR by the gateway CI's
+# `make test` (internal/providers/contractwatch). See
+# agentcc-gateway/cmd/model-watch/README.md.
+#
+# Repository secrets, the same as agentcc-provider-contract-drift.yml, each
+# optional; a provider without its secret is skipped:
+#   ANTHROPIC_API_KEY
+#   OPENAI_API_KEY
+#   GROQ_API_KEY, PERPLEXITY_API_KEY       Groq's list API; Perplexity's static list
+#   MISTRAL_API_KEY, CEREBRAS_API_KEY      their list APIs (the openai suite's mistral@ and cerebras@ fixtures)
+#   TOGETHER_API_KEY, FIREWORKS_API_KEY, OPENROUTER_API_KEY
+#                                          only for re-recording their fixtures (aggregators: not listed,
+#                                          see known_models.json)
+#   GEMINI_API_KEY                         Google AI Studio key
+#   COHERE_API_KEY
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY Bedrock; needs bedrock:ListFoundationModels and
+#                                          bedrock:ListInferenceProfiles besides model access
+#   AZURE_OPENAI_KEY, AZURE_OPENAI_ENDPOINT  only for re-recording the azure fixtures (Azure is not listed)
+# Vertex AI (the gemini suite's vertex@ fixtures) is neither listed nor
+# re-recorded: it needs a short-lived access token a secret cannot hold.
+# Repository variable, optional:
+#   AWS_REGION                             Bedrock region, default us-east-1 (the registry assumes it)
+name: AgentCC Provider New Models
+
+on:
+  schedule:
+    # Daily, 04:41 UTC.
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Registry sections to check, comma-separated (e.g. gemini,groq). Empty: every one with a secret."
+        required: false
+        default: ""
+        type: string
+      max_new_models:
+        description: "Most NEW models to record from their templates this run (spread across providers)."
+        required: false
+        default: 5
+        type: number
+      max_newest_models:
+        description: "Most newest-per-family covered models to re-record this run (the window rotates daily)."
+        required: false
+        default: 8
+        type: number
+      max_cases:
+        description: "Most cases recorded per model."
+        required: false
+        default: 4
+        type: number
+      max_new_issues:
+        description: "Most tracking issues opened this run (existing ones are always updated)."
+        required: false
+        default: 10
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentcc-provider-new-models
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: List models, record new and newest ones, check their shapes
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      new_models: ${{ steps.check.outputs.new_models }}
+    env:
+      # Inputs are empty on a scheduled run; these are the defaults.
+      PROVIDER_FILTER: ${{ inputs.provider }}
+      MAX_NEW: ${{ inputs.max_new_models || 5 }}
+      MAX_NEWEST: ${{ inputs.max_newest_models || 8 }}
+      MAX_CASES: ${{ inputs.max_cases || 4 }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agentcc-gateway/go.mod
+          cache-dependency-path: agentcc-gateway/go.sum
+
+      - name: Build model-watch and the contract recorder
+        working-directory: agentcc-gateway
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/model-watch"
+          go build -o "$RUNNER_TEMP/bin/model-watch" ./cmd/model-watch
+          go build -o "$RUNNER_TEMP/bin/contract-recorder" ./cmd/contract-recorder
+
+      # Exit 0: nothing new. 1: NEW models, a failed listing or stale
+      # coverage; carried on, and failed at the end. 2: bad registry or flags.
+      - name: List upstream models and plan the new ones
+        id: check
+        working-directory: agentcc-gateway
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          out="$RUNNER_TEMP/model-watch"
+          args=(-check -plan-out "$out/plan.json" -summary-out "$out/discovery.md"
+            -max-record "$MAX_NEW" -max-cases "$MAX_CASES")
+          if [ -n "$PROVIDER_FILTER" ]; then
+            args+=(-provider "$PROVIDER_FILTER")
+          fi
+          rc=0
+          "$RUNNER_TEMP/bin/model-watch" "${args[@]}" || rc=$?
+          echo "exit=$rc" >> "$GITHUB_OUTPUT"
+          if [ "$rc" -ge 2 ]; then
+            echo "::error::model-watch could not run (exit $rc); see the log above."
+            exit "$rc"
+          fi
+          echo "new_models=$(jq length "$out/plan.json")" >> "$GITHUB_OUTPUT"
+
+      # No network: it only picks models from the registry. Only whether each
+      # secret is set matters (a provider without one is skipped), so the
+      # values stay out of this step.
+      - name: Pick the newest covered model of each family
+        working-directory: agentcc-gateway
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' && 'set' || '' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY != '' && 'set' || '' }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY != '' && 'set' || '' }}
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY != '' && 'set' || '' }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY != '' && 'set' || '' }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY != '' && 'set' || '' }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY != '' && 'set' || '' }}
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY != '' && 'set' || '' }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY != '' && 'set' || '' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY != '' && 'set' || '' }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY != '' && 'set' || '' }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID != '' && 'set' || '' }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY != '' && 'set' || '' }}
+          AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY != '' && 'set' || '' }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT != '' && 'set' || '' }}
+        run: |
+          out="$RUNNER_TEMP/model-watch"
+          # The day number rotates the window when there are more families
+          # than max_newest_models.
+          args=(-newest -plan-out "$out/newest.json" -max-record "$MAX_NEWEST" -max-cases "$MAX_CASES"
+            -rotate "$(( $(date -u +%s) / 86400 ))")
+          if [ -n "$PROVIDER_FILTER" ]; then
+            args+=(-provider "$PROVIDER_FILTER")
+          fi
+          "$RUNNER_TEMP/bin/model-watch" "${args[@]}"
+
+      # Each recording goes to its own directory, so each model's live
+      # contract test sees only its own cases. A recorder failure (an
+      # upstream error is reported, never saved) or a failing test is
+      # recorded in results.jsonl and reported at the end. Assistants and
+      # vector stores are never recorded (their calls create objects in the
+      # account); a recording whose cases were all of those, or all not
+      # recordable, exits 3 ("nothing to record"), which is reported but is
+      # not a failure.
+      - name: Record new models from their templates, and the newest ones again
+        working-directory: agentcc-gateway
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          out="$RUNNER_TEMP/model-watch"
+          mkdir -p "$out/logs"
+          : > "$out/results.jsonl"
+
+          # record KIND N PROVIDER SUITE MODEL TEMPLATE -- RECORDER-ARGS...
+          # records into recordings/KIND/N, live-tests SUITE on it, and
+          # appends a line to results.jsonl.
+          record() {
+            local kind=$1 n=$2 provider=$3 suite=$4 model=$5 template=$6
+            shift 7
+            case "$suite" in
+              "" | *[!a-z]*)
+                echo "::error::unexpected suite name '$suite'"
+                return 1
+                ;;
+            esac
+            local dir="recordings/$kind/$n" rlog="logs/$kind-$n-record.log" tlog="logs/$kind-$n-test.log"
+            local rrc=0 trc=-1 count
+            mkdir -p "$out/$dir"
+            "$RUNNER_TEMP/bin/contract-recorder" -timeout 2m -out "$out/$dir" \
+              -exclude-endpoint assistants,vector_stores "$@" > "$out/$rlog" 2>&1 || rrc=$?
+            count=$(find "$out/$dir" -type f -name 'response.*' | wc -l)
+            if [ "$count" -gt 0 ]; then
+              trc=0
+              AGENTCC_CONTRACT_FIXTURES_DIR="$out/$dir" \
+                go test "./internal/providers/$suite/" -run '^TestContract$' -count=1 -v > "$out/$tlog" 2>&1 || trc=$?
+            fi
+            echo "$kind $provider $model: $count responses recorded (recorder exit $rrc), live contract test exit $trc"
+            jq -nc --arg kind "$kind" --arg provider "$provider" --arg model "$model" --arg template "$template" \
+              --argjson record_exit "$rrc" --argjson test_exit "$trc" --argjson recorded "$count" \
+              --arg record_log "$rlog" --arg test_log "$tlog" --arg dir "$dir" \
+              '{kind: $kind, provider: $provider, model: $model, template: $template, record_exit: $record_exit,
+                test_exit: $test_exit, recorded: $recorded, record_log: $record_log, test_log: $test_log, dir: $dir}' \
+              >> "$out/results.jsonl"
+          }
+
+          n=0
+          while IFS=$'\t' read -r provider suite from as model template cases; do
+            n=$((n + 1))
+            record new "$n" "$provider" "$suite" "$model" "$template" -- \
+              -provider "$suite" -from "$from" -as "$as" -case "$cases"
+          done < <(jq -r '.[] | select(.record) | [.provider, .recorder.provider, .recorder.from, .recorder.as,
+            .new_model, .template_model, (.recorder.cases | join(","))] | @tsv' "$out/plan.json")
+
+          n=0
+          while IFS=$'\t' read -r provider suite key model cases; do
+            n=$((n + 1))
+            record newest "$n" "$provider" "$suite" "$model" "" -- -provider "$suite" -model "$key" -case "$cases"
+          done < <(jq -r '.[] | select(.record) | [.provider, .recorder.provider, .recorder.model, .model,
+            (.recorder.cases | join(","))] | @tsv' "$out/newest.json")
+
+      - name: Write the job summary and the issue bodies
+        if: ${{ !cancelled() }}
+        working-directory: agentcc-gateway
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ARTIFACT: model-watch-${{ github.run_id }}
+        run: |
+          out="$RUNNER_TEMP/model-watch"
+          if [ ! -f "$out/plan.json" ]; then
+            echo "# Provider model watch: model-watch did not run; see the job log." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          touch "$out/results.jsonl"
+          "$RUNNER_TEMP/bin/model-watch" -report -plan "$out/plan.json" -results "$out/results.jsonl" \
+            -summary-out "$out/results.md" -issues-out "$out/issues.json" -run-url "$RUN_URL" -artifact "$ARTIFACT"
+          {
+            echo "# Provider model watch"
+            echo
+            cat "$out/discovery.md" "$out/results.md"
+            echo "Recordings, plans and logs: artifact \`$ARTIFACT\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the recordings, plans and logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-watch-${{ github.run_id }}
+          path: ${{ runner.temp }}/model-watch
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Fail on new models, failed listings or drift
+        if: ${{ !cancelled() }}
+        env:
+          CHECK_EXIT: ${{ steps.check.outputs.exit }}
+        run: |
+          out="$RUNNER_TEMP/model-watch"
+          fail=0
+          if [ "${CHECK_EXIT:-2}" != 0 ]; then
+            echo "::error::model-watch -check exited ${CHECK_EXIT:-without running}: new models, a failed listing or stale coverage (see the job summary)."
+            fail=1
+          fi
+          if [ -s "$out/results.jsonl" ]; then
+            # Exit 3 with nothing recorded: no case in the plan was one the
+            # recorder sends. Reported, not failed.
+            nothing=$(jq -s '[.[] | select(.recorded == 0 and .record_exit == 3)] | length' "$out/results.jsonl")
+            if [ "$nothing" -gt 0 ]; then
+              echo "::warning::$nothing planned recordings had nothing to record (recorder exit 3; see the job summary)."
+            fi
+            bad=$(jq -s '[.[] | select((.recorded == 0 and .record_exit == 3) | not)
+              | select(.recorded == 0 or .record_exit != 0 or .test_exit != 0)] | length' "$out/results.jsonl")
+            if [ "$bad" -gt 0 ]; then
+              echo "::error::$bad recordings failed or drifted (see the job summary)."
+              fail=1
+            fi
+          fi
+          exit "$fail"
+
+  # The only job with issues: write, and it runs no repository code: it
+  # reads the issue titles and bodies the watch job rendered.
+  notify:
+    name: Open or update one issue per new model
+    needs: watch
+    if: >-
+      ${{ !cancelled() && needs.watch.outputs.new_models != '' && needs.watch.outputs.new_models != '0' &&
+      github.repository == 'future-agi/future-agi' &&
+      (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: model-watch-${{ github.run_id }}
+          path: model-watch
+
+      - name: Open or update the tracking issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MAX_ISSUES: ${{ inputs.max_new_issues || 10 }}
+        run: |
+          issues=model-watch/issues.json
+          if [ ! -f "$issues" ]; then
+            echo "::warning::No issues.json in the artifact; nothing to do."
+            exit 0
+          fi
+          created=0
+          total=$(jq length "$issues")
+          for ((i = 0; i < total; i++)); do
+            title=$(jq -r --argjson i "$i" '.[$i].title' "$issues")
+            jq -r --argjson i "$i" '.[$i].body' "$issues" > body.md
+            # Search is fuzzy; the exact title decides. The oldest match wins.
+            existing=$(gh issue list --state all --limit 30 --json number,title,state \
+              --search "\"$title\" in:title" |
+              jq -c --arg t "$title" '[.[] | select(.title == $t)] | sort_by(.number) | first // empty')
+            if [ -z "$existing" ]; then
+              if [ "$created" -ge "$MAX_ISSUES" ]; then
+                echo "Cap of $MAX_ISSUES new issues reached; not opening: $title"
+                continue
+              fi
+              gh issue create --title "$title" --body-file body.md
+              created=$((created + 1))
+              sleep 2 # stay clear of the secondary rate limit on content creation
+              continue
+            fi
+            number=$(jq -r .number <<< "$existing")
+            gh issue edit "$number" --body-file body.md
+            if [ "$(jq -r .state <<< "$existing")" = CLOSED ]; then
+              gh issue reopen "$number" --comment "Reopened by the daily model-watch run: the model is still listed upstream and still has no entry in known_models.json. Add it as covered, alias or ignored (with the reason) to stop tracking it."
+            fi
+            echo "Updated #$number: $title"
+          done
+          echo "Opened $created new issues; $total models are NEW."

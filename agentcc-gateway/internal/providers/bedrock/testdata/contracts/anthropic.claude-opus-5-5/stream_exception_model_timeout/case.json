@@ -1,0 +1,10 @@
+{
+  "recordable": false,
+  "notes": "Synthetic, from the ConverseStreamOutput / ResponseStream unions of the same model (an exception is an event-stream message with :message-type exception and :exception-type <member>, its members as the JSON payload), and the event-stream framing described in contract_eventstream_test.go. modelTimeoutException is a member of ResponseStream (ModelTimeoutException, 408); the chunks before it are Anthropic stream events, base64 in {\"bytes\"} as in the other InvokeModel stream cases. Not recordable: a request cannot make the model time out on demand. Message invented.",
+  "sanity_gaps": [
+    {
+      "failure": "upstream status 408 became 502",
+      "reason": "known gap B16: a mid-stream exception becomes a 502 upstream_error (code provider_0) whatever the exception, with the raw payload JSON as its message; a modelTimeoutException is a 408, a client-side status, so it should not turn into a gateway-side 502"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "notes": "Vertex AI embedContent (aiplatform v1beta1 discovery, revision 20261012: projects.locations.publishers.models.embedContent -> EmbedContentResponse {embedding {values}, usageMetadata, truncated}); googleapis/go-genai models.go embedContentResponseFromVertex reads the same fields and, through tIsVertexEmbedContentModel, sends Gemini embedding models other than gemini-embedding-001 to embedContent one content at a time. Recordable through cmd/contract-recorder's Vertex AI upstream (VERTEX_PROJECT and VERTEX_ACCESS_TOKEN, optional VERTEX_LOCATION); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record it locally.",
+  "endpoint": "embeddings",
+  "sanity_gaps": [
+    {
+      "failure": "embedding usage",
+      "reason": "known gap G23: embedding usage (usageMetadata.promptTokenCount) dropped; the canonical usage is hard-coded 0"
+    }
+  ]
+}

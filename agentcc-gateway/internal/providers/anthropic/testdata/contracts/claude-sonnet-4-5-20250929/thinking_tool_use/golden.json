@@ -1,0 +1,37 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "thinking_blocks": [
+          {
+            "thinking": "Whether to bring an umbrella depends on the forecast. I should call get_weather for Paris, France in celsius.",
+            "type": "thinking"
+          }
+        ],
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"location\":\"Paris, France\",\"unit\":\"celsius\"}",
+              "name": "get_weather"
+            },
+            "id": "toolu_01CYdJ8wB8rZD9xzX4K2Pkqn",
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "msg_01QbJ8n6ZJbqGdEU7aSHkxWg",
+  "model": "claude-sonnet-4-5-20250929",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 103,
+    "prompt_tokens": 498,
+    "total_tokens": 601
+  }
+}

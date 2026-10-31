@@ -1,0 +1,38 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "No. 9.9 is larger than 9.11, because 0.90 is greater than 0.11.",
+            "thoughtSignature": "Ur+AeIhL3wrCZy2RFdCjhTeSxfDsW8Burx6NolO7xjN/VnAz9YSS6p8JElxuHhV6AYKvE6/kr9IBfCrdPS83bAZcJFZKESKja2u2TT2I5nHkjBAmbQQ8CPqMOZ2jDY4t"
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 14,
+    "candidatesTokenCount": 21,
+    "thoughtsTokenCount": 187,
+    "totalTokenCount": 222,
+    "trafficType": "ON_DEMAND",
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 14
+      }
+    ],
+    "candidatesTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 21
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.8-flash",
+  "createTime": "2026-10-28T09:14:03.218734Z",
+  "responseId": "ZwugKD-V-ukR_Lva7KYTm0o"
+}

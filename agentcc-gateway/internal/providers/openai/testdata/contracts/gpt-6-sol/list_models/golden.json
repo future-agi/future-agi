@@ -1,0 +1,20 @@
+[
+  {
+    "created": "<nonzero>",
+    "id": "gpt-6-sol",
+    "object": "model",
+    "owned_by": "openai"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "gpt-5.6-sol",
+    "object": "model",
+    "owned_by": "openai"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "gpt-6-astra",
+    "object": "model",
+    "owned_by": "openai"
+  }
+]

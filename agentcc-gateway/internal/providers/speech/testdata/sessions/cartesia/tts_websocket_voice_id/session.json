@@ -1,0 +1,77 @@
+{
+  "source": "Cartesia Python SDK (github.com/cartesia-ai/cartesia-python at 3cb04193): examples/examples.py tts_websocket_flushing as src/cartesia/lib/_tts.py sends it: the voice as the ID string the example passes (VoiceSpecifierParam is a string or an object), and a flush",
+  "path": "/tts/websocket",
+  "headers": {
+    "Authorization": "Bearer gateway-key",
+    "Cartesia-Version": "2026-08-14"
+  },
+  "messages": [
+    {
+      "json": {
+        "context_id": "d7c0a2b4-5e61-4f38-9b7a-0c2e4d6f8a13",
+        "model_id": "sonic-latest",
+        "transcript": "Stay hungry, ",
+        "voice": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+        "output_format": {
+          "container": "raw",
+          "encoding": "pcm_s16le",
+          "sample_rate": 44100
+        },
+        "continue": true,
+        "language": "en"
+      }
+    },
+    {
+      "json": {
+        "context_id": "d7c0a2b4-5e61-4f38-9b7a-0c2e4d6f8a13",
+        "model_id": "sonic-latest",
+        "transcript": "",
+        "voice": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+        "output_format": {
+          "container": "raw",
+          "encoding": "pcm_s16le",
+          "sample_rate": 44100
+        },
+        "continue": true,
+        "language": "en",
+        "flush": true
+      }
+    },
+    {
+      "json": {
+        "context_id": "d7c0a2b4-5e61-4f38-9b7a-0c2e4d6f8a13",
+        "model_id": "sonic-latest",
+        "transcript": "stay foolish.",
+        "voice": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+        "output_format": {
+          "container": "raw",
+          "encoding": "pcm_s16le",
+          "sample_rate": 44100
+        },
+        "continue": true,
+        "language": "en"
+      }
+    },
+    {
+      "json": {
+        "context_id": "d7c0a2b4-5e61-4f38-9b7a-0c2e4d6f8a13",
+        "model_id": "sonic-latest",
+        "transcript": "",
+        "voice": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+        "output_format": {
+          "container": "raw",
+          "encoding": "pcm_s16le",
+          "sample_rate": 44100
+        },
+        "continue": false,
+        "language": "en"
+      }
+    }
+  ],
+  "sanity_gaps": [
+    {
+      "failure": "voice \"6ccbfb76-1fc6-48f7-b71d-91ac6298247b\" the client named is not recorded",
+      "reason": "known gap CA2: Cartesia takes the voice as an ID string as well as an object (the SDK's own examples pass a string); the meter reads only the object's id, so such a session records no voice"
+    }
+  ]
+}

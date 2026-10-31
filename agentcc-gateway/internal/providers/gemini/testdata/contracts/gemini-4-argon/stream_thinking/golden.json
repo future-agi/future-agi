@@ -1,0 +1,93 @@
+{
+  "assembled": {
+    "content": "The derivative of x^x is x^x (ln x + 1), for x > 0.",
+    "finish_reason": "stop",
+    "reasoning_content": "**Taking logarithms**\n\nWrite y = x^x, so ln y = x ln x. Differentiating both sides gives y'/y = ln x + 1.",
+    "usage": {
+      "completion_tokens": 1223,
+      "prompt_tokens": 10,
+      "total_tokens": 1233
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "reasoning_content": "**Taking logarithms**\n\nWrite y = x^x, so ln y = x ln x. Differentiating both sides gives y'/y = ln x + 1."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-4-argon",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 1204,
+        "prompt_tokens": 10,
+        "total_tokens": 1214
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "The derivative of x^x is"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-4-argon",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 1211,
+        "prompt_tokens": 10,
+        "total_tokens": 1221
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " x^x (ln x + 1), for x > 0."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-4-argon",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 1223,
+        "prompt_tokens": 10,
+        "total_tokens": 1233
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-4-argon",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 1223,
+        "prompt_tokens": 10,
+        "total_tokens": 1233
+      }
+    }
+  ],
+  "error": null
+}

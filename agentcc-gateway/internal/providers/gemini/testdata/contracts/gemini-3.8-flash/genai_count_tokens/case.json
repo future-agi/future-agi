@@ -1,0 +1,4 @@
+{
+  "endpoint": "genai_count_tokens",
+  "notes": "Native countTokens passthrough: relayed byte for byte, nothing parsed (CountTokensResponse, v1beta discovery: totalTokens, cachedContentTokenCount, promptTokensDetails, cacheTokensDetails; the shape the cookbook's Counting_Tokens notebook prints)."
+}

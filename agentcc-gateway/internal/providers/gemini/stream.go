@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 // streamState tracks state across Gemini stream events.
@@ -17,6 +19,11 @@ type streamState struct {
 	created     int64
 	toolCallIdx int  // tracks incrementing index for tool calls across chunks
 	sawToolCall bool // any tool call emitted so far in this stream
+
+	// shape receives a report for every chunk, part kind and finish reason
+	// this parser skips without translating. nil (the default) discards
+	// reports.
+	shape *common.ShapeReporter
 }
 
 func newStreamState(model string) *streamState {
@@ -36,9 +43,18 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 		return nil, parseGeminiError(http.StatusBadGateway, []byte(data))
 	}
 
+	raw := []byte(data)
 	var resp geminiResponse
-	if err := json.Unmarshal([]byte(data), &resp); err != nil {
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		s.shape.Report(common.ShapeMalformed, "stream_chunk")
 		return nil, err
+	}
+	reportBlankParts(s.shape, &resp, raw)
+	if len(resp.Candidates) == 0 && s.shape != nil {
+		// A chunk with no candidates yields no StreamChoice, and the caller
+		// forwards only chunks that have one, so whatever it carried is lost,
+		// e.g. a blocked prompt's promptFeedback.
+		s.shape.Report(common.ShapeUnknownEvent, chunkKind(raw))
 	}
 
 	chunk := &models.StreamChunk{
@@ -100,6 +116,7 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 				s.toolCallIdx++
 				s.sawToolCall = true
 			}
+			reportUntranslatedPart(s.shape, part)
 		}
 		if hasReasoning {
 			reasoning := reasoningBuilder
@@ -126,8 +143,13 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 			// a tool-calling turn closes as "stop" and the caller discards the
 			// call (breaking multi-turn agents).
 			hasToolCall := s.sawToolCall || len(delta.ToolCalls) > 0
-			reason := mapGeminiFinishReasonWithToolCalls(candidate.FinishReason, hasToolCall)
+			reason := finishReason(s.shape, candidate.FinishReason, hasToolCall)
 			sc.FinishReason = &reason
+		}
+		if candidate.GroundingMetadata != nil {
+			// Only the non-streaming path turns grounding sources into
+			// url_citation annotations; a stream drops them.
+			s.shape.Report(common.ShapeUnknownBlock, "groundingMetadata")
 		}
 
 		chunk.Choices = []models.StreamChoice{sc}
@@ -142,4 +164,35 @@ func (s *streamState) parseStreamData(data string) (*models.StreamChunk, error) 
 	}
 
 	return chunk, nil
+}
+
+// chunkEnvelopeKeys are top-level keys any chunk may carry beside its
+// payload: metadata that says nothing about what kind of chunk it is.
+// createTime is Vertex AI's.
+var chunkEnvelopeKeys = map[string]bool{
+	"usageMetadata": true, "modelVersion": true, "responseId": true, "modelStatus": true, "createTime": true,
+}
+
+// chunkKind names a stream chunk for an unknown_event report. Gemini chunks
+// carry no event type, so the name is the chunk's sorted top-level keys,
+// leaving out the envelope keys when anything else is present: a blocked
+// prompt's chunk is "promptFeedback", an error chunk "error", and a chunk of
+// envelope keys only is named by those.
+func chunkKind(raw []byte) string {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil {
+		return "non-object"
+	}
+	var payload, all []string
+	for k := range obj {
+		all = append(all, k)
+		if !chunkEnvelopeKeys[k] {
+			payload = append(payload, k)
+		}
+	}
+	if len(payload) == 0 {
+		payload = all
+	}
+	sort.Strings(payload)
+	return strings.Join(payload, ",")
 }

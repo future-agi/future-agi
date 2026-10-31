@@ -1,0 +1,5 @@
+{
+  "status": 503,
+  "recordable": false,
+  "notes": "Synthetic, from cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28) (503 ServiceUnavailable: too many users at the same time); the docs give no 503 message, so it is paraphrased from the reference, and the id is invented. A streaming request, so the pre-stream error path of StreamChatCompletion is pinned. Not recordable: nothing a client sends induces it."
+}

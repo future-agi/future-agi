@@ -1,0 +1,24 @@
+{
+  "id": "71d3a5c9-2e8b-4f60-b1a4-9c3e5d7f2a18",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47"
+      }
+    ]
+  },
+  "finish_reason": "TIMEOUT",
+  "usage": {
+    "billed_units": {
+      "input_tokens": 9,
+      "output_tokens": 61
+    },
+    "tokens": {
+      "input_tokens": 498,
+      "output_tokens": 61
+    },
+    "cached_tokens": 0
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "id": "resp_67ccd7eca01881908ff0b5146584e408072912b2993db808",
+  "object": "response",
+  "access_programs": null,
+  "created_at": 1741477868,
+  "status": "completed",
+  "completed_at": 1741477869,
+  "error": null,
+  "incomplete_details": null,
+  "instructions": null,
+  "max_output_tokens": null,
+  "model": "gpt-6-sol",
+  "output": [
+    {
+      "type": "reasoning",
+      "id": "rs_67ccd7f0c1b48190a1f6c2e5d7b3f9a2072912b2993db808",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "**Answering a tongue twister**\n\nThe user is asking the classic woodchuck riddle. There is no real answer, so give the playful one and the 1988 estimate that is often quoted."
+        }
+      ],
+      "encrypted_content": null,
+      "status": "completed"
+    },
+    {
+      "type": "message",
+      "id": "msg_67ccd7f7b5848190a6f3e95d809f6b44072912b2993db808",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "The classic tongue twister has no literal answer, but one playful estimate puts it at about 700 pounds.",
+          "annotations": [],
+          "logprobs": []
+        }
+      ]
+    }
+  ],
+  "parallel_tool_calls": true,
+  "previous_response_id": null,
+  "reasoning": {
+    "effort": "high",
+    "summary": null
+  },
+  "store": true,
+  "temperature": 1.0,
+  "text": {
+    "format": {
+      "type": "text"
+    }
+  },
+  "tool_choice": "auto",
+  "tools": [],
+  "top_p": 1.0,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 2081,
+    "input_tokens_details": {
+      "cached_tokens": 1920,
+      "cache_write_tokens": 128
+    },
+    "output_tokens": 1035,
+    "output_tokens_details": {
+      "reasoning_tokens": 832
+    },
+    "total_tokens": 3116
+  },
+  "user": null,
+  "metadata": {}
+}

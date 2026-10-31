@@ -1,0 +1,24 @@
+{
+  "model": "claude-opus-5-5",
+  "max_tokens": 1024,
+  "system": [
+    {
+      "type": "text",
+      "text": "You are an AI assistant tasked with analyzing literary works. Your goal is to provide insightful commentary on themes, characters, and writing style.\n"
+    },
+    {
+      "type": "text",
+      "text": "<the entire contents of Pride and Prejudice>",
+      "cache_control": {
+        "type": "ephemeral",
+        "ttl": "1h"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Analyze the major themes in Pride and Prejudice."
+    }
+  ]
+}

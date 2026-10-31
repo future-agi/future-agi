@@ -1,0 +1,5 @@
+[
+  "chunk:$.bytes.content_block [type=thinking]",
+  "chunk:$.bytes.delta [type=signature_delta]",
+  "chunk:$.bytes.delta [type=thinking_delta]"
+]

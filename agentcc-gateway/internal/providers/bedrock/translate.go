@@ -13,6 +13,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/netguard"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 // sharedDownloadClient is a package-level HTTP client with connection pooling
@@ -538,7 +539,10 @@ func translateToolChoice(raw json.RawMessage) *bedrockToolChoice {
 	return nil
 }
 
-func translateResponse(resp *bedrockResponse) *models.ChatCompletionResponse {
+// translateResponse converts an InvokeModel response, which for Claude is an
+// Anthropic Messages body. shape receives a report for every block type and
+// stop reason this function does not translate; nil is allowed.
+func translateResponse(resp *bedrockResponse, shape *common.ShapeReporter) *models.ChatCompletionResponse {
 	msg := models.Message{
 		Role: "assistant",
 	}
@@ -563,6 +567,8 @@ func translateResponse(resp *bedrockResponse) *models.ChatCompletionResponse {
 			})
 		case "image":
 			hasMultipart = true
+		default:
+			shape.Report(common.ShapeUnknownBlock, block.Type)
 		}
 	}
 
@@ -624,7 +630,7 @@ func translateResponse(resp *bedrockResponse) *models.ChatCompletionResponse {
 			{
 				Index:        0,
 				Message:      msg,
-				FinishReason: mapStopReason(resp.StopReason),
+				FinishReason: finishReason(shape, resp.StopReason),
 			},
 		},
 		Usage: &models.Usage{
@@ -636,26 +642,50 @@ func translateResponse(resp *bedrockResponse) *models.ChatCompletionResponse {
 }
 
 func mapStopReason(reason string) string {
+	finish, _ := lookupStopReason(reason)
+	return finish
+}
+
+// finishReason is mapStopReason for a live response: a stop reason with no
+// mapping still becomes "stop", and is reported so the default is visible.
+func finishReason(shape *common.ShapeReporter, reason string) string {
+	finish, ok := lookupStopReason(reason)
+	if !ok {
+		shape.Report(common.ShapeUnmappedFinishReason, reason)
+	}
+	return finish
+}
+
+// lookupStopReason maps a stop reason to an OpenAI finish_reason. It serves
+// both APIs: InvokeModel's Anthropic stop_reason and Converse's stopReason,
+// which spell the reasons mapped here the same way. ok is false for a reason
+// with no mapping, which falls back to "stop".
+func lookupStopReason(reason string) (finish string, ok bool) {
 	switch reason {
 	case "end_turn":
-		return "stop"
+		return "stop", true
 	case "max_tokens":
-		return "length"
+		return "length", true
 	case "stop_sequence":
-		return "stop"
+		return "stop", true
 	case "tool_use":
-		return "tool_calls"
+		return "tool_calls", true
 	default:
-		return "stop"
+		return "stop", false
 	}
+}
+
+// bedrockErrorResponse is what parseBedrockError decodes an error body as.
+// Bedrock's restJson1 errors carry the exception name in the
+// x-amzn-ErrorType header, not in the body.
+type bedrockErrorResponse struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
 }
 
 func parseBedrockError(status int, body []byte) *models.APIError {
 	// Try Bedrock error format.
-	var errResp struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-	}
+	var errResp bedrockErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Message != "" {
 		return &models.APIError{
 			Status:  mapBedrockStatus(status),

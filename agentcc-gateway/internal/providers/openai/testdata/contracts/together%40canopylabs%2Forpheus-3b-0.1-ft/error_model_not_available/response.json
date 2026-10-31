@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "Invalid or unavailable model",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": "model_not_available"
+  }
+}

@@ -20,6 +20,9 @@ import (
 
 const defaultAnthropicVersion = "2023-06-01"
 
+// adapterName labels this adapter's unknown-shape reports and metric.
+const adapterName = "anthropic"
+
 // Provider implements the Provider interface for the Anthropic Messages API.
 type Provider struct {
 	id         string
@@ -145,7 +148,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("anthropic: parsing response: %v", err))
 	}
 
-	return translateResponse(&ar2), nil
+	return translateResponse(&ar2, common.NewShapeReporter(ctx, adapterName, p.id)), nil
 }
 
 // StreamChatCompletion sends a streaming chat completion request to Anthropic.
@@ -211,6 +214,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 		state := newStreamState()
+		state.shape = common.NewShapeReporter(ctx, adapterName, p.id)
 		var currentEvent string
 
 		for scanner.Scan() {

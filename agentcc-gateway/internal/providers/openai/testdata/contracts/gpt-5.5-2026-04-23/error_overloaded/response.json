@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "The model is temporarily overloaded. Please retry your request after a brief delay.",
+    "type": "service_unavailable_error",
+    "param": null,
+    "code": "server_is_overloaded"
+  }
+}

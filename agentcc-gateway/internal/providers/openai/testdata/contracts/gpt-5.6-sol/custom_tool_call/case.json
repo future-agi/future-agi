@@ -1,0 +1,12 @@
+{
+  "sanity_gaps": [
+    {
+      "failure": "lacks an id or name",
+      "reason": "known gap O4: the custom tool call's custom.name and custom.input are dropped, leaving a tool call with no name"
+    },
+    {
+      "failure": "arguments are not valid JSON",
+      "reason": "known gap O4: the custom tool call's input is dropped, leaving empty arguments"
+    }
+  ]
+}

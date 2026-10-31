@@ -1,0 +1,12 @@
+{
+  "sanity_gaps": [
+    {
+      "failure": "finish_reason \"\" is not canonical",
+      "reason": "known gap G4: a blocked prompt's only chunk has no candidates, so the stream parser emits nothing; the client sees an empty stream with no finish_reason, no usage and no error"
+    },
+    {
+      "failure": "usage is missing",
+      "reason": "known gap G4: a blocked prompt's only chunk has no candidates, so the stream parser emits nothing; the client sees an empty stream with no finish_reason, no usage and no error"
+    }
+  ]
+}

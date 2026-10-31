@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 // streamState tracks accumulated state across stream events.
@@ -24,6 +25,10 @@ type streamState struct {
 	blockIsToolUse bool
 	// currentBlockIndex records the Anthropic content block index for the active block.
 	currentBlockIndex int
+
+	// shape receives a report for every event, block and delta type this
+	// parser skips without translating. nil (the default) discards reports.
+	shape *common.ShapeReporter
 }
 
 func newStreamState() *streamState {
@@ -76,6 +81,7 @@ func (s *streamState) parseSSELine(eventType, data string) (*models.StreamChunk,
 
 	var event streamEvent
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		s.shape.Report(common.ShapeMalformed, eventType)
 		return nil, false, nil // Skip unparseable events.
 	}
 
@@ -101,6 +107,9 @@ func (s *streamState) parseSSELine(eventType, data string) (*models.StreamChunk,
 		return nil, false, parseAnthropicError(http.StatusBadGateway, []byte(data))
 	}
 
+	// Anthropic adds event types under its versioning policy and asks clients
+	// to tolerate them; tolerate, but say so.
+	s.shape.Report(common.ShapeUnknownEvent, event.Type)
 	return nil, false, nil
 }
 
@@ -111,6 +120,7 @@ func (s *streamState) handleMessageStart(event streamEvent) (*models.StreamChunk
 
 	var msg messageStartData
 	if err := json.Unmarshal(event.Message, &msg); err != nil {
+		s.shape.Report(common.ShapeMalformed, "message_start")
 		return nil, false, nil
 	}
 
@@ -146,6 +156,7 @@ func (s *streamState) handleContentBlockStart(event streamEvent) (*models.Stream
 
 	var block contentBlockStartData
 	if err := json.Unmarshal(event.ContentBlock, &block); err != nil {
+		s.shape.Report(common.ShapeMalformed, "content_block_start")
 		return nil, false, nil
 	}
 
@@ -182,7 +193,15 @@ func (s *streamState) handleContentBlockStart(event streamEvent) (*models.Stream
 		return chunk, false, nil
 	}
 
-	// We don't emit a chunk for content_block_start of type "text".
+	switch block.Type {
+	case "text":
+		// We don't emit a chunk for content_block_start of type "text".
+	case "server_tool_use", "web_search_tool_result":
+		// Work Anthropic already ran on its side, with nothing for the caller
+		// to act on; see handleContentBlockDelta.
+	default:
+		s.shape.Report(common.ShapeUnknownBlock, block.Type)
+	}
 	return nil, false, nil
 }
 
@@ -254,6 +273,15 @@ func (s *streamState) handleContentBlockDelta(event streamEvent) (*models.Stream
 		return chunk, false, nil
 	}
 
+	// Neither: a delta type this parser does not translate.
+	var probe struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(event.Delta, &probe); err != nil {
+		s.shape.Report(common.ShapeMalformed, "content_block_delta")
+	} else {
+		s.shape.Report(common.ShapeUnknownDelta, probe.Type)
+	}
 	return nil, false, nil
 }
 
@@ -264,10 +292,11 @@ func (s *streamState) handleMessageDelta(event streamEvent) (*models.StreamChunk
 
 	var delta messageDeltaData
 	if err := json.Unmarshal(event.Delta, &delta); err != nil {
+		s.shape.Report(common.ShapeMalformed, "message_delta")
 		return nil, false, nil
 	}
 
-	finishReason := mapStopReason(delta.StopReason)
+	finish := finishReason(s.shape, delta.StopReason)
 
 	chunk := &models.StreamChunk{
 		ID:      s.messageID,
@@ -277,7 +306,7 @@ func (s *streamState) handleMessageDelta(event streamEvent) (*models.StreamChunk
 		Choices: []models.StreamChoice{
 			{
 				Index:        0,
-				FinishReason: &finishReason,
+				FinishReason: &finish,
 			},
 		},
 	}

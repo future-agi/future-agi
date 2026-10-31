@@ -1,0 +1,57 @@
+{
+  "model": "command-a-03-2025",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What's the weather like in San Francisco right now?"
+    },
+    {
+      "role": "assistant",
+      "content": "I will look up the current weather in San Francisco.",
+      "tool_calls": [
+        {
+          "id": "get_weather_1byjy32y4hvq",
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "arguments": "{\"location\":\"San Francisco, CA\",\"unit\":\"fahrenheit\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "get_weather_1byjy32y4hvq",
+      "content": "{\"temperature\": \"62°F\", \"conditions\": \"partly cloudy\"}"
+    }
+  ],
+  "max_tokens": 512,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the current weather in a given location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The city and state, e.g. San Francisco, CA"
+            },
+            "unit": {
+              "type": "string",
+              "enum": [
+                "celsius",
+                "fahrenheit"
+              ]
+            }
+          },
+          "required": [
+            "location"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+[
+  {
+    "event": "messageStart",
+    "payload": {
+      "role": "assistant"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "text": "Hamlet returns to Elsinore"
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "exception": "modelStreamErrorException",
+    "payload": {
+      "message": "The model encountered an error while streaming the response.",
+      "originalStatusCode": 500,
+      "originalMessage": "Internal error while generating."
+    }
+  }
+]

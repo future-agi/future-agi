@@ -1,0 +1,46 @@
+{
+  "id": "chatcmpl-VW2mnRogWagciUbfK9WUpcyB2Sh4n",
+  "object": "chat.completion",
+  "created": 1793170512,
+  "model": "gpt-5.6-sol",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "refusal": null,
+        "annotations": [],
+        "tool_calls": [
+          {
+            "id": "call_tLt8bg7g4GGfvARP6JHtx13I",
+            "type": "custom",
+            "custom": {
+              "name": "code_exec",
+              "input": "print(\"hello world\")"
+            }
+          }
+        ]
+      },
+      "logprobs": null,
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 98,
+    "completion_tokens": 61,
+    "total_tokens": 159,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "audio_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 42,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+    }
+  },
+  "service_tier": "default",
+  "system_fingerprint": "fp_7f0af35fa8"
+}

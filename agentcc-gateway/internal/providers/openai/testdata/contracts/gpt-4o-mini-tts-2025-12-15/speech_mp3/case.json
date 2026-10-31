@@ -1,0 +1,5 @@
+{
+  "endpoint": "speech",
+  "content_type": "audio/mpeg",
+  "notes": "audio/mpeg, a 200 content type the spec lists. Recordable."
+}

@@ -1,0 +1,335 @@
+{
+  "assembled": {
+    "content": "Okay, let's check the weather for San Francisco, CA:",
+    "finish_reason": "tool_calls",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "function": {
+          "arguments": "{\"location\": \"San Francisco, CA\", \"unit\": \"fahrenheit\"}",
+          "name": "get_weather"
+        },
+        "id": "toolu_01T1x1fJ34qAmk2tNTrN7Up6",
+        "type": "function"
+      }
+    ],
+    "usage": {
+      "completion_tokens": 89,
+      "prompt_tokens": 472,
+      "total_tokens": 561
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Okay"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": ", let's check the weather"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " for San Francisco, CA:"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "",
+                  "name": "get_weather"
+                },
+                "id": "toolu_01T1x1fJ34qAmk2tNTrN7Up6",
+                "index": 0,
+                "type": "function"
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"location\":",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": " \"San",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": " Francisc",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "o,",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": " CA\"",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": ", ",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "\"unit\": \"fah",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "renheit\"}",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "tool_calls",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_014p7gG3wDgGV9EUtLvnow3U",
+      "model": "claude-haiku-4-5-20251001",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 89,
+        "prompt_tokens": 472,
+        "total_tokens": 561
+      }
+    }
+  ],
+  "error": null
+}

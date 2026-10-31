@@ -1,0 +1,6 @@
+{
+  "code": "",
+  "message": "This vector store is being migrated. Retry after the migration completes.",
+  "status": 409,
+  "type": "invalid_request_error"
+}

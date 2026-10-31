@@ -1,0 +1,23 @@
+{
+  "provider": "azure",
+  "format": "openapi",
+  "url": "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/35a34321b9738f30959b2a9d40a40459c2f8dc48/specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json",
+  "repo": "Azure/azure-rest-api-specs",
+  "path": "specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json",
+  "commit": "35a34321b9738f30959b2a9d40a40459c2f8dc48",
+  "spec_version": {
+    "info.version": "2024-10-21",
+    "openapi": "3.0.0"
+  },
+  "sha256": "8efc665c79a5a5e7d3137d9378da074d9956d042150a1d0a6ffc6ba95cc1bf47",
+  "fetched_at": "2026-10-28T21:03:25Z",
+  "license": "MIT",
+  "roots": [
+    "chat",
+    "chat_stream",
+    "embeddings",
+    "errors",
+    "images",
+    "transcription"
+  ]
+}

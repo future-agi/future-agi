@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "provider": "gemini",
+  "root": "models",
+  "format": "discovery",
+  "select": "method models.list -> ListModelsResponse",
+  "description": "list-models response, decoded by contractwatch's GeminiLister (the adapter's ListModels returns nil)",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.models": {"kinds":["array"]},
+    "$.models[]": {"kinds":["object"]},
+    "$.models[].baseModelId": {"kinds":["string"]},
+    "$.models[].description": {"kinds":["string"]},
+    "$.models[].displayName": {"kinds":["string"]},
+    "$.models[].inputTokenLimit": {"kinds":["integer"]},
+    "$.models[].maxTemperature": {"kinds":["number"]},
+    "$.models[].name": {"kinds":["string"]},
+    "$.models[].outputTokenLimit": {"kinds":["integer"]},
+    "$.models[].supportedGenerationMethods": {"kinds":["array"]},
+    "$.models[].supportedGenerationMethods[]": {"kinds":["string"]},
+    "$.models[].temperature": {"kinds":["number"]},
+    "$.models[].thinking": {"kinds":["boolean"]},
+    "$.models[].topK": {"kinds":["integer"]},
+    "$.models[].topP": {"kinds":["number"]},
+    "$.models[].version": {"kinds":["string"]},
+    "$.nextPageToken": {"kinds":["string"]}
+  }
+}

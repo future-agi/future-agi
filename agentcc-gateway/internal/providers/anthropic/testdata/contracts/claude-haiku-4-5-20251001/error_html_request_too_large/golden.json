@@ -1,0 +1,6 @@
+{
+  "code": "provider_413",
+  "message": "anthropic error (HTTP 413): <html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n<body>\r\n<center><h1>413 Request Entity Too Large</h1></center>\r\n<hr><center>cloudflare</center>\r\n</body>\r\n</html>\r\n",
+  "status": 502,
+  "type": "upstream_error"
+}

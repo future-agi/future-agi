@@ -1,0 +1,8 @@
+{
+  "model": "mistral-ocr-latest",
+  "document": {
+    "type": "document_url",
+    "document_url": "https://arxiv.org/pdf/2201.04234"
+  },
+  "include_image_base64": true
+}

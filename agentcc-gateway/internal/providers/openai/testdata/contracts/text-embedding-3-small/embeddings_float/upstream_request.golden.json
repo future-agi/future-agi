@@ -1,0 +1,14 @@
+{
+  "body": {
+    "dimensions": 3,
+    "encoding_format": "float",
+    "input": "Hello world",
+    "model": "text-embedding-3-small"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/embeddings"
+}

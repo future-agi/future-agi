@@ -1,0 +1,8 @@
+{
+  "status": 500,
+  "headers": {
+    "apim-request-id": "2b5d9e0f-7c3a-4e16-8a92-d1f4b6c8e035"
+  },
+  "recordable": false,
+  "notes": "Synthetic, the errorResponse shape (github.com/Azure/azure-rest-api-specs at 7b9f1ff0714627e3680552703174ffe11538d5c5, specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json) with the OpenAI-style server_error the models behind the service answer; wording as gateway test suites quote it. Not recordable: a server failure cannot be induced."
+}

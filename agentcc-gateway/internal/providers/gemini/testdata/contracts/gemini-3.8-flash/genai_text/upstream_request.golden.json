@@ -1,0 +1,25 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "In one sentence, why is the sky blue?"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "thinkingConfig": {
+        "thinkingLevel": "low"
+      }
+    }
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.8-flash:generateContent"
+}

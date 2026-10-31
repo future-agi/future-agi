@@ -1,0 +1,99 @@
+{
+  "assembled": {
+    "content": "Alice's brother has 3 sisters: Alice and her 2 sisters.",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": null
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "6c1e8a3f-2d4b-4f7e-b9a0-5e3c7d1f2b48",
+      "model": "command-a-reasoning-08-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": ""
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "6c1e8a3f-2d4b-4f7e-b9a0-5e3c7d1f2b48",
+      "model": "command-a-reasoning-08-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": ""
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "6c1e8a3f-2d4b-4f7e-b9a0-5e3c7d1f2b48",
+      "model": "command-a-reasoning-08-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Alice's brother has 3 sisters:"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "6c1e8a3f-2d4b-4f7e-b9a0-5e3c7d1f2b48",
+      "model": "command-a-reasoning-08-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " Alice and her 2 sisters."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "6c1e8a3f-2d4b-4f7e-b9a0-5e3c7d1f2b48",
+      "model": "command-a-reasoning-08-2025",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "6c1e8a3f-2d4b-4f7e-b9a0-5e3c7d1f2b48",
+      "model": "command-a-reasoning-08-2025",
+      "object": "chat.completion.chunk"
+    }
+  ],
+  "error": null
+}

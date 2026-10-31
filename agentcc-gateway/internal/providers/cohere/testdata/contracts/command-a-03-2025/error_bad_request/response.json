@@ -1,0 +1,4 @@
+{
+  "id": "5b7a3c1e-0d2f-4e8a-9b6c-1f4d7e2a8c30",
+  "message": "invalid request: temperature must be between 0 and 1.0 inclusive."
+}

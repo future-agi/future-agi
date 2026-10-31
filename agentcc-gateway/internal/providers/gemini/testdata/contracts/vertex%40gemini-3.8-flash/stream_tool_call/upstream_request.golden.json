@@ -1,0 +1,54 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "What's the weather in Paris?"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {},
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "description": "Get the current weather in a given location",
+            "name": "get_weather",
+            "parametersJsonSchema": {
+              "properties": {
+                "location": {
+                  "description": "The city and country, e.g. Paris, France",
+                  "type": "string"
+                },
+                "unit": {
+                  "enum": [
+                    "celsius",
+                    "fahrenheit"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "location"
+              ],
+              "type": "object"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-gcp-location": "global",
+    "x-gcp-project": "test-project"
+  },
+  "method": "POST",
+  "path": "/v1beta1/projects/test-project/locations/global/publishers/google/models/gemini-3.8-flash:streamGenerateContent",
+  "query": "alt=sse"
+}

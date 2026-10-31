@@ -1,0 +1,8 @@
+[
+  {
+    "created": "<nonzero>",
+    "id": "mistral-large-latest",
+    "object": "model",
+    "owned_by": "mistralai"
+  }
+]

@@ -1,0 +1,21 @@
+{
+  "model": "gpt-5.6-sol",
+  "messages": [
+    {
+      "role": "developer",
+      "content": "You are a release-notes assistant. Summarise the change log the user pastes in one sentence."
+    },
+    {
+      "role": "user",
+      "content": "v2.3.0: adds prompt cache breakpoints, fixes retry jitter, drops Python 3.9."
+    }
+  ],
+  "stream": true,
+  "stream_options": {
+    "include_usage": true,
+    "include_obfuscation": false
+  },
+  "reasoning_effort": "low",
+  "service_tier": "fast",
+  "prompt_cache_key": "release-notes-v1"
+}

@@ -1,0 +1,4 @@
+{
+  "endpoint": "chat_via_responses",
+  "notes": "The \"Functions\" example streamed: output_item.added with the function_call item (arguments \"\"), function_call_arguments.delta fragments, .done, output_item.done, response.completed (event types and fields from ResponseStreamEvent in the spec). Recordable."
+}

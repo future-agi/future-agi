@@ -1,0 +1,6 @@
+{
+  "code": "provider_503",
+  "message": "service unavailable: too many users are trying to access the service at the same time, please try again later",
+  "status": 502,
+  "type": "upstream_error"
+}

@@ -1,0 +1,5 @@
+{
+  "status": 500,
+  "recordable": false,
+  "notes": "Synthetic, from cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28) (500 InternalServerError: an uncategorised internal error) and the error body {id, message} the reference gives every error response (components/responses in cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28)); the docs give no 500 message, so it is invented, as is the id. Not recordable: nothing a client sends induces it."
+}

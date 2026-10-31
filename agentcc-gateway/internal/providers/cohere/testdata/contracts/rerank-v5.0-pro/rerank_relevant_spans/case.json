@@ -1,0 +1,10 @@
+{
+  "endpoint": "rerank",
+  "notes": "Synthetic: the /v2/rerank example in cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28), request and response verbatim (rerank-v5.0-pro, top_n 3, relevant_spans enabled; results with relevant_spans; meta.billed_units input_tokens 192). The canonical rerank request has no relevant_spans, so upstream_patch.json adds the example's for recording. Recordable with the patch.",
+  "sanity_gaps": [
+    {
+      "failure": "billed search_units",
+      "reason": "known gap K8: translateRerankResponse reports billed_units.input_tokens as search_units, and cohereBilledUnits has no search_units field: a token-billed rerank (billed_units.input_tokens, as the reference example for rerank-v5.0-pro shows) is reported as that many search units, so the cost plugin prices 192 tokens as 192 searches"
+    }
+  ]
+}

@@ -1,0 +1,183 @@
+# Daily check that the providers' official API specs still match the subsets
+# the gateway's spec coverage tests are pinned to. For every provider with a
+# fetchable machine-readable spec (OpenAPI, Google discovery, Smithy) it
+# resolves the latest commit with git ls-remote, fetches the spec raw at that
+# commit, flattens the roots the gateway parses, and diffs them against the
+# committed subsets in agentcc-gateway/internal/providers/contractspec/subsets.
+# A new field, enum value, stream event, kind change or newly-nullable field
+# fails the job; for providers without a fetchable spec, a moved change signal
+# (a Stainless or Speakeasy spec hash) does too. Each drifted provider gets one
+# tracking issue, opened or updated.
+#
+# No secrets and no model calls: everything fetched is public. Drift shows up
+# here as soon as a provider publishes it, before any response carries it.
+# The offline half (every committed path mapped or allowlisted) runs on every
+# PR in the gateway CI's `make test` (TestSpecCoverage).
+# See agentcc-gateway/internal/providers/contractspec/README.md.
+name: AgentCC Provider Spec Drift
+
+on:
+  schedule:
+    # Daily, 04:41 UTC.
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Providers to check, comma-separated (e.g. anthropic,openai). Empty: all."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentcc-provider-spec-drift
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Diff the official specs against the committed subsets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      drifted: ${{ steps.check.outputs.drifted }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agentcc-gateway/go.mod
+          cache-dependency-path: agentcc-gateway/go.sum
+
+      # Exit 0: no drift. 1: drift (a report per drifted provider). 2: a spec
+      # could not be fetched or parsed (see the log); providers that were
+      # checked still get their reports.
+      - name: Fetch the latest specs and diff them
+        id: check
+        working-directory: agentcc-gateway
+        env:
+          PROVIDER_FILTER: ${{ inputs.provider }}
+        run: |
+          out="$RUNNER_TEMP/spec-drift"
+          mkdir -p "$out"
+          args=(-fetch -check -report "$out/reports" -cache "$out/specs")
+          if [ -n "$PROVIDER_FILTER" ]; then
+            args+=(-provider "$PROVIDER_FILTER")
+          fi
+          set +e
+          go run ./cmd/contract-specs "${args[@]}" 2>&1 | tee "$out/check.log"
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          drifted=""
+          shopt -s nullglob
+          for report in "$out"/reports/*.md; do
+            name=$(basename "$report" .md)
+            if [ "$name" != summary ]; then
+              drifted="${drifted:+$drifted,}$name"
+            fi
+          done
+          echo "drifted=$drifted" >> "$GITHUB_OUTPUT"
+
+      - name: Write the job summary
+        if: ${{ !cancelled() }}
+        run: |
+          out="$RUNNER_TEMP/spec-drift"
+          if [ -f "$out/reports/summary.md" ]; then
+            cat "$out/reports/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Provider spec drift"
+              echo
+              echo "contract-specs did not write a report; see the job log."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+
+          Regenerate a provider's subset from agentcc-gateway/ with
+          `go run ./cmd/contract-specs -fetch -update -provider <name>`, then run
+          `go test ./internal/providers/... -run SpecCoverage` and map or allowlist what it reports.
+          EOF
+
+      # The fetched specs are kept for debugging only: they are not vendored
+      # (Cohere's is proprietary), so the artifact expires.
+      - name: Upload the reports and fetched specs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-spec-drift-${{ github.run_id }}
+          path: ${{ runner.temp }}/spec-drift
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Fail on drift or fetch errors
+        if: ${{ !cancelled() }}
+        env:
+          CHECK_EXIT: ${{ steps.check.outputs.exit }}
+          DRIFTED: ${{ steps.check.outputs.drifted }}
+        run: |
+          case "${CHECK_EXIT:-2}" in
+            0) echo "No drift." ;;
+            1) echo "::error::Spec drift in: $DRIFTED (see the job summary)."; exit 1 ;;
+            *) echo "::error::contract-specs exited ${CHECK_EXIT:-without running}: a spec could not be fetched or parsed${DRIFTED:+, and drift in: $DRIFTED} (see the log)."; exit 1 ;;
+          esac
+
+  # The only job with issues: write, and it runs no repository code: it reads
+  # the issue bodies the check job rendered.
+  notify:
+    name: Open or update one issue per drifted provider
+    needs: check
+    if: >-
+      ${{ !cancelled() && needs.check.outputs.drifted != '' &&
+      github.repository == 'future-agi/future-agi' &&
+      (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: provider-spec-drift-${{ github.run_id }}
+          path: spec-drift
+
+      - name: Open or update the tracking issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          shopt -s nullglob
+          for report in spec-drift/reports/*.md; do
+            provider=$(basename "$report" .md)
+            if [ "$provider" = summary ]; then
+              continue
+            fi
+            title="Provider spec drift: $provider"
+            {
+              cat "$report"
+              echo
+              echo "Last seen by $RUN_URL."
+            } > body.md
+            # Search is fuzzy; the exact title decides. The oldest match wins.
+            existing=$(gh issue list --state all --limit 30 --json number,title,state \
+              --search "\"$title\" in:title" |
+              jq -c --arg t "$title" '[.[] | select(.title == $t)] | sort_by(.number) | first // empty')
+            if [ -z "$existing" ]; then
+              gh issue create --title "$title" --body-file body.md
+              sleep 2 # stay clear of the secondary rate limit on content creation
+              continue
+            fi
+            number=$(jq -r .number <<< "$existing")
+            gh issue edit "$number" --body-file body.md
+            if [ "$(jq -r .state <<< "$existing")" = CLOSED ]; then
+              gh issue reopen "$number" --comment "Reopened by the daily spec-drift run: $provider's spec differs from the committed subset again. See the updated description."
+            fi
+            echo "Updated #$number: $title"
+          done

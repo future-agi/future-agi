@@ -1,0 +1,16 @@
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp-1","object":"response","created_at":0,"model":"openai/gpt-5.4","status":"in_progress","output":[],"service_tier":"priority","prompt_cache_key":"doc-1"}}
+
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp-1","object":"response","created_at":0,"model":"openai/gpt-5.4","status":"in_progress","output":[],"service_tier":"priority","prompt_cache_key":"doc-1"}}
+
+data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"msg-1","type":"message","role":"assistant","status":"in_progress","content":[]}}
+
+data: {"type":"response.output_text.delta","sequence_number":3,"item_id":"msg-1","output_index":0,"content_index":0,"delta":"The file describes"}
+
+data: {"type":"response.output_text.delta","sequence_number":4,"item_id":"msg-1","output_index":0,"content_index":0,"delta":" the quarterly release plan."}
+
+data: {"type":"response.output_text.done","sequence_number":5,"item_id":"msg-1","output_index":0,"content_index":0,"text":"The file describes the quarterly release plan."}
+
+data: {"type":"response.output_item.done","sequence_number":6,"output_index":0,"item":{"id":"msg-1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"The file describes the quarterly release plan.","annotations":[]}]}}
+
+data: {"type":"response.completed","sequence_number":7,"response":{"id":"resp-1","object":"response","created_at":0,"model":"openai/gpt-5.4","status":"completed","output":[{"id":"msg-1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"The file describes the quarterly release plan.","annotations":[]}]}],"service_tier":"priority","prompt_cache_key":"doc-1","usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12,"tool_calls_details":{"fetch_url":{"invocation":1,"cost_usd":0.0025,"token_usage":[{"model":"extractor","input_tokens":100,"input_tokens_details":{"cached_tokens":40,"cache_read_input_tokens":40},"output_tokens":20,"output_tokens_details":{"reasoning_tokens":5}}]}}}}}
+

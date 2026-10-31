@@ -1,0 +1,34 @@
+{
+  "id": "8d2e4f6a-1b3c-4d5e-9f7a-2c4e6a8b0d13",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "thinking",
+        "thinking": "The user wants the current weather in San Francisco. I should call get_weather with location San Francisco, CA."
+      }
+    ],
+    "tool_calls": [
+      {
+        "id": "get_weather_k3m9x2v7q1wz",
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "arguments": "{\"location\":\"San Francisco, CA\"}"
+        }
+      }
+    ]
+  },
+  "finish_reason": "TOOL_CALL",
+  "usage": {
+    "billed_units": {
+      "input_tokens": 41,
+      "output_tokens": 52
+    },
+    "tokens": {
+      "input_tokens": 937,
+      "output_tokens": 52
+    },
+    "cached_tokens": 0
+  }
+}

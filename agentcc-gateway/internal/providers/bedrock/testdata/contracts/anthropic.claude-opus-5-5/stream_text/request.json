@@ -1,0 +1,11 @@
+{
+  "model": "anthropic.claude-opus-5-5",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Say hello."
+    }
+  ],
+  "max_tokens": 64,
+  "stream": true
+}

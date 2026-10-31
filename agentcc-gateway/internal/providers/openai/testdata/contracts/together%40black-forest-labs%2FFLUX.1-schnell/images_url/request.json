@@ -1,0 +1,6 @@
+{
+  "model": "black-forest-labs/FLUX.1-schnell",
+  "prompt": "cat floating in space, cinematic",
+  "n": 1,
+  "response_format": "url"
+}

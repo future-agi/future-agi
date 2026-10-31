@@ -1,0 +1,23 @@
+{
+  "body": {
+    "max_tokens": 256,
+    "messages": [
+      {
+        "content": "You are a concise assistant.",
+        "role": "system"
+      },
+      {
+        "content": "What is the capital of France? Answer in one sentence.",
+        "role": "user"
+      }
+    ],
+    "model": "command-a-03-2025",
+    "temperature": 0.2
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v2/chat"
+}

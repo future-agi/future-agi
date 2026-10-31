@@ -1,0 +1,11 @@
+{
+  "status": 400,
+  "recordable": false,
+  "notes": "FAILED_PRECONDITION (HTTP 400 in google/rpc/code.proto): the API refuses callers in an unsupported region, or a free-tier project where billing must be enabled. Not recordable from a supported region. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28).",
+  "sanity_gaps": [
+    {
+      "failure": "upstream status 400 became 502",
+      "reason": "known gap G20: mapGeminiStatus maps by the status string and knows only INVALID_ARGUMENT, UNAUTHENTICATED, PERMISSION_DENIED, NOT_FOUND and RESOURCE_EXHAUSTED; FAILED_PRECONDITION becomes a 502, which the gateway retries, fails over and counts against the circuit breaker, although the request can never succeed"
+    }
+  ]
+}
