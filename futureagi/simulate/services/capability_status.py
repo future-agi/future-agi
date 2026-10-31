@@ -37,8 +37,8 @@ def capability_statuses(
 ) -> list[dict[str, Any]]:
     """One row per catalogue capability, in catalogue order.
 
-    Rules, first match wins: a structural failure, read from the current contract, -> Blocked (it describes what
-    exists now, so it outranks older evidence); inputs changed since capture -> Stale; a capability it depends on is
+    Rules, first match wins: a current finding (from the contract as it is now, or the agent's preflight) ->
+    Blocked (it describes what exists now, so it outranks older evidence); inputs changed since capture -> Stale; a capability it depends on is
     not Supported or Partial -> Untested, naming the gate; then the finding: failed -> Blocked, unavailable ->
     Unavailable, passed_with_limits -> Partial, passed -> Supported; anything else, or no evidence -> Untested.
     """

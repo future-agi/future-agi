@@ -199,6 +199,25 @@ def structural_findings(contract: dict[str, Any] | None) -> dict[str, dict[str, 
     }
 
 
+def preflight_findings(report: dict[str, Any] | None, status: str) -> dict[str, dict[str, Any]]:
+    """A failed agent preflight (source, credentials, packaging or the target itself) means the agent cannot start, so
+    the capability that gates every other one reads Blocked, naming the checks that failed."""
+    if status != "failed":
+        return {}
+    failed = [check for check in (report or {}).get("checks") or [] if check.get("status") == "failed"]
+    missing = sorted({str(name) for check in failed for name in check.get("missing") or []})
+    labels = ", ".join(str(check.get("label") or check.get("id")) for check in failed) or "agent preflight"
+    return {
+        "start_health": {
+            "finding": "failed",
+            "reason_code": str(failed[0].get("id")) if failed else str((report or {}).get("error") or "preflight_failed"),
+            "reason": f"Agent preflight failed: {labels}" + (f" (missing {', '.join(missing)})" if missing else ""),
+            "fix": "Fix what the preflight names in the agent's connection, then save it as a new agent version",
+            "checks": [{"target": str(check.get("id")), "result": "failed"} for check in failed],
+        }
+    }
+
+
 def environment_capability_report(job: HostedHarnessJob, agent_version_id: Any = None) -> dict[str, Any]:
     """The capability report for an environment and an agent version (the environment's own when none is named): its
     latest build evidence, Stale once the environment version moved on or the agent is not the one it was checked
@@ -228,8 +247,15 @@ def environment_capability_report(job: HostedHarnessJob, agent_version_id: Any =
         if evidence is not None
         else None
     )
+    from simulate.models import HarnessAgentVersionRuntime
+
     version = job.environment_version
     structural = structural_findings((version.documents or {}).get("contract") if version is not None else None)
+    runtime = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version_id=current["agent_version_id"] or None
+    ).first()
+    if runtime is not None:
+        structural.update(preflight_findings(runtime.preflight_report, runtime.preflight_status))
     rows = capability_statuses(evidence.catalogue if evidence is not None else [], document, current, structural)
     selection = affected_scenarios(rows, evidence.scenario_requirements if evidence is not None else {})
     return {

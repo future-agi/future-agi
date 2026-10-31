@@ -154,3 +154,38 @@ def test_the_report_goes_stale_once_the_agent_is_another_version_than_the_one_ch
     job.agent_version = second
     job.save(update_fields=["agent_version"])
     assert row()["status"] == "stale"
+
+
+def test_a_failed_agent_preflight_blocks_start_and_health_and_everything_behind_it(job, organization, workspace):
+    from simulate.models import HarnessAgentVersionRuntime
+    from simulate.services.capability_evidence import environment_capability_report
+
+    first, second = _versions(organization, workspace)
+    job.agent_version = first
+    job.save(update_fields=["agent_version"])
+    document = {**_DOCUMENT, "capabilities": {"start_health": {"finding": "passed"}, "one_turn": {"finding": "passed"}}}
+    evidence = record_capability_evidence(
+        job, _archive({"generic-harness/capability-evidence.json": json.dumps(document).encode()}))
+    evidence.catalogue = [*_CATALOGUE, {"id": "one_turn", "label": "One turn", "depends_on": ["start_health"]}]
+    evidence.save(update_fields=["catalogue"])
+    for version, status, report in (
+        (second, "passed", {"checks": [{"id": "source", "label": "Source", "status": "passed", "missing": []}]}),
+        (first, "failed", {"checks": [
+            {"id": "source", "label": "Source", "status": "passed", "missing": []},
+            {"id": "credentials_present", "label": "Credentials", "status": "failed", "missing": ["API_KEY"]},
+        ]}),
+    ):
+        HarnessAgentVersionRuntime.objects.create(
+            agent_version=version, agent_definition=version.agent_definition, organization=organization,
+            hash="sha256:" + "2" * 64, source_kind="github", trigger="creation",
+            preflight_status=status, preflight_report=report,
+        )
+
+    rows = {row["id"]: row for row in environment_capability_report(job)["capabilities"]}
+    health = rows["start_health"]
+    assert (health["status"], health["reason_code"]) == ("blocked", "credentials_present")
+    assert health["reason"] == "Agent preflight failed: Credentials (missing API_KEY)"
+    assert (rows["one_turn"]["status"], rows["one_turn"]["blocked_by"]) == ("untested", "start_health")
+    # A version whose preflight passed adds nothing: it was not the version checked, so the report is Stale for it.
+    other = {row["id"]: row for row in environment_capability_report(job, agent_version_id=second.id)["capabilities"]}
+    assert {row["status"] for row in other.values()} == {"stale"}
