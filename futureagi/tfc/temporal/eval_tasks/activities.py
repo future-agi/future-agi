@@ -35,6 +35,7 @@ from tfc.temporal.eval_tasks.types import (
     WorkflowLabelsOutput,
 )
 from tracer.services.eval_tasks.ch_guardrails import eval_ch_guardrails
+from tracer.services.eval_tasks.failure_alert import notify_eval_task_failed
 
 # One structured line per control step, so a task that stops draining is
 # visible on a dashboard instead of only in the entry table. Every field is a
@@ -328,7 +329,7 @@ def _set_task_status_sync(
     try:
         from django.utils import timezone
 
-        from tracer.models.eval_task import EvalTask, EvalTaskStatus
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
         fields: dict = {"status": status}
         if status == EvalTaskStatus.RUNNING:
@@ -346,6 +347,11 @@ def _set_task_status_sync(
             "task_id": str(task_id),
             "changed": bool(changed),
             "status": task.status or "",
+            # Read off the row already reloaded above; retries are deduped by
+            # the alert itself (failure_alert._dedupe_key).
+            "failed_continuous": bool(changed)
+            and status == EvalTaskStatus.FAILED
+            and task.run_type == RunType.CONTINUOUS,
         }
     finally:
         close_old_connections()
@@ -536,6 +542,11 @@ async def set_eval_task_status_activity(input: SetStatusInput) -> SetStatusOutpu
         result = await otel_sync_to_async(
             _set_task_status_sync, thread_sensitive=False
         )(input.task_id, input.status, input.expected_status)
+    if result["failed_continuous"]:
+        info = activity.info()
+        await notify_eval_task_failed(
+            result["task_id"], info.workflow_id, info.workflow_run_id
+        )
     return SetStatusOutput(
         task_id=result["task_id"],
         changed=result["changed"],

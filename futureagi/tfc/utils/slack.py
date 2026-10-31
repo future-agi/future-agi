@@ -7,12 +7,16 @@ from slack_sdk import WebhookClient
 logger = structlog.get_logger(__name__)
 
 
-def send_critical_slack_notification(message: str) -> bool:
+def send_critical_slack_notification(
+    message: str, blocks: list | None = None, timeout: int = 30
+) -> bool:
     """
     Send a notification to the #critical Slack channel.
 
     Args:
-        message: The message to send
+        message: The message to send (the notification fallback when blocks are given)
+        blocks: Optional Block Kit blocks; an environment context block is appended
+        timeout: Webhook request timeout in seconds
 
     Returns:
         True if notification was sent successfully, False otherwise
@@ -37,8 +41,18 @@ def send_critical_slack_notification(message: str) -> bool:
             return False
 
         formatted_message = f"{message}\n\n*Environment:* {env_type}"
-        webhook = WebhookClient(settings.ERROR_LOGS_WEBHOOK)
-        response = webhook.send(text=formatted_message)
+        webhook = WebhookClient(settings.ERROR_LOGS_WEBHOOK, timeout=timeout)
+        if blocks:
+            blocks = [
+                *blocks,
+                {
+                    "type": "context",
+                    "elements": [
+                        {"type": "mrkdwn", "text": f"*Environment:* {env_type}"}
+                    ],
+                },
+            ]
+        response = webhook.send(text=formatted_message, blocks=blocks)
 
         if response.status_code == 200:
             logger.info("Critical Slack notification sent successfully")
