@@ -435,6 +435,7 @@ def _agent_item(
     return {
         "id": str(version.id),
         "label": _agent_label(version.version_name, version.version_number),
+        "name": None,
         "status": (
             _AGENT_STATUS.get(runtime.preflight_status, "active")
             if runtime is not None

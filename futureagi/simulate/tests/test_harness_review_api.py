@@ -152,6 +152,10 @@ def test_save_makes_only_the_accepted_changes_live_and_keeps_the_review_on_the_v
     settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
     saved = _save(auth_client, environment, decided["review_digest"], name="Manager approves discounts")
     assert saved.status_code == 200, saved.content
+    from simulate.serializers.harness_environment import HarnessDraftSaveResponseSerializer
+
+    declared = HarnessDraftSaveResponseSerializer(data=saved.json().get("result", saved.json()))
+    assert declared.is_valid(), declared.errors
     assert [one["id"] for one in _saved_actors(environment)] == ["manager"]
     environment.refresh_from_db()
     version = environment.environment_version
