@@ -661,6 +661,24 @@ const traceRow = (raw) => ({
   latencyMs: raw.latency_ms ?? null,
 });
 
+// Which of a multi-agent app's workers did what in one call. A 404 means the trial has
+// no worker record (the app sent no traces, or they are still arriving): null, not an error.
+export function useCallWorkers(callExecutionId) {
+  return useQuery({
+    queryKey: ["simulation-call-workers-v3", callExecutionId],
+    queryFn: async () => {
+      try {
+        return (await axios.get(endpoints.runResultsV3.workers(callExecutionId))).data;
+      } catch (error) {
+        if (error?.status === 404 || error?.response?.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: !!callExecutionId,
+    retry: false,
+  });
+}
+
 export function useCallTraces(executionId, callExecutionId) {
   const query = useQuery({
     queryKey: ["simulation-call-traces-v3", executionId, callExecutionId],

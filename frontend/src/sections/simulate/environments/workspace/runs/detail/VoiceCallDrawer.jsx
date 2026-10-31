@@ -17,7 +17,8 @@ import {
 } from "src/api/simulate-environments/runDetail";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
 import CallTracesPanel from "./CallTracesPanel";
-import { CALL_TRACES_COPY } from "./callTraces.constants";
+import CallWorkersPanel from "./CallWorkersPanel";
+import { CALL_TRACES_COPY, CALL_WORKERS_COPY } from "./callTraces.constants";
 
 // The annotate / queue / dataset / tags actions need project + annotation
 // context this embedded drawer doesn't wire; hide them rather than leave dead
@@ -112,8 +113,15 @@ export default function VoiceCallDrawer({
           />
         ),
       },
+      {
+        label: CALL_WORKERS_COPY.tab,
+        value: "workers",
+        icon: "solar:users-group-two-rounded-linear",
+        content: <CallWorkersPanel callExecutionId={task.id} />,
+      },
     ],
     [
+      task.id,
       callTraces.projectId,
       callTraces.isError,
       callTraces.traces,

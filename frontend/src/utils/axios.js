@@ -1780,6 +1780,10 @@ export const endpoints = {
       apiPath("/simulate/v3/call-executions/{call_execution_id}/", {
         call_execution_id: id,
       }),
+    workers: (id) =>
+      apiPath("/simulate/v3/call-executions/{call_execution_id}/workers/", {
+        call_execution_id: id,
+      }),
     traces: (id) =>
       apiPath("/simulate/v3/test-executions/{test_execution_id}/traces/", {
         test_execution_id: id,

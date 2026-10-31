@@ -726,7 +726,7 @@ describe("CallDrawer — the call's traces", () => {
     expect(useCallTraces).toHaveBeenLastCalledWith("exec-1", "voice-1");
     expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
       "data-left-tabs",
-      "Traces",
+      "Traces,Workers",
     );
   });
 
@@ -748,7 +748,7 @@ describe("CallDrawer — the call's traces", () => {
 
     expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
       "data-left-tabs",
-      "Traces",
+      "Traces,Workers",
     );
   });
 
@@ -769,7 +769,7 @@ describe("CallDrawer — the call's traces", () => {
     expect(useCallTraces).toHaveBeenLastCalledWith(null, "voice-1");
     expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
       "data-left-tabs",
-      "Traces",
+      "Traces,Workers",
     );
   });
 

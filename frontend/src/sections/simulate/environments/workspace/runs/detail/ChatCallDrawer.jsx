@@ -16,7 +16,8 @@ import { BUILD_TONES } from "../../../buildEnvironment/buildTones";
 import { SCORING_STATUS } from "../runs.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import CallTracesPanel from "./CallTracesPanel";
-import { CALL_TRACES_COPY } from "./callTraces.constants";
+import CallWorkersPanel from "./CallWorkersPanel";
+import { CALL_TRACES_COPY, CALL_WORKERS_COPY } from "./callTraces.constants";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
@@ -195,16 +196,19 @@ export default function ChatCallDrawer({
         {/* left: the artifact */}
         <Stack sx={{ flex: 1.15, minWidth: 0, borderRight: { md: "1px solid" }, borderColor: { md: "divider" } }}>
           <CustomTabs
-            value={showTraces ? "traces" : "transcript"}
+            value={artifact}
             onChange={(_, value) => setArtifact(value)}
             sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider", minHeight: 40 }}
           >
             <Tab value="transcript" label="Transcript" sx={{ minHeight: 40 }} />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} sx={{ minHeight: 40 }} />
+            <Tab value="workers" label={CALL_WORKERS_COPY.tab} sx={{ minHeight: 40 }} />
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
-            {showTraces ? (
+            {artifact === "workers" ? (
+              <CallWorkersPanel callExecutionId={task.id} />
+            ) : showTraces ? (
               <Box sx={{ px: 1.5, py: 1, display: "flex", flexDirection: "column", minHeight: "100%" }}>
                 <CallTracesPanel
                   traces={callTraces.traces}

@@ -553,6 +553,36 @@ class FunctionCallSerializer(serializers.Serializer):
         ref_name = "SimulateRunV3FunctionCall"
 
 
+class CallWorkerSerializer(serializers.Serializer):
+    worker_id = serializers.CharField()
+    id = serializers.CharField()
+    name = serializers.CharField()
+    # Declared names are not proof: true only when the worker's own spans arrived.
+    observed = serializers.BooleanField()
+    undeclared = serializers.BooleanField()
+    instance_ids = serializers.ListField(child=serializers.CharField())
+
+
+class CallWorkerEventSerializer(serializers.Serializer):
+    seq = serializers.IntegerField()
+    type = serializers.ChoiceField(choices=("delegated", "tool_call", "returned"))
+    worker_id = serializers.CharField(allow_null=True)
+    by = serializers.CharField(allow_null=True, required=False)
+    delegation_id = serializers.CharField(required=False)
+    task = serializers.CharField(allow_null=True, required=False)
+    result = serializers.CharField(allow_null=True, required=False)
+    tool = serializers.CharField(required=False)
+    status = serializers.CharField(required=False)
+    at = serializers.CharField(allow_null=True)
+    attribution = serializers.ChoiceField(choices=("reported", "bound", "conflict"))
+
+
+class CallWorkersResponseSerializer(serializers.Serializer):
+    workers = CallWorkerSerializer(many=True)
+    events = CallWorkerEventSerializer(many=True)
+    collected_at = serializers.CharField()
+
+
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     goal = serializers.CharField()
     scenario_details = serializers.CharField(allow_null=True)
@@ -875,6 +905,42 @@ class CallExecutionV3DetailView(APIView):
             test_execution__run_test__deleted=False,
         )
         return Response(build_call_execution_detail(call, request=request))
+
+
+def _call_for_request(request, call_execution_id) -> CallExecution:
+    organization = getattr(request, "organization", None) or getattr(request.user, "organization", None)
+    return get_object_or_404(
+        CallExecution.objects.select_related("test_execution__run_test"),
+        run_test_workspace_filter(request, "test_execution__run_test"),
+        id=call_execution_id,
+        test_execution__run_test__organization=organization,
+        test_execution__run_test__deleted=False,
+    )
+
+
+class CallExecutionV3WorkersView(APIView):
+    """Which of a multi-agent app's workers did what in this trial, read from the spans the app exported."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={200: CallWorkersResponseSerializer},
+        operation_id="simulate_v3_call_execution_workers",
+    )
+    def get(self, request, call_execution_id, *args, **kwargs):
+        from simulate.services.harness_workers import WORKERS_KEY
+
+        call = _call_for_request(request, call_execution_id)
+        timeline = (call.call_metadata or {}).get(WORKERS_KEY)
+        if not timeline:
+            return Response(
+                {
+                    "code": "workers_unavailable",
+                    "reason": "this trial has no record of its workers: the app sent no traces, or they are still arriving",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(timeline)
 
 
 class RunAnalyticsV3View(APIView):
