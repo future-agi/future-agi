@@ -19,7 +19,7 @@ import jsonpatch
 
 from simulate.services.harness_versioning import archives, hashing
 from simulate.services.harness_versioning.diffs import _CONTRACT_IGNORED_FIELDS
-from simulate.services.harness_versioning.references import affects, depends_on
+from simulate.services.harness_versioning.references import ALL, affects, depends_on
 
 # Kinds in the order a review lists them.
 KINDS = ("tool", "rule", "contract_field", "sub_goal", "actor", "source", "scenario", "file")
@@ -462,7 +462,7 @@ def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str |
         for piece in pieces:
             draft = open_draft(locked, piece, lock=True)
             kept = [
-                {name: one[name] for name in ("id", "kind", "key", "action", "summary", "decision")}
+                {name: one[name] for name in ("id", "kind", "key", "action", "summary", "decision", "affects")}
                 for one in review["changes"]
                 if one["piece"] == piece
             ]
@@ -514,6 +514,36 @@ def review_summary(review: dict[str, Any]) -> str:
     return head + (f"; and {more} more" if more > 0 else "")
 
 
+def carry_untouched_proofs(parent: Any, version: Any, suite_version: Any, reviewed: list[dict[str, Any]]) -> None:
+    """Scenarios no accepted change touched keep the proofs they had against the environment version this one came
+    from. A change that may touch every scenario (a rule, a contract field, a world file) carries nothing."""
+    from simulate.models import HarnessSuiteValidation
+
+    accepted = [one for one in reviewed if one.get("decision") == "accepted"]
+    if parent is None or suite_version is None or any(one.get("affects") == ALL for one in accepted):
+        return
+    earlier = HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=suite_version, environment_version=parent
+    ).first()
+    if earlier is None or not isinstance(earlier.proofs, dict):
+        return
+    touched = {key for one in accepted for key in one.get("affects") or []}
+    kept = {key: proof for key, proof in earlier.proofs.items() if key not in touched}
+    if not kept:
+        return
+    holding = [key for key, proof in kept.items() if isinstance(proof, dict) and proof.get("holds") is True]
+    status = (
+        HarnessSuiteValidation.Status.PASSED
+        if len(kept) == len(earlier.proofs) and len(holding) == len(kept)
+        else HarnessSuiteValidation.Status.PARTIAL
+    )
+    HarnessSuiteValidation.no_workspace_objects.get_or_create(
+        suite_version=suite_version,
+        environment_version=version,
+        defaults={"status": status, "proofs": kept, "job": earlier.job, "proved_at": earlier.proved_at},
+    )
+
+
 def name_saved(activated: dict[str, Any], *, name: str) -> None:
     """Give each version a save created the person's name and, when it was reviewed, a summary of what they
     accepted. A version the save reused keeps what it had."""
@@ -526,5 +556,7 @@ def name_saved(activated: dict[str, Any], *, name: str) -> None:
         reviewed = (version.documents or {}).get("review_changes")
         if reviewed:
             version.summary, fields = review_summary({"changes": reviewed})[:1024], [*fields, "summary"]
+            if version.__class__.__name__ == "HarnessEnvironmentVersion":
+                carry_untouched_proofs(version.parent, version, version.job.suite_version, reviewed)
         if fields:
             version.save(update_fields=[*fields, "updated_at"])

@@ -174,3 +174,39 @@ def test_save_refuses_a_review_that_moved_or_a_rejection_with_changes_still_unde
     assert undecided.json()["changes"] == ["actor:manager"]
     environment.refresh_from_db()
     assert not (environment.environment_version.documents or {}).get("review")
+
+
+def test_a_reviewed_save_keeps_proofs_for_scenarios_no_accepted_change_touched(
+    user, workspace, storage, auth_client, settings
+):
+    from django.utils import timezone
+
+    from simulate.models import HarnessSuiteValidation
+    from simulate.services.harness_versioning.review import carry_untouched_proofs
+
+    environment = _versioned(user, workspace, "review-proofs", storage)
+    parent, suite = environment.environment_version, environment.suite_version
+    HarnessSuiteValidation.no_workspace_objects.update_or_create(
+        suite_version=suite, environment_version=parent,
+        defaults={"status": "passed", "proofs": {"a": {"holds": True}, "b": {"holds": True}},
+                  "proved_at": timezone.now()},
+    )
+    revision = _two_actors(auth_client, environment)
+    _decide(auth_client, environment, [{"id": "actor:manager", "decision": "accepted"},
+                                       {"id": "actor:auditor", "decision": "rejected"}], {"environment": revision})
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+    assert _save(auth_client, environment).status_code == 200
+    environment.refresh_from_db()
+    carried = HarnessSuiteValidation.no_workspace_objects.get(
+        suite_version=suite, environment_version=environment.environment_version)
+    assert (carried.status, sorted(carried.proofs)) == ("passed", ["a", "b"])
+
+    # A change touching one scenario drops only its proof; one that may touch every scenario carries nothing.
+    target = environment.environment_version
+    HarnessSuiteValidation.no_workspace_objects.filter(environment_version=target).delete()
+    carry_untouched_proofs(parent, target, suite, [{"decision": "accepted", "affects": ["a"]}])
+    narrowed = HarnessSuiteValidation.no_workspace_objects.get(suite_version=suite, environment_version=target)
+    assert (narrowed.status, sorted(narrowed.proofs)) == ("partial", ["b"])
+    narrowed.delete()
+    carry_untouched_proofs(parent, target, suite, [{"decision": "accepted", "affects": "all"}])
+    assert not HarnessSuiteValidation.no_workspace_objects.filter(environment_version=target).exists()
