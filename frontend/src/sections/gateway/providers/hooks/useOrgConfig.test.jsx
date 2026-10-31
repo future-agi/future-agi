@@ -73,4 +73,89 @@ describe("org config mutations", () => {
       );
     },
   );
+
+  const hooks = [
+    [
+      "activating a version",
+      useActivateOrgConfig,
+      "cfg-1",
+      "Rolled back to selected version",
+    ],
+    [
+      "saving a new version",
+      useCreateOrgConfig,
+      { routing: {} },
+      "Config saved and activated",
+    ],
+  ];
+
+  it.each(hooks)(
+    "warns instead of reporting success when %s is not synced to the gateway",
+    async (_, useHook, input) => {
+      const warning =
+        "Config saved but gateway sync failed. Changes will apply on next gateway restart.";
+      post.mockResolvedValue({
+        data: {
+          status: true,
+          result: { gateway_synced: false, gateway_warning: warning },
+        },
+      });
+      const { result } = renderHook(() => useHook(), { wrapper });
+
+      result.current.mutate(input);
+
+      await waitFor(() =>
+        expect(mockEnqueueSnackbar).toHaveBeenCalledWith(warning, {
+          variant: "warning",
+        }),
+      );
+      expect(mockEnqueueSnackbar).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(hooks)(
+    "falls back to a generic warning when %s is not synced and gives no reason",
+    async (_, useHook, input) => {
+      post.mockResolvedValue({
+        data: { status: true, result: { gateway_synced: false } },
+      });
+      const { result } = renderHook(() => useHook(), { wrapper });
+
+      result.current.mutate(input);
+
+      await waitFor(() =>
+        expect(mockEnqueueSnackbar).toHaveBeenCalledWith(
+          "Gateway sync failed. Changes will apply on next gateway restart.",
+          { variant: "warning" },
+        ),
+      );
+      expect(mockEnqueueSnackbar).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    ...hooks.map(([name, ...rest]) => [`${name} (synced)`, ...rest, true]),
+    // Activating the version that is already active returns no sync status.
+    ...hooks.map(([name, ...rest]) => [`${name} (no sync status)`, ...rest]),
+  ])(
+    "reports success when %s",
+    async (_, useHook, input, successMessage, synced) => {
+      post.mockResolvedValue({
+        data: {
+          status: true,
+          result: synced === undefined ? {} : { gateway_synced: synced },
+        },
+      });
+      const { result } = renderHook(() => useHook(), { wrapper });
+
+      result.current.mutate(input);
+
+      await waitFor(() =>
+        expect(mockEnqueueSnackbar).toHaveBeenCalledWith(successMessage, {
+          variant: "success",
+        }),
+      );
+      expect(mockEnqueueSnackbar).toHaveBeenCalledTimes(1);
+    },
+  );
 });
