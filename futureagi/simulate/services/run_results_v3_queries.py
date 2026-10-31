@@ -67,6 +67,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
+from simulate.selectors.runs import user_executions
 from simulate.semantics import SupportedProviders
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
 from simulate.services.run_reliability_v3 import build_reliability
@@ -1330,7 +1331,8 @@ def build_run_comparison(
         )
 
     previous = against or (
-        TestExecution.objects.filter(
+        user_executions()
+        .filter(
             run_test=execution.run_test,
             status=TestExecution.ExecutionStatus.COMPLETED,
             created_at__lt=execution.created_at,
@@ -1582,7 +1584,8 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     }
 
     siblings = list(
-        TestExecution.objects.filter(
+        user_executions()
+        .filter(
             run_test=execution.run_test,
             status=TestExecution.ExecutionStatus.COMPLETED,
         )

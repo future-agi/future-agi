@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from simulate.models.test_execution import TestExecution
+from simulate.selectors.runs import user_executions
 from simulate.serializers.test_execution import (
     TestExecutionDebugAnalysisErrorSerializer,
     TestExecutionDebugAnalysisNotFoundSerializer,
@@ -30,12 +30,11 @@ class TestExecutionDebugAnalysisView(APIView):
             request.user, "organization", None
         )
         return get_object_or_404(
-            TestExecution.objects.select_related("run_test"),
+            user_executions().select_related("run_test"),
             run_test_workspace_filter(request, "run_test"),
             id=test_execution_id,
             run_test__organization=organization,
             run_test__deleted=False,
-            deleted=False,
         )
 
     @swagger_auto_schema(

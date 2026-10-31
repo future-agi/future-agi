@@ -1055,7 +1055,9 @@ ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
 # message before a post-run chat sandbox is reclaimed, and only trades cost against latency.
 ALK_HOSTED_CHAT_TTL_SECONDS = int(os.getenv("ALK_HOSTED_CHAT_TTL_SECONDS", "1800"))
 # Off sends a fresh build through the staged authoring pipeline instead of the builder session.
-ALK_HOSTED_BUILDER_SESSION = os.getenv("ALK_HOSTED_BUILDER_SESSION", "true").strip().lower() not in (
+ALK_HOSTED_BUILDER_SESSION = os.getenv(
+    "ALK_HOSTED_BUILDER_SESSION", "true"
+).strip().lower() not in (
     "0",
     "false",
     "no",
@@ -1083,6 +1085,47 @@ ALK_E2B_TEMPLATE_CPU_UNITS = int(os.getenv("ALK_E2B_TEMPLATE_CPU_UNITS", "4"))
 ALK_E2B_TEMPLATE_MEMORY_MB = int(os.getenv("ALK_E2B_TEMPLATE_MEMORY_MB", "8192"))
 ALK_E2B_TEMPLATE_DISK_GB = int(os.getenv("ALK_E2B_TEMPLATE_DISK_GB", "10"))
 ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
+# "Fix my agent": the improvement engine runs in its own E2B template, built on the hosted ALK
+# template (the svc-control user and /opt/alk-venv the E2B bootstrap expects).
+AGENT_FIX_E2B_TEMPLATE_REFERENCE = os.getenv("AGENT_FIX_E2B_TEMPLATE_REFERENCE", "")
+AGENT_FIX_ENGINE_COMMAND = os.getenv(
+    "AGENT_FIX_ENGINE_COMMAND", "node /opt/agent-improvement/platform-entry.mjs"
+)
+# Fixes running at once, on the platform and in one organization; the rest wait as queued. Size
+# these for sandboxes and models: a fix holds about 4 sandboxes at its peak (the engine and one
+# for each check run side by side). Two claims can race past a cap by a few fixes.
+AGENT_FIX_MAX_RUNNING = int(os.getenv("AGENT_FIX_MAX_RUNNING", "10"))
+AGENT_FIX_MAX_RUNNING_PER_ORG = int(os.getenv("AGENT_FIX_MAX_RUNNING_PER_ORG", "3"))
+# How long a fix may wait for room before it fails, free to retry.
+AGENT_FIX_MAX_QUEUED_SECONDS = int(os.getenv("AGENT_FIX_MAX_QUEUED_SECONDS", "3600"))
+# Sandboxes one fix may use in all; an engine that dies is started again after a pause.
+AGENT_FIX_MAX_SANDBOX_ATTEMPTS = int(os.getenv("AGENT_FIX_MAX_SANDBOX_ATTEMPTS", "3"))
+# Conversations a fix's check run holds at once. Every run of a fix asks for the same, so
+# its arms stay comparable.
+AGENT_FIX_CHECK_RUN_PARALLELISM = int(os.getenv("AGENT_FIX_CHECK_RUN_PARALLELISM", "2"))
+# The engine reports at least every minute; silent this long, it is treated as dead.
+AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
+    os.getenv("AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS", "600")
+)
+# A check run reserves this much of a fix's budget for each scenario execution.
+AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = os.getenv(
+    "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"
+)
+# Models the engine may call through its fix's API; Future AGI pays for them.
+AGENT_FIX_ENGINE_MODELS = os.getenv(
+    "AGENT_FIX_ENGINE_MODELS", "deepseek/deepseek-v4.1-flash"
+).split(",")
+# How long past the fix's deadline its token still works, for the final report.
+AGENT_FIX_TOKEN_GRACE_SECONDS = int(os.getenv("AGENT_FIX_TOKEN_GRACE_SECONDS", "600"))
+# How long one of the engine's model calls may take at the gateway.
+AGENT_FIX_MODEL_TIMEOUT_SECONDS = int(
+    os.getenv("AGENT_FIX_MODEL_TIMEOUT_SECONDS", "900")
+)
+# Limits on what an engine may upload: a candidate's unpacked tree.
+AGENT_FIX_MAX_TREE_BYTES = int(
+    os.getenv("AGENT_FIX_MAX_TREE_BYTES", str(128 * 1024 * 1024))
+)
+AGENT_FIX_MAX_TREE_FILES = int(os.getenv("AGENT_FIX_MAX_TREE_FILES", "20000"))
 ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS = int(
     os.getenv("ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS", "180")
 )

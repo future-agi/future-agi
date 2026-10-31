@@ -34,6 +34,7 @@ from simulate.models import (
     HostedHarnessStageOutput,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+from simulate.selectors.runs import user_environment_runs
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
@@ -1541,7 +1542,7 @@ def conversation_runs(
     """The environment's Runs, newest first, or one Run's per-call results."""
     job = conversation.job
     environment = job.environment or job
-    runs = HostedHarnessJob.no_workspace_objects.filter(environment=environment)
+    runs = user_environment_runs(environment)
     if not run_id:
         return {
             "runs": [

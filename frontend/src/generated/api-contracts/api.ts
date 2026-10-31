@@ -84,6 +84,18 @@ import type {
   AgentDefinitionEditResponseApi,
   AgentDefinitionListResponseApi,
   AgentDefinitionResponseApi,
+  AgentFixCandidateCreatedApi,
+  AgentFixCheckRunCreatedApi,
+  AgentFixCheckRunRequestApi,
+  AgentFixEngineReportApi,
+  AgentFixEngineStateApi,
+  AgentFixLaunchApi,
+  AgentFixLaunchOptionsApi,
+  AgentFixMakeDefaultApi,
+  AgentFixPullRequestApi,
+  AgentFixRunApi,
+  AgentFixRunDetailApi,
+  AgentFixRunListApi,
   AgentPlaygroundErrorResponseApi,
   AgentPlaygroundGraphsExecutionsListParams,
   AgentPlaygroundGraphsList200,
@@ -1159,6 +1171,11 @@ import type {
   SimulateAgentDefinitionsRunsListParams,
   SimulateApiAgentDefinitionOperationsList200,
   SimulateApiAgentDefinitionOperationsListParams,
+  SimulateApiAgentFixEngineCandidatesBodyOne,
+  SimulateApiAgentFixEngineCandidatesBodyTwo,
+  SimulateApiAgentFixEngineV1ChatCompletionsCreateBody,
+  SimulateApiAgentFixRunsLaunchOptionsParams,
+  SimulateApiAgentFixRunsListParams,
   SimulateApiAgentPromptOptimiserList200,
   SimulateApiAgentPromptOptimiserListParams,
   SimulateApiAlkSimulateCallExecutionsRecordingUploadBody,
@@ -57543,6 +57560,797 @@ export const simulateApiAgentDefinitionOperationsDelete = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineBriefResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineBriefResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineBriefResponseSuccess =
+  simulateApiAgentFixEngineBriefResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineBriefResponseError =
+  simulateApiAgentFixEngineBriefResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineBriefResponse =
+  | simulateApiAgentFixEngineBriefResponseSuccess
+  | simulateApiAgentFixEngineBriefResponseError;
+
+export const getSimulateApiAgentFixEngineBriefUrl = (id: string) => {
+  return `/simulate/api/agent-fix-engine/${id}/brief/`;
+};
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const simulateApiAgentFixEngineBrief = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineBriefResponse> => {
+  return apiMutator<simulateApiAgentFixEngineBriefResponse>(
+    getSimulateApiAgentFixEngineBriefUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineCandidatesResponse201 = {
+  data: AgentFixCandidateCreatedApi;
+  status: 201;
+};
+
+export type simulateApiAgentFixEngineCandidatesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiAgentFixEngineCandidatesResponseSuccess =
+  simulateApiAgentFixEngineCandidatesResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineCandidatesResponseError =
+  simulateApiAgentFixEngineCandidatesResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineCandidatesResponse =
+  | simulateApiAgentFixEngineCandidatesResponseSuccess
+  | simulateApiAgentFixEngineCandidatesResponseError;
+
+export const getSimulateApiAgentFixEngineCandidatesUrl = (id: string) => {
+  return `/simulate/api/agent-fix-engine/${id}/candidates/`;
+};
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const simulateApiAgentFixEngineCandidates = async (
+  id: string,
+  simulateApiAgentFixEngineCandidatesBody?:
+    | SimulateApiAgentFixEngineCandidatesBodyOne
+    | SimulateApiAgentFixEngineCandidatesBodyTwo,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineCandidatesResponse> => {
+  return apiMutator<simulateApiAgentFixEngineCandidatesResponse>(
+    getSimulateApiAgentFixEngineCandidatesUrl(id),
+    {
+      ...options,
+      method: "POST",
+      body: JSON.stringify(simulateApiAgentFixEngineCandidatesBody),
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineCheckRunsResponse202 = {
+  data: AgentFixCheckRunCreatedApi;
+  status: 202;
+};
+
+export type simulateApiAgentFixEngineCheckRunsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiAgentFixEngineCheckRunsResponseSuccess =
+  simulateApiAgentFixEngineCheckRunsResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineCheckRunsResponseError =
+  simulateApiAgentFixEngineCheckRunsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineCheckRunsResponse =
+  | simulateApiAgentFixEngineCheckRunsResponseSuccess
+  | simulateApiAgentFixEngineCheckRunsResponseError;
+
+export const getSimulateApiAgentFixEngineCheckRunsUrl = (id: string) => {
+  return `/simulate/api/agent-fix-engine/${id}/check-runs/`;
+};
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const simulateApiAgentFixEngineCheckRuns = async (
+  id: string,
+  agentFixCheckRunRequestApi: AgentFixCheckRunRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineCheckRunsResponse> => {
+  return apiMutator<simulateApiAgentFixEngineCheckRunsResponse>(
+    getSimulateApiAgentFixEngineCheckRunsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentFixCheckRunRequestApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineCheckRunResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineCheckRunResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineCheckRunResponseSuccess =
+  simulateApiAgentFixEngineCheckRunResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineCheckRunResponseError =
+  simulateApiAgentFixEngineCheckRunResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineCheckRunResponse =
+  | simulateApiAgentFixEngineCheckRunResponseSuccess
+  | simulateApiAgentFixEngineCheckRunResponseError;
+
+export const getSimulateApiAgentFixEngineCheckRunUrl = (
+  id: string,
+  runId: string,
+) => {
+  return `/simulate/api/agent-fix-engine/${id}/check-runs/${runId}/`;
+};
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const simulateApiAgentFixEngineCheckRun = async (
+  id: string,
+  runId: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineCheckRunResponse> => {
+  return apiMutator<simulateApiAgentFixEngineCheckRunResponse>(
+    getSimulateApiAgentFixEngineCheckRunUrl(id, runId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineReportResponse200 = {
+  data: AgentFixEngineStateApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineReportResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineReportResponseSuccess =
+  simulateApiAgentFixEngineReportResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineReportResponseError =
+  simulateApiAgentFixEngineReportResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineReportResponse =
+  | simulateApiAgentFixEngineReportResponseSuccess
+  | simulateApiAgentFixEngineReportResponseError;
+
+export const getSimulateApiAgentFixEngineReportUrl = (id: string) => {
+  return `/simulate/api/agent-fix-engine/${id}/report/`;
+};
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const simulateApiAgentFixEngineReport = async (
+  id: string,
+  agentFixEngineReportApi: AgentFixEngineReportApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineReportResponse> => {
+  return apiMutator<simulateApiAgentFixEngineReportResponse>(
+    getSimulateApiAgentFixEngineReportUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentFixEngineReportApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineSourceResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineSourceResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineSourceResponseSuccess =
+  simulateApiAgentFixEngineSourceResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineSourceResponseError =
+  simulateApiAgentFixEngineSourceResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineSourceResponse =
+  | simulateApiAgentFixEngineSourceResponseSuccess
+  | simulateApiAgentFixEngineSourceResponseError;
+
+export const getSimulateApiAgentFixEngineSourceUrl = (id: string) => {
+  return `/simulate/api/agent-fix-engine/${id}/source/`;
+};
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const simulateApiAgentFixEngineSource = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineSourceResponse> => {
+  return apiMutator<simulateApiAgentFixEngineSourceResponse>(
+    getSimulateApiAgentFixEngineSourceUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponseSuccess =
+  simulateApiAgentFixEngineV1ChatCompletionsCreateResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponseError =
+  simulateApiAgentFixEngineV1ChatCompletionsCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponse =
+  | simulateApiAgentFixEngineV1ChatCompletionsCreateResponseSuccess
+  | simulateApiAgentFixEngineV1ChatCompletionsCreateResponseError;
+
+export const getSimulateApiAgentFixEngineV1ChatCompletionsCreateUrl = (
+  id: string,
+) => {
+  return `/simulate/api/agent-fix-engine/${id}/v1/chat/completions`;
+};
+
+/**
+ * The engine's model calls, at the path an OpenAI-compatible client builds from its
+base URL: no trailing slash, so it is routed on its own, not by the router.
+ */
+export const simulateApiAgentFixEngineV1ChatCompletionsCreate = async (
+  id: string,
+  simulateApiAgentFixEngineV1ChatCompletionsCreateBody: SimulateApiAgentFixEngineV1ChatCompletionsCreateBody,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineV1ChatCompletionsCreateResponse> => {
+  return apiMutator<simulateApiAgentFixEngineV1ChatCompletionsCreateResponse>(
+    getSimulateApiAgentFixEngineV1ChatCompletionsCreateUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(
+        simulateApiAgentFixEngineV1ChatCompletionsCreateBody,
+      ),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsListResponse200 = {
+  data: AgentFixRunListApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsListResponseSuccess =
+  simulateApiAgentFixRunsListResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsListResponseError =
+  simulateApiAgentFixRunsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsListResponse =
+  | simulateApiAgentFixRunsListResponseSuccess
+  | simulateApiAgentFixRunsListResponseError;
+
+export const getSimulateApiAgentFixRunsListUrl = (
+  params: SimulateApiAgentFixRunsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/agent-fix-runs/?${stringifiedParams}`
+    : `/simulate/api/agent-fix-runs/`;
+};
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const simulateApiAgentFixRunsList = async (
+  params: SimulateApiAgentFixRunsListParams,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsListResponse> => {
+  return apiMutator<simulateApiAgentFixRunsListResponse>(
+    getSimulateApiAgentFixRunsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsCreateResponse201 = {
+  data: AgentFixRunApi;
+  status: 201;
+};
+
+export type simulateApiAgentFixRunsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiAgentFixRunsCreateResponseSuccess =
+  simulateApiAgentFixRunsCreateResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsCreateResponseError =
+  simulateApiAgentFixRunsCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsCreateResponse =
+  | simulateApiAgentFixRunsCreateResponseSuccess
+  | simulateApiAgentFixRunsCreateResponseError;
+
+export const getSimulateApiAgentFixRunsCreateUrl = () => {
+  return `/simulate/api/agent-fix-runs/`;
+};
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const simulateApiAgentFixRunsCreate = async (
+  agentFixLaunchApi: AgentFixLaunchApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsCreateResponse> => {
+  return apiMutator<simulateApiAgentFixRunsCreateResponse>(
+    getSimulateApiAgentFixRunsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentFixLaunchApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsLaunchOptionsResponse200 = {
+  data: AgentFixLaunchOptionsApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsLaunchOptionsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsLaunchOptionsResponseSuccess =
+  simulateApiAgentFixRunsLaunchOptionsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsLaunchOptionsResponseError =
+  simulateApiAgentFixRunsLaunchOptionsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsLaunchOptionsResponse =
+  | simulateApiAgentFixRunsLaunchOptionsResponseSuccess
+  | simulateApiAgentFixRunsLaunchOptionsResponseError;
+
+export const getSimulateApiAgentFixRunsLaunchOptionsUrl = (
+  params: SimulateApiAgentFixRunsLaunchOptionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/agent-fix-runs/launch-options/?${stringifiedParams}`
+    : `/simulate/api/agent-fix-runs/launch-options/`;
+};
+
+/**
+ * What the launch form shows and prefills for a finished run, and what would
+refuse the launch now.
+ */
+export const simulateApiAgentFixRunsLaunchOptions = async (
+  params: SimulateApiAgentFixRunsLaunchOptionsParams,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsLaunchOptionsResponse> => {
+  return apiMutator<simulateApiAgentFixRunsLaunchOptionsResponse>(
+    getSimulateApiAgentFixRunsLaunchOptionsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsReadResponse200 = {
+  data: AgentFixRunDetailApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsReadResponseSuccess =
+  simulateApiAgentFixRunsReadResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsReadResponseError =
+  simulateApiAgentFixRunsReadResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsReadResponse =
+  | simulateApiAgentFixRunsReadResponseSuccess
+  | simulateApiAgentFixRunsReadResponseError;
+
+export const getSimulateApiAgentFixRunsReadUrl = (id: string) => {
+  return `/simulate/api/agent-fix-runs/${id}/`;
+};
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const simulateApiAgentFixRunsRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsReadResponse> => {
+  return apiMutator<simulateApiAgentFixRunsReadResponse>(
+    getSimulateApiAgentFixRunsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsCandidatesMakeDefaultResponse200 = {
+  data: AgentFixMakeDefaultApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsCandidatesMakeDefaultResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsCandidatesMakeDefaultResponseSuccess =
+  simulateApiAgentFixRunsCandidatesMakeDefaultResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsCandidatesMakeDefaultResponseError =
+  simulateApiAgentFixRunsCandidatesMakeDefaultResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsCandidatesMakeDefaultResponse =
+  | simulateApiAgentFixRunsCandidatesMakeDefaultResponseSuccess
+  | simulateApiAgentFixRunsCandidatesMakeDefaultResponseError;
+
+export const getSimulateApiAgentFixRunsCandidatesMakeDefaultUrl = (
+  id: string,
+  candidateId: string,
+) => {
+  return `/simulate/api/agent-fix-runs/${id}/candidates/${candidateId}/make-default/`;
+};
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const simulateApiAgentFixRunsCandidatesMakeDefault = async (
+  id: string,
+  candidateId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsCandidatesMakeDefaultResponse> => {
+  return apiMutator<simulateApiAgentFixRunsCandidatesMakeDefaultResponse>(
+    getSimulateApiAgentFixRunsCandidatesMakeDefaultUrl(id, candidateId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponseSuccess =
+  simulateApiAgentFixRunsCandidatesCandidatePatchResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponseError =
+  simulateApiAgentFixRunsCandidatesCandidatePatchResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponse =
+  | simulateApiAgentFixRunsCandidatesCandidatePatchResponseSuccess
+  | simulateApiAgentFixRunsCandidatesCandidatePatchResponseError;
+
+export const getSimulateApiAgentFixRunsCandidatesCandidatePatchUrl = (
+  id: string,
+  candidateId: string,
+) => {
+  return `/simulate/api/agent-fix-runs/${id}/candidates/${candidateId}/patch/`;
+};
+
+/**
+ * The candidate's change as a git patch on the base version, to apply by hand.
+ */
+export const simulateApiAgentFixRunsCandidatesCandidatePatch = async (
+  id: string,
+  candidateId: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsCandidatesCandidatePatchResponse> => {
+  return apiMutator<simulateApiAgentFixRunsCandidatesCandidatePatchResponse>(
+    getSimulateApiAgentFixRunsCandidatesCandidatePatchUrl(id, candidateId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsCandidatesPullRequestResponse200 = {
+  data: AgentFixPullRequestApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsCandidatesPullRequestResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsCandidatesPullRequestResponseSuccess =
+  simulateApiAgentFixRunsCandidatesPullRequestResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsCandidatesPullRequestResponseError =
+  simulateApiAgentFixRunsCandidatesPullRequestResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsCandidatesPullRequestResponse =
+  | simulateApiAgentFixRunsCandidatesPullRequestResponseSuccess
+  | simulateApiAgentFixRunsCandidatesPullRequestResponseError;
+
+export const getSimulateApiAgentFixRunsCandidatesPullRequestUrl = (
+  id: string,
+  candidateId: string,
+) => {
+  return `/simulate/api/agent-fix-runs/${id}/candidates/${candidateId}/pull-request/`;
+};
+
+/**
+ * A GitHub agent's winner, opened once as a pull request on its repository.
+ */
+export const simulateApiAgentFixRunsCandidatesPullRequest = async (
+  id: string,
+  candidateId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsCandidatesPullRequestResponse> => {
+  return apiMutator<simulateApiAgentFixRunsCandidatesPullRequestResponse>(
+    getSimulateApiAgentFixRunsCandidatesPullRequestUrl(id, candidateId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsRetryResponse201 = {
+  data: AgentFixRunApi;
+  status: 201;
+};
+
+export type simulateApiAgentFixRunsRetryResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiAgentFixRunsRetryResponseSuccess =
+  simulateApiAgentFixRunsRetryResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsRetryResponseError =
+  simulateApiAgentFixRunsRetryResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsRetryResponse =
+  | simulateApiAgentFixRunsRetryResponseSuccess
+  | simulateApiAgentFixRunsRetryResponseError;
+
+export const getSimulateApiAgentFixRunsRetryUrl = (id: string) => {
+  return `/simulate/api/agent-fix-runs/${id}/retry/`;
+};
+
+/**
+ * Start a failed fix again: a new fix with the same request. The check runs the
+failed one finished are reused, so the user does not pay for them twice.
+ */
+export const simulateApiAgentFixRunsRetry = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsRetryResponse> => {
+  return apiMutator<simulateApiAgentFixRunsRetryResponse>(
+    getSimulateApiAgentFixRunsRetryUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsStopResponse200 = {
+  data: AgentFixRunApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsStopResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsStopResponseSuccess =
+  simulateApiAgentFixRunsStopResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsStopResponseError =
+  simulateApiAgentFixRunsStopResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsStopResponse =
+  | simulateApiAgentFixRunsStopResponseSuccess
+  | simulateApiAgentFixRunsStopResponseError;
+
+export const getSimulateApiAgentFixRunsStopUrl = (id: string) => {
+  return `/simulate/api/agent-fix-runs/${id}/stop/`;
+};
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const simulateApiAgentFixRunsStop = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsStopResponse> => {
+  return apiMutator<simulateApiAgentFixRunsStopResponse>(
+    getSimulateApiAgentFixRunsStopUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
     },
   );
 };

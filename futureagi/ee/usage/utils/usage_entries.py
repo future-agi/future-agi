@@ -6,9 +6,7 @@ from datetime import timedelta
 from decimal import Decimal
 from io import BytesIO
 from math import ceil
-from typing import Optional  # Import ceil to use for rounding up
 
-from tfc.utils.lazy_extras import av
 import requests
 import structlog
 import tiktoken
@@ -18,29 +16,9 @@ from django.db.models import F, Q
 from django.utils import timezone
 from PIL import Image
 
-from accounts.models.aws_marketplace import (
-    AWSMarketplaceCustomer,
-    SubscriptionStatus,
-)
 from accounts.models.organization import Organization
-from accounts.services.aws_marketplace_metering import (
-    aws_marketplace_metering,
-)
 from agentic_eval.core.utils.functions import detect_input_type
 from ee.usage.deployment import DeploymentMode
-from tfc.utils.api_errors import ApiErrorCode
-
-logger = structlog.get_logger(__name__)
-from model_hub.utils import call_websocket
-from tfc.settings.settings import (
-    BUSINESS_MONTHLY_STRIPE_PRICE_ID,
-    BUSINESS_MONTHLY_STRIPE_PRICE_IDS_ALL,
-    BUSINESS_YEARLY_STRIPE_PRICE_ID,
-    BUSINESS_YEARLY_STRIPE_PRICE_IDS_ALL,
-)
-from tfc.utils.error_codes import get_error_message
-from tfc.utils.storage import download_audio_from_url, upload_audio_to_s3
-from tracer.models.project import ProjectSourceChoices
 from ee.usage.models.usage import (
     APICallLog,
     APICallStatusChoices,
@@ -56,7 +34,21 @@ from ee.usage.models.usage import (
     SubscriptionTier,
     SubscriptionTierChoices,
 )
+from model_hub.utils import call_websocket
+from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
+from tfc.settings.settings import (
+    BUSINESS_MONTHLY_STRIPE_PRICE_ID,
+    BUSINESS_MONTHLY_STRIPE_PRICE_IDS_ALL,
+    BUSINESS_YEARLY_STRIPE_PRICE_ID,
+    BUSINESS_YEARLY_STRIPE_PRICE_IDS_ALL,
+)
+from tfc.utils.api_errors import ApiErrorCode
+from tfc.utils.error_codes import get_error_message
+from tfc.utils.lazy_extras import av
+from tfc.utils.storage import download_audio_from_url, upload_audio_to_s3
+from tracer.models.project import ProjectSourceChoices
 
+logger = structlog.get_logger(__name__)
 User = get_user_model()
 
 DATASET_LIMIT_REACHED_MESSAGE = "Dataset limit reached. \
@@ -1083,7 +1075,9 @@ def create_organization_subscription_if_not_exists(organization):
     return organization_subscription
 
 
-def check_if_api_call_is_rate_limited(organization, api_call_type):
+def check_if_api_call_is_rate_limited(organization, api_call_type, source=None):
+    if source == FIX_CHECK_RUN_EVAL_SOURCE:
+        return False, {}
     # get the subscription tier of the organization
     try:
         create_organization_subscription_if_not_exists(organization)
@@ -1163,9 +1157,10 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
         logger.info(
             f"API CALL LIMITS FOUND: {minute_limit} {hour_limit} {day_limit} {month_limit}"
         )
+        counted_calls = APICallLog.objects.exclude(source=FIX_CHECK_RUN_EVAL_SOURCE)
         if api_call_type not in eval_calls:
             # get the number of api calls made in the last minute, hour, day, month
-            api_calls_made_in_last_minute = APICallLog.objects.filter(
+            api_calls_made_in_last_minute = counted_calls.filter(
                 api_call_type=api_call_type_instance,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(minutes=1),
@@ -1174,7 +1169,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
                     APICallStatusChoices.PROCESSING.value,
                 ],
             ).count()
-            api_calls_made_in_last_hour = APICallLog.objects.filter(
+            api_calls_made_in_last_hour = counted_calls.filter(
                 api_call_type=api_call_type_instance,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(hours=1),
@@ -1183,7 +1178,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
                     APICallStatusChoices.PROCESSING.value,
                 ],
             ).count()
-            api_calls_made_in_last_day = APICallLog.objects.filter(
+            api_calls_made_in_last_day = counted_calls.filter(
                 api_call_type=api_call_type_instance,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(days=1),
@@ -1192,7 +1187,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
                     APICallStatusChoices.PROCESSING.value,
                 ],
             ).count()
-            api_calls_made_in_last_month = APICallLog.objects.filter(
+            api_calls_made_in_last_month = counted_calls.filter(
                 api_call_type=api_call_type_instance,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(days=30),
@@ -1203,7 +1198,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
             ).count()
         else:
             # api_call made in last miniute is all api call s whose instance are any of the 3
-            api_calls_made_in_last_minute = APICallLog.objects.filter(
+            api_calls_made_in_last_minute = counted_calls.filter(
                 api_call_type__name__in=eval_calls,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(minutes=1),
@@ -1212,7 +1207,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
                     APICallStatusChoices.PROCESSING.value,
                 ],
             ).count()
-            api_calls_made_in_last_hour = APICallLog.objects.filter(
+            api_calls_made_in_last_hour = counted_calls.filter(
                 api_call_type__name__in=eval_calls,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(hours=1),
@@ -1221,7 +1216,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
                     APICallStatusChoices.PROCESSING.value,
                 ],
             ).count()
-            api_calls_made_in_last_day = APICallLog.objects.filter(
+            api_calls_made_in_last_day = counted_calls.filter(
                 api_call_type__name__in=eval_calls,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(days=1),
@@ -1230,7 +1225,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
                     APICallStatusChoices.PROCESSING.value,
                 ],
             ).count()
-            api_calls_made_in_last_month = APICallLog.objects.filter(
+            api_calls_made_in_last_month = counted_calls.filter(
                 api_call_type__name__in=eval_calls,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(days=30),
@@ -1331,7 +1326,7 @@ def log_api_call(
         input_tokens = config.get("input_tokens", 0)
 
         is_api_call_rate_limited, detail = check_if_api_call_is_rate_limited(
-            organization, api_call_type
+            organization, api_call_type, source
         )
         if is_api_call_rate_limited:
             config.update(detail)
@@ -1416,7 +1411,7 @@ def log_and_deduct_cost_for_api_request(
             input_tokens = config.get("input_tokens", 0)
 
         is_api_call_rate_limited, detail = check_if_api_call_is_rate_limited(
-            organization, api_call_type
+            organization, api_call_type, source
         )
 
         if is_api_call_rate_limited:
@@ -1700,7 +1695,6 @@ def deduct_cost_for_request(
         organization_subscription = OrganizationSubscription.objects.filter(
             organization=organization
         ).first()
-        wallet_balance = organization_subscription.wallet_balance
 
         if api_call_type == "voice_call":
             # Always compute the duration-based cost from the Pricing table
@@ -3003,8 +2997,8 @@ def get_plan_details():
 
 
 def fetch_pricing_details_for_api_call_type(
-    api_call_type: APICallType, organization: Optional[Organization] = None
-) -> Optional[Pricing]:
+    api_call_type: APICallType, organization: Organization | None = None
+) -> Pricing | None:
     try:
         if not api_call_type:
             return None
@@ -3031,7 +3025,7 @@ def fetch_pricing_details_for_api_call_type(
 
         return pricing_obj
 
-    except Exception as e:
+    except Exception:
         logger.exception(
             f"Error fetching pricing details for api call type: {api_call_type}"
         )

@@ -16853,6 +16853,510 @@ export interface FetchAssistantResponseApi {
   readonly commit_message?: string;
 }
 
+export interface AgentFixCandidateCreatedApi {
+  candidate_id: string;
+  agent_version_id: string;
+  /** @minLength 1 */
+  preflight_status: string;
+}
+
+export interface AgentFixCheckRunRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  label: string;
+  agent_version_id: string;
+  /** @minItems 1 */
+  scenario_keys: string[];
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials: number;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  repeat?: number;
+}
+
+export interface AgentFixCheckRunCreatedApi {
+  run_id: string;
+}
+
+export type AgentFixEngineReportApiStep =
+  (typeof AgentFixEngineReportApiStep)[keyof typeof AgentFixEngineReportApiStep];
+
+export const AgentFixEngineReportApiStep = {
+  reproduce: "reproduce",
+  search: "search",
+  verify: "verify",
+  done: "done",
+} as const;
+
+export type AgentFixEngineReportApiEnding =
+  (typeof AgentFixEngineReportApiEnding)[keyof typeof AgentFixEngineReportApiEnding];
+
+export const AgentFixEngineReportApiEnding = {
+  ready: "ready",
+  no_improvement: "no_improvement",
+  not_reproduced: "not_reproduced",
+  out_of_budget: "out_of_budget",
+  failed: "failed",
+} as const;
+
+export interface AgentFixPlanApi {
+  /** @minimum 0 */
+  target: number;
+  /** @minimum 0 */
+  held_back: number;
+  /** @minimum 0 */
+  must_pass: number;
+  /** @minimum 0 */
+  protected?: number;
+  /** @minimum 0 */
+  max_candidates: number;
+  /** @minimum 0 */
+  repeats: number;
+  /** @minimum 0 */
+  baseline_spread_pts: number;
+}
+
+export interface AgentFixDiagnosisApi {
+  causes?: string[];
+}
+
+export type AgentFixCandidateUpdateApiOutcome =
+  (typeof AgentFixCandidateUpdateApiOutcome)[keyof typeof AgentFixCandidateUpdateApiOutcome];
+
+export const AgentFixCandidateUpdateApiOutcome = {
+  pending: "pending",
+  rejected: "rejected",
+  finalist: "finalist",
+  winner: "winner",
+} as const;
+
+export type AgentFixVerdictTierApiStatus =
+  (typeof AgentFixVerdictTierApiStatus)[keyof typeof AgentFixVerdictTierApiStatus];
+
+export const AgentFixVerdictTierApiStatus = {
+  passed: "passed",
+  failed: "failed",
+  pending: "pending",
+  skipped: "skipped",
+} as const;
+
+export interface AgentFixVerdictTierApi {
+  /** @minLength 1 */
+  name: string;
+  status: AgentFixVerdictTierApiStatus;
+  detail?: string;
+}
+
+export interface AgentFixVerdictApi {
+  accepted: boolean;
+  /** @minLength 1 */
+  reason: string;
+  target_pass_rate?: number[];
+  held_back_pass_rate?: number[];
+  must_pass_regressions: string[];
+  must_pass_within_noise?: string[];
+  tiers?: AgentFixVerdictTierApi[];
+}
+
+export interface AgentFixCandidateUpdateApi {
+  candidate_id: string;
+  outcome: AgentFixCandidateUpdateApiOutcome;
+  verdict?: AgentFixVerdictApi;
+}
+
+export type AgentFixEngineFailureApiOwner =
+  (typeof AgentFixEngineFailureApiOwner)[keyof typeof AgentFixEngineFailureApiOwner];
+
+export const AgentFixEngineFailureApiOwner = {
+  ours: "ours",
+  user: "user",
+} as const;
+
+export interface AgentFixEngineFailureApi {
+  owner: AgentFixEngineFailureApiOwner;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  code: string;
+  /** @maxLength 500 */
+  message: string;
+}
+
+export interface AgentFixEngineReportApi {
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  stage: string;
+  step?: AgentFixEngineReportApiStep;
+  plan?: AgentFixPlanApi;
+  diagnosis?: AgentFixDiagnosisApi;
+  candidates?: AgentFixCandidateUpdateApi[];
+  ending?: AgentFixEngineReportApiEnding;
+  summary?: string;
+  failure?: AgentFixEngineFailureApi;
+  winner_candidate_id?: string;
+}
+
+export interface AgentFixEngineStateApi {
+  /** @minLength 1 */
+  state: string;
+}
+
+export interface AgentFixEnvironmentApi {
+  /** @minLength 1 */
+  name: string;
+  version: number;
+  default_agent_version_id: string;
+}
+
+export interface AgentFixAgentApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  kind: string;
+  version_id: string;
+  version_number: number;
+  /** @minLength 1 */
+  ref: string;
+}
+
+export type AgentFixRunApiState =
+  (typeof AgentFixRunApiState)[keyof typeof AgentFixRunApiState];
+
+export const AgentFixRunApiState = {
+  queued: "queued",
+  running: "running",
+  stopping: "stopping",
+  ready: "ready",
+  no_improvement: "no_improvement",
+  not_reproduced: "not_reproduced",
+  out_of_budget: "out_of_budget",
+  stopped: "stopped",
+  failed: "failed",
+} as const;
+
+/**
+ * A finished fix is done, whatever the engine last said.
+ */
+export type AgentFixRunApiStep =
+  (typeof AgentFixRunApiStep)[keyof typeof AgentFixRunApiStep];
+
+export const AgentFixRunApiStep = {
+  reproduce: "reproduce",
+  search: "search",
+  verify: "verify",
+  done: "done",
+} as const;
+
+export interface AgentFixRequestApi {
+  target_scenario_keys: string[];
+  held_back_scenario_keys?: string[];
+  failing_sub_goals: string[];
+  surfaces: string[];
+  locked_paths: string[];
+  budget_credits: number;
+  max_minutes: number;
+}
+
+export interface AgentFixReportApi {
+  /** @minLength 1 */
+  ending: string;
+  summary: string;
+  /** @minLength 1 */
+  winner_candidate_id: string;
+}
+
+export interface AgentFixFailureApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface AgentFixCheckRunApi {
+  run_id: string;
+  test_execution_id: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  state: string;
+}
+
+export type AgentFixCandidateApiOutcome =
+  (typeof AgentFixCandidateApiOutcome)[keyof typeof AgentFixCandidateApiOutcome];
+
+export const AgentFixCandidateApiOutcome = {
+  pending: "pending",
+  rejected: "rejected",
+  finalist: "finalist",
+  winner: "winner",
+} as const;
+
+export interface AgentFixCandidateApi {
+  readonly id?: string;
+  /**
+   * @minimum 0
+   * @maximum 32767
+   */
+  attempt: number;
+  agent_version_id: string;
+  version_number: number;
+  summary?: string;
+  outcome?: AgentFixCandidateApiOutcome;
+  verdict: AgentFixVerdictApi;
+  readonly check_runs?: readonly AgentFixCheckRunApi[];
+  /** @maxLength 512 */
+  pull_request_url?: string;
+  readonly created_at?: string;
+}
+
+export interface AgentFixRunApi {
+  readonly id?: string;
+  number: number;
+  environment_id: string;
+  environment?: AgentFixEnvironmentApi;
+  source_run_id: string;
+  source_run_number: number;
+  base_agent_version_id: string;
+  agent?: AgentFixAgentApi;
+  state?: AgentFixRunApiState;
+  /** @maxLength 32 */
+  stage?: string;
+  /** A finished fix is done, whatever the engine last said. */
+  readonly step?: AgentFixRunApiStep;
+  plan: AgentFixPlanApi;
+  diagnosis: AgentFixDiagnosisApi;
+  request: AgentFixRequestApi;
+  spent_credits: number;
+  committed_credits: number;
+  report: AgentFixReportApi;
+  failure: AgentFixFailureApi;
+  retried_from_id: string;
+  readonly retryable?: boolean;
+  readonly limited_validation?: boolean;
+  /** The base version's runs; each candidate lists its own. */
+  readonly check_runs?: readonly AgentFixCheckRunApi[];
+  candidates: AgentFixCandidateApi[];
+  started_at?: string;
+  finished_at?: string;
+  readonly created_at?: string;
+}
+
+export interface AgentFixRunListApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: AgentFixRunApi[];
+}
+
+export type AgentFixLaunchApiSurfacesItem =
+  (typeof AgentFixLaunchApiSurfacesItem)[keyof typeof AgentFixLaunchApiSurfacesItem];
+
+export const AgentFixLaunchApiSurfacesItem = {
+  prompt: "prompt",
+  tools: "tools",
+  settings: "settings",
+  code: "code",
+} as const;
+
+export interface AgentFixLaunchApi {
+  source_run_id: string;
+  /**
+   * @minItems 1
+   * @maxItems 200
+   */
+  target_scenario_keys: string[];
+  /** @minItems 1 */
+  surfaces: AgentFixLaunchApiSurfacesItem[];
+  locked_paths?: string[];
+  /**
+   * @minimum 1
+   * @maximum 50000
+   */
+  budget_credits: number;
+  /**
+   * @minimum 1
+   * @maximum 1440
+   */
+  max_minutes: number;
+}
+
+export interface AgentFixLaunchSourceRunApi {
+  id: string;
+  number: number;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  finished_at: string;
+}
+
+export interface AgentFixLaunchEnvironmentApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  version: number;
+}
+
+export interface AgentFixLaunchScenarioApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  name: string;
+  passed: boolean;
+  failing_sub_goals: string[];
+}
+
+export interface AgentFixLaunchSuggestedApi {
+  target_scenario_keys: string[];
+  protected_scenario_keys: string[];
+}
+
+export type AgentFixLaunchSurfaceApiId =
+  (typeof AgentFixLaunchSurfaceApiId)[keyof typeof AgentFixLaunchSurfaceApiId];
+
+export const AgentFixLaunchSurfaceApiId = {
+  prompt: "prompt",
+  tools: "tools",
+  settings: "settings",
+  code: "code",
+} as const;
+
+export interface AgentFixLaunchSurfaceApi {
+  id: AgentFixLaunchSurfaceApiId;
+  /** @minLength 1 */
+  label: string;
+  allowed: boolean;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export type AgentFixLaunchDefaultsApiSurfacesItem =
+  (typeof AgentFixLaunchDefaultsApiSurfacesItem)[keyof typeof AgentFixLaunchDefaultsApiSurfacesItem];
+
+export const AgentFixLaunchDefaultsApiSurfacesItem = {
+  prompt: "prompt",
+  tools: "tools",
+  settings: "settings",
+  code: "code",
+} as const;
+
+export interface AgentFixLaunchDefaultsApi {
+  surfaces: AgentFixLaunchDefaultsApiSurfacesItem[];
+  budget_credits: number;
+  max_minutes: number;
+}
+
+export interface AgentFixLaunchLimitsApi {
+  budget_credits_max: number;
+  max_minutes_max: number;
+  scenarios_max: number;
+}
+
+export interface AgentFixLaunchOptionsApi {
+  source_run: AgentFixLaunchSourceRunApi;
+  environment: AgentFixLaunchEnvironmentApi;
+  agent: AgentFixAgentApi;
+  scenarios: AgentFixLaunchScenarioApi[];
+  suggested: AgentFixLaunchSuggestedApi;
+  surfaces: AgentFixLaunchSurfaceApi[];
+  defaults: AgentFixLaunchDefaultsApi;
+  limits: AgentFixLaunchLimitsApi;
+  blocked: AgentFixFailureApi;
+}
+
+export type AgentFixRunDetailApiState =
+  (typeof AgentFixRunDetailApiState)[keyof typeof AgentFixRunDetailApiState];
+
+export const AgentFixRunDetailApiState = {
+  queued: "queued",
+  running: "running",
+  stopping: "stopping",
+  ready: "ready",
+  no_improvement: "no_improvement",
+  not_reproduced: "not_reproduced",
+  out_of_budget: "out_of_budget",
+  stopped: "stopped",
+  failed: "failed",
+} as const;
+
+/**
+ * A finished fix is done, whatever the engine last said.
+ */
+export type AgentFixRunDetailApiStep =
+  (typeof AgentFixRunDetailApiStep)[keyof typeof AgentFixRunDetailApiStep];
+
+export const AgentFixRunDetailApiStep = {
+  reproduce: "reproduce",
+  search: "search",
+  verify: "verify",
+  done: "done",
+} as const;
+
+export interface AgentFixEvalWarningApi {
+  /** @minLength 1 */
+  name: string;
+  pass_rate: number;
+  base_pass_rate: number;
+  trials: number;
+  base_trials: number;
+}
+
+export interface AgentFixRunDetailApi {
+  readonly id?: string;
+  number: number;
+  environment_id: string;
+  environment?: AgentFixEnvironmentApi;
+  source_run_id: string;
+  source_run_number: number;
+  base_agent_version_id: string;
+  agent?: AgentFixAgentApi;
+  state?: AgentFixRunDetailApiState;
+  /** @maxLength 32 */
+  stage?: string;
+  /** A finished fix is done, whatever the engine last said. */
+  readonly step?: AgentFixRunDetailApiStep;
+  plan: AgentFixPlanApi;
+  diagnosis: AgentFixDiagnosisApi;
+  request: AgentFixRequestApi;
+  spent_credits: number;
+  committed_credits: number;
+  report: AgentFixReportApi;
+  failure: AgentFixFailureApi;
+  retried_from_id: string;
+  readonly retryable?: boolean;
+  readonly limited_validation?: boolean;
+  /** The base version's runs; each candidate lists its own. */
+  readonly check_runs?: readonly AgentFixCheckRunApi[];
+  candidates: AgentFixCandidateApi[];
+  started_at?: string;
+  finished_at?: string;
+  readonly created_at?: string;
+  readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
+}
+
+export interface AgentFixMakeDefaultApi {
+  /** @minLength 1 */
+  outcome: string;
+}
+
+export interface AgentFixPullRequestApi {
+  /** @minLength 1 */
+  pull_request_url: string;
+}
+
 export type AgentPromptOptimiserRunListApiOptimiserType =
   (typeof AgentPromptOptimiserRunListApiOptimiserType)[keyof typeof AgentPromptOptimiserRunListApiOptimiserType];
 
@@ -36188,6 +36692,41 @@ export type SimulateApiAgentDefinitionOperationsList200 = {
   next?: string;
   previous?: string;
   results: AgentDefinitionResponseApi[];
+};
+
+export type SimulateApiAgentFixEngineCandidatesBodyOne = {
+  attempt: number;
+  summary?: string;
+  tree: Blob;
+  patch: Blob;
+};
+
+export type SimulateApiAgentFixEngineCandidatesBodyTwo = {
+  attempt: number;
+  summary?: string;
+  tree: Blob;
+  patch: Blob;
+};
+
+export type SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = {
+  [key: string]: unknown;
+};
+
+export type SimulateApiAgentFixRunsListParams = {
+  environment_id: string;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type SimulateApiAgentFixRunsLaunchOptionsParams = {
+  source_run_id: string;
 };
 
 export type SimulateApiAgentPromptOptimiserListParams = {
