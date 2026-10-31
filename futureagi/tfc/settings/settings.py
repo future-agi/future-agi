@@ -1091,6 +1091,13 @@ AGENT_FIX_E2B_TEMPLATE_REFERENCE = os.getenv("AGENT_FIX_E2B_TEMPLATE_REFERENCE",
 AGENT_FIX_ENGINE_COMMAND = os.getenv(
     "AGENT_FIX_ENGINE_COMMAND", "node /opt/agent-improvement/platform-entry.mjs"
 )
+# Fixes running at once, on the platform and in one organization; the rest wait as queued. Size
+# these for sandboxes and models: a fix holds about 4 sandboxes at its peak (the engine and one
+# for each check run side by side). Two claims can race past a cap by a few fixes.
+AGENT_FIX_MAX_RUNNING = int(os.getenv("AGENT_FIX_MAX_RUNNING", "10"))
+AGENT_FIX_MAX_RUNNING_PER_ORG = int(os.getenv("AGENT_FIX_MAX_RUNNING_PER_ORG", "3"))
+# How long a fix may wait for room before it fails, free to retry.
+AGENT_FIX_MAX_QUEUED_SECONDS = int(os.getenv("AGENT_FIX_MAX_QUEUED_SECONDS", "3600"))
 # Sandboxes one fix may use in all; an engine that dies is started again after a pause.
 AGENT_FIX_MAX_SANDBOX_ATTEMPTS = int(os.getenv("AGENT_FIX_MAX_SANDBOX_ATTEMPTS", "3"))
 # Conversations a fix's check run holds at once. Every run of a fix asks for the same, so

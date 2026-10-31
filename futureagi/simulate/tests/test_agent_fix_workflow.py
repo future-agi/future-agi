@@ -48,7 +48,7 @@ class FakeActivities:
         outcome = self.watches.pop(0) if self.watches else Observation.RUNNING
         if isinstance(outcome, Exception):
             raise outcome
-        # A real watch looks for up to half an hour; this lets a test's signal land.
+        # Lets a test's signal land.
         await asyncio.sleep(0.01)
         return AgentFixWatch(observation=outcome)
 
@@ -68,7 +68,13 @@ def _started(command_id="engine-1"):
     return AgentFixLaunch(observation=Observation.RUNNING, command_id=command_id)
 
 
-async def _run(activities, temporal_test_server_options, *, signal_after_watch=False):
+async def _run(
+    activities,
+    temporal_test_server_options,
+    *,
+    signal_after_watch=False,
+    signal_after_launch=False,
+):
     async with await WorkflowEnvironment.start_time_skipping(
         **temporal_test_server_options
     ) as env:
@@ -87,6 +93,10 @@ async def _run(activities, temporal_test_server_options, *, signal_after_watch=F
             )
             if signal_after_watch:
                 while not activities.watched:
+                    await asyncio.sleep(0.01)
+                await handle.signal(AgentFixWorkflow.cancel)
+            if signal_after_launch:
+                while not activities.launch_calls:
                     await asyncio.sleep(0.01)
                 await handle.signal(AgentFixWorkflow.cancel)
             return await handle.result()
@@ -212,6 +222,56 @@ async def test_a_failing_watch_is_retried_instead_of_ending_a_live_engine(
     assert len(activities.watched) == 4
     assert activities.closed == []
     assert activities.released == 1
+
+
+@pytest.mark.asyncio
+async def test_the_workflow_looks_again_after_each_wait(temporal_test_server_options):
+    activities = FakeActivities(
+        launches=[_started()],
+        watches=[Observation.RUNNING, Observation.RUNNING, Observation.ENDED],
+    )
+
+    result = await _run(activities, temporal_test_server_options)
+
+    assert result.observation == Observation.ENDED
+    assert len(activities.watched) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_fix_held_back_by_the_caps_asks_again_then_starts(
+    temporal_test_server_options,
+):
+    activities = FakeActivities(
+        launches=[
+            AgentFixLaunch(observation=Observation.WAITING),
+            AgentFixLaunch(observation=Observation.WAITING),
+            _started(),
+        ],
+        watches=[Observation.ENDED],
+    )
+
+    result = await _run(activities, temporal_test_server_options)
+
+    assert result.observation == Observation.ENDED
+    assert activities.launch_calls == 3
+    assert activities.watched == ["engine-1"]
+    assert activities.closed == []
+
+
+@pytest.mark.asyncio
+async def test_a_stop_ends_the_wait_for_room_at_once(temporal_test_server_options):
+    activities = FakeActivities(
+        launches=[AgentFixLaunch(observation=Observation.WAITING)],
+    )
+
+    result = await _run(
+        activities, temporal_test_server_options, signal_after_launch=True
+    )
+
+    assert result.observation == Observation.STOPPING
+    assert activities.launch_calls == 1
+    assert activities.watched == []
+    assert [closed.state for closed in activities.closed] == ["stopped"]
 
 
 @pytest.mark.asyncio
