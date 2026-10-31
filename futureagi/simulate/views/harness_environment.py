@@ -497,6 +497,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                     one["piece"]: SaveRequest(
                         expected_parent_id=one["expected_parent_id"],
                         expected_revision=one.get("expected_revision"),
+                        expected_review_digest=body.get("expected_review_digest"),
                     )
                     for one in body["drafts"]
                 },

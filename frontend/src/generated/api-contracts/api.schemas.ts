@@ -18943,6 +18943,11 @@ export interface HarnessDraftSaveItemApi {
 export interface HarnessDraftSaveApi {
   drafts: HarnessDraftSaveItemApi[];
   /**
+   * The review digest the person saw; Save refuses a review that moved since.
+   * @minLength 1
+   */
+  expected_review_digest?: string;
+  /**
    * Repeating a Save with the same key repeats its answer.
    * @minLength 1
    * @maxLength 128

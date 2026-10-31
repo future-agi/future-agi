@@ -407,3 +407,57 @@ def record_decisions(
             draft.last_edited_by = user
             draft.save(update_fields=["documents", "last_edited_by", "updated_at"])
     return draft_review(environment)
+
+
+def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str | None) -> None:
+    """Before Save makes drafts live: when the person rejected any change, rewrite each draft as the saved version
+    plus exactly the accepted changes. With no decision at all, Save keeps today's behaviour (the whole draft).
+
+    Refuses a review that moved since the person looked (`review_stale`) or one with a change still undecided
+    (`review_undecided`), naming the changes.
+    """
+    from simulate.services.harness_versioning import archives
+    from simulate.services.harness_versioning.drafts import (
+        _content,
+        _error,
+        _piece_files,
+        _prepared,
+        open_draft,
+    )
+
+    review = draft_review(locked)
+    if expected_review_digest and expected_review_digest != review["review_digest"]:
+        raise _error("review_stale", "The changes moved since you reviewed them; review them again", 409)
+    rejected = {one["piece"] for one in review["changes"] if one["decision"] == "rejected"} & pieces
+    if not rejected:
+        return
+    decisions = {one["id"]: one["decision"] for one in review["changes"] if one["decision"]}
+    for piece in sorted(rejected):
+        draft = open_draft(locked, piece, lock=True)
+        default = draft.parent
+        changes = [one for one in review["changes"] if one["piece"] == piece]
+        try:
+            composed = compose_accepted(
+                _piece_files(locked, piece, default) if default is not None else {},
+                _piece_files(locked, piece, draft),
+                changes,
+                decisions,
+            )
+        except ReviewRefused as refused:
+            raise _error(refused.code, str(refused), 409, changes=refused.changes) from refused
+        other = "suite" if piece == "environment" else "environment"
+        other_draft = open_draft(locked, other)
+        other_version = other_draft or getattr(locked, f"{other}_version")
+        files = {**composed, **_piece_files(locked, other, other_version)}
+        _, prepared = _prepared(locked, files)
+        body = (
+            (prepared.environment_key, prepared.environment_body)
+            if piece == "environment"
+            else (prepared.suite_key, prepared.suite_body)
+        )
+        archives.put_archive(*body)
+        values = _content(locked, piece, prepared, origin=draft.origin, default=default)
+        values["documents"]["review"] = (draft.documents or {}).get("review")
+        for name, value in values.items():
+            setattr(draft, name, value)
+        draft.save()

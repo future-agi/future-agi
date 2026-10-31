@@ -38005,6 +38005,13 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsBody = zod.object({
         .describe("The draft's revision the caller saw."),
     }),
   ),
+  expected_review_digest: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "The review digest the person saw; Save refuses a review that moved since.",
+    ),
   idempotency_key: zod
     .string()
     .min(1)

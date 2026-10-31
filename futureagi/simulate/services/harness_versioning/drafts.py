@@ -99,6 +99,8 @@ class DraftWrite:
 class SaveRequest:
     expected_parent_id: Any
     expected_revision: int | None = None
+    # The review digest the person saw; a review that moved since is refused.
+    expected_review_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1287,6 +1289,15 @@ def save_drafts(
                     origin="manual",
                     exempt=_exempt(draft),
                 )
+        from simulate.services.harness_versioning.review import apply_review
+
+        apply_review(
+            locked,
+            pieces,
+            expected_review_digest=next(
+                (one.expected_review_digest for one in requests.values() if one.expected_review_digest), None
+            ),
+        )
         drafts = {
             piece: open_draft(locked, piece).id
             for piece in DRAFT_PIECES

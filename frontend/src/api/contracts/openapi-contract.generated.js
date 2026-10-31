@@ -65576,6 +65576,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessDraftSaveItem",
           },
         },
+        expected_review_digest: {
+          title: "Expected review digest",
+          description:
+            "The review digest the person saw; Save refuses a review that moved since.",
+          type: "string",
+          minLength: 1,
+        },
         idempotency_key: {
           title: "Idempotency key",
           description: "Repeating a Save with the same key repeats its answer.",

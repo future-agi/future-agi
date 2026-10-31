@@ -99,3 +99,69 @@ def test_with_no_draft_the_review_is_empty_and_deciding_is_refused(user, workspa
     assert (review["changes"], review["can_save"]) == ([], False)
     refused = _decide(auth_client, environment, [{"remaining": True, "decision": "accepted"}], {})
     assert refused.status_code == 404 and refused.json()["error"] == "draft_not_found"
+
+
+AUDITOR = {**MANAGER, "id": "auditor", "name": "Sam Ortiz", "role": "reads refunds"}
+
+
+def _save(auth_client, environment, digest=None):
+    draft = auth_client.get(f"{BASE}/{environment.id}/drafts/").json()["environment"]
+    return auth_client.post(
+        f"{BASE}/{environment.id}/drafts/save/",
+        {
+            "drafts": [{"piece": "environment", "expected_parent_id": draft["parent_id"],
+                        "expected_revision": draft["revision"]}],
+            "idempotency_key": f"save-{digest or 'none'}"[:60].replace(":", "-"),
+            **({"expected_review_digest": digest} if digest else {}),
+        },
+        format="json",
+    )
+
+
+def _two_actors(auth_client, environment):
+    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+    revision = _review(auth_client, environment)["drafts"]["environment"]["revision"]
+    assert _add(auth_client, environment, AUDITOR, revision=revision).status_code == 200
+    return _review(auth_client, environment)["drafts"]["environment"]["revision"]
+
+
+def test_save_makes_only_the_accepted_changes_live_and_keeps_the_review_on_the_version(
+    user, workspace, storage, auth_client, settings
+):
+    from simulate.tests.test_harness_actors import _saved_actors
+
+    environment = _versioned(user, workspace, "review-partial-save", storage)
+    revision = _two_actors(auth_client, environment)
+    decided = _decide(auth_client, environment, [
+        {"id": "actor:manager", "decision": "accepted"},
+        {"id": "actor:auditor", "decision": "rejected"},
+    ], {"environment": revision}).json()
+    decided = decided.get("result", decided)
+    assert decided["can_save"]
+
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+    saved = _save(auth_client, environment, decided["review_digest"])
+    assert saved.status_code == 200, saved.content
+    assert [one["id"] for one in _saved_actors(environment)] == ["manager"]
+    environment.refresh_from_db()
+    review = (environment.environment_version.documents or {}).get("review") or {}
+    assert {key: value["decision"] for key, value in review["decisions"].items()} == {
+        "actor:manager": "accepted", "actor:auditor": "rejected"}
+
+
+def test_save_refuses_a_review_that_moved_or_a_rejection_with_changes_still_undecided(
+    user, workspace, storage, auth_client, settings
+):
+    environment = _versioned(user, workspace, "review-save-refusals", storage)
+    revision = _two_actors(auth_client, environment)
+    before = _review(auth_client, environment)["review_digest"]
+    _decide(auth_client, environment, [{"id": "actor:auditor", "decision": "rejected"}], {"environment": revision})
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+
+    stale = _save(auth_client, environment, before)
+    assert stale.status_code == 409 and stale.json()["error"] == "review_stale"
+    undecided = _save(auth_client, environment)
+    assert undecided.status_code == 409 and undecided.json()["error"] == "review_undecided"
+    assert undecided.json()["changes"] == ["actor:manager"]
+    environment.refresh_from_db()
+    assert not (environment.environment_version.documents or {}).get("review")

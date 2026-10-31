@@ -779,6 +779,9 @@ class HarnessDraftSaveItemSerializer(StrictInputSerializer):
 
 class HarnessDraftSaveSerializer(serializers.Serializer):
     drafts = HarnessDraftSaveItemSerializer(many=True, min_length=1, max_length=2)
+    expected_review_digest = serializers.CharField(
+        required=False, help_text="The review digest the person saw; Save refuses a review that moved since."
+    )
     idempotency_key = serializers.RegexField(
         r"^[A-Za-z0-9_-]+$",
         max_length=128,
