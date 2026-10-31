@@ -185,7 +185,20 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
             else None
         ),
         records=records,
+        parallelism=_ran_at(run) if finished else None,
     )
+
+
+def _ran_at(run: HostedHarnessJob) -> int:
+    """The parallelism a run really had: what it was admitted at, less any degrade its last
+    attempt recorded. Two arms are only comparable when these match."""
+    payload = run.payload or {}
+    clamped = (payload.get("metadata") or {}).get("parallelism_clamped") or {}
+    admitted = clamped.get("admitted") or (payload.get("runtime") or {}).get(
+        "parallelism"
+    )
+    attempt = run.attempts.order_by("-attempt_number").first()
+    return (attempt.effective_parallelism if attempt else None) or admitted or 1
 
 
 # A plan's limit, met mid-run, is the user's to lift even though the platform reports it.
@@ -233,6 +246,8 @@ def _record(
     failure = receipt.get("failure")
     # An agent that broke the conversation is judged, not excused.
     agent_broke_it = isinstance(failure, Mapping) and failure.get("domain") == "agent"
+    call = receipt.get("call")
+    duration_ms = call.get("duration_ms") if isinstance(call, Mapping) else None
     return CheckRecord(
         scenario_key=scenario_key,
         trial=trial,
@@ -248,6 +263,7 @@ def _record(
             if one.get("name")
         },
         transcript=transcript,
+        duration_s=duration_ms / 1000 if duration_ms else None,
     )
 
 

@@ -228,6 +228,7 @@ class TestEngineCalls:
             "total": 1,
             "failure": None,
             "records": [],
+            "parallelism": None,
         }
 
         ended = _engine(

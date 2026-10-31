@@ -49296,6 +49296,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maximum: 20,
           minimum: 1,
         },
+        repeat: {
+          title: "Repeat",
+          type: "integer",
+          default: 1,
+          maximum: 20,
+          minimum: 1,
+        },
       },
     },
     AgentFixEngineReport: {

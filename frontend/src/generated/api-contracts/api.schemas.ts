@@ -16874,6 +16874,11 @@ export interface AgentFixCheckRunRequestApi {
    * @maximum 20
    */
   trials: number;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  repeat?: number;
 }
 
 export interface AgentFixCheckRunCreatedApi {

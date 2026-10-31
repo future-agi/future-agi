@@ -1093,6 +1093,9 @@ AGENT_FIX_ENGINE_COMMAND = os.getenv(
 )
 # Sandboxes one fix may use in all; an engine that dies is started again after a pause.
 AGENT_FIX_MAX_SANDBOX_ATTEMPTS = int(os.getenv("AGENT_FIX_MAX_SANDBOX_ATTEMPTS", "3"))
+# Conversations a fix's check run holds at once. Every run of a fix asks for the same, so
+# its arms stay comparable.
+AGENT_FIX_CHECK_RUN_PARALLELISM = int(os.getenv("AGENT_FIX_CHECK_RUN_PARALLELISM", "2"))
 # The engine reports at least every minute; silent this long, it is treated as dead.
 AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
     os.getenv("AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS", "600")

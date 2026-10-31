@@ -95,6 +95,8 @@ class CheckRunRequest(BaseModel):
     agent_version_id: UUID
     scenario_keys: list[str] = Field(min_length=1)
     trials: int = Field(ge=1, le=20)
+    # Which repeat of a check this run is: it sets the run's seed.
+    repeat: int = Field(default=1, ge=1, le=20)
 
 
 class FailureOwner(StrEnum):
@@ -124,6 +126,8 @@ class CheckRecord(BaseModel):
     sub_goals: dict[str, bool]
     reasons: dict[str, str]
     transcript: str
+    # How long the conversation took; none for a trial that never had one.
+    duration_s: float | None = None
 
 
 class CheckRunStatus(BaseModel):
@@ -134,6 +138,8 @@ class CheckRunStatus(BaseModel):
     # Set when the run itself failed, after its own retries.
     failure: CheckFailure | None = None
     records: list[CheckRecord]
+    # The parallelism the run really had, once it has finished.
+    parallelism: int | None = None
 
 
 class VerdictTier(BaseModel):

@@ -6,7 +6,7 @@ import secrets
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
@@ -37,20 +37,20 @@ from simulate.services.alk_simulate_ingestion import (
     provision_alk_sim_run_test,
     resolved_agent_version,
 )
-from tracer.services.observability_switch import (
-    ObservabilityRefused,
-    refusal_body,
-    set_agent_observability,
-)
-from simulate.services.scoring_status import (
-    TRANSPORT_RUN_STATUSES,
-    settle_run_after_commit,
-)
 from simulate.services.canonical_json import (  # noqa: F401 - re-exported
     _json_value,
     _rfc3339,
     canonical_digest,
     canonical_json_bytes,
+)
+from simulate.services.scoring_status import (
+    TRANSPORT_RUN_STATUSES,
+    settle_run_after_commit,
+)
+from tracer.services.observability_switch import (
+    ObservabilityRefused,
+    refusal_body,
+    set_agent_observability,
 )
 
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
@@ -288,11 +288,14 @@ def create_selected_harness_run(
     rerun_of: HostedHarnessJob | None = None,
     picks: VersionPicks | None = None,
     fix_run: Any = None,
+    seed: int | None = None,
+    parallelism: int | None = None,
 ) -> tuple[HostedHarnessJob, bool]:
     """Freeze and preallocate one selected-scenario Run for an authored environment.
 
     A rerun of a pinned run (``rerun_of``) keeps that run's pins; ``picks`` win over
-    both, per piece. A ``fix_run`` marks the Run as one of its check runs.
+    both, per piece. A ``fix_run`` marks the Run as one of its check runs. ``seed`` and
+    ``parallelism`` replace the environment's; each defaults to what it has.
     """
 
     if environment.environment_id is not None:
@@ -474,6 +477,10 @@ def create_selected_harness_run(
         runtime["max_duration_seconds"] = max(
             runtime["max_duration_seconds"], len(manifest) * 360
         )
+        if seed is not None:
+            child_payload["seed"] = seed
+        if parallelism is not None:
+            runtime["parallelism"] = parallelism
         child_metadata = child_payload.setdefault("metadata", {})
         for key in (
             "scenario_extend",
