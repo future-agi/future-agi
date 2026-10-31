@@ -101,6 +101,8 @@ class SaveRequest:
     expected_revision: int | None = None
     # The review digest the person saw; a review that moved since is refused.
     expected_review_digest: str | None = None
+    # A name for the version the save creates.
+    name: str = ""
 
 
 @dataclass(frozen=True)
@@ -1305,6 +1307,9 @@ def save_drafts(
         }
         before = {piece: getattr(locked, f"{piece}_version_id") for piece in pieces}
         activated = activate_drafts(locked, pieces, origin=None, user=user)
+        from simulate.services.harness_versioning.review import name_saved
+
+        name_saved(activated, name=next((one.name for one in requests.values() if one.name), ""))
         payload = dict(locked.payload or {})
         metadata = dict(payload.get("metadata") or {})
         saves = {

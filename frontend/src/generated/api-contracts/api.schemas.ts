@@ -18718,6 +18718,11 @@ export interface HarnessDraftItemApi {
   id: string;
   /** @minLength 1 */
   label: string | null;
+  /**
+   * The name a person gave the version, if any.
+   * @minLength 1
+   */
+  name: string;
   status: HarnessDraftItemApiStatus;
   is_default: boolean;
   created_at: string;
@@ -18948,6 +18953,11 @@ export interface HarnessDraftSaveApi {
    */
   expected_review_digest?: string;
   /**
+   * A name for the new version; never an identity.
+   * @maxLength 80
+   */
+  name?: string;
+  /**
    * Repeating a Save with the same key repeats its answer.
    * @minLength 1
    * @maxLength 128
@@ -18979,6 +18989,11 @@ export interface HarnessVersionApi {
   id: string;
   /** @minLength 1 */
   label: string | null;
+  /**
+   * The name a person gave the version, if any.
+   * @minLength 1
+   */
+  name: string;
   status: HarnessVersionApiStatus;
   is_default: boolean;
   created_at: string;

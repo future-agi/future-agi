@@ -556,6 +556,7 @@ class HarnessVersionSerializer(serializers.Serializer):
 
     id = serializers.UUIDField()
     label = serializers.CharField(allow_null=True)
+    name = serializers.CharField(allow_null=True, help_text="The name a person gave the version, if any.")
     status = serializers.ChoiceField(choices=("draft", "active", "discarded"))
     is_default = serializers.BooleanField()
     created_at = serializers.DateTimeField()
@@ -781,6 +782,9 @@ class HarnessDraftSaveSerializer(serializers.Serializer):
     drafts = HarnessDraftSaveItemSerializer(many=True, min_length=1, max_length=2)
     expected_review_digest = serializers.CharField(
         required=False, help_text="The review digest the person saw; Save refuses a review that moved since."
+    )
+    name = serializers.CharField(
+        required=False, allow_blank=True, max_length=80, help_text="A name for the new version; never an identity."
     )
     idempotency_key = serializers.RegexField(
         r"^[A-Za-z0-9_-]+$",

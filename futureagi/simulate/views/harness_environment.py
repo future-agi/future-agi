@@ -498,6 +498,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                         expected_parent_id=one["expected_parent_id"],
                         expected_revision=one.get("expected_revision"),
                         expected_review_digest=body.get("expected_review_digest"),
+                        name=body.get("name") or "",
                     )
                     for one in body["drafts"]
                 },

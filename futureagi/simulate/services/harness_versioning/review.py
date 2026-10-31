@@ -429,6 +429,17 @@ def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str |
     if expected_review_digest and expected_review_digest != review["review_digest"]:
         raise _error("review_stale", "The changes moved since you reviewed them; review them again", 409)
     rejected = {one["piece"] for one in review["changes"] if one["decision"] == "rejected"} & pieces
+    if any(one["decision"] for one in review["changes"]):
+        # What the person decided, kept with the version it becomes, so its summary and diff are the approved ones.
+        for piece in pieces:
+            draft = open_draft(locked, piece, lock=True)
+            kept = [
+                {name: one[name] for name in ("id", "kind", "key", "action", "summary", "decision")}
+                for one in review["changes"]
+                if one["piece"] == piece
+            ]
+            draft.documents = {**(draft.documents or {}), "review_changes": kept}
+            draft.save(update_fields=["documents", "updated_at"])
     if not rejected:
         return
     decisions = {one["id"]: one["decision"] for one in review["changes"] if one["decision"]}
@@ -458,6 +469,34 @@ def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str |
         archives.put_archive(*body)
         values = _content(locked, piece, prepared, origin=draft.origin, default=default)
         values["documents"]["review"] = (draft.documents or {}).get("review")
+        values["documents"]["review_changes"] = (draft.documents or {}).get("review_changes")
         for name, value in values.items():
             setattr(draft, name, value)
         draft.save()
+
+
+SUMMARY_ITEMS = 5
+
+
+def review_summary(review: dict[str, Any]) -> str:
+    """A saved version's summary, from what the person accepted: the first few changes and how many more."""
+    accepted = [one["summary"] for one in (review or {}).get("changes") or [] if one.get("decision") == "accepted"]
+    head = "; ".join(accepted[:SUMMARY_ITEMS])
+    more = len(accepted) - SUMMARY_ITEMS
+    return head + (f"; and {more} more" if more > 0 else "")
+
+
+def name_saved(activated: dict[str, Any], *, name: str) -> None:
+    """Give each version a save created the person's name and, when it was reviewed, a summary of what they
+    accepted. A version the save reused keeps what it had."""
+    for version, created in activated.values():
+        if not created:
+            continue
+        fields = []
+        if name:
+            version.name, fields = name[:80], [*fields, "name"]
+        reviewed = (version.documents or {}).get("review_changes")
+        if reviewed:
+            version.summary, fields = review_summary({"changes": reviewed})[:1024], [*fields, "summary"]
+        if fields:
+            version.save(update_fields=[*fields, "updated_at"])

@@ -104,7 +104,7 @@ def test_with_no_draft_the_review_is_empty_and_deciding_is_refused(user, workspa
 AUDITOR = {**MANAGER, "id": "auditor", "name": "Sam Ortiz", "role": "reads refunds"}
 
 
-def _save(auth_client, environment, digest=None):
+def _save(auth_client, environment, digest=None, name=None):
     draft = auth_client.get(f"{BASE}/{environment.id}/drafts/").json()["environment"]
     return auth_client.post(
         f"{BASE}/{environment.id}/drafts/save/",
@@ -113,6 +113,7 @@ def _save(auth_client, environment, digest=None):
                         "expected_revision": draft["revision"]}],
             "idempotency_key": f"save-{digest or 'none'}"[:60].replace(":", "-"),
             **({"expected_review_digest": digest} if digest else {}),
+            **({"name": name} if name else {}),
         },
         format="json",
     )
@@ -140,10 +141,16 @@ def test_save_makes_only_the_accepted_changes_live_and_keeps_the_review_on_the_v
     assert decided["can_save"]
 
     settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
-    saved = _save(auth_client, environment, decided["review_digest"])
+    saved = _save(auth_client, environment, decided["review_digest"], name="Manager approves discounts")
     assert saved.status_code == 200, saved.content
     assert [one["id"] for one in _saved_actors(environment)] == ["manager"]
     environment.refresh_from_db()
+    version = environment.environment_version
+    # The version reads as what the person approved, under the name they gave it.
+    assert (version.name, version.summary) == ("Manager approves discounts", "Add actor manager")
+    listed = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
+    names = [one.get("name") for one in (listed.get("result", listed).get("environment") or [])]
+    assert "Manager approves discounts" in names
     review = (environment.environment_version.documents or {}).get("review") or {}
     assert {key: value["decision"] for key, value in review["decisions"].items()} == {
         "actor:manager": "accepted", "actor:auditor": "rejected"}

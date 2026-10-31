@@ -86,6 +86,8 @@ class _HarnessPieceVersion(BaseModel):
         related_name="children",
     )
     summary = models.CharField(max_length=1024, blank=True, default="")
+    # A name a person gave the version when saving it. Never an identity: it may repeat and may change.
+    name = models.CharField(max_length=80, blank=True, default="")
     diff = models.JSONField(null=True, blank=True)
     # Secret-safe snapshots of this piece's stage outputs, served without the object store.
     documents = models.JSONField(default=dict, blank=True)

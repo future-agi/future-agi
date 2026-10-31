@@ -37514,6 +37514,10 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
     .object({
       id: zod.string().uuid(),
       label: zod.string().min(1).nullable(),
+      name: zod
+        .string()
+        .min(1)
+        .describe("The name a person gave the version, if any."),
       status: zod.enum(["draft", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
@@ -37619,6 +37623,10 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
     .object({
       id: zod.string().uuid(),
       label: zod.string().min(1).nullable(),
+      name: zod
+        .string()
+        .min(1)
+        .describe("The name a person gave the version, if any."),
       status: zod.enum(["draft", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
@@ -37724,6 +37732,10 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
     zod.object({
       id: zod.string().uuid(),
       label: zod.string().min(1).nullable(),
+      name: zod
+        .string()
+        .min(1)
+        .describe("The name a person gave the version, if any."),
       status: zod.enum(["draft", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
@@ -37982,6 +37994,8 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsParams = zod.object({
 
 export const simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyDraftsItemExpectedRevisionMin = 0;
 
+export const simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyNameMax = 80;
+
 export const simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyIdempotencyKeyMax = 128;
 
 export const simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyIdempotencyKeyRegExp =
@@ -38012,6 +38026,11 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsBody = zod.object({
     .describe(
       "The review digest the person saw; Save refuses a review that moved since.",
     ),
+  name: zod
+    .string()
+    .max(simulateApiHarnessEnvironmentsDraftsSaveDraftsBodyNameMax)
+    .optional()
+    .describe("A name for the new version; never an identity."),
   idempotency_key: zod
     .string()
     .min(1)
@@ -38030,6 +38049,10 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
         zod.object({
           id: zod.string().uuid(),
           label: zod.string().min(1).nullable(),
+          name: zod
+            .string()
+            .min(1)
+            .describe("The name a person gave the version, if any."),
           status: zod.enum(["draft", "active", "discarded"]),
           is_default: zod.boolean(),
           created_at: zod.string().datetime({ offset: true }),
@@ -38111,6 +38134,10 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
         zod.object({
           id: zod.string().uuid(),
           label: zod.string().min(1).nullable(),
+          name: zod
+            .string()
+            .min(1)
+            .describe("The name a person gave the version, if any."),
           status: zod.enum(["draft", "active", "discarded"]),
           is_default: zod.boolean(),
           created_at: zod.string().datetime({ offset: true }),
@@ -38190,6 +38217,10 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
         zod.object({
           id: zod.string().uuid(),
           label: zod.string().min(1).nullable(),
+          name: zod
+            .string()
+            .min(1)
+            .describe("The name a person gave the version, if any."),
           status: zod.enum(["draft", "active", "discarded"]),
           is_default: zod.boolean(),
           created_at: zod.string().datetime({ offset: true }),
@@ -38269,6 +38300,10 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
         zod.object({
           id: zod.string().uuid(),
           label: zod.string().min(1).nullable(),
+          name: zod
+            .string()
+            .min(1)
+            .describe("The name a person gave the version, if any."),
           status: zod.enum(["draft", "active", "discarded"]),
           is_default: zod.boolean(),
           created_at: zod.string().datetime({ offset: true }),
@@ -39505,6 +39540,10 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
     zod.object({
       id: zod.string().uuid(),
       label: zod.string().min(1).nullable(),
+      name: zod
+        .string()
+        .min(1)
+        .describe("The name a person gave the version, if any."),
       status: zod.enum(["draft", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
@@ -39582,6 +39621,10 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
     zod.object({
       id: zod.string().uuid(),
       label: zod.string().min(1).nullable(),
+      name: zod
+        .string()
+        .min(1)
+        .describe("The name a person gave the version, if any."),
       status: zod.enum(["draft", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
@@ -39659,6 +39702,10 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
     zod.object({
       id: zod.string().uuid(),
       label: zod.string().min(1).nullable(),
+      name: zod
+        .string()
+        .min(1)
+        .describe("The name a person gave the version, if any."),
       status: zod.enum(["draft", "active", "discarded"]),
       is_default: zod.boolean(),
       created_at: zod.string().datetime({ offset: true }),
@@ -39804,6 +39851,10 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
+        name: zod
+          .string()
+          .min(1)
+          .describe("The name a person gave the version, if any."),
         status: zod.enum(["draft", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
@@ -39883,6 +39934,10 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
+        name: zod
+          .string()
+          .min(1)
+          .describe("The name a person gave the version, if any."),
         status: zod.enum(["draft", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
@@ -39962,6 +40017,10 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
+        name: zod
+          .string()
+          .min(1)
+          .describe("The name a person gave the version, if any."),
         status: zod.enum(["draft", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
@@ -40101,6 +40160,10 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
+        name: zod
+          .string()
+          .min(1)
+          .describe("The name a person gave the version, if any."),
         status: zod.enum(["draft", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
@@ -40180,6 +40243,10 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
+        name: zod
+          .string()
+          .min(1)
+          .describe("The name a person gave the version, if any."),
         status: zod.enum(["draft", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
@@ -40259,6 +40326,10 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
+        name: zod
+          .string()
+          .min(1)
+          .describe("The name a person gave the version, if any."),
         status: zod.enum(["draft", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),

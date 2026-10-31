@@ -65583,6 +65583,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        name: {
+          title: "Name",
+          description: "A name for the new version; never an identity.",
+          type: "string",
+          maxLength: 80,
+        },
         idempotency_key: {
           title: "Idempotency key",
           description: "Repeating a Save with the same key repeats its answer.",
@@ -96340,6 +96346,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: [
         "id",
         "label",
+        "name",
         "status",
         "is_default",
         "created_at",
@@ -96372,6 +96379,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         label: {
           title: "Label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        name: {
+          title: "Name",
+          description: "The name a person gave the version, if any.",
           type: "string",
           minLength: 1,
           "x-nullable": true,
@@ -96957,6 +96971,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: [
         "id",
         "label",
+        "name",
         "status",
         "is_default",
         "created_at",
@@ -96996,6 +97011,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         label: {
           title: "Label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        name: {
+          title: "Name",
+          description: "The name a person gave the version, if any.",
           type: "string",
           minLength: 1,
           "x-nullable": true,

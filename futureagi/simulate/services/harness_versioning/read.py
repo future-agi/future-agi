@@ -165,6 +165,7 @@ def _piece_item(version: Any, default_id: Any, *, suite: bool) -> dict[str, Any]
     return {
         "id": str(version.id),
         "label": _label(version.version_number),
+        "name": version.name or None,
         "status": version.status,
         "is_default": version.id == default_id,
         "created_at": version.created_at.isoformat(),
