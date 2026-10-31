@@ -6,6 +6,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
+
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
@@ -111,17 +113,14 @@ func TestCopilotSplitBatchAndEqualCalls(t *testing.T) {
 	}
 }
 
-func TestNativeCachePricingIsUnknownUnlessReported(t *testing.T) {
+func TestNativeCachePricingHeldUnlessReported(t *testing.T) {
 	td := copilotFixture(t)
 	sp := td.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(1)
 	sp.Attributes().PutInt("gen_ai.usage.cache_read.input_tokens", 40)
 	p := &normalizationPricer{}
 	rows, _, err := ConvertWithIdentities(context.Background(), td, p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rows[1]["cost"] != float64(0) || rows[1]["attrs_string"].(map[string]string)["fi.cost.kind"] != "unknown" {
-		t.Fatal(rows[1])
+	if err == nil || err.Error() != normalization.CostCoverageError() || rows != nil || p.calls != 0 {
+		t.Fatalf("unknown cost escaped hold: rows=%v err=%v pricing calls=%d", rows, err, p.calls)
 	}
 	sp.Attributes().PutDouble("gen_ai.cost.total", 0.123)
 	rows, _, err = ConvertWithIdentities(context.Background(), td, p)

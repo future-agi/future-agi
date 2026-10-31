@@ -22,14 +22,16 @@ type Profile struct {
 }
 
 type contract struct {
-	Profiles          []Profile `json:"profiles"`
-	UsagePrefixes     []string  `json:"usage_prefixes"`
-	UsageKeys         []string  `json:"usage_keys"`
-	EventKeys         []string  `json:"event_attribute_keys"`
-	LinkKeys          []string  `json:"link_attribute_keys"`
-	AdmissionKeys     []string  `json:"reserved_admission_keys"`
-	AdmissionError    string    `json:"admission_error"`
-	UnpricedUsageKeys []string  `json:"unpriced_usage_keys"`
+	Profiles          []Profile           `json:"profiles"`
+	UsagePrefixes     []string            `json:"usage_prefixes"`
+	UsageKeys         []string            `json:"usage_keys"`
+	EventKeys         []string            `json:"event_attribute_keys"`
+	LinkKeys          []string            `json:"link_attribute_keys"`
+	AdmissionKeys     []string            `json:"reserved_admission_keys"`
+	AdmissionError    string              `json:"admission_error"`
+	UnpricedUsageKeys []string            `json:"unpriced_usage_keys"`
+	CostCoverageError string              `json:"cost_coverage_error"`
+	DetailedCostKeys  map[string][]string `json:"detailed_cost_keys"`
 }
 
 var registry = func() contract {

@@ -33,6 +33,7 @@ from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.payload_storage import PAYLOAD_DEFAULT_TTL, payload_storage
 from tracer.utils.normalization import CONTRACT, requires_immutable_admission
+from tracer.utils.normalization.cost import cost_coverage_error
 from tracer.utils.trace_ingestion import bulk_create_observation_span_task
 
 
@@ -44,6 +45,23 @@ def _requires_immutable_admission(request: ExportTraceServiceRequest) -> bool:
         for span in scope.spans
         for attr in span.attributes
     )
+
+
+def _ingestion_hold(request: ExportTraceServiceRequest) -> str:
+    if _requires_immutable_admission(request):
+        return CONTRACT["admission_error"]
+    for resource in request.resource_spans:
+        for scope in resource.scope_spans:
+            producer = {"name": scope.scope.name, "version": scope.scope.version}
+            for span in scope.spans:
+                attrs = {}
+                for attr in span.attributes:
+                    field = attr.value.WhichOneof("value")
+                    attrs[attr.key] = getattr(attr.value, field) if field else None
+                reason = cost_coverage_error(attrs, producer)
+                if reason:
+                    return reason
+    return ""
 
 
 logger = structlog.get_logger(__name__)
@@ -191,13 +209,14 @@ class OTLPTraceView(APIView):
             # Count spans for response
             span_count = self._count_spans(request_dict)
 
-            if _requires_immutable_admission(otlp_request):
+            hold_reason = _ingestion_hold(otlp_request)
+            if hold_reason:
                 # Reject the entire mixed batch before async acceptance/storage.
                 return self._success_response(
                     request,
                     OTLPExportResult(
                         rejected_spans=span_count,
-                        error_message=CONTRACT["admission_error"],
+                        error_message=hold_reason,
                     ),
                 )
 

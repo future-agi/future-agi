@@ -19,7 +19,8 @@ from tracer.utils.normalization import (
     normalize_span,
     requires_immutable_admission,
 )
-from tracer.utils.normalization.details import needs_detailed_pricing, store_details
+from tracer.utils.normalization.cost import requires_cost_coverage
+from tracer.utils.normalization.details import store_details
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
@@ -1743,6 +1744,11 @@ def calculate_cost(
         attributes["fi.cost.kind"] = "unknown"
         return 0
 
+    # Numeric zero cannot represent unknown in current aggregates or UI. This
+    # also protects direct conversion callers that bypass the OTLP admission gate.
+    if requires_cost_coverage(attributes):
+        raise ValueError(CONTRACT["cost_coverage_error"])
+
     track_cost = bool(attributes.get("fi.normalization.profile"))
 
     # Check user-provided cost attributes (uses AttributeRegistry aliasing
@@ -1768,10 +1774,6 @@ def calculate_cost(
             return value
         except (ValueError, TypeError):
             return 0
-
-    if needs_detailed_pricing(attributes):
-        attributes["fi.cost.kind"] = "unknown"
-        return 0
 
     # Legacy tables cannot distinguish a missing price from a free model.
     # Never promote that ambiguous zero into a verified provider charge.

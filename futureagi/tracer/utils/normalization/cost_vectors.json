@@ -1,0 +1,21 @@
+[
+  {"name":"missing cost", "attributes":{}, "held":true},
+  {"name":"explicit total", "attributes":{"gen_ai.cost.total":0.125}, "held":false},
+  {"name":"explicit zero", "attributes":{"gen_ai.cost.total":0}, "held":false},
+  {"name":"total string", "attributes":{"llm.cost.total":"0.125"}, "held":false},
+  {"name":"complete components", "attributes":{"gen_ai.cost.input":0.1,"gen_ai.cost.output":0.02}, "held":false},
+  {"name":"component aliases", "attributes":{"llm.cost.prompt":0,"llm.cost.completion":"0"}, "held":false},
+  {"name":"partial input", "attributes":{"gen_ai.cost.input":0.1}, "held":true},
+  {"name":"partial output", "attributes":{"gen_ai.cost.output":0}, "held":true},
+  {"name":"invalid total beats components", "attributes":{"gen_ai.cost.total":"unknown","gen_ai.cost.input":0.1,"gen_ai.cost.output":0.2}, "held":true},
+  {"name":"invalid total beats alias", "attributes":{"gen_ai.cost.total":"unknown","llm.cost.total":0.2}, "held":true},
+  {"name":"nonfinite total", "attributes":{"gen_ai.cost.total":"NaN"}, "held":true},
+  {"name":"infinite total", "attributes":{"gen_ai.cost.total":"Infinity"}, "held":true},
+  {"name":"negative total", "attributes":{"gen_ai.cost.total":-1}, "held":true},
+  {"name":"boolean total", "attributes":{"gen_ai.cost.total":true}, "held":true},
+  {"name":"invalid component", "attributes":{"gen_ai.cost.input":0.1,"gen_ai.cost.output":"unknown"}, "held":true},
+  {"name":"sum overflow", "attributes":{"gen_ai.cost.input":1e308,"gen_ai.cost.output":1e308}, "held":true},
+  {"name":"sender-only not common to both receivers", "attributes":{"gen_ai.usage.total_cost":0.125}, "held":true},
+  {"name":"nonadditive", "attributes":{"fi.usage.contribution":"none"}, "held":false},
+  {"name":"qualified summary", "attributes":{"gen_ai.operation.name":"invoke_agent"}, "held":false}
+]

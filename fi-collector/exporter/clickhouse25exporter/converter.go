@@ -228,8 +228,8 @@ func Convert(traces ptrace.Traces) ([]map[string]any, error) {
 // the CH side via ReplacingMergeTree(version), so only within-batch dedup is
 // done here.
 func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pricer) ([]map[string]any, *curatedwriter.Batch, error) {
-	if normalization.RequiresAdmission(traces) {
-		return nil, nil, fmt.Errorf("%s", normalization.AdmissionError())
+	if reason := normalization.IngestionHold(traces); reason != "" {
+		return nil, nil, fmt.Errorf("%s", reason)
 	}
 	normalization.Prepare(traces)
 	rows := make([]map[string]any, 0, traces.SpanCount())

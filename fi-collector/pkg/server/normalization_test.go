@@ -16,13 +16,21 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 )
 
-func TestImmutableContractNeverEnqueuedHTTPOrGRPC(t *testing.T) {
-	for _, key := range []string{"fi.capture.source_work.id", "fi.capture.identity.profile", "fi.usage.plan.id", "fi.usage.fact.id", "fi.usage.revision", "fi.usage.contribution"} {
+func TestUnsupportedContractNeverEnqueuedHTTPOrGRPC(t *testing.T) {
+	for _, key := range []string{"fi.capture.source_work.id", "fi.capture.identity.profile", "fi.usage.plan.id", "fi.usage.fact.id", "fi.usage.revision", "fi.usage.contribution", "gen_ai.usage.cache_read_tokens"} {
 		for _, transport := range []string{"json", "protobuf", "grpc"} {
 			t.Run(key+"/"+transport, func(t *testing.T) {
 				td := calTraces(1, 1, 2, nil)
 				sp := td.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
 				sp.Attributes().PutStr(key, "turn")
+				reason := normalization.AdmissionError()
+				if key == "gen_ai.usage.cache_read_tokens" {
+					ss := td.ResourceSpans().At(0).ScopeSpans().At(0)
+					ss.Scope().SetName("gemini-cli")
+					ss.Scope().SetVersion("v1")
+					sp.Attributes().PutInt(key, 40)
+					reason = normalization.CostCoverageError()
+				}
 				s := directServer()
 				var response ptraceotlp.ExportResponse
 				if transport == "grpc" {
@@ -56,8 +64,8 @@ func TestImmutableContractNeverEnqueuedHTTPOrGRPC(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if response.PartialSuccess().RejectedSpans() != 2 || response.PartialSuccess().ErrorMessage() != normalization.AdmissionError() {
-					t.Fatal("immutable contract silently accepted")
+				if response.PartialSuccess().RejectedSpans() != 2 || response.PartialSuccess().ErrorMessage() != reason {
+					t.Fatal("unsupported contract silently accepted")
 				}
 				if s.work.inUse.Load() != 0 || s.wire.inUse.Load() != 0 {
 					t.Fatal("held batch leaked memory lease")
@@ -143,45 +151,56 @@ func TestPreparedNormalizationPriceIncludesDetails(t *testing.T) {
 
 // The immutable flag and rejected count must describe the ORIGINAL request,
 // even if routing removes the reserved-contract span before normalization.
-func TestImmutableHoldSurvivesRoutingDrop(t *testing.T) {
-	for _, transport := range []string{"grpc", "json", "protobuf"} {
-		t.Run(transport, func(t *testing.T) {
-			s := newRouteServer(t, &routeFake{dropReason: "deleted-agent"})
-			req := routeRequest("customer-prod")
-			req.Traces().ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes().PutStr("fi.capture.source_work.id", "opaque")
-			var response ptraceotlp.ExportResponse
-			if transport == "grpc" {
-				var err error
-				response, err = s.export(sandboxKey(), req)
-				if err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				ct := "application/x-protobuf"
-				if transport == "json" {
-					ct = "application/json"
-				}
-				rec := s.post(t, sandboxKey(), req, ct)
-				if rec.Code != 200 {
-					t.Fatal(rec.Body)
-				}
-				response = ptraceotlp.NewExportResponse()
-				var err error
-				if transport == "json" {
-					err = response.UnmarshalJSON(rec.Body.Bytes())
+func TestIngestionHoldSurvivesRoutingDrop(t *testing.T) {
+	for _, costHold := range []bool{false, true} {
+		for _, transport := range []string{"grpc", "json", "protobuf"} {
+			t.Run(transport, func(t *testing.T) {
+				s := newRouteServer(t, &routeFake{dropReason: "deleted-agent"})
+				req := routeRequest("customer-prod")
+				ss := req.Traces().ResourceSpans().At(0).ScopeSpans().At(0)
+				reason := normalization.AdmissionError()
+				if costHold {
+					ss.Scope().SetName("gemini-cli")
+					ss.Scope().SetVersion("v1")
+					ss.Spans().At(0).Attributes().PutInt("gen_ai.usage.cache_read_tokens", 40)
+					reason = normalization.CostCoverageError()
 				} else {
-					err = response.UnmarshalProto(rec.Body.Bytes())
+					ss.Spans().At(0).Attributes().PutStr("fi.capture.source_work.id", "opaque")
 				}
-				if err != nil {
-					t.Fatal(err)
+				var response ptraceotlp.ExportResponse
+				if transport == "grpc" {
+					var err error
+					response, err = s.export(sandboxKey(), req)
+					if err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					ct := "application/x-protobuf"
+					if transport == "json" {
+						ct = "application/json"
+					}
+					rec := s.post(t, sandboxKey(), req, ct)
+					if rec.Code != 200 {
+						t.Fatal(rec.Body)
+					}
+					response = ptraceotlp.NewExportResponse()
+					var err error
+					if transport == "json" {
+						err = response.UnmarshalJSON(rec.Body.Bytes())
+					} else {
+						err = response.UnmarshalProto(rec.Body.Bytes())
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
 				}
-			}
-			if response.PartialSuccess().ErrorMessage() != normalization.AdmissionError() || response.PartialSuccess().RejectedSpans() != 2 {
-				t.Fatal("routing hid immutable-contract hold")
-			}
-			if len(s.events.snapshot()) != 0 {
-				t.Fatal("rejected work billed")
-			}
-		})
+				if response.PartialSuccess().ErrorMessage() != reason || response.PartialSuccess().RejectedSpans() != 2 {
+					t.Fatal("routing hid immutable-contract hold")
+				}
+				if len(s.events.snapshot()) != 0 {
+					t.Fatal("rejected work billed")
+				}
+			})
+		}
 	}
 }

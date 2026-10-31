@@ -72,6 +72,12 @@ const profileJSON = `{
     "fi.usage.revision"
   ],
   "admission_error": "FI_IMMUTABLE_ADMISSION_UNAVAILABLE",
+  "cost_coverage_error": "FI_COST_COVERAGE_UNAVAILABLE",
+  "detailed_cost_keys": {
+    "total": ["gen_ai.cost.total", "llm.cost.total"],
+    "input": ["gen_ai.cost.input", "llm.cost.prompt"],
+    "output": ["gen_ai.cost.output", "llm.cost.completion"]
+  },
   "unpriced_usage_keys": [
     "gen_ai.usage.cache_read_tokens",
     "gen_ai.usage.cache_write_tokens",

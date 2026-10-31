@@ -32,7 +32,6 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
-	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
 	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -491,8 +490,8 @@ func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder, h
 		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rej)
 	}
 	ctx, req := prepared.ctx, prepared.req
-	if prepared.immutableAdmission {
-		return immutableAdmissionHold(prepared.originalSpans), false, nil
+	if prepared.ingestionHold != "" {
+		return ingestionHoldResponse(prepared.originalSpans, prepared.ingestionHold), false, nil
 	}
 	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
 		return partialSuccessResponse(prepared.routed), false, nil
@@ -611,8 +610,8 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx, req := prepared.ctx, prepared.req
-	if prepared.immutableAdmission {
-		writeExportResponse(w, ct, immutableAdmissionHold(prepared.originalSpans))
+	if prepared.ingestionHold != "" {
+		writeExportResponse(w, ct, ingestionHoldResponse(prepared.originalSpans, prepared.ingestionHold))
 		return
 	}
 	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
@@ -1032,11 +1031,11 @@ func (s *Server) releaseDrained(seq uint64, leases []*lease) {
 	}
 }
 
-// Fail closed, including mixed batches, rather than ACK immutable work into
-// legacy wall-clock-versioned storage. No retry-with-new-ID or correction API.
-func immutableAdmissionHold(count int64) ptraceotlp.ExportResponse {
+// Fail closed for the entire original batch, without storing unsupported
+// immutable work or representing unknown detailed costs as numeric zero.
+func ingestionHoldResponse(count int64, reason string) ptraceotlp.ExportResponse {
 	resp := ptraceotlp.NewExportResponse()
 	resp.PartialSuccess().SetRejectedSpans(count)
-	resp.PartialSuccess().SetErrorMessage(normalization.AdmissionError())
+	resp.PartialSuccess().SetErrorMessage(reason)
 	return resp
 }

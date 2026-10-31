@@ -118,11 +118,12 @@ func StoreDetails(span ptrace.Span) {
 
 // NeedsDetailedPricing prevents a known native profile's cache/reasoning usage
 // from being priced by the legacy two-count table. Explicit billed USD still
-// wins. Unknown cost stays annotated unknown, not provider-reported zero.
+// wins. Ingestion holds unpriceable detailed usage until readers support unknown.
 func NeedsDetailedPricing(attrs pcommon.Map) bool {
-	if String(attrs, "fi.normalization.profile") == "" {
-		return false
-	}
+	return String(attrs, "fi.normalization.profile") != "" && hasDetailedUsage(attrs)
+}
+
+func hasDetailedUsage(attrs pcommon.Map) bool {
 	found := false
 	attrs.Range(func(key string, v pcommon.Value) bool {
 		if !slices.Contains(registry.UnpricedUsageKeys, key) {
