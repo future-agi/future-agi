@@ -805,11 +805,31 @@ def record_hubspot_login(user):
         return None
 
 
+# Synthetic signup probes (the health-check sentinel) sign up with these
+# addresses on a schedule; their activation email must still go out (that is
+# what the probe verifies via the Mailgun events API), but the human-facing
+# side effects below — the new-user Slack ping, the HubSpot contact, demo
+# data — must not fire for them.
+MONITORING_PROBE_EMAIL_PREFIX = "hc-probe+"
+MONITORING_PROBE_EMAIL_DOMAIN = "@futureagi.com"
+
+
+def is_monitoring_probe_email(email):
+    email = (email or "").lower()
+    return email.startswith(MONITORING_PROBE_EMAIL_PREFIX) and email.endswith(
+        MONITORING_PROBE_EMAIL_DOMAIN
+    )
+
+
 def _run_post_registration(user_id, generated_password):
     """Process post-registration steps in a separate thread"""
     user = User.objects.get(id=user_id)
     if user:
         send_signup_email(generated_password, user.email, user.name)
+
+        if is_monitoring_probe_email(user.email):
+            logger.info("post_registration_probe_signup_skipped", email=user.email)
+            return
 
         # Each of these returns without a network call unless its key is set
         # (HUBSPOT_API_TOKEN, SLACK_WEBHOOK_CHANNEL), so a self-hosted install
