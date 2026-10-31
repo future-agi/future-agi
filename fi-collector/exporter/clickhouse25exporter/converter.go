@@ -369,7 +369,10 @@ func spanToRow(
 	if nonAdditive {
 		cost = 0
 	}
-	if !nonAdditive && !hot.CostUserSet && pricer != nil && !normalization.NeedsDetailedPricing(span.Attributes()) {
+	// Producer qualification is not activation of the new accounting contract.
+	// Native exports retain legacy estimates until cache-aware storage/readers
+	// ship; explicit immutable-work/usage-plan traffic is held before conversion.
+	if !nonAdditive && !hot.CostUserSet && pricer != nil {
 		var c float64
 		var ok bool
 		if fromOpenRouter || adapter.ProviderIs(attrsStr, openRouterName) {

@@ -33,7 +33,6 @@ from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.payload_storage import PAYLOAD_DEFAULT_TTL, payload_storage
 from tracer.utils.normalization import CONTRACT, requires_immutable_admission
-from tracer.utils.normalization.cost import cost_coverage_error
 from tracer.utils.trace_ingestion import bulk_create_observation_span_task
 
 
@@ -50,17 +49,9 @@ def _requires_immutable_admission(request: ExportTraceServiceRequest) -> bool:
 def _ingestion_hold(request: ExportTraceServiceRequest) -> str:
     if _requires_immutable_admission(request):
         return CONTRACT["admission_error"]
-    for resource in request.resource_spans:
-        for scope in resource.scope_spans:
-            producer = {"name": scope.scope.name, "version": scope.scope.version}
-            for span in scope.spans:
-                attrs = {}
-                for attr in span.attributes:
-                    field = attr.value.WhichOneof("value")
-                    attrs[attr.key] = getattr(attr.value, field) if field else None
-                reason = cost_coverage_error(attrs, producer)
-                if reason:
-                    return reason
+    # Producer qualification is not opt-in to new accounting semantics. Native
+    # exporters do not retry OTLP partial_success; refusing cache/reasoning usage
+    # here would permanently lose existing exports, including unrelated spans.
     return ""
 
 

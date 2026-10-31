@@ -17,20 +17,17 @@ import (
 )
 
 func TestUnsupportedContractNeverEnqueuedHTTPOrGRPC(t *testing.T) {
-	for _, key := range []string{"fi.capture.source_work.id", "fi.capture.identity.profile", "fi.usage.plan.id", "fi.usage.fact.id", "fi.usage.revision", "fi.usage.contribution", "gen_ai.usage.cache_read_tokens"} {
+	for _, key := range []string{"fi.capture.source_work.id", "fi.capture.identity.profile", "fi.usage.plan.id", "fi.usage.fact.id", "fi.usage.revision", "fi.usage.contribution"} {
 		for _, transport := range []string{"json", "protobuf", "grpc"} {
 			t.Run(key+"/"+transport, func(t *testing.T) {
 				td := calTraces(1, 1, 2, nil)
 				sp := td.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
 				sp.Attributes().PutStr(key, "turn")
 				reason := normalization.AdmissionError()
-				if key == "gen_ai.usage.cache_read_tokens" {
-					ss := td.ResourceSpans().At(0).ScopeSpans().At(0)
-					ss.Scope().SetName("gemini-cli")
-					ss.Scope().SetVersion("v1")
-					sp.Attributes().PutInt(key, 40)
-					reason = normalization.CostCoverageError()
-				}
+				ss := td.ResourceSpans().At(0).ScopeSpans().At(0)
+				ss.Scope().SetName("gemini-cli")
+				ss.Scope().SetVersion("v1")
+				sp.Attributes().PutInt("gen_ai.usage.cache_read_tokens", 40)
 				s := directServer()
 				var response ptraceotlp.ExportResponse
 				if transport == "grpc" {
@@ -152,21 +149,19 @@ func TestPreparedNormalizationPriceIncludesDetails(t *testing.T) {
 // The immutable flag and rejected count must describe the ORIGINAL request,
 // even if routing removes the reserved-contract span before normalization.
 func TestIngestionHoldSurvivesRoutingDrop(t *testing.T) {
-	for _, costHold := range []bool{false, true} {
+	for _, detailedUsage := range []bool{false, true} {
 		for _, transport := range []string{"grpc", "json", "protobuf"} {
 			t.Run(transport, func(t *testing.T) {
 				s := newRouteServer(t, &routeFake{dropReason: "deleted-agent"})
 				req := routeRequest("customer-prod")
 				ss := req.Traces().ResourceSpans().At(0).ScopeSpans().At(0)
 				reason := normalization.AdmissionError()
-				if costHold {
+				if detailedUsage {
 					ss.Scope().SetName("gemini-cli")
 					ss.Scope().SetVersion("v1")
 					ss.Spans().At(0).Attributes().PutInt("gen_ai.usage.cache_read_tokens", 40)
-					reason = normalization.CostCoverageError()
-				} else {
-					ss.Spans().At(0).Attributes().PutStr("fi.capture.source_work.id", "opaque")
 				}
+				ss.Spans().At(0).Attributes().PutStr("fi.capture.source_work.id", "opaque")
 				var response ptraceotlp.ExportResponse
 				if transport == "grpc" {
 					var err error

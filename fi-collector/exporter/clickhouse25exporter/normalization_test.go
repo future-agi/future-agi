@@ -113,22 +113,48 @@ func TestCopilotSplitBatchAndEqualCalls(t *testing.T) {
 	}
 }
 
-func TestNativeCachePricingHeldUnlessReported(t *testing.T) {
-	td := copilotFixture(t)
-	sp := td.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(1)
-	sp.Attributes().PutInt("gen_ai.usage.cache_read.input_tokens", 40)
-	p := &normalizationPricer{}
-	rows, _, err := ConvertWithIdentities(context.Background(), td, p)
-	if err == nil || err.Error() != normalization.CostCoverageError() || rows != nil || p.calls != 0 {
-		t.Fatalf("unknown cost escaped hold: rows=%v err=%v pricing calls=%d", rows, err, p.calls)
+func TestNativeDetailedUsagePreservesLegacyPricing(t *testing.T) {
+	usageKeys := []string{
+		"gen_ai.usage.cache_read_tokens", "gen_ai.usage.cache_write_tokens",
+		"gen_ai.usage.cache_read.input_tokens", "gen_ai.usage.cache_write.input_tokens",
+		"gen_ai.usage.output_tokens.reasoning", "gen_ai.usage.reasoning.output_tokens",
 	}
-	sp.Attributes().PutDouble("gen_ai.cost.total", 0.123)
-	rows, _, err = ConvertWithIdentities(context.Background(), td, p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rows[1]["cost"] != 0.123 {
-		t.Fatal("provider USD lost")
+	costKeys := []string{"", "gen_ai.cost.total", "llm.cost.total", "gen_ai.usage.total_cost", "gen_ai.usage.input_cost", "gen_ai.usage.output_cost"}
+	for _, usageKey := range usageKeys {
+		for _, costKey := range costKeys {
+			t.Run(usageKey+"/"+costKey, func(t *testing.T) {
+				td := copilotFixture(t)
+				sp := td.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(1)
+				sp.Attributes().PutInt(usageKey, 40)
+				if costKey != "" {
+					sp.Attributes().PutDouble(costKey, 0.25)
+				}
+				p := &normalizationPricer{}
+				rows, _, err := ConvertWithIdentities(context.Background(), td, p)
+				if err != nil || len(rows) != 5 {
+					t.Fatalf("native export lost: rows=%d err=%v", len(rows), err)
+				}
+				wantCost, wantCalls, wantKind := 0.5, 4, "estimated"
+				if costKey != "" {
+					wantCost, wantCalls, wantKind = 0.25, 3, "provider_reported"
+				}
+				if rows[1]["cost"] != wantCost || p.calls != wantCalls || rows[1]["attrs_string"].(map[string]string)["fi.cost.kind"] != wantKind {
+					t.Fatalf("legacy price changed: cost=%v calls=%d attrs=%v", rows[1]["cost"], p.calls, rows[1]["attrs_string"])
+				}
+				if costKey == "" {
+					if _, ok := sp.Attributes().Get("gen_ai.cost.total"); ok {
+						t.Fatal("injected fake reported cost")
+					}
+				}
+				// Opting in to the new immutable contract still fails closed, even
+				// with a complete reported price and a qualified native scope.
+				sp.Attributes().PutStr("fi.usage.plan.id", "opaque")
+				rows, _, err = ConvertWithIdentities(context.Background(), td, p)
+				if err == nil || err.Error() != normalization.AdmissionError() || rows != nil || p.calls != wantCalls {
+					t.Fatalf("immutable contract escaped hold: rows=%v err=%v calls=%d", rows, err, p.calls)
+				}
+			})
+		}
 	}
 }
 

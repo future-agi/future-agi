@@ -67,18 +67,6 @@ def test_parent_only_usage_without_summary_profile_is_not_discarded():
     assert normalize_attributes(attrs) == attrs
 
 
-def test_cache_usage_is_not_guessed_with_two_count_pricing():
-    attrs = normalize_attributes(
-        {"gen_ai.usage.cache_read_tokens": 40}, {"name": "gemini-cli", "version": "v1"}
-    )
-    with patch("tracer.utils.otel.calculate_cost_from_tokens") as price:
-        with pytest.raises(ValueError, match=CONTRACT["cost_coverage_error"]):
-            calculate_cost(attrs, 100, 20, "test-model")
-        price.assert_not_called()
-    attrs["gen_ai.cost.total"] = 0.125
-    assert calculate_cost(attrs, 100, 20, "test-model") == 0.125
-
-
 def test_parse_normalize_convert_preserves_scope_session_and_accounting():
     def kv(key, value):
         return {

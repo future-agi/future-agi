@@ -19,7 +19,6 @@ from tracer.utils.normalization import (
     normalize_span,
     requires_immutable_admission,
 )
-from tracer.utils.normalization.cost import requires_cost_coverage
 from tracer.utils.normalization.details import store_details
 
 logger = structlog.get_logger(__name__)
@@ -1744,11 +1743,9 @@ def calculate_cost(
         attributes["fi.cost.kind"] = "unknown"
         return 0
 
-    # Numeric zero cannot represent unknown in current aggregates or UI. This
-    # also protects direct conversion callers that bypass the OTLP admission gate.
-    if requires_cost_coverage(attributes):
-        raise ValueError(CONTRACT["cost_coverage_error"])
-
+    # Preserve existing native pricing, including cache/reasoning exports.
+    # Producer qualification does not activate the new accounting contract;
+    # explicit immutable-work/usage-plan traffic is held before conversion.
     track_cost = bool(attributes.get("fi.normalization.profile"))
 
     # Check user-provided cost attributes (uses AttributeRegistry aliasing

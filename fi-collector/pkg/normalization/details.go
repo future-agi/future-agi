@@ -2,7 +2,6 @@ package normalization
 
 import (
 	"math"
-	"slices"
 	"unicode/utf8"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -114,23 +113,4 @@ func StoreDetails(span ptrace.Span) {
 	if missing > 0 {
 		span.Attributes().PutInt("fi.otel.dropped_links_count", missing)
 	}
-}
-
-// NeedsDetailedPricing prevents a known native profile's cache/reasoning usage
-// from being priced by the legacy two-count table. Explicit billed USD still
-// wins. Ingestion holds unpriceable detailed usage until readers support unknown.
-func NeedsDetailedPricing(attrs pcommon.Map) bool {
-	return String(attrs, "fi.normalization.profile") != "" && hasDetailedUsage(attrs)
-}
-
-func hasDetailedUsage(attrs pcommon.Map) bool {
-	found := false
-	attrs.Range(func(key string, v pcommon.Value) bool {
-		if !slices.Contains(registry.UnpricedUsageKeys, key) {
-			return true
-		}
-		found = (v.Type() == pcommon.ValueTypeInt && v.Int() != 0) || (v.Type() == pcommon.ValueTypeDouble && v.Double() != 0) || (v.Type() == pcommon.ValueTypeStr && v.Str() != "" && v.Str() != "0")
-		return !found
-	})
-	return found
 }

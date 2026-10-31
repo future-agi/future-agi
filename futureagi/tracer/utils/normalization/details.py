@@ -95,12 +95,3 @@ def store_details(span: dict[str, Any]) -> None:
     dropped = len(source_links) - len(links) + span.get("dropped_links_count", 0)
     if dropped:
         attrs["fi.otel.dropped_links_count"] = dropped
-
-
-def needs_detailed_pricing(attributes: dict[str, Any]) -> bool:
-    if not attributes.get("fi.normalization.profile"):
-        return False
-    return any(
-        attributes.get(key) not in (None, 0, "0", "")
-        for key in CONTRACT["unpriced_usage_keys"]
-    )

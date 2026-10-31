@@ -22,16 +22,13 @@ type Profile struct {
 }
 
 type contract struct {
-	Profiles          []Profile           `json:"profiles"`
-	UsagePrefixes     []string            `json:"usage_prefixes"`
-	UsageKeys         []string            `json:"usage_keys"`
-	EventKeys         []string            `json:"event_attribute_keys"`
-	LinkKeys          []string            `json:"link_attribute_keys"`
-	AdmissionKeys     []string            `json:"reserved_admission_keys"`
-	AdmissionError    string              `json:"admission_error"`
-	UnpricedUsageKeys []string            `json:"unpriced_usage_keys"`
-	CostCoverageError string              `json:"cost_coverage_error"`
-	DetailedCostKeys  map[string][]string `json:"detailed_cost_keys"`
+	Profiles       []Profile `json:"profiles"`
+	UsagePrefixes  []string  `json:"usage_prefixes"`
+	UsageKeys      []string  `json:"usage_keys"`
+	EventKeys      []string  `json:"event_attribute_keys"`
+	LinkKeys       []string  `json:"link_attribute_keys"`
+	AdmissionKeys  []string  `json:"reserved_admission_keys"`
+	AdmissionError string    `json:"admission_error"`
 }
 
 var registry = func() contract {
@@ -139,6 +136,19 @@ func RequiresAdmission(td ptrace.Traces) bool {
 }
 
 func AdmissionError() string { return registry.AdmissionError }
+
+// IngestionHold checks explicit contract activation on the original batch,
+// before routing can drop a marked span. A qualified native producer or cache/
+// reasoning counter alone is not opt-in to immutable accounting. Legacy native
+// exports must not be rejected for missing new cost coverage: standard OTLP
+// exporters treat partial_success as final and would permanently lose the batch.
+// This is read-only; normalization growth belongs to the budgeted pass.
+func IngestionHold(td ptrace.Traces) string {
+	if RequiresAdmission(td) {
+		return AdmissionError()
+	}
+	return ""
+}
 
 // Prepare is shared by the authenticated ingestion budget pass and converter.
 // Conversion also invokes it for callers using the converter without a server.
