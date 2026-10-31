@@ -28,6 +28,7 @@ type Provider struct {
 	httpClient *http.Client
 	semaphore  chan struct{}
 	headers    map[string]string
+	minimax    bool
 }
 
 // New creates a new Anthropic provider.
@@ -65,6 +66,7 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		},
 		semaphore: make(chan struct{}, maxConcurrent),
 		headers:   cfg.Headers,
+		minimax:   cfg.Type == "minimax",
 	}, nil
 }
 
@@ -104,7 +106,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	}
 	defer p.releaseSemaphore()
 
-	ar, err := translateRequest(req)
+	ar, err := p.translateRequest(req)
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("anthropic: translating request: %v", err))
 	}
@@ -163,7 +165,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		}
 		defer p.releaseSemaphore()
 
-		ar, err := translateRequest(req)
+		ar, err := p.translateRequest(req)
 		if err != nil {
 			errs <- models.ErrInternal(fmt.Sprintf("anthropic: translating request: %v", err))
 			return
