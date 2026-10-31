@@ -1,5 +1,5 @@
-from datetime import timedelta
 import uuid
+from datetime import timedelta
 
 import pytest
 from django.utils import timezone
@@ -156,13 +156,58 @@ def test_trace_shared_link_lifecycle_resolves_valid_token(
     assert "expired" in expired.data["detail"]
 
 
-@pytest.mark.django_db
-def test_dashboard_shared_link_resolves_dashboard_detail_payload(
-    api_client,
-    auth_client,
-    workspace,
-    user,
-):
+SHARED_DASHBOARD_KEYS = {"name", "description", "widget_count", "widgets"}
+SHARED_WIDGET_KEYS = {
+    "id",
+    "name",
+    "description",
+    "width",
+    "height",
+    "chart_config",
+    "query_config",
+}
+SHARED_METRIC_KEYS = {"display_name", "aggregation"}
+
+
+def _share_dashboard(auth_client, dashboard, access_type="public", emails=()):
+    return auth_client.post(
+        "/tracer/shared-links/",
+        data={
+            "resource_type": "dashboard",
+            "resource_id": str(dashboard.id),
+            "access_type": access_type,
+            "emails": list(emails),
+        },
+        format="json",
+    )
+
+
+def _assert_shared_dashboard_shape(data):
+    assert set(data) == SHARED_DASHBOARD_KEYS
+    for widget in data["widgets"]:
+        assert set(widget) == SHARED_WIDGET_KEYS
+        assert set(widget["chart_config"]) == {"chart_type"}
+        assert set(widget["query_config"]) == {"metrics", "time_range"}
+        assert set(widget["query_config"]["time_range"]) == {"preset"}
+        for metric in widget["query_config"]["metrics"]:
+            assert set(metric) == SHARED_METRIC_KEYS
+
+
+@pytest.fixture
+def private_dashboard(workspace, user):
+    """A dashboard whose saved queries hold data a share link must not carry."""
+    project_id = str(uuid.uuid4())
+    config_id = str(uuid.uuid4())
+    label_id = str(uuid.uuid4())
+    secrets = {
+        "project_id": project_id,
+        "config_id": config_id,
+        "label_id": label_id,
+        "filter_value": "acme-private-customer-7731",
+        "attribute_key": "customer.private_ssn",
+        "eval_key": "private-eval-key",
+        "series": "private-visible-series",
+    }
     dashboard = Dashboard.objects.create(
         workspace=workspace,
         name="Shared dashboard",
@@ -170,43 +215,357 @@ def test_dashboard_shared_link_resolves_dashboard_detail_payload(
         created_by=user,
         updated_by=user,
     )
-    widget = DashboardWidget.objects.create(
+    latency = DashboardWidget.objects.create(
         dashboard=dashboard,
         name="Latency widget",
+        description="p95 latency for the support agent",
         position=0,
         width=6,
         height=4,
         query_config={
+            "workflow": "observe",
+            "project_ids": [project_id],
             "time_range": {"preset": "7D"},
-            "metrics": [{"name": "latency", "type": "system_metric"}],
+            "granularity": "day",
+            "metrics": [
+                {
+                    "id": "m0",
+                    "name": "latency",
+                    "display_name": "Latency",
+                    "type": "system_metric",
+                    "source": "traces",
+                    "aggregation": "p95",
+                    "filters": [
+                        {
+                            "column_id": "user_id",
+                            "filter_config": {
+                                "filter_op": "equals",
+                                "filter_value": secrets["filter_value"],
+                            },
+                        }
+                    ],
+                },
+                {
+                    "id": config_id,
+                    "name": config_id,
+                    "display_name": "Groundedness",
+                    "type": "eval_metric",
+                    "config_id": config_id,
+                    "eval_key": secrets["eval_key"],
+                    "aggregation": "pass_rate",
+                },
+                {
+                    "id": label_id,
+                    "name": "Reviewer verdict",
+                    "type": "annotation_metric",
+                    "label_id": label_id,
+                    "attribute_key": secrets["attribute_key"],
+                    "aggregation": "count",
+                },
+            ],
+            "filters": [
+                {
+                    "column_id": "customer_email",
+                    "filter_config": {
+                        "filter_op": "equals",
+                        "filter_value": secrets["filter_value"],
+                    },
+                }
+            ],
+            "breakdowns": [
+                {"name": secrets["attribute_key"], "type": "custom_attribute"}
+            ],
         },
-        chart_config={"chart_type": "line"},
+        chart_config={
+            "chart_type": "line",
+            "visible_series": [secrets["series"]],
+        },
         created_by=user,
     )
-
-    response = auth_client.post(
-        "/tracer/shared-links/",
-        data={
-            "resource_type": "dashboard",
-            "resource_id": str(dashboard.id),
-            "access_type": "public",
+    custom_range = DashboardWidget.objects.create(
+        dashboard=dashboard,
+        name="Cost widget",
+        position=1,
+        width=12,
+        height=3,
+        query_config={
+            "timeRange": {
+                "custom_start": "2026-01-01T00:00:00Z",
+                "custom_end": "2026-01-31T00:00:00Z",
+            },
+            "metrics": [
+                {"displayName": "Cost", "name": "cost", "aggregation": "sum"},
+            ],
         },
-        format="json",
+        chart_config={"chart_type": "metric"},
+        created_by=user,
     )
-    assert response.status_code == status.HTTP_201_CREATED
-    link = response.json()["result"]
+    return dashboard, [latency, custom_range], secrets
 
-    resolved = api_client.get(f"/tracer/shared/{link['token']}/")
+
+@pytest.mark.django_db
+def test_public_dashboard_link_returns_only_what_the_shared_view_renders(
+    api_client,
+    auth_client,
+    organization,
+    workspace,
+    user,
+    private_dashboard,
+):
+    dashboard, (latency, custom_range), secrets = private_dashboard
+    response = _share_dashboard(auth_client, dashboard)
+    assert response.status_code == status.HTTP_201_CREATED
+    token = response.json()["result"]["token"]
+
+    resolved = api_client.get(f"/tracer/shared/{token}/")
+
     assert resolved.status_code == status.HTTP_200_OK
     payload = resolved.json()
+    assert set(payload) == {"resource_type", "resource_id", "access_type", "data"}
     assert payload["resource_type"] == "dashboard"
     assert payload["resource_id"] == str(dashboard.id)
-    assert payload["data"]["id"] == str(dashboard.id)
-    assert payload["data"]["name"] == dashboard.name
-    assert payload["data"]["description"] == dashboard.description
-    assert payload["data"]["widget_count"] == 1
-    assert payload["data"]["widgets"][0]["id"] == str(widget.id)
-    assert payload["data"]["widgets"][0]["chart_config"]["chart_type"] == "line"
+    assert payload["access_type"] == "public"
+    data = payload["data"]
+    _assert_shared_dashboard_shape(data)
+    assert data == {
+        "name": "Shared dashboard",
+        "description": "Dashboard resolved through a share token",
+        "widget_count": 2,
+        "widgets": [
+            {
+                "id": str(latency.id),
+                "name": "Latency widget",
+                "description": "p95 latency for the support agent",
+                "width": 6,
+                "height": 4,
+                "chart_config": {"chart_type": "line"},
+                "query_config": {
+                    "metrics": [
+                        {"display_name": "Latency", "aggregation": "p95"},
+                        {"display_name": "Groundedness", "aggregation": "pass_rate"},
+                        {"display_name": "Reviewer verdict", "aggregation": "count"},
+                    ],
+                    "time_range": {"preset": "7D"},
+                },
+            },
+            {
+                "id": str(custom_range.id),
+                "name": "Cost widget",
+                "description": "",
+                "width": 12,
+                "height": 3,
+                "chart_config": {"chart_type": "metric"},
+                "query_config": {
+                    "metrics": [{"display_name": "Cost", "aggregation": "sum"}],
+                    "time_range": {"preset": None},
+                },
+            },
+        ],
+    }
+
+    body = resolved.content.decode()
+    leaked = [
+        marker
+        for marker in (
+            user.email,
+            str(user.id),
+            user.name,
+            str(organization.id),
+            str(workspace.id),
+            *secrets.values(),
+            "created_by",
+            "updated_by",
+            "organization",
+            "workspace",
+            "project_ids",
+            "filters",
+            "breakdowns",
+            "granularity",
+            "workflow",
+            "custom_start",
+            "position",
+            "created_at",
+            "updated_at",
+        )
+        if marker in body
+    ]
+    assert leaked == []
+
+    # The owner's in-app view keeps its full contract; only the link is trimmed.
+    in_app = auth_client.get(f"/tracer/dashboard/{dashboard.id}/")
+    assert in_app.status_code == status.HTTP_200_OK
+    in_app_data = in_app.json()["result"]
+    assert in_app_data["created_by"]["email"] == user.email
+    assert in_app_data["widgets"][0]["query_config"]["project_ids"] == [
+        secrets["project_id"]
+    ]
+
+
+@pytest.mark.django_db
+def test_shared_dashboard_tolerates_empty_and_malformed_widgets(
+    api_client,
+    auth_client,
+    workspace,
+    user,
+):
+    empty = Dashboard.objects.create(workspace=workspace, name="Empty", created_by=user)
+    response = _share_dashboard(auth_client, empty)
+    assert response.status_code == status.HTTP_201_CREATED
+    resolved = api_client.get(f"/tracer/shared/{response.json()['result']['token']}/")
+    assert resolved.status_code == status.HTTP_200_OK
+    assert resolved.json()["data"] == {
+        "name": "Empty",
+        "description": "",
+        "widget_count": 0,
+        "widgets": [],
+    }
+
+    dashboard = Dashboard.objects.create(
+        workspace=workspace, name="Legacy dashboard", created_by=user
+    )
+    scalar_configs = DashboardWidget.objects.create(
+        dashboard=dashboard,
+        name="Scalar configs",
+        position=0,
+        query_config="project_ids=private",
+        chart_config=["line"],
+    )
+    bad_values = DashboardWidget.objects.create(
+        dashboard=dashboard,
+        name="Bad values",
+        position=1,
+        query_config={
+            "time_range": {"preset": {"private": "nested"}},
+            "metrics": [
+                "latency",
+                None,
+                42,
+                ["private"],
+                {"aggregation": "avg"},
+                {"display_name": "", "name": {"private": "nested"}},
+                {"display_name": {"private": "nested"}, "name": "tokens"},
+                {"name": "errors", "aggregation": "drop_table"},
+            ],
+        },
+        chart_config={"chart_type": "<script>"},
+    )
+    metrics_not_a_list = DashboardWidget.objects.create(
+        dashboard=dashboard,
+        name="Metrics not a list",
+        position=2,
+        query_config={"metrics": {"name": "private"}, "time_range": "7D"},
+        chart_config={},
+    )
+    DashboardWidget.objects.create(
+        dashboard=dashboard,
+        name="Deleted widget",
+        position=3,
+        deleted=True,
+    )
+
+    response = _share_dashboard(auth_client, dashboard)
+    assert response.status_code == status.HTTP_201_CREATED
+    resolved = api_client.get(f"/tracer/shared/{response.json()['result']['token']}/")
+
+    assert resolved.status_code == status.HTTP_200_OK
+    data = resolved.json()["data"]
+    _assert_shared_dashboard_shape(data)
+    assert data["widget_count"] == 3
+    empty_query = {"metrics": [], "time_range": {"preset": None}}
+    assert data["widgets"] == [
+        {
+            "id": str(scalar_configs.id),
+            "name": "Scalar configs",
+            "description": "",
+            "width": 12,
+            "height": 4,
+            "chart_config": {"chart_type": None},
+            "query_config": empty_query,
+        },
+        {
+            "id": str(bad_values.id),
+            "name": "Bad values",
+            "description": "",
+            "width": 12,
+            "height": 4,
+            "chart_config": {"chart_type": None},
+            "query_config": {
+                "metrics": [
+                    {"display_name": "tokens", "aggregation": None},
+                    {"display_name": "errors", "aggregation": None},
+                ],
+                "time_range": {"preset": None},
+            },
+        },
+        {
+            "id": str(metrics_not_a_list.id),
+            "name": "Metrics not a list",
+            "description": "",
+            "width": 12,
+            "height": 4,
+            "chart_config": {"chart_type": None},
+            "query_config": empty_query,
+        },
+    ]
+    assert "private" not in resolved.content.decode()
+
+
+@pytest.mark.django_db
+def test_restricted_dashboard_link_keeps_acl_and_returns_the_trimmed_payload(
+    api_client,
+    auth_client,
+    organization,
+    user,
+    private_dashboard,
+):
+    dashboard, _, secrets = private_dashboard
+    response = _share_dashboard(
+        auth_client,
+        dashboard,
+        access_type="restricted",
+        emails=["dashboard-viewer@example.com"],
+    )
+    assert response.status_code == status.HTTP_201_CREATED
+    token = response.json()["result"]["token"]
+
+    anonymous = api_client.get(f"/tracer/shared/{token}/")
+    assert anonymous.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "data" not in anonymous.json()
+    assert dashboard.name not in anonymous.content.decode()
+
+    outsider = User.objects.create_user(
+        email="dashboard-outsider@example.com",
+        password="testpassword123",
+        name="Not On The List",
+        organization=organization,
+        organization_role=OrganizationRoles.MEMBER,
+    )
+    api_client.force_authenticate(user=outsider)
+    forbidden = api_client.get(f"/tracer/shared/{token}/")
+    assert forbidden.status_code == status.HTTP_403_FORBIDDEN
+    assert "data" not in forbidden.json()
+    assert dashboard.name not in forbidden.content.decode()
+
+    viewer = User.objects.create_user(
+        email="dashboard-viewer@example.com",
+        password="testpassword123",
+        name="On The List",
+        organization=organization,
+        organization_role=OrganizationRoles.MEMBER,
+    )
+    api_client.force_authenticate(user=viewer)
+    allowed = api_client.get(f"/tracer/shared/{token}/")
+    creator = auth_client.get(f"/tracer/shared/{token}/")
+
+    assert allowed.status_code == status.HTTP_200_OK
+    assert creator.status_code == status.HTTP_200_OK
+    # Signing in, even as the dashboard's author, never widens a shared payload.
+    assert creator.json() == allowed.json()
+    _assert_shared_dashboard_shape(allowed.json()["data"])
+    body = allowed.content.decode()
+    assert user.email not in body
+    assert secrets["filter_value"] not in body
+    assert secrets["project_id"] not in body
 
 
 @pytest.mark.django_db
