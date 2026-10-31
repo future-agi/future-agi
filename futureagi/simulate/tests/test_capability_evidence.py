@@ -10,6 +10,9 @@ import pytest
 from django.utils import timezone
 
 from simulate.models import HarnessCapabilityEvidence, HostedHarnessJob
+from simulate.tests.test_harness_versioning_backfill import (
+    storage as storage,  # noqa: F401 - fixture
+)
 from simulate.services.capability_evidence import (
     capability_report,
     record_capability_evidence,
@@ -228,3 +231,26 @@ def test_evidence_that_names_no_agent_version_is_never_stale_on_the_agent(job, o
     job.agent_version = first
     job.save(update_fields=["agent_version"])
     assert environment_capability_report(job)["capabilities"][0]["status"] == "supported"
+
+
+def test_evidence_from_before_versions_existed_is_judged_only_on_what_it_names(user, workspace, storage, settings):
+    from simulate.services.capability_evidence import environment_capability_report
+    from simulate.tests.test_harness_versioning_picks import _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    environment = _environment(user, workspace, "pre-version-evidence", storage)
+    evidence = HarnessCapabilityEvidence.no_workspace_objects.create(
+        organization_id=environment.organization_id, workspace_id=environment.workspace_id, job=environment,
+        origin=HarnessCapabilityEvidence.Origin.CERTIFICATION, catalog_version="1", catalogue=_CATALOGUE,
+        inputs={}, capabilities={"start_health": {"finding": "passed"}}, captured_at=timezone.now(),
+    )
+
+    def status():
+        return environment_capability_report(environment)["capabilities"][0]["status"]
+
+    assert environment.environment_version_id is not None and status() == "supported"
+    other = environment.environment_version.__class__.objects.exclude(id=environment.environment_version_id).first()
+    if other is not None:
+        evidence.environment_version = other
+        evidence.save(update_fields=["environment_version"])
+        assert status() == "stale"

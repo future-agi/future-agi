@@ -242,8 +242,13 @@ def environment_capability_report(
         {
             "inputs": {
                 **evidence.inputs,
-                "environment_version_id": str(evidence.environment_version_id or ""),
-                # Evidence that names no agent version cannot be judged on one, so only a named one is compared.
+                # Evidence that names no version (captured before versions existed) cannot be judged on one, so only
+                # a named one is compared.
+                **(
+                    {"environment_version_id": str(evidence.environment_version_id)}
+                    if evidence.environment_version_id
+                    else {}
+                ),
                 **({"agent_version_id": str(evidence.agent_version_id)} if evidence.agent_version_id else {}),
             },
             "capabilities": evidence.capabilities,
