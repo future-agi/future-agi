@@ -5,8 +5,10 @@ import {
   screen,
   fireEvent,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import EvalsStep from "../EvalsStep";
 import { EVALS_COPY } from "../evals.constants";
 import { NO_MISSELLING, selectedEntry } from "./fixtures/evalEntries";
@@ -44,7 +46,9 @@ const axios = (await import("src/utils/axios")).default;
 // needs a client. Wrap the library render once so the call sites stay unchanged.
 const render = (ui, options) =>
   rtlRender(
-    <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>
+    </MemoryRouter>,
     options,
   );
 
@@ -89,6 +93,15 @@ const ENV = {
   surface: "voice",
   evalPreset: ["task_success", "policy_adherence", "pii_leakage"],
 };
+
+// Remove asks first (Vel's confirm); the dialog's button carries the same name.
+const confirmRemoveDialog = () =>
+  fireEvent.click(
+    within(screen.getAllByRole("dialog", { hidden: true }).pop()).getByRole("button", {
+      name: "Remove evaluation",
+      hidden: true,
+    }),
+  );
 
 // eslint-disable-next-line react/prop-types
 function Harness({ env = ENV, initial, onGo, patchSpy, ...flags }) {
@@ -263,6 +276,7 @@ describe("EvalsStep — preset auto-seeds into Added (no Suggested card)", () =>
     );
 
     fireEvent.click(screen.getByRole("button", { name: EVALS_COPY.remove }));
+    confirmRemoveDialog();
 
     expect(patchSpy).toHaveBeenCalledWith({ evals: [] });
     // The persisted seed flag keeps the suggestions from looping straight back in.
@@ -302,15 +316,19 @@ describe("EvalsStep — preset auto-seeds into Added (no Suggested card)", () =>
     expect(screen.getByText("Added evaluations (3)")).toBeInTheDocument();
     // Remove all three.
     for (let i = 0; i < 3; i += 1) {
+      // A closing confirm dialog still holds a same-named button; skip it.
       fireEvent.click(
-        screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+        screen
+          .getAllByRole("button", { name: EVALS_COPY.remove, hidden: true })
+          .filter((b) => !b.closest('[role="dialog"]'))[0],
       );
+      confirmRemoveDialog();
     }
     expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
 
     // Switch away and back — the deliberate empty set must survive.
-    fireEvent.click(screen.getByRole("button", { name: "toggle" }));
-    fireEvent.click(screen.getByRole("button", { name: "toggle" }));
+    fireEvent.click(screen.getByRole("button", { name: "toggle", hidden: true }));
+    fireEvent.click(screen.getByRole("button", { name: "toggle", hidden: true }));
     expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
   });
 });
@@ -471,8 +489,15 @@ describe("EvalsStep — remove on a backend-backed env", () => {
     expect(await screen.findByText("no_misselling")).toBeInTheDocument();
     expect(screen.getByText("Library")).toBeInTheDocument();
     expect(screen.queryByText(/credits per/)).toBeNull();
-    expect(screen.getByText("{{conversation}}")).toBeInTheDocument();
-    expect(screen.getByText("Call recording")).toBeInTheDocument();
+    // Vel's mapping chips: one "input → what fills it" chip per input, in a
+    // single wrapped row, with no READS heading.
+    const chip = screen.getByLabelText("conversation → Call recording");
+    expect(chip).toHaveTextContent("conversation");
+    expect(chip).toHaveTextContent("Call recording");
+    expect(
+      screen.getByLabelText("agent_prompt → Agent instructions"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("READS")).toBeNull();
     // The raw source never reaches the screen.
     expect(screen.queryByText("voice_recording")).toBeNull();
   });
@@ -484,6 +509,7 @@ describe("EvalsStep — remove on a backend-backed env", () => {
     fireEvent.click(
       screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
     );
+    confirmRemoveDialog();
 
     await waitFor(() =>
       expect(deleteAppliedEvaluation).toHaveBeenCalledWith("env-1", "cfg-1"),
@@ -505,6 +531,7 @@ describe("EvalsStep — remove on a backend-backed env", () => {
     fireEvent.click(
       screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
     );
+    confirmRemoveDialog();
 
     expect(deleteAppliedEvaluation).not.toHaveBeenCalled();
     expect(patchSpy).toHaveBeenCalledWith(
@@ -571,6 +598,7 @@ describe("EvalsStep — remove on a backend-backed env", () => {
     fireEvent.click(
       screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
     );
+    confirmRemoveDialog();
 
     // The Alert names which row the refusal belongs to, not just the
     // server's sentence — with several rows a bare "already removed"
@@ -615,10 +643,12 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
     axios.get.mockReset();
   });
 
+  // The pencil opens the read-only mapping first (R8); its Edit opens the form.
   const openEditor = async () => {
     fireEvent.click(
       (await screen.findAllByRole("button", { name: EVALS_COPY.edit }))[0],
     );
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
     await waitFor(() =>
       expect(picker.calls.at(-1)?.initialEval?.userEvalId).toBe("cfg-1"),
     );
@@ -785,10 +815,11 @@ describe("EvalsStep — editing an eval on a backend-backed env", () => {
     fireEvent.click(
       (await screen.findAllByRole("button", { name: EVALS_COPY.remove }))[0],
     );
+    confirmRemoveDialog();
 
     await waitFor(() =>
       expect(
-        screen.getAllByRole("button", { name: EVALS_COPY.edit })[0],
+        screen.getAllByRole("button", { name: EVALS_COPY.edit, hidden: true })[0],
       ).toBeDisabled(),
     );
   });

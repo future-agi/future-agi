@@ -1,26 +1,37 @@
 import { ORIGIN_ID } from "../../buildEnvironment/provenance.constants";
-import { ruleRowsFor } from "./overview.constants";
+import { isHarnessTable, ruleRowsFor } from "./overview.constants";
 
 // Copy for the source→sandbox map: the reviewability record of how each derived
 // fact was read from source and what it became in the sandbox world.
 export const MAP_COPY = {
   title: "How the world was built",
-  subtitle:
-    "Every derived fact carries where it was read from and what it became in the sandbox. A tool whose effect you set on the Contract tab shows here as confirmed.",
+  subtitle: "Every derived fact carries where it was read from and what it became in the sandbox.",
   readHead: "Read from source",
   sandboxHead: "In the sandbox world",
   needsAnswer: "Needs your answer",
   confirmed: "you confirmed",
+  // Vel's group hints name where each group was read from; that isn't in the
+  // API, so a real environment gets the plain hints.
   groups: {
-    tools: { label: "Tools", hint: "from the agent config & call-graph" },
-    rules: { label: "Rules", hint: "from policy.yaml, enforced" },
-    stores: { label: "Stores", hint: "from your fixtures" },
-    actors: { label: "Actors", hint: "from the call-graph & prompt" },
+    tools: { label: "Tools", hint: "read from the agent", sampleHint: "from the agent config & call-graph" },
+    rules: { label: "Rules", hint: "read from the agent", sampleHint: "from policy.yaml, enforced" },
+    stores: { label: "Stores", hint: "the world's data", sampleHint: "from your fixtures" },
+    others: { label: "Other parties", hint: "from the call-graph & prompt" },
   },
+  // Vel's sample "Other parties" rows, shown only with ?uiSample=world.
+  sampleOthers: [
+    { key: "transfer", name: "transfer target", origin: "prompt", target: "Supervisor persona" },
+    { key: "service", name: "lookup_order", origin: "callGraph", target: "ecommerce service" },
+    { key: "caller", name: "", target: "Caller: Inbound", derived: true },
+    { key: "clock", name: "", target: "Clock", derived: true },
+  ],
+  othersRight: "2 mapped · 2 derived",
   toolsRight: (n, toAnswer) => `${n} mapped${toAnswer ? ` · ${toAnswer} to answer` : ""}`,
   rulesRight: (n) => `${n} mapped`,
   storesRight: (n) => `${n} mapped`,
   storesEmpty: "No stores seeded for this environment.",
+  toolsEmpty: "No tools read from this agent.",
+  rulesEmpty: "No rules read from this agent.",
   resolve: {
     question: (name) => `Does ${name} change data?`,
     why: "Called from the agent's code, unnamed in the prompt. We can't tell from static analysis alone.",
@@ -114,7 +125,7 @@ export const storeMapRows = (env) => {
 // even read).
 export const storeRowsFromStores = (stores = []) =>
   (Array.isArray(stores) ? stores : []).flatMap((store) =>
-    (store?.tables || []).map((t) => {
+    (store?.tables || []).filter((t) => !isHarnessTable(t?.name)).map((t) => {
       const rows = Number(t?.rows) || 0;
       return {
         key: `${store?.capability || store?.engine || "store"}:${t?.name}`,

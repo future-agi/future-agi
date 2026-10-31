@@ -6,9 +6,19 @@ import {
   jobStatusFor,
   envStatusFor,
 } from "../harnessJobToRow";
-import { ENV_STATUS, BUILD_STATUS } from "../../myEnvironments.constants";
+import {
+  ENV_STATUS,
+  BUILD_STATUS,
+  NOT_PROVIDED,
+} from "../../myEnvironments.constants";
 
-const item = ({ stage, connectors, metadata, jobId = "job-1", updatedAt } = {}) => ({
+const item = ({
+  stage,
+  connectors,
+  metadata,
+  jobId = "job-1",
+  updatedAt,
+} = {}) => ({
   job: { job_id: jobId, metadata },
   status: { stage, updated_at: updatedAt },
   credentials: { detected_connectors: connectors },
@@ -170,9 +180,13 @@ describe("buildStatusFor", () => {
   });
 
   it("maps every stage before the agent connects → building", () => {
-    ["queued", "acquiring_source", "generating_environment", "generating_scenarios", undefined].forEach(
-      (s) => expect(buildStatusFor(s)).toBe(BUILD_STATUS.BUILDING),
-    );
+    [
+      "queued",
+      "acquiring_source",
+      "generating_environment",
+      "generating_scenarios",
+      undefined,
+    ].forEach((s) => expect(buildStatusFor(s)).toBe(BUILD_STATUS.BUILDING));
   });
 });
 
@@ -188,9 +202,14 @@ describe("jobStatusFor", () => {
     ["failed", cancel, ENV_STATUS.FAILED],
     ["cleaning_up", null, ENV_STATUS.FINALIZING],
     ["running", null, ENV_STATUS.RUNNING],
-  ])("stage %s with cancel_requested_at=%s reads %s", (stage, cancelAt, expected) => {
-    expect(jobStatusFor({ stage, cancel_requested_at: cancelAt })).toBe(expected);
-  });
+  ])(
+    "stage %s with cancel_requested_at=%s reads %s",
+    (stage, cancelAt, expected) => {
+      expect(jobStatusFor({ stage, cancel_requested_at: cancelAt })).toBe(
+        expected,
+      );
+    },
+  );
 
   it("drives the jobs-list row, so a cancel in flight reads Cancelling there too", () => {
     const row = harnessJobToRow({
@@ -217,7 +236,13 @@ describe("envStatusFor", () => {
 
 describe("harnessEnvToRow cleanup and cancel stages", () => {
   const row = (stage, status) =>
-    harnessEnvToRow({ id: "env-1", name: "Support Line", agent_type: "voice", stage, status });
+    harnessEnvToRow({
+      id: "env-1",
+      name: "Support Line",
+      agent_type: "voice",
+      stage,
+      status,
+    });
 
   it("shows Finalizing for a build in cleanup, where the backend reports running", () => {
     expect(row("cleaning_up", "running").status).toBe(ENV_STATUS.FINALIZING);
@@ -245,4 +270,87 @@ describe("harnessEnvToRow cleanup and cancel stages", () => {
       expect(built.status).toBe(ENV_STATUS.READY);
     },
   );
+});
+
+describe("harnessEnvToRow, Vel columns", () => {
+  const base = {
+    id: "env-1",
+    name: "Support Line",
+    agent_type: "voice",
+    status: "completed",
+    stage: "completed",
+  };
+  const run = (over = {}) => ({
+    status: "completed",
+    outcome_passed: 6,
+    outcome_failed: 2,
+    outcome_skipped: 5,
+    ...over,
+  });
+
+  it("marks fields the API does not send as NOT_PROVIDED", () => {
+    const row = harnessEnvToRow(base);
+    expect(row.agent).toBe(NOT_PROVIDED);
+    expect(row.owner).toBe(NOT_PROVIDED);
+    expect(row.envVersion).toBe(NOT_PROVIDED);
+    expect(row.agentTags).toBe(NOT_PROVIDED);
+  });
+
+  it("keeps a sent-but-null field as null", () => {
+    const row = harnessEnvToRow({ ...base, agent: null, owner: null });
+    expect(row.agent).toBeNull();
+    expect(row.owner).toBeNull();
+  });
+
+  it("passes agent and owner through", () => {
+    const row = harnessEnvToRow({
+      ...base,
+      agent: { id: "a1", name: "Billing" },
+      owner: { id: "u1", name: "Vel Shah" },
+    });
+    expect(row.agent).toEqual({ id: "a1", name: "Billing" });
+    expect(row.owner).toEqual({ id: "u1", name: "Vel Shah" });
+  });
+
+  it("marks a missing last_run key as NOT_PROVIDED, and a null one as no run", () => {
+    expect(harnessEnvToRow(base).lastRun).toBe(NOT_PROVIDED);
+    expect(harnessEnvToRow({ ...base, last_run: null }).lastRun).toBeNull();
+  });
+
+  it("rates the last run on scored scenarios only", () => {
+    const row = harnessEnvToRow({ ...base, last_run: run() });
+    expect(row.lastRun.rate).toBe(75);
+  });
+
+  it("shows no rate when nothing was scored", () => {
+    const zero = run({
+      outcome_passed: 0,
+      outcome_failed: 0,
+      outcome_skipped: 4,
+    });
+    expect(harnessEnvToRow({ ...base, last_run: zero }).lastRun).toBeNull();
+    expect(harnessEnvToRow({ ...base, last_run: null }).lastRun).toBeNull();
+    const unknown = run({
+      outcome_passed: null,
+      outcome_failed: null,
+      outcome_skipped: null,
+    });
+    expect(harnessEnvToRow({ ...base, last_run: unknown }).lastRun).toBeNull();
+  });
+
+  it("computes the delta from previous_pass_rate", () => {
+    const withPrev = harnessEnvToRow({
+      ...base,
+      last_run: run({ previous_pass_rate: 70 }),
+    });
+    expect(withPrev.lastRun.delta).toBe(5);
+    expect(harnessEnvToRow({ ...base, last_run: run() }).lastRun.delta).toBe(
+      NOT_PROVIDED,
+    );
+    const nullPrev = harnessEnvToRow({
+      ...base,
+      last_run: run({ previous_pass_rate: null }),
+    });
+    expect(nullPrev.lastRun.delta).toBeNull();
+  });
 });

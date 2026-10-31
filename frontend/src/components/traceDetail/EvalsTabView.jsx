@@ -188,8 +188,14 @@ const EvalTableRow = ({
   showFixWithFalcon,
   showErrorLocalization = true,
   layout,
+  focused = false,
 }) => {
-  const [expanded, setExpanded] = useState(false);
+  // A row the drawer was opened on starts expanded and in view.
+  const [expanded, setExpanded] = useState(focused);
+  const rowRef = useRef(null);
+  useEffect(() => {
+    if (focused) rowRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [focused]);
   const showActions = !!onSelectSpan;
   const isSkipped = ev?.skipped === true;
   const hasError = ev?.error === true && !isSkipped;
@@ -264,6 +270,7 @@ const EvalTableRow = ({
   return (
     <>
       <Box
+        ref={rowRef}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -546,6 +553,7 @@ EvalTableRow.propTypes = {
   showFixWithFalcon: PropTypes.bool,
   showErrorLocalization: PropTypes.bool,
   layout: PropTypes.object.isRequired,
+  focused: PropTypes.bool,
 };
 
 /**
@@ -563,6 +571,7 @@ const EvalsTabView = ({
   showFixWithFalcon = true,
   showAddEvals = true,
   showErrorLocalization = true,
+  focusEvalName = null,
 }) => {
   const [search, setSearch] = useState("");
   // The action column only holds "View span", so a drawer that can't jump to
@@ -981,6 +990,7 @@ const EvalsTabView = ({
             showFixWithFalcon={showFixWithFalcon}
             showErrorLocalization={showErrorLocalization}
             layout={layout}
+            focused={!!focusEvalName && ev.eval_name === focusEvalName}
           />
         ))}
       </Box>
@@ -997,6 +1007,8 @@ EvalsTabView.propTypes = {
   showFixWithFalcon: PropTypes.bool,
   showAddEvals: PropTypes.bool,
   showErrorLocalization: PropTypes.bool,
+  // Opens the drawer on this eval: its row starts expanded and in view.
+  focusEvalName: PropTypes.string,
 };
 
 export default EvalsTabView;

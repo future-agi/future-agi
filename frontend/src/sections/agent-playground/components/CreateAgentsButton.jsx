@@ -1,15 +1,13 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
 import { Box, MenuItem, Typography } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import CustomPopover, { usePopover } from "src/components/custom-popover";
 import { CONNECT_AGENT_PATH } from "../agentsTabs";
-import { useCreateGraph } from "src/api/agent-playground/agent-playground";
-import { useAgentPlaygroundStoreShallow } from "../store";
+import useCreatePlaygroundAgent from "../hooks/useCreatePlaygroundAgent";
 
 const OPTIONS = [
   {
@@ -35,26 +33,12 @@ const OPTIONS = [
  */
 export default function CreateAgentsButton({ canCreatePlayground = true }) {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const popover = usePopover();
-
-  const { setCurrentAgent } = useAgentPlaygroundStoreShallow((s) => ({
-    setCurrentAgent: s.setCurrentAgent,
-  }));
-
-  const { mutate: createGraph, isPending } = useCreateGraph({
-    navigate,
-    setCurrentAgent,
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["agent-playground", "graphs"],
-      });
-    },
-  });
+  const { create: createPlayground, isPending } = useCreatePlaygroundAgent();
 
   const handleSelect = (id) => {
     popover.onClose();
-    if (id === "playground") createGraph();
+    if (id === "playground") createPlayground();
     else navigate(CONNECT_AGENT_PATH);
   };
 

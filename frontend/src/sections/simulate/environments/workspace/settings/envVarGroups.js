@@ -32,3 +32,21 @@ export function envVarsEmpty(groups) {
     !groups.credentialFiles.length
   );
 }
+
+/**
+ * Flatten the two variable groups into one key · value · kind list. Secrets
+ * have no value returned (encrypted, addressed by name), so they render
+ * masked; config carries real values. Credential files are mounted files, not
+ * variables, so they are left out.
+ */
+export function envVarRows(groups) {
+  return [
+    ...groups.secrets.map((name) => ({ key: name, kind: "Secret", masked: true })),
+    ...Object.entries(groups.config).map(([key, value]) => ({
+      key,
+      value: String(value),
+      kind: "Config",
+      masked: false,
+    })),
+  ];
+}

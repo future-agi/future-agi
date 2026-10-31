@@ -12,6 +12,9 @@ vi.mock("recharts", async (importOriginal) => ({
 vi.mock("src/api/simulate-environments/runAnalytics", () => ({
   useRunAnalytics: (...args) => useRunAnalytics(...args),
 }));
+vi.mock("src/api/simulate-environments/runDetail", () => ({
+  useRunDetail: () => ({ identity: null, isLoading: false }),
+}));
 
 const { default: RunAnalytics } = await import("../RunAnalytics");
 
@@ -280,6 +283,38 @@ describe("RunAnalytics", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
+  it("marks a voice p90 over its target red: LLM 2500 ms, TTS 800 ms, ASR 500 ms", () => {
+    const row = (key, label, p90) => ({
+      key,
+      label,
+      measured: 3,
+      p50: p90 / 2,
+      p90,
+      p99: p90,
+    });
+    useRunAnalytics.mockReturnValue({
+      data: {
+        ...analytics,
+        dashboard: {
+          ...analytics.dashboard,
+          voice_slos: [
+            row("model", "LLM response", 2600),
+            row("voice", "Text-to-speech", 700),
+            row("transcriber", "Speech recognition", 900),
+          ],
+        },
+      },
+      isPending: false,
+      isError: false,
+    });
+    render(<RunAnalytics executionId="execution-1" />);
+    expect(
+      screen.getByLabelText(/over the 2500 ms target/),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/over the 800 ms target/)).toBeNull();
+    expect(screen.getByLabelText(/over the 500 ms target/)).toBeInTheDocument();
+  });
+
   it("shows the six T1 decisions and hides reliability by default", () => {
     render(<RunAnalytics executionId="execution-1" />);
 
@@ -288,7 +323,7 @@ describe("RunAnalytics", () => {
       "Drop-off",
       "Response time p95",
       "Cost / pass",
-      "CSAT satisfied",
+      "Avg CSAT Score",
       "Change vs last run",
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();

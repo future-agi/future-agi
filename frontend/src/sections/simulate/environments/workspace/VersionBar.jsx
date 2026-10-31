@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography, Tooltip } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import {
   isVersioningDisabled,
   useEnvironmentVersions,
@@ -8,29 +9,23 @@ import {
 } from "src/api/simulate-environments/versions";
 import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
 
-// What is being tested, against what. A run is a pairing — this environment
-// version against that agent version — and a result nobody can attribute to a
-// specific pair is not reproducible, so the pairing is stated here.
-//
-// Stated, not selected: two dropdowns under the header would read as filters
-// that scope the page and do not. The labels are the environment's defaults;
-// with versioning off there is no pairing to state, so only the scenario count
-// shows, after the agent under test when one is connected. Until runs are pinned
-// to versions, the agent shown is the environment's default agent version, not
-// a claim about which one a run used.
-export default function VersionBar({ env, envState }) {
+// What is being tested, against what: Vel's "Agent v2 × environment v7 · N
+// scenarios", with History. While versioning is on, the labels are the
+// environment's default agent, environment and scenario versions, and History
+// opens the Versions tab. Stated, not selected: a run picks its own versions
+// when it starts. With versioning off there is no pairing to state, so only
+// the agent under test and the scenario count show.
+export default function VersionBar({ env, envState, onOpenVersions }) {
   const subject = env?.testSubject;
   const enabled = Boolean(env?.versioning?.enabled);
-  const { data, error } = useEnvironmentVersions(env?.id, {
-    enabled,
-  });
+  const { data, error } = useEnvironmentVersions(env?.id, { enabled });
   // Always mounted, so a check that lands with the drawer closed still
   // refreshes what follows the default.
   useRefreshWhenChecked(env?.id, data?.agent);
   const { versionBar } = WORKSPACE_COPY;
 
   // Only state a pairing once the server has answered. A failed refresh keeps
-  // what it last answered; before any answer only the scenario count shows.
+  // what it last answered; before any answer only the agent and count show.
   const showPairing = enabled && Boolean(data) && !isVersioningDisabled(error);
   const envV = data?.defaults?.environment;
   const agentV = data?.defaults?.agent;
@@ -43,6 +38,45 @@ export default function VersionBar({ env, envState }) {
   const scenarioCount = fromSuite
     ? suiteV.scenarioCount
     : env?.counts?.scenarios ?? envState?.scenarios?.length ?? 0;
+
+  const strong = (t) => (
+    <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
+      {t}
+    </Box>
+  );
+  const sep = (sign) => (
+    <Box
+      component="span"
+      sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
+    >
+      {sign}
+    </Box>
+  );
+
+  let tooltip;
+  if (showPairing) {
+    tooltip = versioned
+      ? versionBar.pairingTooltip(
+          envV ? envLabel : null,
+          envV?.summary,
+          agentV ? agentLabel : null,
+        )
+      : versionBar.noVersionsTooltip;
+  } else {
+    tooltip = (
+      <>
+        {subject && (
+          <Box
+            component="span"
+            sx={{ display: "block", fontWeight: 600, mb: 0.5 }}
+          >
+            {`${subject.name || versionBar.unnamedAgent} ${subject.active_version || ""}, the test subject`}
+          </Box>
+        )}
+        {versionBar.subjectTooltip}
+      </>
+    );
+  }
 
   return (
     <Stack
@@ -59,166 +93,96 @@ export default function VersionBar({ env, envState }) {
         rowGap: 1,
       }}
     >
-      {showPairing && (
-        <>
-          {/* The environment is the primary identity; the agent version is the
-              current test subject running against it. */}
-          <Tooltip
-            arrow
-            title={
-              versioned
-                ? versionBar.pairingTooltip(
-                    envV ? envLabel : null,
-                    envV?.summary,
-                    agentV ? agentLabel : null,
-                  )
-                : versionBar.noVersionsTooltip
-            }
-          >
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={0.75}
-              sx={{ cursor: "default" }}
-            >
-              <Iconify
-                icon="solar:box-linear"
-                width={14}
-                sx={{ color: "text.subtitle" }}
-              />
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {versionBar.envPrefix}{" "}
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightBold" }}
-                >
-                  {envLabel}
-                </Box>
-              </Typography>
-              <Typography
-                sx={{ typography: "s3", color: "text.disabled", mx: 0.25 }}
-              >
-                ·
-              </Typography>
-              <Iconify
-                icon="solar:cpu-bolt-linear"
-                width={14}
-                sx={{ color: "text.subtitle" }}
-              />
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.subtitle",
-                  fontWeight: "fontWeightSemiBold",
-                }}
-              >
-                {versionBar.defaultAgent}
-              </Typography>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {versionBar.agentPrefix}{" "}
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightBold" }}
-                >
-                  {agentLabel}
-                </Box>
-              </Typography>
-            </Stack>
-          </Tooltip>
-          <Typography
-            sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
-          >
-            ·
-          </Typography>
-          {suiteV && (
-            <>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {versionBar.suitePrefix}{" "}
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightBold" }}
-                >
-                  {named(suiteV)}
-                </Box>
-              </Typography>
-              <Typography
-                sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
-              >
-                ·
-              </Typography>
-            </>
-          )}
-        </>
-      )}
-
-      {!showPairing && subject && (
-        <>
-          <Tooltip arrow title={versionBar.subjectTooltip}>
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={0.75}
-              sx={{ cursor: "default" }}
-            >
-              <Iconify
-                icon="solar:cpu-bolt-linear"
-                width={14}
-                sx={{ color: "text.subtitle" }}
-              />
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.subtitle",
-                  fontWeight: "fontWeightSemiBold",
-                }}
-              >
-                {versionBar.testSubject}
-              </Typography>
-              <Typography
-                sx={{
-                  typography: "s2",
-                  color: "text.primary",
-                  fontWeight: "fontWeightBold",
-                }}
-              >
-                {subject.name || versionBar.unnamedAgent}
-              </Typography>
-              {subject.active_version && (
-                <Box
-                  component="span"
-                  sx={{
-                    typography: "s2",
-                    color: "text.secondary",
-                    fontWeight: "fontWeightBold",
-                  }}
-                >
-                  {subject.active_version}
-                </Box>
-              )}
-            </Stack>
-          </Tooltip>
-          <Typography
-            sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
-          >
-            ·
-          </Typography>
-        </>
-      )}
-
-      <Tooltip
-        arrow
-        title={
-          fromSuite
-            ? versionBar.defaultSuiteTooltip(named(suiteV))
-            : versionBar.scenariosTooltip
-        }
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.5}
+        sx={{ minWidth: 0 }}
       >
-        <Typography
-          sx={{ typography: "s3", color: "text.subtitle", cursor: "default" }}
+        <Iconify
+          icon="solar:box-linear"
+          width={14}
+          sx={{ color: "text.subtitle", mr: 0.25, flexShrink: 0 }}
+        />
+        <CustomTooltip show arrow size="small" title={tooltip}>
+          <Typography
+            noWrap
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              cursor: "default",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {showPairing && (
+              <>
+                {`${versionBar.defaultAgent} agent `}
+                {strong(agentLabel)}
+                {sep("×")}
+                {"environment "}
+                {strong(envLabel)}
+                {suiteV && (
+                  <>
+                    {sep("·")}
+                    {`${versionBar.suitePrefix} `}
+                    {strong(named(suiteV))}
+                  </>
+                )}
+              </>
+            )}
+            {!showPairing &&
+              (subject ? (
+                <>
+                  {"Agent "}
+                  {strong(
+                    subject.active_version || subject.name || "connected",
+                  )}
+                </>
+              ) : (
+                "No agent yet"
+              ))}
+          </Typography>
+        </CustomTooltip>
+        <CustomTooltip
+          show
+          arrow
+          size="small"
+          title={
+            fromSuite
+              ? versionBar.defaultSuiteTooltip(named(suiteV))
+              : versionBar.scenariosTooltip
+          }
         >
-          {versionBar.scenariosShared(scenarioCount)}
-        </Typography>
-      </Tooltip>
+          <Typography
+            noWrap
+            sx={{
+              typography: "s3",
+              color: "text.subtitle",
+              cursor: "default",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {` · ${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"}`}
+          </Typography>
+        </CustomTooltip>
+      </Stack>
+      <Box flex={1} />
+      {showPairing && onOpenVersions && (
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={onOpenVersions}
+          startIcon={<Iconify icon="solar:history-linear" width={16} />}
+          sx={{
+            minWidth: 0,
+            flexShrink: 0,
+            color: "text.primary",
+            borderColor: "divider",
+          }}
+        >
+          History
+        </Button>
+      )}
     </Stack>
   );
 }
@@ -236,4 +200,6 @@ VersionBar.propTypes = {
   envState: PropTypes.shape({
     scenarios: PropTypes.arrayOf(PropTypes.any),
   }),
+  // Opens the Versions tab; History shows only with it, while versioning is on.
+  onOpenVersions: PropTypes.func,
 };

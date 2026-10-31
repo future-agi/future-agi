@@ -17,6 +17,7 @@ export default function CallDrawer({
   task,
   executionId = null,
   agentType,
+  focusEvalId = null,
   onClose,
   onPrev,
   onNext,
@@ -56,6 +57,7 @@ export default function CallDrawer({
           <VoiceCallDrawer
             task={task}
             executionId={executionId}
+            focusEvalId={focusEvalId}
             onClose={onClose}
             onPrev={onPrev}
             onNext={onNext}
@@ -68,6 +70,7 @@ export default function CallDrawer({
           <ChatCallDrawer
             task={task}
             executionId={executionId}
+            focusEvalId={focusEvalId}
             onClose={onClose}
             onPrev={onPrev}
             onNext={onNext}
@@ -87,6 +90,8 @@ CallDrawer.propTypes = {
   }),
   executionId: PropTypes.string,
   agentType: PropTypes.string,
+  // The eval the drawer opens on (an eval cell's column id): its tab, expanded.
+  focusEvalId: PropTypes.string,
   onClose: PropTypes.func,
   onPrev: PropTypes.func,
   onNext: PropTypes.func,

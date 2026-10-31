@@ -1,195 +1,368 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, Checkbox, InputBase, Divider,
+  Box,
+  Button,
+  ButtonBase,
+  Collapse,
+  IconButton,
+  Stack,
+  Typography,
 } from "@mui/material";
-
 import Iconify from "src/components/iconify";
+import { injectComposerScaffold } from "src/sections/simulate/environments/buildEnvironment/console/composerScaffoldBus";
 import SideDrawer from "../../components/SideDrawer";
-import EmptyState from "../../components/EmptyState";
-import { ADD_COPY, addCandidates } from "./addScenarios.constants";
-import { ENV_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
+import {
+  ChatThumb,
+  FailingCasesThumb,
+  GenerateThumb,
+  ProductionThumb,
+} from "./add/RouteThumbs";
+import GenerateRoute from "./add/GenerateRoute";
+import ChatRoute from "./add/ChatRoute";
+import ErrorFeedRoute from "./add/ErrorFeedRoute";
+import FailingCasesRoute from "./add/FailingCasesRoute";
+import ProductionRoute from "./add/ProductionRoute";
+import DatasetRoute from "./add/DatasetRoute";
+import ScriptRoute from "./add/ScriptRoute";
 
-const checkboxSx = {
-  p: 0,
-  color: "text.disabled",
-  "&.Mui-checked": { color: "text.primary" },
-  "&.MuiCheckbox-indeterminate": { color: "text.primary" },
-};
+const ROUTES = [
+  {
+    id: "generate",
+    label: "Generate",
+    blurb: "New scenarios across tasks, callers, moods and lines.",
+    Thumb: GenerateThumb,
+  },
+  {
+    id: "error-feed",
+    label: "From Error Feed",
+    blurb: "Turn an issue's failing traces into scenarios.",
+    Thumb: ProductionThumb,
+  },
+  {
+    id: "failing",
+    label: "From failing cases",
+    blurb: "Re-test what failed in past runs.",
+    Thumb: FailingCasesThumb,
+  },
+  {
+    id: "chat",
+    label: "From chat",
+    blurb: "Say what's missing and the builder chat writes it.",
+    Thumb: ChatThumb,
+  },
+];
 
-// Add scenarios.
-//
-// Scenarios already exist by the time anyone reaches this drawer — they are
-// derived when the environment is built. So this is not how you get scenarios,
-// it is how you add ones the derivation could not know to write. The single
-// route generates from the agent (mock, no backend): pick from the pool of
-// probes not already on the environment and they append through `onAdd`.
-export default function AddScenariosDrawer({ open, onClose, env, selected, onAdd }) {
-  const candidates = useMemo(() => addCandidates(env, selected), [env, selected]);
-  const [query, setQuery] = useState("");
-  const [picked, setPicked] = useState(() => new Set());
+// Kept, but quieter: one line each under More sources.
+const MORE_ROUTES = [
+  {
+    id: "replay",
+    label: "Production, word for word",
+    icon: "solar:server-linear",
+    hint: "Replay a production conversation's caller turns exactly as they were said",
+  },
+  {
+    id: "dataset",
+    label: "A dataset",
+    icon: "solar:database-linear",
+    hint: "Turn a dataset's rows into tasks",
+  },
+  {
+    id: "script",
+    label: "A script",
+    icon: "solar:document-text-linear",
+    hint: "Pull scenarios out of a call script, SOP or runbook",
+  },
+];
 
-  const q = query.trim().toLowerCase();
-  const shown = candidates.filter((r) => {
-    if (!q) return true;
-    const hay = `${r.name || ""} ${r.summary || ""} ${r.useCase || ""} ${r.persona?.name || ""}`.toLowerCase();
-    return hay.includes(q);
-  });
-  const shownIds = shown.map((r) => r.id);
-  const allShownPicked = shownIds.length > 0 && shownIds.every((id) => picked.has(id));
-  const someShownPicked = shownIds.some((id) => picked.has(id)) && !allShownPicked;
+const selectedTint = (t) =>
+  `linear-gradient(${alpha(t.palette.primary.main, 0.06)}, ${alpha(t.palette.primary.main, 0.06)})`;
 
-  const close = () => { setPicked(new Set()); setQuery(""); onClose(); };
-  const toggle = (id) => setPicked((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
-  const toggleAll = () => setPicked((prev) => {
-    if (allShownPicked) {
-      const next = new Set(prev);
-      shownIds.forEach((id) => next.delete(id));
-      return next;
-    }
-    return new Set([...prev, ...shownIds]);
-  });
-
-  const confirm = () => {
-    const rows = candidates.filter((r) => picked.has(r.id));
-    if (rows.length) onAdd(rows);
-    close();
+// Vel's Add scenarios. Scenarios already exist once the environment is built,
+// so these routes add the ones the derivation couldn't know to write. Four
+// sources lead; production replay, a dataset and a script sit behind More
+// sources. Generate is real (the extend API); the others say what they send.
+export default function AddScenariosDrawer({
+  open,
+  onClose,
+  env,
+  envState,
+  initialRoute = null,
+}) {
+  const [route, setRoute] = useState(initialRoute);
+  const [moreOpen, setMoreOpen] = useState(() =>
+    MORE_ROUTES.some((r) => r.id === initialRoute),
+  );
+  const close = () => {
+    setRoute(null);
+    onClose();
   };
+  const toggle = (id) => setRoute((r) => (r === id ? null : id));
+  // Pin the ask in the builder chat; the chat opens itself for a new pin.
+  const sendToChat = (ask) => {
+    close();
+    injectComposerScaffold(ask ? `Add scenarios. ${ask}` : "Add scenarios");
+  };
+  const routeProps = { env, envState, onClose: close };
 
   return (
-    <SideDrawer open={open} onClose={close} width={720}>
+    <SideDrawer open={open} onClose={close} width={960} hideClose>
       <Stack sx={{ height: "100%" }}>
-        <Box sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
-          <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
-            {ADD_COPY.title}
-          </Typography>
-          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-            {ADD_COPY.subtitle}
-          </Typography>
-        </Box>
-
-        {candidates.length === 0 ? (
-          <Box sx={{ flex: 1, display: "grid", placeItems: "center", p: 4 }}>
-            <EmptyState
-              icon="solar:check-circle-linear"
-              title={ADD_COPY.emptyTitle}
-              body={ADD_COPY.emptyBody}
-            />
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={2}
+          sx={{
+            px: 2.5,
+            py: 2,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
+          <Box flex={1} minWidth={0}>
+            <Typography sx={{ typography: "m3", fontWeight: 600 }}>
+              Add scenarios
+            </Typography>
+            <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+              This environment already has its scenarios. Add the ones it
+              couldn&apos;t work out from your agent on its own.
+            </Typography>
           </Box>
-        ) : (
-          <>
-            <Stack
-              direction="row" alignItems="center" spacing={1}
-              sx={{ px: 2.5, py: 1.25, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
-            >
-              <Iconify icon="solar:magnifer-linear" width={16} sx={{ color: "text.subtitle" }} />
-              <InputBase
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={ADD_COPY.searchPlaceholder}
-                sx={{ typography: "s2", flex: 1 }}
-              />
-            </Stack>
+          <IconButton size="small" onClick={close} aria-label="Close">
+            <Iconify
+              icon="solar:close-circle-linear"
+              width={20}
+              sx={{ color: "text.subtitle" }}
+            />
+          </IconButton>
+        </Stack>
 
-            <Stack
-              direction="row" alignItems="center" spacing={1.5}
-              sx={{ px: 2.5, py: 1, bgcolor: "background.neutral", borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
-            >
-              <Checkbox
-                size="small"
-                checked={allShownPicked}
-                indeterminate={someShownPicked}
-                onChange={toggleAll}
-                inputProps={{ "aria-label": ADD_COPY.selectAll }}
-                sx={checkboxSx}
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflow: "auto",
+            p: 2.5,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <Box
+            sx={{
+              display: "grid",
+              gap: 1.5,
+              gridTemplateColumns: {
+                xs: "repeat(2, 1fr)",
+                md: `repeat(${ROUTES.length}, 1fr)`,
+              },
+              flexShrink: 0,
+            }}
+          >
+            {ROUTES.map((r) => (
+              <RouteCard
+                key={r.id}
+                route={r}
+                active={route === r.id}
+                onClick={() => toggle(r.id)}
               />
-              <Typography sx={{ typography: "s3", color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, fontWeight: "fontWeightBold" }}>
-                {ADD_COPY.routeLabel} · {shown.length}
-              </Typography>
-            </Stack>
+            ))}
+          </Box>
 
-            <Box sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>
-              <Stack divider={<Divider />}>
-                {shown.map((r) => (
-                  <CandidateRow key={r.id} row={r} checked={picked.has(r.id)} onToggle={() => toggle(r.id)} />
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ mt: 1.25, mb: route ? 2.5 : 0, flexShrink: 0, minHeight: 30 }}
+          >
+            <Button
+              size="small"
+              onClick={() => setMoreOpen((v) => !v)}
+              endIcon={
+                <Iconify
+                  icon={
+                    moreOpen
+                      ? "solar:alt-arrow-left-linear"
+                      : "solar:alt-arrow-right-linear"
+                  }
+                  width={12}
+                />
+              }
+              sx={{ color: "text.secondary", ml: -0.75, flexShrink: 0 }}
+            >
+              More sources
+            </Button>
+            <Collapse in={moreOpen} orientation="horizontal" unmountOnExit>
+              <Stack direction="row" spacing={0.75}>
+                {MORE_ROUTES.map((r) => (
+                  <MoreSource
+                    key={r.id}
+                    route={r}
+                    active={route === r.id}
+                    onClick={() => toggle(r.id)}
+                  />
                 ))}
               </Stack>
-            </Box>
-          </>
-        )}
+            </Collapse>
+          </Stack>
 
-        <Stack
-          direction="row" justifyContent="flex-end" spacing={1}
-          sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
-        >
-          <Button onClick={close} sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", color: "text.secondary" }}>
-            {ADD_COPY.cancel}
-          </Button>
-          <Button
-            variant="contained" color="primary" size="small"
-            disabled={picked.size === 0}
-            onClick={confirm}
-            sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+          <Box
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+            }}
           >
-            {ADD_COPY.confirm(picked.size)}
-          </Button>
-        </Stack>
+            {route === "generate" && <GenerateRoute {...routeProps} />}
+            {route === "error-feed" && <ErrorFeedRoute {...routeProps} />}
+            {route === "failing" && <FailingCasesRoute {...routeProps} />}
+            {route === "chat" && <ChatRoute onSend={sendToChat} />}
+            {route === "replay" && <ProductionRoute {...routeProps} />}
+            {route === "dataset" && <DatasetRoute {...routeProps} />}
+            {route === "script" && <ScriptRoute {...routeProps} />}
+          </Box>
+        </Box>
+
+        {!route && (
+          <Stack
+            direction="row"
+            justifyContent="flex-end"
+            sx={{
+              px: 2.5,
+              py: 1.75,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Button
+              size="small"
+              onClick={close}
+              sx={{ color: "text.secondary" }}
+            >
+              Cancel
+            </Button>
+          </Stack>
+        )}
       </Stack>
     </SideDrawer>
   );
 }
 
 AddScenariosDrawer.propTypes = {
-  open: PropTypes.bool,
-  onClose: PropTypes.func,
-  env: ENV_SHAPE,
-  selected: PropTypes.arrayOf(SCENARIO_SHAPE),
-  onAdd: PropTypes.func,
+  open: PropTypes.bool.isRequired,
+  onClose: PropTypes.func.isRequired,
+  env: PropTypes.shape({ id: PropTypes.string, surface: PropTypes.string }),
+  envState: PropTypes.object,
+  initialRoute: PropTypes.string,
 };
 
-function CandidateRow({ row, checked, onToggle }) {
-  const p = row.persona;
+function RouteCard({ route, active, onClick }) {
+  const { Thumb } = route;
   return (
-    <Stack
-      direction="row" alignItems="flex-start" spacing={1.5}
-      onClick={onToggle}
+    <Box
+      role="button"
+      tabIndex={0}
+      aria-pressed={active}
+      aria-label={route.label}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       sx={{
-        px: 2.5, py: 1.5, cursor: "pointer",
-        bgcolor: checked ? (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03) : "transparent",
-        "&:hover": { bgcolor: "action.hover" },
+        borderRadius: "8px",
+        overflow: "hidden",
+        height: "100%",
+        cursor: "pointer",
+        border: "1px solid",
+        borderColor: active ? "text.primary" : "divider",
+        bgcolor: "background.paper",
+        backgroundImage: active ? selectedTint : "none",
+        transition: "border-color .16s ease",
+        "&:hover": { borderColor: active ? "text.primary" : "text.disabled" },
       }}
     >
-      <Checkbox
-        size="small"
-        checked={checked}
-        onChange={onToggle}
-        onClick={(e) => e.stopPropagation()}
-        inputProps={{ "aria-label": row.name }}
-        sx={{ ...checkboxSx, mt: 0.25 }}
-      />
-      <Box flex={1} minWidth={0}>
-        <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
-          {row.name}
-        </Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          {row.useCase}
-        </Typography>
-        {p?.name && (
-          <Typography sx={{ typography: "s3", color: "text.disabled", mt: 0.25 }}>
-            {p.name}
-          </Typography>
-        )}
+      <Box
+        sx={{
+          height: 72,
+          display: "grid",
+          placeItems: "center",
+          overflow: "hidden",
+          bgcolor: "background.neutral",
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          "& > svg": {
+            transform: "scale(0.68)",
+            transformOrigin: "center center",
+          },
+        }}
+      >
+        <Thumb />
       </Box>
-    </Stack>
+      <Box sx={{ px: 1.5, py: 1 }}>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {route.label}
+        </Typography>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}
+        >
+          {route.blurb}
+        </Typography>
+      </Box>
+    </Box>
   );
 }
-CandidateRow.propTypes = {
-  row: SCENARIO_SHAPE,
-  checked: PropTypes.bool,
-  onToggle: PropTypes.func,
+RouteCard.propTypes = {
+  route: PropTypes.object.isRequired,
+  active: PropTypes.bool,
+  onClick: PropTypes.func.isRequired,
+};
+
+function MoreSource({ route, active, onClick }) {
+  return (
+    <ButtonBase
+      title={route.hint}
+      onClick={onClick}
+      sx={{
+        gap: 0.75,
+        height: 30,
+        px: 1.25,
+        whiteSpace: "nowrap",
+        borderRadius: 1,
+        border: "1px solid",
+        borderColor: active ? "text.primary" : "divider",
+        bgcolor: "background.paper",
+        backgroundImage: active ? selectedTint : "none",
+        color: active ? "text.primary" : "text.secondary",
+        "&:hover": {
+          borderColor: active ? "text.primary" : "text.disabled",
+          color: "text.primary",
+        },
+      }}
+    >
+      <Iconify icon={route.icon} width={14} />
+      <Typography
+        component="span"
+        sx={{ typography: "s2", fontWeight: 600, color: "inherit" }}
+      >
+        {route.label}
+      </Typography>
+    </ButtonBase>
+  );
+}
+MoreSource.propTypes = {
+  route: PropTypes.object.isRequired,
+  active: PropTypes.bool,
+  onClick: PropTypes.func.isRequired,
 };

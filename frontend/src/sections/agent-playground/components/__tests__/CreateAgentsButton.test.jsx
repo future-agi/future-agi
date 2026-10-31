@@ -56,16 +56,12 @@ describe("CreateAgentsButton", () => {
     ).toBeInTheDocument();
   });
 
-  it("sends Connect agents to the environments build page", () => {
+  it("sends Connect agents to the New agent page", () => {
     renderButton();
     openMenu();
     fireEvent.click(screen.getByText("Connect agents"));
-    expect(CONNECT_AGENT_PATH).toBe(
-      "/dashboard/simulate/environments?tab=build",
-    );
-    expect(mockNavigate).toHaveBeenCalledWith(
-      "/dashboard/simulate/environments?tab=build",
-    );
+    expect(CONNECT_AGENT_PATH).toBe("/dashboard/agents/connect");
+    expect(mockNavigate).toHaveBeenCalledWith("/dashboard/agents/connect");
     expect(mockCreateGraph).not.toHaveBeenCalled();
   });
 

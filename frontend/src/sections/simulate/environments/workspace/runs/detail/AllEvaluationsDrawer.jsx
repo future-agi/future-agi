@@ -6,6 +6,7 @@ import {
   Button,
   Checkbox,
   CircularProgress,
+  Collapse,
   FormControlLabel,
   IconButton,
   Stack,
@@ -14,6 +15,8 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import EvalTypeBadge from "src/sections/evals/components/EvalTypeBadge";
 import {
   useEnvironmentRunTest,
@@ -27,7 +30,9 @@ import {
 } from "src/api/simulate-environments/runEvals";
 import SideDrawer from "../../../components/SideDrawer";
 import EmptyState from "../../../components/EmptyState";
+import SoonChip from "../../../components/SoonChip";
 import { refusalText } from "../../evals/refusalText";
+import { EvalMapping } from "../../evals/EvalMappingView";
 import {
   EVALS_LOAD_FAILED_TOOLTIP,
   GRADING_TOOLTIP,
@@ -41,6 +46,7 @@ const REMOVE_FALLBACK = "Couldn’t remove the evaluation. Try again.";
 // reference on every render, which would re-run the memos below even when
 // the run test's configs have not changed.
 const NO_CONFIGS = [];
+const NO_APPLIED = [];
 
 /**
  * The run page's "All Evaluations" drawer.
@@ -52,6 +58,11 @@ const NO_CONFIGS = [];
  * that eval. Both go to the run page (`onRerun`, `onEdit`), whose one edit form
  * and confirm dialog also serve the table's column menus, and this drawer
  * closes once the grading it asked for is queued.
+ *
+ * Ticked rows can also be removed together, after a confirm. A row opens to
+ * the eval's description and mapping; both come from the environment's own
+ * eval row (`appliedEvals`, matched by config id), since the run test sends
+ * neither a description nor labelled inputs.
  */
 export default function AllEvaluationsDrawer({
   open,
@@ -66,15 +77,22 @@ export default function AllEvaluationsDrawer({
   onRerun,
   onEdit,
   onAddEvaluations,
+  appliedEvals = NO_APPLIED,
 }) {
   const queryClient = useQueryClient();
   const [ticked, setTicked] = useState(() => new Set());
+  const [expanded, setExpanded] = useState(() => new Set());
+  const [confirmBulk, setConfirmBulk] = useState(false);
 
   // The run page keeps this drawer mounted while it's closed, so ticks would
   // otherwise still be there on reopening — including on a removed eval that
   // came back under the same id.
   useEffect(() => {
-    if (!open) setTicked(new Set());
+    if (!open) {
+      setTicked(new Set());
+      setExpanded(new Set());
+      setConfirmBulk(false);
+    }
   }, [open]);
 
   const {
@@ -87,6 +105,11 @@ export default function AllEvaluationsDrawer({
   const configs = configsData ?? NO_CONFIGS;
 
   const removeEval = useRemoveAppliedEvaluation();
+
+  const appliedById = useMemo(
+    () => new Map((appliedEvals || []).map((e) => [e?.id, e])),
+    [appliedEvals],
+  );
 
   const runnableIds = useMemo(
     () => configs.filter((c) => c.regradable === true).map((c) => c.id),
@@ -120,30 +143,62 @@ export default function AllEvaluationsDrawer({
     });
   };
 
+  const handleToggleExpanded = (id) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const requestRerun = (list) => onRerun?.(list, { onSuccess: onClose });
+
+  const refreshRunViews = () => {
+    queryClient.invalidateQueries({
+      queryKey: runResultsKey(executionId),
+    });
+    queryClient.invalidateQueries({
+      queryKey: runAnalyticsKey(executionId),
+    });
+    queryClient.invalidateQueries({ queryKey: compareRunsKeyPrefix });
+    // Call rows are built from the live catalog, and a drawer keeps
+    // its detail for minutes: reopened, it must not list the removed eval.
+    queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });
+  };
 
   const handleRemove = (config) => {
     removeEval.mutate(
       { id: env?.id, evalConfigId: config.id },
       {
-        onSuccess: () => {
-          queryClient.invalidateQueries({
-            queryKey: runResultsKey(executionId),
-          });
-          queryClient.invalidateQueries({
-            queryKey: runAnalyticsKey(executionId),
-          });
-          queryClient.invalidateQueries({ queryKey: compareRunsKeyPrefix });
-          // Call rows are built from the live catalog, and a drawer keeps
-          // its detail for minutes: reopened, it must not list the removed eval.
-          queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });
-        },
+        onSuccess: refreshRunViews,
         onError: (e) =>
           enqueueSnackbar(refusalText(e, REMOVE_FALLBACK), {
             variant: "error",
           }),
       },
     );
+  };
+
+  // One DELETE per ticked eval, the same call a row's own remove makes.
+  // `mutate`'s per-call callbacks only fire for the last of several calls, so
+  // each remove is awaited on its own and every refusal is reported by name.
+  const handleBulkRemove = async () => {
+    const list = selectedConfigs;
+    setConfirmBulk(false);
+    const results = await Promise.allSettled(
+      list.map((config) =>
+        removeEval.mutateAsync({ id: env?.id, evalConfigId: config.id }),
+      ),
+    );
+    if (results.some((r) => r.status === "fulfilled")) refreshRunViews();
+    results.forEach((r, i) => {
+      if (r.status !== "rejected") return;
+      enqueueSnackbar(
+        `${list[i].name}: ${refusalText(r.reason, REMOVE_FALLBACK)}`,
+        { variant: "error" },
+      );
+    });
   };
 
   const cannotRunTooltip = grading ? GRADING_TOOLTIP : NOT_COMPLETED_TOOLTIP;
@@ -174,14 +229,53 @@ export default function AllEvaluationsDrawer({
               }
               label={`Evals (${configs.length})`}
             />
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-              onClick={() => onAddEvaluations?.()}
-            >
-              Add Evaluations
-            </Button>
+            {selectedIds.length > 0 ? (
+              <Stack direction="row" alignItems="center" spacing={0.5}>
+                <Button
+                  size="small"
+                  onClick={() => setTicked(new Set())}
+                  sx={{ color: "text.secondary", minWidth: 0 }}
+                >
+                  Clear
+                </Button>
+                {/* Same wait as a row's remove: a column vanishing from a
+                    table that is polling for its scores. */}
+                <CustomTooltip
+                  show={grading}
+                  arrow
+                  size="small"
+                  title={GRADING_TOOLTIP}
+                >
+                  <span>
+                    <Button
+                      size="small"
+                      color="error"
+                      disabled={grading || removeEval.isPending}
+                      onClick={() => setConfirmBulk(true)}
+                      startIcon={
+                        <Iconify
+                          icon="solar:trash-bin-trash-linear"
+                          width={16}
+                        />
+                      }
+                    >
+                      {`Remove ${selectedIds.length}`}
+                    </Button>
+                  </span>
+                </CustomTooltip>
+              </Stack>
+            ) : (
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={
+                  <Iconify icon="solar:add-circle-linear" width={16} />
+                }
+                onClick={() => onAddEvaluations?.()}
+              >
+                Add Evaluations
+              </Button>
+            )}
           </Stack>
         </Box>
 
@@ -232,86 +326,113 @@ export default function AllEvaluationsDrawer({
                   : !canRun
                     ? cannotRunTooltip
                     : "";
+                const isOpen = expanded.has(config.id);
+                const entry = appliedById.get(config.id);
                 return (
-                  <Stack
-                    key={config.id}
-                    direction="row"
-                    alignItems="center"
-                    spacing={1}
-                    sx={{ py: 1.5 }}
-                  >
-                    <Tooltip
-                      arrow
-                      title={!runnable ? HARNESS_ONLY_TOOLTIP : ""}
+                  <Box key={config.id}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={1}
+                      sx={{ py: 1.5 }}
                     >
-                      <span>
-                        <Checkbox
-                          checked={ticked.has(config.id)}
-                          disabled={!runnable}
-                          onChange={() => handleToggleRow(config.id)}
-                          inputProps={{ "aria-label": `Select ${config.name}` }}
-                        />
-                      </span>
-                    </Tooltip>
-                    <Iconify
-                      icon="solar:shield-check-linear"
-                      width={18}
-                      sx={{ color: "text.subtitle", flexShrink: 0 }}
-                    />
-                    <Typography sx={{ flex: 1, typography: "s1" }} noWrap>
-                      {config.name}
-                    </Typography>
-                    {config.eval_type && (
-                      <EvalTypeBadge type={config.eval_type} />
-                    )}
-                    <Tooltip arrow title={runTooltip}>
-                      <span>
-                        <IconButton
-                          aria-label={`Run ${config.name}`}
-                          disabled={!runnable || !canRun || rerunPending}
-                          onClick={() => requestRerun([config])}
-                        >
-                          <Iconify icon="solar:play-circle-linear" width={18} />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                    <Tooltip arrow title={editTooltip}>
-                      <span>
-                        <IconButton
-                          aria-label={`Edit ${config.name}`}
-                          disabled={
-                            !editable ||
-                            grading ||
-                            !canRun ||
-                            editOpen ||
-                            rerunPending
-                          }
-                          onClick={() =>
-                            onEdit?.(config, { onSuccess: onClose })
-                          }
-                        >
-                          <Iconify icon="solar:pen-linear" width={18} />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                    {/* The grader copes with a removal mid-run (it drops the
+                      <Tooltip
+                        arrow
+                        title={!runnable ? HARNESS_ONLY_TOOLTIP : ""}
+                      >
+                        <span>
+                          <Checkbox
+                            checked={ticked.has(config.id)}
+                            disabled={!runnable}
+                            onChange={() => handleToggleRow(config.id)}
+                            inputProps={{
+                              "aria-label": `Select ${config.name}`,
+                            }}
+                          />
+                        </span>
+                      </Tooltip>
+                      <Iconify
+                        icon="solar:shield-check-linear"
+                        width={18}
+                        sx={{ color: "text.subtitle", flexShrink: 0 }}
+                      />
+                      <Typography sx={{ flex: 1, typography: "s1" }} noWrap>
+                        {config.name}
+                      </Typography>
+                      {config.eval_type && (
+                        <EvalTypeBadge type={config.eval_type} />
+                      )}
+                      <Tooltip arrow title={runTooltip}>
+                        <span>
+                          <IconButton
+                            aria-label={`Run ${config.name}`}
+                            disabled={!runnable || !canRun || rerunPending}
+                            onClick={() => requestRerun([config])}
+                          >
+                            <Iconify
+                              icon="solar:play-circle-linear"
+                              width={18}
+                            />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                      <Tooltip arrow title={editTooltip}>
+                        <span>
+                          <IconButton
+                            aria-label={`Edit ${config.name}`}
+                            disabled={
+                              !editable ||
+                              grading ||
+                              !canRun ||
+                              editOpen ||
+                              rerunPending
+                            }
+                            onClick={() =>
+                              onEdit?.(config, { onSuccess: onClose })
+                            }
+                          >
+                            <Iconify icon="solar:pen-linear" width={18} />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                      {/* The grader copes with a removal mid-run (it drops the
                         pending cell), but the column would vanish from a table
                         that is polling for its scores. Removal waits. */}
-                    <Tooltip arrow title={grading ? GRADING_TOOLTIP : ""}>
-                      <span>
-                        <IconButton
-                          aria-label={`Remove ${config.name}`}
-                          disabled={grading || removeEval.isPending}
-                          onClick={() => handleRemove(config)}
-                        >
-                          <Iconify
-                            icon="solar:trash-bin-trash-linear"
-                            width={18}
-                          />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                  </Stack>
+                      <Tooltip arrow title={grading ? GRADING_TOOLTIP : ""}>
+                        <span>
+                          <IconButton
+                            aria-label={`Remove ${config.name}`}
+                            disabled={grading || removeEval.isPending}
+                            onClick={() => handleRemove(config)}
+                          >
+                            <Iconify
+                              icon="solar:trash-bin-trash-linear"
+                              width={18}
+                            />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                      <IconButton
+                        size="small"
+                        aria-label={`Show details for ${config.name}`}
+                        aria-expanded={isOpen}
+                        onClick={() => handleToggleExpanded(config.id)}
+                      >
+                        <Iconify
+                          icon="solar:alt-arrow-down-linear"
+                          width={16}
+                          sx={{
+                            color: "text.subtitle",
+                            transform: isOpen ? "rotate(180deg)" : "none",
+                            transition: "transform 160ms ease",
+                          }}
+                        />
+                      </IconButton>
+                    </Stack>
+                    <Collapse in={isOpen} unmountOnExit>
+                      <EvalDetails config={config} entry={entry} />
+                    </Collapse>
+                  </Box>
                 );
               })}
             </Stack>
@@ -336,9 +457,68 @@ export default function AllEvaluationsDrawer({
           </Tooltip>
         </Box>
       </Box>
+      <ConfirmDialog
+        open={confirmBulk}
+        onClose={() => setConfirmBulk(false)}
+        title={`Remove ${selectedIds.length} eval${selectedIds.length === 1 ? "" : "s"}?`}
+        content={
+          <Typography component="span" sx={{ typography: "s2" }}>
+            New runs won&apos;t be graded on these. Past scores stay.
+          </Typography>
+        }
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            onClick={handleBulkRemove}
+            sx={{ px: 3 }}
+          >
+            {`Remove ${selectedIds.length}`}
+          </Button>
+        }
+      />
     </SideDrawer>
   );
 }
+
+// A row's open body: the eval's description and what fills each variable.
+// Both are the environment's eval row when there is one; a run test's own
+// config has no description and only its raw mapping.
+function EvalDetails({ config, entry }) {
+  const blurb = entry?.description || entry?.blurb || "";
+  return (
+    <Box
+      sx={{
+        mb: 1.5,
+        px: 1.5,
+        py: 1.25,
+        borderRadius: 1,
+        bgcolor: "background.neutral",
+      }}
+    >
+      {blurb ? (
+        <Typography sx={{ typography: "s3", color: "text.secondary", mb: 1 }}>
+          {blurb}
+        </Typography>
+      ) : (
+        <Box sx={{ mb: 1 }}>
+          <SoonChip
+            label="Description"
+            what="This evaluation's description"
+            size="tiny"
+          />
+        </Box>
+      )}
+      <EvalMapping item={entry && entry.inputs?.length ? entry : config} />
+    </Box>
+  );
+}
+
+EvalDetails.propTypes = {
+  config: PropTypes.object.isRequired,
+  entry: PropTypes.object,
+};
 
 AllEvaluationsDrawer.propTypes = {
   open: PropTypes.bool,
@@ -356,4 +536,13 @@ AllEvaluationsDrawer.propTypes = {
   onRerun: PropTypes.func,
   onEdit: PropTypes.func,
   onAddEvaluations: PropTypes.func,
+  // The environment's `evaluations.selected[]` rows; an open row reads its
+  // description and labelled mapping from the one with its config id.
+  appliedEvals: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.string,
+      description: PropTypes.string,
+      inputs: PropTypes.array,
+    }),
+  ),
 };

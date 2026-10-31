@@ -95,6 +95,7 @@ describe("build stage constants", () => {
   it("labels the building tabs in rail order, without Runs or Versions (a building env has neither)", () => {
     expect(BUILDING_TABS.map((t) => t.label)).toEqual([
       "Overview",
+      "World",
       "Contract",
       "Scenarios",
       "Evaluations",

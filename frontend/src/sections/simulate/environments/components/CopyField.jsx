@@ -1,9 +1,8 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
-import {
-  IconButton, Stack, Tooltip, Typography,
-} from "@mui/material";
+import { IconButton, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { copyToClipboard } from "src/utils/utils";
 
 const COPIED_RESET_MS = 1500;
@@ -43,15 +42,19 @@ export default function CopyField({ value, wrap = false }) {
       alignItems="center"
       spacing={1}
       sx={{
-        px: 1.5, py: 1, borderRadius: 1,
-        border: "1px solid", borderColor: "divider",
+        px: 1.5,
+        py: 1,
+        borderRadius: 1,
+        border: "1px solid",
+        borderColor: "divider",
         bgcolor: "background.neutral",
       }}
     >
       <Typography
         noWrap={!wrap}
         sx={{
-          flex: 1, minWidth: 0,
+          flex: 1,
+          minWidth: 0,
           typography: "s2",
           fontFamily: MONO_STACK,
           color: "text.primary",
@@ -60,15 +63,20 @@ export default function CopyField({ value, wrap = false }) {
       >
         {value}
       </Typography>
-      <Tooltip title={label} arrow>
-        <IconButton aria-label={label} size="small" onClick={handleCopy} sx={{ p: 0.5 }}>
+      <CustomTooltip show title={label} arrow size="small">
+        <IconButton
+          aria-label={label}
+          size="small"
+          onClick={handleCopy}
+          sx={{ p: 0.5 }}
+        >
           <Iconify
             icon={copied ? "solar:check-read-linear" : "solar:copy-linear"}
             width={15}
             sx={{ color: copied ? "success.main" : "text.subtitle" }}
           />
         </IconButton>
-      </Tooltip>
+      </CustomTooltip>
     </Stack>
   );
 }

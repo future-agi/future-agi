@@ -2,15 +2,18 @@ import PropTypes from "prop-types";
 import { Box, Stack, Tab } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { CustomTabs } from "src/components/tabs/tabs";
+import { WORKSPACE_TABS_SX } from "../environmentOptions";
 import { paths } from "src/routes/paths";
 import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
-import { ENV_TABS_SX } from "../environmentOptions";
 import OverviewPanel from "./overview/OverviewPanel";
 import RlContractPanel from "./contract/RlContractPanel";
 import ScenariosStep from "./scenarios/ScenariosStep";
 import EvalsStep from "./evals/EvalsStep";
 import RunsSummary from "./runs/summary/RunsSummary";
 import SettingsPanel from "./settings/SettingsPanel";
+import WorldPanel from "./world/WorldPanel";
+import RunsEmptyState from "./runs/RunsEmptyState";
+import useRunRepeats from "./run/useRunRepeats";
 import VersionsPanel from "./versions/VersionsPanel";
 import WorkspaceTabLabel from "./WorkspaceTabLabel";
 import { WORKSPACE_TABS } from "./workspace.constants";
@@ -21,8 +24,7 @@ import { WORKSPACE_TABS } from "./workspace.constants";
 // passed in, and the only data it reads for itself is the Runs history (the live
 // executions for a completed harness job — envState.runs is empty for those).
 //
-// The rail reuses the product tab treatment Phase-1 established (ENV_TABS_SX)
-// rather than the designer's CustomTabs px:1. Numeric counts are hidden while
+// The rail is Vel's: WORKSPACE_TABS_SX carries his tab style. Numeric counts are hidden while
 // the builder streams — the parent passes `counts={null}` then. A deep-linked
 // run detail is a full page (the workspace early-returns the Outlet), so the
 // panels never host the run detail themselves.
@@ -71,15 +73,14 @@ export default function WorkspacePanels({
   const runsTotal = runsLoading
     ? overviewCounts?.runs ?? 0
     : runCount ?? runs.length;
-  // Runs appears once the environment has a run. While the list is still
-  // loading, a deep link to ?tab=runs keeps the tab so it does not bounce to
-  // the Overview and back.
-  const showRuns = runsTotal > 0 || (runsLoading && tab === "runs");
+  // Runs is always in the rail; before the first run it offers the baseline.
   // Versions appears only while versioning is switched on for this environment.
   const showVersions = Boolean(env?.versioning?.enabled);
   const tabs = WORKSPACE_TABS.filter(
-    (t) => (t.id !== "runs" || showRuns) && (t.id !== "versions" || showVersions),
+    (t) => t.id !== "versions" || showVersions,
   );
+  const [repeats] = useRunRepeats(envState, patch);
+  const noRuns = !runsLoading && runsTotal === 0;
 
   // Default landing is the Overview, which is also the first tab in the rail.
   const current =
@@ -108,9 +109,9 @@ export default function WorkspacePanels({
   const renderBody = () => {
     switch (current.id) {
       case "contract":
-        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} backed={backed} />;
+        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} backed={backed} />;
       case "scenarios":
-        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} runBlockedReason={runBlockedReason} />;
+        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} runBlockedReason={runBlockedReason} noRuns={noRuns} />;
       case "evals":
         return (
           <EvalsStep
@@ -125,14 +126,25 @@ export default function WorkspacePanels({
             scenarioCount={counts?.scenarios}
           />
         );
+      case "world":
+        return <WorldPanel env={env} envState={envState} onGo={go} graphData={graphData} />;
       case "runs":
+        if (noRuns)
+          return (
+            <RunsEmptyState
+              repeats={repeats}
+              onStartRun={onStartRun}
+              canRun={canRun}
+              runBlockedReason={runBlockedReason}
+            />
+          );
         // The summary's eval columns come from the runs' own scores, so it
         // only needs the store for its scenario count.
         return <RunsSummary key={env.id} env={env} envState={envState} scenarioCount={counts?.scenarios} onOpenRun={openRun} onGo={go} />;
       case "versions":
         return <VersionsPanel env={env} />;
       case "settings":
-        return <SettingsPanel env={env} locked={locked} backed={backed} />;
+        return <SettingsPanel env={env} envState={envState} patch={patch} locked={locked} backed={backed} onGo={go} />;
       default:
         return (
           // The next-steps checklist's "Add evaluations" step and its CTA
@@ -158,13 +170,13 @@ export default function WorkspacePanels({
 
   return (
     <Stack sx={{ height: "100%", minHeight: 0 }}>
-      <Box sx={{ flexShrink: 0, borderBottom: "1px solid", borderColor: "divider" }}>
+      <Box sx={{ flexShrink: 0, px: "20px", borderBottom: "1px solid", borderColor: "divider" }}>
         <CustomTabs
           value={current.id}
           onChange={(_, v) => onTabChange(v)}
           variant="scrollable"
           scrollButtons={false}
-          sx={ENV_TABS_SX}
+          sx={WORKSPACE_TABS_SX}
         >
           {tabs.map((t) => (
             <Tab

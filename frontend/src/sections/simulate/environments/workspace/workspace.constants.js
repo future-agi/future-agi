@@ -3,51 +3,86 @@
 // inline so the shell, the build-page in-place swap and the tests share them.
 
 // The workspace tabs, in rail order (matching the designer). Overview is first
-// and is the default landing tab. Overview and Contract are views of the
+// and is the default landing tab. Overview, World and Contract are views of the
 // environment itself, so they carry no count badge; Scenarios, Evaluations and
 // Runs badge the length of their matching env-state slice. Settings is last.
+// Each hint is the tab's hover text, Vel's copy without em dashes.
 // The Overview tab id is "overview" (URL reads ?tab=overview), and its panel
 // component/folder keep the OverviewPanel name.
 export const WORKSPACE_TABS = [
   { id: "overview", label: "Overview", icon: "solar:widget-5-linear" },
   {
+    id: "world",
+    label: "World",
+    icon: "solar:globe-linear",
+    hint: "What your agent talks to during a run: the data, and the tool handlers that answer every call. It learns a new tool whenever a later agent version brings one.",
+  },
+  {
     id: "contract",
     label: "Contract",
     icon: "solar:document-text-linear",
-    hint: "What this environment is made of: the world runs execute against, the code behind every tool call and grader, and how each run ends.",
+    hint: "The rules the agent holds to and what it's for, then how a conversation runs: when it ends, who else is in it, and how it's scored. Editing it makes a new environment version, and the scenarios that depend on the change are marked Re-check.",
   },
   {
     id: "scenarios",
     label: "Scenarios",
     icon: "solar:layers-minimalistic-linear",
     badge: "scenarios",
-    hint: "Each scenario is one task your agent has to complete, and carries its own persona.",
+    hint: "Each scenario is one task your agent has to complete, with its own caller. Every agent version runs the same suite; comparisons run over the scenarios both runs share.",
   },
   {
     id: "evals",
     label: "Evaluations",
     icon: "solar:shield-check-linear",
     badge: "evals",
-    hint: "These decide whether each task passed. Pick them from the library and map their inputs onto what the run produces.",
+    hint: "Sub-goals decide pass or fail. Mark an evaluation required to let it fail a conversation; the rest score it.",
   },
-  { id: "runs", label: "Runs", icon: "solar:play-circle-linear", badge: "runs" },
+  {
+    id: "runs",
+    label: "Runs",
+    icon: "solar:play-circle-linear",
+    badge: "runs",
+    hint: "Every simulation of this environment and how it scored. Select two or more runs to compare them scenario by scenario.",
+  },
   // Shown only when the environment has versioning switched on.
   { id: "versions", label: "Versions", icon: "solar:history-linear" },
   {
     id: "settings",
     label: "Settings",
     icon: "solar:settings-linear",
-    hint: "How this environment was built. Everything here is fixed at build time. Only the name can be changed.",
+    hint: "How this environment is built and how runs behave inside it.",
   },
 ];
 
 // Setup-gap areas map onto the tab that owns the underlying answer, so a
-// blocking gap surfaces as an amber dot on that tab. Only the areas the user
-// can resolve inside this workspace are routed; the designer's Sandbox/Tools
-// entries point at an Agents tab we do not render, so they are omitted.
+// blocking gap surfaces as a badge on that tab: the agent on Overview, the
+// sandbox and its tools on World.
 export const GAP_AREA_TO_TAB = {
+  Agent: "overview",
+  Sandbox: "world",
+  Tools: "world",
+  World: "world",
   Contract: "contract",
   Grading: "evals",
+};
+
+// The header chip that says how a run reaches the agent. Only Live earns a
+// chip (Vel's rule): an agent connected where it runs (a hosted platform or a
+// phone number) is called in your account and its tools reach your real
+// systems. An agent built from code runs sealed in our sandbox, with no chip.
+export const RUN_MODE_CHIP = {
+  connect_only: {
+    label: "Live",
+    icon: "solar:plug-circle-linear",
+    tip: "Live. The agent runs in your account and its tools reach your real systems. Only the starting state is checked, and a model judges sub-goals from the conversation.",
+  },
+};
+
+// The Runs tab before the first run.
+export const RUNS_EMPTY_COPY = {
+  title: "No runs yet",
+  body: "The first run is the baseline improvements are measured against.",
+  action: "Run baseline",
 };
 
 // Header, overflow-menu and empty-state copy for the workspace shell.

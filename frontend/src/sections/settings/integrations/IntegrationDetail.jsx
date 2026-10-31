@@ -29,7 +29,7 @@ import StatusBadge from "./StatusBadge";
 import IntegrationSyncHistory from "./IntegrationSyncHistory";
 import EditIntegrationDialog from "./EditIntegrationDialog";
 import DeleteIntegrationDialog from "./DeleteIntegrationDialog";
-import { backButtonSx, outlinedNeutralButtonSx } from "./styles";
+import { outlinedNeutralButtonSx, pageBackButtonSx } from "./styles";
 
 function InfoRow({ label, value }) {
   return (
@@ -99,7 +99,7 @@ export default function IntegrationDetail() {
           variant="outlined"
           startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
           onClick={() => navigate(integrationsPath)}
-          sx={{ mt: theme.spacing(1), ...backButtonSx }}
+          sx={{ mt: theme.spacing(1), ...pageBackButtonSx }}
         >
           Back to Integrations
         </Button>
@@ -116,7 +116,7 @@ export default function IntegrationDetail() {
           variant="outlined"
           startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
           onClick={() => navigate(integrationsPath)}
-          sx={{ mt: theme.spacing(1), ...backButtonSx }}
+          sx={{ mt: theme.spacing(1), ...pageBackButtonSx }}
         >
           Back to Integrations
         </Button>
@@ -134,7 +134,7 @@ export default function IntegrationDetail() {
         variant="outlined"
         startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
         onClick={() => navigate(integrationsPath)}
-        sx={{ mb: theme.spacing(2), ...backButtonSx }}
+        sx={{ mb: theme.spacing(2), ...pageBackButtonSx }}
       >
         Back to Integrations
       </Button>

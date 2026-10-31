@@ -6,7 +6,7 @@ import TrialsPicker from "../TrialsPicker";
 
 const openPicker = async (user, trials) => {
   render(<TrialsPicker trials={trials} onChange={vi.fn()} scenarioCount={2} />);
-  await user.click(screen.getByText(`Repeats: ${trials}`));
+  await user.click(screen.getByRole("button", { name: `Repeats: ${trials}` }));
 };
 
 describe("TrialsPicker — which value is chosen", () => {

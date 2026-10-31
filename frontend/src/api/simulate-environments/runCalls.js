@@ -126,7 +126,6 @@ export function mapCallRow(row, evalColumns = []) {
     },
     status,
     executionStatus: row?.execution_status ?? row?.status ?? null,
-    critical: false,
     csat: row?.csat != null ? Math.round(row.csat * 10) / 10 : null,
     // How far the call's scoring got: `pending`, `succeeded`, `failed`,
     // `timed_out` or `not_applicable`; CSAT adds `skipped`. Null from an API

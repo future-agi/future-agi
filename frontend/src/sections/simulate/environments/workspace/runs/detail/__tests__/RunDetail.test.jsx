@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { useEffect } from "react";
 import {
   act,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -221,6 +222,17 @@ function RunTraceTableStub({
       >
         open c1
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          onOpenCall(
+            { id: "c1", simulationCallType: "voice" },
+            { evalId: "eval-1" },
+          )
+        }
+      >
+        open c1 on its eval
+      </button>
     </div>
   );
 }
@@ -256,11 +268,20 @@ RunAnalyticsStub.propTypes = {
 };
 vi.mock("../RunAnalytics", () => ({ default: RunAnalyticsStub }));
 
-function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
+function CallDrawerStub({
+  task,
+  focusEvalId,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
+  onClose,
+}) {
   if (!task) return null;
   return (
     <div>
       {`drawer:${task.id}`}
+      <span>{`focus:${focusEvalId ?? "-"}`}</span>
       <span>
         {`task:${task.simulationCallType}|${task.status}|${task.scenario}|${task.persona}`}
       </span>
@@ -278,6 +299,7 @@ function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
 }
 CallDrawerStub.propTypes = {
   task: PropTypes.object,
+  focusEvalId: PropTypes.string,
   hasPrev: PropTypes.bool,
   hasNext: PropTypes.bool,
   onPrev: PropTypes.func,
@@ -480,29 +502,67 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(screen.getByText(/Run 3 · agent v2/)).toBeInTheDocument();
-    // The lifecycle remains Completed even when some calls fail.
+    expect(screen.getByText("Run 3")).toBeInTheDocument();
+    // Some calls passed and some failed: a completed run with findings.
     expect(screen.getByText("Completed")).toBeInTheDocument();
-    expect(screen.getByText(/Refund Copilot · 12 tasks/)).toBeInTheDocument();
+    // The agent moved to the second line; the call count is the tab's.
+    expect(screen.getByTestId("run-subline")).toHaveTextContent(
+      /^Refund Copilot · agent v2/,
+    );
     expect(
-      screen.getByRole("tab", { name: /Test runs \(12\)/ }),
+      screen.getByRole("tab", { name: /Scenarios \(12\)/ }),
     ).toBeInTheDocument();
   });
 
   it.each([
-    ["all passed", 12, 0],
-    ["all failed", 0, 12],
-    ["no conclusive outcomes", 0, 0],
-  ])("shows Completed for a completed run with %s", (_, passed, failed) => {
+    ["all passed", 12, 0, "Passed"],
+    ["all failed", 0, 12, "Failed"],
+    ["some failed", 5, 7, "Completed"],
+    ["no conclusive outcomes", 0, 0, "Completed"],
+  ])(
+    "shows the verdict for a finished run with %s",
+    (_, passed, failed, chip) => {
+      useRunDetail.mockReturnValue({
+        identity: IDENTITY,
+        stats: { ...STATS, passed, failed },
+        isLoading: false,
+      });
+      renderDetail();
+      expect(screen.getByText(chip)).toBeInTheDocument();
+      for (const other of ["Passed", "Failed", "Completed"].filter(
+        (c) => c !== chip,
+      ))
+        expect(screen.queryByText(other)).toBeNull();
+    },
+  );
+
+  it("shows a loading state, not Run complete, while the run is pending", () => {
     useRunDetail.mockReturnValue({
-      identity: IDENTITY,
-      stats: { ...STATS, passed, failed },
-      isLoading: false,
+      identity: null,
+      stats: { total: 0, passed: 0, failed: 0, passRate: 0, scores: {} },
+      isLoading: true,
     });
     renderDetail();
-    expect(screen.getByText("Completed")).toBeInTheDocument();
-    expect(screen.queryByText("Passed")).toBeNull();
-    expect(screen.queryByText("Failed")).toBeNull();
+    expect(screen.queryByText("Run complete")).toBeNull();
+    expect(
+      screen.getByRole("status", { name: "Loading run" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an error state with Retry when the run fails to load", () => {
+    const refetch = vi.fn();
+    useRunDetail.mockReturnValue({
+      identity: null,
+      stats: { total: 0, passed: 0, failed: 0, passRate: 0, scores: {} },
+      isLoading: false,
+      error: new Error("boom"),
+      refetch,
+    });
+    renderDetail();
+    expect(screen.queryByText("Run complete")).toBeNull();
+    expect(screen.getByText("Couldn't load this run")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalled();
   });
 
   it("shows Queued for a pending run", () => {
@@ -593,7 +653,7 @@ describe("RunDetail", () => {
       });
       renderDetail();
 
-      for (const name of [/Run evals/, /Export/, /Debug failures/]) {
+      for (const name of [/Run evals/, /Share/, /Debug failures/]) {
         expect(screen.getByRole("button", { name })).toBeDisabled();
       }
       // Stop stays available — it is the one action a live run needs.
@@ -619,7 +679,7 @@ describe("RunDetail", () => {
     renderDetail();
 
     expect(screen.getByRole("button", { name: /Run evals/ })).toBeEnabled();
-    for (const name of [/Export/, /Debug failures/]) {
+    for (const name of [/Share/, /Debug failures/]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
   });
@@ -632,7 +692,7 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    for (const name of [/Run evals/, /Export/, /Debug failures/]) {
+    for (const name of [/Run evals/, /Share/, /Debug failures/]) {
       expect(screen.getByRole("button", { name })).toBeEnabled();
     }
   });
@@ -874,7 +934,7 @@ describe("RunDetail", () => {
     expect(screen.getByText("rerun-off:Starting the run…")).toBeInTheDocument();
   });
 
-  it("has no Run again button when the table has calls to tick", () => {
+  it("has no whole-run re-run button when the table has calls to tick", () => {
     stubTickable = true;
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
@@ -883,7 +943,39 @@ describe("RunDetail", () => {
     });
     renderDetail({ onStartRun: vi.fn() });
 
-    expect(screen.queryByRole("button", { name: /Run again/ })).toBeNull();
+    // With failures, the header's one click re-runs them; the whole run is
+    // behind the caret.
+    expect(screen.queryByRole("button", { name: "Re-run" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Re-run what didn't pass" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers Re-run for the whole run when nothing failed", async () => {
+    stubTickable = true;
+    const user = userEvent.setup();
+    const onStartRun = vi.fn();
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, failed: 0 },
+      isLoading: false,
+    });
+    renderDetail({ onStartRun });
+
+    expect(
+      screen.queryByRole("button", { name: "Re-run what didn't pass" }),
+    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Re-run" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Run as configured now/ }),
+    );
+    expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3, {
+      initialPicks: {
+        agent: undefined,
+        environment: undefined,
+        suite: undefined,
+      },
+    });
   });
 
   it("re-runs the whole run from the header when no call can be ticked", async () => {
@@ -897,7 +989,10 @@ describe("RunDetail", () => {
     });
     renderDetail({ onStartRun });
 
-    await user.click(screen.getByRole("button", { name: /Run again/ }));
+    await user.click(screen.getByRole("button", { name: "Re-run" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Run as configured now/ }),
+    );
     expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3, {
       initialPicks: {
         agent: undefined,
@@ -924,7 +1019,10 @@ describe("RunDetail", () => {
     });
     renderDetail({ onStartRun });
 
-    await user.click(screen.getByRole("button", { name: /Run again/ }));
+    await user.click(screen.getByRole("button", { name: "Re-run" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Run as configured now/ }),
+    );
     expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3, {
       initialPicks: { agent: "a4", environment: "e1", suite: "s2" },
     });
@@ -966,9 +1064,9 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(
-      screen.getByText("Run 3 · agent v4 · env v2 · scenarios v3"),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("run-subline")).toHaveTextContent(
+      "agent v4 · env v2 · scenarios v3",
+    );
     expect(screen.getByText("A4 differs from E2")).toBeInTheDocument();
   });
 
@@ -985,7 +1083,9 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(screen.getByText("Run 3 · agent v2 · env v2")).toBeInTheDocument();
+    expect(screen.getByTestId("run-subline")).toHaveTextContent(
+      "agent v2 · env v2",
+    );
     expect(
       screen.getByText("Agent differs from its environment version"),
     ).toBeInTheDocument();
@@ -999,11 +1099,12 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(screen.getByText("Run 3 · agent v2")).toBeInTheDocument();
+    expect(screen.getByTestId("run-subline")).toHaveTextContent("agent v2");
+    expect(screen.getByTestId("run-subline")).not.toHaveTextContent("env v");
     expect(screen.queryByText(/differs from/)).toBeNull();
   });
 
-  it("keeps the header Run again off while a run is starting", () => {
+  it("keeps the header re-run off while a run is starting", () => {
     stubTickable = false;
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
@@ -1012,7 +1113,7 @@ describe("RunDetail", () => {
     });
     renderDetail({ onStartRun: vi.fn(), runStarting: true });
 
-    expect(screen.getByRole("button", { name: /Run again/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Re-run" })).toBeDisabled();
     stubTickable = true;
   });
 
@@ -1254,6 +1355,21 @@ describe("RunDetail", () => {
     expect(screen.getByText(/ProTeGi · 8 trials/)).toBeInTheDocument();
   });
 
+  it("opens a call from an eval cell on that eval, and a plain open on none", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(
+      screen.getByRole("button", { name: "open c1 on its eval" }),
+    );
+    expect(screen.getByText("drawer:c1")).toBeInTheDocument();
+    expect(screen.getByText("focus:eval-1")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "close call" }));
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    expect(screen.getByText("focus:-")).toBeInTheDocument();
+  });
+
   it("hands the drawer prev/next for a call opened from the table", async () => {
     const user = userEvent.setup();
     const onNext = vi.fn();
@@ -1292,6 +1408,25 @@ describe("RunDetail", () => {
     );
     expect(screen.getByText("drawer:c51")).toBeInTheDocument();
     expect(screen.getByText("active:c51:2")).toBeInTheDocument();
+  });
+
+  it("drops the eval focus when prev/next steps to another call", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+    await user.click(
+      screen.getByRole("button", { name: "open c1 on its eval" }),
+    );
+    expect(screen.getByText("focus:eval-1")).toBeInTheDocument();
+
+    act(() =>
+      navArgs().onStep({
+        task: { id: "c2", simulationCallType: "voice" },
+        source: "table",
+        page: 1,
+      }),
+    );
+    expect(screen.getByText("drawer:c2")).toBeInTheDocument();
+    expect(screen.getByText("focus:-")).toBeInTheDocument();
   });
 
   it("tells the navigation a live run is live", async () => {
@@ -1548,6 +1683,7 @@ describe("RunDetail ?rowId=", () => {
     await user.click(screen.getByRole("tab", { name: "Analytics" }));
     await user.click(screen.getByRole("button", { name: "open from chart" }));
 
-    expect(locationText()).toBe("?rowId=c9|REPLACE");
+    // The open tab rides along in the URL.
+    expect(locationText()).toBe("?tab=analytics&rowId=c9|REPLACE");
   });
 });

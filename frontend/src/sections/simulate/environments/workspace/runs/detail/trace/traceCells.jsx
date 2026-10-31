@@ -9,7 +9,7 @@ import { TestRunExecutionStatus } from "src/sections/test-detail/common";
 
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import { SCORING_STATUS } from "../../runs.constants";
-import { isBad } from "./traceTable.constants";
+import { BAD_WHY, isBad } from "./traceTable.constants";
 
 // MUI's wave shimmer: one 2s cycle, counted from when each bar mounts.
 const SHIMMER_CYCLE_MS = 2000;
@@ -39,31 +39,39 @@ export function CellSkeleton() {
 }
 
 // Numeric metric cell with subtle severity tinting: only bad values turn red and
-// pick up a warning glyph, so the eye lands on them without the column shifting.
-// While the call is still running an empty value shows the loading skeleton,
-// matching the eval cells, rather than a dash.
-export function MetricValue({ metric, value, suffix = "", loading = false }) {
+// pick up a warning glyph, so the eye lands on them without the column shifting;
+// a red value says why on hover. While the call is still running an empty value
+// shows the loading skeleton, matching the eval cells, rather than a dash; a
+// finished call's missing value can say why with `missingTip`.
+export function MetricValue({ metric, value, suffix = "", loading = false, missingTip }) {
   if (value == null && loading) return <CellSkeleton />;
   if (value == null) {
-    return <Typography component="span" sx={{ typography: "s2", color: "text.disabled" }}>-</Typography>;
+    return (
+      <CustomTooltip show={!!missingTip} arrow size="small" title={missingTip || ""}>
+        <Typography component="span" sx={{ typography: "s2", color: "text.disabled" }}>-</Typography>
+      </CustomTooltip>
+    );
   }
   const bad = isBad(metric, typeof value === "number" ? value : Number(value));
+  const why = bad && BAD_WHY[metric] ? BAD_WHY[metric](value) : null;
   return (
-    <Stack direction="row" alignItems="center" spacing={0.625}>
-      {bad && (
-        <Iconify icon="solar:danger-triangle-bold" width={13} sx={{ color: BUILD_TONES.red, flexShrink: 0 }} />
-      )}
-      <Typography
-        component="span"
-        sx={{
-          typography: "s2", fontVariantNumeric: "tabular-nums",
-          color: bad ? BUILD_TONES.red : "text.secondary",
-          fontWeight: bad ? 600 : 400,
-        }}
-      >
-        {typeof value === "number" ? value.toLocaleString() : value}{suffix}
-      </Typography>
-    </Stack>
+    <CustomTooltip show={!!why} arrow size="small" title={why || ""}>
+      <Stack direction="row" alignItems="center" spacing={0.625}>
+        {bad && (
+          <Iconify icon="solar:danger-triangle-bold" width={13} sx={{ color: BUILD_TONES.red, flexShrink: 0 }} />
+        )}
+        <Typography
+          component="span"
+          sx={{
+            typography: "s2", fontVariantNumeric: "tabular-nums",
+            color: bad ? BUILD_TONES.red : "text.secondary",
+            fontWeight: bad ? 600 : 400,
+          }}
+        >
+          {typeof value === "number" ? value.toLocaleString() : value}{suffix}
+        </Typography>
+      </Stack>
+    </CustomTooltip>
   );
 }
 MetricValue.propTypes = {
@@ -71,6 +79,7 @@ MetricValue.propTypes = {
   value: PropTypes.any,
   suffix: PropTypes.string,
   loading: PropTypes.bool,
+  missingTip: PropTypes.string,
 };
 
 // A single eval cell — a score heat-tint with the reason on hover. Choice evals

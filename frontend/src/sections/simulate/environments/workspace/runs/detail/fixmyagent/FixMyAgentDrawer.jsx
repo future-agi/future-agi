@@ -62,6 +62,50 @@ TabButton.propTypes = {
   children: PropTypes.node,
 };
 
+// The diagnosis as a plain-text report: the goals that broke, how, and the
+// one-off issues, with their call counts.
+function reportText(view, { runLabel, failing, measured }) {
+  const calls = (n) => `${n} call${n === 1 ? "" : "s"}`;
+  const lines = [
+    `${runLabel || "Run"} report`,
+    `${failing} failing of ${measured} measured`,
+  ];
+  if (view.goals.length) {
+    lines.push("", "Goals that broke:");
+    view.goals.forEach((goal, i) => {
+      lines.push(
+        `  ${i + 1}. ${goal.label || goal.goal} · ${calls(goal.brokenCallIds?.length ?? 0)}`,
+      );
+      (goal.ways ?? []).forEach((way) =>
+        lines.push(
+          `     - ${way.title}${way.phrase ? `: ${way.phrase}` : ""} (${calls(way.callIds?.length ?? 0)})`,
+        ),
+      );
+    });
+  }
+  if (view.oneOffs.length) {
+    lines.push("", "Seen once:");
+    view.oneOffs.forEach((way) => lines.push(`  - ${way.title}`));
+  }
+  return lines.join("\n");
+}
+
+// Restricted browsers can block a programmatic download; nothing to do then.
+function downloadText(text, filename) {
+  try {
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    // Download blocked.
+  }
+}
+
 // The API refuses a run whose calls are still in flight; anything else is a
 // generic failure — raw backend text is not user copy.
 function refusalMessage(error) {
@@ -75,6 +119,7 @@ export default function FixMyAgentDrawer({
   onClose,
   executionId,
   stats,
+  runLabel,
   onLaunch,
   onViewCalls,
 }) {
@@ -127,10 +172,9 @@ export default function FixMyAgentDrawer({
   // the diagnosis has finished so the very first optimization is reachable here
   // (the Trials tab, where past runs live, is hidden until one exists).
   const selfImprovementOpen = useSelfImprovementOpen();
-  const canLaunch =
-    tab === "diagnosis" &&
-    view.status === "completed" &&
-    view.goals.length + view.oneOffs.length > 0;
+  const diagnosed =
+    view.status === "completed" && view.goals.length + view.oneOffs.length > 0;
+  const canLaunch = tab === "diagnosis" && diagnosed;
 
   return (
     <SideDrawer open={open} onClose={onClose} width={{ xs: "100%", sm: 570 }}>
@@ -175,6 +219,27 @@ export default function FixMyAgentDrawer({
               {failing} failing of {measured} measured
             </Typography>
           </Box>
+          {diagnosed && (
+            <Button
+              size="small"
+              onClick={() =>
+                downloadText(
+                  reportText(view, { runLabel, failing, measured }),
+                  `${(runLabel || "run").toLowerCase().replace(/\s+/g, "-")}-report.txt`,
+                )
+              }
+              startIcon={
+                <Iconify icon="solar:upload-minimalistic-linear" width={14} />
+              }
+              sx={{
+                color: "text.secondary",
+                flexShrink: 0,
+                "&:hover": { bgcolor: "transparent", color: "text.primary" },
+              }}
+            >
+              Export report
+            </Button>
+          )}
         </Stack>
 
         {/* Tab bar — Diagnosis (real) and Imagine (gated). */}
@@ -266,6 +331,8 @@ FixMyAgentDrawer.propTypes = {
     measured: PropTypes.number,
     total: PropTypes.number,
   }),
+  // "Run 3": names the exported report.
+  runLabel: PropTypes.string,
   onLaunch: PropTypes.func,
   onViewCalls: PropTypes.func,
 };

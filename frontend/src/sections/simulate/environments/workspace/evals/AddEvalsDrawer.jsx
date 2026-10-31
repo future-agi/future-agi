@@ -177,7 +177,7 @@ AddEvalsDrawer.propTypes = {
   onAdd: PropTypes.func,
 };
 
-function CompletionBar({ pct, index, total }) {
+export function CompletionBar({ pct, index, total }) {
   return (
     <Stack
       direction="row"

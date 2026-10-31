@@ -5,6 +5,7 @@ import { Box, Stack, Typography, Button, Popover, TextField } from "@mui/materia
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
 
 // Trial presets — 1 is the single-shot; 3/5/8 are the common repeat counts;
 // Custom covers anything else in 1–20. Same set as the header TrialsPicker so
@@ -26,8 +27,7 @@ const RED = BUILD_TONES.red;
  *   [count] ✕  ·  Select all N matching  |  Delete  Repeats[k▾]  ▶ Run (N)
  *   context       escalation (paging)        destructive  dial  PRIMARY
  *
- * Editing is a per-row action (the pencil opens the edit drawer), not a bulk
- * one, so the bar carries no Edit button.
+ * Vel's Must-pass and Edit in chat sit before Delete.
  *
  * `matching` carries our pagination's predicate-selection context so a
  * selection can escalate to "all N matching" without every id being loaded.
@@ -37,6 +37,7 @@ const RED = BUILD_TONES.red;
  */
 export default function SelectionBar({
   count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, onClear, matching,
+  onEditInChat, onMustPass,
 }) {
   const [trialsAnchor, setTrialsAnchor] = useState(null);
   const [customOpen, setCustomOpen] = useState(false);
@@ -168,6 +169,34 @@ export default function SelectionBar({
 
       {/* The actions move as one: on a narrow bar they wrap together, right-aligned. */}
       <Stack direction="row" alignItems="center" spacing={1.25} sx={{ ml: "auto", flexShrink: 0 }}>
+        {/* Vel's marks on the set: must-pass (no API yet) and editing in chat. */}
+        {onMustPass && (
+          <Stack direction="row" alignItems="center" spacing={0.5}>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={onMustPass}
+              startIcon={<Iconify icon="solar:shield-check-linear" width={14} />}
+              sx={{ height: 32, color: "text.primary", borderColor: "divider", typography: "s2" }}
+            >
+              Must-pass
+            </Button>
+            <UiOnlyFlag feature="mustPass" />
+          </Stack>
+        )}
+        {onEditInChat && (
+          <CustomTooltip show arrow size="small" title={`Edit ${count === 1 ? "it" : `these ${count}`} in chat`}>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={onEditInChat}
+              aria-label="Edit in chat"
+              sx={{ height: 32, minWidth: 0, width: 32, px: 0, color: "text.primary", borderColor: "divider" }}
+            >
+              <Iconify icon="solar:pen-new-square-linear" width={16} />
+            </Button>
+          </CustomTooltip>
+        )}
         {/* DESTRUCTIVE — Delete */}
         <CustomTooltip show arrow size="small" title="Delete selected scenarios">
           <Button
@@ -382,6 +411,10 @@ SelectionBar.propTypes = {
   // Why Run is unavailable; shows the button disabled with this on hover.
   runBlockedReason: PropTypes.string,
   onDelete: PropTypes.func.isRequired,
+  // Pins "Edit N scenarios" in the builder chat.
+  onEditInChat: PropTypes.func,
+  // Must-pass on the set; no API yet, so the parent saves nothing.
+  onMustPass: PropTypes.func,
   onClear: PropTypes.func.isRequired,
   // Select-all-matching context from the pagination predicate. Absent → a plain
   // page selection with no escalation. { mode, total, pageCount, onSelectAll }.

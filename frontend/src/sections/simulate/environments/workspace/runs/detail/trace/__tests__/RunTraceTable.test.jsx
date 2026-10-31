@@ -177,12 +177,13 @@ describe("RunTraceTable", () => {
       "4.5",
       "250ms",
       "1,200",
-      "75%",
       "Avg · 8 scored",
       "Total",
     ]) {
       expect(screen.getByText(value)).toBeInTheDocument();
     }
+    // The eval's mean, and the group's pass rate (6 of 8) on its label line.
+    expect(screen.getAllByText("75%")).toHaveLength(2);
   });
 
   beforeEach(() => {
@@ -207,16 +208,17 @@ describe("RunTraceTable", () => {
     });
   });
 
+  // The chips use Vel's names (Failing, Passing); the row keeps the outcome.
   it.each([
-    ["queued", "Queued"],
-    ["in_progress", "In progress"],
-    ["passed", "Passed"],
-    ["failed", "Failed"],
-    ["inconclusive", "Inconclusive"],
-    ["error", "Error"],
+    ["queued", "Queued", "Queued"],
+    ["in_progress", "In progress", "In progress"],
+    ["passed", "Passed", "Passing"],
+    ["failed", "Failed", "Failing"],
+    ["inconclusive", "Inconclusive", "Inconclusive"],
+    ["error", "Error", "Error"],
   ])(
-    "uses the %s outcome for both row labels and filtering",
-    async (outcome, label) => {
+    "uses the %s outcome for the row label and its chip's filter",
+    async (outcome, rowLabel, chipLabel) => {
       const user = userEvent.setup();
       useRunCalls.mockReturnValue({
         tasks: [{ ...TASKS[0], status: outcome }],
@@ -226,11 +228,17 @@ describe("RunTraceTable", () => {
         statusCounts: { [outcome]: 1 },
         count: 1,
         totalPages: 1,
+        // Queued and In progress chips only show while the run is live.
+        runActive: true,
         isLoading: false,
       });
       renderTable({ activeCallId: TASKS[0].id });
-      expect(screen.getAllByText(label)).toHaveLength(2);
-      await user.click(screen.getByRole("button", { name: label }));
+      expect(
+        within(document.querySelector('tr[aria-selected="true"]')).getByText(
+          rowLabel,
+        ),
+      ).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: chipLabel }));
       expect(useRunCalls).toHaveBeenLastCalledWith(
         "ex1",
         expect.objectContaining({ filters: { status: [outcome] } }),
@@ -252,7 +260,7 @@ describe("RunTraceTable", () => {
     it("leaves the other groups closed after opening the only group a filter showed", async () => {
       const user = userEvent.setup();
       renderTable();
-      await user.click(screen.getByRole("button", { name: "Failed" }));
+      await user.click(screen.getByRole("button", { name: "Failing" }));
       await user.click(header("Escalate to a human"));
       await user.click(screen.getByRole("button", { name: /^All/ }));
 
@@ -305,7 +313,7 @@ describe("RunTraceTable", () => {
       expect(persona.escalate()).toBeNull();
 
       loading = true;
-      await user.click(screen.getByRole("button", { name: "Failed" }));
+      await user.click(screen.getByRole("button", { name: "Failing" }));
       expect(screen.getByText("Loading calls…")).toBeInTheDocument();
       loading = false;
       rerender(
@@ -356,9 +364,15 @@ describe("RunTraceTable", () => {
     expect(
       screen.getByText("The Hungry Customer in a Rush"),
     ).toBeInTheDocument();
-    expect(screen.getByText("US male")).toBeInTheDocument();
-    expect(screen.getByText("34")).toBeInTheDocument();
-    expect(screen.getByText("impatient, in a hurry")).toBeInTheDocument();
+    // One line per persona (R20); the traits moved to its hover card.
+    expect(screen.getByText("34 · US male")).toBeInTheDocument();
+    await user.hover(screen.getByText("The Hungry Customer in a Rush"));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "impatient, in a hurry",
+    );
+    // Met sub-goals sit behind Show all.
+    for (const button of screen.getAllByRole("button", { name: "Show all" }))
+      await user.click(button);
     for (const [name, verdict] of [
       ["Identity verified", "Passed"],
       ["Refund created", "Passed"],
@@ -408,7 +422,7 @@ describe("RunTraceTable", () => {
       groupBy: "status",
     });
 
-    await user.click(screen.getByRole("button", { name: "Failed" }));
+    await user.click(screen.getByRole("button", { name: "Failing" }));
     expect(onQueryChange).toHaveBeenLastCalledWith({
       ...base,
       groupBy: "status",
@@ -466,7 +480,7 @@ describe("RunTraceTable", () => {
     expect(screen.getByText("Refund a double charge")).toBeInTheDocument();
     // The chip is translated into an API filter; the server result replaces
     // the rendered rows.
-    await user.click(screen.getByRole("button", { name: "Failed" }));
+    await user.click(screen.getByRole("button", { name: "Failing" }));
 
     expect(screen.queryByText("Refund a double charge")).toBeNull();
     expect(screen.getByText("Escalate to a human")).toBeInTheDocument();
@@ -503,7 +517,7 @@ describe("RunTraceTable", () => {
     expect(screen.getByText("Angry caller")).toBeInTheDocument();
 
     loading = true;
-    await user.click(screen.getByRole("button", { name: "Failed" }));
+    await user.click(screen.getByRole("button", { name: "Failing" }));
     expect(screen.getByText("Loading calls…")).toBeInTheDocument();
 
     loading = false;
@@ -568,7 +582,7 @@ describe("RunTraceTable", () => {
     it("leaves other groups closed after opening the only group a filter showed", async () => {
       const user = userEvent.setup();
       renderTable();
-      await user.click(chip("Failed"));
+      await user.click(chip("Failing"));
       await user.click(header("Escalate to a human"));
       await user.click(chip(/^All/));
 
@@ -580,7 +594,7 @@ describe("RunTraceTable", () => {
     it("opens groups from another filter after Expand all", async () => {
       const user = userEvent.setup();
       renderTable();
-      await user.click(chip("Failed"));
+      await user.click(chip("Failing"));
       await user.click(expandAll());
       await user.click(chip(/^All/));
 
@@ -604,7 +618,7 @@ describe("RunTraceTable", () => {
     it("keeps groups seen under Expand all open after one is closed elsewhere", async () => {
       const user = userEvent.setup();
       renderTable();
-      await user.click(chip("Failed"));
+      await user.click(chip("Failing"));
       await user.click(expandAll());
       await user.click(chip(/^All/));
       await user.click(header("Refund a double charge"));
@@ -686,7 +700,7 @@ describe("RunTraceTable", () => {
     it("keeps groups first seen under Expand all open after one closes on another filter", async () => {
       const user = userEvent.setup();
       renderTable();
-      await user.click(chip("Failed"));
+      await user.click(chip("Failing"));
       await user.click(expandAll());
       await user.click(chip(/^All/));
       await user.click(chip(/^Error/));
@@ -721,7 +735,7 @@ describe("RunTraceTable", () => {
       expect(persona.escalate()).toBeNull();
 
       loading = true;
-      await user.click(chip("Failed"));
+      await user.click(chip("Failing"));
       expect(screen.getByText("Loading calls…")).toBeInTheDocument();
 
       loading = false;
@@ -734,7 +748,7 @@ describe("RunTraceTable", () => {
       renderTable();
       await user.click(expandAll());
       await user.click(expandAll());
-      await user.click(chip("Failed"));
+      await user.click(chip("Failing"));
 
       expect(persona.escalate()).toBeNull();
     });
@@ -871,7 +885,7 @@ describe("RunTraceTable", () => {
     const user = userEvent.setup();
     renderTable({ initialFilters: { callExecutionId: ["t1", "t2"] } });
 
-    await user.click(screen.getByRole("button", { name: "Failed" }));
+    await user.click(screen.getByRole("button", { name: "Failing" }));
 
     expect(useRunCalls).toHaveBeenLastCalledWith(
       "ex1",
@@ -911,7 +925,7 @@ describe("RunTraceTable", () => {
     renderTable();
 
     expect(
-      within(screen.getByRole("button", { name: "Failed" })).getByText("7"),
+      within(screen.getByRole("button", { name: "Failing" })).getByText("7"),
     ).toBeInTheDocument();
     expect(
       within(screen.getByRole("button", { name: "All" })).getByText("9"),
@@ -945,14 +959,14 @@ describe("RunTraceTable", () => {
   });
 
   it.each([
-    [{ status: ["failed"] }, "Failed"],
+    [{ status: ["failed"] }, "Failing"],
     [{}, "All"],
     [{ status: ["failed", "error"] }, null],
     [{ status_not: ["failed"] }, null],
   ])("lights the chip that alone describes %j", (initialFilters, lit) => {
     renderTable({ initialFilters });
 
-    const pressed = ["All", "Failed", "Error", "Passed"].filter(
+    const pressed = ["All", "Failing", "Error", "Passing"].filter(
       (name) =>
         screen.getByRole("button", { name }).getAttribute("aria-pressed") ===
         "true",
@@ -964,7 +978,7 @@ describe("RunTraceTable", () => {
     const user = userEvent.setup();
     renderTable();
 
-    await user.click(screen.getByRole("button", { name: "Failed" }));
+    await user.click(screen.getByRole("button", { name: "Failing" }));
     const filterButton = screen.getByRole("button", { name: /Filter/ });
     expect(filterButton).toHaveTextContent("1");
 
@@ -1166,7 +1180,7 @@ describe("RunTraceTable", () => {
       renderTable();
       const button = screen.getByRole("button", { name: /Columns/ });
       const before = button.textContent;
-      await user.click(screen.getByRole("button", { name: /Failed/ }));
+      await user.click(screen.getByRole("button", { name: /Failing/ }));
 
       expect(button.textContent).toBe(before);
       await openPicker(user);
@@ -1293,14 +1307,17 @@ describe("RunTraceTable", () => {
       return VOICE_ONLY.map((name) => screen.queryByRole("menuitem", { name }));
     };
 
-    it("shows the columns and picker entries on a voice run", async () => {
+    // Both start hidden (R18); a voice run offers them in the picker.
+    it("offers the columns in the picker on a voice run, and shows them once ticked", async () => {
       const user = userEvent.setup();
       withRun("voice", "voice");
       renderTable();
+      headers().forEach((h) => expect(h).toBeNull());
+      const items = await pickerItems(user);
+      items.forEach((item) => expect(item).toBeInTheDocument());
+      for (const item of items) await user.click(item);
+      await user.keyboard("{Escape}");
       headers().forEach((h) => expect(h).toBeInTheDocument());
-      (await pickerItems(user)).forEach((item) =>
-        expect(item).toBeInTheDocument(),
-      );
     });
 
     it("hides the columns and picker entries on a chat run", async () => {
@@ -1320,10 +1337,13 @@ describe("RunTraceTable", () => {
       headers().forEach((h) => expect(h).toBeNull());
     });
 
-    it("keeps the column when the run's type and calls are unknown", () => {
+    it("keeps the picker entries when the run's type and calls are unknown", async () => {
+      const user = userEvent.setup();
       withRun(null, undefined);
       renderTable();
-      headers().forEach((h) => expect(h).toBeInTheDocument());
+      (await pickerItems(user)).forEach((item) =>
+        expect(item).toBeInTheDocument(),
+      );
     });
   });
 
@@ -1344,7 +1364,7 @@ describe("RunTraceTable", () => {
     expect(screen.getAllByText("Error")).not.toHaveLength(0);
   });
 
-  it("offers the Scenarios tab's axes plus Status and requests the chosen one", async () => {
+  it("offers Vel's axes, the Scenarios tab's among them, and requests the chosen one", async () => {
     const user = userEvent.setup();
     renderTable();
 
@@ -1358,11 +1378,16 @@ describe("RunTraceTable", () => {
     ).toEqual([
       "Use case",
       "Sub-goal",
+      "Persona",
+      "Rule brokenRule broken soon",
+      "Failure sub-goalFailure sub-goal soon",
+      "Failure patternFailure pattern soon",
+      "Status",
+      "Verdict causeVerdict cause soon",
       "Accent",
       "Age",
       "Attack",
       "Task",
-      "Status",
       "No grouping",
     ]);
     await user.click(screen.getByRole("menuitem", { name: "Task" }));

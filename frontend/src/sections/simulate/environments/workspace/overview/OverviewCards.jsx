@@ -4,7 +4,7 @@ import { Box, Stack, Typography, Button } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import SectionCard from "../../components/SectionCard";
-import MockBadge from "../../components/MockBadge";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { ENV_SHAPE, OVERVIEW_COPY, ruleRowsFor } from "./overview.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -65,7 +65,7 @@ export function HardRulesCard({ env }) {
     <SectionCard
       title={OVERVIEW_COPY.hardRulesTitle}
       subtitle={OVERVIEW_COPY.hardRulesSubtitle}
-      action={env.provenance?.rules === "mock" ? <MockBadge /> : null}
+      action={env.provenance?.rules === "mock" ? <UiOnlyFlag /> : null}
     >
       <Stack sx={{ p: 2.5 }} spacing={1.25}>
         {rules.length === 0 && (

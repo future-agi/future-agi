@@ -1,99 +1,131 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { enqueueSnackbar } from "notistack";
 import {
-  Box, Stack, Typography, Button, TextField, MenuItem, Checkbox, ListItemText, CircularProgress,
+  Box,
+  Stack,
+  Typography,
+  Button,
+  CircularProgress,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { RUNS_PAGE_SIZE } from "src/api/simulate-environments/runs";
+import { ALL_RUNS_CAP } from "src/api/simulate-environments/useAllRuns";
+import { paths } from "src/routes/paths";
 import SectionCard from "../../../components/SectionCard";
+import SoonChip from "../../../components/SoonChip";
+import { useEnvironmentsStore } from "../../../store/useEnvironmentsStore";
+import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
+import { UI_ONLY_SAVED } from "../../gaps/NeedsInputButton";
 import { useRunsSummary } from "./useRunsSummary";
-import SummaryGraph from "./SummaryGraph";
-import SummaryLegend from "./SummaryLegend";
+import { useRunsOverview } from "./useRunsOverview";
+import RunsHeadline from "./RunsHeadline";
+import EvalCheckChips from "./EvalCheckChips";
+import PassRateTrend from "./PassRateTrend";
 import SummaryTable from "./SummaryTable";
-import { countCoveredScenarios } from "./summaryData";
+import AgentVersionScope from "./AgentVersionScope";
+import RunsSelectionBar from "./RunsSelectionBar";
+import WinnerDrawer from "./WinnerDrawer";
+import { countCoveredScenarios, deriveEvals } from "./summaryData";
 import RunCompare from "./RunCompare";
-import { COMPARE_COPY } from "../../workspace.constants";
 
+// The in-place two-run compare from the versioning work, hidden until its
+// place in the product is decided; the compare page serves ticked runs.
 const RUN_COMPARE_ENABLED = false;
 
-// The Runs tab: every run of the environment as one summary — the eval-score
-// trend graph over the runs table. With versioning on, two finished runs can
-// be ticked and compared. Choosing a winner is a later phase,
-// surfaced as "coming soon" so the shell matches the design without faking the
-// behaviour.
-// Title, legend, graph and the runs bar (~440px) plus ~320px of table rows.
-const MIN_SUMMARY_PX = 760;
-// How many eval lines the graph draws before the user picks their own.
-const DEFAULT_SHOWN_EVALS = 5;
-const GRAPH_RUN_OPTIONS = [1, 2, 3, 4, 5];
-const DEFAULT_GRAPH_RUNS = 1;
+// The Runs tab: the agent-version scope, the latest pass rate and the pass
+// rate across every run, with the evals as chips that draw themselves on the
+// line, over the runs table. Ticked runs compare on the compare page; one
+// can be the baseline every other row is read against (kept per environment
+// in the workspace store, since the API has no baseline yet). Choose winner
+// ranks the runs; saving it, like deleting a run, has no API yet.
+// The scope, the overview card and the runs bar (~420px) plus ~320px of rows.
+const MIN_SUMMARY_PX = 800;
+
+// The compare page's URL for these run ids: the earlier run first, so the
+// change reads from it, and the baseline first when it is one of them.
+export function compareUrl(envId, selected, baselineId) {
+  const ids = [...selected]
+    .sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0))
+    .map((r) => r.id);
+  const ordered = ids.includes(baselineId)
+    ? [baselineId, ...ids.filter((id) => id !== baselineId)]
+    : ids;
+  return `${paths.dashboard.simulate.environments.compare(envId)}?runs=${ordered.join(",")}`;
+}
 
 export default function RunsSummary({
   env,
   envState,
   scenarioCount: scenarioCountProp,
   onOpenRun,
-  onGo,
 }) {
+  const navigate = useNavigate();
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(RUNS_PAGE_SIZE);
-  const [graphRuns, setGraphRuns] = useState(DEFAULT_GRAPH_RUNS);
-  // The selected rows themselves, so a selection survives paging.
+  const [focusId, setFocusId] = useState(null);
+  // The agent version in scope; null for all.
+  const [scope, setScope] = useState(null);
+  // Ticked summary rows, kept whole so a tick survives a page change.
   const [selected, setSelected] = useState([]);
+  const [pickingWinner, setPickingWinner] = useState(false);
   const [comparing, setComparing] = useState(false);
   // TODO: compare is hidden until its place in the product is decided.
   const canCompare = RUN_COMPARE_ENABLED && !!env?.versioning?.enabled;
-  const selectedIds = selected.map((r) => r.executionId);
-  const canSelect = (row) =>
-    selected.length < 2 && !!row.executionId && row.runState === "finished";
-  const toggleSelect = (row) =>
-    setSelected((prev) =>
-      prev.some((r) => r.executionId === row.executionId)
-        ? prev.filter((r) => r.executionId !== row.executionId)
-        : [...prev, row],
-    );
-  const {
-    rows,
-    rowsChrono,
-    evals,
-    series,
-    count,
-    coveredScenarioCount,
-    isLoading,
-  } = useRunsSummary(env, envState, { page, pageSize }, graphRuns);
-  // A ticked run on this page reads its latest state: one no longer finished
-  // (re-graded, say) can't be compared.
-  const live = selected.map(
-    (s) => rows.find((r) => r.executionId === s.executionId) ?? s,
+  const [addingEvals, setAddingEvals] = useState(false);
+  const baselineId = useEnvironmentsStore(
+    (s) => s.byEnv[env.id]?.baselineRunId ?? null,
   );
-  const comparable =
-    live.length === 2 && live.every((r) => r.runState === "finished");
-  // The newer run is the one compared; the older is what it is compared with.
-  const [current, against] = [...live].sort((a, b) => b.ordinal - a.ordinal);
+  const patchEnvState = useEnvironmentsStore((s) => s.patchEnvState);
+
+  const { rows, evals, count, coveredScenarioCount, isLoading } =
+    useRunsSummary(env, envState, { page, pageSize }, { scope });
+  const overview = useRunsOverview(env, envState, focusId, rows, {
+    scope,
+    scoreAll: pickingWinner,
+    baselineId,
+  });
+  const focusEval = overview.evals.find((e) => e.id === focusId) || null;
+  const winnerEvals = useMemo(
+    () => deriveEvals([...overview.rows, ...rows]),
+    [overview.rows, rows],
+  );
   // The server counts over every run of the environment; the page-local
   // fallback only serves mock runs and environments with no run-test.
   const scenarioCount =
     coveredScenarioCount ??
     countCoveredScenarios(rows, scenarioCountProp ?? envState.scenarios?.length ?? 0);
+  const baseline = overview.baseline;
+  // The headline and chips read the latest run against the chosen baseline,
+  // or the run before it when there's none (or the baseline is the latest).
+  const reference =
+    baseline && baseline.id !== overview.latest?.id ? baseline : overview.previous;
 
-  // Which eval lines to draw. Until the user picks, the first five; the last
-  // one cannot be unticked (an empty chart reads as a bug, not a choice).
-  const [pickedIds, setPickedIds] = useState(null);
-  const [highlightedId, setHighlightedId] = useState(null);
-  const shown = pickedIds
-    ? evals.filter((e) => pickedIds.includes(e.id))
-    : evals.slice(0, DEFAULT_SHOWN_EVALS);
-  const shownSeries = series.filter((s) => shown.some((e) => e.id === s.id));
-  const categories = rowsChrono.map((r, i) =>
-    i === rowsChrono.length - 1 ? `${r.label} · latest` : r.label,
-  );
+  // A ticked run on this page reads its latest state: one no longer finished
+  // (re-graded, say) can't be compared in place.
+  const live = selected.map((s) => rows.find((r) => r.id === s.id) ?? s);
+  const comparable =
+    live.length === 2 && live.every((r) => r.runState === "finished");
+  // The newer run is the one compared; the older is what it is compared with.
+  const [current, against] = [...live].sort((a, b) => b.ordinal - a.ordinal);
 
-  const toggleEval = (ids) => {
-    // ids = the currently-checked set from the multi-select.
-    if (!ids.length) return; // keep at least one line
-    setPickedIds(ids);
+  const toggle = (row) =>
+    setSelected((prev) =>
+      prev.some((r) => r.id === row.id)
+        ? prev.filter((r) => r.id !== row.id)
+        : [...prev, row],
+    );
+  // A tick on a run the new scope hides would act on a row nobody can see.
+  const pickScope = (next) => {
+    setScope(next);
+    setPage(0);
+    setSelected([]);
+  };
+  const setBaseline = (id) => {
+    patchEnvState(env.id, { baselineRunId: id });
+    setSelected([]);
   };
 
   // A deep link to ?tab=runs keeps the tab while the runs load; show that
@@ -107,10 +139,10 @@ export default function RunsSummary({
   }
 
   return (
-    // The tab's height: the header, legend and graph keep their size and the
-    // runs table takes the rest, scrolling on its own, so the graph stays in
-    // view however many runs there are. On a short panel it stops shrinking at
-    // room for the graph plus a few table rows, and the panel scrolls instead.
+    // The tab's height: the overview keeps its size and the runs table takes
+    // the rest, scrolling on its own, so the chart stays in view however many
+    // runs there are. On a short panel it stops shrinking at room for the
+    // chart plus a few table rows, and the panel scrolls instead.
     <Box
       sx={{
         p: 2,
@@ -119,112 +151,173 @@ export default function RunsSummary({
         flexDirection: "column",
       }}
     >
-      {/* The graph's tooltip grows down past the chart; a clipping card
-          would cut it off. */}
-      <SectionCard
-        sx={{ overflow: "visible", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
-      >
-        {/* eval filter + legend */}
-        <Stack direction="row" alignItems="center" spacing={2} sx={{ px: 2.5, pt: 1.5, pb: 0.5, flexShrink: 0 }}>
-          <TextField
-            select size="small"
-            value={graphRuns}
-            onChange={(e) => setGraphRuns(Number(e.target.value))}
-            inputProps={{ "aria-label": "Runs in graph" }}
-            sx={{ width: 150, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2", py: 0.5 } }}
-          >
-            {GRAPH_RUN_OPTIONS.map((n) => (
-              <MenuItem key={n} value={n} sx={{ typography: "s2", py: 0.5 }}>
-                Latest {n} {n === 1 ? "run" : "runs"}
-              </MenuItem>
-            ))}
-          </TextField>
-          {evals.length > 0 && (
-            <TextField
-              select size="small"
-              value={shown.map((e) => e.id)}
-              onChange={(e) => toggleEval(e.target.value)}
-              SelectProps={{
-                multiple: true,
-                renderValue: (ids) =>
-                  ids.length === evals.length
-                    ? `All ${evals.length} evals`
-                    : `${ids.length} of ${evals.length} evals`,
-              }}
-              sx={{ width: 200, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2", py: 0.5 } }}
-            >
-              {evals.map((e) => {
-                const on = shown.some((x) => x.id === e.id);
-                return (
-                  <MenuItem key={e.id} value={e.id} sx={{ typography: "s2", py: 0.5 }}>
-                    <Checkbox size="small" checked={on} disabled={on && shown.length === 1} sx={{ p: 0.5, mr: 0.75 }} />
-                    <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: e.color, mr: 1, flexShrink: 0 }} />
-                    <ListItemText primaryTypographyProps={{ typography: "s2" }} primary={e.name} />
-                  </MenuItem>
-                );
-              })}
-            </TextField>
-          )}
-          <SummaryLegend evals={shown} onHighlight={setHighlightedId} />
-        </Stack>
-
-        <SummaryGraph categories={categories} series={shownSeries} highlightedId={highlightedId} />
-
+      <AgentVersionScope
+        runs={overview.runs}
+        value={scope}
+        onChange={pickScope}
+        shown={count}
+      />
+      <SectionCard sx={{ mb: 2, flexShrink: 0 }}>
         <Stack
-          direction="row" alignItems="center" spacing={1}
-          sx={{ px: 2.5, py: 1, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          direction="row"
+          alignItems="center"
+          useFlexGap
+          spacing={2}
+          sx={{ px: 2.5, py: 1.5, flexWrap: "wrap", rowGap: 1 }}
         >
-          <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}>
-            Runs ({count})
-          </Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
-            across {scenarioCount} {scenarioCount === 1 ? "scenario" : "scenarios"}
-          </Typography>
-          {canCompare && (
-            <>
-              <Typography sx={{ typography: "s2", color: "text.secondary", flexShrink: 0 }}>
-                {selected.length ? COMPARE_COPY.picked(selected.length) : COMPARE_COPY.pick}
-              </Typography>
-              {selected.length > 0 && (
-                <Button size="small" onClick={() => setSelected([])} sx={{ typography: "s2", flexShrink: 0 }}>
-                  {COMPARE_COPY.clear}
-                </Button>
-              )}
-              <Button
-                variant="outlined" size="small" disabled={!comparable}
-                onClick={() => setComparing(true)}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0 }}
-              >
-                {COMPARE_COPY.compare}
-              </Button>
-            </>
+          <RunsHeadline latest={overview.latest} previous={reference} />
+          {overview.evals.length > 0 && (
+            <EvalCheckChips
+              evals={overview.evals}
+              latest={overview.latest}
+              previous={reference}
+              focusId={focusId}
+              onFocus={setFocusId}
+            />
           )}
-          <Button
-            variant="outlined" size="small" onClick={() => onGo?.("evals")}
-            startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-            sx={{ typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0 }}
-          >
-            Add Evals
-          </Button>
-          <CustomTooltip show arrow size="small" title="Choosing a winner is coming soon">
-            <span>
+        </Stack>
+        <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+          <PassRateTrend
+            rows={overview.rows}
+            focusEval={focusEval}
+            capped={overview.capped}
+            cap={ALL_RUNS_CAP}
+            isLoading={overview.isLoading}
+            onOpenRun={onOpenRun}
+          />
+        </Box>
+      </SectionCard>
+
+      <SectionCard
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={2}
+          sx={{ px: 2.5, py: 1, flexShrink: 0, minHeight: 52 }}
+        >
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Stack direction="row" alignItems="baseline" spacing={1}>
+              <Typography
+                sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}
+              >
+                Runs ({count})
+              </Typography>
+              <Typography
+                noWrap
+                sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
+              >
+                across {scenarioCount}{" "}
+                {scenarioCount === 1 ? "scenario" : "scenarios"}
+              </Typography>
+            </Stack>
+            {baseline ? (
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <Typography
+                  noWrap
+                  sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }}
+                >
+                  Measured against{" "}
+                  <Box
+                    component="span"
+                    sx={{
+                      color: "text.primary",
+                      fontWeight: "fontWeightSemiBold",
+                    }}
+                  >
+                    {baseline.agentVersion
+                      ? `${baseline.label} · agent ${baseline.agentVersion}`
+                      : baseline.label}
+                  </Box>
+                  . Rates in points, everything else in percent.
+                </Typography>
+                <SoonChip
+                  label="Noise" detail="How much a pass rate moves between identical runs, so a small change can be told apart from chance."
+                  what="The noise band between two runs"
+                  size="tiny"
+                />
+              </Stack>
+            ) : (
+              <Typography
+                noWrap
+                sx={{ typography: "s3", color: "text.subtitle" }}
+              >
+                Select two or more to compare them scenario by scenario
+              </Typography>
+            )}
+          </Box>
+          {selected.length > 0 ? (
+            <RunsSelectionBar
+              selected={selected}
+              baselineId={baselineId}
+              onBaseline={setBaseline}
+              onCompare={() =>
+                canCompare && comparable
+                  ? setComparing(true)
+                  : navigate(compareUrl(env.id, selected, baselineId))
+              }
+              onClear={() => setSelected([])}
+            />
+          ) : (
+            <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
               <Button
-                variant="outlined" size="small" disabled
-                startIcon={<Iconify icon="solar:cup-star-linear" width={15} />}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+                variant="outlined"
+                color="inherit"
+                size="small"
+                onClick={() => setAddingEvals(true)}
+                startIcon={
+                  <Iconify icon="solar:add-circle-linear" width={16} />
+                }
+                sx={{ borderColor: "divider" }}
+              >
+                Add Evals
+              </Button>
+              <Button
+                variant="outlined"
+                color="inherit"
+                size="small"
+                onClick={() => setPickingWinner(true)}
+                startIcon={<Iconify icon="solar:cup-star-bold" width={16} />}
+                sx={{ borderColor: "divider" }}
               >
                 Choose winner
               </Button>
-            </span>
-          </CustomTooltip>
+              {baseline && (
+                <Button
+                  size="small"
+                  onClick={() => setBaseline(null)}
+                  startIcon={<Iconify icon="solar:close-linear" width={14} />}
+                  sx={{ color: "primary.main" }}
+                >
+                  Remove baseline
+                </Button>
+              )}
+            </Stack>
+          )}
         </Stack>
 
         <SummaryTable
-          rows={rows} evals={evals} onOpenRun={onOpenRun}
-          {...(canCompare && { selectedIds, canSelect, onToggleSelect: toggleSelect })}
+          rows={rows}
+          evals={evals}
+          onOpenRun={onOpenRun}
+          selectedIds={selected.map((r) => r.id)}
+          onToggle={toggle}
+          baseline={baseline}
         />
         {count > RUNS_PAGE_SIZE && (
-          <Box sx={{ flexShrink: 0, borderTop: "1px solid", borderColor: "divider" }}>
+          <Box
+            sx={{
+              flexShrink: 0,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
             <DataTablePagination
               page={page}
               pageSize={pageSize}
@@ -238,10 +331,33 @@ export default function RunsSummary({
           </Box>
         )}
       </SectionCard>
-      {selected.length === 2 && (
+
+      <WinnerDrawer
+        open={pickingWinner}
+        onClose={() => setPickingWinner(false)}
+        rows={overview.rows}
+        evals={winnerEvals}
+        onApply={() => {
+          setPickingWinner(false);
+          enqueueSnackbar(UI_ONLY_SAVED, { variant: "info" });
+        }}
+      />
+      {/* Opened in place; mounted only while open, since it reads the
+          environment and the eval catalogue as it mounts. */}
+      {addingEvals && (
+        <AddEvaluationDrawer
+          open
+          env={env}
+          onClose={() => setAddingEvals(false)}
+        />
+      )}
+      {canCompare && comparable && (
         <RunCompare
-          open={comparing} onClose={() => setComparing(false)}
-          env={env} current={current} against={against}
+          open={comparing}
+          onClose={() => setComparing(false)}
+          env={env}
+          current={current}
+          against={against}
         />
       )}
     </Box>
@@ -249,9 +365,12 @@ export default function RunsSummary({
 }
 
 RunsSummary.propTypes = {
-  env: PropTypes.shape({ id: PropTypes.string, name: PropTypes.string, versioning: PropTypes.object }).isRequired,
+  env: PropTypes.shape({
+    id: PropTypes.string,
+    name: PropTypes.string,
+    versioning: PropTypes.object,
+  }).isRequired,
   envState: PropTypes.shape({ scenarios: PropTypes.array }).isRequired,
   scenarioCount: PropTypes.number,
   onOpenRun: PropTypes.func,
-  onGo: PropTypes.func,
 };

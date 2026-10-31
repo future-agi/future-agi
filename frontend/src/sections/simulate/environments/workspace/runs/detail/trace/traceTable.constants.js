@@ -6,11 +6,12 @@ import { STATUS_META } from "../../runs.constants";
 // the table body and the tests read one source of truth.
 
 /*
-  Column picker vocabulary. `defaultOn` is what shows on first load: the run's
-  own outcome (Run details), the differentiating persona and the system metrics
-  read a run at a glance; the restated Scenario column starts hidden. The run's
-  evaluations aren't listed here: they come from the calls API, and the picker
-  offers each one on its own.
+  Column picker vocabulary. `defaultOn` is what shows on first load, as in
+  Vel's table: the run's own outcome (Run details), the persona and the system
+  metrics read a run at a glance. The restated Scenario column, the scenario's
+  other details and the interruption metrics start hidden and stay in the
+  picker. The run's evaluations aren't listed here: they come from the calls
+  API, and the picker offers each one on its own.
 */
 export const TRACE_COLUMNS = [
   {
@@ -30,7 +31,7 @@ export const TRACE_COLUMNS = [
   {
     key: "scenario",
     label: "Scenario",
-    defaultOn: true,
+    defaultOn: false,
     width: 420,
     group: "Scenario details",
   },
@@ -86,14 +87,14 @@ export const TRACE_COLUMNS = [
   {
     key: "stopLatency",
     label: "Stop latency",
-    defaultOn: true,
+    defaultOn: false,
     width: 140,
     group: "System metrics",
   },
   {
     key: "aiInterruptions",
     label: "AI interruptions",
-    defaultOn: true,
+    defaultOn: false,
     width: 150,
     group: "System metrics",
   },
@@ -140,29 +141,141 @@ export const isBad = (metric, value) => {
   return spec.direction === "lowIsBad" ? value <= spec.bad : value >= spec.bad;
 };
 
+// Why a value turned red: the threshold, said plainly.
+export const BAD_WHY = {
+  csat: (v) =>
+    `CSAT ${v} of 10. ${METRIC_THRESHOLDS.csat.bad} or below is an unhappy customer.`,
+  turns: (v) =>
+    `${v} turns. ${METRIC_THRESHOLDS.turns.bad} or more is a long conversation for one task.`,
+  latency: (v) =>
+    `${v}ms average reply. ${METRIC_THRESHOLDS.latency.bad}ms or slower feels laggy.`,
+  tokens: (v) =>
+    `${Number(v).toLocaleString()} tokens. ${METRIC_THRESHOLDS.tokens.bad.toLocaleString()} or more is among the heaviest.`,
+};
+
 /*
-  Group-by axes, keyed by the server's `group_by` value: the Scenarios tab's
-  axes (read from each call's authored scenario) plus the run's own status.
+  Group-by axes in Vel's order, keyed by the `group_by` value sent: the
+  Scenarios tab's axes (read from each call's authored scenario), the run's own
+  status, the persona, and Vel's failure axes. `soon` marks an axis the API
+  doesn't group by yet; it is still offered and sent, and a server that refuses
+  it falls back to the default with a note. Vel's Member axis is left out: it
+  only applies to an agent made of several agents, which runs don't record.
 */
+export const DEFAULT_GROUP_BY = "goal";
 export const GROUPINGS = [
   { id: "goal", label: "Use case", icon: "solar:target-linear" },
   { id: "sub_goal", label: "Sub-goal", icon: "solar:map-linear" },
+  { id: "persona", label: "Persona", icon: "solar:user-id-linear" },
+  {
+    id: "rule",
+    label: "Rule broken",
+    icon: "solar:shield-cross-linear",
+    soon: "Grouping by the rule a call broke",
+  },
+  {
+    id: "failure_sub_goal",
+    label: "Failure sub-goal",
+    icon: "solar:close-circle-linear",
+    soon: "Grouping by the sub-goal a call failed on",
+  },
+  {
+    id: "pattern",
+    label: "Failure pattern",
+    icon: "solar:danger-triangle-linear",
+    soon: "Grouping by failure pattern",
+  },
+  { id: "status", label: "Status", icon: "solar:check-circle-linear" },
+  {
+    id: "cause",
+    label: "Verdict cause",
+    icon: "solar:tag-linear",
+    soon: "Grouping by verdict cause",
+  },
   { id: "accent", label: "Accent", icon: "solar:soundwave-linear" },
   { id: "age", label: "Age", icon: "solar:user-rounded-linear" },
   { id: "attack", label: "Attack", icon: "solar:shield-warning-linear" },
   { id: "task", label: "Task", icon: "solar:checklist-minimalistic-linear" },
-  { id: "status", label: "Status", icon: "solar:check-circle-linear" },
   { id: "", label: "No grouping", icon: "solar:list-linear" },
 ];
 
+// An axis whose groups can split one scenario's repeats apart: the call's own
+// outcome. Its group counts are calls, never scenarios.
+export const SPLITS_TRIALS = new Set(["status"]);
+
+// A call's outcome, as its row and the Filter panel name it, keyed by the
+// server's status value.
+export const OUTCOME_LABELS = {
+  queued: "Queued",
+  in_progress: "In progress",
+  failed: "Failed",
+  error: "Error",
+  inconclusive: "Inconclusive",
+  passed: "Passed",
+};
+
+/*
+  The status chips, in Vel's names and order. `id` is the server's status
+  value. Flaky and Test invalid have no data yet, so they count 0 and stay
+  hidden. Queued and In progress only show while the run is live. All, Failing
+  and Passing always show; any other chip hides at zero.
+*/
 export const STATUS_CHIPS = [
-  { id: "all", label: "All", tone: null },
-  { id: "queued", label: "Queued", tone: null },
-  { id: "in_progress", label: "In progress", tone: "blue" },
-  { id: "failed", label: "Failed", tone: "red" },
-  { id: "error", label: "Error", tone: "amber" },
-  { id: "inconclusive", label: "Inconclusive", tone: null },
-  { id: "passed", label: "Passed", tone: "green" },
+  { id: "all", label: "All", tone: null, about: "" },
+  {
+    id: "queued",
+    label: "Queued",
+    tone: null,
+    liveOnly: true,
+    about: "Waiting to start.",
+  },
+  {
+    id: "in_progress",
+    label: "In progress",
+    tone: "blue",
+    liveOnly: true,
+    about: "Running now.",
+  },
+  {
+    id: "failed",
+    label: "Failing",
+    tone: "red",
+    always: true,
+    about: "The agent didn't do what the scenario asked.",
+  },
+  {
+    id: "flaky",
+    label: "Flaky",
+    tone: "amber",
+    about:
+      "Passed some repeats and failed others. The agent isn't reliable here.",
+  },
+  {
+    id: "inconclusive",
+    label: "Inconclusive",
+    tone: null,
+    about:
+      "Not enough evidence to grade. Never counted as a pass; left out of pass rates.",
+  },
+  {
+    id: "test_invalid",
+    label: "Test invalid",
+    tone: null,
+    about:
+      "The test broke, not the agent. Counts neither for nor against the agent.",
+  },
+  {
+    id: "error",
+    label: "Error",
+    tone: "amber",
+    about: "Our infrastructure or the connection failed.",
+  },
+  {
+    id: "passed",
+    label: "Passing",
+    tone: "green",
+    always: true,
+    about: "Did what the scenario asked.",
+  },
 ];
 
 export const neutralCheckboxSx = {
@@ -257,13 +370,6 @@ export const bodyCellSx = {
   borderColor: "divider",
   "&:not(:first-of-type)": { borderLeft: "1px solid", borderColor: "divider" },
 };
-
-export const OUTCOME_LABELS = Object.fromEntries(
-  STATUS_CHIPS.filter((chip) => chip.id !== "all").map((chip) => [
-    chip.id,
-    chip.label,
-  ]),
-);
 
 // Call outcomes share their labels with the filters.
 export function runOutcome(status) {

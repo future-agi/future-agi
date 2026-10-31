@@ -218,7 +218,7 @@ describe("EnvironmentWorkspace route shell", () => {
     });
   });
 
-  it("renders a seeded client env: name, Live pill and its tabs, without Runs before a run", async () => {
+  it("renders a seeded client env: name, Live pill and its tabs, Runs included before a run", async () => {
     seedClientEnv(TEMPLATE, {
       ...emptyEnvState(),
       agent: { name: "Support agent" },
@@ -232,13 +232,12 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(await screen.findByText("Refund Copilot", { selector: "p" }))
       .toBeInTheDocument();
     expect(screen.getByText("Ready")).toBeInTheDocument();
-    ["Overview", "Contract", "Scenarios", "Evaluations", "Settings"].forEach((label) =>
+    ["Overview", "World", "Contract", "Scenarios", "Evaluations", "Runs", "Settings"].forEach((label) =>
       expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument(),
     );
-    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
   });
 
-  it("lands ?tab=runs on the Overview while the env has no runs", async () => {
+  it("opens ?tab=runs on the Runs empty state while the env has no runs", async () => {
     seedClientEnv(TEMPLATE, {
       ...emptyEnvState(),
       agent: { name: "Support agent" },
@@ -247,11 +246,8 @@ describe("EnvironmentWorkspace route shell", () => {
 
     renderWorkspace("/dashboard/simulate/environments/env-1?tab=runs");
 
-    expect(await screen.findByRole("tab", { name: /Overview/ })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
+    expect(await screen.findByText("No runs yet")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Runs/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByText("Pre-flight")).toBeNull();
   });
 
@@ -349,7 +345,7 @@ describe("EnvironmentWorkspace route shell", () => {
     const runButton = await screen.findByRole("button", { name: /Run simulation/ });
     expect(runButton).toBeDisabled();
     expect(screen.queryByRole("tab", { name: /Overview/ })).toBeNull();
-    expect(screen.queryByText(/scenarios, shared across agent versions/)).toBeNull();
+    expect(screen.queryByText(/^· \d+ scenarios?$/)).toBeNull();
     // The tab area shows the loader rather than an empty pane.
     expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
   });
@@ -389,9 +385,11 @@ describe("EnvironmentWorkspace route shell", () => {
     await user.click(row);
 
     // The row opens the designer-style RunDetail as its own full page: its
-    // identity header names the ordinal + agent version and the run status.
-    expect(await screen.findByText(/Run 1 · agent v1/)).toBeInTheDocument();
-    expect(screen.getByText("Passed")).toBeInTheDocument();
+    // header names the ordinal, with the agent version on the line below.
+    expect((await screen.findAllByText("Run 1")).length).toBeGreaterThan(0);
+    // The run's Passed status shows (the header's verdict moved into the
+    // summary chip in Vel's layout).
+    expect(screen.getAllByText("Passed").length).toBeGreaterThan(0);
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/dashboard/simulate/environments/job-done/runs/rt1/ex1",
     );
@@ -552,8 +550,8 @@ describe("EnvironmentWorkspace route shell", () => {
     // swapped inside the environment workspace.
     renderWorkspace("/dashboard/simulate/environments/job-done/runs/rt1/ex1");
 
-    // The run detail is shown (its identity header names the ordinal + agent).
-    expect(await screen.findByText(/Run 1 · agent v1/)).toBeInTheDocument();
+    // The run detail is shown (its header names the ordinal).
+    expect((await screen.findAllByText("Run 1")).length).toBeGreaterThan(0);
 
     // ...and the environment-workspace chrome around it is gone: no tab rail and
     // no header "Run simulation" button. The run page owns the viewport.
@@ -797,9 +795,8 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     const bar = await screen.findByTestId("draft-bar");
-    expect(bar.previousElementSibling).toHaveTextContent(
-      /shared across agent versions/,
-    );
+    // The version bar ends on the scenario count.
+    expect(bar.previousElementSibling).toHaveTextContent(/· \d+ scenarios?/);
     expect(await saveButton()).toBeEnabled();
   });
 
@@ -818,7 +815,7 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     serve({ environment: null, suite: null, set_aside: [] });
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
-    await screen.findByText(/shared across agent versions/);
+    await screen.findByText(/^· \d+ scenarios?$/);
     await waitFor(() =>
       expect(
         axios.get.mock.calls.some(([url]) => url.endsWith("/drafts/")),

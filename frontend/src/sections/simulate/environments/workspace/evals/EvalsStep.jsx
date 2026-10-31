@@ -10,7 +10,15 @@ import {
   IconButton,
   Tooltip,
   Switch,
+  FormControlLabel,
 } from "@mui/material";
+import { enqueueSnackbar } from "notistack";
+import { ConfirmDialog } from "src/components/custom-dialog";
+import SoonChip from "../../components/SoonChip";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
+import useUiSample from "../../hooks/useUiSample";
+import { UI_ONLY_SAVED } from "../gaps/NeedsInputButton";
+import useRunRepeats from "../run/useRunRepeats";
 import Iconify from "src/components/iconify";
 import { getEval } from "src/api/simulate-environments/_fixtures/evalCatalog";
 import { useRemoveAppliedEvaluation } from "src/api/simulate-environments/environments";
@@ -23,6 +31,7 @@ import EvalRow from "./EvalRow";
 import SelectedEvalRow from "./SelectedEvalRow";
 import AddEvalsDrawer from "./AddEvalsDrawer";
 import AddEvaluationDrawer from "./AddEvaluationDrawer";
+import EvalMappingView from "./EvalMappingView";
 import { useAppliedEvals } from "./useAppliedEvals";
 import { refusalText } from "./refusalText";
 import { EVALS_COPY, ENV_SHAPE, ENV_STATE_SHAPE } from "./evals.constants";
@@ -125,6 +134,19 @@ export default function EvalsStep({
     : backed && building
       ? "Available once the environment finishes building."
       : "";
+  // Vel asks before a remove; the verdicts already given stay on their calls.
+  const [confirmRemove, setConfirmRemove] = useState(null);
+  // The pencil opens Vel's read-only mapping first; its Edit opens our full
+  // config (R8).
+  const [viewingId, setViewingId] = useState(null);
+  // Whether a failing score fails the conversation isn't in the API yet.
+  const [required, setRequired] = useState({});
+  const toggleRequired = (id, on) => {
+    setRequired((r) => ({ ...r, [id]: on }));
+    enqueueSnackbar(UI_ONLY_SAVED, { variant: "info" });
+  };
+  const sampleCost = useUiSample("evalCost");
+  const [repeats] = useRunRepeats(envState, patch);
   const onRemove = (id) => {
     if (!backed) {
       store.remove(id);
@@ -274,9 +296,23 @@ export default function EvalsStep({
 
       <SectionCard
         title={
-          detailUnknown
-            ? EVALS_COPY.addedTitleUnknown
-            : EVALS_COPY.addedTitle(appliedEvals.length)
+          <Stack direction="row" alignItems="center" spacing={0.75}>
+            <span>
+              {detailUnknown
+                ? EVALS_COPY.addedTitleUnknown
+                : EVALS_COPY.addedTitle(appliedEvals.length)}
+            </span>
+            {appliedEvals.length > 0 && (
+              <>
+                <SoonChip
+                  label="Threshold"
+                  what="The score an evaluation needs to pass"
+                  size="tiny"
+                />
+                <UiOnlyFlag feature="evalRequired" />
+              </>
+            )}
+          </Stack>
         }
         subtitle={
           !detailUnknown && appliedEvals.length
@@ -401,7 +437,9 @@ export default function EvalsStep({
                       size="small"
                       disabled={removeDisabled}
                       aria-label={EVALS_COPY.remove}
-                      onClick={() => onRemove(e.id)}
+                      onClick={() =>
+                        setConfirmRemove({ id: e.id, name: e.name })
+                      }
                     >
                       <Iconify
                         icon="solar:trash-bin-trash-linear"
@@ -418,31 +456,30 @@ export default function EvalsStep({
               // doesn't refuse an edit while a run is being graded, so that
               // wait is ours.
               const editable = e.editable === true;
+              const editBlocked =
+                !editable ||
+                locked ||
+                building ||
+                grading ||
+                removeEval.isPending ||
+                Boolean(editingId);
+              const editTooltip =
+                lockedOrBuildingTooltip ||
+                (!editable
+                  ? EVALS_COPY.notEditable
+                  : grading
+                    ? EVALS_COPY.gradingLocked
+                    : "");
               const editAction = backed && (
-                <Tooltip
-                  arrow
-                  title={
-                    lockedOrBuildingTooltip ||
-                    (!editable
-                      ? EVALS_COPY.notEditable
-                      : grading
-                        ? EVALS_COPY.gradingLocked
-                        : "")
-                  }
-                >
+                <Tooltip arrow title={editTooltip}>
                   <Box component="span" sx={{ display: "inline-flex" }}>
                     <IconButton
                       size="small"
-                      disabled={
-                        !editable ||
-                        locked ||
-                        building ||
-                        grading ||
-                        removeEval.isPending ||
-                        Boolean(editingId)
-                      }
+                      disabled={editBlocked}
                       aria-label={EVALS_COPY.edit}
-                      onClick={() => setEditingId(e.id)}
+                      onClick={() =>
+                        setViewingId({ id: e.id, canEdit: !editBlocked, editTooltip })
+                      }
                     >
                       <Iconify
                         icon="solar:pen-linear"
@@ -460,19 +497,80 @@ export default function EvalsStep({
                   key={e.id}
                   item={e}
                   action={
-                    <Stack direction="row" spacing={0.5}>
+                    <Stack direction="row" alignItems="center" spacing={0.5}>
+                      <RequiredSwitch
+                        name={e.name}
+                        checked={!!required[e.id]}
+                        disabled={locked}
+                        onChange={(on) => toggleRequired(e.id, on)}
+                      />
                       {editAction}
                       {removeAction}
                     </Stack>
                   }
                 />
               ) : (
-                <EvalRow key={e.id} item={e} action={removeAction} />
+                <EvalRow
+                  key={e.id}
+                  item={e}
+                  action={
+                    <Stack direction="row" alignItems="center" spacing={0.5}>
+                      <RequiredSwitch
+                        name={e.name}
+                        checked={!!required[e.id]}
+                        disabled={locked}
+                        onChange={(on) => toggleRequired(e.id, on)}
+                      />
+                      {removeAction}
+                    </Stack>
+                  }
+                />
               );
             })}
           </Stack>
         )}
       </SectionCard>
+
+      {sampleCost && appliedEvals.length > 0 && (
+        <SampleCostLine
+          evals={appliedEvals}
+          scenarios={(envState?.scenarios || []).length}
+          repeats={repeats}
+        />
+      )}
+
+      {backed && (
+        <EvalMappingView
+          open={Boolean(viewingId)}
+          item={appliedEvals.find((x) => x.id === viewingId?.id)}
+          onClose={() => setViewingId(null)}
+          onEdit={(it) => {
+            setViewingId(null);
+            setEditingId(it.id);
+          }}
+          canEdit={Boolean(viewingId?.canEdit)}
+          editTooltip={viewingId?.editTooltip || ""}
+        />
+      )}
+
+      <ConfirmDialog
+        open={!!confirmRemove}
+        onClose={() => setConfirmRemove(null)}
+        title={`Remove ${confirmRemove?.name || "this evaluation"}?`}
+        content="New runs won't be graded on it. Past scores stay."
+        action={
+          <Button
+            variant="contained"
+            color="error"
+            onClick={() => {
+              if (confirmRemove) onRemove(confirmRemove.id);
+              setConfirmRemove(null);
+            }}
+          >
+            Remove evaluation
+          </Button>
+        }
+      />
 
       {/* A backed env adds from the whole catalogue through the product picker,
           saved on its run test; a forked/template env keeps the store-only
@@ -516,4 +614,72 @@ EvalsStep.propTypes = {
   backed: PropTypes.bool,
   // A run of this environment is being graded.
   grading: PropTypes.bool,
+};
+
+// Vel's Required switch: a failing score would fail the conversation. Not in
+// the API yet, so it toggles here and saves nothing (the card is flagged).
+function RequiredSwitch({ name, checked, disabled, onChange }) {
+  return (
+    <FormControlLabel
+      sx={{ m: 0, mr: 0.5 }}
+      control={
+        <Switch
+          size="small"
+          checked={checked}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.checked)}
+          inputProps={{ "aria-label": `Required: ${name}` }}
+        />
+      }
+      label={
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          Required
+        </Typography>
+      }
+    />
+  );
+}
+RequiredSwitch.propTypes = {
+  name: PropTypes.string,
+  checked: PropTypes.bool,
+  disabled: PropTypes.bool,
+  onChange: PropTypes.func.isRequired,
+};
+
+// Vel's cost line, shown only with ?uiSample=evalCost: the product hides eval
+// costs on this tab, so the real view carries none.
+function SampleCostLine({ evals, scenarios, repeats }) {
+  const per = evals.reduce((n, e) => n + (Number(e.credits_per_run) || 0), 0);
+  const total = Math.round(per * scenarios * repeats * 100) / 100;
+  const free = evals.filter((e) => !(Number(e.credits_per_run) > 0)).length;
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.75}
+      sx={{ mt: 1.25, px: 0.5 }}
+    >
+      <Typography
+        sx={{
+          typography: "s2",
+          color: "text.secondary",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {`This environment's evals cost about ${total.toLocaleString()} credits per run (${scenarios} scenario${scenarios === 1 ? "" : "s"} × ${repeats} repeat${repeats === 1 ? "" : "s"}).`}
+        {free > 0 && free < evals.length && (
+          <Box
+            component="span"
+            sx={{ color: "text.subtitle" }}
+          >{` ${free} of ${evals.length} are free.`}</Box>
+        )}
+      </Typography>
+      <UiOnlyFlag feature="runEstimate" />
+    </Stack>
+  );
+}
+SampleCostLine.propTypes = {
+  evals: PropTypes.array.isRequired,
+  scenarios: PropTypes.number.isRequired,
+  repeats: PropTypes.number.isRequired,
 };

@@ -1,17 +1,15 @@
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
 
-// An uppercase group divider heading. Verbatim from the designer's OverviewPanel
-// GroupHeading, retyped with a token fontWeight.
+// A group heading, as Vel's current prototype sets it: sentence case, 13/600.
 export function GroupHeading({ children }) {
   return (
     <Typography
       sx={{
-        typography: "s3",
-        fontWeight: "fontWeightBold",
+        fontSize: 13,
+        lineHeight: "20px",
+        fontWeight: 600,
         color: "text.primary",
-        textTransform: "uppercase",
-        letterSpacing: 0.5,
         mb: 1.25,
       }}
     >
@@ -29,12 +27,16 @@ export function Fact({ label, value, color }) {
       <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
         {label}
       </Typography>
-      <Typography
-        noWrap
-        sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", color: color || "text.primary" }}
-      >
-        {value}
-      </Typography>
+      {typeof value === "string" || typeof value === "number" ? (
+        <Typography
+          noWrap
+          sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", color: color || "text.primary" }}
+        >
+          {value}
+        </Typography>
+      ) : (
+        value
+      )}
     </Box>
   );
 }

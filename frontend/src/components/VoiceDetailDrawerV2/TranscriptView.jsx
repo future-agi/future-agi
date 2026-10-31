@@ -13,7 +13,6 @@ import {
   Stack,
   Tooltip,
   Typography,
-  useTheme,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
@@ -23,6 +22,7 @@ import useVoiceAudioStore from "./voiceAudioStore";
 import { computeTotals, enrichTurns, formatClock } from "./transcriptUtils";
 import { DEFAULT_ROLE_LABELS } from "./constants";
 import FunctionCallContent from "./FunctionCallContent";
+import { useSpeakerColors } from "./speakerColors";
 
 // Highlight query matches in a string — returns React nodes.
 const highlightMatches = (text, query) => {
@@ -57,26 +57,6 @@ const highlightMatches = (text, query) => {
     idx = found + needle.length;
   }
   return <>{parts}</>;
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Speaker colors (theme-aware via palette lookup)
-// ─────────────────────────────────────────────────────────────────────────────
-const useSpeakerColors = () => {
-  const theme = useTheme();
-  return useMemo(
-    () => ({
-      assistant:
-        theme.palette.mode === "dark"
-          ? theme.palette.primary.light
-          : theme.palette.primary.main,
-      user: theme.palette.mode === "dark" ? "#FF9933" : "#E9690C",
-      system: theme.palette.mode === "dark" ? "#a78bfa" : "#7c3aed",
-      tool: theme.palette.mode === "dark" ? "#fbbf24" : "#d97706",
-      unknown: theme.palette.text.disabled,
-    }),
-    [theme],
-  );
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

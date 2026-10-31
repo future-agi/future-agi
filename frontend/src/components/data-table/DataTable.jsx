@@ -2,6 +2,7 @@
 import { useCallback, useMemo } from "react";
 import { DataGrid } from "@mui/x-data-grid";
 import { Box, useTheme } from "@mui/material";
+import SkeletonRowsOverlay from "./SkeletonRowsOverlay";
 
 /**
  * DataTable — thin wrapper on MUI X DataGrid (already in the project).
@@ -24,6 +25,8 @@ export default function DataTable({
   rowHeight = 44,
   headerHeight = 40,
   enableSelection = false,
+  // "spinner" (MUI's default) or "skeleton": placeholder rows over the table.
+  loadingVariant = "spinner",
 }) {
   const theme = useTheme();
 
@@ -133,6 +136,10 @@ export default function DataTable({
         rows={data || []}
         columns={muiColumns}
         loading={isLoading}
+        {...(loadingVariant === "skeleton" && {
+          slots: { loadingOverlay: SkeletonRowsOverlay },
+          slotProps: { loadingOverlay: { columns: muiColumns, rowHeight } },
+        })}
         getRowId={getRowId || ((row) => row.id)}
         rowCount={rowCount}
         rowHeight={rowHeight}

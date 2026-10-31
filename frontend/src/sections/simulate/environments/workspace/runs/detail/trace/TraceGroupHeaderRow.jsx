@@ -30,6 +30,45 @@ const DESC_KEYS = [
   "idealOutcome",
   "conversationBranch",
 ];
+// The label line sizes its column up to this, so most labels fit and only the
+// longest are cut.
+const GROUP_LABEL_FIT = 560;
+const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
+
+// An invisible copy of the label line that asks the column for its width, up
+// to GROUP_LABEL_FIT. The visible line is kept out of the column's sizing, so
+// a long label can't stretch the column past that.
+function GroupLabelSizer({ text }) {
+  return (
+    <Box
+      aria-hidden
+      sx={{
+        height: 0,
+        overflow: "hidden",
+        visibility: "hidden",
+        whiteSpace: "nowrap",
+        maxWidth: GROUP_LABEL_FIT,
+        pl: 3.5,
+        typography: "s2",
+        fontWeight: "fontWeightBold",
+      }}
+    >
+      {text}
+    </Box>
+  );
+}
+GroupLabelSizer.propTypes = { text: PropTypes.string };
+
+// How many scenarios a group holds. Each scenario runs `trials` times, so its
+// calls divide evenly, unless the axis can split one scenario's repeats across
+// groups; then the group can only count calls.
+function countLabel(group, trials, trialsSplit) {
+  const calls = group.count ?? group.rows.length;
+  if (trials <= 1) return plural(calls, "scenario");
+  if (trialsSplit || calls % trials) return plural(calls, "call");
+  return plural(calls / trials, "scenario");
+}
+
 const rowHover = (t) => {
   const tint = alpha(
     t.palette.text.primary,
@@ -52,6 +91,8 @@ export default function TraceGroupHeaderRow({
   loading = false,
   leadingCell = false,
   checkbox = null,
+  trials = 1,
+  trialsSplit = false,
 }) {
   // Pinned under the head row while its group's calls scroll past; the next
   // group's row slides over it. Opaque for that, so the hover tint layers over
@@ -158,33 +199,72 @@ export default function TraceGroupHeaderRow({
     );
   };
 
+  // "Refunds · 4 scenarios · 80% passed 4/5": the group's pass rate read the
+  // way the run's is, passed out of the calls that were scored. One line, so
+  // the pinned row keeps its height.
+  const count = ` · ${countLabel(group, trials, trialsSplit)}`;
+  const measured = group.measured ?? 0;
+  const pct = measured ? Math.round(((group.passed ?? 0) / measured) * 100) : 0;
+  const passText = measured
+    ? ` · ${pct}% passed ${group.passed ?? 0}/${measured}`
+    : "";
   const label = (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={1.25}
-      sx={{ minWidth: 0 }}
-    >
-      <Iconify
-        icon={
-          collapsed
-            ? "solar:alt-arrow-right-linear"
-            : "solar:alt-arrow-down-linear"
-        }
-        width={13}
-        sx={{ color: "text.subtitle", flexShrink: 0 }}
-      />
-      <Typography
-        noWrap
-        sx={{
-          typography: "s2",
-          fontWeight: "fontWeightBold",
-          color: "text.primary",
-        }}
+    <>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.25}
+        // Out of the column's sizing: the sizer below asks for the width.
+        sx={{ width: 0, minWidth: "100%" }}
       >
-        {group.label}
-      </Typography>
-    </Stack>
+        <Iconify
+          icon={
+            collapsed
+              ? "solar:alt-arrow-right-linear"
+              : "solar:alt-arrow-down-linear"
+          }
+          width={13}
+          sx={{ color: "text.subtitle", flexShrink: 0 }}
+        />
+        <Typography
+          noWrap
+          title={group.label}
+          sx={{
+            typography: "s2",
+            fontWeight: "fontWeightBold",
+            color: "text.primary",
+            minWidth: 0,
+            flex: "0 1 auto",
+          }}
+        >
+          {group.label}
+        </Typography>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {count}
+          {measured > 0 && (
+            <>
+              {" · "}
+              <Box
+                component="span"
+                sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
+              >
+                {`${pct}%`}
+              </Box>
+              {` passed ${group.passed ?? 0}/${measured}`}
+            </>
+          )}
+        </Typography>
+      </Stack>
+      <GroupLabelSizer text={`${group.label}${count}${passText}`} />
+    </>
   );
 
   return (
@@ -311,6 +391,9 @@ TraceGroupHeaderRow.propTypes = {
   top: PropTypes.number,
   loading: PropTypes.bool,
   leadingCell: PropTypes.bool,
+  // The run's repeats per scenario, and whether this axis can split them.
+  trials: PropTypes.number,
+  trialsSplit: PropTypes.bool,
   // The group's tick: whether it has calls to tick, and their state.
   checkbox: PropTypes.shape({
     selectable: PropTypes.bool,

@@ -73,6 +73,24 @@ const FalconAIConnectorsPage = lazyWithRetry(
 const IntegrationDetailPage = lazyWithRetry(
   () => import("src/sections/settings/integrations/IntegrationDetail"),
 );
+const GithubIntegrationPage = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/settings/integrations/workspace-tools/github/GithubIntegrationPage"
+    ),
+);
+const SlackIntegrationPage = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/settings/integrations/workspace-tools/slack/SlackIntegrationPage"
+    ),
+);
+const CodingAgentsIntegrationPage = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/settings/integrations/workspace-tools/coding-agents/CodingAgentsIntegrationPage"
+    ),
+);
 const ApiKeys = lazyWithRetry(
   () => import("src/pages/dashboard/settings/ApiKeys"),
 );
@@ -329,6 +347,18 @@ const WorkspaceExecutionDetail = lazyWithRetry(
       "src/sections/simulate/environments/workspace/runs/WorkspaceExecutionDetail"
     ),
 );
+const CompareRunsPage = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/compare/CompareRunsPage"
+    ),
+);
+const RunWidgetEditorPage = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/runs/detail/widgets/RunWidgetEditorPage"
+    ),
+);
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
 );
@@ -470,6 +500,9 @@ const ConnectedAgentsTab = lazyWithRetry(
 );
 const PlaygroundAgentsTab = lazyWithRetry(
   () => import("src/sections/agent-playground/PlaygroundAgentsTab"),
+);
+const ConnectAgentPage = lazyWithRetry(
+  () => import("src/sections/agent-playground/ConnectAgentPage"),
 );
 const AgentDetailLayout = lazyWithRetry(
   () =>
@@ -700,6 +733,54 @@ export const dashboardRoutes = (
       ),
     },
     {
+      path: "integrations/github",
+      element: (
+        <RoleProtection
+          allowedRoles={[
+            "Owner",
+            "Admin",
+            "Member",
+            "workspace_admin",
+            "workspace_member",
+          ]}
+        >
+          <GithubIntegrationPage />
+        </RoleProtection>
+      ),
+    },
+    {
+      path: "integrations/slack",
+      element: (
+        <RoleProtection
+          allowedRoles={[
+            "Owner",
+            "Admin",
+            "Member",
+            "workspace_admin",
+            "workspace_member",
+          ]}
+        >
+          <SlackIntegrationPage />
+        </RoleProtection>
+      ),
+    },
+    {
+      path: "integrations/coding-agents",
+      element: (
+        <RoleProtection
+          allowedRoles={[
+            "Owner",
+            "Admin",
+            "Member",
+            "workspace_admin",
+            "workspace_member",
+          ]}
+        >
+          <CodingAgentsIntegrationPage />
+        </RoleProtection>
+      ),
+    },
+    {
       path: "integrations/:connectionId",
       element: (
         <RoleProtection
@@ -857,6 +938,36 @@ export const dashboardRoutes = (
                   allowedRoles={["workspace_admin", "workspace_member"]}
                 >
                   <WorkspaceIntegrations />
+                </WorkspaceRoleProtection>
+              ),
+            },
+            {
+              path: "integrations/github",
+              element: (
+                <WorkspaceRoleProtection
+                  allowedRoles={["workspace_admin", "workspace_member"]}
+                >
+                  <GithubIntegrationPage />
+                </WorkspaceRoleProtection>
+              ),
+            },
+            {
+              path: "integrations/slack",
+              element: (
+                <WorkspaceRoleProtection
+                  allowedRoles={["workspace_admin", "workspace_member"]}
+                >
+                  <SlackIntegrationPage />
+                </WorkspaceRoleProtection>
+              ),
+            },
+            {
+              path: "integrations/coding-agents",
+              element: (
+                <WorkspaceRoleProtection
+                  allowedRoles={["workspace_admin", "workspace_member"]}
+                >
+                  <CodingAgentsIntegrationPage />
                 </WorkspaceRoleProtection>
               ),
             },
@@ -1309,6 +1420,7 @@ export const dashboardRoutes = (
             { path: "playground", element: <PlaygroundAgentsTab /> },
           ],
         },
+        { path: "connect", element: <ConnectAgentPage /> },
         {
           path: "connected/:agentId",
           element: <AgentDetailLayout />,
@@ -1420,9 +1532,9 @@ export const dashboardRoutes = (
           element: <SimulateUseTemplate />,
         },
         {
-          // Build is no longer a page of its own — the source panels create the
-          // job and route straight to the workspace, which hosts the build. An
-          // old /build link lands back on the Build entry tab.
+          // Build is no longer a page of its own: the Build environment drawer
+          // creates the job and routes straight to the workspace, which hosts
+          // the build. An old /build link opens the drawer.
           path: "environments/build",
           element: (
             <Navigate
@@ -1430,6 +1542,17 @@ export const dashboardRoutes = (
               replace
             />
           ),
+        },
+        {
+          // Its own page, not a workspace child: the workspace only hands its
+          // Outlet to a run detail.
+          path: "environments/:envId/compare",
+          element: <CompareRunsPage />,
+        },
+        {
+          // A full page like compare: the run detail renders no Outlet.
+          path: "environments/:envId/runs/:testId/:executionId/widgets/:widgetId",
+          element: <RunWidgetEditorPage />,
         },
         {
           path: "environments/:envId",

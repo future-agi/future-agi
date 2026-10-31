@@ -257,6 +257,10 @@ describe("TraceTable — sub-goal verdicts", () => {
 
     try {
       const { rerender } = render(duplicateGoals([true, false]));
+      // Met sub-goals sit behind Show all; it stays open across refreshes.
+      fireEvent.click(
+        within(activeRow()).getByRole("button", { name: "Show all" }),
+      );
       expectVerdicts(["Passed", "Failed"]);
 
       rerender(duplicateGoals([false, null, true]));
@@ -299,6 +303,9 @@ describe("TraceTable — sub-goal verdicts", () => {
     const details = within(activeRow())
       .getAllByText("Scenario a1")[0]
       .closest("td");
+    // The line reads the roll-up; Show all lists the met ones too.
+    expect(details).toHaveTextContent("Failed · 1 of 3 met");
+    fireEvent.click(within(details).getByRole("button", { name: "Show all" }));
     for (const [name, verdict] of [
       ["Verify identity", "Passed"],
       ["Create refund", "Failed"],
@@ -803,7 +810,7 @@ describe("TraceTable — eval header action", () => {
 });
 
 describe("TraceTable — persona cell", () => {
-  it("shows a persona that has no name but has other fields", () => {
+  it("shows a persona that has no name but has other fields", async () => {
     render(
       <TraceTable
         groups={[
@@ -829,7 +836,9 @@ describe("TraceTable — persona cell", () => {
         activeCallId="x1"
       />,
     );
-    expect(screen.getByText("Indian male")).toBeInTheDocument();
-    expect(screen.getByText("Anxious")).toBeInTheDocument();
+    // One line (R20): no name reads "-", then age and voice; traits on hover.
+    expect(screen.getByText("50-60 · Indian male")).toBeInTheDocument();
+    fireEvent.mouseOver(screen.getByText("50-60 · Indian male"));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Anxious");
   });
 });

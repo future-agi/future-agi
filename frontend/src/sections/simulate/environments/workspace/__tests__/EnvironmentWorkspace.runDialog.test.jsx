@@ -228,10 +228,11 @@ describe("EnvironmentWorkspace run start", () => {
 
     await user.click(await headerRun());
 
+    // The header runs each scenario the environment's repeats, three by default.
     await waitFor(() =>
       expect(axios.post).toHaveBeenCalledWith(
         RUN_URL,
-        { scenario_ids: ["refund-happy-path"], trials: 1 },
+        { scenario_ids: ["refund-happy-path"], trials: 3 },
         { headers: { "Idempotency-Key": "key-1" } },
       ),
     );
@@ -251,7 +252,7 @@ describe("EnvironmentWorkspace run start", () => {
     await user.click(await headerRun());
     expect(axios.post).not.toHaveBeenCalled();
     expect(screen.getByTestId("run-dialog")).toHaveTextContent(
-      JSON.stringify({ trials: 1 }),
+      JSON.stringify({ trials: 3 }),
     );
 
     await user.click(screen.getByRole("button", { name: "submit picks" }));
@@ -260,7 +261,7 @@ describe("EnvironmentWorkspace run start", () => {
         RUN_URL,
         {
           scenario_ids: ["refund-happy-path"],
-          trials: 1,
+          trials: 3,
           environment_version_id: "e1",
         },
         { headers: { "Idempotency-Key": "key-1" } },

@@ -18,17 +18,8 @@ describe("useEnvironmentsStore", () => {
     expect(state.activeAgentId).toBeNull();
   });
 
-  it("starts with a null choice and draft", () => {
-    const state = useEnvironmentsStore.getState();
-    expect(state.choice).toBeNull();
-    expect(state.draft).toBeNull();
-  });
-
-  it("sets and clears the choice", () => {
-    useEnvironmentsStore.getState().setChoice("source");
-    expect(useEnvironmentsStore.getState().choice).toBe("source");
-    useEnvironmentsStore.getState().clearChoice();
-    expect(useEnvironmentsStore.getState().choice).toBeNull();
+  it("starts with a null draft", () => {
+    expect(useEnvironmentsStore.getState().draft).toBeNull();
   });
 
   it("sets and clears the draft", () => {
@@ -39,18 +30,15 @@ describe("useEnvironmentsStore", () => {
   });
 
   it("reset() returns to the initial state", () => {
-    useEnvironmentsStore.getState().setChoice("hosted");
     useEnvironmentsStore.getState().setDraft({ kind: "platform" });
     useEnvironmentsStore.getState().reset();
-    const state = useEnvironmentsStore.getState();
-    expect(state.choice).toBeNull();
-    expect(state.draft).toBeNull();
+    expect(useEnvironmentsStore.getState().draft).toBeNull();
   });
 
   it("resetEnvironmentsStore() works imperatively", () => {
-    useEnvironmentsStore.getState().setChoice("upload");
+    useEnvironmentsStore.getState().setDraft({ kind: "upload" });
     resetEnvironmentsStore();
-    expect(useEnvironmentsStore.getState().choice).toBeNull();
+    expect(useEnvironmentsStore.getState().draft).toBeNull();
   });
 
   describe("env slices", () => {
@@ -149,7 +137,6 @@ describe("useEnvironmentsStore", () => {
 
   describe("scoped reset", () => {
     it("resetEntryState() clears the entry slice but keeps env slices", () => {
-      useEnvironmentsStore.getState().setChoice("source");
       useEnvironmentsStore.getState().setDraft({ kind: "repo" });
       useEnvironmentsStore
         .getState()
@@ -159,7 +146,6 @@ describe("useEnvironmentsStore", () => {
       useEnvironmentsStore.getState().resetEntryState();
 
       const s = useEnvironmentsStore.getState();
-      expect(s.choice).toBeNull();
       expect(s.draft).toBeNull();
       // The env slices survive — a visit to Home must not wipe workspaces.
       expect(s.workspaceEnvs["env-a"]).toBeDefined();

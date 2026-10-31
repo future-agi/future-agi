@@ -107,64 +107,90 @@ describe("EnvironmentsHome", () => {
     listHarnessEnvironments.mockResolvedValue(HARNESS_ENVS);
   });
 
-  it("defaults to the Build environment tab with the matrix", () => {
+  it("defaults to the My Environments tab with the list", async () => {
     renderHome("/dashboard/simulate/environments");
 
     expect(
-      screen.getByRole("tab", { name: "Build environment" }),
+      screen.getByRole("tab", { name: /^My Environments/ }),
     ).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("Source repository")).toBeInTheDocument();
-    // A table-only harness-job name proves the My Environments list is absent.
-    expect(screen.queryByText("Billing Chat Agent")).toBeNull();
+    expect(await screen.findByText("Billing Chat Agent")).toBeInTheDocument();
   });
 
-  it("shows the build matrix when ?tab=build", () => {
+  it("has no Build environment tab", () => {
+    renderHome("/dashboard/simulate/environments");
+    expect(screen.queryByRole("tab", { name: "Build environment" })).toBeNull();
+  });
+
+  // ?tab=build was the old Build tab. Links and bookmarks to it now open the
+  // drawer over My Environments, and the url stops saying build.
+  it("opens the drawer over My Environments on the old ?tab=build", async () => {
     renderHome("/dashboard/simulate/environments?tab=build");
 
+    expect(await screen.findByText("Connect your agent")).toBeInTheDocument();
+    // The open drawer hides the page behind it from the accessibility tree.
     expect(
-      screen.getByRole("tab", { name: "Build environment" }),
+      screen.getByRole("tab", { name: /^My Environments/, hidden: true }),
     ).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("Source repository")).toBeInTheDocument();
-    // 2 hero + 5 option cards; tabs are role="tab", not button.
-    expect(screen.getAllByRole("button")).toHaveLength(7);
-    // "Customer Support Line" doubles as a Prebuilt hero chip, so assert a
-    // table-only harness-job name to prove the My Environments list is absent.
-    expect(screen.queryByText("Billing Chat Agent")).toBeNull();
+    expect(lastSearch).toBe("?tab=my-environments");
+  });
+
+  it("does not open the drawer on its own on other tabs", () => {
+    renderHome("/dashboard/simulate/environments?tab=my-environments");
+    expect(screen.queryByText("Connect your agent")).toBeNull();
+  });
+
+  it("opens the drawer from the empty list's Build an environment button", async () => {
+    const user = userEvent.setup();
+    listHarnessEnvironments.mockResolvedValue({
+      ...HARNESS_ENVS,
+      count: 0,
+      results: [],
+    });
+    renderHome("/dashboard/simulate/environments?tab=my-environments");
+
+    await user.click(
+      await screen.findByRole("button", { name: "Build an environment" }),
+    );
+    expect(await screen.findByText("Connect your agent")).toBeInTheDocument();
+    expect(lastSearch).toBe("?tab=my-environments");
   });
 
   it("switches tabs and writes the choice to the url", async () => {
     const user = userEvent.setup();
     renderHome("/dashboard/simulate/environments");
 
-    await user.click(screen.getByRole("tab", { name: "My Environments" }));
-    expect(lastSearch).toContain("tab=my-environments");
-    expect(await screen.findByText("Billing Chat Agent")).toBeInTheDocument();
-
     await user.click(screen.getByRole("tab", { name: "Personas" }));
     expect(lastSearch).toContain("tab=personas");
     expect(screen.getByText("persona-list-stub")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Build environment" }));
-    expect(lastSearch).toContain("tab=build");
-    expect(screen.getByText("Source repository")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /^My Environments/ }));
+    expect(lastSearch).toContain("tab=my-environments");
+    expect(await screen.findByText("Billing Chat Agent")).toBeInTheDocument();
   });
 
-  it("renders the three tabs in order", () => {
+  it.each(["my-environments", "personas"])(
+    "opens the Build environment drawer from the header on ?tab=%s",
+    async (tab) => {
+      const user = userEvent.setup();
+      renderHome(`/dashboard/simulate/environments?tab=${tab}`);
+
+      await user.click(screen.getByRole("button", { name: "Build environment" }));
+      expect(await screen.findByText("Connect your agent")).toBeInTheDocument();
+      expect(lastSearch).toBe(`?tab=${tab}`);
+    },
+  );
+
+  it("renders the two tabs in order", () => {
     renderHome("/dashboard/simulate/environments");
 
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
-      "Build environment",
-      "My Environments",
-      "Personas",
-    ]);
+    expect(
+      screen.getAllByRole("tab").map((t) => t.textContent.replace(/\d+$/, "")),
+    ).toEqual(["My Environments", "Personas"]);
   });
 
   it("tracks a Personas tab click with the personas navigation event", async () => {
     const user = userEvent.setup();
     renderHome("/dashboard/simulate/environments");
-
-    await user.click(screen.getByRole("tab", { name: "My Environments" }));
-    expect(trackEvent).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("tab", { name: "Personas" }));
     expect(trackEvent).toHaveBeenCalledTimes(1);
@@ -181,7 +207,6 @@ describe("EnvironmentsHome", () => {
       "true",
     );
     expect(screen.getByText("persona-list-stub")).toBeInTheDocument();
-    expect(screen.queryByText("Source repository")).toBeNull();
     expect(screen.queryByText("Billing Chat Agent")).toBeNull();
   });
 
@@ -199,15 +224,12 @@ describe("EnvironmentsHome", () => {
     expect(screen.getAllByRole("link", { name: "View Docs" })).toHaveLength(1);
   });
 
-  it.each(["build", "my-environments"])(
-    "has no docs link on the %s tab",
-    (tab) => {
-      renderHome(`/dashboard/simulate/environments?tab=${tab}`);
-      expect(screen.queryByRole("link", { name: "View Docs" })).toBeNull();
-    },
-  );
+  it("has no docs link on the My Environments tab", () => {
+    renderHome("/dashboard/simulate/environments?tab=my-environments");
+    expect(screen.queryByRole("link", { name: "View Docs" })).toBeNull();
+  });
 
-  it("clears the draft on mount so the matrix starts clean", () => {
+  it("clears the draft on mount so each visit starts clean", () => {
     useEnvironmentsStore.getState().setDraft({ kind: "repo" });
     renderHome("/dashboard/simulate/environments");
     expect(useEnvironmentsStore.getState().draft).toBeNull();
@@ -231,7 +253,7 @@ describe("EnvironmentsHome", () => {
   });
 
   it("renders the header and no scratch button", () => {
-    renderHome("/dashboard/simulate/environments?tab=build");
+    renderHome("/dashboard/simulate/environments");
 
     expect(screen.getByText("Environments")).toBeInTheDocument();
     expect(
@@ -241,5 +263,11 @@ describe("EnvironmentsHome", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Start from scratch")).toBeNull();
     expect(screen.queryByLabelText("Back to environments")).toBeNull();
+  });
+
+  it("shows how many environments there are on the My Environments tab", async () => {
+    renderHome("/dashboard/simulate/environments");
+    const tab = screen.getByRole("tab", { name: /^My Environments/ });
+    expect(await within(tab).findByText("1")).toBeInTheDocument();
   });
 });

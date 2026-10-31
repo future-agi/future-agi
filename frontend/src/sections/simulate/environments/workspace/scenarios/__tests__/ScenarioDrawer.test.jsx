@@ -22,25 +22,27 @@ const open = (apiRow = API_ROW, props = {}) =>
   render(<ScenarioDrawer row={scenarioFromApi(apiRow)} onClose={vi.fn()} onEdit={vi.fn()} {...props} />);
 
 describe("ScenarioDrawer", () => {
-  it("shows every table column, in the table's order, as the API sends it", () => {
+  it("shows every table column, in Vel's order and labels, as the API sends it", () => {
     open();
     expect(screen.getByText("pricing_objection_handled")).toBeInTheDocument();
     expect(screen.getByText("Scenario")).toBeInTheDocument();
-    const labels = ["#", "Persona", "Situation", "Sub-goals", "Ideal outcome"].map((l) => screen.getByText(l));
+    // Vel's labels: Passes when = Ideal outcome, Caller = Persona, Brief =
+    // Situation. "Sub-goals" also heads a figure; the row is the last one.
+    const labels = ["#", "Passes when", "Caller", "Brief", "Sub-goals"].map((l) => screen.getAllByText(l).at(-1));
     labels.slice(1).forEach((el, i) =>
       expect(labels[i].compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(),
     );
     expect(screen.getByText("3")).toBeInTheDocument();
-    // Ideal outcome = `tests`, word for word (no sentence rewriting).
+    // Passes when = `tests`, word for word (no sentence rewriting).
     expect(screen.getByText("the agent explains the price and offers the cheaper plan")).toBeInTheDocument();
-    // Persona = name · gender · age group, one line, as the table writes it.
+    // Caller = name · gender · age group, one line, as the table writes it.
     expect(screen.getByText("Marcus Chen")).toBeInTheDocument();
     expect(screen.getByText(/· Male · 40-50/)).toBeInTheDocument();
     // Same caller line as the table: no personality.
     expect(screen.queryByText(/Cautious/)).toBeNull();
-    // The name is shown in full, so no initials badge.
-    expect(screen.queryByText("MC")).toBeNull();
-    // Situation = `instruction`, unsplit.
+    // Vel's initials badge sits beside the name.
+    expect(screen.getByText("MC")).toBeInTheDocument();
+    // Brief = `instruction`, unsplit.
     expect(screen.getByText(/You run a small 5-person team\.\s+Ask why the plan costs more than a rival\./)).toBeInTheDocument();
     // Sub-goals, numbered, in the order sent.
     expect(screen.getByText("acknowledges_concern")).toBeInTheDocument();
@@ -65,10 +67,12 @@ describe("ScenarioDrawer", () => {
   it("drops a row the API left empty instead of filling it in", () => {
     open({ id: "s2", name: "bare", persona: {}, sub_goals: [] });
     expect(screen.queryByText("#")).toBeNull();
-    expect(screen.queryByText("Ideal outcome")).toBeNull();
-    expect(screen.queryByText("Persona")).toBeNull();
-    expect(screen.queryByText("Situation")).toBeNull();
-    expect(screen.queryByText("Sub-goals")).toBeNull();
+    expect(screen.queryByText("Passes when")).toBeNull();
+    expect(screen.queryByText("Caller")).toBeNull();
+    expect(screen.queryByText("Brief")).toBeNull();
+    // Only the figure, reading 0; no Sub-goals row.
+    expect(screen.getAllByText("Sub-goals")).toHaveLength(1);
+    expect(screen.getByText("None set")).toBeInTheDocument();
     expect(screen.queryByText("Scenario")).toBeNull();
   });
 

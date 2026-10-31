@@ -23,10 +23,14 @@ import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
 import EnvVersionPin from "./EnvVersionPin";
 import ForkMenu from "./ForkMenu";
-import { WORKSPACE_COPY } from "./workspace.constants";
+import NeedsInputButton from "./gaps/NeedsInputButton";
+import RunFromCodeButton from "./code/RunFromCodeButton";
+import RunButton from "./run/RunButton";
+import useRunRepeats from "./run/useRunRepeats";
+import { RUN_MODE_CHIP, WORKSPACE_COPY } from "./workspace.constants";
 
 // The environment workspace header: back to the list, the channel icon, the
-// name + Live pill + env-version pin, the primary "Run simulation" action, and
+// name + Live pill, the primary "Run simulation" action, and
 // (for a regular, unlocked env) the Fork overflow. Run simulation is the
 // product's own navigation — a built env opens its execution detail, otherwise
 // the product's run entry. `locked` = template-seeded until forked: the overflow
@@ -34,6 +38,7 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 export default function WorkspaceHeader({
   env,
   envState,
+  patch,
   canRun,
   runBlockedReason,
   locked = false,
@@ -41,6 +46,7 @@ export default function WorkspaceHeader({
   onFork,
   onStartRun,
   selectionActive = false,
+  onGo,
   scenarioCount: serverScenarioCount,
 }) {
   const navigate = useNavigate();
@@ -50,7 +56,7 @@ export default function WorkspaceHeader({
   // run-all over every scenario × k straight away. A scenario selection on the
   // Scenarios tab takes over the primary Run, so the header yields while one is
   // active.
-  const [headerTrials, setHeaderTrials] = useState(1);
+  const [repeats, setRepeats] = useRunRepeats(envState, patch);
   const scenarioCount = serverScenarioCount ?? envState?.scenarios?.length ?? 0;
   // Cancel is offered only while the build is actually running (not once it has
   // failed/canceled). CancelBuildControl self-hides otherwise.
@@ -78,7 +84,7 @@ export default function WorkspaceHeader({
       direction="row"
       alignItems="center"
       spacing={2}
-      sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+      sx={{ px: 3, py: 1.25, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
     >
       <CustomTooltip show title={WORKSPACE_COPY.back} size="small" arrow>
         <Button
@@ -92,14 +98,33 @@ export default function WorkspaceHeader({
         </Button>
       </CustomTooltip>
 
-      <SurfaceIcon surface={env.surface} size={36} />
+      <SurfaceIcon surface={env.surface} size={28} />
 
       <Box minWidth={0} flex={1}>
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography noWrap sx={{ typography: "s1_2", fontWeight: "fontWeightBold" }}>
-            {env.name}
-          </Typography>
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
+          {/* The tagline lives in the name's tooltip, as in Vel's header. */}
+          <CustomTooltip
+            show={!!env.tagline}
+            size="small"
+            arrow
+            title={
+              <>
+                <Box component="span" sx={{ display: "block", fontWeight: 600 }}>
+                  {env.name}
+                </Box>
+                {env.tagline}
+              </>
+            }
+          >
+            <Typography
+              noWrap
+              sx={{ fontSize: 16, lineHeight: "24px", fontWeight: 600, minWidth: 72, flexShrink: 1 }}
+            >
+              {env.name}
+            </Typography>
+          </CustomTooltip>
           <LivePill env={env} />
+          <RunModeChip mode={env.agentMode} />
           {canRename && (
             <CustomTooltip show title="Rename environment" size="small" arrow>
               <IconButton
@@ -115,9 +140,6 @@ export default function WorkspaceHeader({
           {/* The default environment version; hidden while versioning is off. */}
           <EnvVersionPin env={env} />
         </Stack>
-        <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
-          {env.tagline}
-        </Typography>
       </Box>
 
       {/* Run controls yield to the in-table selection bar: while a scenario
@@ -125,28 +147,24 @@ export default function WorkspaceHeader({
           Repeats pill + Run to keep one primary action at a time. */}
       {!selectionActive && (
         <Stack direction="row" alignItems="center" spacing={1}>
+          <RunFromCodeButton env={env} repeats={repeats} />
+          <NeedsInputButton onGo={onGo} />
           {canRun && (
             <TrialsPicker
-              trials={headerTrials}
-              onChange={setHeaderTrials}
+              trials={repeats}
+              onChange={setRepeats}
               scenarioCount={scenarioCount}
+              unit={env.surface === "voice" ? "call" : "conversation"}
             />
           )}
-          <CustomTooltip show={!canRun} title={runBlockedReason} size="small" arrow>
-            <span>
-              <Button
-                variant="contained"
-                color="primary"
-                size="small"
-                disabled={!canRun}
-                onClick={() => onStartRun?.(undefined, headerTrials)}
-                startIcon={<Iconify icon="solar:play-bold" width={15} />}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-              >
-                {WORKSPACE_COPY.run}
-              </Button>
-            </span>
-          </CustomTooltip>
+          <RunButton
+            env={env}
+            scenarioCount={scenarioCount}
+            repeats={repeats}
+            canRun={canRun}
+            runBlockedReason={runBlockedReason}
+            onStartRun={onStartRun}
+          />
         </Stack>
       )}
 
@@ -206,11 +224,48 @@ export default function WorkspaceHeader({
   );
 }
 
+// Says how a run reaches the agent, prefixed "Runs:" so it doesn't read as a
+// second status beside Ready.
+function RunModeChip({ mode }) {
+  const chip = RUN_MODE_CHIP[mode];
+  if (!chip) return null;
+  return (
+    <CustomTooltip show size="small" arrow title={chip.tip}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.5}
+        sx={{
+          px: 0.75,
+          height: 22,
+          borderRadius: "4px",
+          cursor: "default",
+          border: "1px solid",
+          borderColor: "divider",
+          color: "text.secondary",
+          flexShrink: 0,
+          whiteSpace: "nowrap",
+        }}
+      >
+        <Iconify icon={chip.icon} width={12} />
+        <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+          <Box component="span" sx={{ fontWeight: 400, color: "text.subtitle", mr: 0.5 }}>
+            Runs:
+          </Box>
+          {chip.label}
+        </Typography>
+      </Stack>
+    </CustomTooltip>
+  );
+}
+RunModeChip.propTypes = { mode: PropTypes.string };
+
 WorkspaceHeader.propTypes = {
   env: PropTypes.shape({
     id: PropTypes.string,
     name: PropTypes.string,
     tagline: PropTypes.string,
+    agentMode: PropTypes.string,
     surface: PropTypes.string,
     status: PropTypes.string,
     buildStatus: PropTypes.string,
@@ -222,7 +277,10 @@ WorkspaceHeader.propTypes = {
   }).isRequired,
   envState: PropTypes.shape({
     scenarios: PropTypes.arrayOf(PropTypes.any),
+    runRepeats: PropTypes.number,
   }).isRequired,
+  // Saves the header's repeats into the environment's workspace state.
+  patch: PropTypes.func,
   canRun: PropTypes.bool,
   runBlockedReason: PropTypes.string,
   locked: PropTypes.bool,
@@ -232,5 +290,7 @@ WorkspaceHeader.propTypes = {
   onStartRun: PropTypes.func,
   // True while a scenario selection owns the primary Run; hides the header's.
   selectionActive: PropTypes.bool,
+  // Switches the workspace tab (Needs input links into a tab).
+  onGo: PropTypes.func,
   scenarioCount: PropTypes.number,
 };
