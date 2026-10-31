@@ -372,3 +372,33 @@ class ArchiveTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DiagnosticsTests(unittest.TestCase):
+    def test_data_usage_keeps_only_product_entry_names_and_kib(self):
+        from types import SimpleNamespace
+        output = (b'161000\t/data/temporal\n12\t/data/objects\n7\t/data/.bootstrap-ok\n'
+                  b'9\t/data/../etc\n5\t/elsewhere/x\nnot a row\n')
+        calls = []
+        checkout = SimpleNamespace(
+            containers=lambda: [{'Id': 'app-id', 'Config': {'Labels': {'com.docker.compose.service': 'app'}}},
+                                {'Id': 'db-id', 'Config': {'Labels': {'com.docker.compose.service': 'postgres'}}}],
+            docker=lambda *args, **kwargs: calls.append(args) or SimpleNamespace(stdout=output))
+        usage = real.data_usage(checkout)
+        self.assertEqual(usage['kib'], {'temporal': 161000, 'objects': 12, '.bootstrap-ok': 7})
+        self.assertEqual(calls[0][:2], ('exec', 'app-id'))
+        self.assertEqual(real.data_usage(SimpleNamespace(containers=lambda: [])), {'error': 'app_container_unavailable'})
+        self.assertEqual(real.data_usage(SimpleNamespace()), {'error': 'AttributeError'})
+
+    def test_command_refusal_reads_only_the_closed_reason_token(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            checkout = SimpleNamespace(evidence=evidence, sequence=7)
+            (evidence/'command-0007.stderr').write_bytes(b'noise /home/runner/secret\nbin/update: status_reporting_unavailable\n')
+            self.assertIsNone(real.command_refusal(checkout, SimpleNamespace(returncode=0)))
+            self.assertEqual(real.command_refusal(checkout, SimpleNamespace(returncode=2)), 'status_reporting_unavailable')
+            (evidence/'command-0007.stderr').write_bytes(b'bin/update: Path /home/runner/x is not allowed\n')
+            self.assertEqual(real.command_refusal(checkout, SimpleNamespace(returncode=2)), 'unclassified')
+            self.assertEqual(real.command_refusal(SimpleNamespace(evidence=evidence, sequence=8),
+                                                  SimpleNamespace(returncode=2)), 'unavailable')

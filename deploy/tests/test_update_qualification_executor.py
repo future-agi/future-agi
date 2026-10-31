@@ -285,3 +285,36 @@ class ExactPairPlanTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TransferSpanTests(unittest.TestCase):
+    def test_signed_restore_span_is_exactly_one_shipping_storage_restore(self):
+        from deploy.update.standalone_restore import StandaloneRestore
+        original = StandaloneRestore.resume
+        with mock.patch.object(StandaloneRestore, 'resume', lambda self, *a, **k: 'restored'):
+            with q.QualificationRehearsal.storage_restore_span(object()) as interval:
+                with self.assertRaisesRegex(p.RehearsalError, 'exactly once'):
+                    interval()
+                self.assertEqual(StandaloneRestore.resume(None), 'restored')
+                started, completed = interval()
+                self.assertLess(started, completed)
+                StandaloneRestore.resume(None)
+                with self.assertRaisesRegex(p.RehearsalError, 'exactly once'):
+                    interval()
+            self.assertEqual(StandaloneRestore.resume(None), 'restored')
+        self.assertIs(StandaloneRestore.resume, original)
+
+    def test_helper_seconds_accumulate_every_role_operation_without_changing_role_timing(self):
+        from deploy.update.standalone_restore import _StorageHelpers
+        original = _StorageHelpers.execute
+        timings, seconds = p.VolumeRoleTransfers(), {}
+        with mock.patch.object(_StorageHelpers, 'execute', lambda helper, role, operation, *a, **k: operation):
+            with q.QualificationRehearsal.transfer_roles(object(), 'extract', timings, seconds):
+                for role in p.VOLUME_ROLES:
+                    for operation in ('clear', 'extract', 'sync', 'clear'):
+                        self.assertEqual(_StorageHelpers.execute(None, role, operation), operation)
+        self.assertEqual(set(timings.timings), set(p.VOLUME_ROLES))
+        self.assertEqual({role: set(row) for role, row in seconds.items()},
+                         {role: {'clear', 'extract', 'sync'} for role in p.VOLUME_ROLES})
+        self.assertTrue(all(value >= 0 for row in seconds.values() for value in row.values()))
+        self.assertIs(_StorageHelpers.execute, original)

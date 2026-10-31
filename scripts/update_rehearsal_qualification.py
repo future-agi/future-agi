@@ -301,8 +301,9 @@ print(json.dumps({'postgres':schema}))
             self.attempt = self.store.reserve_attempt(identity, 'always', datetime.now(timezone.utc))
         if self._primary_sealed:
             return SnapshotMilestone.take_snapshot(self)
-        role_times = p.VolumeRoleTransfers()
-        with self.transfer_roles('archive', role_times):
+        role_times, helpers = p.VolumeRoleTransfers(), {}
+        started = time.monotonic()
+        with self.transfer_roles('archive', role_times, helpers):
             _, self.backup_measurement, transfer = p.measure_transfer(
                 lambda: SnapshotMilestone.take_snapshot(self), self.capture_snapshot)
         snapshot, members = self.capture_snapshot()
@@ -310,24 +311,57 @@ print(json.dumps({'postgres':schema}))
         self.corpus.update(source_snapshot_inventory=snapshot, source_snapshot_members=members,
             source_backup_proof=json.loads((self.ledger.directory/'proof.json').read_bytes()),
             source_backup_seal=wire(self.artifact.seal), backup_transfer=transfer,
-            volume_role_transfers={'backup': role_times.finish(snapshot, members)})
+            volume_role_transfers={'backup': role_times.finish(snapshot, members)},
+            transfer_phases={'backup': dict(measured_seconds=transfer['completed_monotonic'] - transfer['started_monotonic'],
+                                            operation_seconds=time.monotonic() - started, helper_seconds=helpers)})
         self.corpus['large_volume_reference'] = dict(snapshot_generation=p.sha(p.canonical_json(snapshot)),
             registry_sha256=p.sha(p.read_bytes(p.ROOT/'deploy/update/high-volume-tables.json', p.MAX_EVIDENCE_BYTES)),
             reference_rows=p.REFERENCE_ROWS, tables=copy.deepcopy(self.sink.reference))
         self._primary_sealed = True
 
     @contextmanager
-    def transfer_roles(self, purpose, timings):
+    def transfer_roles(self, purpose, timings, helper_seconds=None):
         from deploy.update.standalone_restore import _StorageHelpers
         original = _StorageHelpers.execute
         def measured(helper, role, operation, *args, **kwargs):
             call = lambda: original(helper, role, operation, *args, **kwargs)
-            return timings.measure(role, call) if operation == purpose else call()
+            started = time.monotonic()
+            try:
+                return timings.measure(role, call) if operation == purpose else call()
+            finally:
+                if helper_seconds is not None:
+                    # Private diagnostics: where the transfer time goes per role.
+                    row = helper_seconds.setdefault(str(role), {})
+                    row[str(operation)] = row.get(str(operation), 0) + time.monotonic() - started
         _StorageHelpers.execute = measured
         try:
             yield
         finally:
             _StorageHelpers.execute = original
+
+    @contextmanager
+    def storage_restore_span(self):
+        """Clock the shipping storage restore that restore_timeout_seconds bounds.
+
+        Qualification recovery also restarts A, waits for readiness (budgeted
+        separately as recovery_startup_timeout_seconds) and records evidence the
+        host never produces; none of that belongs in the signed restore time.
+        """
+        from deploy.update.standalone_restore import StandaloneRestore
+        original, spans = StandaloneRestore.resume, []
+        def measured(restore, *args, **kwargs):
+            started = time.monotonic()
+            result = original(restore, *args, **kwargs)
+            spans.append((started, time.monotonic()))
+            return result
+        StandaloneRestore.resume = measured
+        def interval():
+            p.need(len(spans) == 1, 'storage restore did not run exactly once')
+            return spans[0]
+        try:
+            yield interval
+        finally:
+            StandaloneRestore.resume = original
 
     @contextmanager
     def start_measurement(self, runtime):
@@ -521,16 +555,20 @@ print(json.dumps({'postgres':schema}))
                 self.record('unexpected-forward-failure.json', p.failure_diagnostics(exc, self))
                 self.recover(exc)
                 raise
-            role_times = p.VolumeRoleTransfers()
-            with self.transfer_roles('extract', role_times):
+            role_times, helpers = p.VolumeRoleTransfers(), {}
+            started = time.monotonic()
+            with self.transfer_roles('extract', role_times, helpers), self.storage_restore_span() as span:
                 _, self.restore_measurement, transfer = p.measure_transfer(
                     lambda: self.recover(self.forward_failure),
-                    lambda: (self._primary_snapshot, self._primary_members))
+                    lambda: (self._primary_snapshot, self._primary_members), interval=span)
             p.need(self.engine.automatic_outcome == 'restored', 'shipping restore did not complete')
             self.shipping_restore_class = StandaloneRestore
             self.corpus['restore_transfer'] = transfer
             self.corpus['volume_role_transfers']['restore'] = role_times.finish(
                 self._primary_snapshot, self._primary_members)
+            self.corpus.setdefault('transfer_phases', {})['restore'] = dict(
+                measured_seconds=transfer['completed_monotonic'] - transfer['started_monotonic'],
+                operation_seconds=time.monotonic() - started, helper_seconds=helpers)
             self.restore_assertions('failure_restore')
         self._remember_resources()
 

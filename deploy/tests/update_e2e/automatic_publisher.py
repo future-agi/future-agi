@@ -41,6 +41,25 @@ from scripts import rehearse_update_compatibility as rehearsal
 REPOSITORY = rehearsal.REPOSITORY
 
 
+
+def transfer_phases(qualified):
+    """Bounded diagnostics from the private corpus: phase and helper seconds only."""
+    import re
+    found = [path for path in Path(qualified).rglob('*-transfer_phases.json')
+             if re.fullmatch(r'[0-9]+-transfer_phases\.json', path.name)]
+    if len(found) != 1:
+        return None
+    try:
+        value = decode_document(found[0].read_bytes()[:65536])['value']
+        number = lambda v: round(float(v), 3) if type(v) in (int, float) else None
+        return {action: dict(measured_seconds=number(item.get('measured_seconds')),
+                             operation_seconds=number(item.get('operation_seconds')),
+                             helper_seconds={str(role)[:32]: {str(op)[:16]: number(s) for op, s in list(ops.items())[:12]}
+                                             for role, ops in list(item.get('helper_seconds', {}).items())[:4]})
+                for action, item in value.items() if action in ('backup', 'restore')}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
 class AutomaticPublisher:
     def __init__(self, directory: Path, *, lane: str, versions, retained_layout,
                  candidates=None, synthetic_fixtures=None, cosign='cosign', openssl='openssl',
@@ -293,7 +312,10 @@ class AutomaticPublisher:
                 manifest_sha256=hashlib.sha256(assets[MANIFEST_ASSET]).hexdigest(),
                 proof_sha256=hashlib.sha256(proof).hexdigest(),
                 migration_plan_count=row['migration_evidence']['target_pending_plan_count'],
-                full_product_qualification=True, test_key_only=True)))
+                full_product_qualification=True, test_key_only=True,
+                # Signed admission inputs and private per-role timing: numbers only.
+                transfer_reference={name: row[name] for name in ('backup_measurement', 'restore_measurement')},
+                transfer_phases=transfer_phases(output/'qualification'))))
 
     def transition(self, source_version, target_version):
         """Return the exact qualified row for this retained-layout transition."""

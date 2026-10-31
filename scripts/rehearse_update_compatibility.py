@@ -1340,18 +1340,26 @@ def _snapshot_volume_members(snapshot, members):
     return {role: len(members[role]) for role in VOLUME_ROLES}
 
 
-def measure_transfer(operation, capture_snapshot, *, clock=time.monotonic):
+def measure_transfer(operation, capture_snapshot, *, clock=time.monotonic, interval=None):
     """Time the shipping operation and capture its inventory + independent trees.
 
     capture_snapshot() runs AFTER the operation and returns (inventory, members)
     read from the sealed generation. In particular cold backup cannot be given a
     guessed pre-backup byte count. Return signed metrics AND retained raw timing;
     both consumers rederive the numerator from these trees before packaging.
+    interval(), when given, returns the (started, completed) clock readings of the
+    shipping phase a host deadline bounds, recorded inside operation(); the
+    signed duration is then that phase, not the caller's instrumentation.
     """
     need(callable(operation) and callable(capture_snapshot), 'unmeasured reference volumes')
     started = clock()
     result = operation()
     completed = clock()
+    if interval is not None:
+        inner = interval()
+        need(type(inner) is tuple and len(inner) == 2 and all(type(v) in (int, float) for v in inner)
+             and started <= inner[0] < inner[1] <= completed, 'measured phase outside its shipping operation')
+        started, completed = inner
     duration = completed - started
     need(_positive(duration), 'unmeasured transfer duration')
     snapshot, members = capture_snapshot()

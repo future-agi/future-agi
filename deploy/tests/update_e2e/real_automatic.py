@@ -262,6 +262,43 @@ def replacement_tolerant(read, paths, *, attempts=5):
             time.sleep(0.05)
 
 
+DATA_USAGE = "for entry in /data/* /data/.[!.]*; do [ -e \"$entry\" ] && du -sk --apparent-size \"$entry\"; done; true"
+
+
+def data_usage(checkout):
+    """Apparent KiB per top-level entry of the app's /data volume (product names only).
+
+    Admission scales transfer time by each volume role's growth over the signed
+    reference, so record which part of app-data grows while A runs.
+    """
+    try:
+        app = [c['Id'] for c in checkout.containers()
+               if c['Config']['Labels'].get('com.docker.compose.service') == 'app']
+        if len(app) != 1:
+            return dict(error='app_container_unavailable')
+        output = checkout.docker('exec', app[0], 'sh', '-c', DATA_USAGE, timeout=120, check=False).stdout
+        usage = {}
+        for line in output.decode('utf-8', errors='replace').splitlines()[:64]:
+            match = re.fullmatch(r'([0-9]{1,15})\s+/data/([A-Za-z0-9._-]{1,64})', line.strip())
+            if match:
+                usage[match.group(2)] = int(match.group(1))
+        return dict(kib=usage, observed_at=time.time())
+    except Exception as exc:
+        return dict(error=type(exc).__name__)
+
+
+def command_refusal(checkout, result):
+    """The closed `bin/update: <reason>` token of the harness's latest command, if any."""
+    if not getattr(result, 'returncode', 0):
+        return None
+    try:
+        name = 'command-{:04d}.stderr'.format(checkout.sequence)
+        tokens = re.findall(rb'^bin/update: ([a-z_]{1,80})$', (checkout.evidence/name).read_bytes()[-65536:], re.M)
+        return tokens[-1].decode() if tokens else 'unclassified'
+    except (OSError, AttributeError, TypeError, ValueError):
+        return 'unavailable'
+
+
 def scheduler_history(store, backup_destination, containers=(), *, activation=None):
     """Closed, token-free projection of what the installed scheduler did.
 

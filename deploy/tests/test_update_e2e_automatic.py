@@ -22,7 +22,8 @@ from deploy.tests.update_e2e.real_automatic import (
     CRON_PERIOD_SECONDS, FAULT_SEAM, PRE_COLD_SOURCE_OBSERVATIONS, SETUP_PROBE_TIMEOUT_SECONDS,
     acceptance_policy, acceptance_reserve_seconds, policy_cli_arguments,
     pending_migration_names, read_attempt_ledger, read_event_records, scheduler_wait_budget,
-    replacement_tolerant, scheduler_history, diagnostic_scheduler_replay, setup_timeout_seconds)
+    replacement_tolerant, scheduler_history, diagnostic_scheduler_replay, setup_timeout_seconds,
+    data_usage, command_refusal)
 from deploy.update.baseline import BaselineStore
 from deploy.update.contracts import ReasonCode
 from deploy.update.enrollment import AUTOMATIC_UPDATE_DISCLOSURE
@@ -114,12 +115,20 @@ class AutomaticLifecycleE2E(unittest.TestCase):
             public_dir = checkout.evidence/'public-status'
             # Diagnostics only: a refused reporting init must not cost the journey.
             reporting = checkout.bin_update('reporting', 'init', '--directory', str(public_dir), check=False)
+            reporting_refusal = command_refusal(checkout, reporting)
+            # Admission scales by each volume's growth while A runs: keep where it grows.
+            usage = dict(setup=data_usage(checkout))
+            checkout.record('data-usage.json', usage)
             def public_status():
                 try:
                     slot = store.read_registration().binding.slot_id
                     return json.loads((public_dir/slot/'status.json').read_bytes())
-                except (OSError, ValueError):
+                except (OSError, ValueError, AttributeError):
                     return None
+            # Operator-facing reporting is a product feature: keep its outcome even on success.
+            checkout.record('public-status.json', dict(reporting_init_returncode=getattr(reporting, 'returncode', None),
+                                                       reporting_init_refusal=reporting_refusal,
+                                                       status=public_status()))
             baseline = BaselineStore(store)
             # Cron atomically replaces state.json while we poll it.
             read_state = lambda: replacement_tolerant(store.read_state, [store.path/'state.json'])
@@ -153,8 +162,11 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                     except Exception:
                         activation = None
                     history = scheduler_history(store, destination, checkout.containers(), activation=activation)
-                    checkout.record('public-status.json', dict(reporting_init_returncode=reporting.returncode,
+                    checkout.record('public-status.json', dict(reporting_init_returncode=getattr(reporting, 'returncode', None),
+                                                               reporting_init_refusal=reporting_refusal,
                                                                status=public_status()))
+                    usage['diagnosis'] = data_usage(checkout)
+                    checkout.record('data-usage.json', usage)
                     if not history.get('attempts'):
                         # Every tick refused before an attempt: name the refusing check.
                         history['diagnostic_replay'] = diagnostic_scheduler_replay(store)
@@ -264,6 +276,8 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                 proofs_after = set(destination.rglob('proof.json'))
                 self.assertEqual(len(proofs_after-proofs_before), 1, 'exactly one cold backup per automatic update')
                 proofs_before = proofs_after
+                usage['after-' + version] = data_usage(checkout)
+                checkout.record('data-usage.json', usage)
                 self.assertEqual(store.read_registration(), registration, 'no re-enrollment')
                 self.assertEqual(activated(), configuration, 'no policy/source/key/CA changes')
                 verify_data()

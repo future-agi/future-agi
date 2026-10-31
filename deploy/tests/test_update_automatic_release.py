@@ -523,6 +523,21 @@ class MeasurementAndExecutorTests(unittest.TestCase):
         with self.assertRaises(producer.RehearsalError):
             producer.measure_transfer(lambda:None,{'docker_volume_name':100})
 
+    def test_transfer_interval_signs_only_the_bounded_shipping_phase(self):
+        # Qualification recovery restarts A and records evidence around the
+        # storage restore; only the phase restore_timeout_seconds bounds is signed.
+        volumes = {v: 100 for v in producer.VOLUME_ROLES}
+        corpus = snapshot_evidence_fixture(volume_bytes=volumes)
+        capture = lambda: (corpus['source_snapshot_inventory'], corpus['source_snapshot_members'])
+        _, measured, raw = producer.measure_transfer(lambda: None, capture, clock=iter((10, 40)).__next__,
+                                                     interval=lambda: (12, 14))
+        self.assertEqual((raw['started_monotonic'], raw['completed_monotonic']), (12, 14))
+        self.assertEqual(measured['throughput_bytes_per_second'], 150)
+        for inner in ((9, 14), (12, 41), (14, 14), (14, 12), [12, 14], ('12', 14)):
+            with self.subTest(inner=inner), self.assertRaisesRegex(producer.RehearsalError, 'outside its shipping'):
+                producer.measure_transfer(lambda: None, capture, clock=iter((10, 40)).__next__,
+                                          interval=lambda: inner)
+
     def test_witnesses_require_every_domain_and_real_origins(self):
         origins = {'postgres_app':'product_api','clickhouse':'collector_ingestion','object_store':'bundled_s3_api',
                    'temporal':'completed_product_workflow','shared_files':'product_spool'}

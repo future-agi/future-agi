@@ -463,6 +463,7 @@ jobs:
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/cleanup.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/scheduler-history.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/public-status.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/data-usage.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/startup-result.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/package-result.json
             ${{ runner.temp }}/pr-mirror-probe.json
@@ -550,6 +551,7 @@ jobs:
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/cleanup.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/scheduler-history.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/public-status.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/data-usage.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/startup-result.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/package-result.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-diagnostics.json
