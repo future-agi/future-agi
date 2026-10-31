@@ -8,6 +8,14 @@ import { useState, useMemo } from "react";
 import { TreeView } from "../../../../TreeView";
 import { CustomTreeNode } from "./CustomTreeNode";
 
+const filterNodeTree = (nodes, query) =>
+  nodes.reduce((matches, node) => {
+    const children = filterNodeTree(node.children || [], query);
+    if (node.name.toLowerCase().includes(query) || children.length > 0)
+      matches.push({ ...node, children });
+    return matches;
+  }, []);
+
 export default function NodeOutputListView({
   showTitle = true,
   showSearch = true,
@@ -19,9 +27,7 @@ export default function NodeOutputListView({
   const [searchQuery, setSearchQuery] = useState("");
   const filteredNodes = useMemo(() => {
     if (!nodes?.length) return [];
-    return nodes.filter((node) =>
-      (node?.name ?? "").toLowerCase().includes(searchQuery.toLowerCase()),
-    );
+    return filterNodeTree(nodes, searchQuery.trim().toLowerCase());
   }, [nodes, searchQuery]);
   return (
     <Box
