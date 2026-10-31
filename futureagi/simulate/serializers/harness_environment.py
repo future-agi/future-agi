@@ -768,6 +768,39 @@ class HarnessVersionDiffSerializer(serializers.Serializer):
     )
 
 
+class HarnessCapabilityRowSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    label = serializers.CharField()
+    status = serializers.ChoiceField(
+        choices=("supported", "partial", "blocked", "unavailable", "untested", "stale")
+    )
+    finding = serializers.CharField(allow_null=True)
+    checks = serializers.ListField(child=serializers.DictField())
+    blocked_by = serializers.CharField(allow_null=True)
+    stale_because = serializers.CharField(allow_null=True)
+    fix_type = serializers.CharField(allow_null=True)
+    needed_by = serializers.IntegerField()
+    affected = serializers.IntegerField()
+
+
+class HarnessCapabilitySelectionSerializer(serializers.Serializer):
+    requested = serializers.IntegerField()
+    eligible = serializers.IntegerField()
+    blocked = serializers.IntegerField()
+    untested = serializers.IntegerField()
+    requirements_recorded = serializers.BooleanField()
+
+
+class HarnessCapabilityReportSerializer(serializers.Serializer):
+    environment_version_id = serializers.CharField(allow_null=True)
+    catalog_version = serializers.CharField(allow_null=True)
+    checked_at = serializers.CharField(allow_null=True)
+    capabilities = HarnessCapabilityRowSerializer(many=True)
+    selection = HarnessCapabilitySelectionSerializer()
+    rules_version = serializers.CharField()
+    computed_at = serializers.CharField()
+
+
 class HarnessRunPlanQuerySerializer(serializers.Serializer):
     agent_version_id = serializers.UUIDField(required=False)
     environment_version_id = serializers.UUIDField(required=False)

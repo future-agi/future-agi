@@ -15599,7 +15599,7 @@ export interface AgentDefinitionCreateRequestApi {
   livekit_config_json?: AgentDefinitionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
 }
@@ -16024,7 +16024,7 @@ export interface AgentDefinitionEditRequestApi {
   livekit_config_json?: AgentDefinitionEditRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
 }
@@ -16172,7 +16172,7 @@ export interface AgentVersionCreateRequestApi {
   livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
   commit_message?: string;
@@ -18525,6 +18525,62 @@ export interface HarnessEnvironmentRenameApi {
    * @maxLength 255
    */
   name: string;
+}
+
+export type HarnessCapabilityRowApiStatus =
+  (typeof HarnessCapabilityRowApiStatus)[keyof typeof HarnessCapabilityRowApiStatus];
+
+export const HarnessCapabilityRowApiStatus = {
+  supported: "supported",
+  partial: "partial",
+  blocked: "blocked",
+  unavailable: "unavailable",
+  untested: "untested",
+  stale: "stale",
+} as const;
+
+export type HarnessCapabilityRowApiChecksItem = { [key: string]: string };
+
+export interface HarnessCapabilityRowApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  status: HarnessCapabilityRowApiStatus;
+  /** @minLength 1 */
+  finding: string;
+  checks: HarnessCapabilityRowApiChecksItem[];
+  /** @minLength 1 */
+  blocked_by: string;
+  /** @minLength 1 */
+  stale_because: string;
+  /** @minLength 1 */
+  fix_type: string;
+  needed_by: number;
+  affected: number;
+}
+
+export interface HarnessCapabilitySelectionApi {
+  requested: number;
+  eligible: number;
+  blocked: number;
+  untested: number;
+  requirements_recorded: boolean;
+}
+
+export interface HarnessCapabilityReportApi {
+  /** @minLength 1 */
+  environment_version_id: string;
+  /** @minLength 1 */
+  catalog_version: string;
+  /** @minLength 1 */
+  checked_at: string;
+  capabilities: HarnessCapabilityRowApi[];
+  selection: HarnessCapabilitySelectionApi;
+  /** @minLength 1 */
+  rules_version: string;
+  /** @minLength 1 */
+  computed_at: string;
 }
 
 export type HarnessComparePairApiBand =

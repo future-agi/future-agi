@@ -31754,7 +31754,7 @@ export const simulateAgentDefinitionsCreateCreateBodyObservabilityEnabledDefault
   false;
 export const simulateAgentDefinitionsCreateCreateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
 
 export const SimulateAgentDefinitionsCreateCreateBody = zod.object({
   agent_name: zod
@@ -31980,7 +31980,7 @@ export const simulateAgentDefinitionsEditUpdateBodyAgentNameMax = 255;
 
 export const simulateAgentDefinitionsEditUpdateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 5;
 
 export const SimulateAgentDefinitionsEditUpdateBody = zod.object({
   observability_enabled: zod.boolean().optional(),
@@ -32281,7 +32281,7 @@ export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitApiSecretMax
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitAgentNameMax = 255;
 
-export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyCommitMessageDefault = ``;
 
@@ -37203,6 +37203,50 @@ reference the same credentials.
  */
 export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
   id: zod.string(),
+});
+
+/**
+ * What this environment was shown to support, one status per capability, computed now from its build's
+evidence; Stale once the environment version has moved on. No writes.
+ */
+export const SimulateApiHarnessEnvironmentsCapabilitiesParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
+  environment_version_id: zod.string().min(1),
+  catalog_version: zod.string().min(1),
+  checked_at: zod.string().min(1),
+  capabilities: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      label: zod.string().min(1),
+      status: zod.enum([
+        "supported",
+        "partial",
+        "blocked",
+        "unavailable",
+        "untested",
+        "stale",
+      ]),
+      finding: zod.string().min(1),
+      checks: zod.array(zod.record(zod.string(), zod.string())),
+      blocked_by: zod.string().min(1),
+      stale_because: zod.string().min(1),
+      fix_type: zod.string().min(1),
+      needed_by: zod.number(),
+      affected: zod.number(),
+    }),
+  ),
+  selection: zod.object({
+    requested: zod.number(),
+    eligible: zod.number(),
+    blocked: zod.number(),
+    untested: zod.number(),
+    requirements_recorded: zod.boolean(),
+  }),
+  rules_version: zod.string().min(1),
+  computed_at: zod.string().min(1),
 });
 
 /**
