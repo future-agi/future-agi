@@ -8,7 +8,9 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import Iconify from "src/components/iconify";
 import { searchCatalog } from "./catalogSearch";
+import { ACTION_BUTTON_SX, META_TEXT_SX, warningText } from "./queryUi";
 import { quoteIdentifier } from "./sqlCompletions";
 
 export default function QueryCatalog({ datasets = [], search = "", onInsert }) {
@@ -17,10 +19,10 @@ export default function QueryCatalog({ datasets = [], search = "", onInsert }) {
   if (!matches.length)
     return (
       <Box sx={{ p: 2 }} role="status">
-        <Typography variant="subtitle2">
+        <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}>
           No matching datasets or columns
         </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+        <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.5 }}>
           Try a dataset name, field, or data type, such as String.
         </Typography>
       </Box>
@@ -28,11 +30,18 @@ export default function QueryCatalog({ datasets = [], search = "", onInsert }) {
   return (
     <Box>
       <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ display: "block", px: 2, py: 1 }}
+        sx={{
+          display: "block",
+          px: 2,
+          py: 1,
+          typography: "s3",
+          color: "text.secondary",
+        }}
       >
-        {matches.length} {matches.length === 1 ? "dataset" : "datasets"} ·
+        {/* The tab badge carries the total; only a search changes the count. */}
+        {search.trim()
+          ? `${matches.length} matching ${matches.length === 1 ? "dataset" : "datasets"} · `
+          : ""}
         Select a column to insert
       </Typography>
       {matches.map((dataset) => {
@@ -58,7 +67,11 @@ export default function QueryCatalog({ datasets = [], search = "", onInsert }) {
                 px: 2,
                 py: 1.25,
                 cursor: "pointer",
-                fontSize: 13,
+                listStyle: "none",
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                "&::-webkit-details-marker": { display: "none" },
                 bgcolor: open ? "action.hover" : "transparent",
                 "&:hover": { bgcolor: "action.hover" },
                 "&:focus-visible": {
@@ -68,13 +81,26 @@ export default function QueryCatalog({ datasets = [], search = "", onInsert }) {
                 },
               }}
             >
+              <Iconify
+                icon="solar:alt-arrow-right-linear"
+                width={14}
+                sx={{
+                  color: "text.secondary",
+                  flexShrink: 0,
+                  transition: "transform 120ms",
+                  transform: open ? "rotate(90deg)" : "none",
+                }}
+              />
               <Typography
                 component="span"
                 sx={{
                   fontFamily: "monospace",
-                  fontSize: 13,
-                  fontWeight: 600,
+                  typography: "s2",
+                  fontWeight: "fontWeightSemiBold",
                   overflowWrap: "anywhere",
+                  color: unavailable ? "text.disabled" : "text.primary",
+                  flex: 1,
+                  minWidth: 0,
                 }}
               >
                 {dataset.name}
@@ -82,9 +108,7 @@ export default function QueryCatalog({ datasets = [], search = "", onInsert }) {
               </Typography>
               <Typography
                 component="span"
-                variant="caption"
-                color="text.secondary"
-                sx={{ display: "block", pl: 2 }}
+                sx={{ ...META_TEXT_SX, flexShrink: 0 }}
               >
                 {search.trim()
                   ? `${dataset.columns.length} of ${dataset.totalColumns}`
@@ -93,11 +117,11 @@ export default function QueryCatalog({ datasets = [], search = "", onInsert }) {
               </Typography>
             </Box>
             <Stack spacing={1} sx={{ px: 2, py: 1.5 }}>
-              <Typography variant="caption" color="text.secondary">
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 {dataset.description}
               </Typography>
               {unavailable && (
-                <Typography variant="caption">
+                <Typography sx={{ typography: "s2", color: warningText }}>
                   {dataset.unavailable_reason ||
                     "This dataset is not available in this project."}
                 </Typography>
@@ -105,12 +129,13 @@ export default function QueryCatalog({ datasets = [], search = "", onInsert }) {
               <Button
                 size="small"
                 variant="outlined"
+                startIcon={<Iconify icon="solar:add-circle-linear" />}
                 disabled={unavailable}
                 aria-label={`Insert dataset ${dataset.name}`}
                 onClick={() =>
                   !unavailable && onInsert(quoteIdentifier(dataset.name))
                 }
-                sx={{ alignSelf: "flex-start" }}
+                sx={{ ...ACTION_BUTTON_SX, alignSelf: "flex-start" }}
               >
                 Insert dataset
               </Button>
@@ -147,7 +172,8 @@ export default function QueryCatalog({ datasets = [], search = "", onInsert }) {
                     component="span"
                     sx={{
                       fontFamily: "monospace",
-                      fontSize: 12,
+                      typography: "s2",
+                      color: "text.primary",
                       flexShrink: 0,
                       maxWidth: "100%",
                       overflowWrap: "anywhere",
@@ -157,10 +183,10 @@ export default function QueryCatalog({ datasets = [], search = "", onInsert }) {
                   </Typography>
                   <Typography
                     component="span"
-                    variant="caption"
-                    color="text.secondary"
                     sx={{
                       fontFamily: "monospace",
+                      typography: "s3",
+                      color: "text.secondary",
                       ml: "auto",
                       textAlign: "right",
                       flexShrink: 0,

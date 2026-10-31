@@ -65,7 +65,7 @@ describe("SQL query results", () => {
   });
   it("can switch from chart configuration back to exact table data", () => {
     renderResult({ result, chart: { type: "bar", x: "locale", y: "score" } });
-    fireEvent.click(screen.getByRole("button", { name: "Table", exact: true }));
+    fireEvent.click(screen.getByRole("tab", { name: "Table", exact: true }));
     expect(
       screen.getByRole("table", { name: "SQL query results" }),
     ).toBeInTheDocument();
