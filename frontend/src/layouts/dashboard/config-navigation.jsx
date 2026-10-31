@@ -106,16 +106,11 @@ export function useNavData() {
         //   });
         // },
       },
-      // {
-      //   title: "Prototype",
-      //   path: paths.dashboard.prototype,
-      //   icon: ICONS.prototype,
-      //   eventTrigger: () => {
-      //     trackEvent(Events.navigationPrototypeClicked, {
-      //       [PropertyName.click]: true,
-      //     });
-      //   },
-      // },
+      {
+        title: "Dataset & experiments",
+        path: paths.dashboard.prototype,
+        icon: ICONS.prototype,
+      },
       {
         title: "Knowledge base",
         path: paths.dashboard.knowledge_base,
