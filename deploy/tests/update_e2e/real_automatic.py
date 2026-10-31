@@ -374,6 +374,40 @@ def collect(trace):
         trace = trace.tb_next
     return facts
 runner.HostRunner._refusal = staticmethod(refusal)
+import time
+try:
+    import futureagi_update.automatic as automatic
+    original_preflight = automatic.AutomaticLifecycle.preflight
+    ESTIMATE = ("backup_seconds", "migration_seconds", "restore_seconds", "extra_disk_bytes",
+                "backup_required_free_bytes", "docker_required_free_bytes", "protected_restore_reserve_bytes",
+                "forward_seconds", "recovery_seconds", "total_seconds", "migration_deadline_seconds",
+                "migration_stall_timeout_seconds")
+    def preflight(self, installation):
+        decision = original_preflight(self, installation)
+        try:
+            estimate = decision.estimate
+            print("FAGI-PREFLIGHT " + json.dumps({"allowed": decision.allowed,
+                "reason_codes": [c.value for c in decision.reason_codes],
+                "estimate": {} if estimate is None else {k: getattr(estimate, k) for k in ESTIMATE},
+                "tick_remaining_seconds": int(installation.runner.deadline - time.monotonic())}), flush=True)
+        except Exception:
+            print("FAGI-PREFLIGHT " + json.dumps({"error": "facts_unavailable"}), flush=True)
+        return decision
+    automatic.AutomaticLifecycle.preflight = preflight
+    import futureagi_update.standalone_state as standalone_state
+    original_measure = standalone_state.StandaloneStateObserver.measure_update_sizes
+    def measure(self, *args, **kwargs):
+        try:
+            return original_measure(self, *args, **kwargs)
+        except Exception as exc:
+            frames = [(os.path.basename(f.filename), f.lineno, f.name) for f in traceback.extract_tb(exc.__traceback__)
+                      if os.path.abspath(f.filename).startswith(package + os.sep)]
+            print("FAGI-SIZES " + json.dumps({"exception_type": type(exc).__name__,
+                "reason_code": getattr(getattr(exc, "reason_code", None), "value", None), "frames": frames[-12:]}), flush=True)
+            raise
+    standalone_state.StandaloneStateObserver.measure_update_sizes = measure
+except (ImportError, AttributeError):
+    pass  # optional facts; the refusal hook alone still applies
 from futureagi_update.__main__ import main
 sys.exit(main(sys.argv[2:]))
 """
@@ -410,6 +444,31 @@ def closed_replay_result(returncode, output):
         except (ValueError, KeyError, TypeError):
             refusals.append(dict(error='unparsed'))
     result = dict(exit_code=returncode, refusals=refusals[:5])
+    estimate_fields = ('backup_seconds', 'migration_seconds', 'restore_seconds', 'extra_disk_bytes',
+                       'backup_required_free_bytes', 'docker_required_free_bytes', 'protected_restore_reserve_bytes',
+                       'forward_seconds', 'recovery_seconds', 'total_seconds', 'migration_deadline_seconds',
+                       'migration_stall_timeout_seconds')
+    frame_ok = lambda name, number, function: (re.fullmatch(r'[a-z0-9_]{1,64}\.py', str(name)) and type(number) is int
+                                               and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,63}|<[a-z]+>', str(function)))
+    for line in output.splitlines():
+        try:
+            if line.startswith('FAGI-PREFLIGHT '):
+                row = json.loads(line[len('FAGI-PREFLIGHT '):])
+                estimate = row.get('estimate') or {}
+                result.setdefault('preflight', []).append(dict(allowed=row.get('allowed') is True,
+                    reason_codes=[c for c in row.get('reason_codes') or [] if c in codes],
+                    estimate={k: estimate[k] for k in estimate_fields if type(estimate.get(k)) is int},
+                    tick_remaining_seconds=row.get('tick_remaining_seconds')
+                    if type(row.get('tick_remaining_seconds')) is int else None))
+            elif line.startswith('FAGI-SIZES '):
+                row = json.loads(line[len('FAGI-SIZES '):])
+                result.setdefault('sizes', []).append(dict(
+                    exception_type=row.get('exception_type') if re.fullmatch(r'[A-Za-z_]\w{0,63}', str(
+                        row.get('exception_type'))) else None,
+                    reason_code=row.get('reason_code') if row.get('reason_code') in codes else None,
+                    frames=[tuple(f) for f in row.get('frames') or [] if len(f) == 3 and frame_ok(*f)]))
+        except (ValueError, TypeError, AttributeError):
+            result.setdefault('errors', []).append('unparsed')
     for line in output.splitlines():
         if line.startswith('{'):
             try:
@@ -420,12 +479,14 @@ def closed_replay_result(returncode, output):
                 result['disposition'] = summary['disposition'] if re.fullmatch(r'[a-z_]{1,40}', str(
                     summary['disposition'])) else None
                 result['reason_codes'] = [c for c in summary.get('reason_codes') or [] if c in codes]
+                result['skip_reason'] = summary.get('skip_reason') if re.fullmatch(r'[a-z_]{1,40}', str(
+                    summary.get('skip_reason'))) else None
     types = re.findall(r'^([A-Za-z_][\w.]*(?:Error|Exception|Refused|Blocked|Failure|Interrupted))(?::|$)', output, re.M)
     result['exception_types'] = sorted(set(types))[:20]
     return result
 
 
-def diagnostic_scheduler_replay(store, *, timeout=900, attempts=3):
+def diagnostic_scheduler_replay(store, *, timeout=900, wait_seconds=900):
     """Replay ONE scheduled run, exactly as cron launches it, after a failed wait.
 
     Same registered launcher environment (env -i HOME/PATH/PYTHON/DOCKER_CONTEXT)
@@ -442,7 +503,9 @@ def diagnostic_scheduler_replay(store, *, timeout=900, attempts=3):
             'DOCKER_CONTEXT=' + binding.docker_context, str(launch.python), '-I', '-c', REPLAY, root,
             '--root', root, '--cwd', root, 'run', '--env-file', str(binding.env_alias)]
     result = dict(error='busy')
-    for _ in range(attempts):
+    # A cron run holds runner.lock for minutes; retry between deliveries.
+    give_up = time.monotonic() + wait_seconds
+    while True:
         process = subprocess.Popen(argv, cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, start_new_session=True)
         try:
@@ -452,10 +515,9 @@ def diagnostic_scheduler_replay(store, *, timeout=900, attempts=3):
             process.communicate()
             return dict(error='timeout', seconds=timeout)
         result = closed_replay_result(process.returncode, output.decode('utf-8', errors='replace'))
-        if result.get('disposition') != 'busy':
+        if result.get('disposition') != 'busy' or time.monotonic() >= give_up:
             return result
-        time.sleep(30)
-    return result
+        time.sleep(15)
 
 
 def read_attempt_ledger(directory):
