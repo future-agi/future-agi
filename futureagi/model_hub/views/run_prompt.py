@@ -1156,6 +1156,138 @@ class RunPrompts:
             run_prompt_id=str(run_prompt_id),
         )
 
+    def _emit_dataset_root_span(
+        self,
+        *,
+        trace_id,
+        span_id,
+        start_ns,
+        end_ns,
+        row_context,
+        error=None,
+    ):
+        """Emit the root (row-execution) span for a dataset run (issue #2665).
+
+        Best-effort: emission failure is logged and swallowed.
+        """
+        try:
+            from tracer.services.dataset_tracing import (
+                SPAN_KIND_CHAIN,
+                build_span,
+                emit_dataset_spans,
+                identity_attributes,
+            )
+
+            attributes = identity_attributes(
+                dataset_id=row_context.get("dataset_id"),
+                row_id=row_context.get("row_id"),
+                column_id=row_context.get("column_id"),
+                variant=row_context.get("variant"),
+                source=row_context.get("source"),
+            )
+            if error is not None:
+                attributes["error.message"] = str(error)
+
+            span = build_span(
+                name="dataset.run.row",
+                trace_id=trace_id,
+                span_id=span_id,
+                parent_span_id=None,
+                start_time=start_ns,
+                end_time=end_ns,
+                span_kind=SPAN_KIND_CHAIN,
+                attributes=attributes,
+                status_code="ERROR" if error is not None else "OK",
+            )
+
+            emit_dataset_spans(
+                [span],
+                organization_id=str(self.run_prompt_model.organization.id),
+                workspace_id=(
+                    str(self.run_prompt_model.dataset.workspace.id)
+                    if self.run_prompt_model.dataset
+                    and self.run_prompt_model.dataset.workspace
+                    else None
+                ),
+            )
+        except Exception:  # noqa: BLE001 - tracing is best-effort
+            logger.exception(
+                "dataset_root_span_emit_failed",
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+
+    def _emit_dataset_render_span(
+        self,
+        *,
+        trace_id,
+        span_id,
+        parent_span_id,
+        start_ns,
+        end_ns,
+        template,
+        rendered,
+        row_context,
+    ):
+        """Emit the template-render span for a dataset row (issue #2665).
+
+        Best-effort: emission failure is logged and swallowed.
+        """
+        try:
+            from tracer.services.dataset_tracing import (
+                ATTR_INPUT_VALUE,
+                ATTR_OPERATION,
+                ATTR_OUTPUT_VALUE,
+                SPAN_KIND_CHAIN,
+                build_span,
+                emit_dataset_spans,
+                identity_attributes,
+            )
+
+            attributes = {
+                ATTR_OPERATION: "render",
+                ATTR_INPUT_VALUE: template,
+                ATTR_OUTPUT_VALUE: rendered,
+            }
+            attributes.update(
+                identity_attributes(
+                    dataset_id=row_context.get("dataset_id"),
+                    row_id=row_context.get("row_id"),
+                    column_id=row_context.get("column_id"),
+                    variant=row_context.get("variant"),
+                    source=row_context.get("source"),
+                )
+            )
+
+            span = build_span(
+                name="prompt.render",
+                trace_id=trace_id,
+                span_id=span_id,
+                parent_span_id=parent_span_id,
+                start_time=start_ns,
+                end_time=end_ns,
+                span_kind=SPAN_KIND_CHAIN,
+                attributes=attributes,
+                status_code="OK",
+            )
+
+            emit_dataset_spans(
+                [span],
+                organization_id=str(self.run_prompt_model.organization.id),
+                workspace_id=(
+                    str(self.run_prompt_model.dataset.workspace.id)
+                    if self.run_prompt_model.dataset
+                    and self.run_prompt_model.dataset.workspace
+                    else None
+                ),
+            )
+        except Exception:  # noqa: BLE001 - tracing is best-effort
+            logger.exception(
+                "dataset_render_span_emit_failed",
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+
     def load_run_prompt_id(self):
         """Load run_prompt_model based on ID."""
         logger.info(
@@ -1326,6 +1458,19 @@ class RunPrompts:
             column_id=str(column.id),
             edit_mode=edit_mode,
         )
+
+        # Issue #2665: emit one trace per row execution. Ids/timestamps are local
+        # (never instance state) because process_row runs in a thread pool.
+        from tracer.services.dataset_tracing import (
+            new_span_id,
+            new_trace_id,
+            now_ns,
+        )
+
+        trace_id = new_trace_id()
+        row_span_id = new_span_id()
+        row_start_ns = now_ns()
+
         try:
             # Call litellm with the validated data
             if edit_mode:
@@ -1426,6 +1571,8 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
+                render_span_id = new_span_id()
+                render_start_ns = now_ns()
                 messages = populate_placeholders(
                     self.run_prompt_model.messages,
                     dataset_id=self.run_prompt_model.dataset.id,
@@ -1437,6 +1584,22 @@ class RunPrompts:
                     ),
                 )
                 messages = remove_empty_text_from_messages(messages)
+                render_end_ns = now_ns()
+                self._emit_dataset_render_span(
+                    trace_id=trace_id,
+                    span_id=render_span_id,
+                    parent_span_id=row_span_id,
+                    start_ns=render_start_ns,
+                    end_ns=render_end_ns,
+                    template=self.run_prompt_model.messages,
+                    rendered=messages,
+                    row_context={
+                        "dataset_id": str(self.run_prompt_model.dataset.id),
+                        "row_id": row_id,
+                        "column_id": str(column.id),
+                        "source": "dataset",
+                    },
+                )
                 logger.info(
                     "RunPrompts_process_row_placeholders_populated",
                     run_prompt_id=str(self.run_prompt_id),
@@ -1478,7 +1641,16 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
-                response, value_info = run_prompt.litellm_response()
+                response, value_info = run_prompt.litellm_response(
+                    trace_id=trace_id,
+                    parent_span_id=row_span_id,
+                    row_context={
+                        "dataset_id": str(self.run_prompt_model.dataset.id),
+                        "row_id": row_id,
+                        "column_id": str(column.id),
+                        "source": "dataset",
+                    },
+                )
                 logger.info(
                     "RunPrompts_process_row_litellm_response_received",
                     run_prompt_id=str(self.run_prompt_id),
@@ -1505,6 +1677,27 @@ class RunPrompts:
                 response = str(e)
                 value_info = {"reason": error_message}
                 status = CellStatus.ERROR.value
+
+            # Emit the root row-execution span (issue #2665). Runs after both the
+            # success and error paths so an errored row still leaves a trace.
+            row_end_ns = now_ns()
+            self._emit_dataset_root_span(
+                trace_id=trace_id,
+                span_id=row_span_id,
+                start_ns=row_start_ns,
+                end_ns=row_end_ns,
+                row_context={
+                    "dataset_id": str(self.run_prompt_model.dataset.id),
+                    "row_id": row_id,
+                    "column_id": str(column.id),
+                    "source": "dataset",
+                },
+                error=(
+                    None
+                    if status == CellStatus.PASS.value
+                    else "row execution failed"
+                ),
+            )
 
             # if status == CellStatus.ERROR.value:
             #     try:
@@ -1553,6 +1746,9 @@ class RunPrompts:
                         json.dumps(value_info) if value_info else json.dumps({})
                     )
                     cell.status = status
+                    # Issue #2665: link the cell to its row-execution trace
+                    cell.trace_id = trace_id
+                    cell.span_id = row_span_id
 
                     if value_info:
                         cell.prompt_tokens = (
@@ -1614,6 +1810,8 @@ class RunPrompts:
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                         response_time=response_time,
+                        trace_id=trace_id,
+                        span_id=row_span_id,
                     )
                     logger.info(
                         "cell_created_in_edit_mode",
@@ -1660,6 +1858,8 @@ class RunPrompts:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     response_time=response_time,
+                    trace_id=trace_id,
+                    span_id=row_span_id,
                 )
                 logger.info(
                     "cell_created",
