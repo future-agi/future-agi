@@ -20,7 +20,9 @@ const commonCellStyle = {
 export const ExperimentSummaryStaticColumnDefs = [
   {
     headerName: "Experiment Name",
-    field: "experimentDatasetName",
+    // colId keeps the header icon mapping in ExperimentHeader.jsx.
+    colId: "experimentDatasetName",
+    field: "experiment_dataset_name",
     cellRenderer: ExperimentNameCellRenderer,
     cellStyle: {
       overflow: "auto",
@@ -30,21 +32,23 @@ export const ExperimentSummaryStaticColumnDefs = [
   },
   {
     headerName: "Average Response time (ms)",
-    field: "averageResponseTime",
+    colId: "averageResponseTime",
+    field: "average_response_time",
     flex: 1,
     cellStyle: {
       ...commonCellStyle,
     },
     valueFormatter: (params) => {
       return params?.value !== undefined
-        ? `${parseFloat(params?.value.toFixed(1))}s`
+        ? `${parseFloat(params?.value.toFixed(1))} ms`
         : 0;
     },
     minWidth: 200,
   },
   {
     headerName: "Prompt Tokens",
-    field: "promptToken",
+    colId: "promptToken",
+    field: "prompt_token",
     flex: 1,
     cellStyle: {
       ...commonCellStyle,
@@ -58,7 +62,8 @@ export const ExperimentSummaryStaticColumnDefs = [
   },
   {
     headerName: "Completion Tokens",
-    field: "completionToken",
+    colId: "completionToken",
+    field: "completion_token",
     cellStyle: {
       ...commonCellStyle,
     },
@@ -72,7 +77,8 @@ export const ExperimentSummaryStaticColumnDefs = [
   },
   {
     headerName: "Total Tokens",
-    field: "totalToken",
+    colId: "totalToken",
+    field: "total_token",
     flex: 1,
     cellStyle: {
       ...commonCellStyle,

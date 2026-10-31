@@ -61,8 +61,14 @@ const transformAgentToFormSchema = (agent) => {
     promptVersion: null,
     agentId: agent?.id || agent?.agentId || "",
     name: agent?.name,
+    // GraphListSerializer sends `active_version_id`
+    // (agent_playground/serializers/graph.py:38-40). Never fall back to
+    // `agent.id`: that is the graph id, which no GraphVersion has.
     agentVersion:
-      agent?.activeVersionId || agent?.id || agent?.agentVersion || null,
+      agent?.active_version_id ??
+      agent?.activeVersionId ??
+      agent?.agentVersion ??
+      null,
     outputFormat: "string",
     // Draft state lives on the version — populated by AgentPromptRenderer
     // once the user selects a version (TH-4355).

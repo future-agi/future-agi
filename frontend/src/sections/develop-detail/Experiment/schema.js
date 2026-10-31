@@ -275,7 +275,7 @@ export const getNewExperimentValidationSchema = (
                   params: { dataset_id: dataset, name },
                 },
               );
-              return response?.data?.result?.isValid ?? true;
+              return response?.data?.result?.is_valid ?? true;
             } catch (error) {
               // If validation fails, return false to block submission
               return false;

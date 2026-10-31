@@ -567,7 +567,6 @@ const RunExperiment = ({
     !!selectedExperiment,
   );
   const allColumns = useMemo(() => {
-
     const cols = experimentColumns?.length ? experimentColumns : datasetColumns;
     if (!cols) return cols;
     return cols.map((col) => ({
@@ -597,7 +596,7 @@ const RunExperiment = ({
     queryKey: ["experiment-suggested-name", dataset],
     queryFn: () => axios.get(endpoints.develop.experiment.suggestName(dataset)),
     enabled: !selectedExperiment && openRunExperiment,
-    select: (d) => d.data?.result?.suggestedName,
+    select: (d) => d.data?.result?.suggested_name,
   });
 
   const onClose = () => {
@@ -746,7 +745,7 @@ const RunExperiment = ({
           ) : (
             <RunExperimentForm
               allColumns={allColumns?.filter((col) =>
-                ["run_prompt", "others",].includes(
+                ["run_prompt", "others"].includes(
                   col?.originType?.toLowerCase(),
                 ),
               )}
