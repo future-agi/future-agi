@@ -10,12 +10,12 @@ import pytest
 from django.utils import timezone
 
 from simulate.models import HarnessCapabilityEvidence, HostedHarnessJob
-from simulate.tests.test_harness_versioning_backfill import (
-    storage as storage,  # noqa: F401 - fixture
-)
 from simulate.services.capability_evidence import (
     capability_report,
     record_capability_evidence,
+)
+from simulate.tests.test_harness_versioning_backfill import (
+    storage as storage,  # noqa: F401 - fixture
 )
 
 _DOCUMENT = {
