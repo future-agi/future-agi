@@ -187,3 +187,25 @@ def test_a_write_adds_one_source_to_each_item_it_moved_and_a_retry_adds_none():
     assert record_sources(first, default, edited, origin="manual", user=user, revision=1, at="t2") == first
     harness = record_sources(first, edited, default, origin="chat", user=None, revision=2, at="t3")
     assert [one["agent"]["kind"] for one in harness["tool:issue_refund"]] == ["user", "harness"]
+
+
+def test_a_chat_change_is_the_person_s_through_the_harness_with_the_message_it_answered():
+    import json as _json
+    from types import SimpleNamespace
+
+    from simulate.services.harness_versioning.review import PROVENANCE_FILE, chat_citations, record_sources
+
+    published = {PROVENANCE_FILE: b"\n".join(_json.dumps(one).encode() for one in (
+        {"message_id": "m1", "tool": "fix_tool", "items": ["tool:issue_refund"]},
+        "not an object",
+        {"message_id": "m2", "tool": "change_world", "items": ["tool:issue_refund", "file:world.sqlite"]},
+    )) + b"\nnot json"}
+    cited = chat_citations(published)
+    assert cited["tool:issue_refund"] == {"message_id": "m2", "tool": "change_world"}
+
+    default = _tree({"tools": TOOLS})
+    edited = _tree({"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}]})
+    [source] = record_sources(None, default, edited, origin="chat", user=SimpleNamespace(id="u-1"), revision=4,
+                              at="t", cited=cited)["tool:issue_refund"]
+    assert source["agent"] == {"kind": "harness", "on_behalf_of": "u-1"}
+    assert (source["tool"], source["used"]) == ("change_world", [{"kind": "message", "id": "m2"}])

@@ -576,6 +576,7 @@ def record_sources(
     user: Any,
     revision: int,
     at: str,
+    cited: Mapping[str, Mapping[str, str]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Where each change came from: every item this write moved gets one source (who, through what, at which draft
     revision), appended to the sources it already had. A retried write at the same revision adds nothing."""
@@ -596,6 +597,35 @@ def record_sources(
         listed = out.setdefault(item_id, [])
         if any(one.get("draft_revision") == revision for one in listed):
             continue
-        listed.append(source)
+        chat = (cited or {}).get(item_id)
+        if chat:
+            # A chat change belongs to the person whose message it answered, made through the harness.
+            listed.append({
+                **source,
+                "agent": {"kind": "harness", "on_behalf_of": source["agent"].get("user_id", "")},
+                "tool": chat.get("tool", ""),
+                "used": [{"kind": "message", "id": chat.get("message_id", "")}],
+            })
+        else:
+            listed.append(source)
         del listed[:-SOURCES_PER_CHANGE]
+    return out
+
+
+PROVENANCE_FILE = ".futureagi-provenance.jsonl"
+
+
+def chat_citations(published: Mapping[str, bytes]) -> dict[str, dict[str, str]]:
+    """Per item, the chat tool call that last moved it and the person's message that call answered, from the
+    builder chat's provenance file in a published tree."""
+    out: dict[str, dict[str, str]] = {}
+    for line in (published.get(PROVENANCE_FILE) or b"").decode("utf-8", "replace").splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        for item_id in entry.get("items") or []:
+            out[str(item_id)] = {"message_id": str(entry.get("message_id") or ""), "tool": str(entry.get("tool") or "")}
     return out

@@ -636,7 +636,8 @@ def record_draft(
     )
 
     wanted = set(DRAFT_PIECES if pieces is None else pieces)
-    split, prepared = _prepared(environment, archives.read_archive(body))
+    published = archives.read_archive(body)
+    split, prepared = _prepared(environment, published)
     require_checkpoint_scenarios(prepared.scenarios)
     hashes = {
         "environment": prepared.environment_hash,
@@ -745,7 +746,10 @@ def record_draft(
                 values["documents"]["exempt_keys"] = sorted(exempt)
             if workspace_sealed is not None:
                 values["documents"]["workspace_sealed"] = workspace_sealed
-            from simulate.services.harness_versioning.review import record_sources
+            from simulate.services.harness_versioning.review import (
+                chat_citations,
+                record_sources,
+            )
 
             values["documents"]["provenance"] = record_sources(
                 (draft.documents or {}).get("provenance") if fresh else None,
@@ -755,6 +759,7 @@ def record_draft(
                 user=user,
                 revision=draft.revision + 1 if fresh else 1,
                 at=timezone.now().isoformat(),
+                cited=chat_citations(published),
             )
             replaced = draft if draft is not None and not fresh else None
             if replaced is not None:
