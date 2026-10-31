@@ -4,7 +4,6 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button } from "@mui/material";
 
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import SideDrawer from "../../../../components/SideDrawer";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import {
@@ -14,11 +13,6 @@ import {
 } from "src/api/simulate-environments/runDetail";
 import DiagnosisPane from "./DiagnosisPane";
 import ImaginePane from "./ImaginePane";
-import BetaChip from "./BetaChip";
-import {
-  SELF_IMPROVEMENT_BETA_HINT,
-  useSelfImprovementOpen,
-} from "./selfImprovement";
 
 /**
  * Fix my agent — the Debug-failures drawer.
@@ -123,10 +117,8 @@ export default function FixMyAgentDrawer({
   const measured =
     view.summary?.measuredCalls ?? stats?.measured ?? stats?.total ?? 0;
 
-  // The primary path out of the diagnosis: launch a real optimization. Shown once
-  // the diagnosis has finished so the very first optimization is reachable here
-  // (the Trials tab, where past runs live, is hidden until one exists).
-  const selfImprovementOpen = useSelfImprovementOpen();
+  // The primary path out of the diagnosis: start a fix from this run. Shown once
+  // the diagnosis has finished.
   const canLaunch =
     tab === "diagnosis" &&
     view.status === "completed" &&
@@ -226,30 +218,17 @@ export default function FixMyAgentDrawer({
               flexShrink: 0,
             }}
           >
-            <CustomTooltip
-              show={!selfImprovementOpen}
-              title={SELF_IMPROVEMENT_BETA_HINT}
-              size="small"
-              arrow
+            {/* Fix my agent: opens the launch form for this run. */}
+            <Button
+              fullWidth
+              variant="contained"
+              color="primary"
+              onClick={onLaunch}
+              startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
+              sx={{ typography: "s2", fontWeight: 700 }}
             >
-              {/* A disabled button fires no hover events; the box carries the tooltip. */}
-              <Box>
-                <Button
-                  fullWidth
-                  variant="contained"
-                  color="primary"
-                  disabled={!selfImprovementOpen}
-                  onClick={onLaunch}
-                  startIcon={
-                    <Iconify icon="solar:magic-stick-3-bold" width={16} />
-                  }
-                  sx={{ typography: "s2", fontWeight: 700 }}
-                >
-                  Run Self Improvement
-                  {!selfImprovementOpen && <BetaChip />}
-                </Button>
-              </Box>
-            </CustomTooltip>
+              Improve
+            </Button>
           </Box>
         )}
       </Stack>

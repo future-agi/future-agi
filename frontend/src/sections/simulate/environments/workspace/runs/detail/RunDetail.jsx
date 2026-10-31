@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button, IconButton, Tab } from "@mui/material";
@@ -36,6 +36,7 @@ import { useRunEvalActions } from "./useRunEvalActions";
 import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
 import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
+import LaunchFixDialog from "../../improvements/LaunchFixDialog";
 import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
@@ -62,6 +63,7 @@ export default function RunDetail({
   creditBanner = null,
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [tab, setTab] = useState("tasks");
   // Filters handed to the calls table from elsewhere on the page (an analytics
   // tile, a diagnosis issue). `seq` remounts the table so a repeat hand-off
@@ -88,6 +90,7 @@ export default function RunDetail({
   });
   const [debugging, setDebugging] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [fixLaunching, setFixLaunching] = useState(false);
   const [exporting, setExporting] = useState(false);
   const { identity, stats } = useRunDetail(testId, executionId, {
     envName: env?.name,
@@ -170,9 +173,12 @@ export default function RunDetail({
     },
   };
 
+  // A check run opened from a fix carries the fix page as its way back; it is
+  // not in the Runs list, so Back would otherwise land somewhere without it.
   const back = () =>
     navigate(
-      paths.dashboard.simulate.environments.workspaceTab(env.id, "runs"),
+      location.state?.backTo ??
+        paths.dashboard.simulate.environments.workspaceTab(env.id, "runs"),
     );
 
   const exportResults = async () => {
@@ -210,7 +216,7 @@ export default function RunDetail({
           flexShrink: 0,
         }}
       >
-        <IconButton size="small" onClick={back}>
+        <IconButton size="small" onClick={back} aria-label="Back">
           <Iconify
             icon="solar:alt-arrow-left-linear"
             width={18}
@@ -554,12 +560,19 @@ export default function RunDetail({
         stats={stats}
         onLaunch={() => {
           setDebugging(false);
-          setLaunching(true);
+          setFixLaunching(true);
         }}
         onViewCalls={(callExecutionIds) => {
           setDebugging(false);
           openCallsWith({ callExecutionId: callExecutionIds });
         }}
+      />
+
+      <LaunchFixDialog
+        open={fixLaunching}
+        onClose={() => setFixLaunching(false)}
+        envId={env.id}
+        sourceRunId={executionId}
       />
 
       <LaunchOptimizationDrawer

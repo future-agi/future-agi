@@ -1771,6 +1771,30 @@ export const endpoints = {
         { call_execution_id: id },
       ),
   },
+  // Fix my agent v0. Functions only: apiPath throws until the backend's
+  // paths are in the generated contract (yarn contracts:generate).
+  agentFixRuns: {
+    list: () => apiPath("/simulate/api/agent-fix-runs/"),
+    launchOptions: () =>
+      apiPath("/simulate/api/agent-fix-runs/launch-options/"),
+    detail: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/", { id }),
+    stop: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/stop/", { id }),
+    makeDefault: (id, candidateId) =>
+      apiPath(
+        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/",
+        { id, candidate_id: candidateId },
+      ),
+    pullRequest: (id, candidateId) =>
+      apiPath(
+        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/",
+        { id, candidate_id: candidateId },
+      ),
+    patch: (id, candidateId) =>
+      apiPath(
+        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/patch/",
+        { id, candidate_id: candidateId },
+      ),
+  },
   runResultsV3: {
     calls: (id) =>
       apiPath("/simulate/v3/test-executions/{test_execution_id}/calls/", {

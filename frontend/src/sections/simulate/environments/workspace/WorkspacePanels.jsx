@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
+import { useEnvironmentFixRuns } from "src/api/simulate-environments/fixRuns";
 import { ENV_TABS_SX } from "../environmentOptions";
 import OverviewPanel from "./overview/OverviewPanel";
 import RlContractPanel from "./contract/RlContractPanel";
@@ -12,6 +13,7 @@ import EvalsStep from "./evals/EvalsStep";
 import RunsSummary from "./runs/summary/RunsSummary";
 import SettingsPanel from "./settings/SettingsPanel";
 import VersionsPanel from "./versions/VersionsPanel";
+import ImprovementsPanel from "./improvements/ImprovementsPanel";
 import WorkspaceTabLabel from "./WorkspaceTabLabel";
 import { WORKSPACE_TABS } from "./workspace.constants";
 
@@ -75,10 +77,16 @@ export default function WorkspacePanels({
   // loading, a deep link to ?tab=runs keeps the tab so it does not bounce to
   // the Overview and back.
   const showRuns = runsTotal > 0 || (runsLoading && tab === "runs");
+  // Improvements appears once the environment has a fix, the same way Runs does.
+  const { count: fixCount, isLoading: fixesLoading } = useEnvironmentFixRuns(env?.id);
+  const showImprovements = fixCount > 0 || (fixesLoading && tab === "improvements");
   // Versions appears only while versioning is switched on for this environment.
   const showVersions = Boolean(env?.versioning?.enabled);
   const tabs = WORKSPACE_TABS.filter(
-    (t) => (t.id !== "runs" || showRuns) && (t.id !== "versions" || showVersions),
+    (t) =>
+      (t.id !== "runs" || showRuns) &&
+      (t.id !== "improvements" || showImprovements) &&
+      (t.id !== "versions" || showVersions),
   );
 
   // Default landing is the Overview, which is also the first tab in the rail.
@@ -102,6 +110,7 @@ export default function WorkspacePanels({
   const badgeCount = (badge) => {
     if (!counts) return null;
     if (badge === "runs") return runsTotal;
+    if (badge === "improvements") return fixCount;
     return counts[badge] ?? 0;
   };
 
@@ -129,6 +138,8 @@ export default function WorkspacePanels({
         // The summary's eval columns come from the runs' own scores, so it
         // only needs the store for its scenario count.
         return <RunsSummary key={env.id} env={env} envState={envState} scenarioCount={counts?.scenarios} onOpenRun={openRun} onGo={go} />;
+      case "improvements":
+        return <ImprovementsPanel env={env} />;
       case "versions":
         return <VersionsPanel env={env} />;
       case "settings":
