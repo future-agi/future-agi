@@ -4,17 +4,18 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 
-// Visual primitives shared by the workbench panels. They follow the
-// Environments page: quiet pill chips for metadata, a dot pill for state, and
-// the flush underline tab rail used across the product's tab bars.
+// Visual primitives shared by the workbench panels. They follow the platform:
+// read-only metadata is plain secondary text joined with " · " (never chips,
+// which read as clickable), tab counts are a bare number after the label, and
+// the run state is a tinted dot pill like the Environments StatusPill.
 
 export const QUERY_TABS_SX = {
   minHeight: 40,
   "& .MuiTab-root": {
     minHeight: 40,
     minWidth: 0,
-    px: 1.5,
-    typography: "s1",
+    px: 1.25,
+    typography: "s2",
     fontWeight: "fontWeightSemiBold",
     textTransform: "none",
     "&:not(:last-of-type)": { mr: 0 },
@@ -24,14 +25,12 @@ export const QUERY_TABS_SX = {
   "& .MuiTabs-indicator": { height: 2, bgcolor: "text.primary" },
 };
 
-// Secondary actions: outlined, small, s2 bold, as on the Environments page.
-export const ACTION_BUTTON_PROPS = { variant: "outlined", size: "small" };
 export const CONTROL_HEIGHT = 32;
-export const ACTION_BUTTON_SX = {
-  height: CONTROL_HEIGHT,
-  typography: "s2",
-  fontWeight: "fontWeightSemiBold",
-  whiteSpace: "nowrap",
+// Primary action: contained brand primary, as on Environments and most pages.
+export const PRIMARY_BUTTON_PROPS = {
+  variant: "contained",
+  color: "primary",
+  size: "small",
 };
 export const PRIMARY_BUTTON_SX = {
   height: CONTROL_HEIGHT,
@@ -39,78 +38,84 @@ export const PRIMARY_BUTTON_SX = {
   fontWeight: "fontWeightBold",
   whiteSpace: "nowrap",
 };
+// Secondary actions: the theme's neutral outlined button.
+export const ACTION_BUTTON_PROPS = { variant: "outlined", size: "small" };
+export const ACTION_BUTTON_SX = {
+  height: CONTROL_HEIGHT,
+  typography: "s2",
+  fontWeight: "fontWeightSemiBold",
+  whiteSpace: "nowrap",
+};
 
-// warning.dark is too light for 11px text on white; read warnings from the
+// warning.dark is too light for small text on white; read warnings from the
 // darker step in light mode and the light step in dark mode.
 export const warningText = (t) =>
   t.palette.mode === "dark"
     ? t.palette.warning.light
     : t.palette.warning.darker;
 
-export function MetaChip({
-  icon,
-  children,
-  tone = "default",
-  mono = false,
-  bordered = true,
-  title,
-  sx,
-}) {
-  const color =
-    tone === "warning"
-      ? warningText
-      : tone === "info"
-        ? "info.dark"
-        : "text.secondary";
+export const META_TEXT_SX = {
+  typography: "s3",
+  color: "text.subtitle",
+  fontVariantNumeric: "tabular-nums",
+};
+
+// "4 rows · 3 columns · 37 ms" — falsy parts are dropped.
+export function MetaLine({ parts, icon, sx, ...other }) {
+  const text = parts.filter(Boolean).join(" · ");
+  if (!text) return null;
   return (
-    <Box
-      component="span"
-      title={title}
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 0.5,
-        flexShrink: 0,
-        maxWidth: "100%",
-        px: 0.75,
-        py: 0.25,
-        borderRadius: 0.75,
-        border: "1px solid",
-        borderColor: bordered ? "divider" : "transparent",
-        bgcolor: (t) =>
-          tone === "warning"
-            ? alpha(t.palette.warning.main, 0.08)
-            : tone === "info"
-              ? alpha(t.palette.info.main, 0.08)
-              : "background.neutral",
-        color,
-        typography: "s3",
-        fontWeight: "fontWeightMedium",
-        fontFamily: mono ? "monospace" : undefined,
-        lineHeight: "16px",
-        whiteSpace: "nowrap",
-        ...sx,
-      }}
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.5}
+      sx={{ minWidth: 0, ...sx }}
+      {...other}
     >
-      {icon && <Iconify icon={icon} width={12} sx={{ flexShrink: 0 }} />}
-      <Box
-        component="span"
-        sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
-      >
-        {children}
-      </Box>
-    </Box>
+      {icon && (
+        <Iconify
+          icon={icon}
+          width={14}
+          sx={{ color: "text.subtitle", flexShrink: 0 }}
+        />
+      )}
+      <Typography component="span" sx={META_TEXT_SX}>
+        {text}
+      </Typography>
+    </Stack>
   );
 }
-MetaChip.propTypes = {
+MetaLine.propTypes = {
+  parts: PropTypes.arrayOf(PropTypes.node).isRequired,
   icon: PropTypes.string,
-  children: PropTypes.node,
-  tone: PropTypes.oneOf(["default", "warning", "info"]),
-  mono: PropTypes.bool,
-  bordered: PropTypes.bool,
-  title: PropTypes.string,
   sx: PropTypes.object,
 };
+
+// Label plus a bare count, shown only when greater than 0 (WorkspaceTabLabel).
+export function TabLabel({ label, count }) {
+  return (
+    <Stack direction="row" alignItems="baseline" spacing={0.625}>
+      <span>{label}</span>
+      {count > 0 && (
+        <Box
+          component="span"
+          aria-hidden
+          sx={{ ...META_TEXT_SX, fontWeight: 500 }}
+        >
+          {count}
+        </Box>
+      )}
+    </Stack>
+  );
+}
+TabLabel.propTypes = { label: PropTypes.string, count: PropTypes.node };
+
+export const visibilityLabel = (visibility) =>
+  visibility === "project" ? "Shared with project" : "Private";
+export const visibilityIcon = (visibility) =>
+  visibility === "project"
+    ? "solar:users-group-rounded-linear"
+    : "solar:lock-keyhole-minimalistic-linear";
 
 const STATE_COLOR = {
   succeeded: (t) => t.palette.success.main,
@@ -133,6 +138,7 @@ export function StatePill({ state, children, ...other }) {
       spacing={0.75}
       sx={{
         display: "inline-flex",
+        flexShrink: 0,
         px: 0.875,
         py: 0.25,
         borderRadius: 999,

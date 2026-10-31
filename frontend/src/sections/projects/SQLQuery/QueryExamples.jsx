@@ -7,7 +7,7 @@ import {
   ListItemText,
   Typography,
 } from "@mui/material";
-import { MetaChip } from "./queryUi";
+import { META_TEXT_SX, warningText } from "./queryUi";
 
 // Vetted example queries from the catalog API. Each is ordinary SQL that the
 // server compiles and scopes like any typed query; using one replaces the
@@ -86,22 +86,26 @@ export default function QueryExamples({
                       {example.description}
                     </Box>
                     {missing.length ? (
-                      <MetaChip
-                        tone="warning"
-                        icon="solar:danger-triangle-linear"
+                      <Box
+                        component="span"
+                        sx={{
+                          display: "block",
+                          typography: "s3",
+                          color: warningText,
+                        }}
                       >
                         {`Needs ${missing.join(", ")} (unavailable)`}
-                      </MetaChip>
+                      </Box>
                     ) : (
                       <Box
                         component="span"
-                        sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}
+                        sx={{
+                          ...META_TEXT_SX,
+                          display: "block",
+                          fontFamily: "monospace",
+                        }}
                       >
-                        {example.datasets?.map((name) => (
-                          <MetaChip key={name} mono>
-                            {name}
-                          </MetaChip>
-                        ))}
+                        {example.datasets?.join(" · ")}
                       </Box>
                     )}
                   </>

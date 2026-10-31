@@ -10,7 +10,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { searchCatalog } from "./catalogSearch";
-import { ACTION_BUTTON_SX, MetaChip, warningText } from "./queryUi";
+import { ACTION_BUTTON_SX, META_TEXT_SX, warningText } from "./queryUi";
 import { quoteIdentifier } from "./sqlCompletions";
 
 export default function QueryCatalog({ datasets = [], search = "", onInsert }) {
@@ -106,12 +106,15 @@ export default function QueryCatalog({ datasets = [], search = "", onInsert }) {
                 {dataset.name}
                 {unavailable ? " (unavailable)" : ""}
               </Typography>
-              <MetaChip>
+              <Typography
+                component="span"
+                sx={{ ...META_TEXT_SX, flexShrink: 0 }}
+              >
                 {search.trim()
                   ? `${dataset.columns.length} of ${dataset.totalColumns}`
                   : dataset.totalColumns}{" "}
                 columns
-              </MetaChip>
+              </Typography>
             </Box>
             <Stack spacing={1} sx={{ px: 2, py: 1.5 }}>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>

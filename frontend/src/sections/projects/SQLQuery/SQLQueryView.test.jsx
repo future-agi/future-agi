@@ -204,6 +204,12 @@ const chooseWindow = (label) => {
   fireEvent.mouseDown(screen.getByRole("combobox", { name: /Time window/ }));
   fireEvent.click(screen.getByRole("option", { name: label, exact: true }));
 };
+const chooseDownload = (format) => {
+  fireEvent.click(
+    screen.getByRole("button", { name: "Download", exact: true }),
+  );
+  fireEvent.click(screen.getByRole("menuitem", { name: format, exact: true }));
+};
 const runQuery = () =>
   fireEvent.click(
     screen.getByRole("button", { name: "Run query", exact: true }),
@@ -248,7 +254,7 @@ describe("SQL refinement regressions", () => {
       within(actions)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["CSV", "Parquet", "Add to dashboard", "History"]);
+    ).toEqual(["Download", "Add to dashboard", "History"]);
     fireEvent.change(screen.getByLabelText("SQL query editor"), {
       target: { value: `${resultJob.sql}\nLIMIT 4` },
     });
@@ -368,7 +374,7 @@ describe("SQL review regressions", () => {
     expect(
       screen.getByRole("button", { name: "Run query", exact: true }),
     ).not.toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "CSV", exact: true }));
+    chooseDownload("CSV");
     await waitFor(() =>
       expect(sqlApi.download).toHaveBeenCalledWith(
         "project",
@@ -376,9 +382,7 @@ describe("SQL review regressions", () => {
         "csv",
       ),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Parquet", exact: true }),
-    );
+    chooseDownload("Parquet");
     await waitFor(() =>
       expect(sqlApi.download).toHaveBeenCalledWith(
         "project",
@@ -681,7 +685,7 @@ describe("SQL review regressions", () => {
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.queryByLabelText(/Previous query results/)).toBeNull();
     expect(
-      screen.getByRole("button", { name: "CSV", exact: true }),
+      screen.getByRole("button", { name: "Download", exact: true }),
     ).toBeDisabled();
     expect(screen.getByText(/Explore fields in Catalog/)).toBeVisible();
     sqlApi.run.mockResolvedValue({
@@ -697,7 +701,7 @@ describe("SQL review regressions", () => {
     expect(screen.getByLabelText(/Previous query results/)).toHaveTextContent(
       /last 1 day/,
     );
-    fireEvent.click(screen.getByRole("button", { name: "CSV", exact: true }));
+    chooseDownload("CSV");
     await waitFor(() =>
       expect(sqlApi.download).toHaveBeenCalledWith(
         "other-project",

@@ -1,22 +1,27 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import Editor from "@monaco-editor/react";
+import { alpha } from "@mui/material/styles";
 import {
   Alert,
   Box,
   Button,
-  ButtonGroup,
   CircularProgress,
   LinearProgress,
   Dialog,
-  DialogActions,
   DialogContent,
-  DialogTitle,
+  FormControl,
+  FormControlLabel,
+  FormLabel,
+  IconButton,
+  Radio,
+  RadioGroup,
   Tab,
   Tabs,
   List,
   ListItemButton,
   ListItemText,
+  Menu,
   MenuItem,
   Stack,
   TextField,
@@ -26,6 +31,7 @@ import {
 import { useDashboardList } from "src/hooks/useDashboards";
 import { useAuthContext } from "src/auth/hooks";
 import { closeSnackbar, enqueueSnackbar } from "notistack";
+import { relativeTime } from "src/utils/format-time";
 import { errorMessage, sqlApi } from "./api";
 import useSQLExecution from "./useSQLExecution";
 import QueryResults from "./QueryResults";
@@ -34,14 +40,20 @@ import QueryExamples from "./QueryExamples";
 import QueryCatalog from "./QueryCatalog";
 import { getSQLCompletions } from "./sqlCompletions";
 import Iconify from "src/components/iconify";
+import FormSearchField from "src/components/FormSearchField/FormSearchField";
+import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import {
   ACTION_BUTTON_PROPS,
   ACTION_BUTTON_SX,
   CONTROL_HEIGHT,
-  MetaChip,
+  MetaLine,
+  PRIMARY_BUTTON_PROPS,
   PRIMARY_BUTTON_SX,
   QUERY_TABS_SX,
   StatePill,
+  TabLabel,
+  visibilityIcon,
+  visibilityLabel,
   warningText,
 } from "./queryUi";
 import {
@@ -70,6 +82,7 @@ export default function SQLQueryView() {
   const [libraryTab, setLibraryTab] = useState("catalog");
   const [librarySearch, setLibrarySearch] = useState("");
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [downloadAnchor, setDownloadAnchor] = useState(null);
   const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
   catalogRef.current = catalog;
   useEffect(
@@ -263,6 +276,9 @@ export default function SQLQueryView() {
       setSelected(value);
       await loadSaved();
       setDialog("");
+      // Land on the saved list so the new or updated query is in view.
+      setLibraryTab("saved");
+      setLibrarySearch("");
       enqueueSnackbar("Query saved", { variant: "success" });
     } catch (e) {
       setError(errorMessage(e));
@@ -295,6 +311,10 @@ export default function SQLQueryView() {
       setSaving(false);
     }
   };
+  // Saving an opened query you own replaces it, so the dialog says so.
+  const updatingSaved = Boolean(
+    selected && selected.created_by_id === user?.id,
+  );
   const addToDashboardDisabled =
     !catalog?.can_save ||
     selected?.visibility !== "project" ||
@@ -321,24 +341,13 @@ export default function SQLQueryView() {
               Read-only ClickHouse SQL · Project scoped
             </Typography>
           </Box>
-          <Stack
-            direction="row"
-            gap={0.75}
-            flexWrap="wrap"
-            useFlexGap
+          <MetaLine
             role="group"
             aria-label="Query limits"
-          >
-            <MetaChip icon="solar:clock-circle-linear" title="Query timeout">
-              30 s timeout
-            </MetaChip>
-            <MetaChip icon="solar:layers-linear" title="Maximum rows returned">
-              10,000 rows max
-            </MetaChip>
-            <MetaChip icon="solar:database-linear" title="Maximum result size">
-              8 MB max
-            </MetaChip>
-          </Stack>
+            icon="solar:info-circle-linear"
+            title="Each run stops after 30 seconds and returns at most 10,000 rows or 8 MB of results."
+            parts={["30 s timeout", "10,000-row limit", "8 MB result limit"]}
+          />
         </Stack>
         {catalog?.identity_semantics && (
           <Stack
@@ -402,8 +411,7 @@ export default function SQLQueryView() {
                 setLibrarySearch("");
                 setLibraryOpen(true);
               }}
-              // Full width: three tabs and their counts only fit the 300px
-              // library column when they share it evenly.
+              // The three tabs share the narrow library column evenly.
               variant="fullWidth"
               aria-label="Query library views"
               sx={{
@@ -423,34 +431,10 @@ export default function SQLQueryView() {
                   value={value}
                   aria-label={label}
                   label={
-                    <Stack direction="row" alignItems="center" spacing={0.75}>
-                      <span>{label}</span>
-                      {count > 0 && (
-                        <Box
-                          component="span"
-                          aria-hidden
-                          sx={{
-                            px: 0.625,
-                            minWidth: 18,
-                            borderRadius: 999,
-                            typography: "s3",
-                            fontWeight: "fontWeightSemiBold",
-                            lineHeight: "16px",
-                            textAlign: "center",
-                            color:
-                              libraryTab === value
-                                ? "background.paper"
-                                : "text.secondary",
-                            bgcolor:
-                              libraryTab === value
-                                ? "text.primary"
-                                : "background.neutral",
-                          }}
-                        >
-                          {value === "saved" && more ? `${count}+` : count}
-                        </Box>
-                      )}
-                    </Stack>
+                    <TabLabel
+                      label={label}
+                      count={value === "saved" && more ? `${count}+` : count}
+                    />
                   }
                   id={`query-library-${value}`}
                   aria-controls={`query-panel-${value}`}
@@ -489,37 +473,30 @@ export default function SQLQueryView() {
               }}
             >
               <Box sx={{ p: 1.5 }}>
-                <TextField
+                {/* The platform search field (FormSearchField): icon, no
+                    floating label; the label stays for assistive tech. */}
+                <FormSearchField
                   fullWidth
-                  size="small"
                   type="search"
-                  InputProps={{
-                    startAdornment: (
-                      <Iconify
-                        icon="solar:magnifer-linear"
-                        width={16}
-                        sx={{ color: "text.disabled", mr: 1, flexShrink: 0 }}
-                      />
-                    ),
-                    sx: { typography: "s2" },
-                  }}
-                  label={
-                    libraryTab === "catalog"
-                      ? "Search catalog"
-                      : libraryTab === "examples"
-                        ? "Search examples"
-                        : "Search saved queries"
-                  }
                   placeholder={
                     libraryTab === "catalog"
-                      ? "Dataset, column or type…"
+                      ? "Search datasets, columns, types"
                       : libraryTab === "saved"
-                        ? "Name or SQL on this page…"
-                        : "Question, dataset or SQL…"
+                        ? "Search saved queries"
+                        : "Search examples"
                   }
-                  value={librarySearch}
+                  searchQuery={librarySearch}
                   onChange={(event) => setLibrarySearch(event.target.value)}
-                  inputProps={{ "aria-controls": `query-panel-${libraryTab}` }}
+                  inputProps={{
+                    "aria-label":
+                      libraryTab === "catalog"
+                        ? "Search catalog"
+                        : libraryTab === "examples"
+                          ? "Search examples"
+                          : "Search saved queries",
+                    "aria-controls": `query-panel-${libraryTab}`,
+                  }}
+                  sx={{ "& .MuiInputBase-input": { typography: "s2" } }}
                 />
               </Box>
               <Box
@@ -640,17 +617,14 @@ export default function SQLQueryView() {
                           <ListItemText
                             primary={query.name}
                             secondary={
-                              <MetaChip
-                                icon={
-                                  query.visibility === "project"
-                                    ? "solar:users-group-rounded-linear"
-                                    : "solar:lock-keyhole-minimalistic-linear"
-                                }
-                              >
-                                {query.visibility === "project"
-                                  ? "Shared with project"
-                                  : "Private"}
-                              </MetaChip>
+                              <MetaLine
+                                icon={visibilityIcon(query.visibility)}
+                                parts={[
+                                  visibilityLabel(query.visibility),
+                                  query.window_hours &&
+                                    describeQueryWindow(query.window_hours),
+                                ]}
+                              />
                             }
                             primaryTypographyProps={{
                               sx: {
@@ -766,22 +740,30 @@ export default function SQLQueryView() {
                   {selected?.name || "Unsaved query"}
                 </Typography>
                 {selected && selected.sql !== sql && (
-                  <MetaChip tone="warning" icon="solar:pen-linear">
-                    Edited
-                  </MetaChip>
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.5}
+                    sx={{ color: warningText }}
+                  >
+                    <Iconify icon="solar:pen-linear" width={12} />
+                    <Typography
+                      component="span"
+                      sx={{
+                        typography: "s3",
+                        fontWeight: "fontWeightSemiBold",
+                        color: "inherit",
+                      }}
+                    >
+                      Edited
+                    </Typography>
+                  </Stack>
                 )}
                 {selected && (
-                  <MetaChip
-                    icon={
-                      selected.visibility === "project"
-                        ? "solar:users-group-rounded-linear"
-                        : "solar:lock-keyhole-minimalistic-linear"
-                    }
-                  >
-                    {selected.visibility === "project"
-                      ? "Shared with project"
-                      : "Private"}
-                  </MetaChip>
+                  <MetaLine
+                    icon={visibilityIcon(selected.visibility)}
+                    parts={[visibilityLabel(selected.visibility)]}
+                  />
                 )}
               </Stack>
             </Stack>
@@ -830,8 +812,7 @@ export default function SQLQueryView() {
                 ))}
               </TextField>
               <Button
-                variant="contained"
-                size="small"
+                {...PRIMARY_BUTTON_PROPS}
                 startIcon={<Iconify icon="solar:play-bold" />}
                 sx={{ ...PRIMARY_BUTTON_SX, px: 1.75 }}
                 onClick={execute}
@@ -1009,24 +990,78 @@ export default function SQLQueryView() {
                   "& .MuiButton-root": { whiteSpace: "nowrap" },
                 }}
               >
-                <ButtonGroup
-                  variant="outlined"
-                  color="inherit"
-                  size="small"
-                  aria-label="Download results"
+                <Button
+                  {...ACTION_BUTTON_PROPS}
+                  sx={ACTION_BUTTON_SX}
+                  startIcon={
+                    <Iconify icon="solar:download-minimalistic-linear" />
+                  }
+                  endIcon={<Iconify icon="solar:alt-arrow-down-linear" />}
+                  aria-haspopup="menu"
+                  aria-expanded={Boolean(downloadAnchor)}
+                  aria-controls={
+                    downloadAnchor ? "query-download-menu" : undefined
+                  }
                   disabled={job?.state !== "succeeded" || job.expired}
-                  sx={{ "& .MuiButton-root": ACTION_BUTTON_SX }}
+                  onClick={(event) => setDownloadAnchor(event.currentTarget)}
                 >
-                  <Button
-                    startIcon={
-                      <Iconify icon="solar:download-minimalistic-linear" />
-                    }
-                    onClick={() => download("csv")}
-                  >
-                    CSV
-                  </Button>
-                  <Button onClick={() => download("parquet")}>Parquet</Button>
-                </ButtonGroup>
+                  Download
+                </Button>
+                <Menu
+                  id="query-download-menu"
+                  anchorEl={downloadAnchor}
+                  open={Boolean(downloadAnchor)}
+                  onClose={() => setDownloadAnchor(null)}
+                  anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+                  transformOrigin={{ vertical: "top", horizontal: "right" }}
+                  slotProps={{ paper: { sx: { mt: 0.5, minWidth: 220 } } }}
+                >
+                  {[
+                    [
+                      "csv",
+                      "CSV",
+                      "solar:file-text-linear",
+                      "Opens in spreadsheets",
+                    ],
+                    [
+                      "parquet",
+                      "Parquet",
+                      "solar:database-linear",
+                      "Typed columns for data tools",
+                    ],
+                  ].map(([format, label, icon, hint]) => (
+                    <MenuItem
+                      key={format}
+                      aria-label={label}
+                      onClick={() => {
+                        setDownloadAnchor(null);
+                        download(format);
+                      }}
+                      sx={{ gap: 1.25, py: 1 }}
+                    >
+                      <Iconify
+                        icon={icon}
+                        width={16}
+                        sx={{ color: "text.secondary", flexShrink: 0 }}
+                      />
+                      <Box>
+                        <Typography
+                          sx={{
+                            typography: "s2",
+                            fontWeight: "fontWeightSemiBold",
+                          }}
+                        >
+                          {label}
+                        </Typography>
+                        <Typography
+                          sx={{ typography: "s3", color: "text.subtitle" }}
+                        >
+                          {hint}
+                        </Typography>
+                      </Box>
+                    </MenuItem>
+                  ))}
+                </Menu>
                 <Button
                   // Quiet while unavailable so the permanently disabled state
                   // does not read as an outlined call to action.
@@ -1140,74 +1175,148 @@ export default function SQLQueryView() {
           </Stack>
         </Box>
       </Stack>
-      <Dialog
+      <ModalWrapper
         open={dialog === "save"}
-        onClose={() => !saving && setDialog("")}
-        fullWidth
-        maxWidth="xs"
+        onClose={() => setDialog("")}
+        title={updatingSaved ? "Update saved query" : "Save query"}
+        subTitle={
+          updatingSaved
+            ? `Saving replaces “${selected.name}” for everyone who can open it.`
+            : "Reopen it later from Saved, or share it with your project."
+        }
+        actionBtnTitle={updatingSaved ? "Save changes" : "Save"}
+        onSubmit={save}
+        isValid={Boolean(name.trim())}
+        isLoading={saving}
+        modalWidth="480px"
       >
-        <DialogTitle>Save query</DialogTitle>
-        <DialogContent>
+        <Stack spacing={2}>
           {error && <Alert severity="error">{error}</Alert>}
-          <Stack spacing={2} sx={{ pt: 1 }}>
-            <TextField
-              autoFocus
-              label="Query name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              inputProps={{ maxLength: 160 }}
-            />
-            <TextField
-              select
-              label="Visibility"
+          <TextField
+            autoFocus
+            fullWidth
+            size="small"
+            label="Query name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            inputProps={{ maxLength: 160 }}
+          />
+          <FormControl>
+            <FormLabel
+              id="query-visibility-label"
+              sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", mb: 1 }}
+            >
+              Visibility
+            </FormLabel>
+            <RadioGroup
+              aria-labelledby="query-visibility-label"
               value={visibility}
               onChange={(e) => setVisibility(e.target.value)}
+              sx={{ gap: 1 }}
             >
-              <MenuItem value="private">Private</MenuItem>
-              <MenuItem value="project">Project members</MenuItem>
-            </TextField>
-            <Typography variant="caption">
-              A shared query is not a public link. Results stay private to the
-              person who runs it.
+              {[
+                ["private", "Private", "Only you can open it."],
+                [
+                  "project",
+                  "Project members",
+                  "Anyone in this project can open it. Each person runs it with their own access; results are never shared.",
+                ],
+              ].map(([value, label, hint]) => (
+                <FormControlLabel
+                  key={value}
+                  value={value}
+                  control={<Radio size="small" sx={{ mt: -0.25 }} />}
+                  label={
+                    <Box>
+                      <Typography
+                        sx={{
+                          typography: "s2",
+                          fontWeight: "fontWeightSemiBold",
+                        }}
+                      >
+                        {label}
+                      </Typography>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.secondary" }}
+                      >
+                        {hint}
+                      </Typography>
+                    </Box>
+                  }
+                  sx={{
+                    m: 0,
+                    px: 1,
+                    py: 1,
+                    alignItems: "flex-start",
+                    border: 1,
+                    borderRadius: 1,
+                    borderColor:
+                      visibility === value ? "primary.main" : "divider",
+                    bgcolor: (t) =>
+                      visibility === value
+                        ? alpha(t.palette.primary.main, 0.06)
+                        : "transparent",
+                  }}
+                />
+              ))}
+            </RadioGroup>
+          </FormControl>
+          <Box
+            sx={{
+              p: 1.5,
+              border: 1,
+              borderColor: "divider",
+              borderRadius: 1,
+              bgcolor: "background.neutral",
+            }}
+          >
+            <MetaLine
+              icon="solar:diskette-linear"
+              parts={[
+                "Saves this SQL",
+                describeQueryWindow(hours),
+                chart?.type === "bar" ? "chart view" : "table view",
+              ]}
+              sx={{ mb: 0.75 }}
+            />
+            <Typography
+              sx={{
+                typography: "s3",
+                fontFamily: "monospace",
+                color: "text.secondary",
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                display: "-webkit-box",
+                WebkitLineClamp: 4,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
+            >
+              {sql}
             </Typography>
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            {...ACTION_BUTTON_PROPS}
-            sx={ACTION_BUTTON_SX}
-            disabled={saving}
-            onClick={() => setDialog("")}
-          >
-            Back
-          </Button>
-          <Button
-            variant="contained"
-            size="small"
-            sx={PRIMARY_BUTTON_SX}
-            disabled={!name.trim() || saving}
-            onClick={save}
-          >
-            Save
-          </Button>
-        </DialogActions>
-      </Dialog>
-      <Dialog
+          </Box>
+        </Stack>
+      </ModalWrapper>
+      <ModalWrapper
         open={dialog === "dashboard"}
-        onClose={() => !saving && setDialog("")}
-        fullWidth
-        maxWidth="xs"
+        onClose={() => setDialog("")}
+        title="Add to dashboard"
+        subTitle="The widget reruns this saved query with each viewer’s project permissions."
+        actionBtnTitle="Add query"
+        onSubmit={addWidget}
+        isValid={Boolean(dashboardId)}
+        isLoading={saving}
+        modalWidth="480px"
       >
-        <DialogTitle>Add query to dashboard</DialogTitle>
-        <DialogContent>
+        <Stack spacing={1.5}>
           {error && <Alert severity="error">{error}</Alert>}
           <TextField
             select
             fullWidth
+            size="small"
             label="Dashboard"
             value={dashboardId}
             onChange={(e) => setDashboardId(e.target.value)}
-            sx={{ mt: 1 }}
           >
             {dashboards.map((d) => (
               <MenuItem key={d.id} value={d.id}>
@@ -1215,115 +1324,159 @@ export default function SQLQueryView() {
               </MenuItem>
             ))}
           </TextField>
-          <Typography variant="caption">
-            The widget reruns the saved query with each viewer&apos;s project
-            permissions.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            {...ACTION_BUTTON_PROPS}
-            sx={ACTION_BUTTON_SX}
-            onClick={() => setDialog("")}
-          >
-            Back
-          </Button>
-          <Button
-            variant="contained"
-            size="small"
-            sx={PRIMARY_BUTTON_SX}
-            disabled={!dashboardId || saving}
-            onClick={addWidget}
-          >
-            Add query
-          </Button>
-        </DialogActions>
-      </Dialog>
-      <Dialog
+          {!dashboards.length && (
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              No dashboards yet. Create one in Dashboards first.
+            </Typography>
+          )}
+        </Stack>
+      </ModalWrapper>
+      <ModalWrapper
         open={dialog === "delete"}
-        onClose={() => !saving && setDialog("")}
+        onClose={() => setDialog("")}
+        title="Delete saved query?"
+        subTitle="Dashboard widgets using this query will stop running. Existing personal results keep their normal expiry."
+        actionBtnTitle="Delete query"
+        cancelBtnTitle="Keep query"
+        actionBtnProps={{ color: "error" }}
+        isValid
+        isLoading={saving}
+        modalWidth="440px"
+        onSubmit={async () => {
+          setSaving(true);
+          setError("");
+          try {
+            await sqlApi.remove(observeId, selected.id);
+            setSelected(null);
+            await loadSaved();
+            setDialog("");
+          } catch (e) {
+            setError(errorMessage(e));
+          } finally {
+            setSaving(false);
+          }
+        }}
       >
-        <DialogTitle>Delete saved query?</DialogTitle>
-        <DialogContent>
-          {error && <Alert severity="error">{error}</Alert>}
-          Dashboard widgets using this query will stop running. Existing
-          personal results keep their normal expiry.
-        </DialogContent>
-        <DialogActions>
-          <Button
-            {...ACTION_BUTTON_PROPS}
-            sx={ACTION_BUTTON_SX}
-            onClick={() => setDialog("")}
-          >
-            Keep query
-          </Button>
-          <Button
-            variant="contained"
-            size="small"
-            sx={PRIMARY_BUTTON_SX}
-            color="error"
-            disabled={saving}
-            onClick={async () => {
-              setSaving(true);
-              setError("");
-              try {
-                await sqlApi.remove(observeId, selected.id);
-                setSelected(null);
-                await loadSaved();
-                setDialog("");
-              } catch (e) {
-                setError(errorMessage(e));
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            Delete query
-          </Button>
-        </DialogActions>
-      </Dialog>
+        {error ? <Alert severity="error">{error}</Alert> : null}
+      </ModalWrapper>
       <Dialog
         open={dialog === "history"}
         onClose={() => setDialog("")}
         fullWidth
+        maxWidth="sm"
+        PaperProps={{ sx: { borderRadius: 1, p: 2, gap: 1.5 } }}
       >
-        <DialogTitle>Your recent queries</DialogTitle>
-        <DialogContent>
-          <List>
-            {history.map((item) => (
-              <ListItemButton
-                key={item.id}
-                onClick={() => {
-                  setSQL(item.sql);
-                  setDialog("");
-                }}
-              >
-                <ListItemText
-                  primary={item.sql.slice(0, 150)}
-                  secondary={`${item.state} · ${new Date(item.created_at).toLocaleString()}`}
-                  primaryTypographyProps={{
-                    sx: { typography: "s2", fontFamily: "monospace" },
-                  }}
-                  secondaryTypographyProps={{ sx: { typography: "s3" } }}
-                />
-              </ListItemButton>
-            ))}
-          </List>
-          {!history.length && (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              No queries yet.
+        <Stack direction="row" alignItems="flex-start" gap={1}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography
+              component="h2"
+              sx={{ typography: "m3", fontWeight: "fontWeightSemiBold" }}
+            >
+              Recent queries
             </Typography>
+            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+              Your last 20 runs in this project. Select one to open it in the
+              editor.
+            </Typography>
+          </Box>
+          <IconButton
+            aria-label="Close"
+            onClick={() => setDialog("")}
+            sx={{ color: "text.primary", mt: -0.5, mr: -0.5 }}
+          >
+            <Iconify icon="akar-icons:cross" />
+          </IconButton>
+        </Stack>
+        <DialogContent sx={{ p: 0 }}>
+          {history.length ? (
+            <List
+              disablePadding
+              aria-label="Recent queries"
+              sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}
+            >
+              {history.map((item, index) => (
+                <ListItemButton
+                  key={item.id}
+                  onClick={() => {
+                    setSQL(item.sql);
+                    setDialog("");
+                  }}
+                  sx={{
+                    display: "block",
+                    px: 1.5,
+                    py: 1.25,
+                    borderTop: index ? 1 : 0,
+                    borderColor: "divider",
+                    "&:hover .history-open": { opacity: 1 },
+                  }}
+                >
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    gap={1}
+                    sx={{ mb: 0.75 }}
+                  >
+                    <StatePill state={item.state}>{item.state}</StatePill>
+                    <MetaLine
+                      parts={[
+                        relativeTime(item.created_at),
+                        item.expired && "results expired",
+                      ]}
+                      title={new Date(item.created_at).toLocaleString()}
+                      sx={{ flex: 1 }}
+                    />
+                    <Typography
+                      className="history-open"
+                      sx={{
+                        typography: "s3",
+                        fontWeight: "fontWeightSemiBold",
+                        color: "text.secondary",
+                        opacity: 0,
+                        transition: "opacity 120ms",
+                      }}
+                    >
+                      Open in editor
+                    </Typography>
+                  </Stack>
+                  <Typography
+                    title={item.sql}
+                    sx={{
+                      typography: "s2",
+                      fontFamily: "monospace",
+                      color: "text.primary",
+                      whiteSpace: "pre-wrap",
+                      overflowWrap: "anywhere",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 3,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                    }}
+                  >
+                    {item.sql}
+                  </Typography>
+                  {item.error && (
+                    <Typography
+                      sx={{ typography: "s3", color: "error.main", mt: 0.5 }}
+                    >
+                      {item.error}
+                    </Typography>
+                  )}
+                </ListItemButton>
+              ))}
+            </List>
+          ) : (
+            <Box sx={{ py: 4, textAlign: "center" }}>
+              <Typography
+                sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}
+              >
+                No queries yet
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                Queries you run in this project appear here.
+              </Typography>
+            </Box>
           )}
         </DialogContent>
-        <DialogActions>
-          <Button
-            {...ACTION_BUTTON_PROPS}
-            sx={ACTION_BUTTON_SX}
-            onClick={() => setDialog("")}
-          >
-            Close
-          </Button>
-        </DialogActions>
       </Dialog>
     </Box>
   );

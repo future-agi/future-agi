@@ -13,12 +13,10 @@ import {
   TablePagination,
   TableRow,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
+  Tab,
   Typography,
   useTheme,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import {
   Bar,
   BarChart,
@@ -29,7 +27,8 @@ import {
   YAxis,
 } from "recharts";
 import Iconify from "src/components/iconify";
-import { MetaChip } from "./queryUi";
+import { SegmentedTabs } from "src/components/tabs/tabs";
+import { MetaLine } from "./queryUi";
 
 // Result table styling follows the shared DataTable (Environments, Evals,
 // Datasets): 13px Inter, muted medium-weight headers, solid row dividers and a
@@ -75,39 +74,6 @@ const EMPTY_VALUE_SX = {
   typography: "s2_1",
   fontFamily: "monospace",
   color: "text.secondary",
-};
-
-// Same segmented choice as the Environments scenario editor: separate
-// outlined buttons, the selected one tinted with the brand primary.
-const VIEW_TOGGLE_SX = {
-  gap: 0.5,
-  border: 0,
-  bgcolor: "transparent",
-  "& .MuiToggleButtonGroup-grouped": {
-    m: 0,
-    height: 32,
-    px: 1.25,
-    gap: 0.75,
-    border: "1px solid !important",
-    borderColor: (t) => `${t.palette.divider} !important`,
-    borderRadius: "4px !important",
-    typography: "s2",
-    fontWeight: "fontWeightSemiBold",
-    textTransform: "none",
-    color: "text.secondary",
-    bgcolor: "background.paper",
-    "&:hover": { bgcolor: "action.hover", color: "text.primary" },
-  },
-  "& .MuiToggleButtonGroup-grouped.Mui-selected": {
-    color: "primary.main",
-    borderColor: (t) => `${t.palette.primary.main} !important`,
-    bgcolor: (t) =>
-      alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.16 : 0.09),
-    "&:hover": {
-      bgcolor: (t) =>
-        alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.22 : 0.14),
-    },
-  },
 };
 
 export const numericColumns = (columns, rows) =>
@@ -209,41 +175,38 @@ export default function QueryResults({
         flexWrap="wrap"
         useFlexGap
       >
-        <ToggleButtonGroup
-          size="small"
-          exclusive
+        {/* The platform's segmented control (SegmentedTabs): one bordered
+            strip with a filled pill on the selected view. */}
+        <SegmentedTabs
           value={mode}
           onChange={(_, value) => value && setMode(value)}
           aria-label="Result view"
-          sx={VIEW_TOGGLE_SX}
         >
-          <ToggleButton value="table">
-            <Iconify icon="solar:server-square-linear" width={16} />
-            Table
-          </ToggleButton>
-          <ToggleButton value="bar" disabled={!numeric.length}>
-            <Iconify icon="solar:chart-2-linear" width={16} />
-            Chart
-          </ToggleButton>
-        </ToggleButtonGroup>
-        <Stack
-          direction="row"
-          gap={0.75}
-          flexWrap="wrap"
-          useFlexGap
+          <Tab
+            value="table"
+            label="Table"
+            icon={<Iconify icon="solar:server-square-linear" width={16} />}
+            iconPosition="start"
+            sx={{ gap: 0.75, "& .MuiTab-iconWrapper": { m: 0 } }}
+          />
+          <Tab
+            value="bar"
+            label="Chart"
+            disabled={!numeric.length}
+            icon={<Iconify icon="solar:chart-2-linear" width={16} />}
+            iconPosition="start"
+            sx={{ gap: 0.75, "& .MuiTab-iconWrapper": { m: 0 } }}
+          />
+        </SegmentedTabs>
+        <MetaLine
           role="group"
           aria-label="Result details"
-        >
-          <MetaChip icon="solar:hamburger-menu-linear">
-            {rows.length.toLocaleString()} rows
-          </MetaChip>
-          <MetaChip icon="solar:align-vertical-spacing-linear">
-            {columns.length.toLocaleString()} columns
-          </MetaChip>
-          <MetaChip icon="solar:stopwatch-linear">
-            {result.elapsed_ms} ms
-          </MetaChip>
-        </Stack>
+          parts={[
+            `${rows.length.toLocaleString()} rows`,
+            `${columns.length.toLocaleString()} columns`,
+            `${result.elapsed_ms} ms`,
+          ]}
+        />
         {mode === "bar" && (
           <>
             <TextField
