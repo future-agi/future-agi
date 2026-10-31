@@ -71,6 +71,7 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 					Name:        name,
 					Description: at.Description,
 					Parameters:  at.InputSchema,
+					Strict:      at.Strict,
 				},
 			})
 		}
