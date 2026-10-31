@@ -154,13 +154,14 @@ def test_native_runner_is_not_an_extra_model_call(monkeypatch):
         (False, 0),
     ],
 )
+@pytest.mark.parametrize("encoded", [True, False])
 def test_native_tool_io_including_empty_and_false_values(
-    output_key, arguments, result, monkeypatch
+    output_key, arguments, result, encoded, monkeypatch
 ):
     attrs = {
         "gen_ai.operation.name": "execute_tool",
-        "gen_ai.tool.call.arguments": json.dumps(arguments),
-        output_key: json.dumps(result),
+        "gen_ai.tool.call.arguments": json.dumps(arguments) if encoded else arguments,
+        output_key: json.dumps(result) if encoded else result,
     }
     obs = convert(attrs, monkeypatch)["observation_span"]
     assert obs["input"] == arguments
