@@ -162,6 +162,16 @@ class CandidateVerdict(BaseModel):
     tiers: list[VerdictTier] = Field(default_factory=list)
 
 
+class EvalWarning(BaseModel):
+    """A platform eval the winner passes less often than the base version."""
+
+    name: str
+    pass_rate: float
+    base_pass_rate: float
+    trials: int
+    base_trials: int
+
+
 class CandidateUpdate(BaseModel):
     candidate_id: UUID
     outcome: CandidateOutcome

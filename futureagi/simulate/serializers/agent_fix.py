@@ -15,6 +15,7 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.agent_fix import (
     agent_identity,
     base_check_runs,
+    eval_warnings,
     is_retryable,
 )
 from simulate.services.harness_environment import environment_name
@@ -265,6 +266,31 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "finished_at",
             "created_at",
         ]
+
+
+class AgentFixEvalWarningSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    pass_rate = serializers.FloatField()
+    base_pass_rate = serializers.FloatField()
+    trials = serializers.IntegerField()
+    base_trials = serializers.IntegerField()
+
+
+class AgentFixRunDetailSerializer(AgentFixRunSerializer):
+    """One fix's read. The warnings read every call of its check runs, so a list leaves
+    them out."""
+
+    eval_warnings = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(
+        serializer_or_field=AgentFixEvalWarningSerializer(many=True)
+    )
+    def get_eval_warnings(self, fix_run: AgentFixRun) -> list[dict]:
+        warnings = [one.model_dump() for one in eval_warnings(fix_run)]
+        return AgentFixEvalWarningSerializer(warnings, many=True).data
+
+    class Meta(AgentFixRunSerializer.Meta):
+        fields = [*AgentFixRunSerializer.Meta.fields, "eval_warnings"]
 
 
 class AgentFixRunListSerializer(serializers.Serializer):

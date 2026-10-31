@@ -40,6 +40,7 @@ from simulate.serializers.agent_fix import (
     AgentFixListQuerySerializer,
     AgentFixMakeDefaultSerializer,
     AgentFixPullRequestSerializer,
+    AgentFixRunDetailSerializer,
     AgentFixRunListSerializer,
     AgentFixRunSerializer,
 )
@@ -198,12 +199,12 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             status=status.HTTP_201_CREATED,
         )
 
-    @validated_request(responses={200: AgentFixRunSerializer})
+    @validated_request(responses={200: AgentFixRunDetailSerializer})
     def retrieve(self, request, pk=None):
         fix_run = self._fix_run(request, pk)
         if fix_run is None:
             return _not_found()
-        return Response(AgentFixRunSerializer(fix_run).data)
+        return Response(AgentFixRunDetailSerializer(fix_run).data)
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,

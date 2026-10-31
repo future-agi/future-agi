@@ -17276,6 +17276,75 @@ export interface AgentFixLaunchOptionsApi {
   blocked: AgentFixFailureApi;
 }
 
+export type AgentFixRunDetailApiState =
+  (typeof AgentFixRunDetailApiState)[keyof typeof AgentFixRunDetailApiState];
+
+export const AgentFixRunDetailApiState = {
+  queued: "queued",
+  running: "running",
+  stopping: "stopping",
+  ready: "ready",
+  no_improvement: "no_improvement",
+  not_reproduced: "not_reproduced",
+  out_of_budget: "out_of_budget",
+  stopped: "stopped",
+  failed: "failed",
+} as const;
+
+/**
+ * A finished fix is done, whatever the engine last said.
+ */
+export type AgentFixRunDetailApiStep =
+  (typeof AgentFixRunDetailApiStep)[keyof typeof AgentFixRunDetailApiStep];
+
+export const AgentFixRunDetailApiStep = {
+  reproduce: "reproduce",
+  search: "search",
+  verify: "verify",
+  done: "done",
+} as const;
+
+export interface AgentFixEvalWarningApi {
+  /** @minLength 1 */
+  name: string;
+  pass_rate: number;
+  base_pass_rate: number;
+  trials: number;
+  base_trials: number;
+}
+
+export interface AgentFixRunDetailApi {
+  readonly id?: string;
+  number: number;
+  environment_id: string;
+  environment?: AgentFixEnvironmentApi;
+  source_run_id: string;
+  source_run_number: number;
+  base_agent_version_id: string;
+  agent?: AgentFixAgentApi;
+  state?: AgentFixRunDetailApiState;
+  /** @maxLength 32 */
+  stage?: string;
+  /** A finished fix is done, whatever the engine last said. */
+  readonly step?: AgentFixRunDetailApiStep;
+  plan: AgentFixPlanApi;
+  diagnosis: AgentFixDiagnosisApi;
+  request: AgentFixRequestApi;
+  spent_credits: number;
+  committed_credits: number;
+  report: AgentFixReportApi;
+  failure: AgentFixFailureApi;
+  retried_from_id: string;
+  readonly retryable?: boolean;
+  /** The base version's runs; each candidate lists its own. */
+  readonly check_runs?: readonly AgentFixCheckRunApi[];
+  candidates: AgentFixCandidateApi[];
+  started_at?: string;
+  finished_at?: string;
+  readonly created_at?: string;
+  readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
+}
+
 export interface AgentFixMakeDefaultApi {
   /** @minLength 1 */
   outcome: string;

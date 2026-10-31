@@ -44,6 +44,7 @@ from simulate.tests.test_agent_fix_services import (
     PATCH,
     _candidate,
     _check,
+    _executions,
     _fix_run,
     _run,
     _tree,
@@ -830,6 +831,7 @@ class TestUserApi:
                 f"{BASE}/", {"environment_id": str(environment.id)}
             ).json()
             read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+            read.pop("eval_warnings")
             assert listed["results"] == [read]
             return read["spent_credits"], read["committed_credits"]
 
@@ -1245,6 +1247,108 @@ class TestUserApi:
             "fix_github_not_connected",
             [],
         )
+
+
+def _judged(run, config, *, passes=0, status="completed"):
+    """Stores an eval on each of a run's calls, the first ``passes`` of them passing."""
+    for index, execution in enumerate(_executions(run)):
+        call = execution.call_execution
+        call.eval_outputs = {
+            str(config.id): {
+                "status": status,
+                "output": "Passed" if index < passes else "Failed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+
+class TestEvalWarnings:
+    TRIALS = 12
+
+    def _arms(self, source_run, *, keys=(KEYS[0],), outcome="winner"):
+        fix_run = _armed(_fix_run(source_run))
+        candidate = _candidate(fix_run)
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=outcome
+        )
+        base = _check(fix_run, label="base", keys=keys, trials=self.TRIALS)
+        mine = _check(
+            fix_run,
+            label="c1",
+            version_id=candidate.agent_version_id,
+            keys=(KEYS[0],),
+            trials=self.TRIALS,
+        )
+        return fix_run, base, mine, _mapped_eval(source_run)
+
+    def _warnings(self, auth_client, fix_run):
+        read = auth_client.get(f"{BASE}/{fix_run.id}/")
+        assert read.status_code == 200, read.content
+        return read.json()["eval_warnings"]
+
+    def test_the_read_warns_when_the_winner_does_worse_on_a_platform_eval(
+        self, auth_client, source_run
+    ):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=3)
+
+        assert self._warnings(auth_client, fix_run) == [
+            {
+                "name": config.name,
+                "pass_rate": 0.25,
+                "base_pass_rate": 1.0,
+                "trials": self.TRIALS,
+                "base_trials": self.TRIALS,
+            }
+        ]
+
+    def test_an_eval_the_winner_holds_does_not_warn(self, auth_client, source_run):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=self.TRIALS)
+
+        assert self._warnings(auth_client, fix_run) == []
+
+    def test_only_the_winner_is_warned_about(self, auth_client, source_run):
+        fix_run, base, mine, config = self._arms(source_run, outcome="rejected")
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config)
+
+        assert self._warnings(auth_client, fix_run) == []
+
+    def test_an_eval_that_errored_is_not_a_trial(self, auth_client, source_run):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, status="error")
+
+        assert self._warnings(auth_client, fix_run) == []
+
+    def test_only_the_scenarios_both_ran_compare(self, auth_client, source_run):
+        """Pooled over everything the base ran, this one would read as 50% to 0%."""
+        fix_run, base, mine, config = self._arms(source_run, keys=KEYS)
+        for execution in _executions(base):
+            passed = execution.source_scenario.scenario_key != KEYS[0]
+            call = execution.call_execution
+            call.eval_outputs = {
+                str(config.id): {
+                    "status": "completed",
+                    "output": "Passed" if passed else "Failed",
+                    "output_type": "Pass/Fail",
+                }
+            }
+            call.save(update_fields=["eval_outputs"])
+        _judged(mine, config)
+
+        assert self._warnings(auth_client, fix_run) == []
+
+    def test_a_list_leaves_the_warnings_out(self, auth_client, environment, source_run):
+        self._arms(source_run)
+
+        listed = auth_client.get(f"{BASE}/", {"environment_id": str(environment.id)})
+
+        assert "eval_warnings" not in listed.json()["results"][0]
 
 
 class TestCheckRunsStayOutOfTheUsersRuns:

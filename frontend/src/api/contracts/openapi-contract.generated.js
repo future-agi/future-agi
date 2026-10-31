@@ -27842,7 +27842,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/AgentFixRun",
+            $ref: "#/definitions/AgentFixRunDetail",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -49650,6 +49650,166 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Created at",
           type: "string",
           format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    AgentFixRunDetail: {
+      required: [
+        "number",
+        "environment_id",
+        "source_run_id",
+        "source_run_number",
+        "base_agent_version_id",
+        "plan",
+        "diagnosis",
+        "request",
+        "spent_credits",
+        "committed_credits",
+        "report",
+        "failure",
+        "retried_from_id",
+        "candidates",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixEnvironment",
+        },
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        source_run_number: {
+          title: "Source run number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        base_agent_version_id: {
+          title: "Base agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        agent: {
+          $ref: "#/definitions/AgentFixAgent",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "queued",
+            "running",
+            "stopping",
+            "ready",
+            "no_improvement",
+            "not_reproduced",
+            "out_of_budget",
+            "stopped",
+            "failed",
+          ],
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+          maxLength: 32,
+        },
+        step: {
+          title: "Step",
+          description: "A finished fix is done, whatever the engine last said.",
+          type: "string",
+          enum: ["reproduce", "search", "verify", "done"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        plan: {
+          $ref: "#/definitions/AgentFixPlan",
+        },
+        diagnosis: {
+          $ref: "#/definitions/AgentFixDiagnosis",
+        },
+        request: {
+          $ref: "#/definitions/AgentFixRequest",
+        },
+        spent_credits: {
+          title: "Spent credits",
+          type: "number",
+        },
+        committed_credits: {
+          title: "Committed credits",
+          type: "number",
+        },
+        report: {
+          $ref: "#/definitions/AgentFixReport",
+        },
+        failure: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        retried_from_id: {
+          title: "Retried from id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+          readOnly: true,
+        },
+        check_runs: {
+          description: "The base version's runs; each candidate lists its own.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCheckRun",
+          },
+          readOnly: true,
+        },
+        candidates: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCandidate",
+          },
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        eval_warnings: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixEvalWarning",
+          },
           readOnly: true,
         },
       },
@@ -88011,6 +88171,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         max_minutes: {
           title: "Max minutes",
+          type: "integer",
+        },
+      },
+    },
+    AgentFixEvalWarning: {
+      required: [
+        "name",
+        "pass_rate",
+        "base_pass_rate",
+        "trials",
+        "base_trials",
+      ],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+        },
+        base_pass_rate: {
+          title: "Base pass rate",
+          type: "number",
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+        },
+        base_trials: {
+          title: "Base trials",
           type: "integer",
         },
       },
