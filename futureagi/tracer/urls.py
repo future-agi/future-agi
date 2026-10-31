@@ -50,6 +50,7 @@ from tracer.views.shared_link import (
     resolve_shared_issue_trace,
     resolve_shared_link,
 )
+from tracer.views.sql_query import SavedSQLQueryViewSet, SQLQueryViewSet
 from tracer.views.trace import GetUserCodeExampleView, TraceView, UsersView
 from tracer.views.trace_grouping import (
     AcknowledgeGroupingOutboxView,
@@ -82,6 +83,9 @@ from tracer.views.trace_severity import (
 )
 
 router = DefaultRouter()
+
+router.register(r"sql-query", SQLQueryViewSet, basename="sql-query")
+router.register(r"saved-sql-query", SavedSQLQueryViewSet, basename="saved-sql-query")
 
 router.register(r"project", ProjectView, basename="project")
 router.register(r"project-version", ProjectVersionView, basename="project-version")

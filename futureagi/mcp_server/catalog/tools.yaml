@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 107
+expected_tool_count: 111
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -647,3 +647,29 @@ tools:
     description: Return the current organization's usage and cost overview.
     operation: {method: GET, path: "/usage/v2/usage-overview/"}
     access: read
+
+  # SQL uses the same bounded, authenticated project execution path as the UI.
+  - name: run_sql
+    group: observability
+    description: Start one read-only project-scoped ClickHouse SELECT or JOIN in a required time window (at most 31 days). Returns a personal job id; poll get_sql_result. No raw tables, settings, writes, external functions, or public result links.
+    operation: {method: POST, path: "/tracer/sql-query/run/"}
+    access: read
+    response: {unwrap: null}
+  - name: get_sql_result
+    group: observability
+    description: Poll a SQL job owned by the caller. Results expire after 24 hours; current project membership is required on every poll.
+    operation: {method: GET, path: "/tracer/sql-query/{id}/"}
+    access: read
+    response: {unwrap: null}
+  - name: cancel_sql
+    group: observability
+    description: Cancel a SQL job owned by the caller without changing project data.
+    operation: {method: POST, path: "/tracer/sql-query/{id}/cancel/"}
+    access: read
+    response: {unwrap: null}
+  - name: get_sql_catalog
+    group: observability
+    description: List the stable scoped SQL datasets and columns available in a project.
+    operation: {method: GET, path: "/tracer/sql-query/catalog/"}
+    access: read
+    response: {unwrap: null}

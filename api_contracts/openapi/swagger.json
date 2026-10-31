@@ -68687,6 +68687,230 @@
                 }
             ]
         },
+        "/tracer/saved-sql-query/": {
+            "get": {
+                "operationId": "tracer_saved-sql-query_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "maximum": 10000,
+                        "minimum": 0
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLSavedList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_saved-sql-query_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLSave"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLSaved"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/saved-sql-query/{id}/": {
+            "get": {
+                "operationId": "tracer_saved-sql-query_read",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLSaved"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "patch": {
+                "operationId": "tracer_saved-sql-query_partial_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLSave"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLSaved"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "tracer_saved-sql-query_delete",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Deleted"
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/saved-sql-query/{id}/add-widget/": {
+            "post": {
+                "operationId": "tracer_saved-sql-query_add_widget",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLWidget"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLWidgetResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/tracer/saved-views/": {
             "get": {
                 "operationId": "tracer_saved-views_list",
@@ -69428,6 +69652,330 @@
                 },
                 {
                     "name": "trace_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/sql-query/": {
+            "get": {
+                "operationId": "tracer_sql-query_list",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "maximum": 10000,
+                        "minimum": 0
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLHistory"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/catalog/": {
+            "get": {
+                "operationId": "tracer_sql-query_catalog",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLCatalog"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/estimate/": {
+            "post": {
+                "operationId": "tracer_sql-query_estimate",
+                "description": "Advisory index estimate of a query; never admits or blocks a run.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLRun"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLEstimate"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/run-saved/": {
+            "post": {
+                "operationId": "tracer_sql-query_run_saved",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLRunSaved"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLExecution"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/run/": {
+            "post": {
+                "operationId": "tracer_sql-query_run",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLRun"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLExecution"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/{id}/": {
+            "get": {
+                "operationId": "tracer_sql-query_read",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLExecution"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/sql-query/{id}/cancel/": {
+            "post": {
+                "operationId": "tracer_sql-query_cancel",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLProject"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLExecution"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/sql-query/{id}/download/": {
+            "get": {
+                "operationId": "tracer_sql-query_download",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "file_format",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "enum": [
+                            "csv",
+                            "parquet"
+                        ]
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Bounded result download",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
                     "in": "path",
                     "required": true,
                     "type": "string"
@@ -154560,6 +155108,196 @@
                 }
             }
         },
+        "SQLSaved": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "visibility": {
+                    "title": "Visibility",
+                    "type": "string",
+                    "enum": [
+                        "private",
+                        "project"
+                    ],
+                    "readOnly": true
+                },
+                "chart": {
+                    "title": "Chart",
+                    "type": "object",
+                    "readOnly": true
+                },
+                "window_hours": {
+                    "title": "Window hours",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "created_by_id": {
+                    "title": "Created by id",
+                    "type": "string",
+                    "readOnly": true
+                }
+            }
+        },
+        "SQLSavedList": {
+            "required": [
+                "items",
+                "has_more"
+            ],
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLSaved"
+                    }
+                },
+                "has_more": {
+                    "title": "Has more",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SQLChart": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "table",
+                        "bar"
+                    ],
+                    "default": "table"
+                },
+                "x": {
+                    "title": "X",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "y": {
+                    "title": "Y",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                }
+            },
+            "default": {
+                "type": "table"
+            }
+        },
+        "SQLSave": {
+            "required": [
+                "project_id",
+                "name",
+                "sql"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 160,
+                    "minLength": 1
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "maxLength": 32768,
+                    "minLength": 1
+                },
+                "visibility": {
+                    "title": "Visibility",
+                    "type": "string",
+                    "enum": [
+                        "private",
+                        "project"
+                    ],
+                    "default": "private"
+                },
+                "chart": {
+                    "$ref": "#/definitions/SQLChart"
+                },
+                "window_hours": {
+                    "title": "Window hours",
+                    "type": "integer",
+                    "default": 24,
+                    "maximum": 744,
+                    "minimum": 1
+                }
+            }
+        },
+        "SQLWidget": {
+            "required": [
+                "project_id",
+                "dashboard_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dashboard_id": {
+                    "title": "Dashboard id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "SQLWidgetResponse": {
+            "required": [
+                "id",
+                "dashboard_id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dashboard_id": {
+                    "title": "Dashboard id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
         "SavedViewDefaultTab": {
             "required": [
                 "key",
@@ -155648,6 +156386,424 @@
                 },
                 "result": {
                     "$ref": "#/definitions/TraceDetailResult"
+                }
+            }
+        },
+        "SQLColumn": {
+            "required": [
+                "name",
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "SQLResult": {
+            "type": "object",
+            "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLColumn"
+                    }
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object"
+                        }
+                    }
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean"
+                },
+                "row_count": {
+                    "title": "Row count",
+                    "type": "integer"
+                },
+                "result_bytes": {
+                    "title": "Result bytes",
+                    "type": "integer"
+                },
+                "elapsed_ms": {
+                    "title": "Elapsed ms",
+                    "type": "integer"
+                }
+            }
+        },
+        "SQLExecution": {
+            "required": [
+                "id",
+                "project_id",
+                "sql",
+                "state",
+                "created_at",
+                "expires_at",
+                "error",
+                "result",
+                "expired"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "running",
+                        "succeeded",
+                        "failed",
+                        "cancelled"
+                    ]
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "expires_at": {
+                    "title": "Expires at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                },
+                "result": {
+                    "$ref": "#/definitions/SQLResult"
+                },
+                "expired": {
+                    "title": "Expired",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SQLHistory": {
+            "required": [
+                "items",
+                "has_more"
+            ],
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLExecution"
+                    }
+                },
+                "has_more": {
+                    "title": "Has more",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SQLDataset": {
+            "required": [
+                "available",
+                "unavailable_reason",
+                "name",
+                "description",
+                "columns"
+            ],
+            "type": "object",
+            "properties": {
+                "available": {
+                    "title": "Available",
+                    "type": "boolean"
+                },
+                "unavailable_reason": {
+                    "title": "Unavailable reason",
+                    "type": "string"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLColumn"
+                    }
+                }
+            }
+        },
+        "SQLExample": {
+            "required": [
+                "id",
+                "title",
+                "description",
+                "sql",
+                "datasets"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "datasets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "SQLCatalog": {
+            "required": [
+                "identity_semantics",
+                "version",
+                "datasets",
+                "examples",
+                "max_rows",
+                "max_window_days",
+                "can_save"
+            ],
+            "type": "object",
+            "properties": {
+                "identity_semantics": {
+                    "title": "Identity semantics",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "datasets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLDataset"
+                    }
+                },
+                "examples": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLExample"
+                    }
+                },
+                "max_rows": {
+                    "title": "Max rows",
+                    "type": "integer"
+                },
+                "max_window_days": {
+                    "title": "Max window days",
+                    "type": "integer"
+                },
+                "can_save": {
+                    "title": "Can save",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SQLRun": {
+            "required": [
+                "project_id",
+                "sql",
+                "start",
+                "end"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "maxLength": 32768,
+                    "minLength": 1
+                },
+                "start": {
+                    "title": "Start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "end": {
+                    "title": "End",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "SQLEstimateSource": {
+            "required": [
+                "dataset",
+                "estimated",
+                "parts",
+                "marks",
+                "max_rows",
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "dataset": {
+                    "title": "Dataset",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "estimated": {
+                    "title": "Estimated",
+                    "type": "boolean"
+                },
+                "parts": {
+                    "title": "Parts",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "marks": {
+                    "title": "Marks",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "max_rows": {
+                    "title": "Max rows",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                }
+            }
+        },
+        "SQLEstimate": {
+            "required": [
+                "status",
+                "reason",
+                "sources",
+                "max_rows_to_read",
+                "exceeds_scan_bound",
+                "elapsed_ms"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "unavailable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLEstimateSource"
+                    }
+                },
+                "max_rows_to_read": {
+                    "title": "Max rows to read",
+                    "type": "integer"
+                },
+                "exceeds_scan_bound": {
+                    "title": "Exceeds scan bound",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "elapsed_ms": {
+                    "title": "Elapsed ms",
+                    "type": "integer"
+                }
+            }
+        },
+        "SQLRunSaved": {
+            "required": [
+                "project_id",
+                "saved_query_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "saved_query_id": {
+                    "title": "Saved query id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "start": {
+                    "title": "Start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "end": {
+                    "title": "End",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "SQLProject": {
+            "required": [
+                "project_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },

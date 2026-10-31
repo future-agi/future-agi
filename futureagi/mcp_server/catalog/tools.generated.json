@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "e627d9ac4d0dce56b0224e487d5b104e2a5d24ae9a5db91cbea4922d25971cbe",
-  "tool_count": 107,
+  "source_contract_sha256": "189e581ca780cf50feed48de69a3b22603ccfac9743de10bf8d4e2572e025682",
+  "tool_count": 111,
   "tools": [
     {
       "name": "whoami",
@@ -11011,6 +11011,206 @@
       },
       "source": {
         "operationId": "usage_v2_usage-overview_list"
+      }
+    },
+    {
+      "name": "run_sql",
+      "description": "Start one read-only project-scoped ClickHouse SELECT or JOIN in a required time window (at most 31 days). Returns a personal job id; poll get_sql_result. No raw tables, settings, writes, external functions, or public result links.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "title": "Project id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "sql": {
+            "title": "Sql",
+            "type": "string",
+            "maxLength": 32768,
+            "minLength": 1
+          },
+          "start": {
+            "title": "Start",
+            "type": "string",
+            "format": "date-time"
+          },
+          "end": {
+            "title": "End",
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "project_id",
+          "sql",
+          "start",
+          "end"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/tracer/sql-query/run/",
+        "parameters": {
+          "path": [],
+          "query": [],
+          "body": [
+            "project_id",
+            "sql",
+            "start",
+            "end"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_run"
+      }
+    },
+    {
+      "name": "get_sql_result",
+      "description": "Poll a SQL job owned by the caller. Results expire after 24 hours; current project membership is required on every poll.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "project_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/sql-query/{id}/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "project_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_read"
+      }
+    },
+    {
+      "name": "cancel_sql",
+      "description": "Cancel a SQL job owned by the caller without changing project data.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project id",
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "project_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/tracer/sql-query/{id}/cancel/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "project_id"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_cancel"
+      }
+    },
+    {
+      "name": "get_sql_catalog",
+      "description": "List the stable scoped SQL datasets and columns available in a project.",
+      "group": "observability",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "project_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/sql-query/catalog/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "project_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": null
+      },
+      "source": {
+        "operationId": "tracer_sql-query_catalog"
       }
     }
   ]

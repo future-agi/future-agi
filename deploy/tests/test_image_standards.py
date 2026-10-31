@@ -744,6 +744,20 @@ class RuntimeSmoke(unittest.TestCase):
             ],
         )
 
+    def test_sql_workbench_dependencies_are_core_in_both_variants(self):
+        self.assertIn("sqlglot", self.smoke.MODULES)
+        self.assertIn("pyarrow.parquet", self.smoke.MODULES)
+        self.tool("ffprobe")
+        self.tool("ffmpeg", MP3_ENCODERS)
+        for variant in ("standard", "slim"):
+            with self.subTest(variant=variant):
+                code, _ = self.run_smoke(
+                    resolved(IMAGE_VARIANT=variant),
+                    missing={"sqlglot", "pyarrow.parquet"},
+                )
+                self.assertIn("import sqlglot: ModuleNotFoundError", code)
+                self.assertIn("import pyarrow.parquet: ModuleNotFoundError", code)
+
     def test_every_core_module_is_imported(self):
         self.tool("ffprobe")
         self.tool("ffmpeg", MP3_ENCODERS)

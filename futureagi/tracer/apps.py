@@ -23,6 +23,7 @@ class SdkConfig(AppConfig):
             project_version,  # noqa: F401
             replay_session,  # noqa: F401
             saved_view,  # noqa: F401
+            sql_query,  # noqa: F401
             shared_link,  # noqa: F401
             span_notes,  # noqa: F401
             trace,  # noqa: F401

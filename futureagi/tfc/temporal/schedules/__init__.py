@@ -25,6 +25,7 @@ from tfc.temporal.schedules.model_hub import MODEL_HUB_SCHEDULES
 from tfc.temporal.schedules.outbox_cdc import OUTBOX_CDC_SCHEDULES
 from tfc.temporal.schedules.retention import RETENTION_SCHEDULES
 from tfc.temporal.schedules.saml import SAML_SCHEDULES
+from tfc.temporal.schedules.sql_workbench import SQL_WORKBENCH_SCHEDULES
 from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
 from tfc.temporal.schedules.tracer import TRACER_SCHEDULES
 
@@ -42,6 +43,7 @@ ALL_SCHEDULES = [
     # Empty unless FI_CDC_MODE=outbox (the standalone install).
     *OUTBOX_CDC_SCHEDULES,
     *SAML_SCHEDULES,
+    *SQL_WORKBENCH_SCHEDULES,
 ]
 
 # Manager functions
@@ -85,6 +87,7 @@ __all__ = [
     "DEPLOYMENT_TELEMETRY_SCHEDULES",
     "ALL_SCHEDULES",
     "SAML_SCHEDULES",
+    "SQL_WORKBENCH_SCHEDULES",
     # Async functions (a_ prefix)
     "a_schedule_exists",
     "a_create_schedule",

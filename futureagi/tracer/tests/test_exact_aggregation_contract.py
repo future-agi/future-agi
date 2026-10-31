@@ -2307,7 +2307,9 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
         _ACTIVITY_WRAPPERS,
     )
     from tfc.temporal.drop_in.workflow import TaskRunnerWorkflow
+
     from tracer.services import exact_aggregation_cache as cache_module
+    from tracer.sql_workbench.tasks import execute_sql, purge_expired_sql_results
     from tracer.tasks.exact_aggregation import (
         EXACT_AGGREGATION_TASK_QUEUE,
         refresh_exact_aggregation_snapshot,
@@ -2334,9 +2336,19 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
     )
     assert "tracer.tasks" in TEMPORAL_ACTIVITY_MODULES
     assert get_workflows_for_queue(EXACT_AGGREGATION_TASK_QUEUE) == [TaskRunnerWorkflow]
-    assert get_activities_for_queue(EXACT_AGGREGATION_TASK_QUEUE) == [
-        _ACTIVITY_WRAPPERS[refresh_exact_aggregation_snapshot.name]
-    ]
+    # SQL workbench shares the admitted worker; keep its allowlist exact rather
+    # than allowing every generic activity onto this single-slot queue.
+    admitted_tasks = (
+        refresh_exact_aggregation_snapshot,
+        execute_sql,
+        purge_expired_sql_results,
+    )
+    registered_activities = get_activities_for_queue(EXACT_AGGREGATION_TASK_QUEUE)
+    admitted_activities = {_ACTIVITY_WRAPPERS[task.name] for task in admitted_tasks}
+    assert {_ACTIVITY_REGISTRY[task.name]["queue"] for task in admitted_tasks} == {
+        EXACT_AGGREGATION_TASK_QUEUE
+    }
+    assert set(registered_activities) == admitted_activities
     # Keep the activity registered on the former generic queue during rollout
     # so already-scheduled workflows can finish on an old queue worker. New
     # dispatches are asserted above to target only the admitted queue.
@@ -2350,9 +2362,7 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
         "agent_compass",
         "trace_ingestion",
     ):
-        assert _ACTIVITY_WRAPPERS[
-            refresh_exact_aggregation_snapshot.name
-        ] not in get_activities_for_queue(generic_queue)
+        assert admitted_activities.isdisjoint(get_activities_for_queue(generic_queue))
     assert (
         cache_module._refresh_dispatch_seconds()
         > EXACT_AGGREGATION_SCHEDULE_TO_START_TIMEOUT_SECONDS

@@ -1070,7 +1070,9 @@ psycopg-binary==3.3.2 ; implementation_name != 'pypy'
 psycopg-pool==3.3.0
     # via psycopg
 pyarrow==22.0.0
-    # via datasets
+    # via
+    #   core-backend
+    #   datasets
 pyasn1==0.6.1
     # via
     #   pyasn1-modules
@@ -1371,6 +1373,8 @@ sqlalchemy==2.0.45
     #   langchain
     #   langchain-community
     #   optuna
+sqlglot==28.10.1
+    # via core-backend
 sqlparse==0.5.5
     # via django
 srsly==2.5.3

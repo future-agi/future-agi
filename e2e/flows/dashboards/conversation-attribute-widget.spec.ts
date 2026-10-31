@@ -577,6 +577,11 @@ test('DASH-E2E-009: a saved conversation widget excludes child-model call-metric
         expect(savedWidget.id).toMatch(/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
         expect(savedWidget.name).toBe(widgetName); expect(savedWidget.query_config).toEqual(canonical); expect(savedWidget.chart_config).toEqual(originalChart);
         await verifySaved(); await uiExpect(page).toHaveURL(new RegExp(`/dashboard/dashboards/${dashboardId}$`));
+        // Saving reruns the rolling 7D query on the dashboard. Its day buckets
+        // can differ from the editor preview when these requests cross midnight.
+        const receipt = await readNative<QueryBody>(QUERY, canonical, since, 'POST', body => body?.result?.query_complete === true);
+        lastBuckets = assertResult(receipt, canonical, both);
+        await attach('saved-query', { receipt, config: canonical, groups: both });
         await assertTable(both, lastBuckets, true); await testInfo.attach('saved-table', { contentType: 'image/png', body: await page.screenshot() });
       }, { timeout: UI_READY });
 
