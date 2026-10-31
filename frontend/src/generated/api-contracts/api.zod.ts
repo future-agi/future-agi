@@ -34604,6 +34604,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
       }),
       retried_from_id: zod.string().uuid(),
       retryable: zod.boolean().optional(),
+      limited_validation: zod.boolean().optional(),
       check_runs: zod
         .array(
           zod.object({
@@ -34932,6 +34933,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
   }),
   retried_from_id: zod.string().uuid(),
   retryable: zod.boolean().optional(),
+  limited_validation: zod.boolean().optional(),
   check_runs: zod
     .array(
       zod.object({
@@ -35206,6 +35208,7 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
   }),
   retried_from_id: zod.string().uuid(),
   retryable: zod.boolean().optional(),
+  limited_validation: zod.boolean().optional(),
   check_runs: zod
     .array(
       zod.object({

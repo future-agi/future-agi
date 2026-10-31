@@ -49620,6 +49620,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           readOnly: true,
         },
+        limited_validation: {
+          title: "Limited validation",
+          type: "boolean",
+          readOnly: true,
+        },
         check_runs: {
           description: "The base version's runs; each candidate lists its own.",
           type: "array",
@@ -49770,6 +49775,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         retryable: {
           title: "Retryable",
+          type: "boolean",
+          readOnly: true,
+        },
+        limited_validation: {
+          title: "Limited validation",
           type: "boolean",
           readOnly: true,
         },
