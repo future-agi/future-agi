@@ -638,9 +638,19 @@ test('DASH-E2E-012: a saved trace annotation widget retains exact text membershi
         await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
         await page.getByText('Untitled widget', { exact: true }).click(); await page.getByPlaceholder('Untitled widget').fill(widgetName);
         await page.getByPlaceholder('Untitled widget').press('Enter');
-        await page.getByRole('combobox').filter({ hasText: 'Line' }).click(); await page.getByRole('option', { name: 'Table', exact: true }).click();
-        await page.getByText('7D', { exact: true }).click(); await page.getByRole('combobox').filter({ hasText: 'Day' }).click();
-        await page.getByRole('option', { name: 'Day', exact: true }).click();
+        await page.getByRole('combobox').filter({ hasText: 'Line' }).click();
+        // MUI Grow can move an option between pointerdown/up; keyboard activation
+        // avoids that coordinate race. Acknowledge both selection and menu closure.
+        const tableOption = page.getByRole('listbox').getByRole('option', { name: 'Table', exact: true });
+        await tableOption.focus(); await tableOption.press('Enter');
+        await uiExpect(page.getByRole('combobox').filter({ hasText: 'Table' })).toHaveText('Table');
+        await uiExpect(page.getByRole('listbox')).toHaveCount(0);
+        await page.getByText('7D', { exact: true }).click();
+        await page.getByRole('combobox').filter({ hasText: 'Day' }).click();
+        const dayOption = page.getByRole('listbox').getByRole('option', { name: 'Day', exact: true });
+        await dayOption.focus(); await dayOption.press('Enter');
+        await uiExpect(page.getByRole('combobox').filter({ hasText: 'Day' })).toHaveText('Day');
+        await uiExpect(page.getByRole('listbox')).toHaveCount(0);
       }, { timeout: UI_READY });
 
       await test.step('3 discover text annotation and Traces with exact scope', async () => {
