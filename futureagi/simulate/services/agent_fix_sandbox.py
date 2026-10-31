@@ -10,7 +10,7 @@ import httpx
 import structlog
 from django.conf import settings
 from django.db import InterfaceError, OperationalError, transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 
 from simulate.models import AgentFixRun
@@ -241,7 +241,8 @@ def _start_engine(sandbox, capability: EngineCapability) -> str:
 
 def _claim_launch(fix_run_id: str) -> Observation | None:
     """Take the run's next sandbox, or say why it gets none. The previous sandbox's
-    credentials stop working here, before anything new exists."""
+    credentials stop working here, before anything new exists. A fix held back by the caps
+    stays queued, and its deadline has not started."""
     with transaction.atomic():
         fix_run = AgentFixRun.no_workspace_objects.select_for_update().get(
             id=fix_run_id
@@ -249,20 +250,30 @@ def _claim_launch(fix_run_id: str) -> Observation | None:
         settled = _settled(fix_run)
         if settled is not None:
             return settled
-        if fix_run.state == AgentFixRun.State.QUEUED:
-            fix_run.state = AgentFixRun.State.RUNNING
-            fix_run.started_at = timezone.now()
-        fix_run.token_hash = ""
-        fix_run.save(
-            update_fields=[
-                "state",
-                "started_at",
-                "token_hash",
-                "updated_at",
-            ]
-        )
+        held_back = fix_run.state == AgentFixRun.State.QUEUED and not _has_room(fix_run)
+        if not held_back:
+            if fix_run.state == AgentFixRun.State.QUEUED:
+                fix_run.state = AgentFixRun.State.RUNNING
+                fix_run.started_at = timezone.now()
+            fix_run.token_hash = ""
+            fix_run.save(
+                update_fields=[
+                    "state",
+                    "started_at",
+                    "token_hash",
+                    "updated_at",
+                ]
+            )
     attempts = settings.AGENT_FIX_MAX_SANDBOX_ATTEMPTS
-    if timezone.now() >= fix_deadline(fix_run):
+    if held_back:
+        waited = (timezone.now() - fix_run.created_at).total_seconds()
+        if waited < settings.AGENT_FIX_MAX_QUEUED_SECONDS:
+            return Observation.WAITING
+        failure = {
+            "code": "fix_queue_timeout",
+            "message": "too many fixes are running; try again later",
+        }
+    elif timezone.now() >= fix_deadline(fix_run):
         failure = {
             "code": "fix_deadline",
             "message": "the fix ran out of the time it was given",
@@ -276,6 +287,18 @@ def _claim_launch(fix_run_id: str) -> Observation | None:
         return None
     close_fix_run(fix_run.id, AgentFixRun.State.FAILED, failure=failure)
     return Observation.ENDED
+
+
+def _has_room(fix_run: AgentFixRun) -> bool:
+    """Whether a queued fix may start: the platform and its organization are under their
+    caps, and no older fix of the organization is still waiting."""
+    fixes = AgentFixRun.no_workspace_objects.filter(deleted=False)
+    running = Q(state__in=(AgentFixRun.State.RUNNING, AgentFixRun.State.STOPPING))
+    if fixes.filter(running).count() >= settings.AGENT_FIX_MAX_RUNNING:
+        return False
+    older = Q(state=AgentFixRun.State.QUEUED, created_at__lt=fix_run.created_at)
+    ahead = fixes.filter(running | older, organization_id=fix_run.organization_id)
+    return ahead.count() < settings.AGENT_FIX_MAX_RUNNING_PER_ORG
 
 
 def _settled(fix_run: AgentFixRun) -> Observation | None:
