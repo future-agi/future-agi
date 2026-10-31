@@ -20,7 +20,7 @@ from django.utils import timezone
 
 from agentcc.services.gateway_client import resolve_gateway_internal_url
 from simulate.models import AgentFixRun
-from simulate.services.agent_fix_engine import committed_usd
+from simulate.selectors.agent_fix import committed_usd
 from simulate.services.harness_usage import billed_ai_usd
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import platform_model_gateway

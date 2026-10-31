@@ -78,10 +78,6 @@ class Migration(migrations.Migration):
                 ),
                 ("report", models.JSONField(blank=True, null=True)),
                 ("failure", models.JSONField(blank=True, null=True)),
-                (
-                    "checkpoint_key",
-                    models.CharField(blank=True, default="", max_length=512),
-                ),
                 ("started_at", models.DateTimeField(blank=True, null=True)),
                 ("finished_at", models.DateTimeField(blank=True, null=True)),
                 ("sandbox_attempt", models.PositiveIntegerField(default=0)),
@@ -98,6 +94,16 @@ class Migration(migrations.Migration):
                         on_delete=django.db.models.deletion.PROTECT,
                         related_name="+",
                         to="simulate.agentversion",
+                    ),
+                ),
+                (
+                    "retried_from",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="retries",
+                        to="simulate.agentfixrun",
                     ),
                 ),
                 (

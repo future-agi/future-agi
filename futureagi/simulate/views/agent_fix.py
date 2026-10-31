@@ -22,6 +22,7 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.agent_fix import (
     check_run_status,
     engine_brief,
+    fix_lineage,
     fix_runs_for_environment,
     fix_runs_for_read,
     launch_options,
@@ -48,12 +49,14 @@ from simulate.services.agent_fix_runs import (
     launch_fix_run,
     make_candidate_default,
     request_stop,
+    retry_fix_run,
 )
 from simulate.services.harness_provider import (
     _usage_limit_response,
     request_organization,
     scope_jobs,
 )
+from simulate.services.harness_usage import usage_limit_error
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.ee_gating import EEFeature, check_ee_feature
 from tfc.utils.api_contracts import validated_request
@@ -70,6 +73,11 @@ def _error_response(exc):
             status=status.HTTP_400_BAD_REQUEST,
         )
     return _usage_limit_response(exc)
+
+
+def _engine_error_response(exc):
+    # The engine reads one error shape; a plan limit is named in it, apart from the fix's budget.
+    return _error_response(usage_limit_error(exc) or exc)
 
 
 def _not_found():
@@ -201,6 +209,23 @@ class AgentFixRunViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,
+        responses={201: AgentFixRunSerializer},
+    )
+    @action(detail=True, methods=["post"])
+    def retry(self, request, pk=None):
+        """Start a failed fix again: a new fix with the same request. The check runs the
+        failed one finished are reused, so the user does not pay for them twice."""
+        fix_run = self._fix_run(request, pk)
+        if fix_run is None:
+            return _not_found()
+        retried = retry_fix_run(fix_run, user=request.user)
+        return Response(
+            AgentFixRunSerializer(self._fix_run(request, retried.id)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
         responses={200: AgentFixRunSerializer},
     )
     @action(detail=True, methods=["post"])
@@ -284,7 +309,7 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     def handle_exception(self, exc):
-        return _error_response(exc) or super().handle_exception(exc)
+        return _engine_error_response(exc) or super().handle_exception(exc)
 
     @property
     def _fix_run(self) -> AgentFixRun:
@@ -337,8 +362,9 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
         url_path=r"check-runs/(?P<run_id>[0-9a-f-]{36})",
     )
     def check_run(self, request, pk=None, run_id=None):
+        # A retry reads the check runs the fixes it retries finished, as its own.
         run = HostedHarnessJob.no_workspace_objects.filter(
-            id=run_id, fix_run=self._fix_run
+            id=run_id, fix_run_id__in=fix_lineage(self._fix_run)
         ).first()
         if run is None:
             return _not_found()
@@ -354,23 +380,6 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
             self._fix_run, EngineReport.model_validate(request.validated_data)
         )
         return Response({"state": fix_run.state})
-
-    @swagger_auto_schema(
-        method="put",
-        # The engine's own record, stored as sent: size is checked in the service.
-        request_body=openapi.Schema(type=openapi.TYPE_STRING, format="binary"),
-        runtime_request_validation=True,
-        responses={204: "stored"},
-    )
-    @action(detail=True, methods=["get", "put"])
-    def checkpoint(self, request, pk=None):
-        if request.method == "PUT":
-            agent_fix_engine.store_checkpoint(self._fix_run, request.body)
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        body = agent_fix_engine.load_object(self._fix_run.checkpoint_key)
-        if body is None:
-            return _not_found()
-        return HttpResponse(body, content_type="application/json")
 
 
 class _GatewayReply(BaseContentNegotiation):
@@ -393,7 +402,7 @@ class AgentFixModelView(APIView):
     content_negotiation_class = _GatewayReply
 
     def handle_exception(self, exc):
-        return _error_response(exc) or super().handle_exception(exc)
+        return _engine_error_response(exc) or super().handle_exception(exc)
 
     @swagger_auto_schema(
         # An OpenAI chat completion request, forwarded as sent: checked in the service.

@@ -823,7 +823,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/agent-fix-engine/{id}/candidates/": ["post"],
       "/simulate/api/agent-fix-engine/{id}/check-runs/": ["post"],
       "/simulate/api/agent-fix-engine/{id}/check-runs/{run_id}/": ["get"],
-      "/simulate/api/agent-fix-engine/{id}/checkpoint/": ["get", "put"],
       "/simulate/api/agent-fix-engine/{id}/report/": ["post"],
       "/simulate/api/agent-fix-engine/{id}/source/": ["get"],
       "/simulate/api/agent-fix-engine/{id}/v1/chat/completions": ["post"],
@@ -837,6 +836,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/":
         ["post"],
+      "/simulate/api/agent-fix-runs/{id}/retry/": ["post"],
       "/simulate/api/agent-fix-runs/{id}/stop/": ["post"],
       "/simulate/api/agent-prompt-optimiser/": ["get", "post"],
       "/simulate/api/agent-prompt-optimiser/{id}/": [
@@ -2164,7 +2164,6 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/agent-fix-engine/{id}/candidates/": ["post"],
   "/simulate/api/agent-fix-engine/{id}/check-runs/": ["post"],
   "/simulate/api/agent-fix-engine/{id}/check-runs/{run_id}/": ["get"],
-  "/simulate/api/agent-fix-engine/{id}/checkpoint/": ["get", "put"],
   "/simulate/api/agent-fix-engine/{id}/report/": ["post"],
   "/simulate/api/agent-fix-engine/{id}/source/": ["get"],
   "/simulate/api/agent-fix-engine/{id}/v1/chat/completions": ["post"],
@@ -2178,6 +2177,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/": [
     "post",
   ],
+  "/simulate/api/agent-fix-runs/{id}/retry/": ["post"],
   "/simulate/api/agent-fix-runs/{id}/stop/": ["post"],
   "/simulate/api/agent-prompt-optimiser/": ["get", "post"],
   "/simulate/api/agent-prompt-optimiser/{id}/": [

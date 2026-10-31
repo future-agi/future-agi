@@ -48,6 +48,14 @@ class AgentFixRun(BaseModel):
     base_agent_version = models.ForeignKey(
         "simulate.AgentVersion", on_delete=models.PROTECT, related_name="+"
     )
+    # The failed fix this one starts again: check runs that one finished are reused.
+    retried_from = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="retries",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -69,7 +77,6 @@ class AgentFixRun(BaseModel):
     # The engine's closing report (simulate.pydantic_schemas.agent_fix.FixReport).
     report = models.JSONField(null=True, blank=True)
     failure = models.JSONField(null=True, blank=True)
-    checkpoint_key = models.CharField(max_length=512, blank=True, default="")
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     # The sandbox now running the engine. A relaunch rotates the token, so a sandbox

@@ -8,10 +8,11 @@ from simulate.pydantic_schemas.agent_fix import (
     SCENARIOS_MAX,
     CandidateOutcome,
     Ending,
+    FailureOwner,
     FixStep,
     Surface,
 )
-from simulate.selectors.agent_fix import agent_identity
+from simulate.selectors.agent_fix import agent_identity, is_retryable
 from simulate.services.harness_environment import environment_name
 
 
@@ -191,6 +192,13 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     diagnosis = AgentFixDiagnosisSerializer(allow_null=True)
     agent = serializers.SerializerMethodField()
     environment = serializers.SerializerMethodField()
+    # The failed fix this one starts again, and whether this one may be started again.
+    retried_from_id = serializers.UUIDField(allow_null=True)
+    retryable = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
+    def get_retryable(self, fix_run: AgentFixRun) -> bool:
+        return is_retryable(fix_run)
 
     @swagger_serializer_method(
         serializer_or_field=serializers.ChoiceField(
@@ -249,6 +257,8 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "committed_credits",
             "report",
             "failure",
+            "retried_from_id",
+            "retryable",
             "check_runs",
             "candidates",
             "started_at",
@@ -312,6 +322,12 @@ class AgentFixCandidateUpdateSerializer(serializers.Serializer):
     verdict = AgentFixVerdictSerializer(required=False, allow_null=True)
 
 
+class AgentFixEngineFailureSerializer(serializers.Serializer):
+    owner = serializers.ChoiceField(choices=[one.value for one in FailureOwner])
+    code = serializers.CharField(max_length=64)
+    message = serializers.CharField(allow_blank=True, max_length=500)
+
+
 class AgentFixEngineReportSerializer(serializers.Serializer):
     stage = serializers.CharField(max_length=32)
     step = serializers.ChoiceField(
@@ -326,6 +342,7 @@ class AgentFixEngineReportSerializer(serializers.Serializer):
         choices=[one.value for one in Ending], required=False, allow_null=True
     )
     summary = serializers.CharField(required=False, allow_blank=True, default="")
+    failure = AgentFixEngineFailureSerializer(required=False, allow_null=True)
     winner_candidate_id = serializers.UUIDField(required=False, allow_null=True)
 
 

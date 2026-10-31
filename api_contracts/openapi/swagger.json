@@ -49903,67 +49903,6 @@
                 }
             ]
         },
-        "/simulate/api/agent-fix-engine/{id}/checkpoint/": {
-            "get": {
-                "operationId": "simulate_api_agent-fix-engine_checkpoint_read",
-                "summary": "The calls the improvement engine makes from its sandbox, for its one fix run.",
-                "description": "Fields these routes do not know are ignored, not refused: the engine template and the\nplatform ship apart, and a newer template must still be heard by an older platform.",
-                "parameters": [],
-                "responses": {
-                    "200": {
-                        "description": ""
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "simulate"
-                ]
-            },
-            "put": {
-                "operationId": "simulate_api_agent-fix-engine_checkpoint_update",
-                "summary": "The calls the improvement engine makes from its sandbox, for its one fix run.",
-                "description": "Fields these routes do not know are ignored, not refused: the engine template and the\nplatform ship apart, and a newer template must still be heard by an older platform.",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "string",
-                            "format": "binary"
-                        }
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "stored"
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "simulate"
-                ],
-                "x-runtime-request-validation": true
-            },
-            "parameters": [
-                {
-                    "name": "id",
-                    "in": "path",
-                    "required": true,
-                    "type": "string"
-                }
-            ]
-        },
         "/simulate/api/agent-fix-engine/{id}/report/": {
             "post": {
                 "operationId": "simulate_api_agent-fix-engine_report",
@@ -50356,6 +50295,49 @@
                 },
                 {
                     "name": "candidate_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/agent-fix-runs/{id}/retry/": {
+            "post": {
+                "operationId": "simulate_api_agent-fix-runs_retry",
+                "description": "Start a failed fix again: a new fix with the same request. The check runs the\nfailed one finished are reused, so the user does not pay for them twice.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixRun"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
                     "in": "path",
                     "required": true,
                     "type": "string"
@@ -124624,6 +124606,36 @@
                 }
             }
         },
+        "AgentFixEngineFailure": {
+            "required": [
+                "owner",
+                "code",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "owner": {
+                    "title": "Owner",
+                    "type": "string",
+                    "enum": [
+                        "ours",
+                        "user"
+                    ]
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "maxLength": 500
+                }
+            },
+            "x-nullable": true
+        },
         "AgentFixEngineReport": {
             "required": [
                 "stage"
@@ -124676,6 +124688,9 @@
                     "title": "Summary",
                     "type": "string",
                     "default": ""
+                },
+                "failure": {
+                    "$ref": "#/definitions/AgentFixEngineFailure"
                 },
                 "winner_candidate_id": {
                     "title": "Winner candidate id",
@@ -124980,6 +124995,7 @@
                 "committed_credits",
                 "report",
                 "failure",
+                "retried_from_id",
                 "candidates"
             ],
             "type": "object",
@@ -125077,6 +125093,17 @@
                 },
                 "failure": {
                     "$ref": "#/definitions/AgentFixFailure"
+                },
+                "retried_from_id": {
+                    "title": "Retried from id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "retryable": {
+                    "title": "Retryable",
+                    "type": "boolean",
+                    "readOnly": true
                 },
                 "check_runs": {
                     "description": "The base version's runs; each candidate lists its own.",

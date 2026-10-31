@@ -1055,7 +1055,9 @@ ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
 # message before a post-run chat sandbox is reclaimed, and only trades cost against latency.
 ALK_HOSTED_CHAT_TTL_SECONDS = int(os.getenv("ALK_HOSTED_CHAT_TTL_SECONDS", "1800"))
 # Off sends a fresh build through the staged authoring pipeline instead of the builder session.
-ALK_HOSTED_BUILDER_SESSION = os.getenv("ALK_HOSTED_BUILDER_SESSION", "true").strip().lower() not in (
+ALK_HOSTED_BUILDER_SESSION = os.getenv(
+    "ALK_HOSTED_BUILDER_SESSION", "true"
+).strip().lower() not in (
     "0",
     "false",
     "no",
@@ -1089,8 +1091,8 @@ AGENT_FIX_E2B_TEMPLATE_REFERENCE = os.getenv("AGENT_FIX_E2B_TEMPLATE_REFERENCE",
 AGENT_FIX_ENGINE_COMMAND = os.getenv(
     "AGENT_FIX_ENGINE_COMMAND", "node /opt/agent-improvement/platform-entry.mjs"
 )
-# Sandboxes one fix may use in all; an engine that dies is started again from its checkpoint.
-AGENT_FIX_MAX_SANDBOX_ATTEMPTS = int(os.getenv("AGENT_FIX_MAX_SANDBOX_ATTEMPTS", "2"))
+# Sandboxes one fix may use in all; an engine that dies is started again after a pause.
+AGENT_FIX_MAX_SANDBOX_ATTEMPTS = int(os.getenv("AGENT_FIX_MAX_SANDBOX_ATTEMPTS", "3"))
 # The engine reports at least every minute; silent this long, it is treated as dead.
 AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
     os.getenv("AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS", "600")
@@ -1109,14 +1111,11 @@ AGENT_FIX_TOKEN_GRACE_SECONDS = int(os.getenv("AGENT_FIX_TOKEN_GRACE_SECONDS", "
 AGENT_FIX_MODEL_TIMEOUT_SECONDS = int(
     os.getenv("AGENT_FIX_MODEL_TIMEOUT_SECONDS", "900")
 )
-# Limits on what an engine may upload: a candidate's unpacked tree and a checkpoint.
+# Limits on what an engine may upload: a candidate's unpacked tree.
 AGENT_FIX_MAX_TREE_BYTES = int(
     os.getenv("AGENT_FIX_MAX_TREE_BYTES", str(128 * 1024 * 1024))
 )
 AGENT_FIX_MAX_TREE_FILES = int(os.getenv("AGENT_FIX_MAX_TREE_FILES", "20000"))
-AGENT_FIX_MAX_CHECKPOINT_BYTES = int(
-    os.getenv("AGENT_FIX_MAX_CHECKPOINT_BYTES", str(16 * 1024 * 1024))
-)
 ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS = int(
     os.getenv("ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS", "180")
 )

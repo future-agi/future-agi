@@ -18,9 +18,10 @@ from simulate.temporal.types.agent_fix import (
 )
 
 _LAUNCH_RETRY = RetryPolicy(
-    maximum_attempts=3,
+    # A sandbox provider's outage can outlast a minute.
+    maximum_attempts=5,
     initial_interval=timedelta(seconds=5),
-    maximum_interval=timedelta(seconds=30),
+    maximum_interval=timedelta(minutes=2),
     # Configuration a retry cannot fix.
     non_retryable_error_types=[
         "HostedHarnessError",
@@ -34,12 +35,14 @@ _WATCH_RETRY = RetryPolicy(
     maximum_interval=timedelta(seconds=30),
 )
 _WATCH_PAUSE = timedelta(seconds=15)
+# Before an engine is started again: long enough for a model or platform blip to pass.
+_RELAUNCH_PAUSE = timedelta(minutes=2)
 
 
 @workflow.defn
 class AgentFixWorkflow:
     """Owns the sandbox of one "Fix my agent" run: starts the engine, watches it, starts it
-    again from its checkpoint when it dies, and always deletes the sandbox at the end.
+    again after a pause when it dies, and always deletes the sandbox at the end.
     simulate.services.agent_fix_sandbox decides what each step saw."""
 
     def __init__(self) -> None:
@@ -92,8 +95,15 @@ class AgentFixWorkflow:
             )
             if observation != Observation.ENGINE_GONE:
                 return observation
-            # The engine died while the run still runs. The next launch starts it again from
-            # its checkpoint, or ends the run once its sandboxes are used up.
+            # The engine died, or stopped on a failure a later launch may not meet (a model or
+            # platform outage). The next launch starts it again, or ends the run once its
+            # sandboxes are used up; a stop during the pause ends it at once.
+            try:
+                await workflow.wait_condition(
+                    lambda: self.cancel_requested, timeout=_RELAUNCH_PAUSE
+                )
+            except TimeoutError:
+                pass
         return Observation.STOPPING
 
     async def _watch(self, input: AgentFixWatchInput) -> Observation:

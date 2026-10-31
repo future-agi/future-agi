@@ -57754,99 +57754,6 @@ export const simulateApiAgentFixEngineCheckRun = async (
   );
 };
 
-export type simulateApiAgentFixEngineCheckpointReadResponse200 = {
-  data: void;
-  status: 200;
-};
-
-export type simulateApiAgentFixEngineCheckpointReadResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
-};
-
-export type simulateApiAgentFixEngineCheckpointReadResponseSuccess =
-  simulateApiAgentFixEngineCheckpointReadResponse200 & {
-    headers: Headers;
-  };
-export type simulateApiAgentFixEngineCheckpointReadResponseError =
-  simulateApiAgentFixEngineCheckpointReadResponseDefault & {
-    headers: Headers;
-  };
-
-export type simulateApiAgentFixEngineCheckpointReadResponse =
-  | simulateApiAgentFixEngineCheckpointReadResponseSuccess
-  | simulateApiAgentFixEngineCheckpointReadResponseError;
-
-export const getSimulateApiAgentFixEngineCheckpointReadUrl = (id: string) => {
-  return `/simulate/api/agent-fix-engine/${id}/checkpoint/`;
-};
-
-/**
- * Fields these routes do not know are ignored, not refused: the engine template and the
-platform ship apart, and a newer template must still be heard by an older platform.
- * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
- */
-export const simulateApiAgentFixEngineCheckpointRead = async (
-  id: string,
-  options?: RequestInit,
-): Promise<simulateApiAgentFixEngineCheckpointReadResponse> => {
-  return apiMutator<simulateApiAgentFixEngineCheckpointReadResponse>(
-    getSimulateApiAgentFixEngineCheckpointReadUrl(id),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
-};
-
-export type simulateApiAgentFixEngineCheckpointUpdateResponse204 = {
-  data: void;
-  status: 204;
-};
-
-export type simulateApiAgentFixEngineCheckpointUpdateResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
-};
-
-export type simulateApiAgentFixEngineCheckpointUpdateResponseSuccess =
-  simulateApiAgentFixEngineCheckpointUpdateResponse204 & {
-    headers: Headers;
-  };
-export type simulateApiAgentFixEngineCheckpointUpdateResponseError =
-  simulateApiAgentFixEngineCheckpointUpdateResponseDefault & {
-    headers: Headers;
-  };
-
-export type simulateApiAgentFixEngineCheckpointUpdateResponse =
-  | simulateApiAgentFixEngineCheckpointUpdateResponseSuccess
-  | simulateApiAgentFixEngineCheckpointUpdateResponseError;
-
-export const getSimulateApiAgentFixEngineCheckpointUpdateUrl = (id: string) => {
-  return `/simulate/api/agent-fix-engine/${id}/checkpoint/`;
-};
-
-/**
- * Fields these routes do not know are ignored, not refused: the engine template and the
-platform ship apart, and a newer template must still be heard by an older platform.
- * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
- */
-export const simulateApiAgentFixEngineCheckpointUpdate = async (
-  id: string,
-  simulateApiAgentFixEngineCheckpointUpdateBody: Blob,
-  options?: RequestInit,
-): Promise<simulateApiAgentFixEngineCheckpointUpdateResponse> => {
-  return apiMutator<simulateApiAgentFixEngineCheckpointUpdateResponse>(
-    getSimulateApiAgentFixEngineCheckpointUpdateUrl(id),
-    {
-      ...options,
-      method: "PUT",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(simulateApiAgentFixEngineCheckpointUpdateBody),
-    },
-  );
-};
-
 export type simulateApiAgentFixEngineReportResponse200 = {
   data: AgentFixEngineStateApi;
   status: 200;
@@ -58344,6 +58251,53 @@ export const simulateApiAgentFixRunsCandidatesPullRequest = async (
 ): Promise<simulateApiAgentFixRunsCandidatesPullRequestResponse> => {
   return apiMutator<simulateApiAgentFixRunsCandidatesPullRequestResponse>(
     getSimulateApiAgentFixRunsCandidatesPullRequestUrl(id, candidateId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsRetryResponse201 = {
+  data: AgentFixRunApi;
+  status: 201;
+};
+
+export type simulateApiAgentFixRunsRetryResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiAgentFixRunsRetryResponseSuccess =
+  simulateApiAgentFixRunsRetryResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsRetryResponseError =
+  simulateApiAgentFixRunsRetryResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsRetryResponse =
+  | simulateApiAgentFixRunsRetryResponseSuccess
+  | simulateApiAgentFixRunsRetryResponseError;
+
+export const getSimulateApiAgentFixRunsRetryUrl = (id: string) => {
+  return `/simulate/api/agent-fix-runs/${id}/retry/`;
+};
+
+/**
+ * Start a failed fix again: a new fix with the same request. The check runs the
+failed one finished are reused, so the user does not pay for them twice.
+ */
+export const simulateApiAgentFixRunsRetry = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsRetryResponse> => {
+  return apiMutator<simulateApiAgentFixRunsRetryResponse>(
+    getSimulateApiAgentFixRunsRetryUrl(id),
     {
       ...options,
       method: "POST",
