@@ -22,6 +22,8 @@ import { VERSION_STATUS } from "src/sections/agent-playground/utils/constants";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useDebounce } from "src/hooks/use-debounce";
 import SearchableSelectControl from "src/components/searchable-select-control/SearchableSelectControl";
+import TemplateFormatSelector from "src/sections/workbench/createPrompt/Playground/TemplateFormatSelector";
+import { getVersionTemplateFormat } from "../utils";
 const AgentPromptRenderer = ({
   prompt,
   onRemove,
@@ -191,6 +193,37 @@ const AgentPromptRenderer = ({
     });
   }, [type, watchedPromptVersion, versionsOptions, setValue, fieldPrefix]);
 
+  // Template format: default to the one the selected version was saved
+  // with. Only an explicit pick is written to the form, so an untouched
+  // card sends no template_format and the backend reads it from the
+  // version. Picking another version drops the explicit pick.
+  const templateFormatField = `${fieldPrefix}.configuration.template_format`;
+  const watchedTemplateFormat = useWatch({
+    control,
+    name: templateFormatField,
+  });
+  const savedTemplateFormat = useMemo(
+    () =>
+      getVersionTemplateFormat(
+        versionsOptions?.find((v) => v?.id === watchedPromptVersion),
+      ),
+    [versionsOptions, watchedPromptVersion],
+  );
+  const templateFormat =
+    watchedTemplateFormat || savedTemplateFormat || "mustache";
+  const prevPromptVersion = useRef(watchedPromptVersion);
+  useEffect(() => {
+    if (type !== PROMPT_CONFIG_TYPE.PROMPT) return;
+    if (
+      prevPromptVersion.current &&
+      prevPromptVersion.current !== watchedPromptVersion &&
+      getValues(templateFormatField)
+    ) {
+      setValue(templateFormatField, undefined);
+    }
+    prevPromptVersion.current = watchedPromptVersion;
+  }, [type, watchedPromptVersion, templateFormatField, getValues, setValue]);
+
   // Set initial agent version
   useEffect(() => {
     if (type !== "agent") return;
@@ -305,6 +338,12 @@ const AgentPromptRenderer = ({
               }
               getOptionValue={(v) => v?.id}
               placeholder="Select version"
+            />
+            <TemplateFormatSelector
+              value={templateFormat}
+              onChange={(v) =>
+                setValue(templateFormatField, v, { shouldDirty: true })
+              }
             />
           </ShowComponent>
 
