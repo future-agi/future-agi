@@ -844,7 +844,11 @@ class ProductHarness:
                 self.env['PYTHON'] = previous
         if check and result.returncode:
             # A CI run cannot be inspected afterwards: keep the refusal code.
-            raise setup_failure('command-{:04d}'.format(self.sequence), result.stdout)
+            failure = setup_failure('command-{:04d}'.format(self.sequence), result.stdout)
+            if type(failure) is RuntimeError:
+                failure = RuntimeError('command-{:04d} failed ({}); see private command logs'.format(
+                    self.sequence, command_refusal(self, result)))
+            raise failure
         return result
 
     def receipts(self):

@@ -279,8 +279,8 @@ class NativeLauncherTests(unittest.TestCase):
         cases = ((b'Setup incomplete: restore_capacity_unknown. Unattended work was not activated.\n' + private,
                   real.SetupIncomplete, 'command-0060 failed: setup incomplete: restore_capacity_unknown'),
                  (b'Setup incomplete: PRIVATE-TOKEN. x\n' + private, RuntimeError,
-                  'command-0060 failed; see private command logs'),
-                 (private, RuntimeError, 'command-0060 failed; see private command logs'))
+                  'command-0060 failed (unavailable); see private command logs'),
+                 (private, RuntimeError, 'command-0060 failed (unavailable); see private command logs'))
         for stdout, kind, message in cases:
             with self.subTest(message=message), patch.object(real, "native_ci", return_value=False), \
                     patch.object(harness, "command", return_value=real.subprocess.CompletedProcess([], 3, stdout)):
@@ -291,6 +291,14 @@ class NativeLauncherTests(unittest.TestCase):
         with patch.object(real, "native_ci", return_value=False), \
                 patch.object(harness, "command", return_value=real.subprocess.CompletedProcess([], 3, private)):
             self.assertEqual(harness.bin_update('setup', '--yes', check=False).returncode, 3)
+        with tempfile.TemporaryDirectory() as directory:
+            harness.evidence = Path(directory)
+            (harness.evidence / 'command-0060.stderr').write_bytes(b'/home/runner/secret\nbin/update: ownership_unconfirmed\n')
+            with patch.object(real, "native_ci", return_value=False), \
+                    patch.object(harness, "command", return_value=real.subprocess.CompletedProcess([], 2, private)):
+                with self.assertRaises(RuntimeError) as raised:
+                    harness.bin_update('setup', '--deactivate', '--yes')
+            self.assertEqual(str(raised.exception), 'command-0060 failed (ownership_unconfirmed); see private command logs')
 
 
 class ArchiveTests(unittest.TestCase):
