@@ -1,7 +1,13 @@
 import React from "react";
 import { Suspense } from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
+import {
+  BrowserRouter,
+  createRoutesFromChildren,
+  matchRoutes,
+  useLocation,
+  useNavigationType,
+} from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import "./utils/apexchartsCompat";
 
@@ -115,7 +121,15 @@ Sentry.init({
   environment: CURRENT_ENVIRONMENT || "development",
   release: import.meta.env.VITE_APP_VERSION || undefined,
   integrations: [
-    Sentry.browserTracingIntegration({
+    // Router-aware tracing names page loads by route pattern
+    // (/dashboard/observe/:id) instead of the raw URL, so each page
+    // aggregates into one row in Sentry.
+    Sentry.reactRouterV6BrowserTracingIntegration({
+      useEffect: React.useEffect,
+      useLocation,
+      useNavigationType,
+      createRoutesFromChildren,
+      matchRoutes,
       // Don't instrument third-party marketing/analytics beacons (Google Ads,
       // GTM, GA, Reddit/Twitter pixels) — their repeated conversion pings get
       // flagged as N+1 API-call perf issues even though they aren't app fetches.
@@ -127,6 +141,11 @@ Sentry.init({
     // Mask text and media in session replays so we never stream customer
     // content (prompts, PII, uploads) to a third party.
     Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true }),
+    // Local-only: stream traces to the Spotlight viewer on :8969 instead of
+    // sentry.io. Start it with `npx @spotlightjs/spotlight`.
+    ...(import.meta.env.DEV && import.meta.env.VITE_SENTRY_SPOTLIGHT === "true"
+      ? [Sentry.spotlightBrowserIntegration()]
+      : []),
   ],
   // 100% tracing in production is expensive and noisy; sample at 10% there and
   // keep full fidelity in lower environments. Override via VITE_SENTRY_TRACES_SAMPLE_RATE.

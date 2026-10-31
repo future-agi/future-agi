@@ -265,6 +265,10 @@ const refreshGridRef = (gridRef, options) =>
 // Eagerly load the trace grid (always visible)
 import TraceGrid from "./TraceGrid";
 import SpanGrid from "./SpanGrid";
+import {
+  startObserveDateRangeTimer,
+  startObserveFilterTimer,
+} from "./observeActionTimers";
 import { useAgentGraph } from "src/api/project/agent-graph";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 
@@ -2510,6 +2514,28 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     setExtraFilters([]);
     localStorage.removeItem(filtersStorageKey);
   }, [setExtraFilters, filtersStorageKey]);
+  const handlePanelApplyExtraFilters = useCallback(
+    (filters) => {
+      startObserveFilterTimer("panel", filters?.length ?? 0);
+      setExtraFilters(filters);
+    },
+    [setExtraFilters],
+  );
+  const handlePanelClearExtraFilters = useCallback(() => {
+    startObserveFilterTimer("panel", 0);
+    clearPrimaryExtraFilters();
+  }, [clearPrimaryExtraFilters]);
+  const handleChipRemoveFilter = useCallback(
+    (idx) => {
+      startObserveFilterTimer("chip_remove");
+      setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
+    },
+    [setExtraFilters],
+  );
+  const handleChipClearFilters = useCallback(() => {
+    startObserveFilterTimer("chip_clear", 0);
+    setExtraFilters([]);
+  }, [setExtraFilters]);
   const clearCompareExtraFilters = useCallback(() => {
     setCompareExtraFilters([]);
     localStorage.removeItem(filtersStorageKey);
@@ -3613,11 +3639,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             // later chips and invalidates a chip-anchored popover ref.
             // Clear it so the popover falls back to the toolbar button anchor.
             setExternalFilterAnchor(null);
-            setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
+            handleChipRemoveFilter(idx);
           }}
           onClearAll={() => {
             setExternalFilterAnchor(null);
-            setExtraFilters([]);
+            handleChipClearFilters();
             try {
               localStorage.removeItem(filtersStorageKey);
             } catch {
@@ -3892,12 +3918,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     hasActiveFilter={extraFilters?.length > 0}
                     extraFilters={extraFilters}
                     fieldLabelMap={filterChipLabelMap}
-                    onRemoveFilter={(idx) =>
-                      setExtraFilters((prev) =>
-                        prev.filter((_, i) => i !== idx),
-                      )
-                    }
-                    onClearFilters={() => setExtraFilters([])}
+                    onRemoveFilter={handleChipRemoveFilter}
+                    onClearFilters={handleChipClearFilters}
                   />
                 )}
                 <Box sx={{ height: 220 }}>
@@ -4095,11 +4117,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   ? primaryTraceDateFilter
                   : primarySpanDateFilter
               }
-              setDateFilter={
-                selectedTab === "trace"
-                  ? setPrimaryTraceDateFilter
-                  : setPrimarySpanDateFilter
-              }
+              setDateFilter={(update) => {
+                startObserveDateRangeTimer();
+                if (selectedTab === "trace") setPrimaryTraceDateFilter(update);
+                else setPrimarySpanDateFilter(update);
+              }}
               hasActiveFilter={hasActiveFilter}
               canSaveView={canSaveViewDeferred}
               onSaveView={handleSaveView}
@@ -4114,8 +4136,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 setExternalFilterAnchor(null);
                 setIsPrimaryFilterOpen(!isPrimaryFilterOpen);
               }}
-              onApplyExtraFilters={setExtraFilters}
-              onClearExtraFilters={clearPrimaryExtraFilters}
+              onApplyExtraFilters={handlePanelApplyExtraFilters}
+              onClearExtraFilters={handlePanelClearExtraFilters}
               graphFilters={selectPanelGraphFilters(
                 filterTarget,
                 extraFilters,

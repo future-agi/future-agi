@@ -55,6 +55,10 @@ import {
   DEFAULT_OBSERVE_LIST_DATE_OPTION,
   getDefaultObserveListDateRangeForMode,
 } from "../dateRangeDefaults";
+import {
+  startObserveDateRangeTimer,
+  startObserveFilterTimer,
+} from "../LLMTracing/observeActionTimers";
 
 // ---------------------------------------------------------------------------
 // User filter fields for TraceFilterPanel
@@ -807,7 +811,10 @@ const UsersView = ({
         // Date
         dateLabel={getDateLabel(dateFilter)}
         dateFilter={dateFilter}
-        setDateFilter={setDateFilter}
+        setDateFilter={(update) => {
+          startObserveDateRangeTimer();
+          setDateFilter(update);
+        }}
         // Filter
         hasActiveFilter={hasActiveFilter}
         canSaveView={canSaveViewDeferred}
@@ -822,7 +829,10 @@ const UsersView = ({
           setIsFilterOpen(!isFilterOpen);
         }}
         filterFields={USER_FILTER_FIELDS}
-        onApplyExtraFilters={setExtraFilters}
+        onApplyExtraFilters={(filters) => {
+          startObserveFilterTimer("panel", filters?.length ?? 0);
+          setExtraFilters(filters);
+        }}
         // Columns (Display panel)
         columns={columns}
         onColumnVisibilityChange={(e) => {

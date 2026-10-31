@@ -74,6 +74,7 @@ import useCursorGridPagination from "./useCursorGridPagination";
 import { getTraceGridRowId } from "./traceGridRowId";
 import { supportsUsageSort, USAGE_SORT_COLUMNS } from "./usageSort";
 import useImmediateGridQueryTransition from "./useImmediateGridQueryTransition";
+import { endObserveListTimers } from "./observeActionTimers";
 import {
   dispatchObservePageChanged,
   OBSERVE_LIST_REFRESH_EVENT,
@@ -678,6 +679,7 @@ const TraceGrid = React.forwardRef(
                 // sets loading again, so an older request cannot settle a newer
                 // in-flight page.
                 setGridLoading(false);
+                endObserveListTimers(pageLoadSucceeded ? "ok" : "error");
               }
               if (
                 !continuationPending &&
