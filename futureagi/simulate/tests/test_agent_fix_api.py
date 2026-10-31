@@ -1013,6 +1013,24 @@ class TestUserApi:
             (str(screen.id), "c1-target")
         ]
 
+    def test_a_retry_shows_the_check_runs_it_reused(self, auth_client, source_run):
+        failed = _fix_run(source_run)
+        baseline = _check(failed, label="baseline")
+        _check(failed, label="c1-target")  # Cut short, so a retry runs it again.
+        HostedHarnessJob.no_workspace_objects.filter(id=baseline.id).update(
+            state="completed"
+        )
+        AgentFixRun.no_workspace_objects.filter(id=failed.id).update(
+            state=AgentFixRun.State.FAILED
+        )
+        retried = _fix_run(source_run, retried_from=failed)
+
+        body = auth_client.get(f"{BASE}/{retried.id}/").json()
+
+        assert [(run["run_id"], run["label"]) for run in body["check_runs"]] == [
+            (str(baseline.id), "baseline")
+        ]
+
     def test_http_patch_is_not_an_action_of_a_fix(self, auth_client, source_run):
         fix_run = _fix_run(source_run)
 
