@@ -5534,7 +5534,10 @@ export const AgentccGatewaysSetBudgetParams = zod.object({
 
 export const AgentccGatewaysSetBudgetBody = zod.object({
   level: zod.string().min(1),
-  config: zod.record(zod.string(), zod.object({}).passthrough()),
+  config: zod.record(
+    zod.string(),
+    zod.object({}).passthrough().describe("Any valid JSON value."),
+  ),
 });
 
 export const AgentccGatewaysSetBudgetResponse = zod.object({
@@ -5564,7 +5567,12 @@ export const AgentccGatewaysSubmitBatchParams = zod.object({
 export const agentccGatewaysSubmitBatchBodyMaxConcurrencyDefault = 5;
 
 export const AgentccGatewaysSubmitBatchBody = zod.object({
-  requests: zod.array(zod.record(zod.string(), zod.object({}).passthrough())),
+  requests: zod.array(
+    zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
+  ),
   max_concurrency: zod
     .number()
     .min(1)
@@ -5595,7 +5603,10 @@ export const agentccGatewaysTestMcpToolBodyArgumentsDefault = {};
 export const AgentccGatewaysTestMcpToolBody = zod.object({
   name: zod.string().min(1),
   arguments: zod
-    .record(zod.string(), zod.object({}).passthrough())
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
     .default(agentccGatewaysTestMcpToolBodyArgumentsDefault),
 });
 
@@ -5683,29 +5694,93 @@ export const AgentccGatewaysUpdateConfigParams = zod.object({
 });
 
 export const AgentccGatewaysUpdateConfigBody = zod.object({
-  guardrails: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
-  routing: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
-  cache: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
+  guardrails: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  routing: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  cache: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
   rate_limiting: zod
-    .record(zod.string(), zod.object({}).passthrough())
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
     .optional(),
-  budgets: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
+  budgets: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
   cost_tracking: zod
-    .record(zod.string(), zod.object({}).passthrough())
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
     .optional(),
-  ip_acl: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
-  alerting: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
-  privacy: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
+  ip_acl: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  alerting: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  privacy: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
   tool_policy: zod
-    .record(zod.string(), zod.object({}).passthrough())
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
     .optional(),
-  mcp: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
-  a2a: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
-  audit: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
+  mcp: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  a2a: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
+  audit: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
   model_database: zod
     .record(zod.string(), zod.object({}).passthrough())
     .optional(),
-  model_map: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
+  model_map: zod
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
+    .optional(),
 });
 
 export const AgentccGatewaysUpdateConfigResponse = zod.object({
@@ -5765,7 +5840,10 @@ export const AgentccGatewaysUpdateMcpGuardrailsParams = zod.object({
 });
 
 export const AgentccGatewaysUpdateMcpGuardrailsBody = zod.object({
-  config: zod.record(zod.string(), zod.object({}).passthrough()),
+  config: zod.record(
+    zod.string(),
+    zod.object({}).passthrough().describe("Any valid JSON value."),
+  ),
 });
 
 export const AgentccGatewaysUpdateMcpGuardrailsResponse = zod.object({
@@ -5794,7 +5872,10 @@ export const AgentccGatewaysUpdateMcpServerParams = zod.object({
 
 export const AgentccGatewaysUpdateMcpServerBody = zod.object({
   server_id: zod.string().min(1),
-  config: zod.record(zod.string(), zod.object({}).passthrough()),
+  config: zod.record(
+    zod.string(),
+    zod.object({}).passthrough().describe("Any valid JSON value."),
+  ),
 });
 
 export const AgentccGatewaysUpdateMcpServerResponse = zod.object({
