@@ -34189,27 +34189,6 @@ export const SimulateApiAgentFixEngineCheckRunParams = zod.object({
 platform ship apart, and a newer template must still be heard by an older platform.
  * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
-export const SimulateApiAgentFixEngineCheckpointReadParams = zod.object({
-  id: zod.string(),
-});
-
-/**
- * Fields these routes do not know are ignored, not refused: the engine template and the
-platform ship apart, and a newer template must still be heard by an older platform.
- * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
- */
-export const SimulateApiAgentFixEngineCheckpointUpdateParams = zod.object({
-  id: zod.string(),
-});
-
-export const SimulateApiAgentFixEngineCheckpointUpdateBody =
-  zod.instanceof(File);
-
-/**
- * Fields these routes do not know are ignored, not refused: the engine template and the
-platform ship apart, and a newer template must still be heard by an older platform.
- * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
- */
 export const SimulateApiAgentFixEngineReportParams = zod.object({
   id: zod.string(),
 });
@@ -34240,6 +34219,9 @@ export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictTiersDefaul
   [];
 export const simulateApiAgentFixEngineReportBodyCandidatesDefault = [];
 export const simulateApiAgentFixEngineReportBodySummaryDefault = ``;
+export const simulateApiAgentFixEngineReportBodyFailureCodeMax = 64;
+
+export const simulateApiAgentFixEngineReportBodyFailureMessageMax = 500;
 
 export const SimulateApiAgentFixEngineReportBody = zod.object({
   stage: zod.string().min(1).max(simulateApiAgentFixEngineReportBodyStageMax),
@@ -34326,6 +34308,18 @@ export const SimulateApiAgentFixEngineReportBody = zod.object({
   summary: zod
     .string()
     .default(simulateApiAgentFixEngineReportBodySummaryDefault),
+  failure: zod
+    .object({
+      owner: zod.enum(["ours", "user"]),
+      code: zod
+        .string()
+        .min(1)
+        .max(simulateApiAgentFixEngineReportBodyFailureCodeMax),
+      message: zod
+        .string()
+        .max(simulateApiAgentFixEngineReportBodyFailureMessageMax),
+    })
+    .optional(),
   winner_candidate_id: zod.string().uuid().optional(),
 });
 
@@ -34526,6 +34520,8 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
         code: zod.string().min(1),
         message: zod.string().min(1),
       }),
+      retried_from_id: zod.string().uuid(),
+      retryable: zod.boolean().optional(),
       check_runs: zod
         .array(
           zod.object({
@@ -34873,6 +34869,8 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     code: zod.string().min(1),
     message: zod.string().min(1),
   }),
+  retried_from_id: zod.string().uuid(),
+  retryable: zod.boolean().optional(),
   check_runs: zod
     .array(
       zod.object({
@@ -34985,6 +34983,16 @@ export const SimulateApiAgentFixRunsCandidatesPullRequestBody = zod.object({});
 export const SimulateApiAgentFixRunsCandidatesPullRequestResponse = zod.object({
   pull_request_url: zod.string().url().min(1),
 });
+
+/**
+ * Start a failed fix again: a new fix with the same request. The check runs the
+failed one finished are reused, so the user does not pay for them twice.
+ */
+export const SimulateApiAgentFixRunsRetryParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiAgentFixRunsRetryBody = zod.object({});
 
 /**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
@@ -35131,6 +35139,8 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     code: zod.string().min(1),
     message: zod.string().min(1),
   }),
+  retried_from_id: zod.string().uuid(),
+  retryable: zod.boolean().optional(),
   check_runs: zod
     .array(
       zod.object({

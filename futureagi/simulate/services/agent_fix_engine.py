@@ -1,5 +1,5 @@
 """What the improvement engine asks the platform for during a fix: the agent's source,
-new candidate versions, check runs of them, progress reports and checkpoints.
+new candidate versions, check runs of them, and progress reports.
 
 Every call that changes something re-reads the fix under its row lock and refuses unless it
 is running: ``close_fix_run`` takes the same lock, so nothing starts after a fix ended.
@@ -28,8 +28,9 @@ from simulate.pydantic_schemas.agent_fix import (
     CheckRunRequest,
     Ending,
     EngineReport,
+    FailureOwner,
 )
-from simulate.selectors.agent_fix import with_spend
+from simulate.selectors.agent_fix import committed_usd, fix_lineage
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.harness_usage import require_harness_call_usage
@@ -206,11 +207,17 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
         )
     environment = fix_run.environment
     kind = agent_kind(environment)
+    finished = _finished_earlier(
+        fix_run, request, kind.run_options(fix_run, version_id)
+    )
     idempotency_key = f"fix:{fix_run.id}:{request.label}"
-    replay = HostedHarnessJob.no_workspace_objects.filter(
-        environment=environment,
-        idempotency_key=run_idempotency_key(environment, idempotency_key),
-    ).exists()
+    replay = (
+        finished is not None
+        or HostedHarnessJob.no_workspace_objects.filter(
+            environment=environment,
+            idempotency_key=run_idempotency_key(environment, idempotency_key),
+        ).exists()
+    )
     executions = len(request.scenario_keys) * request.trials
     if not replay:
         # Before the usage check, which counts against the organization's quota.
@@ -218,6 +225,8 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
         require_harness_call_usage(environment)
     with transaction.atomic():
         locked = _locked_running(fix_run.id)
+        if finished is not None:
+            return finished
         if not replay:
             _require_budget(locked, executions)
         run, created = create_selected_harness_run(
@@ -236,6 +245,41 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
             run.fix_label = request.label
             transaction.on_commit(lambda: _dispatch(run))
     return run
+
+
+def _finished_earlier(
+    fix_run: AgentFixRun, request: CheckRunRequest, options: dict[str, Any]
+) -> HostedHarnessJob | None:
+    """The same check, finished by a failed fix this one retries: the user paid for it
+    once, so it is read again instead of run again. Same label, versions, scenarios and
+    trials; a run that failed or was canceled is run again."""
+    earlier = fix_lineage(fix_run)[1:]
+    picks = options.get("picks")
+    if not earlier or picks is None:
+        return None
+    wanted = tuple(
+        str(one)
+        for one in (
+            picks.agent_version_id,
+            picks.environment_version_id,
+            picks.suite_version_id,
+        )
+    )
+    for run in HostedHarnessJob.no_workspace_objects.filter(
+        fix_run_id__in=earlier,
+        fix_label=request.label,
+        state=HostedHarnessJob.State.COMPLETED,
+        deleted=False,
+    ).order_by("-created_at"):
+        metadata = (run.payload or {}).get("metadata") or {}
+        pins = (run.agent_version_id, run.environment_version_id, run.suite_version_id)
+        if (
+            tuple(str(one) for one in pins) == wanted
+            and metadata.get("selected_scenario_keys") == request.scenario_keys
+            and metadata.get("trials") == request.trials
+        ):
+            return run
+    return None
 
 
 def _dispatch(run: HostedHarnessJob) -> None:
@@ -278,16 +322,6 @@ def _fail_unscheduled(run: HostedHarnessJob) -> None:
                 completed_at=now,
                 error_reason=message,
             )
-
-
-def committed_usd(fix_run: AgentFixRun) -> Decimal:
-    """What the fix's limit is held against: its spend, and a worst case for each check run
-    whose usage is not sealed yet."""
-    return (
-        with_spend(AgentFixRun.no_workspace_objects.filter(id=fix_run.id))
-        .values_list("committed_usd", flat=True)
-        .get()
-    )
 
 
 def _worst_case_per_execution() -> Decimal:
@@ -347,37 +381,42 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
             AgentFixCandidate.no_workspace_objects.filter(
                 fix_run=locked, id=report.winner_candidate_id
             ).update(outcome=CandidateOutcome.WINNER, updated_at=timezone.now())
+        if report.ending is not None:
+            # A launch that died left candidates no later report names: none of them won.
+            AgentFixCandidate.no_workspace_objects.filter(
+                fix_run=locked, outcome=CandidateOutcome.PENDING
+            ).exclude(id__in=[one.candidate_id for one in report.candidates]).update(
+                outcome=CandidateOutcome.REJECTED, updated_at=timezone.now()
+            )
     if report.ending is None:
         return locked
-    # The summary of a failure is the engine's own error text; the user reads this instead.
-    failure = (
-        {
-            "code": "fix_engine_failed",
-            "message": "the improvement engine hit an error it could not recover from",
-        }
-        if report.ending == Ending.FAILED
-        else None
+    return close_fix_run(
+        locked.id,
+        _ENDING_STATES[report.ending],
+        failure=_ending_failure(locked, report),
     )
-    return close_fix_run(locked.id, _ENDING_STATES[report.ending], failure=failure)
 
 
-def store_checkpoint(fix_run: AgentFixRun, body: bytes) -> None:
-    max_bytes = settings.AGENT_FIX_MAX_CHECKPOINT_BYTES
-    if len(body) > max_bytes:
-        raise HostedHarnessError(
-            "fix_checkpoint_too_large",
-            "the checkpoint is over the size limit",
-            status_code=413,
-        )
-    key = _object_key(fix_run, "checkpoint.json")
-    _put(key, body, "application/json")
-    stored = AgentFixRun.no_workspace_objects.filter(
-        id=fix_run.id, state=AgentFixRun.State.RUNNING
-    ).update(checkpoint_key=key, updated_at=timezone.now())
-    if not stored:
-        raise HostedHarnessError(
-            "fix_run_not_running", "the fix is no longer running", status_code=409
-        )
+def _ending_failure(
+    fix_run: AgentFixRun, report: EngineReport
+) -> dict[str, str] | None:
+    """What the read says a failed fix failed on. A failure the user can fix keeps the
+    platform's own words for it; ours gets fixed copy and an alert, since the summary is
+    the engine's own error text."""
+    if report.ending != Ending.FAILED:
+        return None
+    if report.failure is not None and report.failure.owner == FailureOwner.USER:
+        return {"code": report.failure.code, "message": report.failure.message}
+    logger.error(
+        "agent_fix_engine_failed",
+        fix_run=str(fix_run.id),
+        failure=report.failure.model_dump(mode="json") if report.failure else None,
+        summary=report.summary[:1000],
+    )
+    return {
+        "code": "fix_engine_failed",
+        "message": "the improvement engine hit an error it could not recover from",
+    }
 
 
 def load_object(key: str) -> bytes | None:

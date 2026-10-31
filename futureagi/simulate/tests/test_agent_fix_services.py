@@ -24,17 +24,22 @@ from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
     CandidateUpdate,
     CandidateVerdict,
+    CheckFailure,
     CheckRunRequest,
     Ending,
     EngineReport,
+    FailureOwner,
     FixRequest,
     Surface,
 )
 from simulate.selectors.agent_fix import (
     TRANSCRIPT_CHARS,
     _record,
+    check_failure,
     check_run_status,
+    committed_usd,
     engine_brief,
+    is_retryable,
 )
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_runs import (
@@ -42,6 +47,7 @@ from simulate.services.agent_fix_runs import (
     launch_fix_run,
     make_candidate_default,
     request_stop,
+    retry_fix_run,
     split_held_back,
 )
 from simulate.services.harness_versioning.versions import record_authoring
@@ -415,6 +421,79 @@ class TestLaunch:
         assert again.id != first.id
 
 
+class TestRetry:
+    def test_a_failed_fix_starts_again_once_with_its_request(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks
+    ):
+        # Our own outage can end a fix on its deadline; that is retried like any failure.
+        failed = _fix_run(
+            source_run,
+            state=State.FAILED,
+            failure={"code": "fix_deadline", "message": "m"},
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(failed, user=user)
+
+        temporal.start.assert_called_once_with(str(retried.id))
+        assert (
+            retried.state,
+            retried.retried_from_id,
+            retried.request,
+            retried.base_agent_version_id,
+        ) == (State.QUEUED, failed.id, failed.request, failed.base_agent_version_id)
+        assert not is_retryable(failed)
+        assert _refusal(retry_fix_run, failed, user=user) == ("fix_not_retryable", 409)
+
+    @pytest.mark.parametrize(
+        "state",
+        [
+            State.RUNNING,
+            State.READY,
+            State.NO_IMPROVEMENT,
+            State.OUT_OF_BUDGET,
+            State.STOPPED,
+        ],
+    )
+    def test_only_a_failed_fix_starts_again(self, source_run, user, state):
+        fix_run = _fix_run(source_run, state=state)
+
+        assert not is_retryable(fix_run)
+        assert _refusal(retry_fix_run, fix_run, user=user) == ("fix_not_retryable", 409)
+
+    def test_a_retry_reads_what_the_failed_fix_finished_instead_of_paying_again(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks
+    ):
+        failed = _fix_run(source_run, token_hash=hash_secret("t"))
+        baseline = _check(failed, label="baseline")
+        cut_short = _check(failed, label="c1-target")
+        HostedHarnessJob.no_workspace_objects.filter(id=baseline.id).update(
+            state="completed"
+        )
+        # Closing cancels the check run still going.
+        close_fix_run(failed.id, State.FAILED, failure={"code": "x", "message": "m"})
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(
+                AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
+            )
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.RUNNING
+        )
+        retried.refresh_from_db()
+
+        assert _check(retried, label="baseline").id == baseline.id
+        rerun = _check(retried, label="c1-target")
+        assert rerun.id != cut_short.id
+        # Only the run that had to run again is the retry's, and only it is paid for.
+        assert list(
+            HostedHarnessJob.no_workspace_objects.filter(fix_run=retried).values_list(
+                "id", flat=True
+            )
+        ) == [rerun.id]
+        # Another trial count is another check: it runs.
+        assert _check(retried, label="baseline", trials=2).id != baseline.id
+
+
 class TestAddCandidate:
     def test_stores_a_checked_version_that_never_becomes_the_default(
         self, environment, source_run, storage, django_capture_on_commit_callbacks
@@ -534,9 +613,8 @@ class TestAddCandidate:
         lambda fix_run: _candidate(fix_run),
         lambda fix_run: _check(fix_run),
         lambda fix_run: engine.apply_report(fix_run, EngineReport(stage="x")),
-        lambda fix_run: engine.store_checkpoint(fix_run, b"{}"),
     ],
-    ids=["candidate", "check-run", "report", "checkpoint"],
+    ids=["candidate", "check-run", "report"],
 )
 @pytest.mark.parametrize("state", [State.QUEUED, State.STOPPING, State.READY])
 def test_every_engine_call_refuses_a_fix_that_is_not_running(source_run, call, state):
@@ -638,13 +716,13 @@ class TestCheckRuns:
         first = _check(fix_run, trials=2)
         _check(fix_run, label="both", keys=KEYS)
 
-        assert engine.committed_usd(fix_run) == Decimal("2.25")
+        assert committed_usd(fix_run) == Decimal("2.25")
 
         HostedHarnessJob.no_workspace_objects.filter(id=first.id).update(
             fix_cost_usd=Decimal("0.09")
         )
         # The sealed run at what it billed; the other still at 2 x $0.50.
-        assert engine.committed_usd(fix_run) == Decimal("1.34")
+        assert committed_usd(fix_run) == Decimal("1.34")
 
     def test_a_sealed_check_run_is_priced_from_its_billed_usage(
         self, source_run, monkeypatch
@@ -836,6 +914,73 @@ class TestCheckRunStatus:
         assert ended.finished is True
         assert ended.records[0].transcript.startswith("user: hi\nassistant: aaa")
         assert len(ended.records[0].transcript) == TRANSCRIPT_CHARS
+        assert ended.failure is None
+
+    @pytest.mark.parametrize(
+        ("failure", "owner"),
+        [
+            (
+                {"domain": "environment", "code": "credential_unavailable"},
+                FailureOwner.USER,
+            ),
+            (
+                {"domain": "platform_sync", "code": "usage_exhausted"},
+                FailureOwner.USER,
+            ),
+            (
+                {"domain": "platform_sync", "code": "usage_check_failed"},
+                FailureOwner.OURS,
+            ),
+            ({"domain": "infrastructure", "code": "call_failed"}, FailureOwner.OURS),
+            ({"domain": "simulator", "code": "setup_crashed"}, FailureOwner.OURS),
+        ],
+        ids=[
+            "environment",
+            "plan-limit",
+            "usage-check-down",
+            "infrastructure",
+            "simulator",
+        ],
+    )
+    def test_a_failure_is_the_users_only_for_their_environment_or_plan(
+        self, failure, owner
+    ):
+        assert check_failure({**failure, "message": "m"}).owner == owner
+        assert check_failure(None) is None
+
+    def test_a_failed_run_and_its_errored_trials_say_who_can_fix_them(self, source_run):
+        fix_run = _fix_run(source_run)
+        run = _check(fix_run, trials=2)
+        broke, errored = sorted(_executions(run), key=lambda one: one.trial_index)
+        for execution, failure in (
+            (broke, {"domain": "agent", "code": "target_agent_failed"}),
+            (errored, {"domain": "platform_sync", "code": "usage_exhausted"}),
+        ):
+            execution.call_execution.call_metadata = {
+                "hosted_harness_receipt": {"status": "errored", "failure": failure}
+            }
+            execution.call_execution.save(update_fields=["call_metadata"])
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            state="failed",
+            failure={
+                "domain": "environment",
+                "code": "credential_unavailable",
+                "message": "the agent's API key was rejected",
+            },
+        )
+        run.refresh_from_db()
+
+        status = check_run_status(run)
+
+        assert status.failure.model_dump(mode="json") == {
+            "owner": "user",
+            "code": "credential_unavailable",
+            "message": "the agent's API key was rejected",
+        }
+        by_trial = {record.trial: record.failure for record in status.records}
+        # The agent's own failure is its behaviour, judged by the verdict: no excuse.
+        assert by_trial[broke.trial_index] is None
+        assert by_trial[errored.trial_index].owner == FailureOwner.USER
 
     def test_many_trials_cost_no_more_queries_than_one(
         self, source_run, django_assert_num_queries
@@ -872,10 +1017,11 @@ class TestBrief:
 
         assert [one.key for one in brief.inventory] == KEYS
         assert brief.request == FixRequest.model_validate(fix_run.request)
-        assert (brief.base_agent_version_id, brief.has_checkpoint) == (
-            str(fix_run.base_agent_version_id),
-            False,
-        )
+        assert (
+            brief.base_agent_version_id,
+            brief.last_attempt,
+            brief.committed_usd,
+        ) == (str(fix_run.base_agent_version_id), 0, 0.0)
         assert (
             brief.deadline_at
             == (fix_run.started_at + timedelta(minutes=30)).isoformat()
@@ -890,16 +1036,20 @@ class TestBrief:
             fix_run.environment
         )
 
-    def test_a_checkpoint_is_kept_under_one_key_and_read_back(self, source_run):
-        fix_run = _fix_run(source_run)
-
-        engine.store_checkpoint(fix_run, b'{"round": 1}')
+    def test_a_relaunch_numbers_after_the_last_candidate_and_counts_the_spend(
+        self, source_run
+    ):
+        fix_run = _fix_run(source_run, token_hash=hash_secret("t"))
+        _candidate(fix_run, attempt=1)
+        _candidate(fix_run, attempt=103)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            spent_usd=Decimal("1.25")
+        )
         fix_run.refresh_from_db()
-        engine.store_checkpoint(fix_run, b'{"round": 2}')
-        fix_run.refresh_from_db()
 
-        assert engine_brief(fix_run).has_checkpoint is True
-        assert engine.load_object(fix_run.checkpoint_key) == b'{"round": 2}'
+        brief = engine_brief(fix_run)
+
+        assert (brief.last_attempt, brief.committed_usd) == (103, 1.25)
 
 
 class TestReport:
@@ -990,6 +1140,70 @@ class TestReport:
             409,
         )
 
+    @pytest.mark.parametrize(
+        ("failure", "expected"),
+        [
+            (
+                CheckFailure(
+                    owner=FailureOwner.USER,
+                    code="usage_limit",
+                    message="AI credits are paused by your budget",
+                ),
+                {
+                    "code": "usage_limit",
+                    "message": "AI credits are paused by your budget",
+                },
+            ),
+            (
+                CheckFailure(
+                    owner=FailureOwner.OURS,
+                    code="model_unavailable",
+                    message='404 {"error": "model not found"}',
+                ),
+                {
+                    "code": "fix_engine_failed",
+                    "message": "the improvement engine hit an error it could not recover from",
+                },
+            ),
+        ],
+        ids=["the-users", "ours"],
+    )
+    def test_a_failure_says_what_to_fix_only_when_the_user_can(
+        self, source_run, failure, expected
+    ):
+        fix_run = _fix_run(source_run, token_hash=hash_secret("t"))
+
+        closed = engine.apply_report(
+            fix_run,
+            EngineReport(
+                stage="done", ending=Ending.FAILED, summary="raw", failure=failure
+            ),
+        )
+
+        assert closed.failure == expected
+
+    def test_an_ending_rejects_the_candidates_no_report_names_any_more(
+        self, source_run
+    ):
+        fix_run = _fix_run(source_run, token_hash=hash_secret("t"))
+        # Attempt 1 belongs to a launch that died; attempt 101 to the one now ending.
+        lost, named = _candidate(fix_run, attempt=1), _candidate(fix_run, attempt=101)
+
+        engine.apply_report(
+            fix_run,
+            EngineReport(
+                stage="done",
+                ending=Ending.NO_IMPROVEMENT,
+                candidates=[
+                    CandidateUpdate(candidate_id=named.id, outcome=Outcome.FINALIST)
+                ],
+            ),
+        )
+
+        lost.refresh_from_db()
+        named.refresh_from_db()
+        assert (lost.outcome, named.outcome) == (Outcome.REJECTED, Outcome.FINALIST)
+
 
 class TestClose:
     def test_closing_cancels_open_check_runs_and_sets_aside_unproven_candidates(
@@ -1033,7 +1247,8 @@ class TestClose:
             )
             for outcome, one in candidates.items()
         } == {
-            Outcome.PENDING: (Outcome.PENDING, "discarded"),
+            # Named by no report at the ending: it lost.
+            Outcome.PENDING: (Outcome.REJECTED, "discarded"),
             Outcome.REJECTED: (Outcome.REJECTED, "discarded"),
             Outcome.FINALIST: (Outcome.FINALIST, "passed"),
             Outcome.WINNER: (Outcome.WINNER, "passed"),
@@ -1182,15 +1397,6 @@ class TestMakeDefault:
         assert _refusal(make_candidate_default, candidate, user=user) == refusal
         environment.refresh_from_db()
         assert environment.agent_version_id == default
-
-
-def test_refuses_a_checkpoint_over_the_limit(source_run, settings):
-    settings.AGENT_FIX_MAX_CHECKPOINT_BYTES = 4
-
-    assert _refusal(engine.store_checkpoint, _fix_run(source_run), b"12345") == (
-        "fix_checkpoint_too_large",
-        413,
-    )
 
 
 def test_the_base_source_is_fetched_once_per_fix(source_run):

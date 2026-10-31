@@ -9,8 +9,10 @@ from django.conf import settings
 from django.db.models import (
     Count,
     DecimalField,
+    Exists,
     ExpressionWrapper,
     F,
+    Max,
     OuterRef,
     Prefetch,
     Q,
@@ -36,9 +38,11 @@ from simulate.pydantic_schemas.agent_fix import (
     MAX_MINUTES_MAX,
     SCENARIOS_MAX,
     AgentIdentity,
+    CheckFailure,
     CheckRecord,
     CheckRunStatus,
     EngineBrief,
+    FailureOwner,
     FixRequest,
     InventoryScenario,
     LaunchBlocked,
@@ -136,7 +140,8 @@ def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
         base_commit=str(source.get("commit_sha") or ""),
         request=request,
         inventory=inventory(fix_run),
-        has_checkpoint=bool(fix_run.checkpoint_key),
+        last_attempt=fix_run.candidates.aggregate(last=Max("attempt"))["last"] or 0,
+        committed_usd=float(committed_usd(fix_run)),
         deadline_at=fix_deadline(fix_run).isoformat(),
     )
 
@@ -174,7 +179,30 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
         state=run.state,
         finished=finished,
         total=len(executions),
+        failure=(
+            check_failure(run.failure)
+            if run.state == HostedHarnessJob.State.FAILED
+            else None
+        ),
         records=records,
+    )
+
+
+# A plan's limit, met mid-run, is the user's to lift even though the platform reports it.
+_USER_FAILURE_CODES = frozenset({"usage_exhausted"})
+
+
+def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
+    """A run's or a trial's failure, with who can fix it: the user for their environment
+    (credentials, source, an agent that never came up) and their plan, else the platform."""
+    if not isinstance(failure, Mapping):
+        return None
+    code = str(failure.get("code") or "unknown")
+    user = failure.get("domain") == "environment" or code in _USER_FAILURE_CODES
+    return CheckFailure(
+        owner=FailureOwner.USER if user else FailureOwner.OURS,
+        code=code,
+        message=str(failure.get("message") or "")[:500],
     )
 
 
@@ -202,11 +230,15 @@ def _record(
         error = f"the judge decided nothing on {', '.join(undecided)}"
     else:
         error = ""
+    failure = receipt.get("failure")
+    # An agent that broke the conversation is judged, not excused.
+    agent_broke_it = isinstance(failure, Mapping) and failure.get("domain") == "agent"
     return CheckRecord(
         scenario_key=scenario_key,
         trial=trial,
         status="error" if error else "ok",
         error=error,
+        failure=check_failure(failure) if error and not agent_broke_it else None,
         sub_goals={
             name: held for name, held in judged.items() if isinstance(held, bool)
         },
@@ -308,6 +340,16 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
 
 
+def committed_usd(fix_run: AgentFixRun) -> Decimal:
+    """What the fix's limit is held against: its spend, and a worst case for each check run
+    whose usage is not sealed yet."""
+    return (
+        with_spend(AgentFixRun.no_workspace_objects.filter(id=fix_run.id))
+        .values_list("committed_usd", flat=True)
+        .get()
+    )
+
+
 def run_number(path: str = "") -> Subquery:
     """A run's place among its environment's runs, for the run at ``path`` (e.g.
     ``"source_run__"``); the count ``run_summaries`` shows."""
@@ -365,7 +407,13 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
     return (
         with_spend(runs)
-        .annotate(number=Subquery(number), source_run_number=run_number("source_run__"))
+        .annotate(
+            number=Subquery(number),
+            source_run_number=run_number("source_run__"),
+            retried=Exists(
+                AgentFixRun.no_workspace_objects.filter(retried_from=OuterRef("pk"))
+            ),
+        )
         .select_related(
             "source_run",
             "environment__environment_version",
@@ -377,6 +425,28 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
             Prefetch("check_runs", queryset=check_runs, to_attr="check_run_list"),
         )
     )
+
+
+def is_retryable(fix_run: AgentFixRun) -> bool:
+    """A failed fix not started again yet. Whatever failed it, the user may try once more;
+    a fix that came through fix_runs_for_read answers without a query."""
+    if fix_run.state != AgentFixRun.State.FAILED:
+        return False
+    retried = getattr(fix_run, "retried", None)
+    return not (fix_run.retries.exists() if retried is None else retried)
+
+
+def fix_lineage(fix_run: AgentFixRun) -> list[Any]:
+    """The fix's id, then the ids of the failed fixes it retries, newest first."""
+    ids, earlier = [fix_run.id], fix_run.retried_from_id
+    while earlier is not None:
+        ids.append(earlier)
+        earlier = (
+            AgentFixRun.no_workspace_objects.filter(id=earlier)
+            .values_list("retried_from_id", flat=True)
+            .first()
+        )
+    return ids
 
 
 def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFixRun]:

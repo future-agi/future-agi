@@ -16966,6 +16966,25 @@ export interface AgentFixCandidateUpdateApi {
   verdict?: AgentFixVerdictApi;
 }
 
+export type AgentFixEngineFailureApiOwner =
+  (typeof AgentFixEngineFailureApiOwner)[keyof typeof AgentFixEngineFailureApiOwner];
+
+export const AgentFixEngineFailureApiOwner = {
+  ours: "ours",
+  user: "user",
+} as const;
+
+export interface AgentFixEngineFailureApi {
+  owner: AgentFixEngineFailureApiOwner;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  code: string;
+  /** @maxLength 500 */
+  message: string;
+}
+
 export interface AgentFixEngineReportApi {
   /**
    * @minLength 1
@@ -16978,6 +16997,7 @@ export interface AgentFixEngineReportApi {
   candidates?: AgentFixCandidateUpdateApi[];
   ending?: AgentFixEngineReportApiEnding;
   summary?: string;
+  failure?: AgentFixEngineFailureApi;
   winner_candidate_id?: string;
 }
 
@@ -17116,6 +17136,8 @@ export interface AgentFixRunApi {
   committed_credits: number;
   report: AgentFixReportApi;
   failure: AgentFixFailureApi;
+  retried_from_id: string;
+  readonly retryable?: boolean;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];

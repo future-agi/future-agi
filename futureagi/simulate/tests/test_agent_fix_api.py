@@ -225,22 +225,9 @@ class TestEngineCalls:
             "state": "queued",
             "finished": False,
             "total": 1,
+            "failure": None,
             "records": [],
         }
-
-        assert _engine(api_client, "get", fix_run, "checkpoint/").status_code == 404
-        stored = _engine(
-            api_client,
-            "put",
-            fix_run,
-            "checkpoint/",
-            data=b'{"round": 1}',
-            content_type="application/json",
-        )
-        assert stored.status_code == 204
-        assert _engine(api_client, "get", fix_run, "checkpoint/").content == (
-            b'{"round": 1}'
-        )
 
         ended = _engine(
             api_client,
@@ -414,7 +401,12 @@ class TestEngineCalls:
         )
 
         assert response.status_code == 402, response.content
-        assert response.json()["error_code"] == "BUDGET_PAUSED"
+        # In the engine's error shape, named apart from the fix's own budget.
+        assert response.json() == {
+            "error": "usage_limit",
+            "message": "AI credits are paused by your budget",
+            "retryable": False,
+        }
         assert not HostedHarnessJob.no_workspace_objects.filter(
             fix_run=fix_run
         ).exists()
@@ -952,6 +944,29 @@ class TestUserApi:
 
         assert (response.status_code, response.json()["state"]) == (200, "stopping")
         temporal.cancel.assert_called_once_with(str(fix_run.id))
+
+    def test_retry(
+        self, auth_client, source_run, temporal, django_capture_on_commit_callbacks
+    ):
+        failed = _fix_run(
+            source_run,
+            state=AgentFixRun.State.FAILED,
+            failure={"code": "fix_engine_failed", "message": "m"},
+        )
+        assert auth_client.get(f"{BASE}/{failed.id}/").json()["retryable"] is True
+
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.post(f"{BASE}/{failed.id}/retry/", {}, format="json")
+
+        assert response.status_code == 201, response.content
+        retried = response.json()
+        assert (retried["state"], retried["retried_from_id"], retried["retryable"]) == (
+            "queued",
+            str(failed.id),
+            False,
+        )
+        temporal.start.assert_called_once_with(retried["id"])
+        assert auth_client.get(f"{BASE}/{failed.id}/").json()["retryable"] is False
 
     def test_a_candidates_patch_downloads(self, auth_client, source_run, storage):
         fix_run = _fix_run(source_run)

@@ -60,8 +60,8 @@ class EngineCredentials:
 
 
 def launch(fix_run_id: str) -> AgentFixLaunch:
-    """Start the fix's engine in a new sandbox: the first time, or again from its
-    checkpoint after the previous engine died. Says why instead when there is none."""
+    """Start the fix's engine in a new sandbox: the first time, or again after the previous
+    engine died. Says why instead when there is none."""
     refusal = _claim_launch(fix_run_id)
     if refusal is not None:
         return AgentFixLaunch(observation=refusal)

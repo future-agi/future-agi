@@ -27701,35 +27701,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    "/simulate/api/agent-fix-engine/{id}/checkpoint/": {
-      get: {
-        operationId: "simulate_api_agent-fix-engine_checkpoint_read",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
-        requestBody: null,
-        queryParameters: {},
-        responses: {
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-      put: {
-        operationId: "simulate_api_agent-fix-engine_checkpoint_update",
-        runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
-        requestBody: {
-          type: "string",
-          format: "binary",
-        },
-        queryParameters: {},
-        responses: {
-          default: {
-            $ref: "#/definitions/ManagementAPIErrorResponse",
-          },
-        },
-      },
-    },
     "/simulate/api/agent-fix-engine/{id}/report/": {
       post: {
         operationId: "simulate_api_agent-fix-engine_report",
@@ -27933,6 +27904,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/agent-fix-runs/{id}/retry/": {
+      post: {
+        operationId: "simulate_api_agent-fix-runs_retry",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AgentFixRun",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/agent-fix-runs/{id}/stop/": {
       post: {
         operationId: "simulate_api_agent-fix-runs_stop",
@@ -49354,6 +49344,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           default: "",
         },
+        failure: {
+          $ref: "#/definitions/AgentFixEngineFailure",
+        },
         winner_candidate_id: {
           title: "Winner candidate id",
           type: "string",
@@ -49525,6 +49518,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "committed_credits",
         "report",
         "failure",
+        "retried_from_id",
         "candidates",
       ],
       type: "object",
@@ -49617,6 +49611,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         failure: {
           $ref: "#/definitions/AgentFixFailure",
+        },
+        retried_from_id: {
+          title: "Retried from id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+          readOnly: true,
         },
         check_runs: {
           description: "The base version's runs; each candidate lists its own.",
@@ -87501,6 +87506,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
           default: [],
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixEngineFailure: {
+      required: ["owner", "code", "message"],
+      type: "object",
+      properties: {
+        owner: {
+          title: "Owner",
+          type: "string",
+          enum: ["ours", "user"],
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          maxLength: 500,
         },
       },
       "x-nullable": true,

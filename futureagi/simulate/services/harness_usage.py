@@ -67,6 +67,22 @@ def _require_harness_action(organization_id: str, action: str) -> None:
     raise UsageLimitExceeded(CheckResult.model_validate(decision))
 
 
+def usage_limit_error(exc: Exception) -> HostedHarnessError | None:
+    """A usage refusal as a hosted harness error, for a caller that reads only that shape:
+    the fix engine tells the organization's plan limit apart from the fix's own budget."""
+    if is_oss():
+        return None
+    from ee.usage.exceptions import UsageLimitExceeded
+
+    if not isinstance(exc, UsageLimitExceeded):
+        return None
+    return HostedHarnessError(
+        "usage_limit",
+        exc.check_result.reason or "the organization's usage limit is reached",
+        status_code=402,
+    )
+
+
 def require_harness_authoring(organization_id: str) -> None:
     _require_harness_action(organization_id, "harness_authoring")
 

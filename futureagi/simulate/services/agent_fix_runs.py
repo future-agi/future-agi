@@ -18,6 +18,7 @@ from simulate.pydantic_schemas.agent_fix import FixRequest, Surface
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     failing_sub_goals_by_scenario,
+    is_retryable,
     launch_blocker,
 )
 from simulate.services.agent_fix_agents import agent_kind
@@ -130,6 +131,52 @@ def launch_fix_run(
     )
     # The engine's model calls bill AI credits. Each check run checks its call rail when it starts.
     require_agent_fix_usage(str(environment.organization_id))
+    return _create_fix_run(
+        source_run,
+        base_version_id=base_version_id,
+        request=request.model_dump(mode="json"),
+        user=user,
+    )
+
+
+def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
+    """Start a failed fix again: a new fix with its request, linked to it, so the check runs
+    it finished are reused instead of paid for twice."""
+    if not is_retryable(failed):
+        raise HostedHarnessError(
+            "fix_not_retryable",
+            "only a failed fix can be started again, and only once",
+            status_code=409,
+        )
+    source_run = failed.source_run
+    if source_run is None:
+        raise HostedHarnessError(
+            "fix_source_deleted",
+            "the run this fix started from was deleted",
+            status_code=409,
+        )
+    if blocked := launch_blocker(source_run, usage=False):
+        raise blocked
+    require_agent_fix_usage(str(failed.organization_id))
+    return _create_fix_run(
+        source_run,
+        base_version_id=failed.base_agent_version_id,
+        request=failed.request,
+        user=user,
+        retried_from=failed,
+    )
+
+
+def _create_fix_run(
+    source_run: HostedHarnessJob,
+    *,
+    base_version_id: Any,
+    request: dict[str, Any],
+    user: Any,
+    retried_from: AgentFixRun | None = None,
+) -> AgentFixRun:
+    """The new fix, its workflow started once it is committed; one active fix per environment."""
+    environment = source_run.environment
     try:
         with transaction.atomic():
             fix_run = AgentFixRun.no_workspace_objects.create(
@@ -138,8 +185,9 @@ def launch_fix_run(
                 environment=environment,
                 source_run=source_run,
                 base_agent_version_id=base_version_id,
+                retried_from=retried_from,
                 created_by=user,
-                request=request.model_dump(mode="json"),
+                request=request,
             )
             transaction.on_commit(lambda: _start_workflow(fix_run.id))
     except IntegrityError as exc:
@@ -154,6 +202,7 @@ def launch_fix_run(
         "agent_fix_run_launched",
         fix_run=str(fix_run.id),
         environment=str(environment.id),
+        retried_from=str(retried_from.id) if retried_from else None,
     )
     fix_run.refresh_from_db()
     return fix_run

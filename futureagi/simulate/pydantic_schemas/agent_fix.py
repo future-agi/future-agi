@@ -81,7 +81,10 @@ class EngineBrief(BaseModel):
     base_commit: str
     request: FixRequest
     inventory: list[InventoryScenario]
-    has_checkpoint: bool
+    # Where a relaunched engine picks up: its attempts are numbered after the last candidate
+    # an earlier launch sent, and its budget starts from what the fix has committed.
+    last_attempt: int
+    committed_usd: float
     deadline_at: str
 
 
@@ -99,6 +102,21 @@ class CheckRunRequest(BaseModel):
     trials: int = Field(ge=1, le=20)
 
 
+class FailureOwner(StrEnum):
+    """Who can fix a failure: the platform, or the user (their credentials, source or plan)."""
+
+    OURS = "ours"
+    USER = "user"
+
+
+class CheckFailure(BaseModel):
+    """Why a check run, or one trial of it, failed to say anything about the agent."""
+
+    owner: FailureOwner
+    code: str
+    message: str
+
+
 class CheckRecord(BaseModel):
     """One scenario trial of a check run, in the engine's record shape."""
 
@@ -107,6 +125,7 @@ class CheckRecord(BaseModel):
     # "ok" when every sub-goal was judged; "error" when the trial says nothing about the agent.
     status: str
     error: str
+    failure: CheckFailure | None = None
     sub_goals: dict[str, bool]
     reasons: dict[str, str]
     transcript: str
@@ -117,6 +136,8 @@ class CheckRunStatus(BaseModel):
     state: str
     finished: bool
     total: int
+    # Set when the run itself failed, after its own retries.
+    failure: CheckFailure | None = None
     records: list[CheckRecord]
 
 
@@ -173,6 +194,8 @@ class EngineReport(BaseModel):
     candidates: list[CandidateUpdate] = Field(default_factory=list)
     ending: Ending | None = None
     summary: str = ""
+    # With the failed ending: what failed and who can fix it.
+    failure: CheckFailure | None = None
     winner_candidate_id: UUID | None = None
 
 
