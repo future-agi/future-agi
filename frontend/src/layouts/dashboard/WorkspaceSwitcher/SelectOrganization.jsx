@@ -59,6 +59,7 @@ const SelectOrganizationChild = React.forwardRef(
           border: "1px solid",
           borderColor: "divider",
           borderRadius: 1,
+          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
           boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.1)",
           p: 1,
           minWidth: "200px",
@@ -79,17 +80,17 @@ const SelectOrganizationChild = React.forwardRef(
           <ShowComponent condition={isPending}>
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
             <Skeleton
               variant="rectangular"
-              sx={{ borderRadius: 0.5 }}
+              sx={{ borderRadius: "4px" }}
               height={20}
             />
           </ShowComponent>
@@ -106,7 +107,7 @@ const SelectOrganizationChild = React.forwardRef(
                   px: 1,
                   py: 0.5,
                   cursor: isSwitching ? "wait" : "pointer",
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   backgroundColor:
                     org.id === currentOrganizationId
                       ? "background.neutral"
@@ -129,7 +130,7 @@ const SelectOrganizationChild = React.forwardRef(
                 </Typography>
                 <ShowComponent condition={org.id === currentOrganizationId}>
                   <Iconify
-                    icon="eva:checkmark-fill"
+                    icon="solar:check-linear"
                     sx={{ width: 16, height: 16, color: "primary.main" }}
                   />
                 </ShowComponent>

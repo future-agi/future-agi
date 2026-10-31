@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { DataGrid } from "@mui/x-data-grid";
-import { Box, useTheme, Checkbox, Tooltip } from "@mui/material";
+import { Box, useTheme, Checkbox, IconButton, Tooltip } from "@mui/material";
 import PropTypes from "prop-types";
 import CreateUserModal from "./CreateUserModal";
 import axios, { endpoints } from "src/utils/axios";
@@ -117,7 +117,10 @@ const columns = (
             onClick={() => {handleResend(params.row.id)}}
             // onMouseEnter={() => {console.log("resend hovered")}}
           /> */}
-          <span
+          <IconButton
+            size="small"
+            className="row-hover-action"
+            aria-label="Resend invite"
             onClick={() =>
               !loadingResend[params.row.id]
                 ? handleResend(
@@ -127,13 +130,9 @@ const columns = (
                   )
                 : {}
             }
-            style={{
-              // cursor: 'pointer',
+            sx={{
               cursor: loadingResend[params.row.id] ? "not-allowed" : "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              marginRight: "10px",
+              mr: 1,
             }}
           >
             {loadingResend[params.row.id] ? (
@@ -142,12 +141,14 @@ const columns = (
               <ResendInviteIcon
                 width={20}
                 height={20}
+                // eslint-disable-next-line no-restricted-syntax -- ds: data colour
                 fill="#A792FD"
+                // eslint-disable-next-line no-restricted-syntax -- ds: data colour
                 stroke="#A792FD"
                 strokeWidth={0.0}
               />
             )}{" "}
-          </span>
+          </IconButton>
         </Tooltip>
         <Tooltip title="Delete Invite" arrow>
           {/* <img
@@ -161,26 +162,24 @@ const columns = (
             onClick={() => {handleDelete(params.row.id, setRefreshData)}}
             // onMouseEnter={() => {console.log("delete hovered")}}
           /> */}
-          <span
+          <IconButton
+            size="small"
+            className="row-hover-action"
+            aria-label="Delete invite"
             onClick={() => {
               setOpenDeleteConfirmationDialog(true);
               setSelectedDeleteId(params.row.id);
-            }}
-            style={{
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
             }}
           >
             <DeleteInviteIcon
               width={20}
               height={20}
               fill="none"
+              // eslint-disable-next-line no-restricted-syntax -- ds: data colour
               stroke="#DB2F2D"
               strokeWidth={1.0}
             />
-          </span>
+          </IconButton>
         </Tooltip>
       </Box>
     ),
@@ -254,7 +253,7 @@ const InvitationsTable = ({
         height: "calc(100vh - 165px)",
         width: "100%",
         border: "1px solid",
-        borderRadius: "15px",
+        borderRadius: "12px",
         borderColor: "text.disabled",
         padding: "10px",
       }}

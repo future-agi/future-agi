@@ -850,7 +850,7 @@ describe("RunDetail", () => {
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
     await user.click(
-      screen.getByRole("button", { name: "Run Self Improvement" }),
+      screen.getByRole("button", { name: "Run self improvement" }),
     );
     // The optimizer form's onSuccess flows through the real launch drawer to
     // onLaunched → queryClient.invalidateQueries.
@@ -1134,7 +1134,7 @@ describe("RunDetail", () => {
     expect(hook.request).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("status")).toHaveTextContent("Analyzing…");
     expect(
-      screen.queryByRole("button", { name: "Run Self Improvement" }),
+      screen.queryByRole("button", { name: "Run self improvement" }),
     ).toBeNull();
   });
 
@@ -1198,7 +1198,7 @@ describe("RunDetail", () => {
     // No Trials tab yet (no prior runs), so the footer CTA is the only launch path.
     expect(screen.queryByRole("tab", { name: /Trials/ })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    const cta = screen.getByRole("button", { name: "Run Self Improvement" });
+    const cta = screen.getByRole("button", { name: "Run self improvement" });
     expect(cta).toBeInTheDocument();
 
     await user.click(cta);
@@ -1220,9 +1220,9 @@ describe("RunDetail", () => {
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    const cta = screen.getByRole("button", { name: /Run Self Improvement/ });
+    const cta = screen.getByRole("button", { name: /Run self improvement/ });
     expect(cta).toBeDisabled();
-    expect(cta).toHaveTextContent("BETA");
+    expect(cta).toHaveTextContent("Beta");
   });
 
   it("keeps the Trials tab visible but disabled while self-improvement is in beta", () => {
@@ -1232,7 +1232,7 @@ describe("RunDetail", () => {
 
     const trialsTab = screen.getByRole("tab", { name: /Trials \(1\)/ });
     expect(trialsTab).toBeDisabled();
-    expect(trialsTab).toHaveTextContent("BETA");
+    expect(trialsTab).toHaveTextContent("Beta");
   });
 
   it("omits the Trials tab when there are no optimization runs", () => {

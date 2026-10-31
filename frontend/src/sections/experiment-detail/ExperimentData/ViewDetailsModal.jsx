@@ -110,6 +110,7 @@ const ViewDetailsModal = ({
           transform: "translate(-50%, -50%)",
           width: "30%",
           bgcolor: "background.paper",
+          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
           boxShadow: 24,
           borderRadius: theme.spacing(1.5),
           padding: theme.spacing(2.5),
@@ -121,7 +122,7 @@ const ViewDetailsModal = ({
           },
           "&::-webkit-scrollbar-thumb": {
             backgroundColor: "rgba(0, 0, 0, 0.3)",
-            borderRadius: "3px",
+            borderRadius: "4px",
           },
           "&::-webkit-scrollbar-track": {
             backgroundColor: "transparent",
@@ -144,7 +145,7 @@ const ViewDetailsModal = ({
               right: theme.spacing(1.5),
             }}
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
 
           <Typography fontWeight={500} fontSize={16} color="text.primary">
@@ -154,7 +155,7 @@ const ViewDetailsModal = ({
             <Typography
               sx={{
                 color: "text.primary",
-                fontSize: "14px",
+                fontSize: "13px",
                 fontWeight: 500,
                 marginBottom: 0.5,
               }}
@@ -169,7 +170,7 @@ const ViewDetailsModal = ({
                 sx={{ borderRadius: 1 }}
               />
             ) : evalData?.status === "error" ? (
-              <Typography sx={{ color: "red.700", margin: "8px" }}>
+              <Typography sx={{ color: "status.danger.fg", margin: "8px" }}>
                 error
               </Typography>
             ) : normalizedResult.kind === "choices" ? (
@@ -183,7 +184,6 @@ const ViewDetailsModal = ({
                     margin: "5px",
                     backgroundColor: "action.hover",
                     color: "primary.main",
-                    fontWeight: "400",
                     pointerEvents: "none",
                     "&:hover": {
                       color: "primary.main",
@@ -207,7 +207,7 @@ const ViewDetailsModal = ({
           <Box>
             <Typography
               fontWeight={500}
-              fontSize={14}
+              fontSize={13}
               color="text.primary"
               marginBottom={0.5}
             >
@@ -231,7 +231,7 @@ const ViewDetailsModal = ({
                   }}
                 >
                   <Typography
-                    fontSize="14px"
+                    fontSize="13px"
                     fontWeight={400}
                     color="text.primary"
                   >
@@ -245,7 +245,7 @@ const ViewDetailsModal = ({
             <Box>
               <Typography
                 fontWeight={500}
-                fontSize={14}
+                fontSize={13}
                 color="text.primary"
                 marginBottom={0.5}
               >
@@ -264,35 +264,27 @@ const ViewDetailsModal = ({
             </Box>
           )}
           {!compositeResult && (
-          <Box>
-            <Typography
-              fontWeight={500}
-              fontSize={14}
-              color="text.primary"
-              marginBottom={0.5}
-            >
-              Possible Error
-            </Typography>
-
-            {cellValue === "error" ? (
-              <Box
-                sx={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 1,
-                  bgcolor: "red.o5",
-                  border: "1px solid",
-                  borderColor: "red.200",
-                  borderRadius: theme.spacing(0.5),
-                  padding: 2,
-                }}
+            <Box>
+              <Typography
+                fontWeight={500}
+                fontSize={13}
+                color="text.primary"
+                marginBottom={0.5}
               >
+                Possible Error
+              </Typography>
+
+              {cellValue === "error" ? (
                 <Box
                   sx={{
                     display: "flex",
-                    gap: theme.spacing(1),
-                    alignItems: "center",
-                    justifyContent: "space-between",
+                    flexDirection: "column",
+                    gap: 1,
+                    bgcolor: "status.danger.bg",
+                    border: "1px solid",
+                    borderColor: "status.danger.border",
+                    borderRadius: theme.spacing(0.5),
+                    padding: 2,
                   }}
                 >
                   <Box
@@ -300,83 +292,93 @@ const ViewDetailsModal = ({
                       display: "flex",
                       gap: theme.spacing(1),
                       alignItems: "center",
+                      justifyContent: "space-between",
                     }}
                   >
-                    <Iconify
-                      icon="uil:exclamation-triangle"
-                      color="red.500"
-                      width={20}
-                    />
-                    <Typography color="red.500" fontSize={14} fontWeight={500}>
-                      Evaluation Failed
-                    </Typography>
-                  </Box>
-                  {isRefreshing || isRefetching ? (
                     <Box
-                      display="flex"
-                      alignItems="center"
-                      justifyContent="center"
-                    >
-                      <CircularProgress size={18} color="error" />
-                    </Box>
-                  ) : (
-                    <Button
-                      aria-label="fetch-error"
-                      style={{
-                        fontSize: "14px",
-                        textDecoration: "underline",
-                        padding: 0,
-                        fontWeight: 500,
-                        color: "var(--text-primary)",
+                      sx={{
+                        display: "flex",
+                        gap: theme.spacing(1),
+                        alignItems: "center",
                       }}
-                      onClick={handleTryAgain}
                     >
-                      Try again
-                    </Button>
+                      <Iconify
+                        icon="solar:danger-triangle-linear"
+                        color="status.danger.fg"
+                        width={20}
+                      />
+                      <Typography
+                        color="status.danger.fg"
+                        fontSize={13}
+                        fontWeight={500}
+                      >
+                        Evaluation Failed
+                      </Typography>
+                    </Box>
+                    {isRefreshing || isRefetching ? (
+                      <Box
+                        display="flex"
+                        alignItems="center"
+                        justifyContent="center"
+                      >
+                        <CircularProgress size={18} color="error" />
+                      </Box>
+                    ) : (
+                      <Button
+                        aria-label="fetch-error"
+                        style={{
+                          fontSize: "13px",
+                          textDecoration: "underline",
+                          padding: 0,
+                          fontWeight: 500,
+                          color: "var(--text-primary)",
+                        }}
+                        onClick={handleTryAgain}
+                      >
+                        Try again
+                      </Button>
+                    )}
+                  </Box>
+                  {evalData?.metadata?.reason && (
+                    <Typography
+                      color="status.danger.fg"
+                      fontSize={13}
+                      fontWeight={400}
+                      sx={{
+                        wordBreak: "break-word",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {evalData.metadata.reason}
+                    </Typography>
                   )}
                 </Box>
-                {evalData?.metadata?.reason && (
-                  <Typography
-                    color="red.700"
-                    fontSize={13}
-                    fontWeight={400}
-                    sx={{
-                      wordBreak: "break-word",
-                      whiteSpace: "pre-wrap",
-                    }}
-                  >
-                    {evalData.metadata.reason}
-                  </Typography>
-                )}
-              </Box>
-            ) : Array.isArray(input1) && input1.length > 0 ? (
-              <Box
-                sx={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: theme.spacing(1.5),
-                }}
-              >
-                {Object.entries(input1).map(([key, value]) => {
-                  const valueArray = Array.isArray(value) ? value : [value];
-                  return (
-                    <ErrorLocalizeCard
-                      key={key}
-                      value={valueArray}
-                      column={
-                        cellMetadata?.selected_input_key
-                      }
-                      datapoint={evalData}
-                    />
-                  );
-                })}
-              </Box>
-            ) : (
-              <Typography fontSize="14px" color="text.primary">
-                No errors found.
-              </Typography>
-            )}
-          </Box>
+              ) : Array.isArray(input1) && input1.length > 0 ? (
+                <Box
+                  sx={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: theme.spacing(1.5),
+                  }}
+                >
+                  {Object.entries(input1).map(([key, value]) => {
+                    const valueArray = Array.isArray(value) ? value : [value];
+                    return (
+                      <ErrorLocalizeCard
+                        key={key}
+                        value={valueArray}
+                        column={cellMetadata?.selected_input_key}
+                        datapoint={evalData}
+                      />
+                    );
+                  })}
+                </Box>
+              ) : (
+                <Typography fontSize="13px" color="text.primary">
+                  No errors found.
+                </Typography>
+              )}
+            </Box>
           )}
         </Box>
         <Box

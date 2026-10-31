@@ -21,10 +21,11 @@ function EventsLineChart({ eventsData }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
 
-  const axisLabelColor = isDark ? "#71717a" : "#938FA3";
-  const gridColor = isDark ? "#27272a" : "#E1DFEC";
-  const barColor = isDark ? "rgba(147,197,253,0.20)" : "rgba(147,197,253,0.50)";
-  const areaColor = isDark ? "#4F8EF7" : "#2563EB";
+  const axisLabelColor = theme.palette.text.tertiary;
+  const gridColor = theme.palette.divider;
+  const barColor = alpha(theme.palette.status.info.solid, isDark ? 0.2 : 0.35);
+  const areaColor = theme.palette.status.info.solid;
+  const legendColor = theme.palette.text.secondary;
 
   useEffect(() => {
     if (!eventsData?.length || !chartRef.current) return;
@@ -76,7 +77,7 @@ function EventsLineChart({ eventsData }) {
         axisBorder: { show: false },
         axisTicks: { show: false },
         labels: {
-          style: { fontSize: "10px", colors: axisLabelColor },
+          style: { fontSize: "12px", colors: axisLabelColor },
           formatter: (val) => format(new Date(val), "MMM d"),
           datetimeUTC: false,
         },
@@ -91,14 +92,14 @@ function EventsLineChart({ eventsData }) {
           title: {
             text: "Errors",
             style: {
-              fontSize: "10px",
+              fontSize: "12px",
               color: axisLabelColor,
               fontWeight: 400,
               cssClass: "",
             },
           },
           labels: {
-            style: { fontSize: "10px", colors: axisLabelColor },
+            style: { fontSize: "12px", colors: axisLabelColor },
             formatter: (v) =>
               v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v),
           },
@@ -109,14 +110,14 @@ function EventsLineChart({ eventsData }) {
           title: {
             text: "Traffic",
             style: {
-              fontSize: "10px",
+              fontSize: "12px",
               color: axisLabelColor,
               fontWeight: 400,
               cssClass: "",
             },
           },
           labels: {
-            style: { fontSize: "10px", colors: axisLabelColor },
+            style: { fontSize: "12px", colors: axisLabelColor },
             formatter: (v) =>
               v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v),
           },
@@ -133,8 +134,8 @@ function EventsLineChart({ eventsData }) {
         show: true,
         position: "top",
         horizontalAlign: "right",
-        fontSize: "11px",
-        labels: { colors: isDark ? "#a1a1aa" : "#605C70" },
+        fontSize: "12px",
+        labels: { colors: legendColor },
         markers: { width: 8, height: 8, radius: 2 },
         itemMargin: { horizontal: 8 },
       },
@@ -160,7 +161,15 @@ function EventsLineChart({ eventsData }) {
         /* ignore */
       }
     };
-  }, [eventsData, isDark, axisLabelColor, gridColor, barColor, areaColor]);
+  }, [
+    eventsData,
+    isDark,
+    axisLabelColor,
+    gridColor,
+    barColor,
+    areaColor,
+    legendColor,
+  ]);
 
   return (
     <Box sx={{ px: 0.5, pb: 0.5 }}>
@@ -177,19 +186,16 @@ EventsLineChart.propTypes = {
 // generic chart-line icon. `invertDelta` flips the red/green logic for evals
 // where a HIGHER score is BAD (hallucination, toxicity, etc).
 const SCORE_META = {
-  Faithfulness: { icon: "mdi:flag-checkered", invertDelta: false },
-  Relevancy: { icon: "mdi:target", invertDelta: false },
-  Precision: { icon: "mdi:check-decagram-outline", invertDelta: false },
-  Hallucination: { icon: "mdi:brain", invertDelta: true },
+  Faithfulness: { icon: "solar:flag-linear", invertDelta: false },
+  Relevancy: { icon: "solar:target-linear", invertDelta: false },
+  Precision: { icon: "solar:check-circle-linear", invertDelta: false },
+  Hallucination: { icon: "solar:brain-linear", invertDelta: true },
 };
 
 function ScoreTrends({ scoreTrends }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   if (!scoreTrends?.length) {
     return (
-      <Typography fontSize="11px" color="text.disabled" sx={{ py: 1 }}>
+      <Typography fontSize="12px" color="text.disabled" sx={{ py: 1 }}>
         No eval scores recorded for this cluster yet.
       </Typography>
     );
@@ -205,7 +211,7 @@ function ScoreTrends({ scoreTrends }) {
     >
       {scoreTrends.map((s) => {
         const meta = SCORE_META[s.label] || {
-          icon: "mdi:chart-line",
+          icon: "solar:graph-up-linear",
           invertDelta: false,
         };
         const delta = s.current - s.prev;
@@ -213,13 +219,13 @@ function ScoreTrends({ scoreTrends }) {
         const isBad = meta.invertDelta ? isPos : !isPos;
         const deltaColor =
           delta === 0
-            ? isDark
-              ? "#71717a"
-              : "#938FA3"
+            ? "text.tertiary"
             : isBad
-              ? "#DB2F2D"
-              : "#5ACE6D";
-        const trendIcon = isPos ? "mdi:trending-up" : "mdi:trending-down";
+              ? "status.danger.fg"
+              : "status.success.fg";
+        const trendIcon = isPos
+          ? "solar:graph-up-linear"
+          : "solar:graph-down-linear";
 
         return (
           <Box
@@ -227,7 +233,7 @@ function ScoreTrends({ scoreTrends }) {
             sx={{
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "10px",
+              borderRadius: "8px",
               p: 1.75,
               bgcolor: "transparent",
               position: "relative",
@@ -254,7 +260,7 @@ function ScoreTrends({ scoreTrends }) {
                   width: 28,
                   height: 28,
                   borderRadius: "6px",
-                  bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
+                  bgcolor: "action.hover",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -263,15 +269,15 @@ function ScoreTrends({ scoreTrends }) {
               >
                 <Iconify
                   icon={meta.icon}
-                  width={15}
+                  width={16}
                   sx={{ color: "text.disabled" }}
                 />
               </Box>
             </Stack>
 
             <Typography
-              fontSize="26px"
-              fontWeight={700}
+              fontSize="24px"
+              fontWeight={600}
               sx={{
                 color: "text.primary",
                 lineHeight: 1,
@@ -285,7 +291,7 @@ function ScoreTrends({ scoreTrends }) {
             <Stack direction="row" alignItems="center" gap={0.4}>
               <Iconify icon={trendIcon} width={12} sx={{ color: deltaColor }} />
               <Typography
-                fontSize="11px"
+                fontSize="12px"
                 fontWeight={600}
                 sx={{ color: deltaColor }}
               >
@@ -293,7 +299,7 @@ function ScoreTrends({ scoreTrends }) {
                 {Math.abs(delta).toFixed(2)}
               </Typography>
               <Typography
-                fontSize="11px"
+                fontSize="12px"
                 color="text.disabled"
                 sx={{ ml: 0.25 }}
               >
@@ -318,15 +324,12 @@ function ActivityHeatmap({ data }) {
 
   const getColor = (val) => {
     const norm = val / maxVal;
-    if (norm === 0)
-      return isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)";
-    if (norm < 0.25)
-      return isDark ? alpha("#DB2F2D", 0.2) : alpha("#DB2F2D", 0.15);
-    if (norm < 0.5)
-      return isDark ? alpha("#DB2F2D", 0.4) : alpha("#DB2F2D", 0.3);
-    if (norm < 0.75)
-      return isDark ? alpha("#DB2F2D", 0.65) : alpha("#DB2F2D", 0.55);
-    return isDark ? alpha("#DB2F2D", 0.85) : alpha("#DB2F2D", 0.75);
+    if (norm === 0) return theme.palette.action.hover;
+    const hot = theme.palette.status.danger.solid;
+    if (norm < 0.25) return alpha(hot, isDark ? 0.2 : 0.15);
+    if (norm < 0.5) return alpha(hot, isDark ? 0.4 : 0.3);
+    if (norm < 0.75) return alpha(hot, isDark ? 0.65 : 0.55);
+    return alpha(hot, isDark ? 0.85 : 0.75);
   };
 
   const hourLabels = Array.from({ length: 24 }, (_, i) =>
@@ -340,7 +343,7 @@ function ActivityHeatmap({ data }) {
           {hourLabels.map((label, i) => (
             <Box key={i} sx={{ flex: 1, minWidth: 0 }}>
               {label && (
-                <Typography fontSize="9px" color="text.disabled" noWrap>
+                <Typography fontSize="12px" color="text.disabled" noWrap>
                   {label}
                 </Typography>
               )}
@@ -357,7 +360,7 @@ function ActivityHeatmap({ data }) {
             sx={{ mb: 0.25 }}
           >
             <Typography
-              fontSize="10px"
+              fontSize="12px"
               color="text.disabled"
               sx={{ width: 32, flexShrink: 0, textAlign: "right", pr: 0.75 }}
             >
@@ -377,7 +380,7 @@ function ActivityHeatmap({ data }) {
                     borderRadius: "2px",
                     mx: "1px",
                     cursor: "default",
-                    transition: "opacity 0.1s",
+                    transition: "opacity 0.12s",
                     "&:hover": { opacity: 0.75 },
                   }}
                 />
@@ -393,7 +396,7 @@ function ActivityHeatmap({ data }) {
           mt={1}
           sx={{ ml: "36px" }}
         >
-          <Typography fontSize="10px" color="text.disabled">
+          <Typography fontSize="12px" color="text.disabled">
             Low
           </Typography>
           {[0.1, 0.25, 0.5, 0.75, 1.0].map((n) => (
@@ -407,7 +410,7 @@ function ActivityHeatmap({ data }) {
               }}
             />
           ))}
-          <Typography fontSize="10px" color="text.disabled">
+          <Typography fontSize="12px" color="text.disabled">
             High
           </Typography>
         </Stack>
@@ -419,8 +422,6 @@ ActivityHeatmap.propTypes = { data: PropTypes.array.isRequired };
 
 // ── Section card ────────────────────────────────────────────────────────────
 function SectionCard({ title, icon, children }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
   return (
     <Box
       sx={{
@@ -428,7 +429,7 @@ function SectionCard({ title, icon, children }) {
         borderColor: "divider",
         borderRadius: "8px",
         overflow: "hidden",
-        bgcolor: isDark ? alpha("#fff", 0.02) : "background.paper",
+        bgcolor: "background.paper",
       }}
     >
       <Stack
@@ -440,17 +441,17 @@ function SectionCard({ title, icon, children }) {
           py: 1.25,
           borderBottom: "1px solid",
           borderColor: "divider",
-          bgcolor: isDark ? alpha("#fff", 0.025) : alpha("#000", 0.02),
+          bgcolor: "action.hover",
         }}
       >
         {icon && (
-          <Iconify icon={icon} width={15} sx={{ color: "text.disabled" }} />
+          <Iconify icon={icon} width={16} sx={{ color: "text.disabled" }} />
         )}
         <Typography
           fontSize="12px"
           fontWeight={600}
           color="text.secondary"
-          sx={{ textTransform: "uppercase", letterSpacing: "0.05em" }}
+          sx={{ textTransform: "none", letterSpacing: 0 }}
         >
           {title}
         </Typography>
@@ -467,9 +468,6 @@ SectionCard.propTypes = {
 
 // ── Top metric cards ────────────────────────────────────────────────────────
 function MetricCards({ metrics }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-
   return (
     <Box
       sx={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 1 }}
@@ -481,8 +479,9 @@ function MetricCards({ metrics }) {
         // better. Keep it simple: let backend signs speak, frontend colors.
         const isErrorMetric = m.label !== "Avg eval score";
         const isNeg = isErrorMetric ? m.delta > 0 : m.delta < 0;
-        const badgeColor = isNeg ? "#DB2F2D" : "#5ACE6D";
-        const badgeIcon = m.delta > 0 ? "mdi:trending-up" : "mdi:trending-down";
+        const badgeColor = isNeg ? "status.danger.fg" : "status.success.fg";
+        const badgeIcon =
+          m.delta > 0 ? "solar:graph-up-linear" : "solar:graph-down-linear";
         return (
           <Box
             key={m.label}
@@ -500,15 +499,15 @@ function MetricCards({ metrics }) {
               justifyContent="space-between"
               mb={0.5}
             >
-              <Typography fontSize="11px" color="text.disabled">
+              <Typography fontSize="12px" color="text.disabled">
                 {m.label}
               </Typography>
               <Box
                 sx={{
                   width: 24,
                   height: 24,
-                  borderRadius: "5px",
-                  bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.05),
+                  borderRadius: "4px",
+                  bgcolor: "action.selected",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -517,19 +516,19 @@ function MetricCards({ metrics }) {
                 <Iconify
                   icon={
                     i === 0
-                      ? "mdi:alert-circle-outline"
+                      ? "solar:danger-circle-linear"
                       : i === 1
-                        ? "mdi:speedometer"
-                        : "mdi:account-multiple-outline"
+                        ? "solar:speedometer-middle-linear"
+                        : "solar:users-group-rounded-linear"
                   }
-                  width={13}
+                  width={14}
                   sx={{ color: "text.secondary" }}
                 />
               </Box>
             </Stack>
             <Typography
-              fontSize="22px"
-              fontWeight={700}
+              fontSize="20px"
+              fontWeight={600}
               sx={{ color: "text.primary", lineHeight: 1.1 }}
             >
               {m.value}
@@ -537,7 +536,7 @@ function MetricCards({ metrics }) {
             <Stack direction="row" alignItems="center" gap={0.4} mt={0.5}>
               <Iconify icon={badgeIcon} width={12} sx={{ color: badgeColor }} />
               <Typography
-                fontSize="11px"
+                fontSize="12px"
                 fontWeight={600}
                 sx={{ color: badgeColor }}
               >
@@ -549,7 +548,7 @@ function MetricCards({ metrics }) {
                   : m.delta}
                 {m.unit}
               </Typography>
-              <Typography fontSize="11px" color="text.disabled">
+              <Typography fontSize="12px" color="text.disabled">
                 vs prev period
               </Typography>
             </Stack>
@@ -598,19 +597,22 @@ export default function TrendsTab({ error }) {
 
       {/* Events over time */}
       {data.events_over_time?.length > 0 && (
-        <SectionCard title="Events Over Time" icon="mdi:chart-bar">
+        <SectionCard title="Events Over Time" icon="solar:chart-2-linear">
           <EventsLineChart eventsData={data.events_over_time} />
         </SectionCard>
       )}
 
       {/* Score trends */}
-      <SectionCard title="Score Trends" icon="mdi:chart-line">
+      <SectionCard title="Score Trends" icon="solar:graph-up-linear">
         <ScoreTrends scoreTrends={data.score_trends ?? []} />
       </SectionCard>
 
       {/* Activity heatmap */}
       {hasHeatmapData && (
-        <SectionCard title="Activity Heatmap (errors by hour)" icon="mdi:grid">
+        <SectionCard
+          title="Activity Heatmap (errors by hour)"
+          icon="solar:widget-4-linear"
+        >
           <ActivityHeatmap data={data.activity_heatmap} />
         </SectionCard>
       )}

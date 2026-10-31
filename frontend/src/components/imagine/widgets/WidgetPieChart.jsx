@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
@@ -27,7 +28,7 @@ export default function WidgetPieChart({ config }) {
     chart: {
       type: "pie",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : "#666",
+      foreColor: theme.palette.text.secondary,
     },
     theme: { mode: isDark ? "dark" : "light" },
     colors: config.colors || COLORS,
@@ -38,7 +39,7 @@ export default function WidgetPieChart({ config }) {
       fontSize: "12px",
     },
     tooltip: { theme: isDark ? "dark" : "light" },
-    stroke: { width: isDark ? 1 : 2, colors: [isDark ? "#1a1a2e" : "#fff"] },
+    stroke: { width: isDark ? 1 : 2, colors: [theme.palette.background.paper] },
   };
 
   return (

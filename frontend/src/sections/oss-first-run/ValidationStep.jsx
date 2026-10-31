@@ -17,9 +17,10 @@ import {
   Tooltip,
   useTheme,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import LoadingButton from "@mui/lab/LoadingButton";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { statusColors } from "src/utils/runStatus";
 import { useSetupChecks } from "src/api/ossSetup/oss-setup";
 import {
   CHECK_STATUS,
@@ -66,10 +67,10 @@ function renderInlineCode(text) {
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
             fontSize: "0.92em",
             color: "text.primary",
-            bgcolor: (t) => alpha(t.palette.common.white, 0.07),
+            bgcolor: "background.neutral",
             px: 0.6,
             py: 0.15,
-            borderRadius: 0.5,
+            borderRadius: "4px",
           }}
         >
           {part}
@@ -80,34 +81,30 @@ function renderInlineCode(text) {
     );
 }
 
-// `warning.main` disappears on a light surface.
-const WARNING_COLOR = "amber.600";
-
 const STATUS_META = {
   [PASSED]: {
     icon: "solar:check-circle-bold",
-    color: "success.main",
+    role: "success",
     label: "Ready",
   },
   [WARNING]: {
     icon: "solar:danger-triangle-bold",
-    color: WARNING_COLOR,
+    role: "warning",
     label: "Caution",
   },
   [FAILED]: {
     icon: "solar:close-circle-bold",
-    color: "error.main",
+    role: "danger",
     label: "Failed",
   },
   [SKIPPED]: {
     icon: "solar:minus-circle-linear",
-    color: "text.disabled",
+    role: "neutral",
     label: "Optional",
   },
   [PENDING]: {
     icon: "svg-spinners:90-ring",
-    color: "primary.main",
-    labelColor: "text.primary",
+    role: "info",
     label: "Checking…",
   },
 };
@@ -304,32 +301,31 @@ export default function ValidationStep({
     );
   }, [checks, mode]);
 
-  const amberMain = theme.palette.amber[600];
-  const tint = (key, opacity = 0.16) => alpha(theme.palette[key].main, opacity);
+  const roleColors = (role) => statusColors(theme, role);
 
   // An unreachable server shows a spinner, never a wall of failed checks.
   let summaryIcon = {
     icon: "svg-spinners:90-ring-with-bg",
     color: "text.secondary",
-    bg: alpha(theme.palette.text.primary, 0.08),
+    bg: theme.palette.action.selected,
   };
   if (reachable && counts.failed) {
     summaryIcon = {
       icon: "solar:close-circle-bold",
-      color: "error.main",
-      bg: tint("error"),
+      color: roleColors("danger").fg,
+      bg: roleColors("danger").bg,
     };
   } else if (reachable && counts.warning) {
     summaryIcon = {
       icon: "solar:danger-triangle-bold",
-      color: WARNING_COLOR,
-      bg: alpha(amberMain, 0.16),
+      color: roleColors("warning").fg,
+      bg: roleColors("warning").bg,
     };
   } else if (reachable) {
     summaryIcon = {
       icon: "solar:check-circle-bold",
-      color: "success.main",
-      bg: tint("success"),
+      color: roleColors("success").fg,
+      bg: roleColors("success").bg,
     };
   }
 
@@ -416,34 +412,38 @@ export default function ValidationStep({
         alignItems="center"
         spacing={1.5}
         sx={{
-          px: 2,
-          py: 1.5,
+          px: 1.5,
+          py: 1,
           borderTop: "1px solid",
-          borderColor: failed ? tint("error", 0.28) : "divider",
-          bgcolor: failed ? tint("error", 0.1) : "transparent",
+          borderColor: failed ? roleColors("danger").border : "border.subtle",
+          bgcolor: failed ? roleColors("danger").bg : "transparent",
         }}
       >
         <Box
           sx={{
-            width: 22,
+            width: 20,
             display: "flex",
             justifyContent: "center",
             flexShrink: 0,
           }}
         >
-          <Iconify icon={meta.icon} width={22} sx={{ color: meta.color }} />
+          <Iconify
+            icon={meta.icon}
+            width={16}
+            sx={{ color: roleColors(meta.role).solid }}
+          />
         </Box>
 
         <Stack sx={{ flex: 1, minWidth: 0 }}>
           <Typography
-            variant="s1"
+            variant="s2_1"
             fontWeight="fontWeightMedium"
             sx={{ color: "text.primary" }}
           >
             {check.label}
           </Typography>
           {check.detail && (
-            <Typography variant="s2" sx={{ color: "text.secondary" }}>
+            <Typography variant="s2" sx={{ color: "text.tertiary" }}>
               {check.detail}
             </Typography>
           )}
@@ -464,13 +464,12 @@ export default function ValidationStep({
           </Tooltip>
         )}
 
-        <Typography
-          variant="s2_1"
-          fontWeight="fontWeightSemiBold"
-          sx={{ color: meta.labelColor || meta.color, flexShrink: 0 }}
-        >
-          {meta.label}
-        </Typography>
+        <StatusBadge
+          status={check.status}
+          label={meta.label}
+          role={meta.role}
+          dot={false}
+        />
       </Stack>
     );
   };
@@ -479,8 +478,8 @@ export default function ValidationStep({
     <Box
       sx={{
         border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 1,
+        borderColor: "border.default",
+        borderRadius: "8px",
         overflow: "hidden",
         maxWidth: PANEL_MAX_WIDTH,
       }}
@@ -489,13 +488,13 @@ export default function ValidationStep({
         direction="row"
         alignItems="center"
         spacing={1.5}
-        sx={{ px: 2, py: 1.75 }}
+        sx={{ px: 1.5, py: 1.5 }}
       >
         <Box
           sx={{
-            width: 36,
-            height: 36,
-            borderRadius: "50%",
+            width: 28,
+            height: 28,
+            borderRadius: "6px",
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
@@ -504,7 +503,7 @@ export default function ValidationStep({
             color: summaryIcon.color,
           }}
         >
-          <Iconify icon={summaryIcon.icon} width={20} />
+          <Iconify icon={summaryIcon.icon} width={16} />
         </Box>
         <Stack sx={{ flex: 1 }}>
           <Typography
@@ -525,7 +524,7 @@ export default function ValidationStep({
                 ? "solar:alt-arrow-up-linear"
                 : "solar:alt-arrow-down-linear"
             }
-            width={18}
+            width={20}
           />
         </IconButton>
       </Stack>
@@ -540,10 +539,10 @@ export default function ValidationStep({
           spacing={1}
           onClick={rerunDisabled ? undefined : handleRevalidate}
           sx={{
-            px: 2,
-            py: 1.5,
+            px: 1.5,
+            py: 1,
             borderTop: "1px solid",
-            borderColor: "divider",
+            borderColor: "border.subtle",
             cursor: rerunDisabled ? "default" : "pointer",
             color: rerunDisabled ? "text.disabled" : "text.primary",
             userSelect: "none",
@@ -568,8 +567,8 @@ export default function ValidationStep({
         maxWidth: PANEL_MAX_WIDTH,
         mt: 1.25,
         border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 1,
+        borderColor: "border.default",
+        borderRadius: "8px",
       }}
     >
       <Typography
@@ -577,11 +576,9 @@ export default function ValidationStep({
         fontWeight="fontWeightSemiBold"
         sx={{
           display: "block",
-          px: 2,
+          px: 1.5,
           pt: 1.5,
-          color: "text.disabled",
-          textTransform: "uppercase",
-          letterSpacing: "0.09em",
+          color: "text.tertiary",
         }}
       >
         Details
@@ -592,10 +589,10 @@ export default function ValidationStep({
           direction="row"
           spacing={1.25}
           sx={{
-            px: 2,
-            py: 1.25,
+            px: 1.5,
+            py: 1,
             borderTop: i === 0 ? "none" : "1px solid",
-            borderColor: "divider",
+            borderColor: "border.subtle",
           }}
         >
           <Link
@@ -624,9 +621,9 @@ export default function ValidationStep({
         maxWidth: PANEL_MAX_WIDTH,
         mt: 1.25,
         border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 1,
-        px: 2,
+        borderColor: "border.default",
+        borderRadius: "8px",
+        px: 1.5,
         py: 1.5,
       }}
     >
@@ -635,9 +632,7 @@ export default function ValidationStep({
         fontWeight="fontWeightSemiBold"
         sx={{
           display: "block",
-          color: "text.disabled",
-          textTransform: "uppercase",
-          letterSpacing: "0.09em",
+          color: "text.tertiary",
         }}
       >
         Next up
@@ -693,7 +688,6 @@ export default function ValidationStep({
           variant="contained"
           onClick={() => onContinue({ accountExists })}
           disabled={blocked}
-          sx={{ height: 40, borderRadius: 0.5 }}
         >
           Continue
         </LoadingButton>
@@ -701,7 +695,11 @@ export default function ValidationStep({
           <>
             <Typography
               variant="s2_1"
-              sx={{ color: "error.main", textAlign: "center", pt: 0.5 }}
+              sx={{
+                color: roleColors("danger").fg,
+                textAlign: "center",
+                pt: 0.5,
+              }}
             >
               Fix the failed systems to continue with a production launch.
             </Typography>
@@ -712,7 +710,7 @@ export default function ValidationStep({
               fullWidth
               variant="outlined"
               onClick={() => onSwitchMode(LAUNCH_MODE.EXPERIMENT)}
-              sx={{ height: 40, borderRadius: 0.5 }}
+              
             >
               Continue with Test flight
             </LoadingButton>
@@ -724,7 +722,7 @@ export default function ValidationStep({
             fullWidth
             variant="text"
             onClick={() => onSwitchMode(LAUNCH_MODE.LIVE)}
-            sx={{ height: 34, borderRadius: 0.5, color: "text.secondary" }}
+            sx={{ color: "text.secondary" }}
           >
             Switch to Production
           </LoadingButton>
@@ -735,7 +733,7 @@ export default function ValidationStep({
           href={supportHref}
           target="_blank"
           rel="noopener"
-          sx={{ height: 34, borderRadius: 0.5, color: "text.secondary" }}
+          sx={{ color: "text.secondary" }}
         >
           Contact support
         </LoadingButton>

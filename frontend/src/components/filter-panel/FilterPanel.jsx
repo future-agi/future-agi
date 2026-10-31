@@ -2030,7 +2030,7 @@ const FilterPanel = ({
           <Tabs
             value={activeTab}
             onChange={(_, v) => setActiveTab(v)}
-            sx={{
+            sx={{ boxShadow: "none",
               minHeight: 28,
               borderBottom: "1px solid",
               borderColor: "divider",

@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import { Box, Typography, useTheme } from "@mui/material";
 import React from "react";
 import ChartsTheme from "./ChartsTheme";
@@ -122,7 +123,7 @@ const EvalsChartsGenerator = ({ id, series, subLabel, label, onZoom }) => {
       show: true,
       position: "top",
       horizontalAlign: "left",
-      fontSize: "14px",
+      fontSize: "13px",
       labels: {
         colors: "var(--text-primary)",
       },
@@ -136,11 +137,10 @@ const EvalsChartsGenerator = ({ id, series, subLabel, label, onZoom }) => {
   return (
     <Box
       sx={{
-        border: "2px solid",
+        border: "1px solid",
         borderColor: "divider",
         padding: 2,
-        borderRadius: "15px",
-        boxShadow: "0px",
+        borderRadius: "8px",
       }}
     >
       <Typography fontWeight={500} color="text.disabled">

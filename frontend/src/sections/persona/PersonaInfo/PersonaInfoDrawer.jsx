@@ -19,7 +19,7 @@ const PersonaInfoDrawer = ({
   };
   return (
     <Drawer anchor="right" open={open} onClose={onClose}>
-      <Box sx={{ width: "700px", height: "100vh", position: "relative" }}>
+      <Box sx={{ width: 640, height: "100vh", position: "relative" }}>
         <IconButton
           onClick={onClose}
           sx={{
@@ -29,7 +29,7 @@ const PersonaInfoDrawer = ({
             color: "text.primary",
           }}
         >
-          <Iconify icon="akar-icons:cross" />
+          <Iconify icon="solar:close-linear" width={16} />
         </IconButton>
         <PersonaInfo
           editPersona={editPersona}

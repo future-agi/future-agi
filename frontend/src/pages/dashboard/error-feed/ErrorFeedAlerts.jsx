@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router-dom";
@@ -6,7 +7,6 @@ import {
   Autocomplete,
   Box,
   Button,
-  Card,
   Chip,
   CircularProgress,
   Drawer,
@@ -32,6 +32,9 @@ import {
 import { LoadingButton } from "@mui/lab";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import Section from "src/components/section";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import { getErrorMessage } from "src/sections/settings/integrations/utils";
 import {
   useIntegrationConnections,
@@ -374,7 +377,7 @@ function AlertRuleForm({ rule, draft, onClose }) {
     >
       <Box
         sx={{
-          p: { xs: 2, sm: 2.5 },
+          p: 2,
           borderBottom: 1,
           borderColor: "divider",
           flexShrink: 0,
@@ -387,7 +390,7 @@ function AlertRuleForm({ rule, draft, onClose }) {
           gap={1}
         >
           <Box sx={{ minWidth: 0 }}>
-            <Typography typography="m2" fontWeight="fontWeightSemiBold">
+            <Typography typography="m2" fontWeight="fontWeightMedium">
               {edit ? "Edit Error Feed alert" : "Create Error Feed alert"}
             </Typography>
             <Typography typography="s2" color="text.secondary">
@@ -400,20 +403,20 @@ function AlertRuleForm({ rule, draft, onClose }) {
             aria-label="Close"
             sx={{ flexShrink: 0 }}
           >
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Stack>
       </Box>
       <Box
         sx={{
-          p: { xs: 2, sm: 2.5 },
+          p: 2,
           flex: 1,
           minHeight: 0,
           overflowY: "auto",
           overflowX: "hidden",
         }}
       >
-        <Stack spacing={2.25} sx={{ minWidth: 0 }}>
+        <Stack spacing={2} sx={{ minWidth: 0 }}>
           {(optionQuery.isLoading || connectionsQuery.isLoading) && (
             <Typography typography="s2" color="text.secondary">
               Loading alert settings…
@@ -888,10 +891,10 @@ function AlertRuleForm({ rule, draft, onClose }) {
               <FormHelperText>{fieldErrors.cooldown}</FormHelperText>
             )}
           </FormControl>
-          <Card
-            variant="outlined"
+          <Box
             sx={{
               p: 1.5,
+              borderRadius: "8px",
               bgcolor: "background.neutral",
               overflowWrap: "anywhere",
             }}
@@ -917,7 +920,7 @@ function AlertRuleForm({ rule, draft, onClose }) {
                 ?.name || "selected channel"}
               .
             </Typography>
-          </Card>
+          </Box>
         </Stack>
       </Box>
       <Box
@@ -1017,8 +1020,8 @@ function SectionTitle({ step, title, subtitle }) {
   return (
     <Box pt={0.75}>
       <Stack direction="row" spacing={1} alignItems="center">
-        <Chip label={step} size="small" color="primary" />
-        <Typography typography="s1" fontWeight="fontWeightSemiBold">
+        <Chip label={step} size="small" />
+        <Typography typography="s1" fontWeight="fontWeightMedium">
           {title}
         </Typography>
       </Stack>
@@ -1082,7 +1085,7 @@ export default function ErrorFeedAlerts() {
         <Box sx={{ minWidth: 0 }}>
           <Button
             size="small"
-            startIcon={<Iconify icon="eva:arrow-ios-back-fill" />}
+            startIcon={<Iconify icon="solar:alt-arrow-left-linear" />}
             onClick={() => navigate("/dashboard/error-feed")}
           >
             Error Feed
@@ -1097,7 +1100,7 @@ export default function ErrorFeedAlerts() {
         <Button
           size="small"
           variant="contained"
-          startIcon={<Iconify icon="octicon:plus-24" width={20} />}
+          startIcon={<Iconify icon="solar:add-linear" width={20} />}
           onClick={() => setCreateOpen(true)}
         >
           Create alert
@@ -1123,21 +1126,24 @@ export default function ErrorFeedAlerts() {
           </MuiAlert>
         )}
         {!isLoading && !isError && rules.length === 0 && (
-          <Card variant="outlined" sx={{ p: 5, textAlign: "center" }}>
-            <SvgColor
-              src="/assets/icons/navbar/ic_alert.svg"
-              sx={{ width: 42, height: 42, color: "text.secondary", mb: 1 }}
+          <Section variant="panel" sx={{ p: 0 }}>
+            <EmptyState
+              icon="solar:bell-linear"
+              title="No Error Feed alerts yet"
+              description="Create a rule to send matching issue notifications to Slack."
+              action={
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  onClick={() => setCreateOpen(true)}
+                >
+                  Create alert
+                </Button>
+              }
+              sx={{ pt: 6, pb: 6 }}
             />
-            <Typography typography="m3" fontWeight="fontWeightSemiBold">
-              No Error Feed alerts yet
-            </Typography>
-            <Typography typography="s2" color="text.secondary" mb={2}>
-              Create a rule to send matching issue notifications to Slack.
-            </Typography>
-            <Button variant="contained" onClick={() => setCreateOpen(true)}>
-              Create alert
-            </Button>
-          </Card>
+          </Section>
         )}
         {!isLoading && !isError && rules.length > 0 && (
           <Box
@@ -1155,7 +1161,7 @@ export default function ErrorFeedAlerts() {
                 overflowY: "auto",
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: 1,
+                borderRadius: "8px",
               }}
             >
               <Table stickyHeader size="small" sx={{ minWidth: 980 }}>
@@ -1186,9 +1192,10 @@ export default function ErrorFeedAlerts() {
                       key={rule.id}
                       hover
                       sx={{
+                        height: ROW_HEIGHT.default,
                         "& .MuiTableCell-body": {
                           borderColor: "divider",
-                          py: 1.25,
+                          py: 1,
                         },
                       }}
                     >
@@ -1204,7 +1211,7 @@ export default function ErrorFeedAlerts() {
                           rule.failure_reason) && (
                           <Typography
                             typography="s3"
-                            color="warning.main"
+                            color="status.warning.fg"
                             sx={{ display: "block", mt: 0.5 }}
                           >
                             {rule.failure_reason ||
@@ -1214,12 +1221,12 @@ export default function ErrorFeedAlerts() {
                         )}
                       </TableCell>
                       <TableCell sx={{ minWidth: 190 }}>
-                        <Typography typography="s2">
+                        <Typography typography="s1">
                           {summaryFor(rule)}
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Typography typography="s2">
+                        <Typography typography="s1">
                           {rule.project_scope ||
                             (rule.project_id
                               ? "Selected project"
@@ -1227,7 +1234,7 @@ export default function ErrorFeedAlerts() {
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Typography typography="s2">
+                        <Typography typography="s1">
                           #
                           {rule.slack_channel_name ||
                             rule.configuration?.slack_channel_name ||
@@ -1235,7 +1242,7 @@ export default function ErrorFeedAlerts() {
                         </Typography>
                       </TableCell>
                       <TableCell sx={{ whiteSpace: "nowrap" }}>
-                        <Typography typography="s2">
+                        <Typography typography="s1">
                           {rule.last_triggered_at
                             ? new Date(rule.last_triggered_at).toLocaleString()
                             : "Never"}
@@ -1256,9 +1263,12 @@ export default function ErrorFeedAlerts() {
                               })
                             }
                           />
-                          <Typography typography="s2">
-                            {rule.enabled === false ? "Paused" : "Active"}
-                          </Typography>
+                          <StatusBadge
+                            status={
+                              rule.enabled === false ? "paused" : "active"
+                            }
+                            dot={false}
+                          />
                         </Stack>
                       </TableCell>
                       <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
@@ -1365,7 +1375,7 @@ export default function ErrorFeedAlerts() {
                       previous: () => (
                         <Box display="flex" alignItems="center" gap={0.5}>
                           <Iconify
-                            icon="octicon:chevron-left-24"
+                            icon="solar:alt-arrow-left-linear"
                             width={18}
                             height={18}
                             sx={{ path: { strokeWidth: 1.5 } }}
@@ -1377,7 +1387,7 @@ export default function ErrorFeedAlerts() {
                         <Box display="flex" alignItems="center" gap={0.5}>
                           Next
                           <Iconify
-                            icon="octicon:chevron-right-24"
+                            icon="solar:alt-arrow-right-linear"
                             width={18}
                             height={18}
                             sx={{ path: { strokeWidth: 1.5 } }}

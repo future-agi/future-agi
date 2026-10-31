@@ -16,6 +16,7 @@ import Iconify from "src/components/iconify";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
 import axios, { endpoints } from "src/utils/axios";
 import { getChipColor, getChipLabel, getFontColor } from "../common";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
@@ -67,8 +68,9 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
           height: "85%",
           overflowY: "auto",
           bgcolor: "background.paper",
+          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
           boxShadow: 24,
-          width: "625px",
+          width: "720px",
           borderRadius: theme.spacing(1.5),
           padding: theme.spacing(2.5),
           display: "flex",
@@ -84,13 +86,13 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
         >
           <Typography
             fontSize={typographyTheme.body1.fontSize}
-            fontWeight={typographyTheme.fontWeightBold}
+            fontWeight={typographyTheme.fontWeightSemiBold}
             color={theme.palette.text.primary}
           >
             {title}
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         {isError ? (
@@ -110,7 +112,7 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
             }}
           >
             <Iconify
-              icon="mdi:information-outline"
+              icon="solar:info-circle-linear"
               width={20}
               color="text.secondary"
             />
@@ -180,12 +182,23 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
                         marginRight: 0.5,
                         backgroundColor: theme.palette.action.hover,
                         color: theme.palette.primary.main,
-                        fontWeight: typographyTheme.fontWeightRegular,
                         width: "fit-content",
                       }}
                     />
                   ))}
                 </Box>
+              ) : typeof data?.score === "number" ? (
+                <Typography
+                  variant="body2"
+                  sx={{ fontVariantNumeric: "tabular-nums" }}
+                >
+                  {getChipLabel(data)}
+                </Typography>
+              ) : typeof data?.score === "boolean" ? (
+                <StatusBadge
+                  role={data.score ? "success" : "danger"}
+                  label={getChipLabel(data)}
+                />
               ) : (
                 <Chip
                   variant="soft"
@@ -281,9 +294,9 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
                   sx={{
                     display: "flex",
                     gap: 1,
-                    bgcolor: "red.o5",
+                    bgcolor: "status.danger.bg",
                     border: "1px solid",
-                    borderColor: "red.200",
+                    borderColor: "status.danger.border",
                     borderRadius: theme.spacing(0.5),
                     padding: 2,
                     justifyContent: "space-between",
@@ -298,12 +311,12 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
                     }}
                   >
                     <Iconify
-                      icon="uil:exclamation-triangle"
-                      color="red.500"
+                      icon="solar:danger-triangle-linear"
+                      color="status.danger.fg"
                       width={20}
                     />
                     <Typography
-                      color={theme.palette.red["500"]}
+                      color="status.danger.fg"
                       fontSize={typographyTheme.body2.fontSize}
                       fontWeight={typographyTheme.fontWeightMedium}
                     >
@@ -378,7 +391,7 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
                     })()}
                 </Box>
               ) : (
-                <Typography fontSize="14px" color="text.primary">
+                <Typography fontSize="13px" color="text.primary">
                   No errors found.
                 </Typography>
               )}
@@ -397,7 +410,6 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
             fullWidth
             sx={{
               color:'text.disabled',
-              fontWeight:'400',
             }}
             onClick={onClose}
           >Cancel</Button>

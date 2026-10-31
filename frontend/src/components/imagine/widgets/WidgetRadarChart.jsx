@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
@@ -16,7 +17,7 @@ export default function WidgetRadarChart({ config }) {
     chart: {
       type: "radar",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : "#666",
+      foreColor: theme.palette.text.secondary,
       toolbar: { show: false },
     },
     theme: { mode: isDark ? "dark" : "light" },

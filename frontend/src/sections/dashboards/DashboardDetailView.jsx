@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, {
   forwardRef,
   useCallback,
@@ -12,8 +13,6 @@ import {
   Box,
   Breadcrumbs,
   Button,
-  Card,
-  CardContent,
   Chip,
   CircularProgress,
   ClickAwayListener,
@@ -30,6 +29,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import Section from "src/components/section";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
@@ -487,7 +487,6 @@ function DraggableWidgetCard({
   refreshRequestId,
   onQuerySettled,
 }) {
-  const theme = useTheme();
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: widget.id,
     data: { widget },
@@ -517,24 +516,17 @@ function DraggableWidgetCard({
         "&:hover .drag-handle": { opacity: 1 },
       }}
     >
-      <Card
-        variant="outlined"
+      <Section
+        variant="panel"
         sx={{
           height: widgetHeight,
           display: "flex",
           flexDirection: "column",
-          transition: "border-color 0.2s, box-shadow 0.2s",
-          "&:hover": {
-            borderColor: theme.palette.divider,
-            boxShadow: theme.shadows[2],
-          },
           overflow: "hidden",
         }}
       >
-        <CardContent
+        <Box
           sx={{
-            p: 2,
-            "&:last-child": { pb: 2 },
             flex: 1,
             display: "flex",
             flexDirection: "column",
@@ -561,7 +553,7 @@ function DraggableWidgetCard({
             >
               {!isReadOnly && (
                 <Iconify
-                  icon="mdi:drag"
+                  icon="solar:grip-vertical-linear"
                   width={16}
                   sx={{ color: "text.disabled", mr: 0.5, flexShrink: 0 }}
                 />
@@ -604,7 +596,7 @@ function DraggableWidgetCard({
                         )
                       }
                     >
-                      <Iconify icon="mdi:pencil-outline" width={16} />
+                      <Iconify icon="solar:pen-linear" width={16} />
                     </IconButton>
                   </Tooltip>
                   <Tooltip title="More">
@@ -613,7 +605,10 @@ function DraggableWidgetCard({
                       aria-label="Widget options"
                       onClick={(e) => onMenuOpen(e, widget)}
                     >
-                      <Iconify icon="mdi:dots-vertical" width={16} />
+                      <Iconify
+                        icon="solar:menu-dots-vertical-linear"
+                        width={16}
+                      />
                     </IconButton>
                   </Tooltip>
                 </Stack>
@@ -657,8 +652,8 @@ function DraggableWidgetCard({
               onQuerySettled={onQuerySettled}
             />
           </Box>
-        </CardContent>
-      </Card>
+        </Box>
+      </Section>
     </Box>
   );
 }
@@ -684,8 +679,8 @@ DraggableWidgetCard.propTypes = {
 function DragOverlayCard({ widget }) {
   const theme = useTheme();
   return (
-    <Card
-      variant="outlined"
+    <Section
+      variant="panel"
       sx={{
         width: 280,
         height: 120,
@@ -695,32 +690,34 @@ function DragOverlayCard({ widget }) {
         overflow: "hidden",
       }}
     >
-      <CardContent sx={{ p: 1.5, "&:last-child": { pb: 1.5 } }}>
-        <Stack direction="row" alignItems="center" spacing={0.5}>
-          <Iconify icon="mdi:drag" width={14} sx={{ color: "text.disabled" }} />
-          <Typography variant="subtitle2" noWrap>
-            {widget.name}
-          </Typography>
-        </Stack>
-        <Box
-          sx={{
-            mt: 1,
-            height: 60,
-            borderRadius: 1,
-            bgcolor: "action.hover",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Iconify
-            icon="mdi:chart-line"
-            width={24}
-            sx={{ color: "text.disabled" }}
-          />
-        </Box>
-      </CardContent>
-    </Card>
+      <Stack direction="row" alignItems="center" spacing={0.5}>
+        <Iconify
+          icon="solar:grip-vertical-linear"
+          width={14}
+          sx={{ color: "text.disabled" }}
+        />
+        <Typography variant="subtitle2" noWrap>
+          {widget.name}
+        </Typography>
+      </Stack>
+      <Box
+        sx={{
+          mt: 1,
+          height: 60,
+          borderRadius: 1,
+          bgcolor: "action.hover",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Iconify
+          icon="solar:graph-up-linear"
+          width={24}
+          sx={{ color: "text.disabled" }}
+        />
+      </Box>
+    </Section>
   );
 }
 
@@ -1245,17 +1242,17 @@ export default function DashboardDetailView() {
         sx={{ px: 3, pt: 2, pb: 0 }}
       >
         <Breadcrumbs
-          separator={<Iconify icon="mdi:chevron-right" width={16} />}
+          separator={<Iconify icon="solar:alt-arrow-right-linear" width={16} />}
         >
           <Link
             underline="hover"
             color="text.secondary"
-            sx={{ cursor: "pointer", fontSize: "14px" }}
+            sx={{ cursor: "pointer", fontSize: "13px" }}
             onClick={() => navigate(paths.dashboard.dashboards.root)}
           >
             Dashboards
           </Link>
-          <Typography color="text.primary" fontSize="14px">
+          <Typography color="text.primary" fontSize="13px">
             {dashboard.name}
           </Typography>
         </Breadcrumbs>
@@ -1269,7 +1266,7 @@ export default function DashboardDetailView() {
               sx={{ mr: 0.5 }}
             >
               <Iconify
-                icon="mdi:clock-outline"
+                icon="solar:clock-circle-linear"
                 width={14}
                 sx={{ color: "text.secondary" }}
               />
@@ -1286,12 +1283,11 @@ export default function DashboardDetailView() {
                 isRefreshing ? (
                   <CircularProgress size={14} color="inherit" />
                 ) : (
-                  <Iconify icon="mdi:refresh" width={16} />
+                  <Iconify icon="solar:refresh-linear" width={16} />
                 )
               }
               onClick={handleRefreshDashboard}
               disabled={isRefreshing}
-              sx={{ textTransform: "none" }}
             >
               {isRefreshing ? "Refreshing" : "Refresh"}
             </Button>
@@ -1309,8 +1305,8 @@ export default function DashboardDetailView() {
               }}
             >
               <Iconify
-                icon={linkCopied ? "mdi:check" : "mdi:share-variant-outline"}
-                width={18}
+                icon={linkCopied ? "solar:check-linear" : "solar:share-linear"}
+                width={20}
               />
             </IconButton>
           </Tooltip>
@@ -1321,7 +1317,7 @@ export default function DashboardDetailView() {
                 aria-label="Dashboard options"
                 onClick={(e) => setDashMenuAnchor(e.currentTarget)}
               >
-                <Iconify icon="mdi:dots-horizontal" width={20} />
+                <Iconify icon="solar:menu-dots-linear" width={20} />
               </IconButton>
             </Tooltip>
           )}
@@ -1348,8 +1344,8 @@ export default function DashboardDetailView() {
               ref={customDateAnchorRef}
               icon={
                 <Iconify
-                  icon="mdi:calendar-outline"
-                  width={15}
+                  icon="solar:calendar-linear"
+                  width={16}
                   sx={{ color: "inherit !important" }}
                 />
               }
@@ -1414,8 +1410,8 @@ export default function DashboardDetailView() {
           typographyProps={{
             variant: "h4",
             sx: {
-              fontSize: "28px",
-              fontWeight: 700,
+              fontSize: "24px",
+              fontWeight: 600,
               color: "text.primary",
               lineHeight: 1.3,
               wordBreak: "break-word",
@@ -1433,7 +1429,7 @@ export default function DashboardDetailView() {
             sx: {
               color: dashboard.description ? "text.secondary" : "text.disabled",
               mt: 0.5,
-              fontSize: "14px",
+              fontSize: "13px",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
             },
@@ -1447,50 +1443,37 @@ export default function DashboardDetailView() {
         sx={{ px: 3, pt: 2, pb: 4, flex: 1, overflow: "visible" }}
       >
         {!hasWidgets ? (
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              height: "50vh",
-              gap: 2,
-            }}
-          >
-            <Iconify
-              icon="mdi:chart-line"
-              width={64}
-              sx={{ color: "text.disabled" }}
-            />
-            <Typography variant="h6" color="text.secondary">
-              No widgets yet
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Add your first widget to start visualizing data
-            </Typography>
-            <CustomTooltip
-              show={isReadOnly}
-              type=""
-              title="You don't have permission to add widgets."
-              size="small"
-              arrow
-            >
-              <span>
-                <Button
-                  variant="outlined"
-                  startIcon={<Iconify icon="mdi:plus" />}
-                  disabled={isReadOnly}
-                  onClick={() =>
-                    navigate(
-                      `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                    )
-                  }
-                >
-                  Add Widget
-                </Button>
-              </span>
-            </CustomTooltip>
-          </Box>
+          <EmptyState
+            icon="solar:graph-up-linear"
+            title="No widgets yet"
+            description="Add a widget to start visualizing data."
+            action={
+              <CustomTooltip
+                show={isReadOnly}
+                type=""
+                title="You don't have permission to add widgets."
+                size="small"
+                arrow
+              >
+                <span>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    disabled={isReadOnly}
+                    onClick={() =>
+                      navigate(
+                        `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                      )
+                    }
+                  >
+                    Add widget
+                  </Button>
+                </span>
+              </CustomTooltip>
+            }
+            sx={{ pt: 6, pb: 6 }}
+          />
         ) : (
           <>
             <DndContext
@@ -1545,10 +1528,8 @@ export default function DashboardDetailView() {
                               top: "50%",
                               transform: "translateY(-50%)",
                               width: 22,
-                              height: 22,
                               minWidth: 22,
                               padding: 0,
-                              borderRadius: "50%",
                               opacity: 0,
                               transition: "opacity 0.15s",
                               bgcolor: "background.paper",
@@ -1559,7 +1540,7 @@ export default function DashboardDetailView() {
                               },
                             }}
                           >
-                            <Iconify icon="mdi:plus" width={14} />
+                            <Iconify icon="solar:add-linear" width={14} />
                           </IconButton>
                         </Tooltip>
                       )}
@@ -1647,7 +1628,7 @@ export default function DashboardDetailView() {
               <Box sx={{ display: "flex", justifyContent: "center", mt: 3 }}>
                 <Button
                   variant="outlined"
-                  startIcon={<Iconify icon="mdi:plus" />}
+                  startIcon={<Iconify icon="solar:add-linear" />}
                   onClick={() =>
                     navigate(
                       `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
@@ -1670,7 +1651,7 @@ export default function DashboardDetailView() {
         onClose={() => {
           if (!widthMenuAnchor) closeWidgetMenu();
         }}
-        slotProps={{ paper: { sx: { minWidth: 180 } } }}
+        slotProps={{ paper: { sx: { minWidth: 200 } } }}
       >
         <MenuItem
           onClick={() => {
@@ -1683,29 +1664,37 @@ export default function DashboardDetailView() {
           }}
         >
           <ListItemIcon>
-            <Iconify icon="mdi:pencil-outline" width={18} />
+            <Iconify icon="solar:pen-linear" width={16} />
           </ListItemIcon>
           <ListItemText>Edit</ListItemText>
         </MenuItem>
         <MenuItem onClick={handleDuplicateWidget}>
           <ListItemIcon>
-            <Iconify icon="mdi:content-copy" width={18} />
+            <Iconify icon="solar:copy-linear" width={16} />
           </ListItemIcon>
           <ListItemText>Duplicate</ListItemText>
         </MenuItem>
         <MenuItem onClick={(e) => setWidthMenuAnchor(e.currentTarget)}>
           <ListItemIcon>
-            <Iconify icon="mdi:resize" width={18} />
+            <Iconify icon="solar:scaling-linear" width={16} />
           </ListItemIcon>
           <ListItemText>Resize Width</ListItemText>
-          <Iconify icon="mdi:chevron-right" width={16} sx={{ ml: 1 }} />
+          <Iconify
+            icon="solar:alt-arrow-right-linear"
+            width={16}
+            sx={{ ml: 1 }}
+          />
         </MenuItem>
         <Divider />
-        <MenuItem onClick={handleDeleteWidget} sx={{ color: "error.main" }}>
+        <MenuItem
+          onClick={handleDeleteWidget}
+          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+          sx={{ color: "status.danger.fg" }}
+        >
           <ListItemIcon>
             <Iconify
-              icon="mdi:delete-outline"
-              width={18}
+              icon="solar:trash-bin-trash-linear"
+              width={16}
               sx={{ color: "error.main" }}
             />
           </ListItemIcon>
@@ -1728,7 +1717,7 @@ export default function DashboardDetailView() {
             onClick={() => handleWidthChange(opt.value)}
           >
             <ListItemIcon>
-              <Iconify icon={opt.icon} width={18} />
+              <Iconify icon={opt.icon} width={16} />
             </ListItemIcon>
             <ListItemText>{opt.label}</ListItemText>
           </MenuItem>
@@ -1740,7 +1729,7 @@ export default function DashboardDetailView() {
         anchorEl={dashMenuAnchor}
         open={Boolean(dashMenuAnchor)}
         onClose={() => setDashMenuAnchor(null)}
-        slotProps={{ paper: { sx: { minWidth: 180 } } }}
+        slotProps={{ paper: { sx: { minWidth: 200 } } }}
       >
         <MenuItem
           onClick={() => {
@@ -1750,7 +1739,7 @@ export default function DashboardDetailView() {
           }}
         >
           <ListItemIcon>
-            <Iconify icon="mdi:pencil-outline" width={18} />
+            <Iconify icon="solar:pen-linear" width={16} />
           </ListItemIcon>
           <ListItemText>Rename</ListItemText>
         </MenuItem>
@@ -1761,16 +1750,20 @@ export default function DashboardDetailView() {
           }}
         >
           <ListItemIcon>
-            <Iconify icon="mdi:plus" width={18} />
+            <Iconify icon="solar:add-linear" width={16} />
           </ListItemIcon>
           <ListItemText>Add Widget</ListItemText>
         </MenuItem>
         <Divider />
-        <MenuItem onClick={handleDeleteDashboard} sx={{ color: "error.main" }}>
+        <MenuItem
+          onClick={handleDeleteDashboard}
+          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+          sx={{ color: "status.danger.fg" }}
+        >
           <ListItemIcon>
             <Iconify
-              icon="mdi:delete-outline"
-              width={18}
+              icon="solar:trash-bin-trash-linear"
+              width={16}
               sx={{ color: "error.main" }}
             />
           </ListItemIcon>

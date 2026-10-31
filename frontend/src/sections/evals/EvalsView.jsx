@@ -1,3 +1,5 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
+import SelectionBar from "src/components/selection-bar";
 import { Box, Typography, Button, Link, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -322,7 +324,7 @@ const EvalsView = () => {
           <>
             <Typography
               color="text.primary"
-              variant="m2"
+              variant="m1"
               fontWeight={"fontWeightSemiBold"}
             >
               Evaluations
@@ -330,7 +332,7 @@ const EvalsView = () => {
             <Box sx={{ display: "flex", alignItems: "center" }}>
               <Typography
                 variant="s1"
-                color="text.primary"
+                color="text.secondary"
                 fontWeight={"fontWeightRegular"}
               >
                 Create evaluation and monitor
@@ -353,76 +355,7 @@ const EvalsView = () => {
               />
               <Box>
                 {selected?.length ? (
-                  <Box
-                    sx={{
-                      padding: "6px 16px",
-                      gap: "16px",
-                      borderRadius: "8px",
-                      border: "1px solid var(--border-default)",
-                      display: "flex",
-                    }}
-                  >
-                    <Typography
-                      sx={{
-                        fontSize: "14px",
-                        fontWeight: 500,
-                        lineHeight: "22px",
-                        color: "primary.main",
-                        paddingRight: "16px",
-                        borderRight: "2px solid var(--border-default)",
-                      }}
-                    >
-                      {selected?.length || 0} Selected
-                    </Typography>
-                    {/* {selected?.length > 1 && (
-                                        <Typography
-                                            sx={{
-                                                fontSize: "14px",
-                                                fontWeight: 600,
-                                                color: "text.secondary",
-                                                display: "flex",
-                                                alignItems: "center",
-                                                gap: "5px",
-                                                cursor: "pointer",
-                                            }}
-                                            onClick={() => setOpenDuplicate(true)}
-                                        >
-                                            <Iconify icon="gg:duplicate" />
-                                            Duplicate
-                                        </Typography>
-                                    )} */}
-
-                    {/* <Typography
-                                        sx={{
-                                            fontSize: "14px",
-                                            fontWeight: 600,
-                                            color: "text.secondary",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: "5px",
-                                            cursor: "pointer",
-                                        }}
-                                        onClick={() => setOpenDelete(true)}
-                                    >
-                                        <Iconify icon="solar:trash-bin-trash-bold" />
-                                        Delete
-                                    </Typography> */}
-
-                    <Typography
-                      sx={{
-                        fontSize: "14px",
-                        fontWeight: 600,
-                        color: "text.secondary",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        cursor: "pointer",
-                      }}
-                      onClick={closeModal}
-                    >
-                      Cancel
-                    </Typography>
-                  </Box>
+                  <SelectionBar count={selected.length} onCancel={closeModal} />
                 ) : (
                   <Button
                     variant="contained"
@@ -430,10 +363,6 @@ const EvalsView = () => {
                     onClick={() => {
                       trackEvent(Events.addDatasetCLicked);
                       setAddDatasetDrawerOpen(true);
-                    }}
-                    sx={{
-                      px: "24px",
-                      typography: "s1",
                     }}
                   >
                     Create Evaluation
@@ -540,7 +469,7 @@ const EvalsView = () => {
                     objectFit: "cover",
                     width: "100%",
                     height: "100%",
-                    borderRadius: "15px",
+                    borderRadius: "8px",
                   }}
                 />
                 <Typography
@@ -583,7 +512,7 @@ const EvalsView = () => {
                     objectFit: "cover",
                     width: "100%",
                     height: "100%",
-                    borderRadius: "15px",
+                    borderRadius: "8px",
                   }}
                 />
                 <Typography
@@ -626,7 +555,7 @@ const EvalsView = () => {
                     objectFit: "cover",
                     width: "100%",
                     height: "100%",
-                    borderRadius: "15px",
+                    borderRadius: "8px",
                   }}
                 />
                 <Typography

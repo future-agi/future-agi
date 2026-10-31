@@ -163,7 +163,7 @@ const AddColumnForm = ({
                 cursor: "pointer",
                 borderRadius: "8px",
                 backgroundColor: "transparent",
-                transition: "background-color 0.3s ease",
+                transition: "background-color 0.2s ease",
                 "&:hover": { backgroundColor: "action.hover" },
               }}
             >
@@ -178,7 +178,7 @@ const AddColumnForm = ({
                 <Iconify icon={icon} width={20} height={20} />
                 <Typography
                   sx={{
-                    fontSize: "14px",
+                    fontSize: "13px",
                     fontWeight: 600,
                     color: "text.primary",
                   }}
@@ -191,7 +191,7 @@ const AddColumnForm = ({
                   fontSize: "12px",
                   color: "text.secondary",
                   marginLeft: "28px",
-                  transition: "color 0.3s ease",
+                  transition: "color 0.2s ease",
                 }}
               >
                 {helpingText}
@@ -271,7 +271,8 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
               : "850px",
           height: staticColumnType ? "205px" : "700px",
           bgcolor: "background.paper",
-          borderRadius: "16px",
+          borderRadius: "12px",
+          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
           boxShadow: 24,
           p: 3,
         }}
@@ -284,9 +285,9 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
             right: staticColumnType ? "10px" : "40px",
           }}
         >
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
-        <Typography fontWeight={700} fontSize={"18px"} color="text.primary">
+        <Typography fontWeight={600} fontSize={"16px"} color="text.primary">
           {staticColumnType ? `${staticColumnType} Column` : "Add Columns"}
         </Typography>
         {!staticColumnType ? (
@@ -306,10 +307,10 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
                       color: "text.secondary",
                       fontSize: "12px",
                       paddingLeft: "13px",
-                      fontWeight: 700,
+                      fontWeight: 600,
                     }}
                   >
-                    DATA TYPE
+                    Data type
                   </Typography>
                   <Box sx={{ marginTop: "20px" }}>
                     {dataType.map((val, index) => (
@@ -333,7 +334,7 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
                       >
                         <Typography
                           sx={{
-                            fontSize: "14px",
+                            fontSize: "13px",
                             fontWeight: 600,
                             color:
                               selectedDataType === val.name
@@ -387,10 +388,6 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
             >
               <Button
                 sx={{
-                  paddingX: "16px",
-                  borderRadius: "10px",
-                  fontSize: "14px",
-                  fontWeight: 700,
                   color: "text.primary",
                   border: "1px solid var(--border-default)",
                 }}
@@ -399,12 +396,6 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
                 Cancel
               </Button>
               <LoadingButton
-                sx={{
-                  paddingX: "16px",
-                  borderRadius: "10px",
-                  fontSize: "14px",
-                  fontWeight: 700,
-                }}
                 variant="contained"
                 color="primary"
                 onClick={() => {

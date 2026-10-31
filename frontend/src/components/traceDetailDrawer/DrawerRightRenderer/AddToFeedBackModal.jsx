@@ -23,6 +23,7 @@ const style = {
   width: "616px",
   bgcolor: "background.paper",
   borderRadius: 1,
+  // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
   boxShadow: 24,
   px: 1.5,
   py: 0.5,
@@ -56,12 +57,16 @@ function AddToFeedBackModal({ open, handleClose, setOpenSubmitFeedback }) {
           }}
         >
           <Typography
-            sx={{ fontWeight: 700, fontSize: "16px", color: "text.primary" }}
+            sx={{ fontWeight: 600, fontSize: "16px", color: "text.primary" }}
           >
             Feedbacks for Auto Learning
           </Typography>
           <IconButton onClick={handleClose} size="small">
-            <Iconify icon="mdi:close" color="text.primary" width={22} />
+            <Iconify
+              icon="solar:close-linear"
+              color="text.primary"
+              width={20}
+            />
           </IconButton>
         </Box>
 
@@ -91,7 +96,7 @@ function AddToFeedBackModal({ open, handleClose, setOpenSubmitFeedback }) {
             <Typography variant="body2" sx={{ color: "text.primary" }}>
               <Iconify
                 icon="mdi:circle-medium"
-                width={10}
+                width={12}
                 color="text.primary"
               />
               Lack of actual content in question, context, and answer fields;
@@ -100,7 +105,7 @@ function AddToFeedBackModal({ open, handleClose, setOpenSubmitFeedback }) {
             <Typography variant="body2" sx={{ color: "text.primary" }}>
               <Iconify
                 icon="mdi:circle-medium"
-                width={10}
+                width={12}
                 color="text.primary"
               />
               Inability to assess relevance, accuracy, or alignment with
@@ -114,7 +119,7 @@ function AddToFeedBackModal({ open, handleClose, setOpenSubmitFeedback }) {
         <Box sx={{ pb: 2, pt: 1 }}>
           <Typography
             sx={{
-              fontSize: "14px",
+              fontSize: "13px",
               fontWeight: 500,
               color: "text.primary",
               mb: 1,
@@ -171,28 +176,24 @@ function AddToFeedBackModal({ open, handleClose, setOpenSubmitFeedback }) {
           sx={{ display: "flex", justifyContent: "space-evenly", mt: 4, mb: 2 }}
         >
           <Button
+            size="small"
             variant="outlined"
             onClick={handleClose}
             sx={{
               width: "48%",
-              fontSize: "12px",
-              fontWeight: 500,
               color: "text.secondary",
-              height: "28px",
             }}
           >
             Cancel
           </Button>
           <Button
+            size="small"
             variant="contained"
             onClick={handleSubmit}
             sx={{
               width: "48%",
-              fontSize: "12px",
-              fontWeight: 600,
               color: "primary.contrastText",
               backgroundColor: "primary.main",
-              height: "28px",
               "&:hover": { backgroundColor: "primary.dark" },
             }}
           >
@@ -232,12 +233,16 @@ export function SubmitFeedBackModal({
           }}
         >
           <Typography
-            sx={{ fontWeight: 700, fontSize: "16px", color: "text.primary" }}
+            sx={{ fontWeight: 600, fontSize: "16px", color: "text.primary" }}
           >
             Your feedback is submitted
           </Typography>
           <IconButton onClick={handleSubmitFeedBackClose} size="small">
-            <Iconify icon="mdi:close" color="text.primary" width={22} />
+            <Iconify
+              icon="solar:close-linear"
+              color="text.primary"
+              width={20}
+            />
           </IconButton>
         </Box>
 
@@ -350,13 +355,11 @@ export function SubmitFeedBackModal({
           }}
         >
           <Button
+            size="small"
             variant="outlined"
             onClick={handleSubmitFeedBackClose}
             sx={{
-              height: "30px",
               width: "49%",
-              fontSize: "12px",
-              fontWeight: 500,
               color: "text.secondary",
               borderColor: "divider",
               "&:hover": {
@@ -368,13 +371,11 @@ export function SubmitFeedBackModal({
             Cancel
           </Button>
           <Button
+            size="small"
             variant="contained"
             onClick={handleSubmitFeedBackClose}
             sx={{
-              height: "30px",
               width: "49%",
-              fontSize: "12px",
-              fontWeight: 600,
               color: "primary.contrastText",
               backgroundColor: "primary.main",
               "&:hover": {

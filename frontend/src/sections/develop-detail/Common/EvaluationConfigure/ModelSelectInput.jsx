@@ -114,7 +114,8 @@ const ModelSelectInput = ({ control, configKey, config }) => {
                         pointerEvents: "auto",
                         cursor: "pointer",
                         opacity: 1,
-                        color: "error.main",
+                        // eslint-disable-next-line no-restricted-syntax -- ds: error state of unavailable option
+                        color: "status.danger.fg",
                       },
                     }}
                   >

@@ -48,7 +48,7 @@ export default function UserTableRow({
             primaryTypographyProps={{ typography: "body2" }}
             secondaryTypographyProps={{
               component: "span",
-              color: "text.disabled",
+              color: "text.secondary",
             }}
           />
         </TableCell>
@@ -73,9 +73,17 @@ export default function UserTableRow({
           </Label>
         </TableCell>
 
-        <TableCell align="right" sx={{ px: 1, whiteSpace: "nowrap" }}>
+        <TableCell
+          align="right"
+          sx={{
+            fontVariantNumeric: "tabular-nums",
+            px: 1,
+            whiteSpace: "nowrap",
+          }}
+        >
           <Tooltip title="Quick Edit" placement="top" arrow>
             <IconButton
+              className="row-hover-action"
               color={quickEdit.value ? "inherit" : "default"}
               onClick={quickEdit.onTrue}
             >
@@ -87,7 +95,7 @@ export default function UserTableRow({
             color={popover.open ? "inherit" : "default"}
             onClick={popover.onOpen}
           >
-            <Iconify icon="eva:more-vertical-fill" />
+            <Iconify icon="solar:menu-dots-vertical-linear" />
           </IconButton>
         </TableCell>
       </TableRow>
@@ -109,7 +117,8 @@ export default function UserTableRow({
             confirm.onTrue();
             popover.onClose();
           }}
-          sx={{ color: "error.main" }}
+          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+          sx={{ color: "status.danger.fg" }}
         >
           <Iconify icon="solar:trash-bin-trash-bold" />
           Delete

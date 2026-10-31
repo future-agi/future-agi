@@ -42,7 +42,7 @@ export default function CancelBuildControl({ envId, building = false }) {
         disabled={cancel.isPending}
         onClick={() => setConfirming(true)}
         startIcon={<Iconify icon="solar:close-circle-linear" width={15} />}
-        sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+        sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}
       >
         {cancel.isPending ? "Canceling…" : "Cancel build"}
       </Button>

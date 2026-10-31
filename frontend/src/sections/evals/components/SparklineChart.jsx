@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import { Box, Typography, useTheme } from "@mui/material";
 import ApexCharts from "apexcharts";
 import PropTypes from "prop-types";
@@ -34,13 +35,7 @@ const SparklineChart = ({ data = [], color = "#E2A6F1", height = 28 }) => {
         sparkline: { enabled: true },
         animations: { enabled: false },
       },
-      colors: [
-        hasNonZeroData
-          ? color
-          : muiTheme.palette.mode === "dark"
-            ? "#3a3f47"
-            : "#e2e8f0",
-      ],
+      colors: [hasNonZeroData ? color : muiTheme.palette.divider],
       stroke: {
         curve: "smooth",
         width: hasNonZeroData ? 1.5 : 1,
@@ -87,6 +82,7 @@ const SparklineChart = ({ data = [], color = "#E2A6F1", height = 28 }) => {
     hasNonZeroData,
     muiTheme.palette.background.default,
     muiTheme.palette.mode,
+    muiTheme.palette.divider,
   ]);
 
   return (
@@ -100,7 +96,7 @@ const SparklineChart = ({ data = [], color = "#E2A6F1", height = 28 }) => {
       <Typography
         variant="caption"
         color={hasNonZeroData ? "text.primary" : "text.disabled"}
-        sx={{ minWidth: 20, textAlign: "right", fontSize: "11px" }}
+        sx={{ minWidth: 20, textAlign: "right", fontSize: "12px" }}
       >
         {totalCount}
       </Typography>

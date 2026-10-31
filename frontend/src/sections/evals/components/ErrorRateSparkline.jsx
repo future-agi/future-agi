@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import { Box, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
@@ -23,8 +24,7 @@ const ErrorRateSparkline = ({ dailyValues = [], height = 28 }) => {
   const hasData = useMemo(() => days.some((d) => d.value > 0), [days]);
 
   const hovered = hoveredIdx !== null ? days[hoveredIdx] : null;
-  const isDark = theme.palette.mode === "dark";
-  const baselineColor = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)";
+  const baselineColor = theme.palette.divider;
 
   const svgWidth = 140;
   const svgHeight = height;
@@ -179,7 +179,7 @@ const ErrorRateSparkline = ({ dailyValues = [], height = 28 }) => {
       >
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: hovered ? "text.secondary" : "transparent",
             lineHeight: 1,
             whiteSpace: "nowrap",
@@ -189,7 +189,7 @@ const ErrorRateSparkline = ({ dailyValues = [], height = 28 }) => {
         </Typography>
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 500,
             color: hovered ? getValueColor(hovered.value) : "transparent",
             lineHeight: 1,

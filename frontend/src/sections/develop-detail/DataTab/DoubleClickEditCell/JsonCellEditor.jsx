@@ -246,6 +246,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
             padding: "10px",
             border: "1px solid var(--border-default)",
             borderRadius: "4px",
+            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
             boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
             zIndex: 1000,
           }}
@@ -326,7 +327,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
           onChange={handleValueChange}
           valueTypes={[imageType]}
           sx={{
-            fontSize: "14px",
+            fontSize: "13px",
             "& .jv-edit-input": {
               border: "1px solid var(--border-default)",
               borderRadius: "4px",
@@ -349,7 +350,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
             color="primary"
             startIcon={
               <Icon
-                icon="mdi:check-bold"
+                icon="solar:check-linear"
                 style={{
                   width: 16,
                   height: 16,
@@ -359,8 +360,6 @@ const JsonCellEditor = forwardRef((props, ref) => {
             }
             onClick={triggerValueChange}
             sx={{
-              fontSize: "12px",
-              fontWeight: 500,
               p: theme.spacing(2),
               whiteSpace: "nowrap",
             }}

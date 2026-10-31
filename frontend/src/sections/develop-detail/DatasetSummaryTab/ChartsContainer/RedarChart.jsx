@@ -23,6 +23,7 @@ const getDefaultOptions = (isDark) => ({
       left: 1,
       top: 1,
     },
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     foreColor: isDark ? "#a1a1aa" : undefined,
   },
   theme: {
@@ -32,7 +33,9 @@ const getDefaultOptions = (isDark) => ({
     radar: {
       size: 150,
       polygons: {
+        // eslint-disable-next-line no-restricted-syntax -- ds: data colour
         strokeColors: isDark ? "#27272a" : undefined,
+        // eslint-disable-next-line no-restricted-syntax -- ds: data colour
         connectorColors: isDark ? "#27272a" : undefined,
       },
     },

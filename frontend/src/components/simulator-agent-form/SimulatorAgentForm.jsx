@@ -7,7 +7,6 @@ import {
   Tab,
   Tabs,
   Typography,
-  useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useEffect, useState } from "react";
@@ -21,6 +20,7 @@ import { ShowComponent } from "../show";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { formSchema } from "./validation";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const tabEventMap = {
   "Basic Settings": Events.simulatorAgentBasicSettingClicked,
@@ -40,11 +40,11 @@ const SimulatorAgentForm = ({
   defaultValues,
 }) => {
   const [activeTab, setActiveTab] = useState("Basic Settings");
+  const covered = useDrawerCovered(open);
   const { control, formState, handleSubmit, reset } = useForm({
     defaultValues: defaultValues,
     resolver: zodResolver(formSchema),
   });
-  const theme = useTheme();
 
   function handleClose() {
     onClose();
@@ -70,13 +70,13 @@ const SimulatorAgentForm = ({
       anchor="right"
       open={open}
       onClose={handleClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 2,
-          boxShadow: "-10px 0px 100px #00000035",
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           overflow: "visible",
           padding: 2,
@@ -114,7 +114,7 @@ const SimulatorAgentForm = ({
           ></HeadingAndSubheading>
 
           <IconButton onClick={handleClose}>
-            <Iconify icon="eva:close-fill" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
 
@@ -131,23 +131,10 @@ const SimulatorAgentForm = ({
             value={activeTab}
             textColor="primary"
             indicatorColor="primary"
-            TabIndicatorProps={{
-              style: {
-                backgroundColor: theme.palette.primary.main,
-              },
-            }}
             sx={{
               width: "100%",
-              minHeight: 0,
               "& .MuiTab-root": {
                 margin: "0 !important",
-                fontWeight: "600",
-                typography: "s2",
-                color: "primary.main",
-                "&:not(.Mui-selected)": {
-                  color: "text.disabled",
-                  fontWeight: "500",
-                },
               },
             }}
           >

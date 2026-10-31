@@ -21,6 +21,7 @@ const getDefaultOptions = (isDark) => ({
     toolbar: {
       show: false,
     },
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     foreColor: isDark ? "#a1a1aa" : undefined,
   },
   theme: {
@@ -29,6 +30,7 @@ const getDefaultOptions = (isDark) => ({
   grid: {
     show: true,
     strokeDashArray: 10,
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     borderColor: isDark ? "#27272a" : undefined,
   },
   plotOptions: {
@@ -180,7 +182,7 @@ const ColumnBarChart = ({
                 value={item.totalCells}
                 sx={{ marginTop: "4px" }}
               />
-              <SvgColor
+              <SvgColor width={24}
                 // @ts-ignore
                 src="/assets/icons/summary/bar-graph.svg"
                 color={generateAllColors(palette, colors || undefined)[index]}

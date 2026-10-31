@@ -17,6 +17,8 @@ import { useVoiceCallDetail } from "src/sections/agents/helper";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2/VoiceDetailDrawerV2";
+import { statusColors } from "src/utils/runStatus";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const EMPTY_AGG = {
   total_traces: 0,
@@ -61,10 +63,10 @@ function AggregateBar({ agg }) {
             textAlign: "center",
           }}
         >
-          <Typography fontSize="17px" fontWeight={700} color="text.primary">
+          <Typography fontSize="16px" fontWeight={600} color="text.primary">
             {item.value}
           </Typography>
-          <Typography fontSize="10px" color="text.disabled" mt={0.25}>
+          <Typography fontSize="12px" color="text.disabled" mt={0.25}>
             {item.label}
           </Typography>
         </Box>
@@ -75,21 +77,17 @@ function AggregateBar({ agg }) {
 AggregateBar.propTypes = { agg: PropTypes.object.isRequired };
 
 // ── Score cell renderer — full-cell fill, green ≥ 70%, red < 70% ─────────────
-function scoreColors(pct, isDark) {
-  if (pct >= 70)
-    return {
-      backgroundColor: "rgba(90,206,109,0.12)",
-      color: isDark ? "#94DFA0" : "#3a9e50",
-    };
-  if (pct >= 50)
-    return {
-      backgroundColor: "rgba(245,166,35,0.12)",
-      color: isDark ? "#E8A13A" : "#c47d00",
-    };
-  return {
-    backgroundColor: "rgba(219,47,45,0.10)",
-    color: isDark ? "#E87876" : "#c0392b",
-  };
+function scoreColors(pct, theme) {
+  if (pct >= 70) {
+    const c = statusColors(theme, "success");
+    return { backgroundColor: c.bg, color: c.fg };
+  }
+  if (pct >= 50) {
+    // Amber stays on the cell fill; the number reads in the theme text colour.
+    return { backgroundColor: statusColors(theme, "warning").bg, color: null };
+  }
+  const c = statusColors(theme, "danger");
+  return { backgroundColor: c.bg, color: c.fg };
 }
 
 function ScoreCellRenderer({ value }) {
@@ -111,10 +109,7 @@ function ScoreCellRenderer({ value }) {
     );
   }
   const pct = Math.round(value * 100);
-  const { backgroundColor, color } = scoreColors(
-    pct,
-    theme.palette.mode === "dark",
-  );
+  const { backgroundColor, color } = scoreColors(pct, theme);
   return (
     <div
       style={{
@@ -125,7 +120,7 @@ function ScoreCellRenderer({ value }) {
         backgroundColor,
         paddingInline: 12,
         fontWeight: 500,
-        fontSize: 13,
+        fontSize: 12,
         color,
       }}
     >
@@ -147,7 +142,7 @@ function TracesGrid({ rows, onRowClick }) {
         field: "id",
         width: 155,
         sortable: true,
-        cellStyle: { fontSize: "11px" },
+        cellStyle: { fontSize: "12px" },
       },
       {
         headerName: "Input",
@@ -169,7 +164,7 @@ function TracesGrid({ rows, onRowClick }) {
                 minute: "2-digit",
               })
             : "—",
-        cellStyle: { fontSize: "11px" },
+        cellStyle: { fontSize: "12px" },
       },
       {
         headerName: "Duration",
@@ -238,7 +233,7 @@ function TracesGrid({ rows, onRowClick }) {
         rowData={rows}
         columnDefs={colDefs}
         defaultColDef={defaultColDef}
-        rowHeight={40}
+        rowHeight={ROW_HEIGHT.default}
         headerHeight={38}
         rowBuffer={10}
         suppressCellFocus
@@ -324,7 +319,7 @@ export default function TracesTab({ error }) {
 
       <Box>
         <TracesGrid rows={rows} onRowClick={setDrawerTraceId} />
-        <Typography fontSize="11px" color="text.disabled" mt={1}>
+        <Typography fontSize="12px" color="text.disabled" mt={1}>
           {isLoading
             ? "Loading traces…"
             : `Showing ${rows.length} of ${total.toLocaleString()} total traces in this cluster`}

@@ -227,9 +227,9 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
         borderBottom={1}
         borderColor="divider"
       >
-        <Typography variant="h6">Filters</Typography>
+        <Typography variant="subtitle1">Filters</Typography>
         <IconButton onClick={onClose} edge="end">
-          <Iconify icon="mdi:close" width={20} />
+          <Iconify icon="solar:close-linear" width={16} />
         </IconButton>
       </Stack>
 
@@ -239,11 +239,11 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
           {/* Date range */}
           <Box>
             <Typography variant="subtitle2" gutterBottom>
-              Date Range
+              Date range
             </Typography>
             <Stack spacing={1.5}>
               <TextField
-                label="Start Date"
+                label="Start date"
                 type="datetime-local"
                 size="small"
                 fullWidth
@@ -252,7 +252,7 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
                 InputLabelProps={{ shrink: true }}
               />
               <TextField
-                label="End Date"
+                label="End date"
                 type="datetime-local"
                 size="small"
                 fullWidth
@@ -332,7 +332,7 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
           {/* Status code range */}
           <Box>
             <Typography variant="subtitle2" gutterBottom>
-              Status Code
+              Status code
             </Typography>
             <Stack direction="row" spacing={1}>
               <TextField
@@ -504,7 +504,7 @@ const FilterPanel = ({ open, onClose, filters, onApply }) => {
         sx={{ position: "sticky", bottom: 0, bgcolor: "background.paper" }}
       >
         <Button variant="text" onClick={handleClear} sx={{ flex: 1 }}>
-          Clear All
+          Clear all
         </Button>
         <Button variant="contained" onClick={handleApply} sx={{ flex: 1 }}>
           Apply

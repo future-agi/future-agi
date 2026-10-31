@@ -21,6 +21,7 @@ const getDefaultOptions = (isDark) => ({
     toolbar: {
       show: false,
     },
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     foreColor: isDark ? "#a1a1aa" : undefined,
   },
   theme: { mode: isDark ? "dark" : "light" },
@@ -28,6 +29,7 @@ const getDefaultOptions = (isDark) => ({
   grid: {
     show: true,
     strokeDashArray: 10,
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     borderColor: isDark ? "#27272a" : undefined,
   },
   dataLabels: {
@@ -143,7 +145,6 @@ const StackBarChart = ({
           <Button
             variant={!notAllSelected ? "contained" : "outlined"}
             color={!notAllSelected ? "primary" : "secondary"}
-            sx={{ borderRadius: "4px" }}
             size="small"
             onClick={() => clickAllLegend(!notAllSelected)}
           >
@@ -206,7 +207,7 @@ const StackBarChart = ({
           <Typography
             typography={"s1"}
             fontWeight={"fontWeightMedium"}
-            color="green.500"
+            color="status.success.fg"
           >
             {headerData?.average} {headerData?.average && "%"}
           </Typography>

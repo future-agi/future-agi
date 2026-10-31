@@ -247,7 +247,7 @@ export default function TwoFactorVerifyView() {
       <Typography
         fontWeight={"fontWeightSemiBold"}
         sx={{
-          fontSize: "28px",
+          fontSize: "24px",
           color: "text.primary",
           fontFamily: "Inter",
           lineHeight: "36px",
@@ -257,7 +257,7 @@ export default function TwoFactorVerifyView() {
       </Typography>
       <Typography
         sx={{
-          fontSize: "14px",
+          fontSize: "13px",
           color: "text.secondary",
           fontFamily: "Inter",
           mt: 1,
@@ -275,7 +275,7 @@ export default function TwoFactorVerifyView() {
         sx={{
           color: "error.main",
           bgcolor: "error.lighter",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           px: 2,
           py: 1,
           border: "1px solid",
@@ -321,7 +321,7 @@ export default function TwoFactorVerifyView() {
           onChange={(e) => setCode(e.target.value)}
           autoComplete="one-time-code"
           inputProps={{ maxLength: 6 }}
-          sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+          sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
           size="small"
           autoFocus
         />
@@ -329,13 +329,13 @@ export default function TwoFactorVerifyView() {
         {renderErrorAlert()}
 
         <LoadingButton
+          size="large"
           fullWidth
           color="primary"
           type="submit"
           variant="contained"
           loading={isSubmitting}
           disabled={code.length !== 6}
-          sx={{ height: "42px", borderRadius: 0.5 }}
         >
           Verify
         </LoadingButton>
@@ -390,7 +390,7 @@ export default function TwoFactorVerifyView() {
           value={code}
           onChange={(e) => setCode(e.target.value)}
           autoComplete="off"
-          sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+          sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
           size="small"
           autoFocus
         />
@@ -398,13 +398,13 @@ export default function TwoFactorVerifyView() {
         {renderErrorAlert()}
 
         <LoadingButton
+          size="large"
           fullWidth
           color="primary"
           type="submit"
           variant="contained"
           loading={isSubmitting}
           disabled={!code.trim()}
-          sx={{ height: "42px", borderRadius: 0.5 }}
         >
           Verify
         </LoadingButton>
@@ -454,12 +454,12 @@ export default function TwoFactorVerifyView() {
       {renderErrorAlert()}
 
       <LoadingButton
+        size="large"
         fullWidth
         color="primary"
         variant="contained"
         loading={isSubmitting}
         onClick={handlePasskeySubmit}
-        sx={{ height: "42px", borderRadius: 0.5 }}
       >
         Verify with passkey
       </LoadingButton>

@@ -11,6 +11,7 @@ export const LabelCard = styled(Box)(({ theme }) => ({
   position: "absolute",
   zIndex: 2,
   overflow: "hidden",
+  // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
   boxShadow: "-20px 20px 40px -4px rgba(145, 158, 171, 0.24)",
   "&:before": {
     content: '""',
@@ -38,7 +39,7 @@ export const SearchBox = styled(Box)(({ theme }) => ({
   display: "flex",
   alignItems: "center",
   border: `1px solid ${theme.palette.divider}`,
-  borderRadius: "10px",
+  borderRadius: "8px",
   height: "35px",
 }));
 
@@ -46,7 +47,7 @@ export const LabelButton = styled(Typography)(({ theme }) => ({
   borderRadius: "6px",
   color: theme.palette.text.primary,
   cursor: "pointer",
-  fontSize: "14px",
+  fontSize: "13px",
   fontWeight: typography.fontWeightRegular,
   lineHeight: 1.6,
   padding: "6px 8px",
@@ -79,7 +80,7 @@ export const ModalHeader = styled(Box)(() => ({
 }));
 
 export const ModalTitle = styled(Typography)(({ theme }) => ({
-  fontSize: 18,
+  fontSize: 16,
   fontWeight: theme.typography.fontWeightBold,
 }));
 
@@ -88,7 +89,7 @@ export const ModalBody = styled(Box)(() => ({
 }));
 
 export const PreviewWrap = styled(Box)(({ theme }) => ({
-  borderRadius: "10px",
+  borderRadius: "8px",
   border: `1px solid ${theme.palette.background.neutral}`,
   overflow: "hidden",
   marginTop: "29px",

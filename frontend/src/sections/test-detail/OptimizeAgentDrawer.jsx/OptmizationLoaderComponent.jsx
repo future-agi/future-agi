@@ -1,8 +1,9 @@
-import { Box, CircularProgress, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import { ShowComponent } from "src/components/show";
 import { AgentPromptOptimizerStatus } from "../FixMyAgentDrawer/common";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const OptmizationLoaderComponent = ({
   optimizationStatus = "unknown",
@@ -41,7 +42,7 @@ const OptmizationLoaderComponent = ({
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={24} sx={{ color: "text.primary" }} />
+            <ContentSkeleton variant="panel" />
           </Box>
 
           <Stack
@@ -86,7 +87,7 @@ const OptmizationLoaderComponent = ({
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={24} sx={{ color: "text.primary" }} />
+            <ContentSkeleton variant="panel" />
           </Box>
 
           <Stack
@@ -133,7 +134,7 @@ const OptmizationLoaderComponent = ({
               sx={{
                 height: 22,
                 width: 22,
-                bgcolor: "red.500",
+                bgcolor: "status.danger.solid",
               }}
             />
           </Box>
@@ -232,7 +233,7 @@ const OptmizationLoaderComponent = ({
               variant="outlined"
               size="medium"
               startIcon={
-                <Iconify icon="pajamas:retry" width="22px" height="22px" />
+                <Iconify icon="solar:refresh-linear" width="22px" height="22px" />
               }
               onClick={() => {
                 navigate("/dashboard/settings/billing");

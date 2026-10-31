@@ -10,6 +10,7 @@ import {
   useTheme,
 } from "@mui/material";
 import PropTypes from "prop-types";
+import { alpha } from "@mui/material/styles";
 import React, { useState, useEffect } from "react";
 import Iconify from "src/components/iconify";
 const CustomBackdrop = styled(Backdrop)(({ theme }) => ({
@@ -44,12 +45,13 @@ export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
       fullWidth
       PaperProps={{
         sx: {
-          width: "900px",
+          width: "960px",
           height: "700px",
           maxWidth: "none",
           maxHeight: "none",
           margin: 0,
           borderRadius: 2,
+          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
           boxShadow: 2,
           display: "flex",
           flexDirection: "column",
@@ -79,10 +81,7 @@ export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              backgroundColor:
-                theme.palette.mode === "light"
-                  ? "rgba(255, 255, 255, 0.9)"
-                  : "rgba(33, 43, 54, 0.9)",
+              backgroundColor: alpha(theme.palette.background.paper, 0.9),
               backdropFilter: "blur(2px)",
               zIndex: 10,
               minHeight: "400px",
@@ -140,7 +139,6 @@ export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
             onClick={onClose}
             sx={{
               width: "30px",
-              height: "30px",
               position: "absolute",
               marginLeft: "8px",
               top: 0,
@@ -150,7 +148,7 @@ export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
             }}
           >
             <Iconify
-              icon="line-md:close"
+              icon="solar:close-linear"
               sx={{
                 width: (theme) => theme.spacing(2),
                 height: (theme) => theme.spacing(2),

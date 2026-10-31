@@ -11,7 +11,7 @@ const AddedUsers = ({ addedUsers }) => {
         maxHeight: "200px",
         overflowY: "scroll",
         borderColor: "divider",
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
       spacing={1.25}
       padding={1}

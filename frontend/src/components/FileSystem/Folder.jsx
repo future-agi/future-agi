@@ -56,14 +56,14 @@ export default function Folder({
         // - Menu button: ~40px (when isChildren)
         // - Padding and gaps: ~16px
 
-        let reservedWidth = 32 + 16; // folder icon + padding/gaps
+        let reservedWidth = 16 + 8 + 16; // folder icon + gaps + padding
 
         if (hasChildren) {
-          reservedWidth += 30; // chevron icon
+          reservedWidth += 24; // chevron icon
         }
 
         if (isChildren) {
-          reservedWidth += 40 + 40; // left padding + menu button
+          reservedWidth += 32 + 28; // left padding + menu button
         } else {
           reservedWidth += 0; // no menu button for parent folders
         }
@@ -127,8 +127,12 @@ export default function Folder({
         alignItems={"center"}
         gap={theme.spacing(1)}
         sx={{
-          pl: isChildren ? "40px" : 0,
-          bgcolor: isLinkActive ? "action.hover" : "unset",
+          pl: isChildren ? "32px" : 1,
+          pr: 0.5,
+          minHeight: 28,
+          borderRadius: "6px",
+          bgcolor: isLinkActive ? "action.selected" : "unset",
+          "&:hover": isLinkActive ? undefined : { bgcolor: "action.hover" },
           cursor: "pointer",
           ...sx,
         }}
@@ -154,33 +158,42 @@ export default function Folder({
           </IconButton>
         )}
 
-        <Box sx={{ position: "relative", width: 20, height: 20 }}>
+        {/* Monochrome 16px icon, like the sidebar: grey at rest, primary when
+            the folder is open. */}
+        <Box
+          sx={{ position: "relative", width: 16, height: 16, flexShrink: 0 }}
+        >
           <SvgColor
             src={folderIcon}
             sx={{
               position: "absolute",
               inset: 0,
+              width: 16,
+              height: 16,
               opacity: isLinkActive ? 0 : 1,
-              transition: "opacity 0.4s ease-in-out",
-              color: "blue.500",
+              transition: "opacity 0.2s ease-in-out",
+              color: "text.secondary",
             }}
           />
           <SvgColor
             src={openFolderIcon}
             sx={{
-              color: "blue.500",
+              color: "text.primary",
               position: "absolute",
               inset: 0,
+              width: 16,
+              height: 16,
               opacity: isLinkActive ? 1 : 0,
-              transition: "opacity 0.4s ease-in-out",
+              transition: "opacity 0.2s ease-in-out",
             }}
           />
         </Box>
 
         <Typography
-          typography={"s1"}
-          fontWeight={"fontWeightMedium"}
-          color={"text.primary"}
+          fontSize={13}
+          lineHeight="20px"
+          fontWeight={isLinkActive ? 500 : 400}
+          color={isLinkActive ? "text.primary" : "text.secondary"}
           sx={{
             flex: 1,
             minWidth: 0,
@@ -197,6 +210,7 @@ export default function Folder({
         </Typography>
 
         <IconButton
+          size="small"
           disabled={isSample || !isChildren}
           sx={{
             opacity: isSample || !isChildren ? 0 : 1,
@@ -209,6 +223,8 @@ export default function Folder({
           <SvgColor
             sx={{
               color: "text.disabled",
+              height: 16,
+              width: 16,
               rotate: "90deg",
             }}
             src="/assets/icons/ic_ellipsis.svg"
@@ -222,7 +238,7 @@ export default function Folder({
           PaperProps={{
             sx: {
               mt: 1,
-              minWidth: 100,
+              minWidth: 200,
               p: 0.5,
             },
           }}
@@ -255,7 +271,8 @@ export default function Folder({
               );
               setOpen(false), setSelectedActionName("Delete");
             }}
-            sx={{ color: "error.main", px: 1.25, py: 0.75 }}
+            // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
+            sx={{ color: "status.danger.fg", px: 1.25, py: 0.75 }}
           >
             <ListItemText
               primary="Delete"

@@ -29,10 +29,10 @@ const ExperimentEvaluationChart = ({ col, rows }) => {
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
         <Iconify
-          icon="material-symbols:check-circle-outline"
+          icon="solar:check-circle-linear"
           sx={{ color: "text.secondary" }}
         />
-        <Typography color="text.secondary" fontSize="13px" fontWeight={700}>
+        <Typography color="text.secondary" fontSize="13px" fontWeight={600}>
           {col?.name?.split("-")?.[0]}
         </Typography>
       </Box>
@@ -45,6 +45,7 @@ const ExperimentEvaluationChart = ({ col, rows }) => {
               toolbar: {
                 show: false,
               },
+              // eslint-disable-next-line no-restricted-syntax -- ds: data colour
               foreColor: isDark ? "#a1a1aa" : undefined,
             },
             theme: {
@@ -70,6 +71,7 @@ const ExperimentEvaluationChart = ({ col, rows }) => {
               theme: isDark ? "dark" : "light",
             },
             grid: {
+              // eslint-disable-next-line no-restricted-syntax -- ds: data colour
               borderColor: isDark ? "#27272a" : undefined,
             },
           }}

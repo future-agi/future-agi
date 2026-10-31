@@ -28,7 +28,9 @@ const FEEDBACK_OPTIONS = {
 };
 
 const DIALOG_PAPER_STYLES = {
+  maxWidth: 720,
   borderRadius: 2,
+  // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
   boxShadow: "0px 8px 24px rgba(0, 0, 0, 0.15)",
 };
 
@@ -194,7 +196,7 @@ const FeedbackSubmissionModal = memo(
       <Dialog
         open={open}
         onClose={onClose}
-        maxWidth="sm"
+        maxWidth={false}
         fullWidth
         PaperProps={{ sx: DIALOG_PAPER_STYLES }}
         disablePortal={false}
@@ -206,10 +208,14 @@ const FeedbackSubmissionModal = memo(
             onClick={handleCancel}
             sx={CLOSE_BUTTON_STYLES}
           >
-            <Iconify icon="eva:close-fill" width={24} color="text.primary" />
+            <Iconify
+              icon="solar:close-linear"
+              width={24}
+              color="text.primary"
+            />
           </IconButton>
 
-          <Typography sx={{ fontWeight: 700, fontSize: "16px", mb: 2, px: 2 }}>
+          <Typography sx={{ fontWeight: 600, fontSize: "16px", mb: 2, px: 2 }}>
             Your feedback is submitted
           </Typography>
 

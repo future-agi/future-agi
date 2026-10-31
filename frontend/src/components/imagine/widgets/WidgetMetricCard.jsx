@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
@@ -8,16 +9,16 @@ export default function WidgetMetricCard({ config }) {
 
   const trendColor =
     trendDirection === "up"
-      ? "#16a34a"
+      ? "status.success.fg"
       : trendDirection === "down"
-        ? "#dc2626"
-        : "#666";
+        ? "status.danger.fg"
+        : "text.tertiary";
   const trendIcon =
     trendDirection === "up"
-      ? "mdi:trending-up"
+      ? "solar:graph-up-linear"
       : trendDirection === "down"
-        ? "mdi:trending-down"
-        : "mdi:minus";
+        ? "solar:graph-down-linear"
+        : "solar:minus-linear";
 
   return (
     <Box
@@ -42,7 +43,7 @@ export default function WidgetMetricCard({ config }) {
       <Typography
         sx={{
           fontSize: 32,
-          fontWeight: 700,
+          fontWeight: 600,
           lineHeight: 1.1,
           color: "text.primary",
           fontFamily: "'IBM Plex Mono', monospace",

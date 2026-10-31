@@ -105,14 +105,16 @@ export default function FalconAIFab() {
           bottom: 72,
           right: 12,
           zIndex: 1200,
-          bgcolor: "#7857FC",
-          color: "#fff",
+          bgcolor: "primary.main",
+          color: "primary.contrastText",
           width: 40,
           height: 40,
           minHeight: 40,
+          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
           boxShadow: "0 3px 12px 0 rgba(120, 87, 252, 0.4)",
           "&:hover": {
-            bgcolor: "#6344e0",
+            bgcolor: "primary.dark",
+            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
             boxShadow: "0 4px 18px 0 rgba(120, 87, 252, 0.55)",
             transform: "scale(1.08)",
           },

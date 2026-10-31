@@ -15,6 +15,7 @@ const getDefaultOptions = (isDark) => ({
     toolbar: {
       show: false,
     },
+    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
     foreColor: isDark ? "#a1a1aa" : undefined,
   },
   theme: { mode: isDark ? "dark" : "light" },
@@ -100,7 +101,6 @@ const DonutChart = ({
               variant={"outlined"}
               {...(item.active && { color: "primary" })}
               sx={{
-                borderRadius: "4px",
                 color: "text.secondary",
                 ...((currentIndex != null || currentIndex != undefined) && {
                   padding: "8px",
@@ -154,7 +154,7 @@ const DonutChart = ({
             <Typography
               typography={"s1"}
               fontWeight={"fontWeightMedium"}
-              color="green.500"
+              color="status.success.fg"
             >
               {headerValue.map(cleanChoiceLabel).join(", ")}
               {/* {headerValue.map((item) => `${item} ${(headerData?.average[item])?.toFixed(0)}%`).join(", ")} */}

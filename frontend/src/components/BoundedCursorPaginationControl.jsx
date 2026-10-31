@@ -298,7 +298,7 @@ const BoundedCursorPaginationControl = ({
           }}
         >
           <CircularProgress size={14} />
-          <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+          <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
             {loadingLabel}
           </Typography>
         </Box>
@@ -309,11 +309,7 @@ const BoundedCursorPaginationControl = ({
               {errorMessage}
             </Typography>
           )}
-          <Button
-            size="small"
-            onClick={() => runOneBoundedPage(true)}
-            sx={{ fontSize: 11 }}
-          >
+          <Button size="small" onClick={() => runOneBoundedPage(true)}>
             {retryLabel}
           </Button>
         </Stack>

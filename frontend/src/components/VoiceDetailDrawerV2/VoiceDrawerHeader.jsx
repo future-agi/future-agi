@@ -1,38 +1,25 @@
 import React, { useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
-import { Box, Stack, Tooltip, Typography } from "@mui/material";
+import { IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 
 const HeaderButton = ({ icon, tooltip, onClick, disabled }) => (
   <Tooltip title={tooltip} arrow placement="bottom">
-    <Box
-      component="button"
-      onClick={onClick}
-      disabled={disabled}
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 24,
-        height: 24,
-        p: 0,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "4px",
-        bgcolor: "background.paper",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-        flexShrink: 0,
-        "&:hover:not(:disabled)": {
-          bgcolor: "action.hover",
-          borderColor: "text.disabled",
-        },
-        transition: "all 120ms",
-      }}
-    >
-      <Iconify icon={icon} width={16} sx={{ color: "text.primary" }} />
-    </Box>
+    <span>
+      <IconButton
+        size="small"
+        onClick={onClick}
+        disabled={disabled}
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.paper",
+        }}
+      >
+        <Iconify icon={icon} width={16} sx={{ color: "text.primary" }} />
+      </IconButton>
+    </span>
   </Tooltip>
 );
 
@@ -45,32 +32,20 @@ HeaderButton.propTypes = {
 
 const NavButton = ({ icon, tooltip, onClick, disabled }) => (
   <Tooltip title={tooltip} arrow placement="bottom">
-    <Box
-      component="button"
-      onClick={onClick}
-      disabled={disabled}
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 24,
-        height: 24,
-        p: 0,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "2px",
-        bgcolor: "background.paper",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-        flexShrink: 0,
-        "&:hover:not(:disabled)": {
-          bgcolor: "action.hover",
-          borderColor: "text.disabled",
-        },
-      }}
-    >
-      <Iconify icon={icon} width={20} sx={{ color: "text.primary" }} />
-    </Box>
+    <span>
+      <IconButton
+        size="small"
+        onClick={onClick}
+        disabled={disabled}
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.paper",
+        }}
+      >
+        <Iconify icon={icon} width={20} sx={{ color: "text.primary" }} />
+      </IconButton>
+    </span>
   </Tooltip>
 );
 
@@ -185,39 +160,29 @@ const VoiceDrawerHeader = ({
             {callId || "-"}
           </Typography>
           <Tooltip title={copyTooltip} arrow placement="bottom">
-            <Box
-              component="button"
+            <IconButton
+              size="small"
               onClick={handleCopy}
-              sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                p: 0,
-                border: "none",
-                bgcolor: "transparent",
-                cursor: "pointer",
-                flexShrink: 0,
-                "&:hover": { opacity: 0.7 },
-              }}
+              aria-label="Copy call ID"
             >
               <Iconify
-                icon="mdi:content-copy"
+                icon="solar:copy-linear"
                 width={12}
                 sx={{ color: "text.secondary" }}
               />
-            </Box>
+            </IconButton>
           </Tooltip>
         </Stack>
 
         <Stack direction="row" spacing={0.5}>
           <NavButton
-            icon="mdi:chevron-up"
+            icon="solar:alt-arrow-up-linear"
             tooltip="Previous call (↑)"
             onClick={onPrev}
             disabled={!hasPrev}
           />
           <NavButton
-            icon="mdi:chevron-down"
+            icon="solar:alt-arrow-down-linear"
             tooltip="Next call (↓)"
             onClick={onNext}
             disabled={!hasNext}
@@ -230,28 +195,32 @@ const VoiceDrawerHeader = ({
         <Stack direction="row" spacing={0.5}>
           {onFullscreen && (
             <HeaderButton
-              icon={isFullscreen ? "lucide:minimize" : "lucide:fullscreen"}
+              icon={
+                isFullscreen
+                  ? "solar:quit-full-screen-linear"
+                  : "solar:full-screen-linear"
+              }
               tooltip={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
               onClick={onFullscreen}
             />
           )}
           {onOpenNewTab && (
             <HeaderButton
-              icon="iconoir:open-new-window"
+              icon="solar:arrow-right-up-linear"
               tooltip="Open in new tab"
               onClick={onOpenNewTab}
             />
           )}
           {onDownload && (
             <HeaderButton
-              icon="mdi:download-outline"
+              icon="solar:download-minimalistic-linear"
               tooltip="Download raw data"
               onClick={onDownload}
             />
           )}
           {onShare && (
             <HeaderButton
-              icon="basil:share-outline"
+              icon="solar:share-linear"
               tooltip="Share call"
               onClick={onShare}
             />
@@ -259,27 +228,13 @@ const VoiceDrawerHeader = ({
         </Stack>
 
         <Tooltip title="Close (Esc)" arrow placement="bottom">
-          <Box
-            component="button"
-            onClick={onClose}
-            sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              p: 0,
-              border: "none",
-              bgcolor: "transparent",
-              cursor: "pointer",
-              flexShrink: 0,
-              "&:hover": { opacity: 0.6 },
-            }}
-          >
+          <IconButton size="small" onClick={onClose} aria-label="Close">
             <Iconify
-              icon="mdi:close"
+              icon="solar:close-linear"
               width={20}
               sx={{ color: "text.primary" }}
             />
-          </Box>
+          </IconButton>
         </Tooltip>
       </Stack>
     </Stack>

@@ -25,6 +25,7 @@ import {
   Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
+import { statusColors } from "src/utils/runStatus";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CellMarkdown from "src/sections/common/CellMarkdown";
@@ -53,11 +54,11 @@ const Kbd = ({ children }) => (
       minWidth: 20,
       height: 20,
       px: 0.5,
-      borderRadius: 0.5,
+      borderRadius: "4px",
       bgcolor: "action.hover",
       border: "1px solid",
       borderColor: "divider",
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: 600,
       fontFamily: "inherit",
       color: "text.secondary",
@@ -122,19 +123,16 @@ function quietSurface(theme, opacity = 0.035) {
   return alpha(theme.palette.text.primary, opacity);
 }
 
+const STATUS_ROLE = {
+  warning: "warning",
+  info: "info",
+  success: "success",
+  error: "danger",
+};
+
 function statusTone(theme, color = "warning") {
-  const paletteColor = theme.palette[color] || theme.palette.info;
-  return {
-    border: alpha(
-      paletteColor.main,
-      theme.palette.mode === "dark" ? 0.32 : 0.24,
-    ),
-    bg: alpha(paletteColor.main, theme.palette.mode === "dark" ? 0.12 : 0.055),
-    text:
-      theme.palette.mode === "dark"
-        ? paletteColor.light || paletteColor.main
-        : paletteColor.dark || paletteColor.main,
-  };
+  const c = statusColors(theme, STATUS_ROLE[color] || "info");
+  return { border: c.border, bg: c.bg, text: c.fg };
 }
 
 function statusChipSx(color) {
@@ -142,8 +140,8 @@ function statusChipSx(color) {
     const tone = statusTone(theme, color);
     return {
       height: 20,
-      fontSize: 11,
-      fontWeight: 700,
+      fontSize: 12,
+      fontWeight: 600,
       borderColor: tone.border,
       bgcolor: tone.bg,
       color: tone.text,
@@ -158,16 +156,9 @@ function focusedScopeSx(isFocused) {
     outline: "2px solid",
     outlineOffset: -2,
     outlineColor: (theme) => theme.palette.primary.main,
-    boxShadow: (theme) =>
-      `0 0 0 5px ${alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.28 : 0.16)}`,
-    bgcolor: (theme) =>
-      alpha(
-        theme.palette.primary.main,
-        theme.palette.mode === "dark" ? 0.1 : 0.06,
-      ),
+    bgcolor: "action.hover",
     scrollMarginBlock: 96,
-    transition:
-      "outline-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease",
+    transition: "outline-color 180ms ease, background-color 180ms ease",
   };
 }
 
@@ -181,8 +172,6 @@ function ReviewStatusChip({ comment }) {
       variant="outlined"
       sx={(theme) => ({
         ...statusChipSx(reviewThreadStatusColor(comment.thread_status))(theme),
-        height: 18,
-        fontSize: 10,
         ml: 0.75,
       })}
     />
@@ -256,7 +245,7 @@ function ShortcutsOverlay({ onClose }) {
         position: "absolute",
         inset: 0,
         zIndex: 10,
-        bgcolor: "rgba(0,0,0,0.3)",
+        bgcolor: (theme) => alpha(theme.palette.common.black, 0.3),
         display: "flex",
         alignItems: "flex-start",
         justifyContent: "center",
@@ -269,9 +258,10 @@ function ShortcutsOverlay({ onClose }) {
           bgcolor: "background.paper",
           border: "1px solid",
           borderColor: "divider",
-          borderRadius: 0.5,
+          borderRadius: "4px",
           p: 2.5,
           width: 300,
+          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
           boxShadow: 8,
         }}
       >
@@ -286,15 +276,15 @@ function ShortcutsOverlay({ onClose }) {
           <Stack direction="row" spacing={0.75} alignItems="center">
             <Iconify
               icon="solar:keyboard-bold-duotone"
-              width={18}
+              width={20}
               color="primary.main"
             />
-            <Typography variant="subtitle2" fontWeight={700}>
+            <Typography variant="subtitle2" fontWeight={600}>
               Keyboard Shortcuts
             </Typography>
           </Stack>
-          <IconButton size="small" onClick={onClose} sx={{ p: 0.25 }}>
-            <Iconify icon="mingcute:close-line" width={16} />
+          <IconButton size="small" onClick={onClose}>
+            <Iconify icon="solar:close-linear" width={16} />
           </IconButton>
         </Box>
         <Stack spacing={1}>
@@ -702,7 +692,7 @@ const LabelPanel = forwardRef(function LabelPanel(
             mb: 2,
             px: 1.5,
             py: 1,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             bgcolor: "action.hover",
             border: "1px solid",
             borderColor: "divider",
@@ -712,7 +702,7 @@ const LabelPanel = forwardRef(function LabelPanel(
           }}
         >
           <Iconify
-            icon="mingcute:lock-fill"
+            icon="solar:lock-linear"
             width={16}
             sx={{ color: "text.secondary" }}
           />
@@ -733,7 +723,7 @@ const LabelPanel = forwardRef(function LabelPanel(
               p: 1.25,
               border: "1px solid",
               borderColor: tone.border,
-              borderRadius: 0.75,
+              borderRadius: "4px",
               bgcolor: tone.bg,
               minWidth: 0,
               overflowX: "hidden",
@@ -773,7 +763,7 @@ const LabelPanel = forwardRef(function LabelPanel(
                   key={comment.id || comment.created_at}
                   sx={{
                     p: 1,
-                    borderRadius: 0.75,
+                    borderRadius: "4px",
                     bgcolor: "background.paper",
                     border: "1px solid",
                     borderColor: "divider",
@@ -841,7 +831,7 @@ const LabelPanel = forwardRef(function LabelPanel(
 
       {overallReviewComments.length > 0 ? (
         <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
-          <Typography variant="caption" fontWeight={700} display="block">
+          <Typography variant="caption" fontWeight={600} display="block">
             Reviewer feedback
           </Typography>
           <Stack spacing={0.75} sx={{ mt: 0.75 }}>
@@ -876,7 +866,7 @@ const LabelPanel = forwardRef(function LabelPanel(
         </Alert>
       ) : reviewFeedback && !hasReviewCommentTrail ? (
         <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
-          <Typography variant="caption" fontWeight={700} display="block">
+          <Typography variant="caption" fontWeight={600} display="block">
             Reviewer feedback
           </Typography>
           <Typography variant="body2">{reviewFeedback}</Typography>
@@ -943,10 +933,10 @@ const LabelPanel = forwardRef(function LabelPanel(
             <Iconify
               icon={
                 showInstructions
-                  ? "eva:chevron-up-fill"
-                  : "eva:chevron-down-fill"
+                  ? "solar:alt-arrow-up-linear"
+                  : "solar:alt-arrow-down-linear"
               }
-              width={18}
+              width={20}
               sx={{ color: "text.disabled" }}
             />
           </Stack>
@@ -954,7 +944,7 @@ const LabelPanel = forwardRef(function LabelPanel(
             <Box
               sx={{
                 bgcolor: "background.neutral",
-                borderRadius: 0.5,
+                borderRadius: "4px",
                 p: 2,
                 mt: 1,
                 maxHeight: 280,
@@ -991,7 +981,7 @@ const LabelPanel = forwardRef(function LabelPanel(
             onChange={(e) => onViewingAnnotatorChange?.(e.target.value || null)}
             inputProps={{ "aria-label": "Viewing annotator" }}
             sx={{
-              borderRadius: 0.5,
+              borderRadius: "4px",
               "& .MuiSelect-select": { py: 1 },
             }}
           >
@@ -1068,7 +1058,7 @@ const LabelPanel = forwardRef(function LabelPanel(
               data-comment-focus={labelFocused ? "true" : undefined}
               onClick={() => !readOnly && setFocusedIndex(i)}
               sx={{
-                borderRadius: 0.75,
+                borderRadius: "4px",
                 cursor: "default",
                 ...focusedScopeSx(labelFocused),
               }}
@@ -1106,7 +1096,7 @@ const LabelPanel = forwardRef(function LabelPanel(
                     return {
                       mt: 1,
                       p: 1.25,
-                      borderRadius: 0.5,
+                      borderRadius: "4px",
                       border: "1px solid",
                       borderColor: tone.border,
                       bgcolor: tone.bg,
@@ -1115,7 +1105,7 @@ const LabelPanel = forwardRef(function LabelPanel(
                 >
                   <Typography
                     variant="caption"
-                    fontWeight={700}
+                    fontWeight={600}
                     sx={(theme) => ({
                       display: "block",
                       mb: 0.75,
@@ -1172,7 +1162,7 @@ const LabelPanel = forwardRef(function LabelPanel(
             focusedCommentScope === "item" ? "true" : undefined
           }
           sx={{
-            borderRadius: 0.75,
+            borderRadius: "4px",
             ...focusedScopeSx(focusedCommentScope === "item"),
           }}
         >
@@ -1224,25 +1214,10 @@ const LabelPanel = forwardRef(function LabelPanel(
                 fullWidth
                 color="inherit"
                 sx={{
-                  borderRadius: 0.75,
-                  minHeight: 42,
-                  fontWeight: 800,
-                  bgcolor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? theme.palette.common.white
-                      : theme.palette.grey[900],
-                  color: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? theme.palette.grey[900]
-                      : theme.palette.common.white,
-                  boxShadow: "none",
+                  bgcolor: "text.primary",
+                  color: "background.paper",
                   "&:hover": {
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? alpha(theme.palette.common.white, 0.92)
-                        : theme.palette.grey[800],
-                    boxShadow: (theme) =>
-                      `0 12px 24px ${alpha(theme.palette.text.primary, 0.14)}`,
+                    bgcolor: "text.secondary",
                   },
                   "&.Mui-disabled": {
                     color: "text.disabled",

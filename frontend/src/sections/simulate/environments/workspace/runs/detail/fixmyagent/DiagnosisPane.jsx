@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { alpha, keyframes } from "@mui/material/styles";
+import { keyframes } from "@mui/material/styles";
 import {
   Box,
   Stack,
@@ -11,7 +11,6 @@ import {
 
 import Iconify from "src/components/iconify";
 import EmptyState from "../../../../components/EmptyState";
-import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import GoalCard, { OneOffRow } from "./GoalCard";
 
 /**
@@ -140,19 +139,15 @@ export default function DiagnosisPane({
           mt: 2.5,
           px: 1.75,
           py: 1.5,
-          borderRadius: 1,
-          border: "1px solid",
-          borderColor: (t) =>
-            alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.35 : 0.25),
-          bgcolor: (t) =>
-            alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.1 : 0.05),
+          borderRadius: "8px",
+          bgcolor: "status.discovery.bg",
         }}
       >
         <Stack direction="row" alignItems="flex-start" spacing={1.25}>
           <Iconify
             icon="solar:lightbulb-bolt-linear"
             width={15}
-            sx={{ color: BUILD_TONES.accent, flexShrink: 0, mt: "2px" }}
+            sx={{ color: "status.discovery.solid", flexShrink: 0, mt: "2px" }}
           />
           <Box>
             <Typography sx={{ typography: "s2" }}>
@@ -179,7 +174,7 @@ export default function DiagnosisPane({
 
       {analysis.oneOffs.length > 0 && (
         <Box sx={{ px: 2.5, pt: 2.5 }}>
-          <Typography sx={{ typography: "s2", fontWeight: 700, mb: 0.5 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.5 }}>
             Also seen, 1 call each
           </Typography>
           {analysis.oneOffs.map((way) => (

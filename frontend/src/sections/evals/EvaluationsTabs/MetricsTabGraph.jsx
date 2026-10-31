@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import { Alert, Box, Button, Grid, Skeleton, useTheme } from "@mui/material";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import EvaluationDateTimeRangePicker from "../EvalsChartsView/EvaluationDateTimeRangePicker";
@@ -130,7 +131,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
           type: "line",
           stacked: false,
           background: "transparent",
-          foreColor: isDark ? "#a1a1aa" : undefined,
+          foreColor: theme.palette.text.secondary,
           toolbar: {
             show: false,
           },
@@ -175,7 +176,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
           intersect: false,
         },
         grid: {
-          borderColor: isDark ? "#27272a" : undefined,
+          borderColor: theme.palette.divider,
         },
         legend: {
           position: "top",
@@ -183,7 +184,7 @@ const MetricsTabGraph = ({ setDateFilter }) => {
         },
       },
     };
-  }, [graphData?.result, isDark, chartId]);
+  }, [graphData?.result, isDark, theme, chartId]);
 
   return (
     <Box sx={{ paddingY: 1, height: "100%", overflow: "hidden" }}>

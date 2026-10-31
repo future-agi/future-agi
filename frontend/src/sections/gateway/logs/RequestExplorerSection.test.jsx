@@ -1,7 +1,20 @@
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, userEvent } from "src/utils/test-utils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render as baseRender, screen, userEvent } from "src/utils/test-utils";
+import { GatewayContext } from "../context/GatewayContext";
 import RequestExplorerSection from "./RequestExplorerSection";
+
+// The Filters button reads the gateway context and runs queries; the real page
+// mounts under the app's QueryClientProvider and GatewayProvider.
+const render = (ui) =>
+  baseRender(
+    <QueryClientProvider client={new QueryClient()}>
+      <GatewayContext.Provider value={{ gatewayId: null }}>
+        {ui}
+      </GatewayContext.Provider>
+    </QueryClientProvider>,
+  );
 
 const columnsState = {
   columns: [],
@@ -69,7 +82,7 @@ describe("RequestExplorerSection columns control", () => {
     const button = screen.getByRole("button", { name: "Columns" });
     expect(button).toHaveAttribute("aria-haspopup", "dialog");
     expect(button).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByRole("button", { name: "Filters" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Filter" })).toBeInTheDocument();
     expect(screen.getByTestId("request-table")).toHaveTextContent("0 columns");
 
     await user.click(button);

@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
@@ -27,7 +28,7 @@ export default function WidgetDonutChart({ config }) {
     chart: {
       type: "donut",
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : "#666",
+      foreColor: theme.palette.text.secondary,
     },
     theme: { mode: isDark ? "dark" : "light" },
     colors: config.colors || COLORS,
@@ -42,7 +43,7 @@ export default function WidgetDonutChart({ config }) {
               ? {
                   show: true,
                   label: config.centerLabel,
-                  fontSize: "14px",
+                  fontSize: "13px",
                   fontWeight: 600,
                 }
               : { show: false },
@@ -53,7 +54,7 @@ export default function WidgetDonutChart({ config }) {
     dataLabels: { enabled: false },
     legend: { position: "bottom", fontSize: "12px" },
     tooltip: { theme: isDark ? "dark" : "light" },
-    stroke: { width: isDark ? 1 : 2, colors: [isDark ? "#1a1a2e" : "#fff"] },
+    stroke: { width: isDark ? 1 : 2, colors: [theme.palette.background.paper] },
   };
 
   return (

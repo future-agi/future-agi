@@ -9,6 +9,8 @@ import {
   useLocation,
 } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
 
 // getHarnessJob resolves the harness-backed environment; listHarnessJobs is
 // exported for parity with the other consumers of this module.
@@ -146,6 +148,9 @@ function LocationProbe() {
   return <div data-testid="location">{`${pathname}${search}`}</div>;
 }
 
+// The workspace reads theme.palette.status / .data, so render with the app theme.
+const appTheme = createTheme({ palette: palette("light") });
+
 function renderWorkspace(entry) {
   const client = new QueryClient({
     // harnessJobQuery sets its own `retry` fn (no-retry on 404), which overrides
@@ -153,26 +158,28 @@ function renderWorkspace(entry) {
     defaultOptions: { queries: { retry: false, retryDelay: 0 } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[entry]}>
-        <LocationProbe />
-        <Routes>
-          <Route
-            path="/dashboard/simulate/environments/:envId"
-            element={<EnvironmentWorkspace />}
-          >
+    <ThemeProvider theme={appTheme}>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[entry]}>
+          <LocationProbe />
+          <Routes>
             <Route
-              path="runs/:testId/:executionId"
-              element={<WorkspaceExecutionDetail />}
+              path="/dashboard/simulate/environments/:envId"
+              element={<EnvironmentWorkspace />}
+            >
+              <Route
+                path="runs/:testId/:executionId"
+                element={<WorkspaceExecutionDetail />}
+              />
+            </Route>
+            <Route
+              path="/dashboard/simulate/environments"
+              element={<div>environments-list</div>}
             />
-          </Route>
-          <Route
-            path="/dashboard/simulate/environments"
-            element={<div>environments-list</div>}
-          />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </ThemeProvider>,
   );
 }
 

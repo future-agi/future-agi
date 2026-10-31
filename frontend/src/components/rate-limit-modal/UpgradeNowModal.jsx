@@ -1,21 +1,22 @@
 import React, { useState } from "react";
 import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  IconButton,
-  Typography,
-  Grid,
   Box,
   Button,
-  Paper,
+  ButtonBase,
+  Chip,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  Grid,
+  IconButton,
   List,
   ListItem,
-  ListItemText,
-  useTheme,
-  Chip,
   ListItemIcon,
+  ListItemText,
+  Typography,
+  useTheme,
 } from "@mui/material";
+import Section from "src/components/section";
 import { LoadingScreen } from "src/components/loading-screen";
 import PropTypes from "prop-types";
 import Iconify from "../iconify";
@@ -38,6 +39,7 @@ const planData = {
   [PLAN_TYPES.FREE]: {
     name: "Free plan",
     icon: "circle",
+    // eslint-disable-next-line no-restricted-syntax -- ds: plan-tier colour
     iconColor: "#ff6384", // Pink/red color based on the image
     tagline: "For individuals and early stage start-ups",
     price: 0,
@@ -57,6 +59,7 @@ const planData = {
   [PLAN_TYPES.CUSTOM]: {
     name: "Custom plan",
     icon: "diamond",
+    // eslint-disable-next-line no-restricted-syntax -- ds: plan-tier colour
     iconColor: "#9c27b0", // Purple color based on the image
     tagline: "For large organization",
     price: "",
@@ -116,17 +119,9 @@ function PlanCard({
   };
 
   return (
-    <Paper
-      elevation={0}
-      sx={{
-        border: "1px solid",
-        borderColor: "primary.lighter",
-        p: 2,
-        height: "100%",
-        borderRadius: "12px",
-        display: "flex",
-        flexDirection: "column",
-      }}
+    <Section
+      variant="panel"
+      sx={{ p: 2, height: "100%", display: "flex", flexDirection: "column" }}
     >
       <Box
         sx={{ display: "flex", flexDirection: "column", alignItems: "start" }}
@@ -149,16 +144,17 @@ function PlanCard({
             {name}
             {plan == currentPlan && (
               <Chip
+                size="small"
                 variant="soft"
                 label="Your current plan"
                 color="success"
-                sx={{
-                  height: "20px",
-                  // padding: "2px 0px",
-                  borderRadius: "4px",
-                  // background: theme?.palette?.purple?.o10,
-                  // color: theme?.palette?.purple[500],
-                }}
+                sx={
+                  {
+                    // padding: "2px 0px",
+                    // background: theme?.palette?.purple?.o10,
+                    // color: theme?.palette?.purple[500],
+                  }
+                }
               />
             )}
           </Typography>
@@ -237,7 +233,7 @@ function PlanCard({
       {includesLowerTier && (
         <Typography
           variant="subtitle2"
-          fontSize={"14px"}
+          fontSize={"13px"}
           color={"text.primary"}
           fontWeight={600}
           sx={{ mt: 1 }}
@@ -257,16 +253,7 @@ function PlanCard({
                     color="success.main"
                   />
                 </ListItemIcon>
-                <ListItemText
-                  primary={feature}
-                  sx={{
-                    fontSize: "12px",
-                    color: "text.primary",
-                    "& .MuiTypography-root": {
-                      fontWeight: 400,
-                    },
-                  }}
-                />
+                <ListItemText primary={feature} />
               </ListItem>
             ))}
         </List>
@@ -280,7 +267,6 @@ function PlanCard({
           onClick={handleContactSales}
           sx={{
             mt: 3,
-            borderRadius: "8px",
           }}
         >
           Contact us
@@ -296,7 +282,6 @@ function PlanCard({
           loading={isLoadingButton}
           sx={{
             mt: 3,
-            borderRadius: "8px",
           }}
         >
           Upgrade to PAYG
@@ -307,24 +292,27 @@ function PlanCard({
         currentPlan == PLAN_TYPES.PRO) && (
         <Typography
           component="div"
-          fontSize={"10px"}
+          fontSize={"12px"}
           sx={{
             mt: 0.5,
           }}
         >
           Pay-as-you-go unlocks higher limits and usage-based billing
-          <Typography
+          <ButtonBase
             component="span"
-            fontSize={"10px"}
-            fontWeight={500}
             onClick={() => redirectToPlan()}
-            sx={{ textDecoration: "underline", cursor: "pointer" }}
+            sx={{
+              font: "inherit",
+              fontWeight: 500,
+              textDecoration: "underline",
+              verticalAlign: "baseline",
+            }}
           >
             check annual plans
-          </Typography>
+          </ButtonBase>
         </Typography>
       )}
-    </Paper>
+    </Section>
   );
 }
 
@@ -375,14 +363,14 @@ const PricingDialog = ({ open, onClose, title, description }) => {
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="md"
+      maxWidth={false}
       PaperProps={{
         sx: {
           borderRadius: "12px",
           width: "100%",
           minHeight: "fit-content",
           position: "fixed",
-          maxWidth: 950,
+          maxWidth: 960,
           pb: 2,
         },
       }}
@@ -397,7 +385,7 @@ const PricingDialog = ({ open, onClose, title, description }) => {
         >
           <Typography
             variant="body2"
-            fontSize="18px"
+            fontSize="16px"
             color="text.primary"
             fontWeight="600"
           >
@@ -408,17 +396,16 @@ const PricingDialog = ({ open, onClose, title, description }) => {
             size="small"
             aria-label="close"
             sx={{
-              padding: "0px",
               margin: "0px",
               color: "text.primary",
             }}
           >
-            <Iconify icon="oui:cross" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Typography
           variant="body2"
-          fontSize={"14px"}
+          fontSize={"13px"}
           color="text.secondary"
           sx={{ mb: 1 }}
         >

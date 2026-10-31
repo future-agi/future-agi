@@ -60,7 +60,7 @@ const PersonaListContent = ({
           color: "text.primary",
         }}
       >
-        <Iconify icon="akar-icons:cross" />
+        <Iconify icon="solar:close-linear" width={20} />
       </IconButton>
       <Box
         sx={{
@@ -142,7 +142,7 @@ const PersonaCreateContent = ({ onCancel, type }) => {
           color: "text.primary",
         }}
       >
-        <Iconify icon="akar-icons:cross" />
+        <Iconify icon="solar:close-linear" />
       </IconButton>
       <PersonaCreateEditForm
         onCancel={onCancel}

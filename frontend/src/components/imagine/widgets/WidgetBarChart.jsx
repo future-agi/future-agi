@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
@@ -30,7 +31,7 @@ export default function WidgetBarChart({ config }) {
       type: "bar",
       stacked,
       background: "transparent",
-      foreColor: isDark ? "#a1a1aa" : "#666",
+      foreColor: theme.palette.text.secondary,
       toolbar: { show: false },
     },
     theme: { mode: isDark ? "dark" : "light" },
@@ -46,7 +47,7 @@ export default function WidgetBarChart({ config }) {
     dataLabels: { enabled: false },
     xaxis: { categories },
     grid: {
-      borderColor: isDark ? "#27272a" : "#f0f0f0",
+      borderColor: theme.palette.divider,
       strokeDashArray: 3,
     },
     tooltip: { theme: isDark ? "dark" : "light" },

@@ -13,6 +13,7 @@ import { RESPONSE_CODES } from "src/utils/constants";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import logger from "src/utils/logger";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const CreateUserModal = ({ open, onClose, userData, type, setRefreshData }) => {
   const [isLoading, setIsLoading] = useState(false);
@@ -207,18 +208,21 @@ const CreateUserModal = ({ open, onClose, userData, type, setRefreshData }) => {
     { label: "Owner", value: "Owner" },
   ];
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
-          width: "400px",
+          width: "480px",
           position: "fixed",
           zIndex: 1000,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
@@ -234,6 +238,7 @@ const CreateUserModal = ({ open, onClose, userData, type, setRefreshData }) => {
             width: "400px",
             backgroundColor: "background.paper",
             padding: 2,
+            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
             boxShadow: 3,
             zIndex: 1000,
             flexDirection: "column",

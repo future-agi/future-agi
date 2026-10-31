@@ -70,6 +70,7 @@ export default function PreviewCreatedModal({
           transform: "translate(-50%, -50%)",
           width: "90%",
           bgcolor: "background.paper",
+          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
           boxShadow: 24,
           borderRadius: "12px",
           height: "90%",
@@ -81,11 +82,11 @@ export default function PreviewCreatedModal({
           alignItems={"center"}
           sx={{ padding: "10px 20px" }}
         >
-          <Typography fontWeight={700} fontSize={18} color="text.primary">
+          <Typography fontWeight={600} fontSize={16} color="text.primary">
             Preview
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mingcute:close-line" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
         <Divider />
@@ -150,8 +151,8 @@ export default function PreviewCreatedModal({
                     mb: 1,
                     cursor: "pointer",
                   }}
-                  fontSize={14}
-                  fontWeight={700}
+                  fontSize={13}
+                  fontWeight={600}
                 >
                   Annotations
                 </Typography>

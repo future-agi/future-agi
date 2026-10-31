@@ -8,6 +8,7 @@ import {
   Link,
   Typography,
 } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDeleteAnnotationLabel } from "./useDeleteAnnotationLabel";
 import PropTypes from "prop-types";
@@ -157,11 +158,8 @@ const AnnotateDrawerChild = ({
             sx={{ mt: 2 }}
             startIcon={
               <SvgColor
-                sx={{
-                  height: 16,
-                  width: 16,
-                  color: "inherit",
-                }}
+                width={16}
+                sx={{ color: "inherit" }}
                 src={"/assets/icons/ic_add.svg"}
               />
             }
@@ -175,17 +173,12 @@ const AnnotateDrawerChild = ({
       </Box>
 
       <Box sx={{ display: "flex", gap: 2, pt: 2, justifyContent: "flex-end" }}>
-        <Button
-          onClick={onClose}
-          variant="outlined"
-          sx={{ padding: "10px 50px" }}
-        >
+        <Button onClick={onClose} variant="outlined">
           Cancel
         </Button>
         <Button
           color="primary"
           variant="contained"
-          sx={{ padding: "10px 50px" }}
           onClick={() => {
             if (!isDirty) {
               onClose();
@@ -261,11 +254,13 @@ const AnnotateDrawer = ({
       notes: spanAnnotationData?.notes?.[0]?.notes ?? "",
     };
   }, [spanAnnotationData]);
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={onClose}
+      sx={coveredDrawerSx(covered)}
       BackdropProps={{ invisible: true }}
       PaperProps={{
         sx: { width: "40%", p: 2, display: "flex", flexDirection: "column" },
@@ -294,7 +289,7 @@ const AnnotateDrawer = ({
                 </ShowComponent>
               </Typography>
               <IconButton onClick={onClose}>
-                <Iconify icon="mingcute:close-line" width={20} />
+                <Iconify icon="solar:close-linear" width={20} />
               </IconButton>
             </Box>
 
@@ -318,7 +313,7 @@ const AnnotateDrawer = ({
                 mb: 1,
               }}
             >
-              <Typography typography={"m2"} fontWeight={"fontWeightBold"}>
+              <Typography typography={"m2"} fontWeight={"fontWeightSemiBold"}>
                 Label Configuration
               </Typography>
               <Box
@@ -332,7 +327,7 @@ const AnnotateDrawer = ({
                 <Link
                   href="https://docs.futureagi.com/docs/observe/features/manual-tracing/annotating-using-api"
                   underline="always"
-                  color="blue.500"
+                  color="status.info.fg"
                   target="_blank"
                   rel="noopener noreferrer"
                   fontWeight="fontWeightMedium"
@@ -340,7 +335,7 @@ const AnnotateDrawer = ({
                   Learn more
                 </Link>
                 <IconButton onClick={onClose}>
-                  <Iconify icon="mingcute:close-line" width={20} />
+                  <Iconify icon="solar:close-linear" width={20} />
                 </IconButton>
               </Box>
             </Box>

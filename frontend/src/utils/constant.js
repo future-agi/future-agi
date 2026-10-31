@@ -296,16 +296,25 @@ export const RunPromptOutputTypeOptions = [
 ];
 
 export const SpanChipColors = {
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   chain: { backgroundColor: "#FF3EFA14", borderColor: "#FF3EFA29" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   retriever: { backgroundColor: "#2F7CF714", borderColor: "#2F7CF729" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   llm: { backgroundColor: "#FF950014", borderColor: "#FF950029" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   tool: { backgroundColor: "#F5E65F29", borderColor: "#F5E65F" },
   agent: { backgroundColor: "action.selected", borderColor: "primary.light" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   embedding: { backgroundColor: "#4CAF5014", borderColor: "#4CAF5029" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   reranker: { backgroundColor: "#E9690C1F", borderColor: "#E9690C66" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   unknown: { backgroundColor: "#D92D201F", borderColor: "#D92D2066" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   guardrail: { backgroundColor: "#8237941F", borderColor: "#82379466" },
   evaluator: { backgroundColor: "background.neutral", borderColor: "divider" },
+  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
   conversation: { backgroundColor: "#0EA5E91F", borderColor: "#0EA5E966" },
 };
 

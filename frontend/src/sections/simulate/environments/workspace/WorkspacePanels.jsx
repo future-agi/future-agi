@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
-import { ENV_TABS_SX } from "../environmentOptions";
 import OverviewPanel from "./overview/OverviewPanel";
 import RlContractPanel from "./contract/RlContractPanel";
 import ScenariosStep from "./scenarios/ScenariosStep";
@@ -21,8 +20,7 @@ import { WORKSPACE_TABS } from "./workspace.constants";
 // passed in, and the only data it reads for itself is the Runs history (the live
 // executions for a completed harness job — envState.runs is empty for those).
 //
-// The rail reuses the product tab treatment Phase-1 established (ENV_TABS_SX)
-// rather than the designer's CustomTabs px:1. Numeric counts are hidden while
+// The rail is the theme's own tabs, with no restyling. Numeric counts are hidden while
 // the builder streams — the parent passes `counts={null}` then. A deep-linked
 // run detail is a full page (the workspace early-returns the Outlet), so the
 // panels never host the run detail themselves.
@@ -159,12 +157,11 @@ export default function WorkspacePanels({
   return (
     <Stack sx={{ height: "100%", minHeight: 0 }}>
       <Box sx={{ flexShrink: 0, borderBottom: "1px solid", borderColor: "divider" }}>
-        <CustomTabs
+        <CustomTabs sx={{ boxShadow: "none" }}
           value={current.id}
           onChange={(_, v) => onTabChange(v)}
           variant="scrollable"
           scrollButtons={false}
-          sx={ENV_TABS_SX}
         >
           {tabs.map((t) => (
             <Tab

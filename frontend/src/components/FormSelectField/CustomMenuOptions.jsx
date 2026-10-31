@@ -78,7 +78,7 @@ const CustomMenuOptions = ({
       {isSearchable && isOpen && (
         <SearchFieldBox sx={{ mb: "12px" }}>
           <IconButton size="small" sx={{ color: theme.palette.divider }}>
-            <Iconify icon="eva:search-fill" />
+            <Iconify icon="solar:magnifier-linear" />
           </IconButton>
           <Input
             placeholder="Search"
@@ -115,7 +115,8 @@ const CustomMenuOptions = ({
                   pointerEvents: "auto",
                   cursor: "pointer",
                   opacity: 1,
-                  color: "error.main",
+                  // eslint-disable-next-line no-restricted-syntax -- ds: error state of unavailable option
+                  color: "status.danger.fg",
                 },
               }}
             >
@@ -127,7 +128,7 @@ const CustomMenuOptions = ({
 
       {createLabel && (
         <LabelButton sx={{ minWidth: "170px" }} onClick={handleCreateLabel}>
-          <Iconify icon="eva:plus-fill" /> {createLabel}
+          <Iconify icon="solar:add-linear" /> {createLabel}
         </LabelButton>
       )}
 

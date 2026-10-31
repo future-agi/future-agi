@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
-import { BUILD_TONES } from "../buildEnvironment/buildTones";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
 // A tab's label: its name, an optional item count, and — when the tab owns a
@@ -14,7 +13,7 @@ export default function WorkspaceTabLabel({ label, count, gaps, hint }) {
 
   const content = (
     <Stack direction="row" alignItems="center" spacing={0.75}>
-      <Typography component="span" sx={{ typography: "s2", color: "inherit" }}>
+      <Typography component="span" sx={{ typography: "s1", color: "inherit" }}>
         {label}
       </Typography>
       {count != null && count > 0 && (
@@ -35,7 +34,7 @@ export default function WorkspaceTabLabel({ label, count, gaps, hint }) {
             height: 7,
             borderRadius: "50%",
             flexShrink: 0,
-            bgcolor: BUILD_TONES.amber,
+            bgcolor: "status.warning.solid",
           }}
         />
       )}
@@ -56,7 +55,7 @@ export default function WorkspaceTabLabel({ label, count, gaps, hint }) {
           {hint && <Typography sx={{ typography: "s3" }}>{hint}</Typography>}
           {hasGaps && (
             <Box sx={{ mt: hint ? 1 : 0 }}>
-              <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold", mb: 0.375 }}>
+              <Typography sx={{ typography: "s3", fontWeight: 500, mb: 0.375 }}>
                 {WORKSPACE_COPY.gaps.tooltip}
               </Typography>
               {gaps.map((gap) => (

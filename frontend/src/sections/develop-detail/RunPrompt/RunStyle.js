@@ -36,7 +36,7 @@ export const RunBtnWrap = styled(Box)(({ theme }) => ({
 export const RunWrapper = styled(Box)(({ theme }) => ({
   backgroundColor: theme.palette.background.default,
   width: "480px",
-  borderRadius: "16px",
+  borderRadius: "12px",
   margin: "0 auto",
 }));
 
@@ -47,7 +47,7 @@ export const RunHeader = styled(Box)(() => ({
 }));
 export const RunTitle = styled(Typography)(({ theme }) => ({
   flex: 1,
-  fontSize: "18px",
+  fontSize: "16px",
   fontWeight: theme.typography.fontWeightBold,
   color: theme.palette.text.primary,
 }));
@@ -79,6 +79,7 @@ export const PromptWrap = styled(Box)(({ theme }) => ({
   width: "525px",
   height: "100%",
   backgroundColor: theme.palette.background.paper,
+  // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
   boxShadow: "-40px 40px 80px -8px rgba(145, 158, 171, 0.24)",
 }));
 export const PromptWrapTtl = styled(Typography)(({ theme }) => ({
@@ -104,7 +105,7 @@ export const PromptItem = styled(Box)(({ theme }) => ({
   padding: "12px 16px",
   minHeight: "72px",
   color: theme.palette.text.primary,
-  fontSize: "14px",
+  fontSize: "13px",
   fontWeight: theme.typography.fontWeightRegular,
   lineHeight: 1.6,
 }));

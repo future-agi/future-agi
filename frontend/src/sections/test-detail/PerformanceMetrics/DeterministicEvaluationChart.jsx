@@ -60,6 +60,7 @@ const DeterministicEvaluationChart = ({ title, data }) => {
     chart: {
       type: "donut",
       background: "transparent",
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       foreColor: isDark ? "#a1a1aa" : undefined,
       toolbar: { show: false },
     },
@@ -73,7 +74,7 @@ const DeterministicEvaluationChart = ({ title, data }) => {
       enabled: true,
       formatter: (val) => `${val.toFixed(0)}%`,
       style: {
-        fontSize: "11px",
+        fontSize: "12px",
         fontWeight: 600,
       },
     },
@@ -91,6 +92,7 @@ const DeterministicEvaluationChart = ({ title, data }) => {
       },
     },
     grid: {
+      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
       borderColor: isDark ? "#27272a" : undefined,
     },
   };
@@ -155,7 +157,7 @@ const DeterministicEvaluationChart = ({ title, data }) => {
                   sx={{
                     width: 12,
                     height: 12,
-                    borderRadius: "3px",
+                    borderRadius: "4px",
                     backgroundColor: item.color,
                   }}
                 />

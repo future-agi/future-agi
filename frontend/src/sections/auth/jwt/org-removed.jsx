@@ -79,7 +79,7 @@ export default function OrgRemovedPage() {
               <Typography
                 fontWeight="fontWeightSemiBold"
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -90,7 +90,7 @@ export default function OrgRemovedPage() {
               <Typography
                 fontWeight="fontWeightSemiBold"
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -102,7 +102,7 @@ export default function OrgRemovedPage() {
             </Stack>
 
             <Alert
-              icon={<Iconify icon="fluent:info-24-regular" width={20} />}
+              icon={<Iconify icon="solar:info-circle-linear" width={20} />}
               severity="info"
               sx={{ maxWidth: "440px" }}
             >
@@ -121,17 +121,17 @@ export default function OrgRemovedPage() {
                   fullWidth
                   helperText="Leave blank to auto-generate from your email domain"
                   sx={{
-                    "& .MuiOutlinedInput-root": { borderRadius: 0.5 },
+                    "& .MuiOutlinedInput-root": { borderRadius: "4px" },
                   }}
                 />
 
                 <LoadingButton
+                  size="large"
                   fullWidth
                   type="submit"
                   variant="contained"
                   color="primary"
                   loading={isPending}
-                  sx={{ height: "42px", borderRadius: 0.5 }}
                 >
                   Create New Organization
                 </LoadingButton>
