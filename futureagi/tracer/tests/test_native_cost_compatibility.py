@@ -46,19 +46,14 @@ def test_native_detailed_usage_preserves_legacy_pricing(scope, usage_key, report
         "tracer.utils.otel.calculate_cost_from_tokens", return_value=0.5
     ) as price:
         assert calculate_cost(attrs, 100, 20, "synthetic-model") == (
-            next(iter(reported.values())) if reported else 0.5
+            next(iter(reported.values())) if reported else 0
         )
         if reported:
             price.assert_not_called()
             assert attrs["fi.cost.kind"] == "provider_reported"
         else:
-            price.assert_called_once_with(
-                prompt_tokens=100,
-                completion_tokens=20,
-                model="synthetic-model",
-                organization_id=None,
-            )
-            assert attrs["fi.cost.kind"] == "estimated"
+            price.assert_not_called()
+            assert attrs["fi.cost.kind"] == "unknown"
             assert "gen_ai.cost.total" not in attrs  # no synthetic USD zero
 
 
@@ -188,7 +183,7 @@ def test_native_direct_conversion_preserves_legacy_cost(scope, immutable):
                 {},
                 "org",
             )
-            assert result["observation_span"]["cost"] == 0.5
+            assert result["observation_span"]["cost"] == 0
             assert result["observation_span"]["prompt_tokens"] == 100
             assert result["observation_span"]["completion_tokens"] == 20
-            price.assert_called_once()
+            price.assert_not_called()

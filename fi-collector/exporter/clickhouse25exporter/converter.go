@@ -369,10 +369,25 @@ func spanToRow(
 	if nonAdditive {
 		cost = 0
 	}
-	// Producer qualification is not activation of the new accounting contract.
-	// Native exports retain legacy estimates until cache-aware storage/readers
-	// ship; explicit immutable-work/usage-plan traffic is held before conversion.
-	if !nonAdditive && !hot.CostUserSet && pricer != nil {
+	// Two-count pricing cannot account for separately billed cache or reasoning
+	// units. For qualified native producers, retain the observed usage but mark
+	// monetary coverage unknown rather than manufacturing an uncached USD price.
+	// Explicit reported USD (including zero) still takes precedence. Unqualified
+	// legacy producers keep their existing compatibility path.
+	unknownDetailedCost := false
+	if trackCost && !nonAdditive && !hot.CostUserSet {
+		for _, key := range []string{
+			"gen_ai.usage.cache_read_tokens", "gen_ai.usage.cache_write_tokens",
+			"gen_ai.usage.cache_read.input_tokens", "gen_ai.usage.cache_write.input_tokens",
+			"gen_ai.usage.output_tokens.reasoning", "gen_ai.usage.reasoning.output_tokens",
+		} {
+			if _, exists := attrsNum[key]; exists {
+				unknownDetailedCost = true
+				break
+			}
+		}
+	}
+	if !nonAdditive && !hot.CostUserSet && !unknownDetailedCost && pricer != nil {
 		var c float64
 		var ok bool
 		if fromOpenRouter || adapter.ProviderIs(attrsStr, openRouterName) {

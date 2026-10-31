@@ -1743,9 +1743,7 @@ def calculate_cost(
         attributes["fi.cost.kind"] = "unknown"
         return 0
 
-    # Preserve existing native pricing, including cache/reasoning exports.
-    # Producer qualification does not activate the new accounting contract;
-    # explicit immutable-work/usage-plan traffic is held before conversion.
+    # Producer qualification enables cost provenance, not immutable admission.
     track_cost = bool(attributes.get("fi.normalization.profile"))
 
     # Check user-provided cost attributes (uses AttributeRegistry aliasing
@@ -1771,6 +1769,19 @@ def calculate_cost(
             return value
         except (ValueError, TypeError):
             return 0
+
+    # Cache/reasoning units may have different billing rates. A two-count
+    # fallback is not a valid estimate for a qualified producer that reports
+    # these units without a billed USD amount. Keep usage, but mark coverage
+    # unknown rather than writing a manufactured monetary total.
+    detailed_usage = (
+        "gen_ai.usage.cache_read_tokens", "gen_ai.usage.cache_write_tokens",
+        "gen_ai.usage.cache_read.input_tokens", "gen_ai.usage.cache_write.input_tokens",
+        "gen_ai.usage.output_tokens.reasoning", "gen_ai.usage.reasoning.output_tokens",
+    )
+    if track_cost and any(key in attributes for key in detailed_usage):
+        attributes["fi.cost.kind"] = "unknown"
+        return 0
 
     # Legacy tables cannot distinguish a missing price from a free model.
     # Never promote that ambiguous zero into a verified provider charge.

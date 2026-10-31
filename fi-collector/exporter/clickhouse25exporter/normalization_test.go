@@ -134,7 +134,7 @@ func TestNativeDetailedUsagePreservesLegacyPricing(t *testing.T) {
 				if err != nil || len(rows) != 5 {
 					t.Fatalf("native export lost: rows=%d err=%v", len(rows), err)
 				}
-				wantCost, wantCalls, wantKind := 0.5, 4, "estimated"
+				wantCost, wantCalls, wantKind := 0.0, 3, "unknown"
 				if costKey != "" {
 					wantCost, wantCalls, wantKind = 0.25, 3, "provider_reported"
 				}
