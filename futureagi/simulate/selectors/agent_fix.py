@@ -501,11 +501,11 @@ SURFACE_LABELS = {
     Surface.SETTINGS: "Settings",
     Surface.CODE: "Code",
 }
-# What the launch form starts from: the instructions only, within 1,500 credits and two
-# and a half hours.
+# What the launch form starts from: the instructions only, within 1,500 credits and three
+# hours.
 DEFAULT_SURFACES = [Surface.PROMPT]
 DEFAULT_BUDGET_CREDITS = 1500
-DEFAULT_MAX_MINUTES = 150
+DEFAULT_MAX_MINUTES = 180
 
 
 def launch_blocker(
