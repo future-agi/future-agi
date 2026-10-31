@@ -46,11 +46,13 @@ import (
 
 // Config is what main() passes us. Public fields = YAML wire format.
 type Config struct {
-	GRPCAddr       string        `yaml:"grpc_addr"`         // :4317 default
-	HTTPAddr       string        `yaml:"http_addr"`         // :4318 default; empty disables
-	BatchMaxRows   int           `yaml:"batch_max_rows"`    // flush after N rows
-	BatchMaxAge    time.Duration `yaml:"batch_max_age"`     // flush after X time
-	GRPCMaxRecvMiB int           `yaml:"grpc_max_recv_mib"` // max gRPC message size in MiB; 0 = the body cap
+	// ObsoleteMaxPendingRows is decoded only to reject stale YAML at startup.
+	ObsoleteMaxPendingRows *int          `yaml:"max_pending_rows"`
+	GRPCAddr               string        `yaml:"grpc_addr"`         // :4317 default
+	HTTPAddr               string        `yaml:"http_addr"`         // :4318 default; empty disables
+	BatchMaxRows           int           `yaml:"batch_max_rows"`    // flush after N rows
+	BatchMaxAge            time.Duration `yaml:"batch_max_age"`     // flush after X time
+	GRPCMaxRecvMiB         int           `yaml:"grpc_max_recv_mib"` // max gRPC message size in MiB; 0 = the body cap
 	// IngestBudgetMiB bounds the heap all OTLP requests hold at once, from
 	// their bodies to their rows' insert (see ingest_limits.go). 0 = derived
 	// from the Go memory limit.
@@ -138,11 +140,14 @@ type Server struct {
 	// trace_sessions best-effort insert — bounding the curated latency and
 	// avoiding many tiny RMT parts. It rides the same lock + flush cycle as
 	// `pend` so the curated dual-write flushes with the span batch.
-	pendMu       sync.Mutex
-	pend         []map[string]any
-	pendCurated  *curatedwriter.Batch
-	pendProperty []observedcatalog.ScopedSpan
-	pendRoots    []traceavailable.Root
+	bufferedRows    int  // pending and in-flight rows, through all synchronous sidecars
+	admissionClosed bool // guarded by pendMu
+	refusals        Refusals
+	pendMu          sync.Mutex
+	pend            []map[string]any
+	pendCurated     *curatedwriter.Batch
+	pendProperty    []observedcatalog.ScopedSpan
+	pendRoots       []traceavailable.Root
 	// Input positions, not span IDs: duplicate IDs can have different chunk
 	// outcomes. These indices are appended atomically with their canonical rows.
 	pendRootRows, pendPropertyRows []int
@@ -300,10 +305,59 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	return s
 }
 
+// Limits are the admission limits in force after defaults, reported by the
+// admin endpoint so a benchmark can check the target's budget instead of assuming
+// it.
+type Limits struct {
+	MaxPendingRows    int     `json:"max_pending_rows"`
+	BatchMaxRows      int     `json:"batch_max_rows"`
+	BatchMaxAgeMS     int64   `json:"batch_max_age_ms"`
+	GRPCMaxRecvMiB    float64 `json:"grpc_max_recv_mib"`
+	GRPCMaxRecvBytes  int64   `json:"grpc_max_recv_bytes"`
+	AdmissionModel    string  `json:"admission_model"`
+	IngestBudgetBytes int64   `json:"ingest_budget_bytes"`
+	WirePoolBytes     int64   `json:"wire_pool_bytes"`
+	WorkPoolBytes     int64   `json:"work_pool_bytes"`
+	MaxWaitMS         int64   `json:"max_wait_ms"`
+	InsertConcurrency int     `json:"insert_concurrency"`
+	GRPCGzip          bool    `json:"grpc_gzip"`
+	MaxHTTPBodyBytes  int     `json:"max_http_body_bytes"`
+}
+
+// Limits returns the effective limits of this server.
+func (s *Server) Limits() Limits {
+	return Limits{
+		AdmissionModel: "byte-leases-v1", IngestBudgetBytes: s.limits.budget, WirePoolBytes: s.limits.wire, WorkPoolBytes: s.limits.work, MaxWaitMS: s.limits.maxWait.Milliseconds(), InsertConcurrency: s.limits.inserts, GRPCMaxRecvBytes: s.limits.maxRecv,
+		MaxPendingRows:   0, // legacy field; byte leases govern admission
+		BatchMaxRows:     s.cfg.BatchMaxRows,
+		BatchMaxAgeMS:    s.cfg.BatchMaxAge.Milliseconds(),
+		GRPCMaxRecvMiB:   float64(s.limits.maxRecv) / (1 << 20),
+		MaxHTTPBodyBytes: int(s.limits.maxBody),
+	}
+}
+
+// Admission is an observational row backlog, not the byte admission budget.
+// BufferedRows includes pending and in-flight rows until synchronous sidecars end;
+// some rows may already be visible in ClickHouse. It is not a loss detector.
+type Admission struct {
+	BufferedRows   int      `json:"buffered_rows"`
+	PendingRows    int      `json:"pending_rows"`
+	MaxPendingRows int      `json:"max_pending_rows"` // legacy receipt field; always zero, no row cap
+	Refusals       Refusals `json:"refusals"`
+}
+type Refusals struct {
+	ShuttingDownRequests int64 `json:"shutting_down_requests"`
+}
+
+func (s *Server) Admission() Admission {
+	s.pendMu.Lock()
+	defer s.pendMu.Unlock()
+	return Admission{BufferedRows: s.bufferedRows, PendingRows: len(s.pend), Refusals: s.refusals}
+}
+
 // Run blocks until ctx is cancelled or a serve error occurs. On shutdown
-// we drain pending rows once before returning so an SIGTERM doesn't lose
-// the in-flight batch (DECISIONS: in-flight loss bounded to last 5 s as
-// the deliberate at-least-once boundary).
+// we attempt a final drain. A hard crash can lose acknowledged in-memory rows;
+// no time or loss bound is guaranteed by the flush-age trigger.
 func (s *Server) Run(ctx context.Context) error {
 	if s.cfg.GRPCAddr == "" && s.cfg.HTTPAddr == "" {
 		return fmt.Errorf("at least one of GRPCAddr / HTTPAddr must be set")
@@ -404,9 +458,16 @@ func (s *Server) shutdown() {
 		defer cancel()
 		_ = s.httpd.Shutdown(shCtx)
 	}
+	s.closeAdmission()
 	close(s.stopCh)
 	s.wg.Wait()
 	s.drainNow(context.Background())
+}
+
+func (s *Server) closeAdmission() {
+	s.pendMu.Lock()
+	s.admissionClosed = true
+	s.pendMu.Unlock()
 }
 
 // grpcErrLogger logs fallback transport-level receive-cap failures. The
@@ -500,7 +561,9 @@ func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder, h
 	if ctx.Err() != nil {
 		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectProjectUnavailable)
 	}
-	h.s.enqueueRouted(rows, ids, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden)
+	if h.s.enqueueRouted(rows, ids, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden) != enqueueAccepted {
+		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectShutdown)
+	}
 	h.s.emitUsage(ctx, req.Traces())
 
 	resp := ptraceotlp.NewExportResponse()
@@ -621,7 +684,10 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		s.rejectHTTP(w, ct, rejectProjectUnavailable)
 		return
 	}
-	s.enqueueRouted(rows, ids, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden)
+	if s.enqueueRouted(rows, ids, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden) != enqueueAccepted {
+		s.rejectHTTP(w, ct, rejectShutdown)
+		return
+	}
 	enqueued = len(rows) > 0
 
 	s.emitUsage(ctx, req.Traces())
@@ -732,6 +798,10 @@ func partialSuccessResponse(routed auth.RouteOutcome) ptraceotlp.ExportResponse 
 // neither the observed catalog nor the stored-root notifier may see, so they
 // are parked without a tenant scope: both then skip them, and the catalog does
 // not record a scope failure for every drain that carries them.
+//
+// The request is admitted or refused as ONE unit, even when its rows are
+// parked in two parcels: a client that is told to retry a refused request
+// would otherwise store the parcel that fitted a second time.
 func (s *Server) enqueueRouted(
 	rows []map[string]any,
 	ids *curatedwriter.Batch,
@@ -740,10 +810,9 @@ func (s *Server) enqueueRouted(
 	workspaceID string,
 	workspaceProjectIDs map[string]struct{},
 	hiddenProjectIDs map[string]struct{},
-) {
+) enqueueOutcome {
 	if routed.Hidden != "" {
-		s.enqueue(rows, ids)
-		return
+		return s.enqueueParcels(parcel{rows: rows, ids: ids})
 	}
 	if len(hiddenProjectIDs) > 0 {
 		var visible, hidden []map[string]any
@@ -760,14 +829,15 @@ func (s *Server) enqueueRouted(
 			// The payload's identities go with the visible rows, or with the
 			// hidden ones when nothing else is left.
 			if len(visible) == 0 {
-				s.enqueue(hidden, ids)
-				return
+				return s.enqueueParcels(parcel{rows: hidden, ids: ids})
 			}
-			s.enqueue(hidden, nil)
-			rows = visible
+			return s.enqueueParcels(
+				parcel{rows: hidden},
+				parcel{rows: visible, ids: ids, organizationID: organizationID, workspaceID: workspaceID, projectIDs: workspaceProjectIDs},
+			)
 		}
 	}
-	s.enqueueScoped(rows, ids, organizationID, workspaceID, workspaceProjectIDs)
+	return s.enqueueScoped(rows, ids, organizationID, workspaceID, workspaceProjectIDs)
 }
 
 // indexByte and trimSpace are lifted here so the file doesn't grow a
@@ -792,6 +862,27 @@ func trimSpace(s string) string {
 	return s
 }
 
+// enqueueOutcome is the admission decision for one request.
+type enqueueOutcome int
+
+const (
+	// enqueueAccepted: every row of the request is parked.
+	enqueueAccepted enqueueOutcome = iota
+	// enqueueClosed: the server is shutting down and has closed admission for
+	// its final drain. Nothing is parked; a client should retry (elsewhere or
+	// after the restart).
+	enqueueClosed
+)
+
+// parcel is a group of rows parked together under one tenant scope.
+type parcel struct {
+	rows           []map[string]any
+	ids            *curatedwriter.Batch
+	organizationID string
+	workspaceID    string
+	projectIDs     map[string]struct{}
+}
+
 // enqueue parks rows on the pending buffer and signals the flusher.
 // We choose non-blocking signalling: if the channel already holds a tick
 // the flusher will already wake up and see this batch.
@@ -799,8 +890,8 @@ func trimSpace(s string) string {
 // `ids` are the CURATED dimension identities collected for this same payload;
 // they ride alongside `rows` so the curated dual-write flushes with the span
 // batch. A nil / empty Batch is skipped (the common no-user/no-session case).
-func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) {
-	s.enqueueScoped(rows, ids, "", "", nil)
+func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) enqueueOutcome {
+	return s.enqueueScoped(rows, ids, "", "", nil)
 }
 
 // enqueueScoped keeps the authenticated workspace in a drain-local sidecar.
@@ -812,44 +903,35 @@ func (s *Server) enqueueScoped(
 	organizationID string,
 	workspaceID string,
 	workspaceProjectIDs map[string]struct{},
-) {
-	if len(rows) == 0 {
-		return
+) enqueueOutcome {
+	return s.enqueueParcels(parcel{
+		rows:           rows,
+		ids:            ids,
+		organizationID: organizationID,
+		workspaceID:    workspaceID,
+		projectIDs:     workspaceProjectIDs,
+	})
+}
+
+// enqueueParcels parks one already byte-admitted request atomically, or refuses
+// all of it after shutdown. It does not introduce a second row-count budget.
+func (s *Server) enqueueParcels(parcels ...parcel) enqueueOutcome {
+	total := 0
+	for _, p := range parcels {
+		total += len(p.rows)
+	}
+	if total == 0 {
+		return enqueueAccepted
 	}
 	s.pendMu.Lock()
-	base := len(s.pend)
-	s.pend = append(s.pend, rows...)
-	if s.traceNotifier != nil {
-		for i := range rows {
-			for _, root := range traceavailable.ExtractRoots(rows[i:i+1], organizationID, workspaceID, workspaceProjectIDs) {
-				s.pendRoots = append(s.pendRoots, root)
-				s.pendRootRows = append(s.pendRootRows, base+i)
-			}
-		}
+	if s.admissionClosed {
+		s.refusals.ShuttingDownRequests++
+		s.pendMu.Unlock()
+		return enqueueClosed
 	}
-	if s.propertyCatalog != nil && organizationID != "" && workspaceID != "" {
-		for i, row := range rows {
-			s.pendPropertyRows = append(s.pendPropertyRows, base+i)
-			projectID, _ := row["project_id"].(string)
-			scopeError := ""
-			if workspaceProjectIDs == nil {
-				scopeError = "missing_project_workspace_proof"
-			} else if _, allowed := workspaceProjectIDs[projectID]; !allowed {
-				scopeError = "project_workspace_mismatch"
-			}
-			s.pendProperty = append(s.pendProperty, observedcatalog.ScopedSpan{
-				OrganizationID: organizationID,
-				WorkspaceID:    workspaceID,
-				ScopeError:     scopeError,
-				Row:            row,
-			})
-		}
-	}
-	if ids != nil && !ids.Empty() {
-		if s.pendCurated == nil {
-			s.pendCurated = curatedwriter.NewBatch()
-		}
-		s.pendCurated.Merge(ids)
+	s.bufferedRows += total
+	for _, p := range parcels {
+		s.appendLocked(p)
 	}
 	shouldKick := len(s.pend) >= s.cfg.BatchMaxRows
 	s.pendMu.Unlock()
@@ -858,6 +940,50 @@ func (s *Server) enqueueScoped(
 		case s.pendCh <- struct{}{}:
 		default:
 		}
+	}
+	return enqueueAccepted
+}
+
+// appendLocked parks a parcel whose rows are already reserved. s.pendMu must
+// be held.
+func (s *Server) appendLocked(p parcel) {
+	rows := p.rows
+	if len(rows) == 0 {
+		return
+	}
+	base := len(s.pend)
+	s.pend = append(s.pend, rows...)
+	if s.traceNotifier != nil {
+		for i := range rows {
+			for _, root := range traceavailable.ExtractRoots(rows[i:i+1], p.organizationID, p.workspaceID, p.projectIDs) {
+				s.pendRoots = append(s.pendRoots, root)
+				s.pendRootRows = append(s.pendRootRows, base+i)
+			}
+		}
+	}
+	if s.propertyCatalog != nil && p.organizationID != "" && p.workspaceID != "" {
+		for i, row := range rows {
+			s.pendPropertyRows = append(s.pendPropertyRows, base+i)
+			projectID, _ := row["project_id"].(string)
+			scopeError := ""
+			if p.projectIDs == nil {
+				scopeError = "missing_project_workspace_proof"
+			} else if _, allowed := p.projectIDs[projectID]; !allowed {
+				scopeError = "project_workspace_mismatch"
+			}
+			s.pendProperty = append(s.pendProperty, observedcatalog.ScopedSpan{
+				OrganizationID: p.organizationID,
+				WorkspaceID:    p.workspaceID,
+				ScopeError:     scopeError,
+				Row:            row,
+			})
+		}
+	}
+	if p.ids != nil && !p.ids.Empty() {
+		if s.pendCurated == nil {
+			s.pendCurated = curatedwriter.NewBatch()
+		}
+		s.pendCurated.Merge(p.ids)
 	}
 }
 
@@ -945,6 +1071,8 @@ func (s *Server) drainNow(ctx context.Context) {
 	if len(batch) == 0 {
 		return
 	}
+	// Observation only: retain the count through canonical and sidecar ownership.
+	defer func() { s.pendMu.Lock(); s.bufferedRows -= len(batch); s.pendMu.Unlock() }()
 	confirmed, _ := s.writer.InsertConfirmed(ctx, batch)
 	roots = confirmedSidecars(roots, rootRows, confirmed)
 	property = confirmedSidecars(property, propertyRows, confirmed)

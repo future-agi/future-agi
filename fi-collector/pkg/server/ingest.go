@@ -100,6 +100,7 @@ func (r *rejection) grpcCode() codes.Code {
 }
 
 var (
+	rejectShutdown           = &rejection{reason: "shutdown", kind: rejectBusy, msg: "collector is shutting down; retry"}
 	rejectProjectUnavailable = &rejection{reason: "project_unavailable", kind: rejectBusy, msg: "project resolution temporarily unavailable, retry later"}
 	rejectHeap               = &rejection{reason: "heap", kind: rejectBusy,
 		msg: "server busy (memory), retry later"}

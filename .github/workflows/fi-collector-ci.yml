@@ -17,6 +17,7 @@ on:
       - "futureagi/tracer/services/clickhouse/oss_*.py"
       - "futureagi/tracer/services/clickhouse/tests/test_oss_*.py"
       - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
+      - "futureagi/tracer/services/clickhouse/v2/schema/**"
       - ".github/workflows/fi-collector-ci.yml"
   push:
     branches: [dev, main]
@@ -34,6 +35,7 @@ on:
       - "futureagi/tracer/services/clickhouse/oss_*.py"
       - "futureagi/tracer/services/clickhouse/tests/test_oss_*.py"
       - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
+      - "futureagi/tracer/services/clickhouse/v2/schema/**"
       - ".github/workflows/fi-collector-ci.yml"
   merge_group:
   workflow_dispatch:
@@ -61,7 +63,7 @@ jobs:
         run: go test -count=1 -p 1 -timeout 5m -run 'TestPrice|TestGRPCLargeMessage|TestScan|TestPool|TestWireGrowers|TestAuthenticated|TestQuotaRefusal' ./pkg/server
       - name: Compile shipped commands
         working-directory: fi-collector
-        run: go build ./cmd/fi-collector ./cmd/fi-property-catalog-consumer ./cmd/fi-observed-catalog-backfill
+        run: go build ./cmd/fi-collector ./cmd/fi-property-catalog-consumer ./cmd/fi-observed-catalog-backfill ./cmd/otlpbench
 
   integration:
     runs-on: ubuntu-latest
@@ -166,6 +168,144 @@ jobs:
           path: |
             ${{ runner.temp }}/observed-integration.jsonl
             ${{ runner.temp }}/observed-services.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  otlp-benchmark-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    env:
+      OTLPBENCH_CI_PROJECT: otlpbench-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      OTLPBENCH_CI_CH_PORT: "18147"
+      OTLPBENCH_LIVE_CH_URL: http://127.0.0.1:18147
+      OTLPBENCH_LIVE_CH_DATABASE: otlpbench_ci
+      OTLPBENCH_LIVE_CH_USER: test
+      OTLPBENCH_LIVE_CH_PASSWORD: test
+      OTLPBENCH_LIVE_CONFIRM: isolated-test-stack
+      GOMAXPROCS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: fi-collector/go.mod
+          cache-dependency-path: fi-collector/go.sum
+      - name: Start isolated pinned ClickHouse for the benchmark smoke
+        timeout-minutes: 3
+        run: |
+          docker compose --env-file /dev/null -f fi-collector/benchmark/ci-compose.yml \
+            -p "$OTLPBENCH_CI_PROJECT" up -d --wait --wait-timeout 120
+      - name: Apply actual canonical schema and curated table DDL
+        timeout-minutes: 2
+        run: |
+          compose=(docker compose --env-file /dev/null -f fi-collector/benchmark/ci-compose.yml -p "$OTLPBENCH_CI_PROJECT")
+          "${compose[@]}" exec -T clickhouse clickhouse-client --user test --password test \
+            --query 'CREATE DATABASE otlpbench_ci'
+          "${compose[@]}" exec -T clickhouse clickhouse-client --user test --password test \
+            --database otlpbench_ci --allow_experimental_json_type 1 --multiquery \
+            < futureagi/tracer/services/clickhouse/v2/schema/002_spans_v2.sql
+          # The smoke uses canonical spans plus curated writes, not app dictionaries.
+          # Extract existing table DDL; never replace it with a mock span schema.
+          python3 - <<'PY' > "$RUNNER_TEMP/otlpbench-curated.sql"
+          import re
+          from pathlib import Path
+          schema = Path('futureagi/tracer/services/clickhouse/v2/schema')
+          for name in ('015_traces_and_trace_dict.sql', '017_end_users.sql', '018_trace_sessions.sql'):
+              match = re.search(r'^CREATE TABLE IF NOT EXISTS [\s\S]*?;\s*$', (schema / name).read_text(), re.MULTILINE)
+              if not match:
+                  raise SystemExit(f'Missing curated CREATE TABLE in {name}')
+              print(match.group(0))
+          PY
+          "${compose[@]}" exec -T clickhouse clickhouse-client --user test --password test \
+            --database otlpbench_ci --multiquery < "$RUNNER_TEMP/otlpbench-curated.sql"
+      - name: Require actual collector to ClickHouse ID verification, backpressure accounting and recovery
+        timeout-minutes: 8
+        working-directory: fi-collector
+        run: |
+          set -o pipefail
+          # The backpressure case uses current byte leases behind a slow insert
+          # path over HTTP protobuf, HTTP JSON+gzip and uncompressed gRPC.
+          # HTTP 503 is a retryable refusal; gRPC UNAVAILABLE stays ambiguous
+          # because it can also originate from the transport. Requests too large
+          # for the entire work pool are permanently refused, never admitted as
+          # a row-budget overshoot. The tamper case drops 3 stored rows and
+          # stores 3 spans twice; exact-ID SQL must report
+          # exactly 3 missing and 3 duplicates. The bucket case checks the durable lag's SQL bucketing
+          # against the Go histogram. Regression proofs also require later-only
+          # namespace reuse refusal, exact cross-window fault loss, and a visible
+          # sentinel beyond 4,096 permanently missing earlier identities.
+          # The recovery case restarts the real collector mid-run and, separately,
+          # holds every writer request to ClickHouse for 1.5 s; no acknowledged
+          # span may be missing and each fault must recover within the run.
+          OTLPBENCH_LIVE_RESULT="$RUNNER_TEMP/otlpbench-real-smoke.json" \
+          OTLPBENCH_LIVE_BACKPRESSURE_RESULT="$RUNNER_TEMP/otlpbench-real-backpressure.json" \
+          OTLPBENCH_LIVE_RECOVERY_RESULT="$RUNNER_TEMP/otlpbench-real-recovery.json" \
+          OTLPBENCH_LIVE_TAMPER_RESULT="$RUNNER_TEMP/otlpbench-real-tamper.json" \
+            go test -race -count=1 -p 1 -timeout 360s -json \
+            -run '^(TestLiveClickHouseCollectorPipeline|TestLiveClickHouseBackpressureAccounting|TestLiveClickHouseRecovery|TestLiveClickHouseVerifierCountsDroppedAndDuplicatedSpans|TestLiveClickHouseLatencyBucketsMatchGo|TestLiveClickHouseReusePreflightChecksLaterTraces|TestLiveClickHouseFaultLossAttribution|TestLiveClickHouseSentinelPollingFairness)$' ./pkg/ingestbench \
+            | tee "$RUNNER_TEMP/otlpbench-smoke-tests.jsonl"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          events = [json.loads(line) for line in (Path(os.environ['RUNNER_TEMP']) / 'otlpbench-smoke-tests.jsonl').read_text().splitlines()]
+          passed = {e.get('Test') for e in events if e['Action'] == 'pass'}
+          required = {
+              'TestLiveClickHouseCollectorPipeline',
+              'TestLiveClickHouseBackpressureAccounting',
+              'TestLiveClickHouseBackpressureAccounting/protobuf-gzip-false',
+              'TestLiveClickHouseBackpressureAccounting/json-gzip-true',
+              'TestLiveClickHouseBackpressureAccounting/grpc-gzip-false',
+              'TestLiveClickHouseRecovery',
+              'TestLiveClickHouseRecovery/collector-restart',
+              'TestLiveClickHouseRecovery/clickhouse-pause',
+              'TestLiveClickHouseVerifierCountsDroppedAndDuplicatedSpans',
+              'TestLiveClickHouseLatencyBucketsMatchGo',
+              'TestLiveClickHouseReusePreflightChecksLaterTraces',
+              'TestLiveClickHouseFaultLossAttribution',
+              'TestLiveClickHouseSentinelPollingFairness',
+          }
+          missing = required - passed
+          if missing:
+              raise SystemExit(f'Real ClickHouse benchmark proofs missing or skipped: {sorted(missing)}')
+          print(f'Confirmed {len(required)} real ClickHouse benchmark proofs')
+          PY
+      - name: Publish the real smoke result (headline must be withheld for a 1 s run)
+        timeout-minutes: 2
+        working-directory: fi-collector
+        run: |
+          set -o pipefail
+          go run ./cmd/otlpbench publish \
+            --markdown "$RUNNER_TEMP/otlpbench-real-smoke.md" \
+            --json "$RUNNER_TEMP/otlpbench-real-smoke.publication.json" \
+            "$RUNNER_TEMP/otlpbench-real-smoke.json" | tee "$RUNNER_TEMP/otlpbench-publish.txt"
+          grep -q '^headline withheld: .*below the configured minimum' "$RUNNER_TEMP/otlpbench-publish.txt"
+          grep -q '^## Not measured' "$RUNNER_TEMP/otlpbench-real-smoke.md"
+      - name: Collect only this smoke project's logs
+        if: always()
+        run: |
+          docker compose --env-file /dev/null -f fi-collector/benchmark/ci-compose.yml \
+            -p "$OTLPBENCH_CI_PROJECT" logs --no-color --tail 100 \
+            > "$RUNNER_TEMP/otlpbench-services.log" 2>&1 || true
+      - name: Remove only this isolated CI project
+        if: always()
+        timeout-minutes: 2
+        run: |
+          : "${OTLPBENCH_CI_PROJECT:?exact test project is required}"
+          docker compose --env-file /dev/null -f fi-collector/benchmark/ci-compose.yml \
+            -p "$OTLPBENCH_CI_PROJECT" down --volumes --remove-orphans --timeout 10
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: otlpbench-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/otlpbench-real-smoke.json
+            ${{ runner.temp }}/otlpbench-real-backpressure.json
+            ${{ runner.temp }}/otlpbench-real-recovery.json
+            ${{ runner.temp }}/otlpbench-real-tamper.json
+            ${{ runner.temp }}/otlpbench-real-smoke.md
+            ${{ runner.temp }}/otlpbench-real-smoke.publication.json
+            ${{ runner.temp }}/otlpbench-smoke-tests.jsonl
+            ${{ runner.temp }}/otlpbench-services.log
           if-no-files-found: warn
           retention-days: 7
 
