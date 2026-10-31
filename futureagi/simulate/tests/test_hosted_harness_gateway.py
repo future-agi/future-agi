@@ -199,6 +199,14 @@ def test_platform_simulator_material_uses_deployment_credentials_only(monkeypatc
     assert "ANTHROPIC_VERTEX_PROJECT_ID" not in values
 
 
+def test_the_sub_actor_switch_reaches_the_sandbox_only_when_set(monkeypatch):
+    monkeypatch.delenv("HARNESS_SUB_ACTORS", raising=False)
+    assert "HARNESS_SUB_ACTORS" not in _platform_simulator_material()
+
+    monkeypatch.setenv("HARNESS_SUB_ACTORS", "1")
+    assert _platform_simulator_material()["HARNESS_SUB_ACTORS"] == "1"
+
+
 def test_platform_simulator_defaults_to_gateway_authoring_and_gemini_caller(
     monkeypatch,
 ):
@@ -1835,6 +1843,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "AGENTCC_BASE_URL": "https://gateway.example.test",
         "AGENTCC_API_KEY": "harness-virtual-key",
         "SIMULATOR_STT_PROVIDER": "deepgram",
+        "HARNESS_SUB_ACTORS": "1",
         "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS": "3600",
     }
     monkeypatch.setattr(
@@ -1883,6 +1892,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
+    assert client.sandbox.process.session_request.env["HARNESS_SUB_ACTORS"] == "1"
     assert job.conversation.messages.get().content.startswith("Build the test environment")
     assert "; fi &&" in client.sandbox.process.session_request.command
     # Authoring and call execution are distinct bounded phases. The sandbox must survive the
@@ -2932,7 +2942,7 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     gateway.client = client
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: {},
+        lambda: {"HARNESS_SUB_ACTORS": "1"},
     )
     barrier = Barrier(2)
 
@@ -2956,6 +2966,7 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     assert states == ["starting", "starting"]
     assert client.sandbox.process.sessions == [_CHAT_SESSION]
     assert "hosted_chat_entrypoint" in client.sandbox.process.session_request.command
+    assert client.sandbox.process.session_request.env["HARNESS_SUB_ACTORS"] == "1"
     assert client.deleted is False
 
 

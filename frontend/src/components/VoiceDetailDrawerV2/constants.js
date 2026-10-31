@@ -9,6 +9,7 @@ export const DEFAULT_ROLE_LABELS = {
   assistant: "Assistant",
   system: "System",
   tool: "Tool",
+  sub_actor: "Sub-actor",
 };
 
 export const LEFT_PANEL_TAB_SHAPE = PropTypes.shape({

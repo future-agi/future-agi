@@ -162,6 +162,7 @@ export const STATUS_CHIPS = [
   { id: "failed", label: "Failed", tone: "red" },
   { id: "error", label: "Error", tone: "amber" },
   { id: "inconclusive", label: "Inconclusive", tone: null },
+  { id: "no_score", label: "No score", tone: null },
   { id: "passed", label: "Passed", tone: "green" },
 ];
 

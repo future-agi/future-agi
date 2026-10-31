@@ -45,6 +45,7 @@ GOAL_OUTCOMES = (
     "error",
     "escalated",
     "inconclusive",
+    "no_score",
 )
 # Provider-agnostic end reasons (metric list v1 §5.1), first match wins. The hosted ALK
 # reasons are listed explicitly: none of them appear in any provider's vocabulary.
@@ -167,6 +168,7 @@ def _breakdown(
         segments = [
             by_label.get(value, {"label": value, "count": 0, "share": 0})
             for value in order
+            if value != "no_score" or value in by_label
         ]
     if key == "goal_outcome":
         for segment in segments:
@@ -495,7 +497,12 @@ def build_run_dashboard(
         summary["measured"],
         # pass^1's range belongs to the run header: this rate pools trials, so
         # the range need not bracket it.
-        f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded.",
+        f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded."
+        + (
+            f" {outcomes['no_score']} with no score are excluded too."
+            if outcomes["no_score"]
+            else ""
+        ),
     )
     metric("total", f"Total {noun}s", total, measured=total)
     metric(

@@ -36,6 +36,8 @@ function humanizeEvalKey(key) {
 export function buildSummaryRow(run, scores) {
   const total = run?.total ?? 0;
   const passed = run?.passed ?? 0;
+  // Out of calls with a pass or fail; a run with none has no score, not 0%.
+  const scored = run?.scored ?? total;
   return {
     id: run?.id,
     executionId: run?.executionId ?? run?.id,
@@ -53,7 +55,7 @@ export function buildSummaryRow(run, scores) {
     scenarioCount: run?.scenarioCount ?? null,
     scenarioIds: run?.scenarioIds ?? [],
     trials: run?.trials ?? 1,
-    passRate: total ? Math.round((passed / total) * 100) : 0,
+    passRate: scored ? Math.round((passed / scored) * 100) : null,
     durationS: run?.durationS ?? null,
     scores: scores || {},
     tokens: null,

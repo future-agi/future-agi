@@ -263,6 +263,7 @@ class HostedHarnessScenario(BaseModel):
     persona = models.JSONField(null=True, blank=True)
     coverage = models.JSONField(null=True, blank=True)
     sub_goals = models.JSONField(null=True, blank=True)
+    sub_actors = models.JSONField(null=True, blank=True)
     keywords = models.JSONField(null=True, blank=True)
     background_noise = models.CharField(max_length=64, blank=True, default="")
     max_turns = models.PositiveIntegerField(null=True, blank=True)

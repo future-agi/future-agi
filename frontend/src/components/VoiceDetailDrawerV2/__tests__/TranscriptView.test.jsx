@@ -83,3 +83,32 @@ describe("function calls in voice transcripts", () => {
     expect(document.querySelector("script")).toBeNull();
   });
 });
+
+describe("sub-actors in voice transcripts", () => {
+  it("names a sub-actor's turn as someone who is not the customer", () => {
+    render(
+      <TranscriptView
+        transcript={[
+          {
+            id: "1",
+            speaker_role: "user",
+            content: "One ride please",
+            duration: 2,
+          },
+          {
+            id: "2",
+            speaker_role: "sub_actor",
+            speaker_name: "Rowan",
+            content: "Make it two",
+            duration: 1,
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText("Rowan (not the customer)")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Someone else (not the customer)"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/^Sub-actor \d+%$/)).toBeInTheDocument();
+  });
+});

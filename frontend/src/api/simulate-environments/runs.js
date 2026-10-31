@@ -60,6 +60,7 @@ export function executionToRun(raw) {
   const failed = hasOutcomes
     ? (raw.outcome_failed ?? 0) + skipped
     : raw?.failed_calls ?? Math.max(total - passed, 0);
+  const noScore = hasOutcomes ? raw.outcome_no_score ?? 0 : 0;
 
   let status;
   if (!TERMINAL_STATUSES.includes(raw?.status)) {
@@ -67,6 +68,8 @@ export function executionToRun(raw) {
   } else if (raw.status === "Cancelled") {
     // A stopped run is terminal but not a failure.
     status = "cancelled";
+  } else if (raw.status === "Completed" && failed === 0 && !passed && noScore) {
+    status = "no_score";
   } else if (raw.status === "Completed" && failed === 0) {
     status = "passed";
   } else {
@@ -90,8 +93,10 @@ export function executionToRun(raw) {
     total,
     passed,
     failed,
+    // Calls a pass rate counts: every call except those that ran with no pass or fail.
+    scored: Math.max(total - noScore, 0),
     pending: hasOutcomes
-      ? Math.max(total - passed - failed, 0)
+      ? Math.max(total - passed - failed - noScore, 0)
       : raw?.pending_calls ?? Math.max(total - passed - failed, 0),
     skipped,
     hasOutcomes,

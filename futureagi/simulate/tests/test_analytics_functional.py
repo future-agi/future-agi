@@ -466,6 +466,12 @@ class TestRunResultsV3Views:
             {"name": "Verify identity", "held": True},
             {"name": "Create refund", "held": False},
             {"name": "Send confirmation", "held": None},
+            {
+                "name": "Offer upgrade",
+                "held": True,
+                "verdict": "not_applicable",
+                "reason": "Not applicable: x",
+            },
             "Unmeasured goal",
         ]
         metadata = (
@@ -483,6 +489,12 @@ class TestRunResultsV3Views:
             {"name": "Verify identity", "passed": True},
             {"name": "Create refund", "passed": False},
             {"name": "Send confirmation", "passed": None},
+            {
+                "name": "Offer upgrade",
+                "passed": None,
+                "result": "not_applicable",
+                "reason": "Not applicable: x",
+            },
             {"name": "Unmeasured goal", "passed": None},
         ]
         response = auth_client.get(
@@ -1272,6 +1284,109 @@ class TestRunResultsV3Views:
         assert row["outcome"] == "error"
         assert row["harness_outcome_status"] == "error"
         assert row["execution_status"] == "completed"
+
+    def test_a_scenario_skipped_with_sub_actors_switched_off_keeps_dev_s_outcome_and_shows_why(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.CANCELLED
+        call.call_metadata = {
+            "harness_outcome_status": "skipped",
+            "hosted_harness_receipt": {
+                "status": "skipped",
+                "sub_goals": [],
+                "reason": "sub-actors are switched off",
+            },
+        }
+        call.eval_outputs = {}
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+        base = f"/simulate/v3/test-executions/{test_execution.id}"
+
+        calls = auth_client.get(f"{base}/calls/")
+        analytics = auth_client.get(f"{base}/analytics/")
+
+        assert calls.status_code == analytics.status_code == status.HTTP_200_OK
+        row = next(
+            item for item in calls.json()["results"] if item["id"] == str(call.id)
+        )
+        assert (row["outcome"], row["outcome_reason"]) == (
+            "error",
+            "sub-actors are switched off",
+        )
+        body = analytics.json()
+        assert "skipped" not in body["summary"]["outcomes"]
+        assert body["dashboard"]["run_health"]["attempted"] == body["summary"]["total"]
+
+    def test_a_call_where_nothing_it_tests_happened_reads_no_score(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {
+            "harness_outcome_status": "no_score",
+            "hosted_harness_receipt": {
+                "status": "passed",
+                "sub_goals": [
+                    {
+                        "name": "noticed",
+                        "held": True,
+                        "judged": True,
+                        "verdict": "not_applicable",
+                        "reason": "Not applicable: Rowan's trigger never fired in this call.",
+                    }
+                ],
+            },
+        }
+        call.eval_outputs = {}
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        row = next(
+            item for item in response.json()["results"] if item["id"] == str(call.id)
+        )
+        assert row["outcome"] == "no_score"
+        assert row["sub_goal_results"] == [
+            {
+                "name": "noticed",
+                "passed": None,
+                "result": "not_applicable",
+                "reason": "Not applicable: Rowan's trigger never fired in this call.",
+            }
+        ]
+
+    def test_a_failed_eval_on_a_call_with_no_scored_sub_goal_still_reads_failed(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {
+            "harness_outcome_status": "no_score",
+            "hosted_harness_receipt": {"status": "passed", "sub_goals": []},
+        }
+        call.eval_outputs = {
+            "native": {
+                "source": "harness",
+                "name": "Native evaluation",
+                "output": "Failed",
+                "output_type": "Pass/Fail",
+                "status": "completed",
+            }
+        }
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        row = next(
+            item for item in response.json()["results"] if item["id"] == str(call.id)
+        )
+        assert row["outcome"] == "failed"
 
     def test_calls_rows_expose_scoring_states(
         self, auth_client, test_execution, scenario
@@ -2436,6 +2551,7 @@ class TestRunResultsV3Views:
             "failed": 0,
             "error": 1,
             "inconclusive": 2,
+            "no_score": 0,
         }
         # An infrastructure error says nothing about the agent, so it is not in the rate.
         assert body["summary"]["measured"] == 1
@@ -4182,3 +4298,27 @@ class TestRunTestEvalSummaryComparisonView:
             url, {"execution_ids": json.dumps([str(test_execution.id)])}
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db
+def test_the_aggregate_average_leaves_out_results_that_are_neither_a_pass_nor_a_fail(
+    test_execution, scenario
+):
+    from simulate.utils.test_execution import calculate_aggregate_metrics
+
+    for index, value in enumerate(
+        ("Passed", "Not applicable", "Inconclusive", "Failed")
+    ):
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number=f"+1555000{index:04d}",
+            status=CallExecution.CallStatus.COMPLETED,
+            eval_outputs={
+                "e1": {"name": "Noticed", "output": value, "output_type": "Pass/Fail"}
+            },
+        )
+    metrics = calculate_aggregate_metrics(
+        CallExecution.objects.filter(test_execution=test_execution)
+    )
+    assert metrics["avg_noticed"] == 50.0

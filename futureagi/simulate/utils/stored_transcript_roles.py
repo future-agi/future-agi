@@ -3,6 +3,11 @@
 from simulate.models.test_execution import CallTranscript
 
 
+def sub_actor_label(name: str | None) -> str:
+    """How a transcript names a sub-actor, so no one reads them as the customer."""
+    return f"{name or 'Someone else'} (not the customer)"
+
+
 def get_conversational_transcript_roles() -> list[str]:
     """Return roles that represent back-and-forth dialogue turns."""
     return [
@@ -17,4 +22,5 @@ def get_displayable_transcript_roles() -> list[str]:
         CallTranscript.SpeakerRole.USER,
         CallTranscript.SpeakerRole.ASSISTANT,
         CallTranscript.SpeakerRole.SYSTEM,
+        CallTranscript.SpeakerRole.SUB_ACTOR,
     ]

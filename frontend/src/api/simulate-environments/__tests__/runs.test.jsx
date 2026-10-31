@@ -76,6 +76,33 @@ beforeEach(() => {
 });
 
 describe("executionToRun", () => {
+  it("counts every call but no-score ones in the pass-rate base, so errored calls still count", () => {
+    const base = {
+      id: "ex-rate",
+      status: "Completed",
+      total_chats: 10,
+      outcome_passed: 6,
+      outcome_failed: 4,
+      outcome_skipped: 0,
+    };
+    expect(executionToRun({ ...base, outcome_no_score: 0 }).scored).toBe(10);
+    expect(executionToRun({ ...base, outcome_no_score: 2 }).scored).toBe(8);
+  });
+
+  it("reads No score for a finished run whose graded calls all had no pass or fail", () => {
+    const run = executionToRun({
+      id: "ex-unscored",
+      status: "Completed",
+      total_chats: 3,
+      outcome_passed: 0,
+      outcome_failed: 0,
+      outcome_skipped: 0,
+      outcome_no_score: 3,
+    });
+    expect(run.status).toBe("no_score");
+    expect(run.pending).toBe(0);
+  });
+
   it("maps a completed, fully-passing execution to `passed`", () => {
     const run = executionToRun({
       id: "ex-1",

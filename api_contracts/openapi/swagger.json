@@ -122042,6 +122042,7 @@
                 "outcome_passed",
                 "outcome_failed",
                 "outcome_skipped",
+                "outcome_no_score",
                 "started_at",
                 "completed_at"
             ],
@@ -122097,6 +122098,11 @@
                 },
                 "outcome_skipped": {
                     "title": "Outcome skipped",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "outcome_no_score": {
+                    "title": "Outcome no score",
                     "type": "integer",
                     "x-nullable": true
                 },
@@ -124842,8 +124848,14 @@
                         "system",
                         "tool_calls",
                         "tool_call_result",
+                        "sub_actor",
                         "unknown"
                     ]
+                },
+                "speaker_name": {
+                    "title": "Speaker name",
+                    "type": "string",
+                    "maxLength": 255
                 },
                 "content": {
                     "title": "Content",
@@ -125836,6 +125848,54 @@
                 }
             }
         },
+        "HarnessEnvironmentSubActor": {
+            "required": [
+                "id",
+                "name",
+                "role",
+                "channel",
+                "persona",
+                "scenarios_count"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string"
+                },
+                "channel": {
+                    "title": "Channel",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "persona": {
+                    "title": "Persona",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "loudness_ratio": {
+                    "title": "Loudness ratio",
+                    "type": "number"
+                },
+                "scenarios_count": {
+                    "title": "Scenarios count",
+                    "type": "integer"
+                }
+            }
+        },
         "HarnessEnvironmentEndConditions": {
             "required": [
                 "max_turns",
@@ -125935,6 +125995,7 @@
             "required": [
                 "amendments",
                 "sub_goals",
+                "sub_actors",
                 "end_conditions",
                 "provenance"
             ],
@@ -126042,6 +126103,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/HarnessEnvironmentCatalogueSubGoal"
+                    }
+                },
+                "sub_actors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentSubActor"
                     }
                 },
                 "end_conditions": {
@@ -126198,6 +126265,33 @@
                 }
             }
         },
+        "HarnessEnvironmentScenarioSubActor": {
+            "required": [
+                "id",
+                "instruction",
+                "trigger"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "instruction": {
+                    "title": "Instruction",
+                    "type": "string"
+                },
+                "trigger": {
+                    "title": "Trigger",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                }
+            }
+        },
         "HarnessEnvironmentScenario": {
             "required": [
                 "scenario_key",
@@ -126210,6 +126304,7 @@
                 "fixture",
                 "steps",
                 "sub_goals",
+                "sub_actors",
                 "persona",
                 "situation",
                 "outcome",
@@ -126272,6 +126367,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/HarnessEnvironmentSubGoal"
+                    }
+                },
+                "sub_actors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentScenarioSubActor"
                     }
                 },
                 "persona": {
@@ -130660,6 +130761,16 @@
                 "judged": {
                     "title": "Judged",
                     "type": "boolean"
+                },
+                "verdict": {
+                    "title": "Verdict",
+                    "type": "string",
+                    "enum": [
+                        "pass",
+                        "fail",
+                        "not_applicable",
+                        "inconclusive"
+                    ]
                 }
             }
         },
@@ -130957,6 +131068,12 @@
                 },
                 "failure": {
                     "$ref": "#/definitions/HarnessFailure"
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 1
                 },
                 "digest": {
                     "title": "Digest",
@@ -134734,8 +134851,14 @@
                         "system",
                         "tool_calls",
                         "tool_call_result",
+                        "sub_actor",
                         "unknown"
                     ]
+                },
+                "speaker_name": {
+                    "title": "Speaker name",
+                    "type": "string",
+                    "maxLength": 255
                 },
                 "content": {
                     "title": "Content",
@@ -136528,6 +136651,12 @@
                 },
                 "outcome_skipped": {
                     "title": "Outcome skipped",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "outcome_no_score": {
+                    "title": "Outcome no score",
                     "type": "integer",
                     "readOnly": true,
                     "x-nullable": true
@@ -139441,6 +139570,18 @@
                     "title": "Passed",
                     "type": "boolean",
                     "x-nullable": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "inconclusive"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
                 }
             }
         },
@@ -140044,6 +140185,7 @@
                         "passed",
                         "failed",
                         "inconclusive",
+                        "no_score",
                         "error"
                     ]
                 },
@@ -142305,8 +142447,15 @@
                         "passed",
                         "failed",
                         "inconclusive",
+                        "no_score",
                         "error"
                     ]
+                },
+                "outcome_reason": {
+                    "title": "Outcome reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 },
                 "execution_status": {
                     "title": "Execution status",
@@ -142564,6 +142713,30 @@
                 }
             }
         },
+        "LabelledFacetValue": {
+            "required": [
+                "value",
+                "count",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "RunFacets": {
             "required": [
                 "goal",
@@ -142582,6 +142755,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/FacetValue"
+                    }
+                },
+                "sub_actor": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/LabelledFacetValue"
                     }
                 },
                 "status": {

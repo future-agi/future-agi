@@ -16059,6 +16059,7 @@ export interface HarnessRunSummaryApi {
   outcome_passed: number;
   outcome_failed: number;
   outcome_skipped: number;
+  outcome_no_score: number;
   started_at: string;
   completed_at: string;
 }
@@ -17315,6 +17316,7 @@ export const ALKSimulateTranscriptSegmentApiSpeakerRole = {
   system: "system",
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
+  sub_actor: "sub_actor",
   unknown: "unknown",
 } as const;
 
@@ -17324,6 +17326,8 @@ export type ALKSimulateTranscriptSegmentApiToolCalls = {
 
 export interface ALKSimulateTranscriptSegmentApi {
   speaker_role: ALKSimulateTranscriptSegmentApiSpeakerRole;
+  /** @maxLength 255 */
+  speaker_name?: string;
   content: string;
   /** @minimum 0 */
   start_time_ms?: number;
@@ -17677,6 +17681,21 @@ export interface HarnessEnvironmentCatalogueSubGoalApi {
   check: string;
 }
 
+export type HarnessEnvironmentSubActorApiPersona = { [key: string]: string };
+
+export interface HarnessEnvironmentSubActorApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  role: string;
+  /** @minLength 1 */
+  channel: string;
+  persona: HarnessEnvironmentSubActorApiPersona;
+  loudness_ratio?: number;
+  scenarios_count: number;
+}
+
 export type HarnessEnvironmentEndConditionsApiClock =
   (typeof HarnessEnvironmentEndConditionsApiClock)[keyof typeof HarnessEnvironmentEndConditionsApiClock];
 
@@ -17754,6 +17773,7 @@ export interface HarnessEnvironmentContractApi {
   open_questions?: string[];
   amendments: HarnessEnvironmentAmendmentApi[];
   sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
+  sub_actors: HarnessEnvironmentSubActorApi[];
   end_conditions: HarnessEnvironmentEndConditionsApi;
   notes?: string;
   chosen_evals?: string[];
@@ -17803,6 +17823,17 @@ export interface HarnessEnvironmentSubGoalApi {
   claim?: string;
 }
 
+export type HarnessEnvironmentScenarioSubActorApiTrigger = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentScenarioSubActorApi {
+  /** @minLength 1 */
+  id: string;
+  instruction: string;
+  trigger: HarnessEnvironmentScenarioSubActorApiTrigger;
+}
+
 export type HarnessEnvironmentScenarioApiFixture = { [key: string]: string };
 
 export type HarnessEnvironmentScenarioApiPersona = { [key: string]: string };
@@ -17822,6 +17853,7 @@ export interface HarnessEnvironmentScenarioApi {
   fixture: HarnessEnvironmentScenarioApiFixture;
   steps: number;
   sub_goals: HarnessEnvironmentSubGoalApi[];
+  sub_actors: HarnessEnvironmentScenarioSubActorApi[];
   persona: HarnessEnvironmentScenarioApiPersona;
   /** @minLength 1 */
   situation: string;
@@ -19675,6 +19707,16 @@ export const HarnessResultReceiptApiStatus = {
 
 export type HarnessResultReceiptApiEvaluations = { [key: string]: unknown };
 
+export type HarnessSubGoalApiVerdict =
+  (typeof HarnessSubGoalApiVerdict)[keyof typeof HarnessSubGoalApiVerdict];
+
+export const HarnessSubGoalApiVerdict = {
+  pass: "pass",
+  fail: "fail",
+  not_applicable: "not_applicable",
+  inconclusive: "inconclusive",
+} as const;
+
 export interface HarnessSubGoalApi {
   /**
    * @minLength 1
@@ -19684,6 +19726,7 @@ export interface HarnessSubGoalApi {
   held: boolean;
   reason?: string;
   judged: boolean;
+  verdict?: HarnessSubGoalApiVerdict;
 }
 
 export type HarnessTargetMetricsApiProvider =
@@ -19818,6 +19861,11 @@ export interface HarnessResultReceiptApi {
   evaluations: HarnessResultReceiptApiEvaluations;
   call: HarnessCallApi;
   failure: HarnessFailureApi;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  reason?: string;
   /**
    * @minLength 1
    * @pattern ^sha256:[0-9a-f]{64}$
@@ -21696,6 +21744,7 @@ export const CallTranscriptApiSpeakerRole = {
   system: "system",
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
+  sub_actor: "sub_actor",
   unknown: "unknown",
 } as const;
 
@@ -21703,6 +21752,8 @@ export interface CallTranscriptApi {
   readonly id?: string;
   /** Role of the speaker (user or assistant) */
   speaker_role?: CallTranscriptApiSpeakerRole;
+  /** @maxLength 255 */
+  speaker_name?: string;
   /**
    * Transcript content
    * @minLength 1
@@ -22352,6 +22403,7 @@ export interface TestExecutionItemResponseApi {
   readonly outcome_passed?: number;
   readonly outcome_failed?: number;
   readonly outcome_skipped?: number;
+  readonly outcome_no_score?: number;
   environment_version?: RunVersionLabelApi | null;
   suite_version?: RunVersionLabelApi | null;
   pinned_agent_version?: RunVersionLabelApi | null;
@@ -23504,6 +23556,7 @@ export const CallExecutionV3DetailResponseApiOutcome = {
   passed: "passed",
   failed: "failed",
   inconclusive: "inconclusive",
+  no_score: "no_score",
   error: "error",
 } as const;
 
@@ -23540,10 +23593,20 @@ export interface PersonaDetailsApi {
   traits: string[];
 }
 
+export type SubGoalResultApiResult =
+  (typeof SubGoalResultApiResult)[keyof typeof SubGoalResultApiResult];
+
+export const SubGoalResultApiResult = {
+  not_applicable: "not_applicable",
+  inconclusive: "inconclusive",
+} as const;
+
 export interface SubGoalResultApi {
   /** @minLength 1 */
   name: string;
   passed: boolean | null;
+  result?: SubGoalResultApiResult;
+  reason?: string;
 }
 
 export interface CostBreakdownApi {
@@ -24296,6 +24359,7 @@ export const RunCallApiOutcome = {
   passed: "passed",
   failed: "failed",
   inconclusive: "inconclusive",
+  no_score: "no_score",
   error: "error",
 } as const;
 
@@ -24345,6 +24409,8 @@ export interface RunCallApi {
   source_scenario_key: string;
   trial_index: number;
   outcome: RunCallApiOutcome;
+  /** @minLength 1 */
+  outcome_reason?: string;
   /** @minLength 1 */
   execution_status: string;
   /** @minLength 1 */
@@ -24411,9 +24477,18 @@ export interface FacetValueApi {
   count: number;
 }
 
+export interface LabelledFacetValueApi {
+  /** @minLength 1 */
+  value: string;
+  count: number;
+  /** @minLength 1 */
+  label: string;
+}
+
 export interface RunFacetsApi {
   goal: FacetValueApi[];
   sub_goal: FacetValueApi[];
+  sub_actor?: LabelledFacetValueApi[];
   status: FacetValueApi[];
 }
 

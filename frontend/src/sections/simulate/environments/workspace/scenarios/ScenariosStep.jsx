@@ -527,6 +527,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
       />
       <ScenarioDrawer
         row={openRow}
+        env={env}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => { setOpenRow(null); setEditing(row); }}
         locked={locked}

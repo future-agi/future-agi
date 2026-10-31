@@ -159,7 +159,10 @@ function SummaryRow({ row, evals, onOpenRun, selected, selectable, onToggleSelec
       <NumCell value={row.trials ?? 1} />
       <NumCell value={row.tasks} />
 
-      <NumCell value={`${row.passRate}%`} bold />
+      <NumCell
+        value={row.passRate == null ? "No score" : `${row.passRate}%`}
+        bold
+      />
       <NumCell value={row.durationS != null ? formatDuration(row.durationS) : DASH} />
       <NumCell value={DASH} muted />
       <NumCell value={DASH} muted />

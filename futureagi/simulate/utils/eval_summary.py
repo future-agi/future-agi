@@ -1,3 +1,4 @@
+from collections import Counter
 from typing import Container
 
 import numpy as np
@@ -158,9 +159,18 @@ def _calculate_config_stats(eval_config, outputs):
         raise ValueError(f"Invalid output type: {output_type}")
 
 
+# Results that are neither a pass nor a fail, so no pass rate counts them.
+UNSCORED_OUTPUTS = frozenset({"Not applicable", "Inconclusive"})
+
+
 def _calculate_pass_fail_stats(eval_config, outputs):
     """Calculate Pass/Fail statistics"""
-    total_calls = len(outputs)
+    unscored = Counter(
+        output.get("output")
+        for output in outputs
+        if output.get("output") in UNSCORED_OUTPUTS
+    )
+    total_calls = len(outputs) - sum(unscored.values())
     pass_count = 0
     fail_count = 0
 
@@ -189,6 +199,8 @@ def _calculate_pass_fail_stats(eval_config, outputs):
             "fail": fail_rate,
             "pass_count": pass_count,
             "fail_count": fail_count,
+            "not_applicable_count": unscored["Not applicable"],
+            "inconclusive_count": unscored["Inconclusive"],
         },
     }
 

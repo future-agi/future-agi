@@ -5965,6 +5965,13 @@ class RunTestExecutionsView(APIView):
                             if test_execution.id in hosted_jobs
                             else None
                         ),
+                        "outcome_no_score": (
+                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
+                                "no_score", 0
+                            )
+                            if test_execution.id in hosted_jobs
+                            else None
+                        ),
                         **_version_labels(version_labels, test_execution.id),
                     }
                 )

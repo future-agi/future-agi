@@ -1664,7 +1664,13 @@ def start_conversation_run(
 
 # What a chat workspace reproduces faithfully. Build outputs (the bundle manifest, seeded
 # stores) are not in it, so those keep what the last build produced.
-_CHECKPOINT_STAGE_KINDS = ("contract", "scenarios", "sub_goals", "coverage")
+_CHECKPOINT_STAGE_KINDS = (
+    "contract",
+    "scenarios",
+    "sub_goals",
+    "coverage",
+    "sub_actors",
+)
 
 
 def _schedule_checkpoint_promotion(conversation_id: str, turn_sequence: int) -> None:

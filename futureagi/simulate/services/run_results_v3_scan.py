@@ -42,6 +42,7 @@ from simulate.services.run_results_v3_scoring import (
     HARNESS_ERROR,
     HARNESS_FAILED,
     HARNESS_INCONCLUSIVE,
+    HARNESS_NO_SCORE,
     HARNESS_PASSED,
     IN_PROGRESS_CALL_STATUSES,
     NATIVE_FAILED,
@@ -450,6 +451,7 @@ _HARNESS_ERROR = frozenset(HARNESS_ERROR)
 _HARNESS_FAILED = frozenset(HARNESS_FAILED)
 _HARNESS_INCONCLUSIVE = frozenset(HARNESS_INCONCLUSIVE)
 _HARNESS_PASSED = frozenset(HARNESS_PASSED)
+_HARNESS_NO_SCORE = frozenset(HARNESS_NO_SCORE)
 
 
 def _outcome(
@@ -470,6 +472,8 @@ def _outcome(
         return "inconclusive"
     if harness_status in _HARNESS_FAILED or failed is True:
         return "failed"
+    if harness_status in _HARNESS_NO_SCORE:
+        return "no_score"
     if errored is True or harness_status in _HARNESS_INCONCLUSIVE:
         return "inconclusive"
     if harness_status in _HARNESS_PASSED or passed is True:

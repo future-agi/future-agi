@@ -1806,13 +1806,14 @@ class TestRunTestExecutionsView:
             expires_at=timezone.now() + timedelta(hours=1),
         )
 
-        def receipt(key, receipt_status, *, deleted, through_execution):
+        def receipt(key, receipt_status, *, deleted, through_execution, outcome=None):
             call_execution = CallExecution.all_objects.create(
                 test_execution=test_execution,
                 scenario=scenario_with_prompt_version,
                 status=CallExecution.CallStatus.COMPLETED,
                 simulation_call_type=CallExecution.SimulationCallType.TEXT,
                 deleted=deleted,
+                call_metadata=({"harness_outcome_status": outcome} if outcome else {}),
             )
             registration = HostedHarnessScenario.objects.create(
                 job=job,
@@ -1847,6 +1848,14 @@ class TestRunTestExecutionsView:
         receipt("gone-passed", "passed", deleted=True, through_execution=True)
         receipt("gone-errored", "errored", deleted=True, through_execution=False)
         receipt("gone-skipped", "skipped", deleted=True, through_execution=True)
+        # Every sub-goal not applicable: the receipt says passed, the call has no score.
+        receipt(
+            "kept-no-score",
+            "passed",
+            deleted=False,
+            through_execution=True,
+            outcome="no_score",
+        )
 
         response = auth_client.get(
             f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
@@ -1858,11 +1867,12 @@ class TestRunTestExecutionsView:
             for item in response.json()["results"]
             if item["id"] == str(test_execution.id)
         )
-        assert row["calls"] == 3
-        assert row["total_calls"] == 3
+        assert row["calls"] == 4
+        assert row["total_calls"] == 4
         assert row["outcome_passed"] == 1
         assert row["outcome_failed"] == 1
         assert row["outcome_skipped"] == 1
+        assert row["outcome_no_score"] == 1
 
     def test_get_run_test_executions_times_a_prompt_run_without_deleted_calls(
         self, auth_client, organization, workspace, scenario_with_prompt_version

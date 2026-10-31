@@ -94,6 +94,22 @@ export const scenarioCoverage = async (jobId, params = {}) => {
 // raw row on `_raw` for the Phase-2 edit drawer. The persona is normalised to
 // the shape's camelCase keys; coverage/keywords and the run fields ride along
 // untouched.
+// When a scenario's sub-actor enters, in the words a reader of the scenario needs.
+export const subActorWhen = (trigger = {}) => {
+  switch (trigger.kind) {
+    case "mid_journey":
+      return `After the agent's turn ${trigger.turn}`;
+    case "on_tool":
+      return trigger.on_call > 1
+        ? `On call ${trigger.on_call} of ${trigger.tool}, or after the agent's turn 4`
+        : `When the agent calls ${trigger.tool}, or after the agent's turn 4`;
+    case "on_keyword":
+      return `When the agent says ${(trigger.words || []).join(", ")}, or after the agent's turn 4`;
+    default:
+      return "From the start";
+  }
+};
+
 export const scenarioFromApi = (row = {}) => {
   const persona = row.persona || null;
   return {
@@ -110,6 +126,7 @@ export const scenarioFromApi = (row = {}) => {
     conversationBranch: row.branch,
     branchCategory: row.branch,
     subTasks: Array.isArray(row.sub_goals) ? row.sub_goals : [],
+    subActors: Array.isArray(row.sub_actors) ? row.sub_actors : [],
     persona: persona
       ? {
           name: persona.name,

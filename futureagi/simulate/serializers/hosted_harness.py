@@ -74,6 +74,9 @@ class HarnessSubGoalSerializer(serializers.Serializer):
     held = serializers.BooleanField(allow_null=True)
     reason = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     judged = serializers.BooleanField()
+    verdict = serializers.ChoiceField(
+        choices=("pass", "fail", "not_applicable", "inconclusive"), required=False
+    )
 
 
 class HarnessMetricEvaluationSerializer(serializers.Serializer):
@@ -177,6 +180,8 @@ class HarnessResultReceiptSerializer(serializers.Serializer):
     evaluations = serializers.JSONField()
     call = HarnessCallSerializer(allow_null=True)
     failure = HarnessFailureSerializer(allow_null=True)
+    # Why a scenario was skipped, when the harness gave a reason.
+    reason = serializers.CharField(required=False, max_length=500)
     digest = serializers.RegexField(_SHA256)
 
     def validate_evaluations(self, value):

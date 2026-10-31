@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { subActorWhen } from "src/api/simulate-environments/scenarios";
 import SideDrawer from "../../components/SideDrawer";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import { personaSubline } from "./personaLabels";
@@ -21,7 +22,7 @@ const SECTION_HEAD = {
   typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.5, mb: 1,
 };
 
-export default function ScenarioDrawer({ row, onClose, onEdit, locked = false }) {
+export default function ScenarioDrawer({ row, env, onClose, onEdit, locked = false }) {
   return (
     <SideDrawer open={!!row} onClose={onClose} width={680}>
       {row && (
@@ -47,7 +48,7 @@ export default function ScenarioDrawer({ row, onClose, onEdit, locked = false })
             )}
           </Stack>
           <Box sx={{ flex: 1, overflow: "auto" }}>
-            <ScenarioSheet row={row} />
+            <ScenarioSheet row={row} env={env} />
           </Box>
         </Stack>
       )}
@@ -57,13 +58,15 @@ export default function ScenarioDrawer({ row, onClose, onEdit, locked = false })
 
 ScenarioDrawer.propTypes = {
   row: SCENARIO_SHAPE,
+  env: PropTypes.shape({ subActors: PropTypes.array }),
   onClose: PropTypes.func.isRequired,
   onEdit: PropTypes.func,
   locked: PropTypes.bool,
 };
 
-function ScenarioSheet({ row }) {
+function ScenarioSheet({ row, env }) {
   const persona = row.persona?.name ? row.persona : null;
+  const listed = Object.fromEntries((env?.subActors || []).map((one) => [one.id, one]));
   const goals = normaliseSubTasks(row.subTasks);
   // The same fields the table's Situation and Ideal outcome cells read.
   const situation = row.situation || row.task;
@@ -106,6 +109,28 @@ function ScenarioSheet({ row }) {
         </Stack>
       </Row>
     ),
+    row.subActors?.length > 0 && (
+      <Row key="sub-actors" label="Sub-actors">
+        <Stack spacing={1.25} sx={{ maxWidth: 760 }}>
+          {row.subActors.map((one) => (
+            <Box key={one.id}>
+              <Typography className="sd-val">
+                <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
+                  {listed[one.id]?.name || one.id}
+                </Box>
+                {listed[one.id]?.role ? ` · ${listed[one.id].role}` : ""}
+                {` · ${subActorWhen(one.trigger)}`}
+              </Typography>
+              {one.instruction && (
+                <Typography className="sd-val" sx={{ color: "text.secondary", whiteSpace: "pre-line" }}>
+                  {one.instruction}
+                </Typography>
+              )}
+            </Box>
+          ))}
+        </Stack>
+      </Row>
+    ),
     idealOutcome && (
       <Row key="outcome" label="Ideal outcome">
         <Typography className="sd-val" sx={{ whiteSpace: "pre-line" }}>{idealOutcome}</Typography>
@@ -131,7 +156,7 @@ function ScenarioSheet({ row }) {
   );
 }
 
-ScenarioSheet.propTypes = { row: SCENARIO_SHAPE };
+ScenarioSheet.propTypes = { row: SCENARIO_SHAPE, env: PropTypes.shape({ subActors: PropTypes.array }) };
 
 function Row({ label, children }) {
   return (

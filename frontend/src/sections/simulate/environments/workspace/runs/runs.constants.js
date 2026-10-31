@@ -52,6 +52,8 @@ export const PULSING_DOT_CLASS = "sim-status-dot--pulse";
 export const STATUS_META = {
   in_progress: { color: BUILD_TONES.blue, label: "In progress" },
   inconclusive: { color: BUILD_TONES.ash, label: "Inconclusive" },
+  // Nothing the call was meant to test happened in it: neither a pass nor a fail.
+  no_score: { color: BUILD_TONES.ash, label: "No score" },
   queued: { color: BUILD_TONES.zinc, label: "Queued" },
   booting: { color: BUILD_TONES.amber, label: "Provisioning" },
   running: { color: BUILD_TONES.blue, label: "Running" },

@@ -2151,7 +2151,14 @@ class HostedHarnessProvider:
         from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
 
         spoken = agent_type(job) == AGENT_TYPE_VOICE
-        response.data["fields"] = field_catalogue(offerable, spoken=spoken)
+        from simulate.services.harness_environment import _stage_output
+        from simulate.services.harness_scenarios import sub_actor_choice_labels
+
+        response.data["fields"] = field_catalogue(
+            offerable,
+            spoken=spoken,
+            sub_actor_labels=sub_actor_choice_labels(_stage_output(job, "sub_actors")),
+        )
         response.data["scenario_editing"] = self._editing_contract(spoken)
         from simulate.services.harness_scenarios import GROUPINGS
 

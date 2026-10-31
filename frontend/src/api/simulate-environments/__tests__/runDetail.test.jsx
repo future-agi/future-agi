@@ -1580,3 +1580,19 @@ describe("useCallTraces", () => {
     expect(axios.get).not.toHaveBeenCalled();
   });
 });
+
+describe("sub-actor turns in a call", () => {
+  it("names who spoke on a voice turn", () => {
+    const voice = mapCallDetail({
+      id: "v",
+      transcript: [
+        { speaker_role: "sub_actor", speaker_name: "Rowan", content: "Two" },
+        { speaker_role: "user", content: "One" },
+      ],
+    });
+    expect(voice.turns.map((t) => [t.role, t.speakerName])).toEqual([
+      ["sub_actor", "Rowan"],
+      ["customer", ""],
+    ]);
+  });
+});

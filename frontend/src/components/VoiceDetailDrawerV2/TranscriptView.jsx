@@ -15,12 +15,18 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import { ShowComponent } from "src/components/show";
 import useVoiceAudioStore from "./voiceAudioStore";
-import { computeTotals, enrichTurns, formatClock } from "./transcriptUtils";
+import {
+  computeTotals,
+  enrichTurns,
+  formatClock,
+  subActorLabel,
+} from "./transcriptUtils";
 import { DEFAULT_ROLE_LABELS } from "./constants";
 import FunctionCallContent from "./FunctionCallContent";
 
@@ -73,6 +79,7 @@ const useSpeakerColors = () => {
       user: theme.palette.mode === "dark" ? "#FF9933" : "#E9690C",
       system: theme.palette.mode === "dark" ? "#a78bfa" : "#7c3aed",
       tool: theme.palette.mode === "dark" ? "#fbbf24" : "#d97706",
+      sub_actor: theme.palette.mode === "dark" ? "#2dd4bf" : "#0d9488",
       unknown: theme.palette.text.disabled,
     }),
     [theme],
@@ -317,7 +324,9 @@ const TurnRow = React.forwardRef(
               ? "action.hover"
               : isFunctionCall
                 ? "background.neutral"
-                : "transparent",
+                : turn.role === "sub_actor"
+                  ? alpha(color, 0.08)
+                  : "transparent",
           transition: "background-color 80ms",
           "&:hover": {
             bgcolor: isPlaying ? "rgba(123, 86, 219, 0.12)" : "action.hover",
@@ -357,6 +366,12 @@ const TurnRow = React.forwardRef(
               }}
             >
               {formatClock(turn.start)}
+            </Typography>
+          )}
+
+          {turn.role === "sub_actor" && (
+            <Typography sx={{ fontSize: 10, color, fontWeight: 600 }}>
+              {subActorLabel(turn.speakerName)}
             </Typography>
           )}
 

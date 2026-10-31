@@ -69,6 +69,10 @@ from simulate.models import (
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.semantics import SupportedProviders
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
+from simulate.services.harness_scenarios import (
+    NO_SUB_ACTOR,
+    SIMULATED_USER_ONLY,
+)
 from simulate.services.run_reliability_v3 import build_reliability
 from simulate.services.run_results_v3 import OUTCOME_LABELS, build_evaluation_catalog
 from simulate.services.run_results_v3_expressions import (
@@ -84,6 +88,7 @@ from simulate.services.run_results_v3_scoring import (
     HARNESS_ERROR,
     HARNESS_FAILED,
     HARNESS_INCONCLUSIVE,
+    HARNESS_NO_SCORE,
     HARNESS_PASSED,
     IN_PROGRESS_CALL_STATUSES,
     NATIVE_FAILED,
@@ -916,6 +921,10 @@ def run_calls_queryset(
                 then=Value("failed"),
             ),
             When(failed_eval, then=Value("failed")),
+            When(
+                call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE),
+                then=Value("no_score"),
+            ),
             When(errored_eval, then=Value("inconclusive")),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_INCONCLUSIVE),
@@ -1008,6 +1017,26 @@ def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
     return sub_goal_query
 
 
+def _sub_actor_q(values: list[str]) -> Q:
+    """Calls each sub-actor entered; ``none`` is a call no sub-actor entered."""
+    entered = Q(
+        call_metadata__harness_sub_actors__summary__contains=[{"triggered": True}]
+    )
+    query = Q(pk__in=[])
+    for value in values:
+        if value == NO_SUB_ACTOR:
+            query |= (
+                Q(call_metadata__harness_sub_actors__summary__isnull=True) | ~entered
+            )
+        else:
+            query |= Q(
+                call_metadata__harness_sub_actors__summary__contains=[
+                    {"sub_actor": value, "triggered": True}
+                ]
+            )
+    return query
+
+
 def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
     search = str(query.get("search") or "").strip()
     filters = query.get("filters") or {}
@@ -1049,6 +1078,18 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
             ~Exists(
                 CallExecution._base_manager.filter(
                     _sub_goal_q(values, pinned=pinned), pk=OuterRef("pk")
+                )
+            )
+        )
+
+    if values := filters.get("sub_actor"):
+        queryset = queryset.filter(_sub_actor_q(values))
+    if values := filters.get("sub_actor_not"):
+        # NOT EXISTS, so a call with no sub-actor record still counts as "not".
+        queryset = queryset.filter(
+            ~Exists(
+                CallExecution._base_manager.filter(
+                    _sub_actor_q(values), pk=OuterRef("pk")
                 )
             )
         )
@@ -1207,6 +1248,35 @@ def _sub_goal_facet(calls: QuerySet) -> list[dict[str, Any]]:
     ]
 
 
+def _sub_actor_facet(calls: QuerySet) -> list[dict[str, Any]]:
+    """Calls per sub-actor that entered them, by name; none when no run call had one."""
+    counts: Counter = Counter()
+    names = {NO_SUB_ACTOR: SIMULATED_USER_ONLY}
+    summaries = (
+        calls.order_by()
+        .values_list("call_metadata__harness_sub_actors__summary", flat=True)
+        .iterator(chunk_size=2000)
+    )
+    for summary in summaries:
+        entered = [
+            one
+            for one in (summary if isinstance(summary, list) else [])
+            if isinstance(one, dict) and one.get("triggered") and one.get("sub_actor")
+        ]
+        for one in entered:
+            key = str(one["sub_actor"])
+            counts[key] += 1
+            names.setdefault(key, str(one.get("name") or key))
+        if not entered:
+            counts[NO_SUB_ACTOR] += 1
+    if set(counts) <= {NO_SUB_ACTOR}:
+        return []
+    return [
+        {"value": value, "count": count, "label": names[value]}
+        for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
 def run_call_facets(
     rows: Callable[[], list[dict[str, Any]]],
     calls: Callable[[], QuerySet],
@@ -1217,6 +1287,7 @@ def run_call_facets(
         return cached
     facets = _value_facets(rows(), {"goal": "result_goal", "status": "result_outcome"})
     facets["sub_goal"] = _sub_goal_facet(calls())
+    facets["sub_actor"] = _sub_actor_facet(calls())
     if facets_cache_key:
         cache.set(facets_cache_key, facets, timeout=60 * 60)
     return facets

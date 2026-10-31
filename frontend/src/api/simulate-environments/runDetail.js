@@ -559,6 +559,7 @@ export function mapCallDetail(raw) {
   const isChat = raw.simulation_call_type === "text";
   const turns = callTranscript(raw).map((t) => ({
     role: normalizeRole(t.speaker_role ?? t.role),
+    speakerName: t.speaker_name || "",
     text: messageText(t.content),
     at: t.start_time_seconds ?? null,
     toolCalls: t.tool_calls ?? null,

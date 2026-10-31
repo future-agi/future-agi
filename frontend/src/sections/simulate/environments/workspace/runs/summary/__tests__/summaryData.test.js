@@ -45,8 +45,18 @@ describe("buildSummaryRow", () => {
 
   it("does not divide by zero on an empty run", () => {
     const row = buildSummaryRow({ ...run, total: 0, passed: 0 }, undefined);
-    expect(row.passRate).toBe(0);
+    expect(row.passRate).toBeNull();
     expect(row.scores).toEqual({});
+  });
+
+  it("counts only calls with a pass or fail, and a run with none has no score", () => {
+    // 20 calls, 10 with a pass or fail: the other 10 had no score.
+    expect(
+      buildSummaryRow({ ...run, passed: 5, scored: 10 }, {}).passRate,
+    ).toBe(50);
+    expect(
+      buildSummaryRow({ ...run, passed: 0, scored: 0 }, {}).passRate,
+    ).toBeNull();
   });
 });
 

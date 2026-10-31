@@ -89,8 +89,9 @@ const stopRowClick = (e) => e.stopPropagation();
 // anywhere else on the row opens it in full through onOpen. Stripped from the
 // source: the twin-seed override icon (twinSeedPrompt) — twin-only, not on
 // either entry path.
-export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, onHideGroup, selectedIds, onSelectionChange, selection, pageIds, onTogglePage, locked = false, rowHeight = "Short" }) {
+export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onOpen, onHideGroup, selectedIds, onSelectionChange, selection, pageIds, onTogglePage, locked = false, rowHeight = "Short" }) {
   const limits = ROW_HEIGHTS[rowHeight] || ROW_HEIGHTS.Short;
+  const subActorNames = Object.fromEntries((env?.subActors || []).map((one) => [one.id, one.name]));
   const [widths, setWidths] = useState(readWidths);
   const widthsRef = useRef(widths);
   widthsRef.current = widths;
@@ -367,6 +368,11 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                       <TruncTooltip title={row.summary || row.title}>
                         <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{row.summary || row.title}</Typography>
                       </TruncTooltip>
+                      {row.subActors?.length > 0 && (
+                        <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
+                          With {row.subActors.map((one) => subActorNames[one.id] || one.id).join(", ")}
+                        </Typography>
+                      )}
                     </TableCell>
 
                     <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
@@ -429,6 +435,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
 ScenarioTable.propTypes = {
   rows: PropTypes.arrayOf(SCENARIO_SHAPE).isRequired,
   groups: PropTypes.arrayOf(GROUP_SHAPE),
+  env: PropTypes.shape({ subActors: PropTypes.array }),
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
   // Opens a row in full (the scenario drawer).

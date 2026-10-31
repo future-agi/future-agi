@@ -115,3 +115,13 @@ describe("ScenarioTable — opening a row", () => {
 
 
 });
+
+describe("ScenarioTable sub-actors", () => {
+  it("names who else is in a scenario under its summary", () => {
+    renderTable({
+      rows: [{ ...rows[0], subActors: [{ id: "friend", instruction: "", trigger: {} }] }, rows[1]],
+      env: { ...env, subActors: [{ id: "friend", name: "Rowan" }] },
+    });
+    expect(screen.getAllByText("With Rowan")).toHaveLength(1);
+  });
+});
