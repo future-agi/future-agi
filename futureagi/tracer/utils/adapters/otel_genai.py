@@ -136,7 +136,19 @@ class OtelGenAIAdapter(BaseTraceAdapter):
         output_messages = _extract_indexed_messages(attributes, _COMPLETION_RE)
 
         # --- Determine span kind ---
-        span_kind = attributes.get("gen_ai.span.kind", "")
+        span_kind = next(
+            (
+                attributes[k]
+                for k in (
+                    "fi.span.kind",
+                    "gen_ai.span.kind",
+                    "llm.request.type",
+                    "openinference.span.kind",
+                )
+                if attributes.get(k)
+            ),
+            "",
+        )
         if not span_kind and operation_name in _OPERATION_KIND_MAP:
             span_kind = _OPERATION_KIND_MAP[operation_name]
         elif not span_kind and model:

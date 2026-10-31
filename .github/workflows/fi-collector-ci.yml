@@ -5,6 +5,8 @@ on:
     branches: [dev, main]
     paths:
       - "fi-collector/**"
+      - "futureagi/tracer/utils/normalization/**"
+      - "scripts/sync_trace_normalization.py"
       - "docker-compose*.yml"
       - "bin/install*"
       - "bin/lib/**"
@@ -22,6 +24,8 @@ on:
     branches: [dev, main]
     paths:
       - "fi-collector/**"
+      - "futureagi/tracer/utils/normalization/**"
+      - "scripts/sync_trace_normalization.py"
       - "docker-compose*.yml"
       - "bin/install*"
       - "bin/lib/**"

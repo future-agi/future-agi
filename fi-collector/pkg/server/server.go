@@ -32,6 +32,7 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
 	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -493,6 +494,9 @@ func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder, h
 	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
 		return partialSuccessResponse(prepared.routed), false, nil
 	}
+	if normalization.RequiresAdmission(req.Traces()) {
+		return immutableAdmissionHold(int64(req.Traces().SpanCount()) + prepared.rejectedSpans), false, nil
+	}
 	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), h.s.pricer)
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), false, err
@@ -609,6 +613,10 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	ctx, req := prepared.ctx, prepared.req
 	if prepared.routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
 		writeExportResponse(w, ct, partialSuccessResponse(prepared.routed))
+		return
+	}
+	if normalization.RequiresAdmission(req.Traces()) {
+		writeExportResponse(w, ct, immutableAdmissionHold(int64(req.Traces().SpanCount())+prepared.rejectedSpans))
 		return
 	}
 	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), s.pricer)
@@ -1022,4 +1030,13 @@ func (s *Server) releaseDrained(seq uint64, leases []*lease) {
 		delete(s.drained, s.releaseNext)
 		leases = next
 	}
+}
+
+// Fail closed, including mixed batches, rather than ACK immutable work into
+// legacy wall-clock-versioned storage. No retry-with-new-ID or correction API.
+func immutableAdmissionHold(count int64) ptraceotlp.ExportResponse {
+	resp := ptraceotlp.NewExportResponse()
+	resp.PartialSuccess().SetRejectedSpans(count)
+	resp.PartialSuccess().SetErrorMessage(normalization.AdmissionError())
+	return resp
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/adapter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/detid"
+	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -227,6 +228,10 @@ func Convert(traces ptrace.Traces) ([]map[string]any, error) {
 // the CH side via ReplacingMergeTree(version), so only within-batch dedup is
 // done here.
 func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pricer) ([]map[string]any, *curatedwriter.Batch, error) {
+	if normalization.RequiresAdmission(traces) {
+		return nil, nil, fmt.Errorf("%s", normalization.AdmissionError())
+	}
+	normalization.Prepare(traces)
 	rows := make([]map[string]any, 0, traces.SpanCount())
 	ids := curatedwriter.NewBatch()
 
@@ -359,7 +364,11 @@ func spanToRow(
 	// OpenRouter) is priced with OpenRouter's own rate for its model slug
 	// when that slug has no exact key.
 	cost := hot.Cost
-	if !hot.CostUserSet && pricer != nil {
+	nonAdditive := normalization.NonAdditive(span.Attributes())
+	if nonAdditive {
+		cost = 0
+	}
+	if !nonAdditive && !hot.CostUserSet && pricer != nil && !normalization.NeedsDetailedPricing(span.Attributes()) {
 		var c float64
 		var ok bool
 		if fromOpenRouter || adapter.ProviderIs(attrsStr, openRouterName) {
@@ -369,7 +378,13 @@ func spanToRow(
 		}
 		if ok {
 			cost = c
+			attrsStr["fi.cost.kind"] = "estimated"
 		}
+	}
+	if nonAdditive || (!hot.CostUserSet && attrsStr["fi.cost.kind"] != "estimated") {
+		attrsStr["fi.cost.kind"] = "unknown"
+	} else if hot.CostUserSet && attrsStr["fi.cost.kind"] == "" {
+		attrsStr["fi.cost.kind"] = "provider_reported"
 	}
 
 	startNanos := span.StartTimestamp().AsTime()
@@ -894,23 +909,16 @@ func statusString(c ptrace.StatusCode) string {
 // string (not []any) because the CH `span_events String` column stores it
 // verbatim — saves a re-serialise on the writer side.
 func spanEventsJSON(events ptrace.SpanEventSlice) string {
-	if events.Len() == 0 {
-		return "[]"
-	}
-	var b strings.Builder
-	b.WriteByte('[')
+	values := make([]map[string]any, 0, events.Len())
 	for i := 0; i < events.Len(); i++ {
-		if i > 0 {
-			b.WriteByte(',')
-		}
 		ev := events.At(i)
-		b.WriteByte('{')
-		fmt.Fprintf(&b, `"name":%q,"timestamp":%q`,
-			ev.Name(), formatDateTime64(ev.Timestamp().AsTime()))
-		b.WriteByte('}')
+		values = append(values, map[string]any{
+			"name": ev.Name(), "timestamp": formatDateTime64(ev.Timestamp().AsTime()),
+			"attributes": ev.Attributes().AsRaw(), "dropped_attributes_count": ev.DroppedAttributesCount(),
+		})
 	}
-	b.WriteByte(']')
-	return b.String()
+	encoded, _ := json.Marshal(values) // only finite sanitized scalars
+	return string(encoded)
 }
 
 // formatDateTime64 emits CH's DateTime64(6) text form: "YYYY-MM-DD HH:MM:SS.ffffff".

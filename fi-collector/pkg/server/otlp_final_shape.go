@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -16,6 +17,7 @@ import (
 // and conversion/encoding memory, without serializing a second request body.
 // Old-generation attempts never reach conversion and never shrink this lease.
 func (s *Server) pricePreparedExport(ctx context.Context, td ptrace.Traces, held *exportWork) *rejection {
+	normalization.Prepare(td)
 	shape, err := scanPreparedTraces(td)
 	if err != nil {
 		var se *scanError
@@ -92,7 +94,7 @@ func scanPreparedTraces(td ptrace.Traces) (otlpShape, error) {
 					extra := spanEventJSON(int64(len(ev.Name())))
 					sp.json += extra
 					s.hotCopyBytes += extra
-					if err := s.pdataAttributes(ev.Attributes(), kvOther, nil, nil); err != nil {
+					if err := s.pdataAttributes(ev.Attributes(), kvEvent, nil, &sp); err != nil {
 						return s, err
 					}
 				}

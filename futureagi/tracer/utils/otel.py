@@ -14,6 +14,12 @@ from litellm import cost_per_token, model_cost
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
+from tracer.utils.normalization import (
+    CONTRACT,
+    normalize_span,
+    requires_immutable_admission,
+)
+from tracer.utils.normalization.details import needs_detailed_pricing, store_details
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
@@ -22,6 +28,7 @@ from model_hub.models.choices import StatusType
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.eval_mapping import require_mapping_paths
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.utils.storage import upload_audio_to_s3, upload_image_to_s3, upload_video_to_s3
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import ObservationSpan, UserIdType
@@ -41,7 +48,6 @@ from tracer.utils.semantic_conventions import (
     detect_semconv,
     get_attribute,
 )
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
@@ -786,6 +792,10 @@ def convert_otel_span_to_observation_span(
     column values and raw attributes for future-proofing.
     """
     try:
+        normalize_span(otel_span)
+        if requires_immutable_admission(otel_span["attributes"]):
+            raise ValueError(CONTRACT["admission_error"])
+        store_details(otel_span)
         attributes = process_attributes(
             otel_span.get("attributes", {}), org_id=organization_id
         )
@@ -842,6 +852,8 @@ def convert_otel_span_to_observation_span(
         if input_val in [None, "", "[]", []]:
             if attributes.get(SpanAttributes.RAW_INPUT) is not None:
                 input_val = attributes.get(SpanAttributes.RAW_INPUT, None)
+        if input_val in [None, "", "[]", []]:
+            input_val = attributes.get("gen_ai.input.messages")
         input_val = decoder.parse_nested_json(input_val) if input_val else None
 
         # Process output value
@@ -851,6 +863,8 @@ def convert_otel_span_to_observation_span(
         if output_val in [None, "", "[]", []]:
             if attributes.get(SpanAttributes.RAW_OUTPUT) is not None:
                 output_val = attributes.get(SpanAttributes.RAW_OUTPUT, None)
+        if output_val in [None, "", "[]", []]:
+            output_val = attributes.get("gen_ai.output.messages")
         output_val = decoder.parse_nested_json(output_val) if output_val else None
 
         end_user = None
@@ -1468,6 +1482,10 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
     Supports multiple semantic conventions through attribute aliasing and
     implements dual storage for future-proofing.
     """
+    normalize_span(otel_span)
+    if requires_immutable_admission(otel_span["attributes"]):
+        raise ValueError(CONTRACT["admission_error"])
+    store_details(otel_span)
     attributes = process_attributes(
         otel_span.get("attributes", {}), org_id=organization_id
     )
@@ -1511,6 +1529,8 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         and attributes.get(SpanAttributes.RAW_INPUT) is not None
     ):
         input_val = attributes.get(SpanAttributes.RAW_INPUT)
+    if input_val in [None, "", "[]", []]:
+        input_val = attributes.get("gen_ai.input.messages")
     input_val = DECODER.parse_nested_json(input_val) if input_val else None
 
     output_val = attributes.get("fi.llm.output") or attributes.get(
@@ -1521,6 +1541,8 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         and attributes.get(SpanAttributes.RAW_OUTPUT) is not None
     ):
         output_val = attributes.get(SpanAttributes.RAW_OUTPUT)
+    if output_val in [None, "", "[]", []]:
+        output_val = attributes.get("gen_ai.output.messages")
     output_val = DECODER.parse_nested_json(output_val) if output_val else None
 
     # Prepare End User data
@@ -1717,6 +1739,10 @@ def calculate_cost(
     (gen_ai.cost.total, gen_ai.cost.input, gen_ai.cost.output and their
     OpenInference equivalents), then falls back to token-based calculation.
     """
+    if attributes.get("fi.usage.contribution") == "none":
+        attributes["fi.cost.kind"] = "unknown"
+        return 0
+
     # Check user-provided cost attributes (uses AttributeRegistry aliasing
     # to support gen_ai.cost.* and llm.cost.* conventions automatically)
     user_cost_total = get_attribute(attributes, "cost_total")
@@ -1725,23 +1751,34 @@ def calculate_cost(
 
     if user_cost_total is not None:
         try:
-            return float(user_cost_total)
+            value = float(user_cost_total)
+            attributes.setdefault("fi.cost.kind", "provider_reported")
+            return value
         except (ValueError, TypeError):
             return 0
 
     if user_cost_input is not None or user_cost_output is not None:
         try:
-            return float(user_cost_input or 0) + float(user_cost_output or 0)
+            value = float(user_cost_input or 0) + float(user_cost_output or 0)
+            attributes.setdefault("fi.cost.kind", "provider_reported")
+            return value
         except (ValueError, TypeError):
             return 0
 
-    # Fall back to token-based calculation
-    return calculate_cost_from_tokens(
+    if needs_detailed_pricing(attributes):
+        attributes["fi.cost.kind"] = "unknown"
+        return 0
+
+    # Legacy tables cannot distinguish a missing price from a free model.
+    # Never promote that ambiguous zero into a verified provider charge.
+    value = calculate_cost_from_tokens(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         model=model,
         organization_id=organization_id,
     )
+    attributes.setdefault("fi.cost.kind", "estimated" if value else "unknown")
+    return value
 
 
 def calculate_cost_from_tokens(
