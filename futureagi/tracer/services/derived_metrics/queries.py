@@ -262,7 +262,7 @@ def snapshot_select(
         SELECT {span_identity} AS span_id, s.id AS raw_span_id, s.trace_id AS raw_trace_id, s.trace_session_id AS raw_session_id,
             {sampling_identity} AS unit_sampling_id, {sampling_ambiguity} AS unit_sampling_ambiguous,
             {session} AS session_id, {user} AS user_id, {unit} AS unit_id,
-            s.start_time, s.updated_at, s._version, {group_expression} AS metric_group,
+            s.start_time, s.end_time, s.updated_at, s._version, {group_expression} AS metric_group,
             if(%(cohort_key)s = '', '', if(mapContains(s.attrs_string, %(cohort_key)s), toJSONString(tuple('value', s.attrs_string[%(cohort_key)s])), '["missing"]')) AS cohort
             {projections}
         FROM span_versions s
@@ -290,8 +290,8 @@ def snapshot_select(
             if(uniqExact(m.cohort) = 1, any(m.cohort), '["mixed"]') AS cohort,
             if(uniqExact(m.metric_group) = 1, any(m.metric_group), '["mixed"]') AS metric_group,
             toDate(min(m.start_time), 'UTC') AS day, count() AS source_rows,
-            min(m.start_time) AS unit_start,
-            max(greatest(m._version, toUInt64(toUnixTimestamp64Nano(m.updated_at)))) AS last_arrival_ns
+            min(m.start_time) AS unit_start, min(isNotNull(m.end_time)) AS span_ended,
+            max(toUInt64(toUnixTimestamp64Nano(m.updated_at))) AS last_arrival_ns
             {"," + ",".join(span_values) if span_values else ""}
         FROM members m GROUP BY m.unit_id
     )""")
@@ -531,7 +531,7 @@ def snapshot_select(
         SELECT u.unit_id AS unit_id, u.session_id AS session_id, u.user_id AS user_id, {cohort_projection} AS cohort, u.day AS day,
             {numeric_map} AS input_values,
             {boolean_map} AS inputs_bool, {text_map} AS inputs_text,
-            u.unit_start AS unit_start, {arrival} AS last_arrival_ns,
+            u.unit_start AS unit_start, u.span_ended AS span_ended, {arrival} AS last_arrival_ns,
             {p} AS probability, toUInt8({invalid}) AS local_invalid_probability, u.source_rows AS source_rows,
             {scope_value} AS sampling_scope, {stratum_value} AS sampling_stratum,
             {design} AS sampling_design, {population} AS population_size
@@ -544,6 +544,7 @@ def snapshot_select(
     )
     evidence_output = (
         ", inputs_bool, inputs_text, unit_start, last_arrival_ns"
+        + (", span_ended" if definition.selection_unit == "span" else "")
         if include_evidence
         else ""
     )

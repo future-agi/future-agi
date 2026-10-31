@@ -146,7 +146,9 @@ def field_recipe(definition) -> FieldRecipe:
     source = SimpleNamespace(
         inputs=inputs,
         formula=formula_text,
-        selection_unit="session",
+        selection_unit="span"
+        if getattr(definition, "level", "conversation") == "span"
+        else "session",
         weighting=getattr(definition, "weighting", "none"),
         cohort_key=getattr(definition, "cohort_key", ""),
         group_dims=getattr(definition, "group_dims", ()),
@@ -305,6 +307,30 @@ def _source_plan(
     return tuple(ctes), predicate, params
 
 
+def _authority_ctes(predicate):
+    """Snapshot facts, separate from the ceiling-free nomination superset."""
+    ctes = []
+    ctes.append(f"""unit_live_versions AS (
+        SELECT project_id, trace_id, id, trace_session_id, end_user_id, start_time, updated_at, is_deleted
+        FROM spans PREWHERE project_id = %(project_id)s AND {predicate}
+        WHERE (org_id = %(org_id)s OR isNull(org_id)) AND created_at <= %(as_of)s AND updated_at <= %(as_of)s
+        ORDER BY _version DESC LIMIT 1 BY project_id, trace_id, id
+    )""")
+    canonical_user = f"toString({resolved_id_expr('s.end_user_id', 'au')})"
+    has_user = f"notEmpty({canonical_user}) AND {canonical_user} != '{NIL_ID}'"
+    ctes.append(f"""conversation_authority AS (
+        SELECT toString({resolved_id_expr("s.trace_session_id", "am")}) AS authority_id,
+            min(s.start_time) AS anchor, max(toUInt64(toUnixTimestamp64Nano(s.updated_at))) AS arrival,
+            count() AS live_members,
+            if(uniqExactIf({canonical_user}, {has_user}) = 1, anyIf({canonical_user}, {has_user}), '') AS canonical_user
+        FROM unit_live_versions s
+        {remap_left_join("s.trace_session_id", "trace_session_id_remap", "am")}
+        {remap_left_join("s.end_user_id", "end_user_id_remap", "au")}
+        WHERE s.is_deleted = 0 GROUP BY authority_id
+    )""")
+    return tuple(ctes)
+
+
 def unit_values_select(
     definition,
     scope: Scope,
@@ -327,25 +353,44 @@ def unit_values_select(
     live committed row gets its own tombstone, so its old bucket is invalidated.
     A user-level metric stores the SAME conversation rows, not raw user units;
     user_id is canonical, or '' when the conversation names zero or several users.
+    Saved definition filters always constrain source membership; optional filters
+    may only narrow that membership, never replace the saved predicates.
     Trace storage is off.
     """
     if getattr(definition, "level", "conversation") not in {"conversation", "user"}:
         raise FormulaError("Only conversation-backed metric fields are enabled.")
+    from tracer.services.derived_metrics.spec import require_computable
+
+    # Native callers include old recipe DTOs as well as saved versions. Preserve
+    # their historical defaults, but never reinterpret a legacy raw-user recipe
+    # as a v2 conversation field. Admission precedes even source-plan compilation.
+    require_computable(
+        SimpleNamespace(
+            selection_unit=getattr(definition, "selection_unit", "session"),
+            level=getattr(definition, "level", "conversation"),
+            kind=getattr(definition, "kind", "custom"),
+            user_rule=getattr(definition, "user_rule", ""),
+        )
+    )
     if type(settle_minutes) is not int or not 0 <= settle_minutes <= 10080:
         raise ValueError("Invalid settle interval.")
     ids = _ids(unit_ids)
     recipe = field_recipe(definition)
-    formula, value_type, alias = recipe.formula, recipe.value_type, recipe.value_alias
     ctes, predicate, source_params = _source_plan(
         scope, ids, manifest, source_identities
     )
+    ctes = (*ctes, *_authority_ctes(predicate))
     source, params = snapshot_select(
         recipe.source,
         scope,
         start,
         end,
         as_of,
-        filters or [],
+        # Saved filters are immutable membership, never an optional override.
+        # Explicit filters can only narrow it (as in preview). Avoid duplicating
+        # saved predicates when a native writer passes the complete saved set.
+        list(getattr(definition, "filters", ()))
+        + [f for f in (filters or ()) if f not in getattr(definition, "filters", ())],
         source_run_id,
         unit_predicate=predicate,
         source_ctes=ctes,
@@ -379,6 +424,85 @@ def unit_values_select(
         previous = f"LEFT JOIN ({committed}) old ON r.unit_id = old.unit_id"
         old_start = "ifNull(old.unit_start, toDateTime64(0, 6, 'UTC'))"
     params["unit_settle_minutes"] = settle_minutes
+    previous += " LEFT JOIN conversation_authority a ON r.unit_id = a.authority_id"
+    return _field_projection(
+        recipe,
+        source,
+        params,
+        ctes,
+        driving,
+        previous,
+        old_start,
+        anchor_expression=f"if(ifNull(a.live_members, 0) > 0, a.anchor, {old_start})",
+        arrival_expression="ifNull(a.arrival, 0)",
+        user_expression="ifNull(a.canonical_user, '')",
+    )
+
+
+def span_values_select(definition, scope, *, start, end, as_of):
+    """Transient deduped-span fields for a WHOLE dirty bucket; never persisted.
+
+    Mutable start/filter predicates run after immutable source collapse. This
+    shares the exact typed values, filters, sketches and sampling compiler with
+    preview and conversation refresh. A span settles only after it has ended.
+    """
+    from tracer.services.derived_metrics.spec import require_computable
+
+    require_computable(definition)
+    if definition.level != "span":
+        raise ValueError("span totals require a span definition")
+    recipe = field_recipe(definition)
+    source, params = snapshot_select(
+        recipe.source,
+        scope,
+        start,
+        end,
+        as_of,
+        list(getattr(definition, "filters", ())),
+        "",
+        include_evidence=True,
+    )
+    params["unit_settle_minutes"] = 0
+    return _field_projection(
+        recipe,
+        source,
+        params,
+        (),
+        f"SELECT unit_id FROM ({source})",
+        "",
+        "toDateTime64(0, 6, 'UTC')",
+        level="span",
+    )
+
+
+def _field_projection(
+    recipe,
+    source,
+    params,
+    ctes,
+    driving,
+    previous,
+    old_start,
+    *,
+    level="conversation",
+    anchor_expression=None,
+    arrival_expression="ifNull(s.last_arrival_ns, 0)",
+    user_expression="ifNull(s.user_id, '')",
+):
+    formula, value_type, alias = recipe.formula, recipe.value_type, recipe.value_alias
+    with_clause = f"WITH {', '.join(ctes)}" if ctes else ""
+    requested_id = "s.unit_id" if level == "span" else "r.unit_id"
+    source_join = (
+        f"({source}) s"
+        if level == "span"
+        else f"({driving}) r LEFT JOIN ({source}) s ON r.unit_id = s.unit_id {previous}"
+    )
+    due = (
+        "if(ifNull(s.span_ended, 0), fromUnixTimestamp64Nano(toInt64(last_arrival_ns), 'UTC'), "
+        "toDateTime64(%(as_of)s, 6, 'UTC') + toIntervalSecond(1))"
+        if level == "span"
+        else "fromUnixTimestamp64Nano(toInt64(last_arrival_ns), 'UTC') + toIntervalMinute(%(unit_settle_minutes)s)"
+    )
     evidence = {"number": "inputs", "boolean": "inputs_bool", "text": "inputs_text"}
 
     def input_value(item: dict) -> str:
@@ -432,8 +556,12 @@ def unit_values_select(
             f"CAST({expression}, 'Nullable({cast})') AS {value_column(candidate)}"
         )
     finite = "isFinite(computed_value)" if value_type == "number" else "1"
-    query = f"""WITH {", ".join(ctes)}
-        SELECT unit_id, session_id, user_id, 'conversation' AS level, unit_start,
+    anchor_expression = (
+        anchor_expression
+        or f"if(ifNull(s.source_rows, 0) = 0, {old_start}, s.unit_start)"
+    )
+    query = f"""{with_clause}
+        SELECT unit_id, session_id, user_id, '{level}' AS level, unit_start,
             toStartOfFifteenMinutes(unit_start) AS bucket_start, last_arrival_ns,
             if(status = 'open' OR is_deleted, NULL, due_at) AS settled_at,
             status, no_value_reason, {", ".join(columns)},
@@ -449,10 +577,10 @@ def unit_values_select(
                         {missing}, {missing_reason_sql}, {zero}, 'zero_denominator',
                         NOT ({complete}) OR NOT ({finite}), 'non_finite', '') AS no_value_reason
             FROM (
-                SELECT r.unit_id AS unit_id, if(notEmpty(ifNull(s.session_id, '')), s.session_id, r.unit_id) AS session_id,
-                    ifNull(s.user_id, '') AS user_id, if(ifNull(s.source_rows, 0) = 0, {old_start}, s.unit_start) AS unit_start,
-                    ifNull(s.last_arrival_ns, 0) AS last_arrival_ns,
-                    fromUnixTimestamp64Nano(toInt64(last_arrival_ns), 'UTC') + toIntervalMinute(%(unit_settle_minutes)s) AS due_at,
+                SELECT {requested_id} AS unit_id, if(notEmpty(ifNull(s.session_id, '')), s.session_id, {requested_id}) AS session_id,
+                    {user_expression} AS user_id, {anchor_expression} AS unit_start,
+                    {arrival_expression} AS last_arrival_ns,
+                    {due} AS due_at,
                     toUInt8(ifNull(s.source_rows, 0) = 0) AS is_deleted, ifNull(s.source_rows, 0) AS source_rows,
                     s.input_values AS inputs, s.inputs_bool AS inputs_bool, s.inputs_text AS inputs_text,
                     s.probability AS sample_probability, ifNull(s.sampling_scope, '') AS sampling_scope,
@@ -460,7 +588,7 @@ def unit_values_select(
                     s.population_size AS population_size, ifNull(s.invalid_probability, 0) AS invalid_probability,
                     ifNull(s.cohort, '') AS cohort, {n} AS part_n, {d} AS part_d,
                     {unpack}
-                FROM ({driving}) r LEFT JOIN ({source}) s ON r.unit_id = s.unit_id {previous}
+                FROM {source_join}
             ) s
         )
     """

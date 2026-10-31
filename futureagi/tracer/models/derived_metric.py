@@ -203,11 +203,14 @@ class DerivedMetric(BaseModel):
                 id=version_id,
                 metric_id=metric_id,
                 backfill_status=DerivedMetricVersion.BackfillStatus.COMPLETE,
-            ).exists()
-            if not ready:
+            ).first()
+            if ready is None:
                 raise MetricStateConflict(
                     "version is not a completed backfill of this metric"
                 )
+            from tracer.services.derived_metrics.spec import require_computable
+
+            require_computable(ready)
             current = (
                 Q(active_version__isnull=True)
                 if expected_active_id is None
@@ -1759,6 +1762,15 @@ class MetricReadManifest(models.Model):
                 if refresh.head_manifest_id
                 else None
             )
+            if parent and parent.published_by.source_ceilings.get("recovery_pending"):
+                forwarded = attempt.source_ceilings.get("recovery_pending")
+                consumed = attempt.source_ceilings.get("consumes_recovery") == str(
+                    parent.id
+                )
+                if not forwarded and not consumed:
+                    raise MetricStateConflict(
+                        "unconsumed recovery requires a durable handoff"
+                    )
             # A revoked base cannot be inherited into a fresh, usable generation.
             # Erasure/retention rebuilds must publish a complete checkpoint.
             if (
@@ -1831,8 +1843,20 @@ class MetricReadManifest(models.Model):
                 manifest_sha256=_sha256_json(body),
                 created_at=now,
             )
+            if attempt.source_ceilings.get("logical_expiry"):
+                if attempt.purpose != MetricRefreshAttempt.Purpose.COMPACTION:
+                    raise MetricStateConflict("expiry requires a complete checkpoint")
+                from tracer.services.derived_metrics.deletion_protocol import (
+                    commit_logical_expiry,
+                )
+
+                # Head switch, permanent pin revocation, writer exclusion and
+                # durable nonidentifying cleanup intent commit or roll back once.
+                commit_logical_expiry(attempt, manifest, now=now)
             for field, value in cursors.items():
                 setattr(refresh, field, value)
+            if attempt.source_ceilings.get("logical_expiry"):
+                refresh.pending_expiry = True
             refresh.head_manifest = manifest
             refresh.last_success_at = now
             refresh.consecutive_failures = 0
@@ -1841,6 +1865,7 @@ class MetricReadManifest(models.Model):
             refresh.save(
                 update_fields=[
                     *cursors,
+                    "pending_expiry",
                     "head_manifest",
                     "last_success_at",
                     "consecutive_failures",
@@ -2271,6 +2296,16 @@ class MetricErasureRequest(models.Model):
         moved = cls.objects.filter(
             Q(status__in=[cls.Status.QUEUED, cls.Status.FAILED])
             | Q(status=cls.Status.RUNNING, claim_expires_at__lte=now),
+            # Writer transport/barrier receipts are not multi-store erasure jobs.
+            # Their explicit completion protocol must not be stolen by B18.
+            Q(store_payload__protocol__isnull=True)
+            | ~Q(
+                store_payload__protocol__in=[
+                    "metric_submission",
+                    "metric_expiry",
+                    "metric_policy_replan",
+                ]
+            ),
             id=request_id,
         ).update(
             status=cls.Status.RUNNING,

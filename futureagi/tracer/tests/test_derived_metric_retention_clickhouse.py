@@ -149,7 +149,10 @@ def test_partial_cutoff_all_revisions_and_horizon_expand_never_resurrects(
     )
     writer.compact()  # same sensitive payload in checkpoint AND an older delta
     pin = capture_pin(
-        writer.lease.project_id, consumer_kind="snapshot", ttl=timedelta(minutes=5)
+        writer.lease.project_id,
+        consumer_kind="snapshot",
+        ttl=timedelta(minutes=5),
+        now=now,
     )
     scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
     cells = read_field_cells(
@@ -521,6 +524,7 @@ def test_finite_retention_takeover_keeps_candidates_exclusive_to_the_failed_atte
         user,
         at + timedelta(hours=1),
         resolved=8,
+        trace_id="trace",
     )
     failed = writer.begin(
         ledger={
@@ -558,8 +562,9 @@ def test_finite_retention_takeover_keeps_candidates_exclusive_to_the_failed_atte
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("prune_before_expiry", [False, True])
 def test_expired_active_conversation_is_not_reanchored_after_source_retention(
-    live_writer, workspace, observe_project
+    live_writer, workspace, observe_project, prune_before_expiry
 ):
     from tracer.tests.test_derived_metric_clickhouse import seed_span
 
@@ -589,7 +594,8 @@ def test_expired_active_conversation_is_not_reanchored_after_source_retention(
         end=now,
         as_of=now,
     )
-    expire_project(writer, [definition], retention_days=lambda: 1, now=now)
+    if not prune_before_expiry:
+        expire_project(writer, [definition], retention_days=lambda: 1, now=now)
     writer.store.execute(
         "ALTER TABLE spans DELETE WHERE id = 'expired-anchor' SETTINGS mutations_sync=2"
     )
@@ -609,3 +615,1173 @@ def test_expired_active_conversation_is_not_reanchored_after_source_retention(
         len(current_fields(writer, head)),
         sum(r[2] for r in bucket_rows(writer, head) if not r[-1]),
     ) == (0, 1)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("interruption", ["during_transfer", "after_purge"])
+def test_retained_recovery_handoff_survives_interruption_compaction_and_gc(
+    live_writer, workspace, observe_project, monkeypatch, interruption
+):
+    from tracer.services.derived_metrics import retention
+    from tracer.services.derived_metrics.changes import ChangeBatch
+    from tracer.services.derived_metrics.lease import ProjectLease
+    from tracer.services.derived_metrics.refresh import RefreshWriter
+    from tracer.tests.test_derived_metric_clickhouse import seed_span
+
+    writer = live_writer
+    definition = definition_for(writer, workspace, observe_project)
+    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
+    session, user = uuid4(), uuid4()
+    now = timezone.now()
+    at = now - timedelta(hours=12)
+    seed_span(writer.store.client, scope, "first", session, user, at, resolved=4)
+    kwargs = {"start": at - timedelta(days=1), "end": now, "as_of": now}
+    writer.refresh(change_for(session), [definition], scope, **kwargs)
+    seed_span(
+        writer.store.client,
+        scope,
+        "exclusive",
+        session,
+        user,
+        at + timedelta(hours=1),
+        resolved=8,
+        trace_id="trace",
+    )
+    failed = writer.begin(
+        ledger={
+            "dirty_before": [
+                {
+                    "unit_id": str(session),
+                    "bucket_start": at.replace(
+                        minute=at.minute // 15 * 15, second=0, microsecond=0
+                    ),
+                }
+            ],
+            "membership_preimage": [
+                {
+                    "trace_id": "trace",
+                    "span_id": "exclusive",
+                    "canonical_session_id": str(session),
+                }
+            ],
+        }
+    )
+    writer.seal(failed)
+    future = now + timedelta(minutes=6)
+    grant = MetricProjectRefresh.take_lease(
+        writer.lease.project_id,
+        holder="handoff-takeover",
+        ttl=timedelta(minutes=5),
+        now=future,
+    )
+    replacement = RefreshWriter(
+        ProjectLease(grant, clock=lambda: future),
+        writer.store,
+        org_id=writer.org_id,
+        workspace_id=writer.workspace_id,
+        retention_days=lambda: 1,
+    )
+    raised = []
+    original_append = replacement.append
+    original_purge = retention._purge_terminal_payloads
+
+    def interrupt_append(attempt, part, entries):
+        original_append(attempt, part, entries)
+        if attempt.source_ceilings.get("recovery_pending") and not raised:
+            raised.append(True)
+            raise RuntimeError("injected durable handoff interruption")
+
+    def interrupt_purge(*args, **kwargs):
+        result = original_purge(*args, **kwargs)
+        if not raised:
+            raised.append(True)
+            raise RuntimeError("injected durable handoff interruption")
+        return result
+
+    if interruption == "during_transfer":
+        monkeypatch.setattr(replacement, "append", interrupt_append)
+    else:
+        monkeypatch.setattr(retention, "_purge_terminal_payloads", interrupt_purge)
+    empty = ChangeBatch((), (), (), (), (), {"watermark_ns": 2})
+    with pytest.raises(RuntimeError, match="durable handoff interruption"):
+        replacement.refresh(empty, [definition], scope, **kwargs)
+    monkeypatch.setattr(replacement, "append", original_append)
+    monkeypatch.setattr(retention, "_purge_terminal_payloads", original_purge)
+    if interruption == "during_transfer":
+        failed.refresh_from_db()
+        assert failed.state == "prepared" and failed.ledger_chunks.exists()
+    else:
+        # Checkpoint/GC must carry the private handoff until the writer consumes
+        # it, rather than assuming publication alone means its work was done.
+        replacement.compact()
+        replacement.collect_garbage()
+        pending = MetricProjectRefresh.objects.get(
+            project_id=scope.project
+        ).head_manifest.published_by
+        assert pending.source_ceilings["recovery_pending"]
+        assert pending.ledger_chunks.filter(part="membership_preimage").exists()
+    assert MetricProjectRefresh.objects.get(project_id=scope.project).watermark_ns == 1
+    head = replacement.refresh(empty, [definition], scope, **kwargs)
+    assert current_fields(replacement, head)[0][1] == 8.0
+    assert MetricProjectRefresh.objects.get(project_id=scope.project).watermark_ns == 2
+    assert not MetricAttemptLedgerChunk.objects.filter(
+        attempt__project_id=scope.project
+    ).exists()
+
+
+def history_fixture(writer, workspace, project, *, finite=True):
+    """Event, arrival, evaluation and lease clocks are explicit and independent."""
+    from datetime import UTC, datetime
+
+    from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
+
+    now = datetime(2026, 10, 28, 12, tzinfo=UTC)
+    writer.lease.clock = lambda: now
+    writer.lease.renew()
+    writer.retention_days = lambda: 1 if finite else 0
+    definition = definition_for(writer, workspace, project)
+    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
+    session, trace = uuid4(), uuid4()
+    recent, old = now - timedelta(hours=12), now - timedelta(days=3)
+    seed_span_revision(writer, scope, trace, "recent", session, recent, 4, revision=1)
+    kwargs = {"start": old - timedelta(days=1), "end": now + timedelta(days=1)}
+    head = writer.refresh(
+        change_for(session),
+        [definition],
+        scope,
+        as_of=now - timedelta(minutes=1),
+        **kwargs,
+    )
+    return definition, scope, session, trace, now, recent, old, kwargs, head
+
+
+def anonymous_parts(writer, head):
+    sql, params = committed_rows_select(
+        RETIRED_PARTS, head, org_id=writer.org_id, project_id=writer.lease.project_id
+    )
+    return writer.store.execute(
+        f"SELECT bucket_start, unit_count, weighted_n, weighted_d FROM ({sql}) WHERE is_deleted = 0 ORDER BY bucket_start",
+        params,
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_expiry_publication_revokes_recent_anchor_pin_and_queued_snapshot_before_purge(
+    live_writer, workspace, observe_project, monkeypatch
+):
+    from tracer.services.derived_metrics import retention
+    from tracer.services.derived_metrics.publication import pinned_read
+    from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
+
+    writer = live_writer
+    definition, scope, session, trace, now, recent, old, kwargs, original = (
+        history_fixture(writer, workspace, observe_project)
+    )
+    pins = [
+        capture_pin(scope.project, consumer_kind=kind, ttl=timedelta(hours=1), now=now)
+        for kind in ("request", "snapshot")
+    ]
+    stale, _ = prepare_field(
+        writer, metric=definition.metric_id, unit_id=str(session), start=recent
+    )
+    seed_span_revision(writer, scope, trace, "earlier", session, old, 6, revision=1)
+    original_purge, paused = retention.purge_checkpoint, []
+
+    def before_purge(w, attempt, manifest, **options):
+        if not current_fields(w, manifest):
+            paused.append(manifest)
+            # The previous PRIVATE row still exists with its misleading recent
+            # anchor, but cannot be delivered or used to complete a queued copy.
+            assert (
+                w.store.execute(
+                    "SELECT count() FROM metric_field_values_checkpoint WHERE unit_id = %(unit)s",
+                    {"unit": str(session)},
+                )[0][0]
+                > 0
+            )
+            for pin in pins:
+                assert not pin.is_usable(now)
+                with pytest.raises(MetricStateConflict, match="expired"):
+                    with pinned_read(w.store, scope.project, pin=pin, now=now):
+                        pytest.fail("revoked result delivered")
+            fresh = capture_pin(
+                scope.project,
+                consumer_kind="request",
+                ttl=timedelta(minutes=1),
+                now=now,
+            )
+            assert fresh.manifest_id == manifest.id != original.id
+            with pytest.raises(MetricStateConflict):
+                w.stage_and_publish(stale)
+            raise RuntimeError("crash after atomic expiry commit")
+        return original_purge(w, attempt, manifest, **options)
+
+    monkeypatch.setattr(retention, "purge_checkpoint", before_purge)
+    with pytest.raises(RuntimeError, match="atomic expiry commit"):
+        writer.refresh(
+            change_for(session, cursor=2), [definition], scope, as_of=now, **kwargs
+        )
+    assert paused
+    safe = paused[0]
+    assert current_fields(writer, safe) == []
+    assert [(r[1:]) for r in anonymous_parts(writer, safe)] == [(1, 4.0, 1.0)]
+    assert anonymous_parts(writer, safe)[0][0] == old.replace(minute=0)
+    assert all(
+        r[-1] for r in bucket_rows(writer, safe) if r[0] == recent.replace(minute=0)
+    )
+    monkeypatch.setattr(retention, "purge_checkpoint", original_purge)
+    retention.purge_checkpoint(writer, safe.published_by, safe)
+    for table, key in [
+        (FIELD_VALUES, "unit_id"),
+        (UNIT_STATE, "unit_id"),
+        (SOURCE_DEPENDENCIES, "canonical_session_id"),
+    ]:
+        assert writer.store.execute(
+            f"SELECT count() FROM {table.name} WHERE {key} = %(unit)s",
+            {"unit": str(session)},
+        ) == [(0,)]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_shrink_then_expansion_never_reactivates_expiry_revoked_pins(
+    live_writer, monkeypatch
+):
+    from tracer.services.derived_metrics import retention
+    from tracer.services.derived_metrics.publication import pinned_read
+
+    writer, now = live_writer, timezone.now()
+    definition, unit = numeric_definition(uuid4()), str(uuid4())
+    original = seed_fields_and_buckets(
+        writer, definition, [(unit, now - timedelta(days=3), 7, "user")]
+    )
+    pins = [
+        capture_pin(
+            writer.lease.project_id, consumer_kind=kind, ttl=timedelta(hours=1), now=now
+        )
+        for kind in ("request", "snapshot")
+    ]
+    deletion = retention._delete
+    monkeypatch.setattr(
+        retention,
+        "_delete",
+        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("before physical purge")),
+    )
+    with pytest.raises(RuntimeError, match="before physical purge"):
+        expire_project(writer, [definition], retention_days=lambda: 1, now=now)
+    assert expire_project(writer, [definition], retention_days=lambda: 0, now=now)[
+        "unlimited"
+    ]
+    original.refresh_from_db()
+    assert original.revoked_at is not None
+    for pin in pins:
+        assert not pin.is_usable(now)
+        with pytest.raises(MetricStateConflict, match="expired"):
+            with pinned_read(writer.store, writer.lease.project_id, pin=pin, now=now):
+                pytest.fail("horizon expansion restored an old capture")
+    monkeypatch.setattr(retention, "_delete", deletion)
+    writer.compact()
+    writer.collect_garbage()
+    assert all(not pin.is_usable(now) for pin in pins)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_fresh_earlier_arrival_expires_reopened_conversation_without_retirement(
+    live_writer, workspace, observe_project
+):
+    from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
+
+    writer = live_writer
+    definition, scope, session, trace, now, recent, old, kwargs, _ = history_fixture(
+        writer, workspace, observe_project
+    )
+    seed_span_revision(
+        writer, scope, trace, "earlier", session, old, 6, revision=1, arrival=now
+    )
+    head = writer.refresh(
+        change_for(session, cursor=2), [definition], scope, as_of=now, **kwargs
+    )
+    assert current_fields(writer, head) == []
+    assert anonymous_parts(writer, head) == []
+    assert all(r[-1] for r in bucket_rows(writer, head))
+    for table in (
+        "metric_field_values",
+        "metric_field_values_checkpoint",
+        "metric_unit_state",
+    ):
+        assert writer.store.execute(
+            f"SELECT count() FROM {table} WHERE unit_id = %(unit)s",
+            {"unit": str(session)},
+        ) == [(0,)]
+    assert not MetricAttemptLedgerChunk.objects.filter(
+        attempt__project_id=scope.project
+    ).exists()
+    head = writer.refresh(
+        change_for(session, cursor=3),
+        [definition],
+        scope,
+        as_of=now + timedelta(minutes=30),
+        **kwargs,
+    )
+    assert current_fields(writer, head) == [] and anonymous_parts(writer, head) == []
+    assert all(r[-1] for r in bucket_rows(writer, head))
+
+
+@pytest.mark.django_db(transaction=True)
+def test_fresh_arrival_takeover_stays_in_progress_until_due_settle(
+    live_writer, workspace, observe_project
+):
+    from tracer.models.derived_metric import MetricRefreshAttempt
+    from tracer.services.derived_metrics.changes import ChangeBatch, Dependency
+    from tracer.services.derived_metrics.lease import ProjectLease
+    from tracer.services.derived_metrics.refresh import RefreshWriter
+    from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
+
+    writer = live_writer
+    definition, scope, session, trace, now, recent, old, kwargs, _ = history_fixture(
+        writer, workspace, observe_project, finite=False
+    )
+    later = recent + timedelta(hours=1)
+    seed_span_revision(
+        writer, scope, trace, "later", session, later, 8, revision=1, arrival=now
+    )
+    failed = writer.begin(
+        ledger={
+            "dirty_before": [{"unit_id": str(session), "bucket_start": recent}],
+            "membership_preimage": [
+                Dependency(
+                    str(trace), "later", str(session), str(session), "", "", later
+                ).payload()
+            ],
+        }
+    )
+    writer.seal(failed)
+    lease_clock = now + timedelta(minutes=6)
+    grant = MetricProjectRefresh.take_lease(
+        scope.project,
+        holder="fresh-takeover",
+        ttl=timedelta(minutes=5),
+        now=lease_clock,
+    )
+    replacement = RefreshWriter(
+        ProjectLease(grant, clock=lambda: lease_clock),
+        writer.store,
+        org_id=writer.org_id,
+        workspace_id=writer.workspace_id,
+        retention_days=lambda: 1,
+    )
+    empty = ChangeBatch((), (), (), (), (), {"watermark_ns": 2})
+    head = replacement.refresh(empty, [definition], scope, as_of=lease_clock, **kwargs)
+    assert current_fields(replacement, head)[0][1] is None
+    assert all(r[-1] for r in bucket_rows(replacement, head))
+    state, p = committed_rows_select(
+        UNIT_STATE, head, org_id=writer.org_id, project_id=scope.project
+    )
+    assert writer.store.execute(f"SELECT due_at, is_deleted FROM ({state})", p) == [
+        (now + timedelta(minutes=30), 0)
+    ]
+    for tick, cursor in [
+        (now + timedelta(minutes=30) - timedelta(seconds=1), 3),
+        (now + timedelta(minutes=30), 4),
+    ]:
+        head = replacement.refresh(
+            change_for(session, cursor=cursor),
+            [definition],
+            scope,
+            as_of=tick,
+            **kwargs,
+        )
+        if cursor == 3:
+            assert current_fields(replacement, head)[0][1] is None
+            assert all(r[-1] for r in bucket_rows(replacement, head))
+        else:
+            assert current_fields(replacement, head)[0][1] == 8.0
+            assert [r[2:5] for r in bucket_rows(replacement, head) if not r[-1]] == [
+                (1, 8.0, 1.0)
+            ]
+    failed.refresh_from_db()
+    assert failed.state == MetricRefreshAttempt.State.ABORTED
+
+
+@pytest.mark.django_db(transaction=True)
+def test_mixed_expiry_handoff_preserves_only_retained_owner_preimages(live_writer):
+    from tracer.services.derived_metrics.changes import Dependency
+
+    writer, now = live_writer, timezone.now()
+    expired, retained, trace = str(uuid4()), str(uuid4()), str(uuid4())
+    definition = numeric_definition(uuid4())
+    seed_fields_and_buckets(
+        writer,
+        definition,
+        [
+            (expired, now - timedelta(days=3), 4, "old-user"),
+            (retained, now - timedelta(hours=12), 6, "new-user"),
+        ],
+    )
+    failed = writer.begin(
+        ledger={
+            "dirty_before": [{"unit_id": expired}, {"unit_id": retained}],
+            "membership_preimage": [
+                Dependency(
+                    trace,
+                    "expired-owner",
+                    expired,
+                    expired,
+                    "old-user",
+                    "old-user",
+                    now - timedelta(hours=12),
+                ).payload(),
+                Dependency(
+                    trace,
+                    "retained-owner",
+                    retained,
+                    retained,
+                    "new-user",
+                    "new-user",
+                    now - timedelta(hours=12),
+                ).payload(),
+            ],
+        }
+    )
+    writer.seal(failed)
+    expire_project(writer, [definition], retention_days=lambda: 1, now=now)
+    head = MetricProjectRefresh.for_project(writer.lease.project_id).head_manifest
+    assert head.published_by.source_ceilings["recovery_pending"]
+    chunks = list(head.published_by.ledger_chunks.exclude(part="cleanup_intent"))
+    assert any(retained in str(c.payload) for c in chunks)
+    assert all(
+        expired not in str(c.payload) and "old-user" not in str(c.payload)
+        for c in chunks
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_physical_expiry_waits_for_delayed_insert_drain_and_final_scrub(
+    live_writer, monkeypatch
+):
+    from threading import Event, Thread
+
+    from django.db import close_old_connections
+
+    from conftest import _ch_test_native_client
+    from tracer.models.derived_metric import (
+        MetricAttemptBatch,
+        MetricErasureRequest,
+        MetricRefreshAttempt,
+    )
+    from tracer.services.derived_metrics.deletion_protocol import collect_history
+    from tracer.services.derived_metrics.lease import ProjectLease
+    from tracer.services.derived_metrics.publication import ClickHousePublicationStore
+    from tracer.services.derived_metrics.refresh import RefreshWriter
+    from tracer.services.derived_metrics.retention import finish_pending_expiry
+
+    writer, now = live_writer, timezone.now()
+    expired, retained = str(uuid4()), str(uuid4())
+    definition = numeric_definition(uuid4())
+    seed_fields_and_buckets(
+        writer,
+        definition,
+        [
+            (expired, now - timedelta(days=3), 4, "old"),
+            (retained, now - timedelta(hours=12), 6, "live"),
+        ],
+    )
+    pin = capture_pin(
+        writer.lease.project_id, consumer_kind="snapshot", ttl=timedelta(hours=1)
+    )
+    attempt, payloads = prepare_field(
+        writer,
+        metric=definition.metric_id,
+        unit_id=expired,
+        start=now - timedelta(days=3),
+    )
+    MetricRefreshAttempt.transition(
+        attempt.id, from_state="prepared", to_state="staging", **writer.lease.check()
+    )
+    plan = next(writer.plans(attempt))
+    batch = MetricAttemptBatch.freeze(
+        attempt.id,
+        table_name="field_values",
+        batch_no=0,
+        row_count=len(payloads[0].rows),
+        payload_sha256=payloads[0].digest,
+        payload_ref="ledger:field_values:0",
+        row_sequences=(plan["first"], plan["last"]),
+        **writer.lease.check(),
+    )
+    database = writer.store.execute("SELECT currentDatabase()")[0][0]
+    query_id, entered, drained, failures = str(uuid4()), Event(), Event(), []
+
+    def delayed_submission():
+        close_old_connections()
+        try:
+            with _ch_test_native_client(database=database) as client:
+                store = ClickHousePublicationStore(client)
+
+                def delayed_insert(table, payload):
+                    entered.set()
+                    # A REAL server-side INSERT is running before expiry. One
+                    # row per block permits a controlled 40-second server delay;
+                    # the private payload lands AFTER the first successful scrub.
+                    client.execute(
+                        f"INSERT INTO {table.name} ({', '.join(table.columns)}) "
+                        "SELECT f.* FROM format(RowBinary, %(structure)s, unhex(%(data)s)) f "
+                        "CROSS JOIN (SELECT sleepEachRow(2) AS pause FROM numbers(20)) d WHERE d.pause = 0",
+                        {
+                            "structure": ", ".join(f"{n} {t}" for n, t in table.schema),
+                            "data": "".join(payload.rows),
+                        },
+                        query_id=query_id,
+                        settings={
+                            "max_block_size": 1,
+                            "max_threads": 1,
+                            "max_execution_time": 120,
+                        },
+                    )
+
+                store.insert = delayed_insert
+                submitting = RefreshWriter(
+                    ProjectLease(writer.lease.grant),
+                    store,
+                    org_id=writer.org_id,
+                    workspace_id=writer.workspace_id,
+                )
+                submitting.submit(attempt, batch, FIELD_VALUES, payloads[0])
+        except Exception as exc:
+            failures.append(exc)
+        finally:
+            drained.set()
+            close_old_connections()
+
+    thread = Thread(target=delayed_submission)
+    thread.start()
+    try:
+        assert entered.wait(10)
+        for _ in range(100):
+            if writer.store.execute(
+                "SELECT count() FROM system.processes WHERE query_id = %(id)s",
+                {"id": query_id},
+            ) == [(1,)]:
+                break
+            assert not drained.wait(0.05), failures
+        else:
+            pytest.fail("delayed INSERT was not observed on the server")
+        result = expire_project(writer, [definition], retention_days=lambda: 1, now=now)
+        assert not result["purged"] and not drained.is_set()
+        assert not pin.is_usable()
+        assert not MetricAttemptLedgerChunk.objects.filter(attempt=attempt).exists()
+        obligation = MetricErasureRequest.objects.get(
+            project_key=writer.lease.project_id, store_payload__protocol="metric_expiry"
+        )
+        assert obligation.status != "done" and expired not in str(
+            obligation.store_payload
+        )
+        safe_pin = capture_pin(
+            writer.lease.project_id, consumer_kind="snapshot", ttl=timedelta(hours=1)
+        )
+        writer.compact()
+        writer.collect_garbage()
+        # Collect the ACTUAL excluded attempt, not just call a no-op GC pass.
+        MetricRefreshAttempt.objects.filter(id=attempt.id).update(
+            expires_at=attempt.created_at + timedelta(seconds=1)
+        )
+        history = collect_history(
+            writer.lease.project_id, now=timezone.now() + timedelta(minutes=10)
+        )
+        if history is not None:
+            purge_by_scope(writer.store, history)
+        assert not MetricRefreshAttempt.objects.filter(id=attempt.id).exists()
+        obligation.refresh_from_db()
+        assert obligation.status != "done"
+        assert drained.wait(150), "server-side INSERT did not drain"
+        assert not failures, [type(e).__name__ for e in failures]
+        assert (
+            writer.store.execute(
+                "SELECT count() FROM metric_field_values WHERE unit_id = %(unit)s",
+                {"unit": expired},
+            )[0][0]
+            > 0
+        )
+        safe = MetricProjectRefresh.for_project(writer.lease.project_id).head_manifest
+        assert [r[0] for r in current_fields(writer, safe)] == [retained]
+        execute, crashed = writer.store.execute, []
+
+        def crash_before_receipt(sql, *args, **options):
+            if (
+                sql.startswith("SELECT count() FROM metric_field_values WHERE org_id")
+                and not crashed
+            ):
+                crashed.append(True)
+                raise RuntimeError("crash before final scrub receipt")
+            return execute(sql, *args, **options)
+
+        monkeypatch.setattr(writer.store, "execute", crash_before_receipt)
+        with pytest.raises(RuntimeError, match="final scrub receipt"):
+            finish_pending_expiry(writer)
+        obligation.refresh_from_db()
+        assert obligation.status != "done"
+        monkeypatch.setattr(writer.store, "execute", execute)
+        assert finish_pending_expiry(writer)
+        obligation.refresh_from_db()
+        assert obligation.status == "done"
+        assert obligation.receipts["final_scrub"] == {
+            "remaining": 0,
+            "verified_tables": 4,
+            "private_payloads_remaining": 0,
+        }
+        assert safe_pin.is_usable()
+        cells = read_field_cells(
+            writer.store,
+            Scope(writer.org_id, writer.workspace_id, writer.lease.project_id),
+            safe_pin,
+            definition.metric_id,
+            1,
+            [retained],
+            retention_days=lambda: 1,
+        )
+        assert len(cells) == 1 and cells[0]["value_number"] == 6.0
+        assert writer.store.execute(
+            "SELECT count() FROM metric_field_values WHERE unit_id = %(unit)s",
+            {"unit": expired},
+        ) == [(0,)]
+    finally:
+        thread.join(160)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("prior_retirement", [False, True])
+def test_retired_and_new_spans_with_identical_surviving_rows_require_admission_proof(
+    live_writer, workspace, observe_project, prior_retirement
+):
+    """HELD C02 product assertion, never skipped or converted to a green guard.
+
+    The same surviving recent S must be admitted iff it was not retired before.
+    Source authority for making that distinction has deliberately not been built.
+    """
+    from tracer.services.derived_metrics.changes import Dependency
+    from tracer.tests.test_derived_metric_refresh_clickhouse import (
+        metric_bucket_rows,
+        seed_span_revision,
+        span_definition_for,
+    )
+
+    writer, now = live_writer, timezone.now()
+    definition = span_definition_for(writer, workspace, observe_project)
+    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
+    session, trace, baseline_trace = uuid4(), uuid4(), uuid4()
+    old, recent = now - timedelta(days=3), now - timedelta(hours=12)
+    # Both histories publish an explicit non-retired baseline. Only one includes S.
+    seed_span_revision(
+        writer, scope, baseline_trace, "baseline", session, recent, 3, revision=1
+    )
+    dependencies = [
+        Dependency(
+            str(baseline_trace), "baseline", str(session), str(session), "", "", recent
+        )
+    ]
+    if prior_retirement:
+        seed_span_revision(writer, scope, trace, "S", session, old, 7, revision=1)
+        dependencies.append(
+            Dependency(str(trace), "S", str(session), str(session), "", "", old)
+        )
+    kwargs = {"start": old - timedelta(days=1), "end": now, "as_of": now}
+    writer.refresh(
+        change_for(session, dependencies=dependencies), [definition], scope, **kwargs
+    )
+    expire_project(writer, [definition], retention_days=lambda: 1, now=now)
+    writer.compact()
+    writer.collect_garbage()
+    writer.store.execute(
+        "ALTER TABLE spans DELETE WHERE id = 'S' SETTINGS mutations_sync=2"
+    )
+    seed_span_revision(writer, scope, trace, "S", session, recent, 7, revision=2)
+    writer.retention_days = lambda: 0  # expansion is not non-retirement authority
+    head = writer.refresh(
+        change_for(
+            session,
+            cursor=2,
+            dependencies=[
+                Dependency(str(trace), "S", str(session), str(session), "", "", recent)
+            ],
+        ),
+        [definition],
+        scope,
+        **kwargs,
+    )
+    assert sum(r[2] for r in metric_bucket_rows(writer, head, definition)) == 2
+    # This assertion requires genuinely NEW S live in one history, but not the
+    # corrected/reused previously retired S in the indistinguishable other one.
+    deps, p = committed_rows_select(
+        SOURCE_DEPENDENCIES, head, org_id=writer.org_id, project_id=scope.project
+    )
+    assert writer.store.execute(
+        f"SELECT count() FROM ({deps}) WHERE span_id = 'S' AND is_deleted = 0", p
+    )[0][0] == (0 if prior_retirement else 1)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_policy_shrink_during_staging_requires_replan_before_publication(
+    live_writer, workspace, observe_project
+):
+    from tracer.services.derived_metrics.refresh import MetricRetentionChanged
+    from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
+
+    writer, now = live_writer, timezone.now().replace(microsecond=0)
+    scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
+    definition = definition_for(writer, workspace, observe_project)
+    session, trace = uuid4(), uuid4()
+    at = now - timedelta(days=3)
+    seed_span_revision(writer, scope, trace, "old", session, at, 4, revision=1)
+    kwargs = {"start": at - timedelta(days=1), "end": now, "as_of": now}
+    writer.refresh(change_for(session), [definition], scope, **kwargs)
+    before = writer.compact()
+    pin = capture_pin(scope.project, consumer_kind="snapshot", ttl=timedelta(hours=1))
+    execute = writer.store.execute
+
+    def shrink_after_hydration(sql, *args, **options):
+        result = execute(sql, *args, **options)
+        if options.get("with_column_types") and sql.startswith("SELECT * REPLACE"):
+            writer.retention_days = lambda: 1
+        return result
+
+    writer.store.execute = shrink_after_hydration
+    try:
+        with pytest.raises(MetricStateConflict, match="retention_expired"):
+            read_field_cells(
+                writer.store,
+                scope,
+                pin,
+                definition.metric_id,
+                1,
+                [str(session)],
+                retention_days=lambda: writer.retention_days(),
+            )
+    finally:
+        writer.store.execute = execute
+        writer.retention_days = lambda: 0
+    seed_span_revision(writer, scope, trace, "old", session, at, 8, revision=2)
+    insert = writer.store.insert
+
+    def shrink_after_insert(table, payload):
+        insert(table, payload)
+        writer.retention_days = lambda: 1
+
+    writer.store.insert = shrink_after_insert
+    try:
+        with pytest.raises(MetricRetentionChanged, match="replan required"):
+            writer.refresh(change_for(session, cursor=2), [definition], scope, **kwargs)
+    finally:
+        writer.store.insert = insert
+    state = MetricProjectRefresh.for_project(scope.project)
+    assert state.head_manifest_id == before.id and state.watermark_ns == 1
+    assert state.pending_expiry
+    writer.compact()
+    assert MetricProjectRefresh.for_project(scope.project).pending_expiry
+    with pytest.raises(MetricStateConflict, match="retention_expired"):
+        assert_capture_retained(
+            pin, [at], retention_days=writer.retention_days, now=now
+        )
+    head = writer.refresh(change_for(session, cursor=2), [definition], scope, **kwargs)
+    assert current_fields(writer, head) == [] and not pin.is_usable()
+    assert [r[1:] for r in anonymous_parts(writer, head)] == [(1, 8.0, 1.0)]
+
+
+def known_expired_metric_update(writer, workspace, project, *, mixed, group="west"):
+    from tracer.services.derived_metrics.changes import Dependency
+    from tracer.tests.test_derived_metric_refresh_clickhouse import (
+        seed_span_revision,
+        span_definition_for,
+    )
+
+    now = timezone.now()
+    writer.lease.clock = lambda: now
+    writer.lease.renew()
+    conversation = definition_for(writer, workspace, project)
+    conversation.metric.name = "Conversation expiry fixture"
+    conversation.metric.save(update_fields=["name"])
+    span = span_definition_for(writer, workspace, project) if mixed else None
+    definitions = [conversation, span] if mixed else [conversation]
+    scope = Scope(writer.org_id, writer.workspace_id, project.id)
+    session, trace = uuid4(), uuid4()
+    old = now - timedelta(days=3)
+    dependency = Dependency(
+        str(trace), "known", str(session), str(session), "", "", old
+    )
+    seed_span_revision(writer, scope, trace, "known", session, old, 4, revision=1)
+    kwargs = {"start": old - timedelta(days=1), "end": now + timedelta(days=1)}
+    writer.refresh(
+        change_for(session, dependencies=(dependency,)),
+        definitions,
+        scope,
+        as_of=now - timedelta(minutes=1),
+        **kwargs,
+    )
+    seed_span_revision(
+        writer,
+        scope,
+        trace,
+        "known",
+        session,
+        old,
+        8,
+        revision=2,
+        arrival=now,
+        group=group,
+    )
+    writer.retention_days = lambda: 1
+    head = writer.refresh(
+        change_for(session, cursor=2, dependencies=(dependency,), prior=(dependency,)),
+        definitions,
+        scope,
+        as_of=now,
+        **kwargs,
+    )
+    return head, conversation, span
+
+
+def metric_retired_statistics(writer, head, definition):
+    from tracer.services.derived_metrics.buckets import STATS
+
+    sql, params = committed_rows_select(
+        RETIRED_PARTS,
+        head,
+        org_id=writer.org_id,
+        project_id=writer.lease.project_id,
+    )
+    columns = [
+        f"finalizeAggregation({name})"
+        if name in {"uniq_state", "quantile_state"}
+        else name
+        for name in STATS
+    ]
+    return writer.store.execute(
+        f"SELECT bucket_start, group_key, {', '.join(columns)} FROM ({sql}) "
+        "WHERE metric_id = toUUID(%(metric)s) AND metric_version = %(version)s "
+        "AND is_deleted = 0 ORDER BY bucket_start, group_key",
+        {**params, "metric": str(definition.metric_id), "version": definition.version},
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("mixed", [False, True])
+def test_known_expired_conversation_reopens_before_retirement(
+    live_writer, workspace, observe_project, mixed
+):
+    from tracer.tests.test_derived_metric_refresh_clickhouse import metric_bucket_rows
+
+    head, conversation, _ = known_expired_metric_update(
+        live_writer, workspace, observe_project, mixed=mixed
+    )
+    assert metric_retired_statistics(live_writer, head, conversation) == []
+    assert metric_bucket_rows(live_writer, head, conversation) == []
+    assert current_fields(live_writer, head) == []
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("group", ["west", "east"])
+def test_span_expiry_replaces_bucket_with_final_retired_parts(
+    live_writer, workspace, observe_project, group
+):
+    from tracer.services.derived_metrics.buckets import STATS
+    from tracer.services.derived_metrics.storage import BUCKET_TOTALS
+
+    writer = live_writer
+    head, _, span = known_expired_metric_update(
+        writer, workspace, observe_project, mixed=True, group=group
+    )
+    retired = metric_retired_statistics(writer, head, span)
+    sql, params = committed_rows_select(
+        BUCKET_TOTALS,
+        head,
+        org_id=writer.org_id,
+        project_id=writer.lease.project_id,
+    )
+    columns = [
+        f"finalizeAggregation({name})"
+        if name in {"uniq_state", "quantile_state"}
+        else name
+        for name in STATS
+    ]
+    totals = writer.store.execute(
+        f"SELECT bucket_start, group_key, {', '.join(columns)} FROM ({sql}) "
+        "WHERE metric_id = toUUID(%(metric)s) AND metric_version = %(version)s "
+        "AND is_deleted = 0 ORDER BY bucket_start, group_key",
+        {**params, "metric": str(span.metric_id), "version": span.version},
+    )
+    assert len(retired) == 1
+    assert retired[0][2 + STATS.index("weighted_n")] == 8
+    assert totals == retired
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("resume", ["collect_garbage", "finish_pending_expiry"])
+def test_cleanup_recovery_does_not_certify_erasure_with_private_ledgers(
+    live_writer, workspace, observe_project, monkeypatch, resume
+):
+    from tracer.models.derived_metric import MetricErasureRequest
+    from tracer.services.derived_metrics import retention
+    from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
+
+    writer = live_writer
+    definition, scope, session, trace, now, _, old, kwargs, _ = history_fixture(
+        writer, workspace, observe_project
+    )
+    seed_span_revision(writer, scope, trace, "earlier", session, old, 6, revision=1)
+
+    def crash_before_purge(*args, **options):
+        raise RuntimeError("crash after publication before private payload purge")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(retention, "purge_checkpoint", crash_before_purge)
+        with pytest.raises(RuntimeError, match="crash after publication"):
+            writer.refresh(
+                change_for(session, cursor=2), [definition], scope, as_of=now, **kwargs
+            )
+    chunks = MetricAttemptLedgerChunk.objects.filter(attempt__project_id=scope.project)
+    assert any(str(session) in str(chunk.payload) for chunk in chunks)
+    obligations = MetricErasureRequest.objects.filter(
+        project_key=scope.project, store_payload__protocol="metric_expiry"
+    )
+    assert obligations.exists() and not obligations.filter(status="done").exists()
+    with monkeypatch.context() as patch:
+        patch.setattr(retention, "_purge_terminal_payloads", lambda *a, **kw: 0)
+        with pytest.raises(MetricStateConflict, match="private scrub is incomplete"):
+            retention.finish_pending_expiry(writer)
+    assert not obligations.filter(status="done").exists() and chunks.exists()
+
+    def fail_external_scrub(*args, **options):
+        raise RuntimeError("external scrub unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(retention, "_delete", fail_external_scrub)
+        with pytest.raises(RuntimeError, match="external scrub unavailable"):
+            retention.finish_pending_expiry(writer)
+    assert not chunks.all().exists() and not obligations.filter(status="done").exists()
+    if resume == "collect_garbage":
+        writer.collect_garbage()
+    else:
+        assert retention.finish_pending_expiry(writer)
+    assert not obligations.exclude(status="done").exists()
+    assert not chunks.all().exists()
+    for table in (
+        FIELD_VALUES,
+        retention.TABLES["metric_field_values_checkpoint"],
+        SOURCE_DEPENDENCIES,
+        UNIT_STATE,
+    ):
+        assert writer.store.execute(
+            f"SELECT count() FROM {table.name} WHERE project_id = toUUID(%(project)s)",
+            {"project": str(scope.project)},
+        ) == [(0,)]
+    assert not MetricProjectRefresh.for_project(scope.project).pending_expiry
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("mixed", [False, True])
+@pytest.mark.parametrize("initial_days", [0, 4])
+def test_span_policy_shrink_is_revalidated_at_publication(
+    live_writer, workspace, observe_project, mixed, initial_days
+):
+    from tracer.services.derived_metrics.changes import Dependency
+    from tracer.services.derived_metrics.refresh import MetricRetentionChanged
+    from tracer.tests.test_derived_metric_refresh_clickhouse import (
+        seed_span_revision,
+        span_definition_for,
+    )
+
+    writer, now = live_writer, timezone.now()
+    writer.lease.clock = lambda: now
+    writer.lease.renew()
+    writer.retention_days = lambda: initial_days
+    definitions = []
+    if mixed:
+        conversation = definition_for(writer, workspace, observe_project)
+        conversation.metric.name = "Mixed policy fixture"
+        conversation.metric.save(update_fields=["name"])
+        definitions.append(conversation)
+    span = span_definition_for(writer, workspace, observe_project)
+    definitions.append(span)
+    scope = Scope(writer.org_id, writer.workspace_id, observe_project.id)
+    session, trace = uuid4(), uuid4()
+    at = now - timedelta(days=3)
+    dependency = Dependency(str(trace), "old", str(session), str(session), "", "", at)
+    seed_span_revision(writer, scope, trace, "old", session, at, 4, revision=1)
+    kwargs = {"start": at - timedelta(days=1), "end": now, "as_of": now}
+    writer.refresh(
+        change_for(session, dependencies=(dependency,)), definitions, scope, **kwargs
+    )
+    before = writer.compact()
+    seed_span_revision(writer, scope, trace, "old", session, at, 8, revision=2)
+    insert = writer.store.insert
+
+    def shrink_after_insert(table, payload):
+        insert(table, payload)
+        writer.retention_days = lambda: 1
+
+    writer.store.insert = shrink_after_insert
+    try:
+        with pytest.raises(MetricRetentionChanged, match="replan required"):
+            writer.refresh(
+                change_for(
+                    session, cursor=2, dependencies=(dependency,), prior=(dependency,)
+                ),
+                definitions,
+                scope,
+                **kwargs,
+            )
+    finally:
+        writer.store.insert = insert
+    state = MetricProjectRefresh.for_project(scope.project)
+    assert state.head_manifest_id == before.id and state.watermark_ns == 1
+    assert state.pending_expiry
+    head = writer.refresh(
+        change_for(session, cursor=2, dependencies=(dependency,), prior=(dependency,)),
+        definitions,
+        scope,
+        **kwargs,
+    )
+    assert MetricProjectRefresh.for_project(scope.project).watermark_ns == 2
+    assert not MetricProjectRefresh.for_project(scope.project).pending_expiry
+    assert metric_retired_statistics(writer, head, span)
+    assert not MetricAttemptLedgerChunk.objects.filter(
+        attempt__project_id=scope.project
+    ).exists()
+    for table in (FIELD_VALUES, SOURCE_DEPENDENCIES, UNIT_STATE):
+        assert writer.store.execute(
+            f"SELECT count() FROM {table.name} WHERE project_id = toUUID(%(project)s)",
+            {"project": str(scope.project)},
+        ) == [(0,)]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_finite_mixed_refresh_preserves_nonexpired_snapshot_pin(
+    live_writer, workspace, observe_project, monkeypatch
+):
+    from tracer.models.derived_metric import MetricRefreshAttempt
+    from tracer.services.derived_metrics import retention
+    from tracer.services.derived_metrics.changes import Dependency
+    from tracer.tests.test_derived_metric_refresh_clickhouse import (
+        metric_bucket_rows,
+        seed_span_revision,
+        span_definition_for,
+    )
+
+    writer, now = live_writer, timezone.now()
+    writer.lease.clock = lambda: now
+    writer.lease.renew()
+    writer.retention_days = lambda: 1
+    conversation = definition_for(writer, workspace, observe_project)
+    conversation.metric.name = "Retained snapshot fixture"
+    conversation.metric.save(update_fields=["name"])
+    span = span_definition_for(writer, workspace, observe_project)
+    scope = Scope(writer.org_id, writer.workspace_id, observe_project.id)
+    session, trace = uuid4(), uuid4()
+    at = now - timedelta(hours=12)
+    dependency = Dependency(
+        str(trace), "retained", str(session), str(session), "", "", at
+    )
+    seed_span_revision(writer, scope, trace, "retained", session, at, 4, revision=1)
+    kwargs = {"start": now - timedelta(days=2), "end": now, "as_of": now}
+    writer.refresh(
+        change_for(session, dependencies=(dependency,)),
+        [conversation, span],
+        scope,
+        **kwargs,
+    )
+    pin = capture_pin(
+        scope.project, consumer_kind="snapshot", ttl=timedelta(hours=1), now=now
+    )
+    assert not expire_project(
+        writer, [conversation, span], retention_days=writer.retention_days, now=now
+    )["purged"]
+    assert pin.is_usable(now)
+    seed_span_revision(writer, scope, trace, "retained", session, at, 8, revision=2)
+
+    def crash_before_private_cleanup(*args, **options):
+        raise RuntimeError("retained checkpoint published before PG cleanup")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(retention, "purge_checkpoint", crash_before_private_cleanup)
+        with pytest.raises(RuntimeError, match="retained checkpoint published"):
+            writer.refresh(
+                change_for(
+                    session, cursor=2, dependencies=(dependency,), prior=(dependency,)
+                ),
+                [conversation, span],
+                scope,
+                **kwargs,
+            )
+    head = MetricProjectRefresh.for_project(scope.project).head_manifest
+    through = head.published_by.source_ceilings["private_cleanup_through"]
+    predecessors = MetricAttemptLedgerChunk.objects.filter(
+        attempt__project_id=scope.project, attempt__generation__lte=through
+    )
+    assert predecessors.exists() and pin.is_usable(now)
+    later = writer.begin(ledger={"dirty_before": [{"unit_id": str(session)}]})
+    MetricRefreshAttempt.abort(
+        later.id, reason="injected_failure", **writer.lease.check()
+    )
+    head = writer.compact()  # forwards the cleanup boundary through checkpoint/GC
+    writer.collect_garbage()
+    assert not predecessors.exists()
+    assert (
+        later.ledger_chunks.exists()
+    )  # newer, unconsumed work is not in that boundary
+    assert metric_bucket_rows(writer, head, conversation)[0][2:] == (1, 8.0, 1.0)
+    assert metric_retired_statistics(writer, head, conversation) == []
+    assert pin.is_usable(now)
+    assert not head.published_by.source_ceilings.get("logical_expiry")
+    assert (
+        read_field_cells(
+            writer.store,
+            scope,
+            pin,
+            conversation.metric_id,
+            conversation.version,
+            [str(session)],
+            retention_days=writer.retention_days,
+            now=now,
+        )[0]["value_number"]
+        == 4
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_idle_span_expiry_replaces_final_bucket_statistics(
+    live_writer, workspace, observe_project
+):
+    from tracer.services.derived_metrics.buckets import STATS
+    from tracer.services.derived_metrics.changes import Dependency
+    from tracer.tests.test_derived_metric_refresh_clickhouse import (
+        metric_bucket_rows,
+        seed_span_revision,
+        span_definition_for,
+    )
+
+    writer, now = live_writer, timezone.now()
+    writer.lease.clock = lambda: now
+    writer.lease.renew()
+    definition = span_definition_for(writer, workspace, observe_project)
+    scope = Scope(writer.org_id, writer.workspace_id, observe_project.id)
+    session, trace = uuid4(), uuid4()
+    old = now - timedelta(days=3)
+    dependency = Dependency(str(trace), "old", str(session), str(session), "", "", old)
+    seed_span_revision(writer, scope, trace, "old", session, old, 4, revision=1)
+    writer.refresh(
+        change_for(session, dependencies=(dependency,)),
+        [definition],
+        scope,
+        start=old - timedelta(days=1),
+        end=now,
+        as_of=now,
+    )
+    seed_span_revision(writer, scope, trace, "old", session, old, 8, revision=2)
+    writer.retention_days = lambda: 1
+    assert expire_project(
+        writer, [definition], retention_days=writer.retention_days, now=now
+    )["purged"]
+    head = MetricProjectRefresh.for_project(scope.project).head_manifest
+    parts = metric_retired_statistics(writer, head, definition)
+    assert len(parts) == 1 and parts[0][2 + STATS.index("weighted_n")] == 8
+    assert [row[2:] for row in metric_bucket_rows(writer, head, definition)] == [
+        (1, 8.0, 1.0)
+    ]

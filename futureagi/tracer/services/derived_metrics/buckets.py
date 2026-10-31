@@ -102,8 +102,11 @@ def rebuilt_parts_select(definition, field_sql, retired_sql, *, fold_groups=True
         f"SELECT {columns} FROM ({live_parts_select(definition, field_sql)}) "
         f"UNION ALL SELECT {columns} FROM ({retired_sql}) WHERE is_deleted = 0"
     )
-    if not fold_groups:
-        return raw
+    return fold_parts_select(raw) if fold_groups else raw
+
+
+def fold_parts_select(raw):
+    """Rank/fold already merged anonymous parts, including direct span parts."""
     # B03 tags literal values as ["value", ...], so a real label named Other
     # is distinct from this structural marker. Fail closed for legacy raw
     # sampling-stratum keys that collide instead of silently merging the groups.

@@ -194,3 +194,187 @@ def test_binary_payload_errors_do_not_echo_private_data():
     with pytest.raises(ValueError, match="invalid frozen metric payload"):
         FrozenRows(("private-not-hex",))
     assert "private" not in repr(FrozenRows((b"private".hex(),)))
+
+
+def legacy_definition():
+    return SimpleNamespace(
+        selection_unit="user", level="conversation", kind="custom", user_rule=""
+    )
+
+
+@pytest.mark.django_db
+def test_native_refresh_rejects_needs_rebuild_before_expiry_or_attempts(writer):
+    from tracer.models.derived_metric import MetricRefreshAttempt
+    from tracer.services.derived_metrics.changes import ChangeBatch
+    from tracer.services.derived_metrics.errors import MetricInputError
+    from tracer.services.derived_metrics.queries import Scope
+
+    def forbidden():
+        pytest.fail("legacy refresh reached retention policy loading")
+
+    writer.retention_days = forbidden
+    with pytest.raises(MetricInputError, match="needs_rebuild"):
+        writer.refresh(
+            ChangeBatch((), (), (), (), (), {}),
+            [legacy_definition()],
+            Scope(writer.org_id, writer.workspace_id, writer.lease.project_id),
+            start=timezone.now() - timedelta(days=1),
+            end=timezone.now(),
+            as_of=timezone.now(),
+        )
+    assert not MetricRefreshAttempt.objects.exists()
+    assert not writer.store.writes
+
+
+def test_native_compiler_rejects_needs_rebuild_before_source_compilation(monkeypatch):
+    from uuid import uuid4
+
+    from tracer.services.derived_metrics import unit_reads
+    from tracer.services.derived_metrics.errors import MetricInputError
+    from tracer.services.derived_metrics.queries import Scope
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("legacy compiler reached source-plan compilation")
+
+    monkeypatch.setattr(unit_reads, "_source_plan", forbidden)
+    with pytest.raises(MetricInputError, match="needs_rebuild"):
+        unit_reads.unit_values_select(
+            legacy_definition(),
+            Scope(uuid4(), uuid4(), uuid4()),
+            [uuid4()],
+            start=timezone.now() - timedelta(days=1),
+            end=timezone.now(),
+            as_of=timezone.now(),
+        )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("status", ["pending", "complete"])
+def test_direct_activation_cannot_activate_legacy_version(
+    observe_project, workspace, status
+):
+    from tracer.models.derived_metric import DerivedMetric, DerivedMetricVersion
+    from tracer.services.derived_metrics.errors import MetricInputError
+
+    metric = DerivedMetric.objects.create(
+        organization=workspace.organization,
+        workspace=workspace,
+        project=observe_project,
+        name="Legacy recipe",
+    )
+    version = DerivedMetricVersion.objects.create(
+        metric=metric,
+        version=1,
+        formula="mean(value)",
+        inputs=[{"alias": "value", "source": "span", "field": "latency_ms"}],
+        selection_unit="user",
+        weighting="none",
+        definition_hash="a" * 64,
+        backfill_status=status,
+    )
+    expected_error = MetricInputError if status == "complete" else MetricStateConflict
+    with pytest.raises(expected_error):
+        DerivedMetric.activate_version(metric.id, version.id, expected_active_id=None)
+    metric.refresh_from_db()
+    version.refresh_from_db()
+    assert metric.active_version_id is None and version.activated_at is None
+
+
+@pytest.mark.parametrize("filters", [None, [], [{"field": "provider", "value": "p"}]])
+def test_native_compiler_saved_filters_are_mandatory_with_optional_narrowing(filters):
+    from copy import deepcopy
+    from uuid import uuid4
+
+    from tracer.services.derived_metrics.queries import Scope
+    from tracer.services.derived_metrics.unit_reads import unit_values_select
+    from tracer.tests.test_derived_metric_clickhouse import recipe
+
+    definition = recipe()
+    definition.filters = [{"field": "model", "value": "m"}]
+    before = deepcopy(definition.filters)
+    _, params = unit_values_select(
+        definition,
+        Scope(uuid4(), uuid4(), uuid4()),
+        [uuid4()],
+        start=timezone.now() - timedelta(days=1),
+        end=timezone.now(),
+        as_of=timezone.now(),
+        filters=filters,
+    )
+    assert params["filter_0"] == "m"
+    if filters:
+        assert params["filter_1"] == "p"
+    assert definition.filters == before
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("rollback", [False, True])
+def test_logical_expiry_manifest_revocation_and_cleanup_intent_are_one_transaction(
+    writer, monkeypatch, rollback
+):
+    from tracer.models.derived_metric import MetricErasureRequest, MetricRefreshAttempt
+    from tracer.services.derived_metrics import deletion_protocol
+    from tracer.services.derived_metrics.deletion_protocol import capture_pin
+
+    initial = writer.begin()
+    writer.freeze(initial, FIELD_VALUES, "SELECT original")
+    writer.seal(initial, cursors={"watermark_ns": 1})
+    original = writer.stage_and_publish(initial)
+    pin = capture_pin(
+        writer.lease.project_id, consumer_kind="snapshot", ttl=timedelta(hours=1)
+    )
+    stale = writer.begin()
+    checkpoint = writer.begin(purpose="compaction", ceilings={"logical_expiry": True})
+    writer.freeze(checkpoint, FIELD_VALUES, "SELECT safe")
+    writer.seal(checkpoint, cursors={"watermark_ns": 2})
+    commit = deletion_protocol.commit_logical_expiry
+
+    def interrupt(*args, **kwargs):
+        commit(*args, **kwargs)
+        raise RuntimeError("rollback expiry transaction")
+
+    if rollback:
+        monkeypatch.setattr(deletion_protocol, "commit_logical_expiry", interrupt)
+        with pytest.raises(RuntimeError, match="rollback expiry"):
+            writer.stage_and_publish(checkpoint)
+    else:
+        writer.stage_and_publish(checkpoint)
+    original.refresh_from_db()
+    stale.refresh_from_db()
+    current = MetricProjectRefresh.for_project(writer.lease.project_id)
+    assert (current.watermark_ns, original.revoked_at is not None, pin.is_usable()) == (
+        (1, False, True) if rollback else (2, True, False)
+    )
+    assert (stale.state == MetricRefreshAttempt.State.ABORTED) is not rollback
+    assert (
+        MetricErasureRequest.objects.filter(
+            store_payload__protocol="metric_expiry"
+        ).exists()
+        is not rollback
+    )
+
+
+@pytest.mark.django_db
+def test_expiry_fences_later_allocated_namespaces_and_keeps_idle_cleanup_scheduled(
+    writer,
+):
+    from tracer.models.derived_metric import MetricErasureRequest
+
+    checkpoint = writer.begin(purpose="compaction", ceilings={"logical_expiry": True})
+    writer.freeze(checkpoint, FIELD_VALUES, "SELECT safe")
+    writer.seal(checkpoint)
+    later = writer.begin()
+    writer.freeze(later, FIELD_VALUES, "SELECT obsolete_private")
+    writer.seal(later)
+    writer.stage_and_publish(checkpoint)
+    later.refresh_from_db()
+    assert later.generation > checkpoint.generation and later.state == "aborted"
+    obligation = MetricErasureRequest.objects.get(
+        store_payload__protocol="metric_expiry"
+    )
+    assert obligation.store_payload["through_generation"] >= later.generation
+    assert MetricProjectRefresh.for_project(writer.lease.project_id).pending_expiry
+    # B18's generic multi-store worker cannot claim a writer barrier as erasure.
+    assert MetricErasureRequest.claim(obligation.id, ttl=timedelta(minutes=1)) is None
+    with pytest.raises(MetricStateConflict):
+        writer.stage_and_publish(later)

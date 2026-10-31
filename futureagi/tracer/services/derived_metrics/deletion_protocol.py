@@ -201,6 +201,48 @@ def revoke_generations(
         return pins.update(invalidated_at=now, invalidation_reason=reason)
 
 
+def commit_logical_expiry(attempt, manifest, *, now):
+    """Part of publish's transaction, NEVER a post-publication callback.
+
+    Cleanup is generation-scoped and independent of collected private ledgers.
+    Only project/attempt namespaces survive, not subjects or matching hashes.
+    """
+    if not connections[DEFAULT_DB_ALIAS].in_atomic_block:
+        raise RuntimeError("logical expiry requires the publication transaction")
+    old = list(
+        MetricReadManifest.objects.filter(project_id=attempt.project_id)
+        .exclude(id=manifest.id)
+        .values_list("id", flat=True)
+    )
+    revoke_generations(
+        attempt.project_id, reason="retention_expired", manifest_ids=old, now=now
+    )
+    # Include writers allocated AFTER this checkpoint was prepared as well as
+    # writers with no parent manifest. Allocation order is not publication order.
+    MetricRefreshAttempt.objects.filter(
+        project_id=attempt.project_id,
+        state__in=MetricRefreshAttempt.OPEN_STATES,
+    ).update(state="aborted", aborted_at=now, abort_reason="generation_revoked")
+    through = MetricProjectRefresh.objects.get(
+        project_id=attempt.project_id
+    ).generation_high_water
+    project = apps.get_model("tracer", "Project")._base_manager.get(
+        id=attempt.project_id
+    )
+    return _intent(
+        organization_id=project.organization_id,
+        project_id=attempt.project_id,
+        scope="history",
+        deletion_key=f"expiry:{attempt.id}",
+        store_payload={
+            "protocol": "metric_expiry",
+            "through_generation": through,
+            "checkpoint_attempt": str(attempt.id),
+            "shard": manifest.visibility_receipts.get("shard"),
+        },
+    )
+
+
 def _intent(
     *,
     organization_id,
@@ -265,6 +307,15 @@ def collect_history(project_id, *, now=None, limit=1000):
         raise ValueError("collection limit must be between 1 and 1000")
     with serialized_project(project_id):
         now = now or timezone.now()
+        # Completed synchronous submissions can never land later. Their absence
+        # after collection is safe; unresolved submissions are independent roots
+        # and survive even when their private attempt/manifest has been removed.
+        MetricErasureRequest.objects.filter(
+            project_key=project_id,
+            store_payload__protocol="metric_submission",
+            status="done",
+            receipts__synchronous_response__drained=1,
+        ).delete()
         refresh = MetricProjectRefresh.objects.select_for_update().get(
             project_id=project_id
         )
