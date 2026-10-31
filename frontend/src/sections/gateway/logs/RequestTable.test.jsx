@@ -291,3 +291,73 @@ describe("RequestTable", () => {
     );
   });
 });
+
+describe("RequestTable cost cell — unpriced logs", () => {
+  const savedData = mockState.data;
+
+  const unpricedRow = (overrides = {}) => ({
+    id: "log-unpriced",
+    request_id: "request-unpriced",
+    model: "ollama/llama3",
+    provider: "ollama",
+    status_code: 200,
+    latency_ms: 42,
+    cost: "0",
+    input_tokens: 3,
+    output_tokens: 4,
+    total_tokens: 7,
+    session_id: "session-unpriced",
+    started_at: "2026-05-21T10:03:00Z",
+    metadata: { cost_source: "unpriced" },
+    ...overrides,
+  });
+
+  const renderRow = (row) => {
+    mockState.data = { results: [row], count: 1 };
+    return render(<RequestTable {...baseProps} />);
+  };
+
+  afterEach(() => {
+    mockState.data = savedData;
+  });
+
+  it("shows an Unpriced chip with a tooltip instead of $0.00 for an unpriced zero-cost log", async () => {
+    renderRow(unpricedRow());
+
+    expect(screen.getByText("Unpriced")).toBeInTheDocument();
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+
+    await userEvent.hover(screen.getByText("Unpriced"));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      /No price is set for this model/,
+    );
+  });
+
+  it("shows the chip when an unpriced log has an empty cost", () => {
+    renderRow(unpricedRow({ cost: null }));
+
+    expect(screen.getByText("Unpriced")).toBeInTheDocument();
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+  });
+
+  it("shows $0.00 for a zero-cost log with no cost_source", () => {
+    renderRow(unpricedRow({ metadata: null }));
+
+    expect(screen.getByText("$0.00")).toBeInTheDocument();
+    expect(screen.queryByText("Unpriced")).not.toBeInTheDocument();
+  });
+
+  it("shows the formatted cost for an org_custom zero-cost log", () => {
+    renderRow(unpricedRow({ metadata: { cost_source: "org_custom" } }));
+
+    expect(screen.getByText("$0.00")).toBeInTheDocument();
+    expect(screen.queryByText("Unpriced")).not.toBeInTheDocument();
+  });
+
+  it("shows the formatted cost when an unpriced log has a positive cost", () => {
+    renderRow(unpricedRow({ cost: "0.5" }));
+
+    expect(screen.getByText("$0.5000")).toBeInTheDocument();
+    expect(screen.queryByText("Unpriced")).not.toBeInTheDocument();
+  });
+});
