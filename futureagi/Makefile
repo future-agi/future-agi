@@ -20,7 +20,7 @@ help:
 	@echo "  check-all       Run lint + mypy + tests (pre-PR gate)"
 	@echo ""
 	@echo "Pre-commit hooks (uses .pre-commit-config.yaml):"
-	@echo "  pre-commit-install  Install git hooks (one-time)"
+	@echo "  pre-commit-install  Bootstrap pre-commit + hook environments (one-time)"
 	@echo "  pre-commit          Run hooks on staged files"
 	@echo "  pre-commit-all      Run hooks on all files"
 	@echo ""
@@ -60,8 +60,11 @@ mypy-baseline:
 
 # Pre-commit hooks - delegate to the pre-commit tool (.pre-commit-config.yaml).
 # pre-commit is pinned in requirements-test.txt / pyproject.toml.
+# Note: no `pre-commit install` here — husky v9 owns core.hooksPath=.husky/
+# and invokes `pre-commit run` from .husky/pre-commit, so installing hooks
+# separately would fail. This target bootstraps the pre-commit tool + verifies.
 pre-commit-install:
-	@pre-commit install
+	@../scripts/setup-python-hooks.sh
 
 pre-commit:
 	@pre-commit run
