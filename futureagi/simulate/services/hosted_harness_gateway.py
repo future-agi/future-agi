@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import copy
 import gzip
 import hashlib
@@ -935,10 +936,13 @@ def github_checkout(
         "GIT_CONFIG_COUNT": "1" if token else "0",
     }
     if token:
+        # GitHub's git endpoint takes an installation token as Basic x-access-token; it
+        # refuses Bearer, and git then reports a prompt it may not show.
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
         environment.update(
             {
                 "GIT_CONFIG_KEY_0": "http.extraHeader",
-                "GIT_CONFIG_VALUE_0": f"Authorization: Bearer {token}",
+                "GIT_CONFIG_VALUE_0": f"Authorization: Basic {basic}",
             }
         )
     commands = [
