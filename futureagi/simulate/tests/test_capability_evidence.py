@@ -10,7 +10,10 @@ import pytest
 from django.utils import timezone
 
 from simulate.models import HarnessCapabilityEvidence, HostedHarnessJob
-from simulate.services.capability_evidence import capability_report, record_capability_evidence
+from simulate.services.capability_evidence import (
+    capability_report,
+    record_capability_evidence,
+)
 
 _DOCUMENT = {
     "schema_version": "futureagi.capability-evidence.v1",

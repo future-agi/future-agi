@@ -12,6 +12,8 @@ from simulate.selectors.runs import user_executions
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentVersionCreateSerializer,
+    HarnessCapabilityQuerySerializer,
+    HarnessCapabilityReportSerializer,
     HarnessCompareQuerySerializer,
     HarnessCompareSerializer,
     HarnessDefaultMoveSerializer,
@@ -34,8 +36,6 @@ from simulate.serializers.harness_environment import (
     HarnessNudgeSerializer,
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
-    HarnessCapabilityQuerySerializer,
-    HarnessCapabilityReportSerializer,
     HarnessSuiteMemberSerializer,
     HarnessVersionDiffQuerySerializer,
     HarnessVersionDiffSerializer,
