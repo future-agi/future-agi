@@ -129928,7 +129928,9 @@
                 "base_digest",
                 "draft_digest",
                 "summary",
-                "decision"
+                "decision",
+                "affects",
+                "depends_on"
             ],
             "type": "object",
             "properties": {
@@ -130020,6 +130022,19 @@
                         "rejected"
                     ],
                     "x-nullable": true
+                },
+                "affects": {
+                    "title": "Affects",
+                    "description": "The scenario keys this change touches, or `all`.",
+                    "type": "object"
+                },
+                "depends_on": {
+                    "description": "Changes this one needs; accepting it means accepting them.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 }
             }
         },

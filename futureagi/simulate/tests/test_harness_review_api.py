@@ -41,6 +41,8 @@ def test_an_added_actor_is_one_change_decided_once_and_undecided_again_when_it_c
     [change] = [one for one in review["changes"] if one["kind"] == "actor"]
     assert (change["id"], change["action"], change["decision"]) == ("actor:manager", "added", None)
     assert change["summary"] == "Add actor manager" and not review["can_save"]
+    # No scenario includes the new actor yet, and it needs nothing else in the draft.
+    assert (change["affects"], change["depends_on"]) == ([], [])
     revision = review["drafts"]["environment"]["revision"]
 
     decided = _decide(auth_client, environment, [{"id": "actor:manager", "decision": "accepted"}],

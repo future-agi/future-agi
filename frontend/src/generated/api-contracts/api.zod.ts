@@ -37880,6 +37880,15 @@ export const SimulateApiHarnessEnvironmentsDraftsDraftsReviewResponse =
         draft_digest: zod.string().min(1),
         summary: zod.string().min(1),
         decision: zod.enum(["accepted", "rejected"]),
+        affects: zod
+          .object({})
+          .passthrough()
+          .describe("The scenario keys this change touches, or `all`."),
+        depends_on: zod
+          .array(zod.string().min(1))
+          .describe(
+            "Changes this one needs; accepting it means accepting them.",
+          ),
       }),
     ),
     counts: zod.object({
@@ -37969,6 +37978,15 @@ export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResp
         draft_digest: zod.string().min(1),
         summary: zod.string().min(1),
         decision: zod.enum(["accepted", "rejected"]),
+        affects: zod
+          .object({})
+          .passthrough()
+          .describe("The scenario keys this change touches, or `all`."),
+        depends_on: zod
+          .array(zod.string().min(1))
+          .describe(
+            "Changes this one needs; accepting it means accepting them.",
+          ),
       }),
     ),
     counts: zod.object({

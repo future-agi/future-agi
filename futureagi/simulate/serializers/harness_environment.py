@@ -727,6 +727,10 @@ class HarnessReviewChangeSerializer(serializers.Serializer):
     draft_digest = serializers.CharField(allow_null=True)
     summary = serializers.CharField()
     decision = serializers.ChoiceField(choices=("accepted", "rejected"), allow_null=True)
+    affects = serializers.JSONField(help_text="The scenario keys this change touches, or `all`.")
+    depends_on = serializers.ListField(
+        child=serializers.CharField(), help_text="Changes this one needs; accepting it means accepting them."
+    )
 
 
 class HarnessReviewDraftSerializer(serializers.Serializer):

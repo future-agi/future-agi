@@ -18839,6 +18839,11 @@ export const HarnessReviewChangeApiDecision = {
 
 export type HarnessReviewChangeApiPatchItem = { [key: string]: string };
 
+/**
+ * The scenario keys this change touches, or `all`.
+ */
+export type HarnessReviewChangeApiAffects = { [key: string]: unknown };
+
 export interface HarnessReviewChangeApi {
   /** @minLength 1 */
   id: string;
@@ -18858,6 +18863,10 @@ export interface HarnessReviewChangeApi {
   /** @minLength 1 */
   summary: string;
   decision: HarnessReviewChangeApiDecision;
+  /** The scenario keys this change touches, or `all`. */
+  affects: HarnessReviewChangeApiAffects;
+  /** Changes this one needs; accepting it means accepting them. */
+  depends_on: string[];
 }
 
 export interface HarnessReviewCountsApi {

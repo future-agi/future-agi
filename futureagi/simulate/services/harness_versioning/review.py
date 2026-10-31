@@ -19,6 +19,7 @@ import jsonpatch
 
 from simulate.services.harness_versioning import archives, hashing
 from simulate.services.harness_versioning.diffs import _CONTRACT_IGNORED_FIELDS
+from simulate.services.harness_versioning.references import affects, depends_on
 
 # Kinds in the order a review lists them.
 KINDS = ("tool", "rule", "contract_field", "sub_goal", "actor", "source", "scenario", "file")
@@ -313,6 +314,17 @@ def _piece_changes(environment: Any, piece: str, draft: Any) -> list[dict[str, A
     return [{**change, "piece": piece} for change in compute_changes(before, after)]
 
 
+def _scenarios(environment: Any) -> dict[str, dict[str, Any]]:
+    """The scenarios as the drafts would leave them (the suite draft, else the saved suite), by key."""
+    from simulate.services.harness_versioning.drafts import _piece_files, open_draft
+
+    version = open_draft(environment, "suite") or environment.suite_version
+    if version is None:
+        return {}
+    files = _piece_files(environment, "suite", version)
+    return {item.key: item.value for item in item_index(files).values() if item.kind == "scenario"}
+
+
 def draft_review(environment: Any) -> dict[str, Any]:
     """Every change the open drafts make, each with the decision taken on it.
 
@@ -339,6 +351,10 @@ def draft_review(environment: Any) -> dict[str, Any]:
             if decision:
                 decided[change["id"]] = decision
             changes.append(change)
+    scenarios = _scenarios(environment)
+    for change in changes:
+        change["affects"] = affects(change, scenarios)
+        change["depends_on"] = depends_on(change, changes, scenarios)
     counts = {
         "total": len(changes),
         "accepted": sum(one["decision"] == "accepted" for one in changes),
@@ -428,6 +444,18 @@ def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str |
     review = draft_review(locked)
     if expected_review_digest and expected_review_digest != review["review_digest"]:
         raise _error("review_stale", "The changes moved since you reviewed them; review them again", 409)
+    refused = {one["id"] for one in review["changes"] if one["decision"] == "rejected"}
+    needs = [
+        (one["id"], other) for one in review["changes"] if one["decision"] == "accepted"
+        for other in one.get("depends_on") or [] if other in refused
+    ]
+    if needs:
+        raise _error(
+            "change_depends_on_rejected",
+            "An accepted change needs one you rejected; accept both or reject both",
+            409,
+            pairs=[{"change": change, "needs": other} for change, other in needs],
+        )
     rejected = {one["piece"] for one in review["changes"] if one["decision"] == "rejected"} & pieces
     if any(one["decision"] for one in review["changes"]):
         # What the person decided, kept with the version it becomes, so its summary and diff are the approved ones.
