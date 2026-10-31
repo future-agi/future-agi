@@ -761,6 +761,9 @@ def record_draft(
                     **values,
                 )
             else:
+                # Decisions taken in review stay with the draft; each holds only while its item is unchanged.
+                if (draft.documents or {}).get("review"):
+                    values["documents"]["review"] = draft.documents["review"]
                 for name, value in values.items():
                     setattr(draft, name, value)
                 draft.origin = origin

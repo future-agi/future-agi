@@ -51835,6 +51835,82 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/drafts/review/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_drafts_drafts_review",
+                "description": "Every change the open drafts make, item by item, with the decision taken on each. No writes.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessDraftReview"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/drafts/review/decisions/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_drafts_review_drafts_review_decisions",
+                "description": "Accept or reject changes, one by id, all of a kind, or every remaining one; returns the review.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessReviewDecisions"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessDraftReview"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/drafts/save/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_drafts_save_drafts",
@@ -129804,6 +129880,266 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/HarnessDraftItem"
+                    }
+                }
+            }
+        },
+        "HarnessReviewDraft": {
+            "required": [
+                "id",
+                "revision",
+                "parent_id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer"
+                },
+                "parent_id": {
+                    "title": "Parent id",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessReviewChange": {
+            "required": [
+                "id",
+                "piece",
+                "kind",
+                "key",
+                "document",
+                "action",
+                "fields",
+                "patch",
+                "base_digest",
+                "draft_digest",
+                "summary",
+                "decision"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "piece": {
+                    "title": "Piece",
+                    "type": "string",
+                    "enum": [
+                        "environment",
+                        "suite"
+                    ]
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "tool",
+                        "rule",
+                        "contract_field",
+                        "sub_goal",
+                        "actor",
+                        "source",
+                        "scenario",
+                        "file"
+                    ]
+                },
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "document": {
+                    "title": "Document",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "added",
+                        "removed",
+                        "changed"
+                    ]
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "patch": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "base_digest": {
+                    "title": "Base digest",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "draft_digest": {
+                    "title": "Draft digest",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "decision": {
+                    "title": "Decision",
+                    "type": "string",
+                    "enum": [
+                        "accepted",
+                        "rejected"
+                    ],
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessReviewCounts": {
+            "required": [
+                "total",
+                "accepted",
+                "rejected",
+                "undecided"
+            ],
+            "type": "object",
+            "properties": {
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                },
+                "accepted": {
+                    "title": "Accepted",
+                    "type": "integer"
+                },
+                "rejected": {
+                    "title": "Rejected",
+                    "type": "integer"
+                },
+                "undecided": {
+                    "title": "Undecided",
+                    "type": "integer"
+                }
+            }
+        },
+        "HarnessDraftReview": {
+            "required": [
+                "drafts",
+                "changes",
+                "counts",
+                "review_digest",
+                "can_save"
+            ],
+            "type": "object",
+            "properties": {
+                "drafts": {
+                    "title": "Drafts",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/HarnessReviewDraft"
+                    }
+                },
+                "changes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReviewChange"
+                    }
+                },
+                "counts": {
+                    "$ref": "#/definitions/HarnessReviewCounts"
+                },
+                "review_digest": {
+                    "title": "Review digest",
+                    "description": "Send back on Save; a review that moved is refused.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "can_save": {
+                    "title": "Can save",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessReviewDecision": {
+            "required": [
+                "decision"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "description": "One change; omit with `kind` or `remaining`.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "tool",
+                        "rule",
+                        "contract_field",
+                        "sub_goal",
+                        "actor",
+                        "source",
+                        "scenario",
+                        "file"
+                    ]
+                },
+                "remaining": {
+                    "title": "Remaining",
+                    "description": "Every change not yet decided.",
+                    "type": "boolean"
+                },
+                "decision": {
+                    "title": "Decision",
+                    "type": "string",
+                    "enum": [
+                        "accepted",
+                        "rejected"
+                    ]
+                }
+            }
+        },
+        "HarnessReviewDecisions": {
+            "required": [
+                "expected_revisions",
+                "decisions"
+            ],
+            "type": "object",
+            "properties": {
+                "expected_revisions": {
+                    "title": "Expected revisions",
+                    "description": "Per piece, the draft revision the person reviewed.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "decisions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReviewDecision"
                     }
                 }
             }

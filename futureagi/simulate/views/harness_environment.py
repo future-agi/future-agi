@@ -20,9 +20,11 @@ from simulate.serializers.harness_environment import (
     HarnessCompareQuerySerializer,
     HarnessCompareSerializer,
     HarnessDefaultMoveSerializer,
+    HarnessDraftReviewSerializer,
     HarnessDraftSaveResponseSerializer,
     HarnessDraftSaveSerializer,
     HarnessDraftsSerializer,
+    HarnessReviewDecisionsSerializer,
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
     HarnessEnvironmentDetailSerializer,
@@ -438,6 +440,39 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if job is None:
             return self._not_found()
         return Response(list_drafts(job))
+
+    @validated_request(responses={200: HarnessDraftReviewSerializer})
+    @action(detail=True, methods=["get"], url_path="drafts/review")
+    def drafts_review(self, request, pk=None):
+        """Every change the open drafts make, item by item, with the decision taken on each. No writes."""
+        from simulate.services.harness_versioning.review import draft_review
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(draft_review(job))
+
+    @validated_request(
+        request_serializer=HarnessReviewDecisionsSerializer,
+        responses={200: HarnessDraftReviewSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="drafts/review/decisions")
+    def drafts_review_decisions(self, request, pk=None):
+        """Accept or reject changes, one by id, all of a kind, or every remaining one; returns the review."""
+        from simulate.services.harness_versioning.review import record_decisions
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        return Response(
+            record_decisions(
+                job, body["decisions"], expected_revisions=body["expected_revisions"], user=request.user
+            )
+        )
 
     @validated_request(
         request_serializer=HarnessDraftSaveSerializer,

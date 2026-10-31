@@ -296,3 +296,114 @@ def compose_accepted(
         except jsonpatch.JsonPatchException as exc:
             raise ReviewRefused("review_stale", f"{change['id']} changed after the review: {exc}", [change["id"]]) from exc
     return files
+
+
+DECISIONS = ("accepted", "rejected")
+
+
+def _decisions(draft: Any) -> dict[str, dict[str, Any]]:
+    return dict(((draft.documents or {}).get("review") or {}).get("decisions") or {})
+
+
+def _piece_changes(environment: Any, piece: str, draft: Any) -> list[dict[str, Any]]:
+    from simulate.services.harness_versioning.drafts import _piece_files
+
+    before = _piece_files(environment, piece, draft.parent) if draft.parent_id else {}
+    after = _piece_files(environment, piece, draft)
+    return [{**change, "piece": piece} for change in compute_changes(before, after)]
+
+
+def draft_review(environment: Any) -> dict[str, Any]:
+    """Every change the open drafts make, each with the decision taken on it.
+
+    A decision holds only for the content it was taken on: once the draft changes that item again, the item is
+    undecided until someone decides it again.
+    """
+    from simulate.services.harness_versioning.drafts import DRAFT_PIECES, open_draft
+
+    drafts: dict[str, dict[str, Any]] = {}
+    changes: list[dict[str, Any]] = []
+    decided: dict[str, str] = {}
+    defaults: list[str] = []
+    for piece in DRAFT_PIECES:
+        draft = open_draft(environment, piece)
+        if draft is None:
+            continue
+        drafts[piece] = {"id": str(draft.id), "revision": draft.revision, "parent_id": str(draft.parent_id or "")}
+        defaults.append(str(getattr(draft.parent, "hash", "") or ""))
+        recorded = _decisions(draft)
+        for change in _piece_changes(environment, piece, draft):
+            entry = recorded.get(change["id"]) or {}
+            decision = entry.get("decision") if entry.get("draft_digest") == change["draft_digest"] else None
+            change["decision"] = decision
+            if decision:
+                decided[change["id"]] = decision
+            changes.append(change)
+    counts = {
+        "total": len(changes),
+        "accepted": sum(one["decision"] == "accepted" for one in changes),
+        "rejected": sum(one["decision"] == "rejected" for one in changes),
+    }
+    counts["undecided"] = counts["total"] - counts["accepted"] - counts["rejected"]
+    return {
+        "drafts": drafts,
+        "changes": changes,
+        "counts": counts,
+        "review_digest": review_digest("|".join(defaults), changes, decided),
+        "can_save": bool(changes) and counts["undecided"] == 0,
+    }
+
+
+def record_decisions(
+    environment: Any, decisions: list[dict[str, Any]], *, expected_revisions: dict[str, int], user: Any
+) -> dict[str, Any]:
+    """Store accept or reject on changes, by id, by kind, or for every remaining one, and return the review.
+
+    A decision is kept with the content it was taken on. A draft that moved since the person looked refuses the
+    whole request (`draft_changed`), so nobody decides on content they did not see.
+    """
+    from django.db import transaction
+
+    from simulate.services.harness_versioning.drafts import (
+        DRAFT_PIECES,
+        _error,
+        draft_changed,
+        open_draft,
+    )
+
+    with transaction.atomic():
+        current = {piece: open_draft(environment, piece, lock=True) for piece in DRAFT_PIECES}
+        current = {piece: draft for piece, draft in current.items() if draft is not None}
+        if not current:
+            raise _error("draft_not_found", "No unsaved changes", 404)
+        for piece, draft in current.items():
+            if piece in expected_revisions and expected_revisions[piece] != draft.revision:
+                raise draft_changed(piece=piece)
+        changes = [change for piece, draft in current.items() for change in _piece_changes(environment, piece, draft)]
+        by_id = {change["id"]: change for change in changes}
+        for item in decisions:
+            decision = item.get("decision")
+            if decision not in DECISIONS:
+                raise _error("decision_invalid", "A decision is accepted or rejected", 400)
+            if item.get("id"):
+                if item["id"] not in by_id:
+                    raise _error("change_not_found", "That change is not in the draft any more", 404, id=item["id"])
+                targets = [by_id[item["id"]]]
+            elif item.get("kind"):
+                targets = [change for change in changes if change["kind"] == item["kind"]]
+            else:
+                targets = changes
+            for change in targets:
+                draft = current[change["piece"]]
+                recorded = _decisions(draft)
+                if item.get("remaining") and (recorded.get(change["id"]) or {}).get("draft_digest") == change[
+                    "draft_digest"
+                ]:
+                    continue
+                recorded[change["id"]] = {"decision": decision, "draft_digest": change["draft_digest"]}
+                review = {**((draft.documents or {}).get("review") or {}), "decisions": recorded}
+                draft.documents = {**(draft.documents or {}), "review": review}
+        for draft in current.values():
+            draft.last_edited_by = user
+            draft.save(update_fields=["documents", "last_edited_by", "updated_at"])
+    return draft_review(environment)

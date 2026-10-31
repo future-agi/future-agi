@@ -37828,6 +37828,151 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
 });
 
 /**
+ * Every change the open drafts make, item by item, with the decision taken on each. No writes.
+ */
+export const SimulateApiHarnessEnvironmentsDraftsDraftsReviewParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsDraftsDraftsReviewResponse =
+  zod.object({
+    drafts: zod.record(
+      zod.string(),
+      zod.object({
+        id: zod.string().min(1),
+        revision: zod.number(),
+        parent_id: zod.string(),
+      }),
+    ),
+    changes: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        piece: zod.enum(["environment", "suite"]),
+        kind: zod.enum([
+          "tool",
+          "rule",
+          "contract_field",
+          "sub_goal",
+          "actor",
+          "source",
+          "scenario",
+          "file",
+        ]),
+        key: zod.string().min(1),
+        document: zod.string().min(1),
+        action: zod.enum(["added", "removed", "changed"]),
+        fields: zod.array(zod.string().min(1)),
+        patch: zod.array(zod.record(zod.string(), zod.string())),
+        base_digest: zod.string().min(1),
+        draft_digest: zod.string().min(1),
+        summary: zod.string().min(1),
+        decision: zod.enum(["accepted", "rejected"]),
+      }),
+    ),
+    counts: zod.object({
+      total: zod.number(),
+      accepted: zod.number(),
+      rejected: zod.number(),
+      undecided: zod.number(),
+    }),
+    review_digest: zod
+      .string()
+      .min(1)
+      .describe("Send back on Save; a review that moved is refused."),
+    can_save: zod.boolean(),
+  });
+
+/**
+ * Accept or reject changes, one by id, all of a kind, or every remaining one; returns the review.
+ */
+export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsBody =
+  zod.object({
+    expected_revisions: zod
+      .record(zod.string(), zod.number())
+      .describe("Per piece, the draft revision the person reviewed."),
+    decisions: zod.array(
+      zod.object({
+        id: zod
+          .string()
+          .min(1)
+          .optional()
+          .describe("One change; omit with `kind` or `remaining`."),
+        kind: zod
+          .enum([
+            "tool",
+            "rule",
+            "contract_field",
+            "sub_goal",
+            "actor",
+            "source",
+            "scenario",
+            "file",
+          ])
+          .optional(),
+        remaining: zod
+          .boolean()
+          .optional()
+          .describe("Every change not yet decided."),
+        decision: zod.enum(["accepted", "rejected"]),
+      }),
+    ),
+  });
+
+export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponse =
+  zod.object({
+    drafts: zod.record(
+      zod.string(),
+      zod.object({
+        id: zod.string().min(1),
+        revision: zod.number(),
+        parent_id: zod.string(),
+      }),
+    ),
+    changes: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        piece: zod.enum(["environment", "suite"]),
+        kind: zod.enum([
+          "tool",
+          "rule",
+          "contract_field",
+          "sub_goal",
+          "actor",
+          "source",
+          "scenario",
+          "file",
+        ]),
+        key: zod.string().min(1),
+        document: zod.string().min(1),
+        action: zod.enum(["added", "removed", "changed"]),
+        fields: zod.array(zod.string().min(1)),
+        patch: zod.array(zod.record(zod.string(), zod.string())),
+        base_digest: zod.string().min(1),
+        draft_digest: zod.string().min(1),
+        summary: zod.string().min(1),
+        decision: zod.enum(["accepted", "rejected"]),
+      }),
+    ),
+    counts: zod.object({
+      total: zod.number(),
+      accepted: zod.number(),
+      rejected: zod.number(),
+      undecided: zod.number(),
+    }),
+    review_digest: zod
+      .string()
+      .min(1)
+      .describe("Send back on Save; a review that moved is refused."),
+    can_save: zod.boolean(),
+  });
+
+/**
  * Make every named draft live together; returns the new defaults and every
 version.
  */

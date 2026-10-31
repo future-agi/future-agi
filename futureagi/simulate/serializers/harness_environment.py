@@ -709,6 +709,64 @@ class HarnessDraftsSerializer(serializers.Serializer):
     set_aside = HarnessDraftItemSerializer(many=True)
 
 
+class HarnessReviewChangeSerializer(serializers.Serializer):
+    """One item the drafts change, as an RFC 6902 patch with the values it read, and the decision taken on it."""
+
+    id = serializers.CharField()
+    piece = serializers.ChoiceField(choices=("environment", "suite"))
+    kind = serializers.ChoiceField(
+        choices=("tool", "rule", "contract_field", "sub_goal", "actor", "source", "scenario", "file")
+    )
+    key = serializers.CharField()
+    document = serializers.CharField()
+    action = serializers.ChoiceField(choices=("added", "removed", "changed"))
+    fields = serializers.ListField(child=serializers.CharField())
+    patch = serializers.ListField(child=serializers.DictField())
+    base_digest = serializers.CharField(allow_null=True)
+    draft_digest = serializers.CharField(allow_null=True)
+    summary = serializers.CharField()
+    decision = serializers.ChoiceField(choices=("accepted", "rejected"), allow_null=True)
+
+
+class HarnessReviewDraftSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    revision = serializers.IntegerField()
+    parent_id = serializers.CharField(allow_blank=True)
+
+
+class HarnessReviewCountsSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    accepted = serializers.IntegerField()
+    rejected = serializers.IntegerField()
+    undecided = serializers.IntegerField()
+
+
+class HarnessDraftReviewSerializer(serializers.Serializer):
+    """Every change the open drafts make, for the person to accept or reject before Save."""
+
+    drafts = serializers.DictField(child=HarnessReviewDraftSerializer())
+    changes = HarnessReviewChangeSerializer(many=True)
+    counts = HarnessReviewCountsSerializer()
+    review_digest = serializers.CharField(help_text="Send back on Save; a review that moved is refused.")
+    can_save = serializers.BooleanField()
+
+
+class HarnessReviewDecisionSerializer(StrictInputSerializer):
+    id = serializers.CharField(required=False, help_text="One change; omit with `kind` or `remaining`.")
+    kind = serializers.ChoiceField(
+        choices=("tool", "rule", "contract_field", "sub_goal", "actor", "source", "scenario", "file"), required=False
+    )
+    remaining = serializers.BooleanField(required=False, help_text="Every change not yet decided.")
+    decision = serializers.ChoiceField(choices=("accepted", "rejected"))
+
+
+class HarnessReviewDecisionsSerializer(StrictInputSerializer):
+    expected_revisions = serializers.DictField(
+        child=serializers.IntegerField(), help_text="Per piece, the draft revision the person reviewed."
+    )
+    decisions = HarnessReviewDecisionSerializer(many=True)
+
+
 class HarnessDraftSaveItemSerializer(StrictInputSerializer):
     piece = serializers.ChoiceField(choices=("environment", "suite"))
     expected_parent_id = serializers.UUIDField(

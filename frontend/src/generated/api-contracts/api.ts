@@ -622,6 +622,7 @@ import type {
   HarnessConversationTranscriptAppendResponseApi,
   HarnessConversationWorkspaceResponseApi,
   HarnessDefaultMoveApi,
+  HarnessDraftReviewApi,
   HarnessDraftSaveApi,
   HarnessDraftSaveResponseApi,
   HarnessDraftsApi,
@@ -651,6 +652,7 @@ import type {
   HarnessPreflightApi,
   HarnessPreflightResponseApi,
   HarnessResultReceiptApi,
+  HarnessReviewDecisionsApi,
   HarnessRunCreateApi,
   HarnessRunCreateResponseApi,
   HarnessRunPlanApi,
@@ -60190,6 +60192,102 @@ export const simulateApiHarnessEnvironmentsDrafts = async (
     },
   );
 };
+
+export type simulateApiHarnessEnvironmentsDraftsDraftsReviewResponse200 = {
+  data: HarnessDraftReviewApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsDraftsDraftsReviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsDraftsDraftsReviewResponseSuccess =
+  simulateApiHarnessEnvironmentsDraftsDraftsReviewResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsDraftsDraftsReviewResponseError =
+  simulateApiHarnessEnvironmentsDraftsDraftsReviewResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsDraftsDraftsReviewResponse =
+  | simulateApiHarnessEnvironmentsDraftsDraftsReviewResponseSuccess
+  | simulateApiHarnessEnvironmentsDraftsDraftsReviewResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDraftsDraftsReviewUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/drafts/review/`;
+};
+
+/**
+ * Every change the open drafts make, item by item, with the decision taken on each. No writes.
+ */
+export const simulateApiHarnessEnvironmentsDraftsDraftsReview = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDraftsDraftsReviewResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDraftsDraftsReviewResponse>(
+    getSimulateApiHarnessEnvironmentsDraftsDraftsReviewUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponse200 =
+  {
+    data: HarnessDraftReviewApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponseSuccess =
+  simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponseError =
+  simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponse =
+
+    | simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponseSuccess
+    | simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsUrl =
+  (id: string) => {
+    return `/simulate/api/harness-environments/${id}/drafts/review/decisions/`;
+  };
+
+/**
+ * Accept or reject changes, one by id, all of a kind, or every remaining one; returns the review.
+ */
+export const simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisions =
+  async (
+    id: string,
+    harnessReviewDecisionsApi: HarnessReviewDecisionsApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResponse>(
+      getSimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsUrl(id),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(harnessReviewDecisionsApi),
+      },
+    );
+  };
 
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse200 = {
   data: HarnessDraftSaveResponseApi;

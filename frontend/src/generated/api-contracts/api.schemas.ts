@@ -18782,6 +18782,145 @@ export interface HarnessDraftsApi {
   set_aside: HarnessDraftItemApi[];
 }
 
+export interface HarnessReviewDraftApi {
+  /** @minLength 1 */
+  id: string;
+  revision: number;
+  parent_id: string;
+}
+
+export type HarnessDraftReviewApiDrafts = {
+  [key: string]: HarnessReviewDraftApi;
+};
+
+export type HarnessReviewChangeApiPiece =
+  (typeof HarnessReviewChangeApiPiece)[keyof typeof HarnessReviewChangeApiPiece];
+
+export const HarnessReviewChangeApiPiece = {
+  environment: "environment",
+  suite: "suite",
+} as const;
+
+export type HarnessReviewChangeApiKind =
+  (typeof HarnessReviewChangeApiKind)[keyof typeof HarnessReviewChangeApiKind];
+
+export const HarnessReviewChangeApiKind = {
+  tool: "tool",
+  rule: "rule",
+  contract_field: "contract_field",
+  sub_goal: "sub_goal",
+  actor: "actor",
+  source: "source",
+  scenario: "scenario",
+  file: "file",
+} as const;
+
+export type HarnessReviewChangeApiAction =
+  (typeof HarnessReviewChangeApiAction)[keyof typeof HarnessReviewChangeApiAction];
+
+export const HarnessReviewChangeApiAction = {
+  added: "added",
+  removed: "removed",
+  changed: "changed",
+} as const;
+
+export type HarnessReviewChangeApiDecision =
+  (typeof HarnessReviewChangeApiDecision)[keyof typeof HarnessReviewChangeApiDecision];
+
+export const HarnessReviewChangeApiDecision = {
+  accepted: "accepted",
+  rejected: "rejected",
+} as const;
+
+export type HarnessReviewChangeApiPatchItem = { [key: string]: string };
+
+export interface HarnessReviewChangeApi {
+  /** @minLength 1 */
+  id: string;
+  piece: HarnessReviewChangeApiPiece;
+  kind: HarnessReviewChangeApiKind;
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  document: string;
+  action: HarnessReviewChangeApiAction;
+  fields: string[];
+  patch: HarnessReviewChangeApiPatchItem[];
+  /** @minLength 1 */
+  base_digest: string;
+  /** @minLength 1 */
+  draft_digest: string;
+  /** @minLength 1 */
+  summary: string;
+  decision: HarnessReviewChangeApiDecision;
+}
+
+export interface HarnessReviewCountsApi {
+  total: number;
+  accepted: number;
+  rejected: number;
+  undecided: number;
+}
+
+export interface HarnessDraftReviewApi {
+  drafts: HarnessDraftReviewApiDrafts;
+  changes: HarnessReviewChangeApi[];
+  counts: HarnessReviewCountsApi;
+  /**
+   * Send back on Save; a review that moved is refused.
+   * @minLength 1
+   */
+  review_digest: string;
+  can_save: boolean;
+}
+
+/**
+ * Per piece, the draft revision the person reviewed.
+ */
+export type HarnessReviewDecisionsApiExpectedRevisions = {
+  [key: string]: number;
+};
+
+export type HarnessReviewDecisionApiKind =
+  (typeof HarnessReviewDecisionApiKind)[keyof typeof HarnessReviewDecisionApiKind];
+
+export const HarnessReviewDecisionApiKind = {
+  tool: "tool",
+  rule: "rule",
+  contract_field: "contract_field",
+  sub_goal: "sub_goal",
+  actor: "actor",
+  source: "source",
+  scenario: "scenario",
+  file: "file",
+} as const;
+
+export type HarnessReviewDecisionApiDecision =
+  (typeof HarnessReviewDecisionApiDecision)[keyof typeof HarnessReviewDecisionApiDecision];
+
+export const HarnessReviewDecisionApiDecision = {
+  accepted: "accepted",
+  rejected: "rejected",
+} as const;
+
+export interface HarnessReviewDecisionApi {
+  /**
+   * One change; omit with `kind` or `remaining`.
+   * @minLength 1
+   */
+  id?: string;
+  kind?: HarnessReviewDecisionApiKind;
+  /** Every change not yet decided. */
+  remaining?: boolean;
+  decision: HarnessReviewDecisionApiDecision;
+}
+
+export interface HarnessReviewDecisionsApi {
+  /** Per piece, the draft revision the person reviewed. */
+  expected_revisions: HarnessReviewDecisionsApiExpectedRevisions;
+  decisions: HarnessReviewDecisionApi[];
+}
+
 export type HarnessDraftSaveItemApiPiece =
   (typeof HarnessDraftSaveItemApiPiece)[keyof typeof HarnessDraftSaveItemApiPiece];
 
