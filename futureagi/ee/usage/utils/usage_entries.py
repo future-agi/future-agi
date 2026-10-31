@@ -35,6 +35,7 @@ from ee.usage.models.usage import (
     SubscriptionTierChoices,
 )
 from model_hub.utils import call_websocket
+from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 from tfc.settings.settings import (
     BUSINESS_MONTHLY_STRIPE_PRICE_ID,
     BUSINESS_MONTHLY_STRIPE_PRICE_IDS_ALL,
@@ -1074,7 +1075,9 @@ def create_organization_subscription_if_not_exists(organization):
     return organization_subscription
 
 
-def check_if_api_call_is_rate_limited(organization, api_call_type):
+def check_if_api_call_is_rate_limited(organization, api_call_type, source=None):
+    if source == FIX_CHECK_RUN_EVAL_SOURCE:
+        return False, {}
     # get the subscription tier of the organization
     try:
         create_organization_subscription_if_not_exists(organization)
@@ -1154,9 +1157,10 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
         logger.info(
             f"API CALL LIMITS FOUND: {minute_limit} {hour_limit} {day_limit} {month_limit}"
         )
+        counted_calls = APICallLog.objects.exclude(source=FIX_CHECK_RUN_EVAL_SOURCE)
         if api_call_type not in eval_calls:
             # get the number of api calls made in the last minute, hour, day, month
-            api_calls_made_in_last_minute = APICallLog.objects.filter(
+            api_calls_made_in_last_minute = counted_calls.filter(
                 api_call_type=api_call_type_instance,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(minutes=1),
@@ -1165,7 +1169,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
                     APICallStatusChoices.PROCESSING.value,
                 ],
             ).count()
-            api_calls_made_in_last_hour = APICallLog.objects.filter(
+            api_calls_made_in_last_hour = counted_calls.filter(
                 api_call_type=api_call_type_instance,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(hours=1),
@@ -1174,7 +1178,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
                     APICallStatusChoices.PROCESSING.value,
                 ],
             ).count()
-            api_calls_made_in_last_day = APICallLog.objects.filter(
+            api_calls_made_in_last_day = counted_calls.filter(
                 api_call_type=api_call_type_instance,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(days=1),
@@ -1183,7 +1187,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
                     APICallStatusChoices.PROCESSING.value,
                 ],
             ).count()
-            api_calls_made_in_last_month = APICallLog.objects.filter(
+            api_calls_made_in_last_month = counted_calls.filter(
                 api_call_type=api_call_type_instance,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(days=30),
@@ -1194,7 +1198,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
             ).count()
         else:
             # api_call made in last miniute is all api call s whose instance are any of the 3
-            api_calls_made_in_last_minute = APICallLog.objects.filter(
+            api_calls_made_in_last_minute = counted_calls.filter(
                 api_call_type__name__in=eval_calls,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(minutes=1),
@@ -1203,7 +1207,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
                     APICallStatusChoices.PROCESSING.value,
                 ],
             ).count()
-            api_calls_made_in_last_hour = APICallLog.objects.filter(
+            api_calls_made_in_last_hour = counted_calls.filter(
                 api_call_type__name__in=eval_calls,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(hours=1),
@@ -1212,7 +1216,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
                     APICallStatusChoices.PROCESSING.value,
                 ],
             ).count()
-            api_calls_made_in_last_day = APICallLog.objects.filter(
+            api_calls_made_in_last_day = counted_calls.filter(
                 api_call_type__name__in=eval_calls,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(days=1),
@@ -1221,7 +1225,7 @@ def check_if_api_call_is_rate_limited(organization, api_call_type):
                     APICallStatusChoices.PROCESSING.value,
                 ],
             ).count()
-            api_calls_made_in_last_month = APICallLog.objects.filter(
+            api_calls_made_in_last_month = counted_calls.filter(
                 api_call_type__name__in=eval_calls,
                 organization=organization,
                 created_at__gte=timezone.now() - timedelta(days=30),
@@ -1322,7 +1326,7 @@ def log_api_call(
         input_tokens = config.get("input_tokens", 0)
 
         is_api_call_rate_limited, detail = check_if_api_call_is_rate_limited(
-            organization, api_call_type
+            organization, api_call_type, source
         )
         if is_api_call_rate_limited:
             config.update(detail)
@@ -1407,7 +1411,7 @@ def log_and_deduct_cost_for_api_request(
             input_tokens = config.get("input_tokens", 0)
 
         is_api_call_rate_limited, detail = check_if_api_call_is_rate_limited(
-            organization, api_call_type
+            organization, api_call_type, source
         )
 
         if is_api_call_rate_limited:
