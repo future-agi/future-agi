@@ -1,17 +1,25 @@
-"""Datadog exports partition arrivals, not overlapping request start times."""
+"""Datadog exports deduplicate committed arrivals and freeze metric membership."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from threading import Event, Thread
 from unittest.mock import Mock, patch
 
 import pytest
+from django.db import close_old_connections, transaction
+from django.db import connection as db_connection
 
 from accounts.models.workspace import Workspace
 from agentcc.models import AgentccRequestLog
-from integrations.models import ConnectionStatus, SyncLog, SyncStatus
+from integrations.models import (
+    ConnectionStatus,
+    IntegrationConnection,
+    SyncLog,
+    SyncStatus,
+)
 from integrations.services.datadog_service import DatadogService
 from integrations.temporal.activities import _sync_export_integration
 
-BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+BASE = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -97,7 +105,10 @@ def test_successive_datadog_windows_do_not_reexport_or_recount(datadog):
     assert metric_values(service, "output_tokens") == [5]
     assert metric_values(service, "cost") == [0.2]
     assert connection.last_synced_at == BASE + timedelta(seconds=180)
-    assert connection.sync_cursor == {"unrelated": "preserve"}
+    assert connection.sync_cursor == {
+        "unrelated": "preserve",
+        "datadog_export_from": BASE.isoformat(),
+    }
 
 
 @pytest.mark.django_db
@@ -269,7 +280,10 @@ def test_checkpoint_save_failure_does_not_replay_completed_delivery(datadog):
     assert len(logs_sent(service)) == 1
     service.export_metrics.assert_called_once()
     assert connection.last_synced_at == BASE + timedelta(seconds=120)
-    assert connection.sync_cursor == {"unrelated": "preserve"}
+    assert connection.sync_cursor == {
+        "unrelated": "preserve",
+        "datadog_export_from": BASE.isoformat(),
+    }
 
 
 @pytest.mark.django_db
@@ -331,3 +345,175 @@ def test_real_datadog_adapter_receives_one_log_and_count_window(datadog):
         if s["metric"].endswith(".requests")
     ]
     assert requests[0]["points"][0]["value"] == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("arrival", [1, 119])
+def test_ingestion_committing_after_completed_window_is_not_lost(datadog, arrival):
+    connection, service = datadog
+    inserted = Event()
+    may_commit = Event()
+    errors = []
+
+    def ingestion():
+        close_old_connections()
+        try:
+            with transaction.atomic():
+                with patch(
+                    "django.utils.timezone.now",
+                    return_value=BASE + timedelta(seconds=arrival),
+                ):
+                    AgentccRequestLog.no_workspace_objects.bulk_create(
+                        [
+                            AgentccRequestLog(
+                                organization_id=connection.organization_id,
+                                workspace_id=connection.workspace_id,
+                                request_id="inflight-at-watermark",
+                                started_at=BASE - timedelta(hours=1),
+                                input_tokens=10,
+                            )
+                        ]
+                    )
+                inserted.set()
+                if not may_commit.wait(timeout=30):
+                    raise RuntimeError("timed out waiting to commit ingestion")
+        except BaseException as exc:
+            errors.append(exc)
+            inserted.set()
+        finally:
+            db_connection.close()
+
+    worker = Thread(target=ingestion)
+    worker.start()
+    try:
+        assert inserted.wait(timeout=30)
+        assert not errors
+        assert not AgentccRequestLog.no_workspace_objects.filter(
+            request_id="inflight-at-watermark"
+        ).exists()
+        # Exceed even the old one-minute lookback before ingestion commits.
+        sync_at(connection, 120)
+        sync_at(connection, 240)
+        assert connection.last_synced_at == BASE + timedelta(seconds=240)
+        assert logs_sent(service) == []
+    finally:
+        may_commit.set()
+        worker.join(timeout=30)
+    assert not worker.is_alive()
+    assert not errors
+
+    # Reload to prove recovery uses durable state, not this worker's memory.
+    connection = IntegrationConnection.no_workspace_objects.get(pk=connection.pk)
+    sync_at(connection, 300)
+    sync_at(connection, 360)
+    assert [log["attributes"]["request_id"] for log in logs_sent(service)] == [
+        "inflight-at-watermark"
+    ]
+    assert metric_values(service, "requests") == [1]
+    assert metric_values(service, "input_tokens") == [10]
+
+
+@pytest.mark.django_db
+def test_newly_visible_row_between_log_and_metric_phases_waits_for_next_run(datadog):
+    connection, service = datadog
+    create_log(connection, "original", arrived=90)
+
+    def send_logs(credentials, logs):
+        if not AgentccRequestLog.no_workspace_objects.filter(
+            organization=connection.organization, request_id="newly-visible"
+        ).exists():
+            create_log(connection, "newly-visible", arrived=91)
+        return {"sent": len(logs)}
+
+    service.export_logs.side_effect = send_logs
+    sync_at(connection, 120)
+    assert [log["attributes"]["request_id"] for log in logs_sent(service)] == [
+        "original"
+    ]
+    assert metric_values(service, "requests") == [1]
+    service.export_logs.side_effect = lambda credentials, logs: {"sent": len(logs)}
+    sync_at(connection, 180)
+    sync_at(connection, 240)
+    assert [log["attributes"]["request_id"] for log in logs_sent(service)] == [
+        "original",
+        "newly-visible",
+    ]
+    assert metric_values(service, "requests") == [1, 1]
+
+
+@pytest.mark.django_db
+def test_pending_metrics_keep_frozen_membership_when_older_insert_becomes_visible(
+    datadog,
+):
+    connection, service = datadog
+    create_log(connection, "acknowledged", arrived=90)
+    service.export_metrics.side_effect = RuntimeError("synthetic metric failure")
+    sync_at(connection, 120)
+    first_series = service.export_metrics.call_args.args[1]
+
+    # This row sorts before the acknowledged batch, but was not visible when
+    # the snapshot was taken. It must not change the retried metric payload.
+    create_log(connection, "committed-during-retry", arrived=1)
+    service.export_metrics.side_effect = lambda credentials, series: {
+        "sent": len(series)
+    }
+    connection = IntegrationConnection.no_workspace_objects.get(pk=connection.pk)
+    sync_at(connection, 180)
+    assert service.export_metrics.call_args.args[1] == first_series
+    assert len(logs_sent(service)) == 1
+    sync_at(connection, 240)
+    sync_at(connection, 300)
+    assert [log["attributes"]["request_id"] for log in logs_sent(service)] == [
+        "acknowledged",
+        "committed-during-retry",
+    ]
+    assert metric_values(service, "requests") == [1, 1, 1]  # first call failed
+
+
+@pytest.mark.django_db
+def test_receipts_are_per_connection_and_do_not_suppress_other_destinations(datadog):
+    from integrations.models import DatadogExportReceipt
+
+    connection, service = datadog
+    create_log(connection, "original", arrived=90)
+    sync_at(connection, 120)
+    other = IntegrationConnection.no_workspace_objects.create(
+        organization=connection.organization,
+        workspace=connection.workspace,
+        created_by=connection.created_by,
+        encrypted_credentials=connection.encrypted_credentials,
+        platform="datadog",
+        display_name="Another Datadog destination",
+        last_synced_at=BASE,
+    )
+    sync_at(other, 120)
+    sync_at(other, 180)
+    assert len(logs_sent(service)) == 2
+    assert metric_values(service, "requests") == [1, 1]
+    assert DatadogExportReceipt.objects.filter(connection=connection).count() == 1
+    assert DatadogExportReceipt.objects.filter(connection=other).count() == 1
+
+
+@pytest.mark.django_db
+def test_snapshot_membership_and_cursor_are_saved_atomically_before_delivery(datadog):
+    from integrations.models import DatadogExportReceipt
+
+    connection, service = datadog
+    create_log(connection, "original", arrived=90)
+    save = connection.save
+
+    def fail_snapshot(*args, **kwargs):
+        if "sync_cursor" in kwargs.get("update_fields", []):
+            raise RuntimeError("synthetic snapshot write failure")
+        return save(*args, **kwargs)
+
+    with patch.object(connection, "save", side_effect=fail_snapshot):
+        sync_at(connection, 120)
+    service.export_logs.assert_not_called()
+    service.export_metrics.assert_not_called()
+    assert not DatadogExportReceipt.objects.filter(connection=connection).exists()
+    assert connection.sync_cursor == {"unrelated": "preserve"}
+    sync_at(connection, 180)
+    sync_at(connection, 240)
+    assert len(logs_sent(service)) == 1
+    assert metric_values(service, "requests") == [1]

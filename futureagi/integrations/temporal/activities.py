@@ -499,7 +499,7 @@ def _sync_export_integration(connection):
         # First sync: export logs from the last 24 hours (or backfill_from).
         sync_from = connection.backfill_from or (now - timedelta(hours=24))
     elif connection.platform == "datadog":
-        # Datadog does not deduplicate log intake or overlapping count windows.
+        # Datadog uses durable receipt dedup; this bounds the metric run, not visibility.
         sync_from = connection.last_synced_at
     else:
         # Preserve the existing lookback for the other export platforms.
@@ -620,43 +620,82 @@ def _sync_export_integration(connection):
 
 
 def _export_datadog(connection, credentials, service, sync_from, sync_to):
-    """Export non-overlapping arrival intervals with durable batch progress.
+    """Export a durable snapshot of previously unseen, committed request logs.
 
-    created_at (ingestion time) keeps late requests in the next interval even if
-    started_at predates the checkpoint; the log itself retains its event time.
-    Acknowledged log batches survive metric failures and activity retries. As
-    with any non-transactional HTTP sink, a crash between acceptance and saving
-    the cursor can still replay the last uncheckpointed batch.
+    created_at is not commit time. Retain the initial backfill floor and exclude
+    per-connection receipts instead of advancing a timestamp visibility cutoff.
+    Snapshot membership also keeps log delivery and metric accounting identical
+    when ingestion commits during an export. HTTP acceptance and saving progress
+    are not atomic; a lost response/crash can still replay an unacknowledged send.
     """
-    from django.db.models import Avg, Count, Sum
+    import uuid
+    from itertools import islice
+
+    from django.db import transaction
+    from django.db.models import Avg, Count, Exists, OuterRef, Sum
 
     from agentcc.models import AgentccRequestLog
+    from integrations.models import DatadogExportReceipt
 
     BATCH_SIZE = 500
 
     cursor = connection.sync_cursor.get("datadog_export")
     if not cursor:
         cursor = {
+            "export_id": str(uuid.uuid4()),
+            "logs_after": None,
             "sync_from": sync_from.isoformat(),
             "sync_to": sync_to.isoformat(),
-            "logs_after": None,
             "logs_complete": False,
             "metrics_complete": False,
         }
-        connection.sync_cursor["datadog_export"] = cursor
-        connection.save(update_fields=["sync_cursor", "updated_at"])
+        # This floor is fixed even when the last completed checkpoint advances.
+        # Otherwise an insert started before that checkpoint can commit too late
+        # to ever be seen. Do not expire receipts while source rows still exist.
+        floor = connection.sync_cursor.get("datadog_export_from", sync_from.isoformat())
+        seen = DatadogExportReceipt.objects.filter(
+            connection=connection, request_log_id=OuterRef("pk")
+        )
+        unseen = AgentccRequestLog.objects.filter(
+            organization=connection.organization,
+            deleted=False,
+            created_at__gte=datetime.fromisoformat(floor),
+            created_at__lt=sync_to,
+        ).filter(~Exists(seen))
+        if connection.workspace_id:
+            unseen = unseen.filter(workspace=connection.workspace)
 
-    # Use the same arrival interval for logs and counts (including null starts).
+        # A single SELECT fixes visible membership, streamed in bounded chunks.
+        # Save membership and cursor together, before making any sink requests.
+        with transaction.atomic():
+            ids = (
+                unseen.order_by("created_at", "id")
+                .values_list("id", flat=True)
+                .iterator(chunk_size=BATCH_SIZE)
+            )
+            while batch_ids := list(islice(ids, BATCH_SIZE)):
+                DatadogExportReceipt.objects.bulk_create(
+                    [
+                        DatadogExportReceipt(
+                            connection=connection,
+                            request_log_id=pk,
+                            export_id=cursor["export_id"],
+                        )
+                        for pk in batch_ids
+                    ],
+                    batch_size=BATCH_SIZE,
+                )
+            connection.sync_cursor["datadog_export_from"] = floor
+            connection.sync_cursor["datadog_export"] = cursor
+            connection.save(update_fields=["sync_cursor", "updated_at"])
+
+    receipts = DatadogExportReceipt.objects.filter(
+        connection=connection, export_id=cursor["export_id"]
+    )
+    # Both phases use exactly this frozen membership, never a live time query.
     qs = AgentccRequestLog.objects.filter(
-        organization=connection.organization,
-        deleted=False,
-        created_at__gte=sync_from,
-        created_at__lt=sync_to,
+        pk__in=receipts.values("request_log_id")
     ).order_by("created_at", "id")
-
-    # If workspace is set on the connection, scope to that workspace.
-    if connection.workspace_id:
-        qs = qs.filter(workspace=connection.workspace)
 
     total_logs_sent = 0
     while not cursor["logs_complete"]:
@@ -750,7 +789,7 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
             total_sent=total_logs_sent,
         )
 
-    # Export aggregated metrics for the whole interval, not just remaining logs.
+    # Count each snapshot member once, including logs acknowledged before retry.
     metrics_sent = 0
     if cursor["metrics_complete"]:
         return {"logs_sent": total_logs_sent, "metrics_sent": 0}
