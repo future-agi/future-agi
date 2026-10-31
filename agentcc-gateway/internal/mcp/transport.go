@@ -168,12 +168,19 @@ func NewStdioTransport(command string, args []string) *StdioTransport {
 	}
 }
 
-// Start launches the subprocess and begins reading stdout.
+// Start launches the subprocess and begins reading stdout. ctx only gates the
+// launch; the subprocess runs until Close. Callers start it under a handshake
+// timeout and cancel that once connected, which CommandContext would take as
+// the signal to kill the process.
 func (t *StdioTransport) Start(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	cmd := exec.CommandContext(ctx, t.command, t.args...)
+	cmd := exec.Command(t.command, t.args...)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
