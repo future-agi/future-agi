@@ -290,4 +290,9 @@ describe("RequestTable", () => {
       },
     );
   });
+
+  it("renders Unpriced chip instead of $0.00 for unpriced models", () => {
+    render(<RequestTable {...baseProps} />);
+    expect(screen.getByText("Unpriced")).toBeInTheDocument();
+  });
 });
