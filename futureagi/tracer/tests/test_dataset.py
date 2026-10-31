@@ -18,10 +18,14 @@ from model_hub.models.choices import (
     SourceChoices,
 )
 from model_hub.models.develop_dataset import Column, Dataset
+from model_hub.utils.dataset_limit import DatasetLimitCheck, DatasetLimitOutcome
+from tfc.constants.api_calls import APICallTypeChoices
 from tfc.utils.error_codes import get_error_message
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
+
+DATASET_LIMIT_ALLOWED = DatasetLimitCheck(DatasetLimitOutcome.ALLOWED)
 
 
 def get_result(response):
@@ -365,7 +369,7 @@ class TestAddToNewDatasetAPI:
         self, mock_check_allowed, mock_task, auth_client, observe_spans, ch_seed
     ):
         """Request without project derives it from selected spans."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
 
@@ -406,7 +410,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Successfully create dataset with spanIds."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
 
@@ -447,7 +451,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Span ids derive their project from ClickHouse, not PG spans."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         trace_id = uuid.uuid4()
         span_id = f"ch_span_{uuid.uuid4().hex[:16]}"
@@ -483,7 +487,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Successfully create dataset with traceIds."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
 
@@ -516,7 +520,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Trace ids no longer need PG Trace/ObservationSpan rows to export."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         trace_id = uuid.uuid4()
         span_id = f"ch_root_{uuid.uuid4().hex[:16]}"
@@ -552,7 +556,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Successfully create dataset with selectAll=True."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
 
@@ -579,7 +583,7 @@ class TestAddToNewDatasetAPI:
         self, mock_check_allowed, auth_client, observe_project, observe_spans, dataset
     ):
         """Creating dataset with existing name should return 400."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
 
         response = auth_client.post(
             "/tracer/dataset/add_to_new_dataset/",
@@ -612,7 +616,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Same-org duplicate names outside the active workspace do not block create."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
         dataset_name = f"Cross Workspace Name {uuid.uuid4().hex[:8]}"
@@ -656,7 +660,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Selected spans from another workspace are hidden before dataset creation."""
-        mock_check_allowed.return_value = (True, {})
+        mock_check_allowed.return_value = DATASET_LIMIT_ALLOWED
         mock_task.delay.return_value = None
         _, _, other_span = create_observe_span_for_workspace(
             organization, other_workspace, suffix="new_dataset_guard"
@@ -684,22 +688,28 @@ class TestAddToNewDatasetAPI:
         mock_task.delay.assert_not_called()
 
     def test_dataset_creation_limit_reached(
-        self, auth_client, observe_project, observe_spans
+        self, auth_client, organization, observe_project, observe_spans
     ):
-        """A reached limit answers 400 with the plan-limit message.
+        """A reached limit answers like every other dataset-create route.
 
-        The frontend shows a 429 only through the usage entry's upgrade alert,
-        which this route does not send, so the message has to arrive as a 400
-        for the user to see it. It is a quota refusal, not a failure, so
-        nothing is logged as an error.
+        429 with the plan-limit message, plus the upgrade alert the frontend
+        shows for a 429 (it drops the 429 itself). No usage row is written:
+        this route never recorded DATASET_ADD usage, and the limit counts
+        Dataset rows, not usage rows. It is a quota refusal, not a failure,
+        so nothing is logged as an error.
         """
+        from ee.usage.models.usage import APICallLog
+
         with (
             patch(
                 "tracer.views.dataset.check_if_dataset_creation_is_allowed"
             ) as mock_check,
+            patch("ee.usage.utils.usage_entries.call_websocket") as websocket,
             patch("tracer.views.dataset.logger") as logger,
         ):
-            mock_check.return_value = (False, {"resource_name": "dataset", "limit": 0})
+            mock_check.return_value = DatasetLimitCheck(
+                DatasetLimitOutcome.LIMIT_REACHED, limit=3
+            )
 
             response = auth_client.post(
                 "/tracer/dataset/add_to_new_dataset/",
@@ -714,11 +724,101 @@ class TestAddToNewDatasetAPI:
                 format="json",
             )
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
         assert response.json()["message"] == get_error_message(
             "DATASET_CREATE_LIMIT_REACHED"
         )
+        websocket.assert_called_once()
+        assert websocket.call_args.args[0] == str(organization.id)
+        alert = websocket.call_args.kwargs["message"]
+        assert alert["alert_title"] == get_error_message("RESOURCE_ALERT_TITLE").format(
+            "Dataset"
+        )
+        assert "supports only 3 dataset" in alert["alert_description"]
+        assert not APICallLog.objects.filter(
+            organization=organization,
+            api_call_type__name=APICallTypeChoices.DATASET_ADD.value,
+        ).exists()
+        assert not Dataset.no_workspace_objects.filter(
+            name="Limited Dataset", organization=organization
+        ).exists()
         logger.exception.assert_not_called()
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    def test_reached_limit_still_refuses_when_the_alert_cannot_be_sent(
+        self, mock_task, auth_client, organization, observe_project, observe_spans
+    ):
+        """A failed websocket push never turns the refusal into a creation."""
+        with (
+            patch(
+                "tracer.views.dataset.check_if_dataset_creation_is_allowed",
+                return_value=DatasetLimitCheck(
+                    DatasetLimitOutcome.LIMIT_REACHED, limit=3
+                ),
+            ),
+            patch(
+                "ee.usage.utils.usage_entries.call_websocket",
+                side_effect=ConnectionError("websocket relay down"),
+            ) as websocket,
+        ):
+            response = auth_client.post(
+                "/tracer/dataset/add_to_new_dataset/",
+                {
+                    "new_dataset_name": "Alert Down Dataset",
+                    "project": str(observe_project.id),
+                    "span_ids": [s.id for s in observe_spans],
+                    "mapping_config": [
+                        {"col_name": "input", "data_type": "text"},
+                    ],
+                },
+                format="json",
+            )
+
+        websocket.assert_called_once()
+        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert response.json()["message"] == get_error_message(
+            "DATASET_CREATE_LIMIT_REACHED"
+        )
+        assert not Dataset.no_workspace_objects.filter(
+            name="Alert Down Dataset", organization=organization
+        ).exists()
+        mock_task.delay.assert_not_called()
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    def test_denied_entitlement_answers_429_with_upgrade_alert(
+        self, mock_task, auth_client, organization, observe_project, observe_spans
+    ):
+        """The real check, not a mocked outcome, drives the same refusal."""
+        from ee.usage.schemas.events import CheckResult
+
+        denied = CheckResult(allowed=False, error_code="ENTITLEMENT_LIMIT", limit=2)
+
+        with (
+            patch(
+                "ee.usage.services.entitlements.Entitlements.can_create",
+                return_value=denied,
+            ),
+            patch("ee.usage.utils.usage_entries.call_websocket") as websocket,
+        ):
+            response = auth_client.post(
+                "/tracer/dataset/add_to_new_dataset/",
+                {
+                    "new_dataset_name": "Denied Dataset",
+                    "project": str(observe_project.id),
+                    "span_ids": [s.id for s in observe_spans],
+                    "mapping_config": [
+                        {"col_name": "input", "data_type": "text"},
+                    ],
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert (
+            "supports only 2 dataset"
+            in (websocket.call_args.kwargs["message"]["alert_description"])
+        )
+        mock_task.delay.assert_not_called()
 
     @pytest.mark.parametrize(
         ("is_cloud", "expected_status"),
@@ -776,7 +876,7 @@ class TestAddToNewDatasetAPI:
 
 @pytest.mark.django_db
 class TestCreateNewDatasetEntitlement:
-    """create_new_dataset must act on the (allowed, detail) entitlement result."""
+    """create_new_dataset must act on the typed entitlement outcome."""
 
     @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
     def test_denied_entitlement_blocks_creation(
@@ -785,7 +885,9 @@ class TestCreateNewDatasetEntitlement:
         from model_hub.views.utils.dataset_limit import DatasetLimitReached
         from tracer.views.dataset import create_new_dataset
 
-        mock_check.return_value = (False, {"resource_name": "dataset", "limit": 3})
+        mock_check.return_value = DatasetLimitCheck(
+            DatasetLimitOutcome.LIMIT_REACHED, limit=3
+        )
 
         with pytest.raises(DatasetLimitReached):
             create_new_dataset("Blocked Dataset", organization, workspace, user.id)
@@ -801,7 +903,7 @@ class TestCreateNewDatasetEntitlement:
     ):
         from tracer.views.dataset import create_new_dataset
 
-        mock_check.return_value = (True, {})
+        mock_check.return_value = DATASET_LIMIT_ALLOWED
 
         dataset = create_new_dataset(
             "Allowed Dataset", organization, workspace, user.id
