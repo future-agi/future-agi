@@ -126,7 +126,9 @@ class OrganizationCreateAPIView(APIView):
         # Password is None since the user already has an account — the signup
         # email portion will be a no-op or gracefully skipped.
         try:
-            process_post_registration(str(user.id), None)
+            process_post_registration(
+                str(user.id), None, organization_id=str(organization.id)
+            )
         except Exception:
             logger.exception(
                 "Failed to trigger post-registration onboarding",

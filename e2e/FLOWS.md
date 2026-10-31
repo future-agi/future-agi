@@ -235,6 +235,26 @@
 - Continue routes to /auth/jwt/login, not /auth/jwt/register
 - signing in as the owner returns a token pair from POST /accounts/token/ and moves on to organization setup
 
+### AUTH-E2E-004 — fresh signup seeds demo traces visible in Observe
+
+**Goal:** A new user signs up with their own password and can inspect the seeded demo trace in Observe  
+**Spec:** `flows/auth/signup-demo-traces.spec.ts:28`  
+**Tags:** —
+
+**User steps:**
+
+1. complete first-run checks if required
+2. sign up with a unique email and a user-supplied password
+3. complete role and organization onboarding
+4. see both demo datasets
+5. open the Observe demo project
+6. open its single demo trace and inspect the span tree
+
+**Backend state verified:**
+
+- the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
+- ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
+
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session  
