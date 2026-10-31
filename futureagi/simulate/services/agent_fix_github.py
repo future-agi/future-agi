@@ -10,6 +10,7 @@ import structlog
 from django.conf import settings
 
 from simulate.models import AgentFixCandidate, HarnessAgentVersionRuntime
+from simulate.selectors.agent_fix import limited_validation
 from simulate.services.agent_fix_engine import load_object
 from simulate.services.agent_fix_runs import require_shippable
 from simulate.services.harness_github import safe_repository, short_ref
@@ -24,6 +25,11 @@ logger = structlog.get_logger(__name__)
 
 _COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
 _AUTHOR = ("Future AGI", "fix-my-agent@futureagi.com")
+_NO_DRAFTS = "draft pull requests are not supported"
+_LIMITED_NOTE = (
+    "**Limited validation.** Too few failing cases were held back to verify this fix."
+    " Review it closely before you merge."
+)
 
 
 def open_pull_request(candidate: AgentFixCandidate) -> str:
@@ -69,7 +75,15 @@ def open_pull_request(candidate: AgentFixCandidate) -> str:
     with GitHubAppTokenProvider.from_settings().credential(installation_id) as token:
         _push(repository, commit, branch, patch, candidate, title, body, token)
         base = _base_branch(repository, str(source.get("ref") or ""), token)
-        url = _pull_request(repository, branch, base, title, body, token)
+        url = _pull_request(
+            repository,
+            branch,
+            base,
+            title,
+            body,
+            token,
+            draft=limited_validation(fix_run),
+        )
     AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
         pull_request_url=url
     )
@@ -83,19 +97,24 @@ def open_pull_request(candidate: AgentFixCandidate) -> str:
 
 
 def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
+    """The title and body, which say so when too few cases were held back to verify it."""
     summary = candidate.summary.strip()
     first = summary.splitlines()[0] if summary else f"attempt {candidate.attempt}"
     reason = (candidate.verdict or {}).get("reason") or ""
+    limited = limited_validation(candidate.fix_run)
+    proof = "Checked" if limited else "Proven"
     body = "\n\n".join(
         part
         for part in (
+            _LIMITED_NOTE if limited else "",
             summary,
-            f"Proven by Fix my agent: {reason}" if reason else "",
+            f"{proof} by Fix my agent: {reason}" if reason else "",
             "Opened by Future AGI Fix my agent.",
         )
         if part
     )
-    return f"Fix my agent: {first}"[:120], body
+    name = "Fix my agent (limited validation)" if limited else "Fix my agent"
+    return f"{name}: {first}"[:120], body
 
 
 def _push(
@@ -177,15 +196,22 @@ def _base_branch(repository: str, ref: str, token: str) -> str:
 
 
 def _pull_request(
-    repository: str, branch: str, base: str, title: str, body: str, token: str
+    repository: str,
+    branch: str,
+    base: str,
+    title: str,
+    body: str,
+    token: str,
+    *,
+    draft: bool,
 ) -> str:
-    """Open the pull request, or find the one already open for ``branch``."""
-    response = _api(
-        "POST",
-        f"/repos/{repository}/pulls",
-        token,
-        json={"title": title, "head": branch, "base": base, "body": body},
-    )
+    """Open the pull request, or find the one already open for ``branch``. A repository
+    without draft pull requests gets a normal one, and its title still says what it is."""
+    path = f"/repos/{repository}/pulls"
+    pull = {"title": title, "head": branch, "base": base, "body": body, "draft": draft}
+    response = _api("POST", path, token, json=pull)
+    if response.status_code == 422 and _NO_DRAFTS in response.text.lower():
+        response = _api("POST", path, token, json={**pull, "draft": False})
     if response.status_code == 201:
         return response.json()["html_url"]
     if response.status_code == 403:

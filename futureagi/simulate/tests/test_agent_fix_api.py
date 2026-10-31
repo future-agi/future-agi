@@ -1155,6 +1155,63 @@ class TestUserApi:
         [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
         assert shown["pull_request_url"] == self.PULL
 
+    def test_a_limited_fix_ships_as_a_draft_that_says_so(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+
+        response, [(_, _, sent)] = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert response.status_code == 200, response.content
+        assert sent["json"]["draft"] is True
+        assert "limited validation" in sent["json"]["title"]
+        assert sent["json"]["body"].startswith("**Limited validation.**")
+        assert "Proven by" not in sent["json"]["body"]
+
+    def test_a_verified_fix_ships_as_a_normal_pull_request(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={
+                **fix_run.request,
+                "held_back_scenario_keys": [f"held-{n}" for n in range(4)],
+            }
+        )
+
+        response, [(_, _, sent)] = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert response.status_code == 200, response.content
+        assert sent["json"]["draft"] is False
+        assert "limited validation" not in sent["json"]["title"].lower()
+        assert "limited validation" not in sent["json"]["body"].lower()
+
+    def test_a_repository_without_drafts_gets_a_pull_request_that_still_says_so(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        refused = {
+            "message": "Validation Failed",
+            "errors": [
+                {"message": "Draft pull requests are not supported in this repository."}
+            ],
+        }
+
+        response, calls = self._ship(
+            auth_client,
+            fix_run,
+            candidate,
+            [(422, refused), (201, {"html_url": self.PULL})],
+        )
+
+        assert response.status_code == 200, response.content
+        assert [sent["json"]["draft"] for _, _, sent in calls] == [True, False]
+        assert "limited validation" in calls[1][2]["json"]["title"]
+
     def test_a_pull_request_github_already_has_is_found_not_duplicated(
         self, auth_client, source_run, github
     ):
