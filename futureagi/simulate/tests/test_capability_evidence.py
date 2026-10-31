@@ -189,3 +189,32 @@ def test_a_failed_agent_preflight_blocks_start_and_health_and_everything_behind_
     # A version whose preflight passed adds nothing: it was not the version checked, so the report is Stale for it.
     other = {row["id"]: row for row in environment_capability_report(job, agent_version_id=second.id)["capabilities"]}
     assert {row["status"] for row in other.values()} == {"stale"}
+
+
+def test_a_run_keeps_the_capability_report_it_was_created_with(user, workspace, settings):
+    from django.test import override_settings
+
+    from simulate.services.hosted_harness import create_selected_harness_run
+    from simulate.tests.test_harness_unpinned_runs import _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = False
+    environment = _environment(user, workspace, "capability-snapshot")
+    record_capability_evidence(
+        environment, _archive({"generic-harness/capability-evidence.json": json.dumps(_DOCUMENT).encode()}))
+    evidence = HarnessCapabilityEvidence.no_workspace_objects.get(job=environment)
+    evidence.catalogue = _CATALOGUE
+    evidence.save(update_fields=["catalogue"])
+
+    with override_settings(HARNESS_MAX_ARTIFACT_BYTES=10_737_418_240):
+        run, _ = create_selected_harness_run(
+            environment, scenario_keys=["scenario-a"], trials=1, idempotency_key="snapshot-run")
+    run.refresh_from_db()
+    snapshot = run.capability_snapshot
+    assert [(row["id"], row["status"]) for row in snapshot["capabilities"]] == [("start_health", "supported")]
+    assert snapshot["rules_version"] and snapshot["computed_at"]
+
+    # Later evidence changes the environment's report, never the run's copy.
+    evidence.capabilities = {"start_health": {"finding": "failed"}}
+    evidence.save(update_fields=["capabilities"])
+    run.refresh_from_db()
+    assert run.capability_snapshot == snapshot

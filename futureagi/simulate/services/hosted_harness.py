@@ -614,6 +614,13 @@ def create_selected_harness_run(
                 "suite_version",
                 "assembled_bundle",
             ]
+        from simulate.services.capability_evidence import environment_capability_report
+
+        child.capability_snapshot = environment_capability_report(
+            environment,
+            agent_version_id=getattr(child.agent_version, "id", None),
+            environment_version=child.environment_version,
+        )
         child.save(
             update_fields=[
                 "payload",
@@ -624,6 +631,7 @@ def create_selected_harness_run(
                 "updated_at",
                 "stage_outputs",
                 "bundle_digest",
+                "capability_snapshot",
                 *pin_fields,
             ]
         )

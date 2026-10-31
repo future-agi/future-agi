@@ -218,10 +218,13 @@ def preflight_findings(report: dict[str, Any] | None, status: str) -> dict[str, 
     }
 
 
-def environment_capability_report(job: HostedHarnessJob, agent_version_id: Any = None) -> dict[str, Any]:
-    """The capability report for an environment and an agent version (the environment's own when none is named): its
-    latest build evidence, Stale once the environment version moved on or the agent is not the one it was checked
-    with."""
+def environment_capability_report(
+    job: HostedHarnessJob, agent_version_id: Any = None, environment_version: Any = None
+) -> dict[str, Any]:
+    """The capability report for an environment, an agent version and an environment version (the environment's own
+    when none is named): its latest build evidence, Stale once the environment version is another one or the agent is
+    not the one it was checked with."""
+    version = environment_version or job.environment_version
     evidence = (
         HarnessCapabilityEvidence.no_workspace_objects.filter(
             job=job,
@@ -232,7 +235,7 @@ def environment_capability_report(job: HostedHarnessJob, agent_version_id: Any =
         .first()
     )
     current = {
-        "environment_version_id": str(job.environment_version_id or ""),
+        "environment_version_id": str(getattr(version, "id", None) or ""),
         "agent_version_id": str(agent_version_id or job.agent_version_id or ""),
     }
     document = (
@@ -249,7 +252,6 @@ def environment_capability_report(job: HostedHarnessJob, agent_version_id: Any =
     )
     from simulate.models import HarnessAgentVersionRuntime
 
-    version = job.environment_version
     structural = structural_findings((version.documents or {}).get("contract") if version is not None else None)
     runtime = HarnessAgentVersionRuntime.no_workspace_objects.filter(
         agent_version_id=current["agent_version_id"] or None
