@@ -23,7 +23,11 @@ config:
         import urllib.request
         text = kwargs.get("text", output or "")
         text = str(text)
-        pattern = r"(?!.*@)(?:https?://)?(?:www\.)?\S+\.\S+"
+        # Match scheme/www URLs and bare domains with an alphabetic TLD. The
+        # lookbehind stops matches from starting inside a word or right after
+        # "@", so e-mail addresses, decimals ("3.14") and abbreviations
+        # ("e.g.") are not treated as links.
+        pattern = r"(?<![@\w.])(?:https?://|www\.)?(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:[/?#]\S*)?"
         links = re.findall(pattern, text)
         if not links:
             return {"score": 1.0, "reason": "No links found in output, so none are invalid"}
