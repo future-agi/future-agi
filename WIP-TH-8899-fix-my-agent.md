@@ -1,7 +1,7 @@
 # TH-8899 Fix my agent: working notes
 
 **Delete this file before the branch merges.** It keeps the state of the work in the branch, so
-nothing lives only on one laptop. Last updated 2026-10-30.
+nothing lives only on one laptop. Last updated 2026-10-31.
 
 ## Branches
 
@@ -26,8 +26,9 @@ Each platform fix goes on the base branch first and is cherry-picked to the stac
 2. The platform and the engine template ship together. The template is pinned by env
    `AGENT_FIX_E2B_TEMPLATE_REFERENCE`, not by code. A template older than worker `6321d17` with this
    platform searches on the cases the read says are held back.
-   - `agent-improvement:2e13bb44-02c7-4223-b661-dda87c7f8b7f` is built from worker `0a36d71`
-     (stacked branch). The base branch head `0c3a639` has no template of its own yet.
+   - `agent-improvement:c1043885-84a3-47b5-b7de-f72c0b8dc784` is built from worker `f312c43`
+     (stacked branch), on the dev E2B team. The base branch head `3e36d6f` has no template of its
+     own. An older template on this platform still runs: its checkpoint calls fail and are logged.
 3. The gateway that the engine reaches must serve the engine's model. The profile
    `workers/agent-fix/profiles/platform.json` pins `deepseek/deepseek-v4.1-flash` through
    OpenRouter. The dev box gateway had no OpenRouter provider and a dead key; fixed by hand on
@@ -50,21 +51,49 @@ namespace, against a real GitHub repository through the GitHub App:
   conversations passed.
 - Diagnose, Propose and Screen after the gateway fix. On 30 Oct at 23:41 IST attempt 1 screened
   3 of 6 held-back cases passing.
+- On 30 Oct at 23:30 IST the throwaway backend died: a native segfault in its granian process,
+  which also ran the embedded Temporal worker; it had no restart policy, so the fix ran out its
+  deadline (`fix_deadline`). The shared dev backend runs no embedded worker and did not crash.
+- Retry, 31 Oct 07:29 IST: `POST retry/` on that fix started fix `89ef609e`. Reproduce took 30 s
+  instead of 100 min: the finished baseline was reused, and the new fix ran no baseline of its own.
 
 Not yet verified: Verify, the winner, and the pull request against GitHub itself (the pull request
 path is tested against a local bare repository only). Locally the run never got past the baseline:
 the local sandbox TTL (`ALK_E2B_MAX_TTL_SECONDS=21600`) is shorter than a 72-conversation baseline.
 
-Tests: 184 pass on the base branch and 187 on the stacked branch
-(`simulate/tests/test_agent_fix_{services,api,sandbox,workflow}.py`). Engine: `node --test
-workers/agent-fix/test/*.test.mjs`.
+Tests: 197 pass on the base branch and 200 on the stacked branch
+(`simulate/tests/test_agent_fix_{services,api,sandbox,workflow}.py`). Engine: 42 on base, 47 on
+stacked (`node --test workers/agent-fix/test/*.test.mjs`; link `workers/agent-fix/node_modules`
+from a checkout that ran `fetch-runtime.mjs`).
 
-## Next: failures by owner, and a retry
+## Failures by owner, self-healing and retry (built 31 Oct)
 
-Kartik's call on 30 Oct: our transient failures heal themselves; deterministic failures fail fast
-and offer the user a retry; the checkpoint resume goes.
+Kartik's call on 30 Oct: our transient failures heal themselves; failures that will not heal fail
+fast, say who can fix them, and offer a retry; the checkpoint resume goes. An architect review
+corrected the first plan: retry is a new fix (a resurrected row replays its own canceled check
+runs), the launch number comes from the brief's last candidate attempt, and a dead customer key is
+not detected in v0.
 
-The facts it rests on:
+Built (platform `987ac60a6`, engine `3e36d6f`):
+
+- The platform classifies by code. The user owns `environment` failures (credentials, source, an
+  agent that never came up) and `usage_exhausted`; the platform owns the rest. A check run's status
+  and each errored trial carry `failure {owner, code, message}`.
+- A plan limit reaches the engine as `usage_limit` (402) in its own error shape. Before, every 402
+  ended the fix as out of budget.
+- Engine: an outage that outlasts the retries exits without an ending, and the platform starts it
+  again after 2 minutes, up to 3 sandboxes. A failure the platform classified ends the fix with
+  that failure: the user's keeps the platform's words, ours gets `fix_engine_failed` and an error
+  log.
+- No checkpoint. The brief carries `last_attempt` and `committed_usd`; the final report is retried
+  until the platform has it.
+- `POST agent-fix-runs/<id>/retry/` on any failed fix, once: a new fix with the same request and
+  `retried_from`. A check run the failed fix finished is reused when label, versions, scenarios and
+  trials match; a failed or canceled one runs again. A deadline counts: our own outage ended one.
+  The read has `retryable` and `retried_from_id`.
+- At an ending, pending candidates no report names are rejected.
+
+The facts it rested on:
 
 - Any engine error ends the fix: `improve.mjs` writes "Failed for infrastructure reasons" and
   `finishedAt`, the engine reports the `failed` ending, and the platform closes the run. Since
@@ -82,22 +111,11 @@ The facts it rests on:
   customer key that dies inside their agent probably shows as `agent|target_agent_failed`, so
   every candidate is rejected and the fix ends "no improvement": a wrong verdict, not an error.
 
-The plan under review:
+Not built:
 
-| Class               | Examples                                                                                                                              | What happens                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Ours, transient     | a check run failed `infrastructure` or `platform_sync` after its own retries; gateway 429/5xx or timeouts; platform 5xx; sandbox gone | The engine exits non-zero; the platform relaunches after about 2, then 10 minutes; cap 3. |
-| Ours, deterministic | gateway 4xx on our key (the 30 Oct 404), an engine bug                                                                                | `fix_platform_error`, a Sentry error, fixed copy, Retry.                                  |
-| The user's          | a check run failed `environment` (credentials, source, repository access); plan limit                                                 | `fix_environment_error` with the typed message, Retry.                                    |
-
-- The platform classifies by code and gives the engine the class in the check-run status.
-- The brief carries the launch number, so the checkpoint and its endpoint go.
-- Retry: `POST agent-fix-runs/<id>/retry/` on a failed fix except `fix_deadline`; the clock
-  restarts; a completed check run replays, a failed or canceled one runs again; `retryable` on the
-  read.
-- Open: how to tell a dead customer key from a candidate that breaks the agent.
-
-An architect review of this plan was running when this file was written.
+- A customer key that dies mid-fix still reads as the agent failing. Next: count the conversations
+  that ended with the agent failing in the ending's summary.
+- The FE needs a Retry button: show it when `retryable`, POST `retry/`, open the new fix.
 
 ## Open questions
 
@@ -105,7 +123,10 @@ An architect review of this plan was running when this file was written.
   removed locally only, for testing.
 - The FE shows `report.summary` before `failure.message`. For a failed fix the summary is the
   engine's error text; the FE should show `failure.message` first.
-- Credits spent on a run that failed on our side: refund or not.
+- Credits spent on a run that failed on our side: refund or not. A retry already does not charge
+  again for the check runs the failed fix finished.
+- The embedded Temporal worker segfaulted once inside granian. If self-hosted setups run that
+  mode, the same crash can take their backend down.
 
 ## Tickets
 
@@ -127,6 +148,10 @@ Changed on the shared dev box for this work (backups next to each file):
   `deepseek/deepseek-v4.1-flash` and its price (`.bak-2026-10-30-th8899`).
 - `~/future-agi/.env`: `OPENROUTER_API_KEY` replaced, the old one was dead
   (`.env.bak-2026-10-30-th8899`).
+
+The throwaway database is changed by hand, because `0100` is edited in place: `checkpoint_key`
+dropped, `retried_from_id` added. `run.sh` now pins the template above and restarts the container
+unless stopped.
 
 Clean up after the work: the container, the database, the Temporal namespace, the tunnel,
 `~/th8899-wt` and its local branch.
