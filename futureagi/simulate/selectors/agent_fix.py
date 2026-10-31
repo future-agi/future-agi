@@ -185,11 +185,11 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
             else None
         ),
         records=records,
-        parallelism=_ran_at(run) if finished else None,
+        parallelism=ran_at(run) if finished else None,
     )
 
 
-def _ran_at(run: HostedHarnessJob) -> int:
+def ran_at(run: HostedHarnessJob) -> int:
     """The parallelism a run really had: what it was admitted at, less any degrade its last
     attempt recorded. Two arms are only comparable when these match."""
     payload = run.payload or {}
@@ -463,6 +463,25 @@ def fix_lineage(fix_run: AgentFixRun) -> list[Any]:
             .first()
         )
     return ids
+
+
+def check_run_parallelism(fix_run: AgentFixRun) -> int:
+    """The parallelism a fix's next check run asks for. Arms compare only at one parallelism,
+    and a baseline can run below the setting: a bundle sealed by an older runtime can hold its
+    agent to one world while a new candidate's would not. So candidates follow the baseline."""
+    baseline = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            fix_run_id__in=fix_lineage(fix_run),
+            agent_version_id=fix_run.base_agent_version_id,
+            state=HostedHarnessJob.State.COMPLETED,
+            deleted=False,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if baseline is None:
+        return settings.AGENT_FIX_CHECK_RUN_PARALLELISM
+    return ran_at(baseline)
 
 
 def base_check_runs(fix_run: AgentFixRun) -> list[HostedHarnessJob]:
