@@ -12,7 +12,11 @@ from simulate.pydantic_schemas.agent_fix import (
     FixStep,
     Surface,
 )
-from simulate.selectors.agent_fix import agent_identity, is_retryable
+from simulate.selectors.agent_fix import (
+    agent_identity,
+    base_check_runs,
+    is_retryable,
+)
 from simulate.services.harness_environment import environment_name
 
 
@@ -230,11 +234,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     )
     def get_check_runs(self, fix_run: AgentFixRun) -> list[dict]:
         """The base version's runs; each candidate lists its own."""
-        runs = fix_run.check_run_list
-        base = [
-            run for run in runs if run.agent_version_id == fix_run.base_agent_version_id
-        ]
-        return AgentFixCheckRunSerializer(base, many=True).data
+        return AgentFixCheckRunSerializer(base_check_runs(fix_run), many=True).data
 
     class Meta:
         model = AgentFixRun

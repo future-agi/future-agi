@@ -449,6 +449,27 @@ def fix_lineage(fix_run: AgentFixRun) -> list[Any]:
     return ids
 
 
+def base_check_runs(fix_run: AgentFixRun) -> list[HostedHarnessJob]:
+    """The base version's check runs a fix's read shows. A retry reuses what the failed fix
+    finished, and those runs stay on the failed fix, so they are added here."""
+    base = fix_run.base_agent_version_id
+    runs = [run for run in fix_run.check_run_list if run.agent_version_id == base]
+    earlier = fix_lineage(fix_run)[1:]
+    if not earlier:
+        return runs
+    labels = {run.fix_label for run in runs}
+    for run in HostedHarnessJob.no_workspace_objects.filter(
+        fix_run_id__in=earlier,
+        agent_version_id=base,
+        state=HostedHarnessJob.State.COMPLETED,
+        deleted=False,
+    ).order_by("-created_at"):
+        if run.fix_label not in labels:
+            labels.add(run.fix_label)
+            runs.append(run)
+    return runs
+
+
 def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFixRun]:
     return fix_runs_for_read(
         AgentFixRun.no_workspace_objects.filter(environment=environment)
