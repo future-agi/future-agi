@@ -17,6 +17,10 @@ on:
         type: choice
         options: [distributed, standalone]
         default: standalone
+      host_update_fallibility:
+        description: Prove SET-E2E-002 assertion fallibility after the normal suite (distributed only)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -44,6 +48,11 @@ jobs:
       gateway: ${{ steps.filter.outputs.gateway || steps.always.outputs.gateway }}
       stacks: ${{ steps.stacks.outputs.stacks }}
     steps:
+      - name: Validate host update fallibility opt-in
+        if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'
+        run: |
+          printf '%s\n' '::error::host_update_fallibility=true requires stack=distributed; no builds were started.'
+          exit 1
       - uses: actions/checkout@v4
       - id: filter
         if: github.event_name == 'pull_request'
@@ -274,6 +283,13 @@ jobs:
             printf '\n%s\n' "AGENTCC_GATEWAY_VERSION=$IMAGE_TAG" >> e2e/stack/e2e.env
           fi
 
+      - name: Prepare public host status directory
+        if: matrix.stack == 'distributed'
+        run: |
+          status_dir="$HOME/.cache/futureagi-e2e/futureagi-e2e/host-update-status"
+          install -d -m 0755 "$status_dir"
+          echo "E2E_HOST_UPDATE_STATUS_DIR=$status_dir" >> "$GITHUB_ENV"
+
       - name: Prefetch vendor images
         # fi-collector, agentcc-gateway and the app images are deliberately
         # absent: their tag is the locally built IMAGE_TAG and a pull would
@@ -339,6 +355,27 @@ jobs:
 
       - name: Run E2E suite
         run: bin/e2e test
+
+      - name: Prove host update assertion fallibility
+        id: host-update-fallibility
+        if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && matrix.stack == 'distributed'
+        # Default success() gating: the unchanged normal suite must pass first.
+        # Driver: 20m aggregate cap, 360s per child, <=7s termination grace.
+        timeout-minutes: 22
+        env:
+          HOST_UPDATE_FALLIBILITY: ${{ inputs.host_update_fallibility }}
+        run: node e2e/scripts/host-update-fallibility.mjs --output-dir "$RUNNER_TEMP/host-update-fallibility"
+
+      - name: Upload host update fallibility evidence
+        if: >-
+          !cancelled() && github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility
+          && matrix.stack == 'distributed' && steps.host-update-fallibility.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-update-fallibility-distributed
+          path: ${{ runner.temp }}/host-update-fallibility
+          retention-days: 7
+          if-no-files-found: error
 
       - name: Upload report
         if: ${{ !cancelled() }}

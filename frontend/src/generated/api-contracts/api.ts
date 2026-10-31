@@ -651,6 +651,8 @@ import type {
   HarnessVersionsApi,
   HealthCheckResponseApi,
   HeartbeatApi,
+  HostUpdateStatusErrorApi,
+  HostUpdateStatusResponseApi,
   HuggingFaceAddRowsRequestApi,
   HuggingFaceDatasetConfigRequestApi,
   HuggingFaceDatasetConfigResponseApi,
@@ -18978,6 +18980,82 @@ export const apiHealthClickhouseList = async (
 ): Promise<apiHealthClickhouseListResponse> => {
   return apiMutator<apiHealthClickhouseListResponse>(
     getApiHealthClickhouseListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type apiHostUpdateStatusListResponse200 = {
+  data: HostUpdateStatusResponseApi;
+  status: 200;
+};
+
+export type apiHostUpdateStatusListResponse400 = {
+  data: HostUpdateStatusErrorApi;
+  status: 400;
+};
+
+export type apiHostUpdateStatusListResponse401 = {
+  data: HostUpdateStatusErrorApi;
+  status: 401;
+};
+
+export type apiHostUpdateStatusListResponse403 = {
+  data: HostUpdateStatusErrorApi;
+  status: 403;
+};
+
+export type apiHostUpdateStatusListResponse404 = {
+  data: HostUpdateStatusErrorApi;
+  status: 404;
+};
+
+export type apiHostUpdateStatusListResponse405 = {
+  data: HostUpdateStatusErrorApi;
+  status: 405;
+};
+
+export type apiHostUpdateStatusListResponse503 = {
+  data: HostUpdateStatusErrorApi;
+  status: 503;
+};
+
+export type apiHostUpdateStatusListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 405 | 503>;
+};
+
+export type apiHostUpdateStatusListResponseSuccess =
+  apiHostUpdateStatusListResponse200 & {
+    headers: Headers;
+  };
+export type apiHostUpdateStatusListResponseError = (
+  | apiHostUpdateStatusListResponse400
+  | apiHostUpdateStatusListResponse401
+  | apiHostUpdateStatusListResponse403
+  | apiHostUpdateStatusListResponse404
+  | apiHostUpdateStatusListResponse405
+  | apiHostUpdateStatusListResponse503
+  | apiHostUpdateStatusListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type apiHostUpdateStatusListResponse =
+  | apiHostUpdateStatusListResponseSuccess
+  | apiHostUpdateStatusListResponseError;
+
+export const getApiHostUpdateStatusListUrl = () => {
+  return `/api/host-update-status/`;
+};
+
+export const apiHostUpdateStatusList = async (
+  options?: RequestInit,
+): Promise<apiHostUpdateStatusListResponse> => {
+  return apiMutator<apiHostUpdateStatusListResponse>(
+    getApiHostUpdateStatusListUrl(),
     {
       ...options,
       method: "GET",

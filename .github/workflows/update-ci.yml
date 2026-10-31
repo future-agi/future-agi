@@ -1,0 +1,627 @@
+# bin/update CI (deploy/update/README.md).
+#   unit  deploy/tests/test_update_*.py: the manifest and its generator and
+#         schema, settings, the env-file writer, signature verification,
+#         planning, apply/rollback/recovery and the CLI with fakes, plus the
+#         release workflow and repository invariants they depend on. Standard
+#         library only (jsonschema when installed), on the oldest Python
+#         bin/update supports and on a current one, seconds to run.
+#   compose  bin/update's read-only Compose calls (config, config --services,
+#         config --profiles, the version-key probe) against the repository's
+#         compose files under Docker Compose releases that behave differently:
+#         the oldest supported, v2.24.1 and v2.24.7 (bugs bin/update works
+#         around or names), v2.25.0 (refused) and the newest. No daemon.
+#   e2e   the same tool against real Docker Compose stacks: fake Future AGI
+#         images in a registry on the runner, manifests signed with a test
+#         cosign key, then check, apply, failed health checks, rollback,
+#         tampered signatures and digests, interrupts and recovery, under the
+#         runner's Compose and under v2.24.7. The faults suite fails, kills
+#         and interrupts bin/update at its Docker calls (here: every call that
+#         changes state and its neighbours; FUTURE_AGI_UPDATE_E2E_FAULTS_SCOPE=full
+#         runs every call of the Standalone sequences).
+name: Update CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "bin/update"
+      - "deploy/update/**"
+      - "deploy/tests/test_update_*.py"
+      - "deploy/tests/update_e2e/**"
+      - "scripts/generate_update_manifest.py"
+      - "scripts/check_update_safety.py"
+      - "**/*.py"
+      - "**/*.go"
+      - "**/*.sql"
+      - "**/*.sh"
+      - "bin/**"
+      - "scripts/**"
+      - "deploy/**"
+      - "fi-collector/**"
+      - "agentcc-gateway/**"
+      - "docker-compose*.yml"
+      - "futureagi/**"
+      - "bin/lib/**"
+      - ".github/workflows/backend-ci.yml"
+      - "docker-compose.yml"
+      - "docker-compose.distributed.yml"
+      - "deploy/docker-compose.production.yml"
+      - "deploy/docker-compose.host-status.standalone.yml"
+      - "deploy/docker-compose.host-status.distributed.yml"
+      - "bin/install"
+      - "deploy/setup.sh"
+      - ".env.example"
+      - "deploy/.env.production.example"
+      - "deploy/env-reference.toml"
+      - ".gitignore"
+      # Private retained env files must never enter any Docker build context.
+      - "**/.dockerignore"
+      - "**/*.dockerignore"
+      - "**/Dockerfile*"
+      - ".github/actions/setup-helm-tools/**"
+      - ".github/workflows/release-update-manifest.yml"
+      - ".github/workflows/release-images.yml"
+      - ".github/workflows/update-ci.yml"
+      - ".github/workflows/build-image-multiarch.yml"
+      - ".github/workflows/helm-release.yml"
+      # deploy/update/deployment-files.txt: a release hashes these, and its
+      # generator refuses a git-tracked file the digest of a directory skips.
+      - "agentcc-gateway/config.example.yaml"
+      - "deploy/clickhouse/users.d/**"
+      - "deploy/standalone/clickhouse/**"
+      - "futureagi/.ci/clickhouse-storage-policy.xml"
+      - "futureagi/config/peerdb/temporal-dynamicconfig.yaml"
+      - "futureagi/scripts/property_catalog_oss/**"
+      - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
+      - ".gitattributes"
+  push:
+    branches: [dev, main]
+    paths:
+      - "bin/update"
+      - "deploy/update/**"
+      - "deploy/tests/test_update_*.py"
+      - "deploy/tests/update_e2e/**"
+      - "scripts/generate_update_manifest.py"
+      - "scripts/check_update_safety.py"
+      - "**/*.py"
+      - "**/*.go"
+      - "**/*.sql"
+      - "**/*.sh"
+      - "bin/**"
+      - "scripts/**"
+      - "deploy/**"
+      - "fi-collector/**"
+      - "agentcc-gateway/**"
+      - "docker-compose*.yml"
+      - "futureagi/**"
+      - "bin/lib/**"
+      - ".github/workflows/backend-ci.yml"
+      - "docker-compose.yml"
+      - "docker-compose.distributed.yml"
+      - "deploy/docker-compose.production.yml"
+      - "deploy/docker-compose.host-status.standalone.yml"
+      - "deploy/docker-compose.host-status.distributed.yml"
+      - "bin/install"
+      - "deploy/setup.sh"
+      - ".env.example"
+      - "deploy/.env.production.example"
+      - "deploy/env-reference.toml"
+      - ".gitignore"
+      # Private retained env files must never enter any Docker build context.
+      - "**/.dockerignore"
+      - "**/*.dockerignore"
+      - "**/Dockerfile*"
+      - ".github/actions/setup-helm-tools/**"
+      - ".github/workflows/release-update-manifest.yml"
+      - ".github/workflows/release-images.yml"
+      - ".github/workflows/update-ci.yml"
+      - ".github/workflows/build-image-multiarch.yml"
+      - ".github/workflows/helm-release.yml"
+      # deploy/update/deployment-files.txt: a release hashes these, and its
+      # generator refuses a git-tracked file the digest of a directory skips.
+      - "agentcc-gateway/config.example.yaml"
+      - "deploy/clickhouse/users.d/**"
+      - "deploy/standalone/clickhouse/**"
+      - "futureagi/.ci/clickhouse-storage-policy.xml"
+      - "futureagi/config/peerdb/temporal-dynamicconfig.yaml"
+      - "futureagi/scripts/property_catalog_oss/**"
+      - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
+      - ".gitattributes"
+  merge_group:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  safety:
+    name: Unattended update layout and environment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Resolve explicit PR base
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          DEFAULT_BASE: origin/dev
+        run: |
+          base="${PR_BASE:-${BEFORE:-$DEFAULT_BASE}}"
+          if [[ "$base" =~ ^0+$ ]]; then base="$DEFAULT_BASE"; fi
+          git rev-parse --verify "${base}^{commit}"
+          echo "UPDATE_SAFETY_BASE=$base" >> "$GITHUB_ENV"
+      - name: Daemon-free safety fixtures
+        run: python -m unittest discover -s deploy/tests -p test_update_safety_gate.py -v
+      - name: Compose layout, complete backup coverage, unattended env and ClickHouse risk
+        run: |
+          python -I scripts/check_update_safety.py --static --base "$UPDATE_SAFETY_BASE" --json \
+            > "$RUNNER_TEMP/update-safety-layout.json"
+      - name: Retain large-volume rehearsal requirements
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-safety-layout-requirements
+          path: ${{ runner.temp }}/update-safety-layout.json
+          if-no-files-found: error
+
+  unit:
+    name: unit (Python ${{ matrix.python }})
+    # Python 3.9 (the oldest bin/update supports) has setup-python builds for
+    # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
+    runs-on: ubuntu-24.04
+    # The expanded serial crash/restore contracts take about 19 minutes in
+    # measured full-suite runs. Ten minutes cancelled both 22bb323a1 jobs
+    # before unittest could print final results or run the later harness suites.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # bin/update refuses anything older than 3.9.
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Daemon-free historical-input regressions read tag deployment/chart
+          # data through git archive; they never execute that historical code.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install host test verifier
+        uses: ./.github/actions/setup-helm-tools
+        with:
+          cosign: "true"
+      - name: Export the pinned real-signature test verifier
+        run: |
+          set -euo pipefail
+          verifier="$(command -v cosign)"
+          test -x "$verifier"
+          # setup-helm-tools pins cosign v3.1.3 through the SHA-pinned
+          # sigstore/cosign-installer and checks the installed version.
+          printf 'FUTURE_AGI_UPDATE_TEST_COSIGN=%s\n' "$verifier" >> "$GITHUB_ENV"
+          printf 'FUTURE_AGI_TEST_COSIGN=%s\n' "$verifier" >> "$GITHUB_ENV"
+      - name: Schema validator on both supported interpreters
+        run: python -m pip install --quiet jsonschema==4.23.0
+      - name: deploy/tests/test_update_*.py
+        # Positive host-ownership/reporting fixtures need trusted ancestry.
+        # A private child of /tmp is still below a world-writable ancestor.
+        run: |
+          set -euo pipefail
+          TMPDIR="$(mktemp -d "$HOME/fagi-update-tests.XXXXXX")"
+          export TMPDIR
+          trap 'rm -rf -- "$TMPDIR"' EXIT
+          python -m unittest discover -s deploy/tests -p 'test_update_*.py' -v
+      - name: Daemon-free real harness, TLS publisher and native CI plans
+        run: |
+          python -m unittest discover -s deploy/tests/update_e2e -p 'test_real_automatic_harness.py' -v
+          python -m unittest discover -s deploy/tests/update_e2e -p 'test_automatic_publisher.py' -v
+          python -m unittest discover -s deploy/tests/update_e2e -p 'test_acceptance_ci.py' -v
+          python -m unittest discover -s deploy/tests/update_e2e -p 'test_acceptance_guards.py' -v
+          python -m unittest discover -s deploy/tests/update_e2e -p 'test_release_metadata.py' -v
+
+  compose:
+    name: compose versions
+    # Python 3.9 (the oldest bin/update supports) has setup-python builds for
+    # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Docker Compose releases
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/compose-versions"
+          mkdir -p "$dir"
+          for v in v2.24.0 v2.24.1 v2.24.7 v2.25.0 v2.26.0 v2.40.3 v5.1.4; do
+            base="https://github.com/docker/compose/releases/download/$v/docker-compose-linux-x86_64"
+            curl -fsSL --retry 3 -o "$dir/docker-compose-$v" "$base"
+            want=$(curl -fsSL --retry 3 "$base.sha256" | cut -d' ' -f1)
+            echo "$want  $dir/docker-compose-$v" | sha256sum -c -
+            chmod +x "$dir/docker-compose-$v"
+          done
+          echo "FUTURE_AGI_UPDATE_COMPOSE_MATRIX=$dir" >> "$GITHUB_ENV"
+      - name: Compose matrix tests
+        run: python -m unittest discover -s deploy/tests -p 'test_update_install_cli.py' -k ComposeMatrix -v
+
+  # deploy/tests/update_e2e/harness.py: every resource it creates carries its
+  # suite's prefix and is removed at the end, so the suites run side by side.
+  e2e:
+    name: e2e (${{ matrix.suite }}, Compose ${{ matrix.compose }})
+    # Python 3.9 (the oldest bin/update supports) has setup-python builds for
+    # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
+    runs-on: ubuntu-24.04
+    # faults runs bin/update once per (Docker call, fault), each run followed by its recovery.
+    timeout-minutes: ${{ matrix.suite == 'faults' && 120 || 45 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Real product and vendor backup fixtures have their own native jobs
+        # below, not this fake-image matrix or a mismatched opt-in variable.
+        suite: [standalone, distributed, faults]
+        # runner: the runner's own Compose. v2.24.7 ignores profiles in
+        # `config --format json`, which bin/update must not depend on.
+        compose: [runner, v2.24.7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # The oldest Python bin/update supports runs the updater itself.
+          python-version: "3.9"
+      - name: Docker Compose ${{ matrix.compose }}
+        if: matrix.compose != 'runner'
+        env:
+          COMPOSE_VERSION: ${{ matrix.compose }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-x86_64"
+          bin="$RUNNER_TEMP/docker-compose-$COMPOSE_VERSION"
+          curl -fsSL --retry 3 -o "$bin" "$base"
+          want=$(curl -fsSL --retry 3 "$base.sha256" | cut -d' ' -f1)
+          echo "$want  $bin" | sha256sum -c -
+          chmod +x "$bin"
+          echo "FUTURE_AGI_UPDATE_E2E_COMPOSE=$bin" >> "$GITHUB_ENV"
+      - name: deploy/tests/test_update_e2e_${{ matrix.suite }}.py
+        env:
+          SUITE: ${{ matrix.suite }}
+          FUTURE_AGI_UPDATE_E2E: "1"
+          FUTURE_AGI_UPDATE_E2E_DIR: ${{ runner.temp }}/update-e2e
+          FUTURE_AGI_UPDATE_E2E_FAULTS_SCOPE: state
+        run: python -m unittest discover -s deploy/tests -p "test_update_e2e_${SUITE}.py" -v
+
+  automatic-upgrade:
+    name: Real automatic latest-stable to PR and cold restore
+    if: github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: ./.github/actions/setup-helm-tools
+        with:
+          cosign: "true"
+      - name: Explicit native daemon and private Compose launcher
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          docker context create colima-fagi-update --docker host=unix:///var/run/docker.sock
+          docker --context colima-fagi-update info
+          systemctl is-active --quiet cron.service
+          systemctl is-enabled --quiet cron.service
+          command -v crontab
+          dir="$(mktemp -d "$HOME/fagi-upd-e2e-real-tools.XXXXXX")"
+          plugin="$(docker --context colima-fagi-update info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}')"
+          test -n "$plugin" && test -f "$plugin" && test -x "$plugin"
+          ln -s "$plugin" "$dir/docker-compose"
+          echo "$dir" >> "$GITHUB_PATH"
+      - name: Ephemeral runner-only Docker Hub mirror and real RepoDigest probe
+        # ONLY this disposable GitHub-hosted runner changes daemon configuration.
+        # A plain registry serves PR images; misses fall back to Docker Hub.
+        # Do not use proxy mode: Distribution pull-through caches reject pushes.
+        env:
+          REGISTRY_IMAGE: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_OS" = Linux
+          docker --context colima-fagi-update pull "$REGISTRY_IMAGE"
+          sudo python3 -I - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('/etc/docker/daemon.json')
+          config = json.loads(path.read_text()) if path.exists() else {}
+          config['registry-mirrors'] = ['http://localhost:5000']
+          config['insecure-registries'] = list(dict.fromkeys(config.get('insecure-registries', []) + ['localhost:5000']))
+          path.write_text(json.dumps(config) + '\n')
+          PY
+          sudo systemctl restart docker.service
+          docker --context colima-fagi-update run -d --restart unless-stopped \
+            --name "fagi-upd-e2e-mirror-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            -p 127.0.0.1:5000:5000 "$REGISTRY_IMAGE"
+          python3 -I - <<'PY'
+          import time
+          from urllib.request import ProxyHandler, build_opener
+          opener = build_opener(ProxyHandler({}))
+          for attempt in range(30):
+              try:
+                  with opener.open('http://localhost:5000/v2/', timeout=2) as response:
+                      assert response.status == 200
+                  break
+              except OSError:
+                  if attempt == 29:
+                      raise
+                  time.sleep(1)
+          PY
+          # A deliberately unpublished, PR-specific probe must resolve through
+          # the plain mirror under docker.io, not just a local retag/load.
+          probe="futureagi/acceptance-mirror-probe:pr-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker --context colima-fagi-update tag "$REGISTRY_IMAGE" "localhost:5000/$probe"
+          docker --context colima-fagi-update push "localhost:5000/$probe"
+          docker --context colima-fagi-update pull --platform linux/amd64 "docker.io/$probe"
+          docker --context colima-fagi-update image inspect "localhost:5000/$probe" "docker.io/$probe" \
+            > "$RUNNER_TEMP/pr-mirror-probe.json"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from deploy.update.manifest import parse_image_ref
+          local, normal = json.loads((Path(os.environ['RUNNER_TEMP'])/'pr-mirror-probe.json').read_bytes())
+          assert local['Id'] == normal['Id']
+          expected = {parse_image_ref(pin).digest for pin in local['RepoDigests']
+                      if parse_image_ref(pin).registry == 'localhost:5000'}
+          assert expected and any(parse_image_ref(pin).registry == 'docker.io'
+              and parse_image_ref(pin).repository == 'futureagi/acceptance-mirror-probe'
+              and parse_image_ref(pin).digest in expected for pin in normal['RepoDigests'])
+          PY
+          # Dependency images are NOT rewritten or uploaded. Prove a mirror miss
+          # still reaches Docker Hub with an image that is neither cached on
+          # this runner nor held by the mirror (actual PG/CH follow later).
+          control=hello-world:linux
+          if docker --context colima-fagi-update image inspect "$control" >/dev/null 2>&1; then
+            echo 'Mirror fallback probe unexpectedly cached; cannot prove a miss.' >&2
+            exit 1
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/v2/library/hello-world/tags/list)
+          test "$code" = 404
+          docker --context colima-fagi-update pull "$control"
+          docker --context colima-fagi-update image inspect "$control" --format '{{json .RepoDigests}}' \
+            | grep -q 'hello-world@sha256:'
+          echo 'Plain mirror resolved unpublished docker.io tag and fell back to Docker Hub on a miss.'
+      - id: buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          endpoint: colima-fagi-update
+      - name: Build PR OCI images, transport only over loopback, qualify, then scheduler forward and restore
+        # Test-only cosign key and HTTPS CA are generated by AutomaticPublisher.
+        # No login, production environment/secrets, OIDC, external push or package write.
+        # Full qualify/package must pass in this job, with no milestone rows,
+        # synthetic fallback or waived guards. Cron performs every update.
+        # `buildx use` is scoped to the default context; every PR build names
+        # this docker-container builder explicitly (the docker driver cannot
+        # export OCI layouts).
+        env:
+          FAGI_UPDATE_E2E_BUILDER: ${{ steps.buildx.outputs.name }}
+          # Only api.github.com release metadata; acceptance strips it from children.
+          FAGI_UPDATE_RELEASE_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python -I deploy/tests/update_e2e/acceptance.py --mode upgrade \
+            --out "$HOME/fagi-upd-e2e-real-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Count cron deliveries of the installed scheduler (closed counts only)
+        # Cron discards the scheduler's output by design; its own journal shows
+        # whether each */5 delivery happened. Counts and times only, no command lines.
+        if: always()
+        run: |
+          set -uo pipefail
+          out="$HOME/fagi-upd-e2e-real-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$out"
+          { sudo journalctl -u cron.service --no-pager -o short-iso; sudo journalctl -t CRON --no-pager -o short-iso; } \
+            2>/dev/null | sort -u | python3 -I -c '
+          import json, sys
+          rows = [line.split()[0] for line in sys.stdin
+                  if "(runner) CMD" in line and "bin/update" in line and " run " in line]
+          print(json.dumps({"schema_version": 1, "deliveries": len(rows),
+                            "first": rows[0] if rows else None, "last": rows[-1] if rows else None}))
+          ' > "$out/cron-deliveries.json" || true
+      - name: Retain bounded public CI result only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automatic-upgrade-result
+          path: |
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/summary.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/cron-deliveries.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/failure.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/test-output.log
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/command-diagnostics.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/pr-image-transport.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/pr-built-images.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/platform-images.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/cron-environment.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-budgets.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/restored-source.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/cleanup.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/scheduler-history.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/public-status.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/data-usage.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/startup-result.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/package-result.json
+            ${{ runner.temp }}/pr-mirror-probe.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-diagnostics.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-result.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/installed-v*.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/qualification/diagnostics.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  automatic-a-b-c:
+    name: Real one-opt-in v1.53.0 to v1.54.0 to v1.55.0
+    if: github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: ./.github/actions/setup-helm-tools
+        with:
+          cosign: "true"
+      - name: Explicit native daemon and private Compose launcher
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          docker context create colima-fagi-update --docker host=unix:///var/run/docker.sock
+          docker --context colima-fagi-update info
+          systemctl is-active --quiet cron.service
+          systemctl is-enabled --quiet cron.service
+          command -v crontab
+          dir="$(mktemp -d "$HOME/fagi-upd-e2e-real-tools.XXXXXX")"
+          plugin="$(docker --context colima-fagi-update info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}')"
+          test -n "$plugin" && test -f "$plugin" && test -x "$plugin"
+          ln -s "$plugin" "$dir/docker-compose"
+          echo "$dir" >> "$GITHUB_PATH"
+      - uses: docker/setup-buildx-action@v3
+        with:
+          endpoint: colima-fagi-update
+      - name: Real published images, qualify/package with test key, installed-scheduler acceptance
+        env:
+          # Existing contents:read token, not inherited by app/qualifier processes.
+          FAGI_UPDATE_RELEASE_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python -I deploy/tests/update_e2e/acceptance.py --mode a-b-c \
+            --out "$HOME/fagi-upd-e2e-real-abc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Count cron deliveries of the installed scheduler (closed counts only)
+        # Cron discards the scheduler's output by design; its own journal shows
+        # whether each */5 delivery happened. Counts and times only, no command lines.
+        if: always()
+        run: |
+          set -uo pipefail
+          out="$HOME/fagi-upd-e2e-real-abc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$out"
+          { sudo journalctl -u cron.service --no-pager -o short-iso; sudo journalctl -t CRON --no-pager -o short-iso; } \
+            2>/dev/null | sort -u | python3 -I -c '
+          import json, sys
+          rows = [line.split()[0] for line in sys.stdin
+                  if "(runner) CMD" in line and "bin/update" in line and " run " in line]
+          print(json.dumps({"schema_version": 1, "deliveries": len(rows),
+                            "first": rows[0] if rows else None, "last": rows[-1] if rows else None}))
+          ' > "$out/cron-deliveries.json" || true
+      - name: Retain bounded public CI result only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automatic-a-b-c-result
+          path: |
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/summary.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/cron-deliveries.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/failure.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/test-output.log
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/command-diagnostics.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/platform-images.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/cron-environment.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-budgets.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/cleanup.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/scheduler-history.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/public-status.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/data-usage.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/startup-result.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/package-result.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-diagnostics.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-result.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/installed-v*.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/qualification/diagnostics.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  daemon-storage:
+    # Setup and admission need image-store capacity. The non-root installation
+    # user cannot read a rootful daemon's /var/lib/docker, so this exercises the
+    # fixed daemon-side helper in minutes instead of after a full qualification.
+    name: Native daemon storage helper (non-root user, rootful overlay2)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Registered context on the runner's rootful daemon
+        run: docker context create colima-fagi-update --docker host=unix:///var/run/docker.sock
+      - name: Real inspect_daemon_storage as the non-root runner user
+        run: |
+          set -euo pipefail
+          test "$(id -u)" != 0
+          python -I deploy/tests/update_e2e/native_storage_probe.py \
+            docker.io/futureagi/standalone:v1.56.1@sha256:3ae9fd984297b9a24a437fd55272a55e24f94288b18d65924d7777c69ec0d515
+
+  backup:
+    name: Native vendor cold backup and crash-restore matrices
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Explicit native fixture daemon and Compose launcher
+        run: |
+          set -euo pipefail
+          docker context create colima-fagi-update --docker host=unix:///var/run/docker.sock
+          dir="$(mktemp -d "$HOME/fagi-upd-e2e-real-backup-tools.XXXXXX")"
+          plugin="$(docker --context colima-fagi-update info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}')"
+          test -n "$plugin" && test -f "$plugin" && test -x "$plugin"
+          ln -s "$plugin" "$dir/docker-compose"
+          echo "$dir" >> "$GITHUB_PATH"
+      - name: Execute actual opted-in vendor tests serially, not a skipped discovery
+        run: |
+          set -euo pipefail
+          umask 077
+          python -I deploy/tests/update_e2e/backup_ci.py \
+            --out "$HOME/fagi-upd-e2e-real-backup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Retain fixture results and verified cleanup, never archives or env
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-backup-result
+          path: |
+            ~/fagi-upd-e2e-real-backup-${{ github.run_id }}-${{ github.run_attempt }}/summary.json
+            ~/fagi-upd-e2e-real-backup-${{ github.run_id }}-${{ github.run_attempt }}/test-output.log
+            ~/fagi-upd-e2e-real-backup-${{ github.run_id }}-${{ github.run_attempt }}/fagi-upd-e2e-ci-acceptance-*.json
+          if-no-files-found: warn
+          retention-days: 7

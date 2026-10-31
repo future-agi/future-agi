@@ -732,6 +732,12 @@ GCP_MARKETPLACE_DOUBLE_METRICS = {
     "enterprise_voice_simulation",
 }
 
+# Optional read-only public status mount. No updater/control access in the app.
+# Only /run/futureagi-host-update/status.json is accepted by the reader; an empty
+# value leaves existing installations healthy with reporting unconfigured.
+FI_HOST_UPDATE_STATUS_FILE = os.environ.get("FI_HOST_UPDATE_STATUS_FILE", "")
+FI_HOST_UPDATE_STATUS_SLOT = os.environ.get("FI_HOST_UPDATE_STATUS_SLOT", "")
+
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
 EE_LICENSE_PUBLIC_KEY = os.environ.get("EE_LICENSE_PUBLIC_KEY", "").replace("\\n", "\n")

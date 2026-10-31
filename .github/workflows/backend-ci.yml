@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.filter.outputs.backend || steps.always.outputs.backend }}
+      update_safety: ${{ steps.filter.outputs.update_safety || 'false' }}
       executor_base: ${{ steps.filter.outputs.executor_base || 'false' }}
     steps:
       - uses: actions/checkout@v4
@@ -56,12 +57,88 @@ jobs:
               - 'frontend/docker-entrypoint.sh'
               - 'scripts/env_reference.py'
               - 'scripts/docs_site.py'
+              - 'scripts/check_update_safety.py'
+              - '.github/workflows/update-ci.yml'
+            # The gate also discovers shell sources by reading shebangs, which
+            # paths-filter cannot express (for example docs/rebuild-catalog).
+            # Run this daemon-free gate for every changed path without widening
+            # the separate backend filter that controls the heavy test shards.
+            update_safety:
+              - '**'
             executor_base:
               - 'futureagi/code-executor/Dockerfile.base'
               - 'futureagi/code-executor/requirements.sandbox.txt'
       - id: always
         if: github.event_name != 'pull_request'
         run: echo "backend=true" >> "$GITHUB_OUTPUT"
+
+  update-safety:
+    name: OSS migrations and unattended update safety
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.update_safety == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      # Production OSS settings, not test.py (which deliberately enables EE).
+      DJANGO_SETTINGS_MODULE: tfc.settings.settings
+      EE_LICENSE_KEY: ""
+      ENV_TYPE: local
+      LITELLM_MODE: PRODUCTION
+      NO_STARTUP_DB_MUTATIONS: "true"
+      FI_SKIP_CH25_MIGRATION: "1"
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+      - name: Install OSS backend dependencies
+        run: uv sync --frozen --no-dev
+      - name: Honest-mistake gate tests in the real OSS backend environment (serial)
+        # unittest discovery must retain the repo/import roots; reserve -I for
+        # direct gate scripts and child processes reading historical sources.
+        run: |
+          uv run --no-sync python -m unittest discover -s ../deploy/tests -p test_update_safety_gate.py -v
+          uv run --no-sync python -m unittest discover -s tests -p test_update_safety_gate_django.py -v
+      - name: Models must have migrations (no database writes)
+        run: uv run --no-sync python manage.py makemigrations --check --dry-run
+      - name: Resolve explicit PR base
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          DEFAULT_BASE: origin/dev
+        run: |
+          base="${PR_BASE:-${BEFORE:-$DEFAULT_BASE}}"
+          if [[ "$base" =~ ^0+$ ]]; then base="$DEFAULT_BASE"; fi
+          git rev-parse --verify "${base}^{commit}"
+          echo "UPDATE_SAFETY_BASE=$base" >> "$GITHUB_ENV"
+      - name: Real OSS MigrationLoader, layout and high-volume migration risk
+        run: |
+          uv run --no-sync python -I ../scripts/check_update_safety.py \
+            --static --django --base "$UPDATE_SAFETY_BASE" --json \
+            > "$RUNNER_TEMP/update-safety-migrations.json"
+      - name: Calibrate real historical loaders (read-only tags, not product qualification)
+        run: |
+          uv run --no-sync python -I ../scripts/check_update_safety.py --calibrate --json \
+            > "$RUNNER_TEMP/update-safety-historical.json"
+      - name: Retain large-volume rehearsal requirements
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-safety-migration-requirements
+          path: |
+            ${{ runner.temp }}/update-safety-migrations.json
+            ${{ runner.temp }}/update-safety-historical.json
+          if-no-files-found: error
 
   plan:
     # Pins one durations snapshot per run so re-runs shard identically —
@@ -523,6 +600,7 @@ jobs:
     needs:
       [
         changes,
+        update-safety,
         plan,
         test,
         saml-multiworker,

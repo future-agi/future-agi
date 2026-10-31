@@ -73,6 +73,66 @@ function resolveTransitiveDefinitions(allDefinitions, refs) {
   return allRefs;
 }
 
+// Swagger 2 needs vendor extensions for nullability and discriminated unions.
+// Orval understands the equivalent OpenAPI 3 keywords, but drops x-nullable.
+// Normalize the host-status wire contract before generation rather than patching
+// generated TS/Zod. Keep existing endpoint generation/legacy rewrites unchanged.
+function normalizeHostStatusSchema(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(normalizeHostStatusSchema);
+  let result = Object.fromEntries(
+    Object.entries(schema).map(([key, value]) => [
+      key,
+      normalizeHostStatusSchema(value),
+    ]),
+  );
+  // The legacy alternative exposes additive properties for Swagger tooling,
+  // but maxProperties == required.length forbids every optional property.
+  // Orval drops maxProperties, so express that same closed branch structurally
+  // before generation. Otherwise a partial restore group matches the legacy
+  // branch and is silently accepted (or stripped) by the generated parser.
+  if (
+    result.type === "object" &&
+    result.additionalProperties === false &&
+    Array.isArray(result.required) &&
+    result.maxProperties === result.required.length
+  ) {
+    result.properties = Object.fromEntries(
+      Object.entries(result.properties || {}).filter(([key]) =>
+        result.required.includes(key),
+      ),
+    );
+  }
+  const nullable = result["x-nullable"] === true;
+  delete result["x-nullable"];
+  if (result["x-oneOf"]) {
+    result = { description: result.description, oneOf: result["x-oneOf"] };
+  } else if (result["x-anyOf"]) {
+    result = { description: result.description, anyOf: result["x-anyOf"] };
+  }
+  return nullable ? { anyOf: [result, { type: "null" }] } : result;
+}
+
+// The Orval input transformer runs AFTER its validated Swagger-to-OpenAPI 3.1
+// upgrade. Never insert native unions/null types into the Swagger 2 input, or
+// disable validation to make a nonconforming input pass.
+function normalizeHostStatusSpec(spec) {
+  return {
+    ...spec,
+    components: {
+      ...spec.components,
+      schemas: Object.fromEntries(
+        Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
+          name,
+          name.startsWith("HostUpdateStatusResponse")
+            ? normalizeHostStatusSchema(schema)
+            : schema,
+        ]),
+      ),
+    },
+  };
+}
+
 function buildManagementApiSwagger(swagger) {
   const paths = {};
   const refs = new Set();
@@ -195,7 +255,10 @@ async function runGeneration(schemaPath) {
   };
 
   await generate({
-    input: schemaPath,
+    input: {
+      target: schemaPath,
+      override: { transformer: normalizeHostStatusSpec },
+    },
     output: {
       target: apiOutputPath,
       mode: "split",
@@ -206,7 +269,10 @@ async function runGeneration(schemaPath) {
   });
 
   await generate({
-    input: schemaPath,
+    input: {
+      target: schemaPath,
+      override: { transformer: normalizeHostStatusSpec },
+    },
     output: {
       target: zodOutputPath,
       mode: "single",
@@ -215,6 +281,14 @@ async function runGeneration(schemaPath) {
       override: {
         header: baseOverride.header,
         components: baseOverride.components,
+        // This endpoint is a closed public report, including both exact legacy
+        // and complete restore alternatives. Do not change the permissive
+        // generation semantics of unrelated, established API operations.
+        operations: {
+          "api_host-update-status_list": {
+            zod: { strict: { response: true } },
+          },
+        },
         zod: {
           generate: {
             body: true,
@@ -228,6 +302,13 @@ async function runGeneration(schemaPath) {
     },
   });
 
+  // Orval can log a validation error without rejecting generate(). Treat
+  // missing output as failure and let the caller restore the previous snapshot.
+  for (const name of ["api.ts", "api.schemas.ts", "api.zod.ts"]) {
+    if (!fs.existsSync(path.join(outputDir, name))) {
+      throw new Error(`OpenAPI generation did not produce ${name}`);
+    }
+  }
   normalizeGeneratedQueryParamSerialization();
 
   // Post-processing for orval-narrow types.
@@ -1948,7 +2029,7 @@ const before = snapshotGeneratedFiles();
 try {
   await runGeneration(tempSchemaPath);
 } catch (error) {
-  if (process.argv.includes("--check")) restoreSnapshot(before);
+  restoreSnapshot(before);
   throw error;
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
