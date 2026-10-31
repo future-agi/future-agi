@@ -14,7 +14,16 @@ from tracer.utils.otel import SpanAttributes
     ["llm.request.type", "fi.span.kind", "gen_ai.span.kind", "openinference.span.kind"],
 )
 @pytest.mark.parametrize(
-    "kind", ["chat", "llm", "LLM", " Llm ", "generate_content", "text_completion"]
+    "kind",
+    [
+        "chat",
+        "llm",
+        "LLM",
+        " Llm ",
+        "generate_content",
+        "text_completion",
+        "completion",
+    ],
 )
 def test_kind_aliases_preserve_indexed_content_and_legacy_fields(key, kind):
     span = {

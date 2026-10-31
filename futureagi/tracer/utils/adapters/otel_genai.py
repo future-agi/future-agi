@@ -160,6 +160,8 @@ class OtelGenAIAdapter(BaseTraceAdapter):
         normalized_kind = AttributeRegistry.normalize_span_kind(span_kind)
         if normalized_kind != "unknown":
             span_kind = normalized_kind.upper()
+        else:
+            span_kind = _OPERATION_KIND_MAP.get(span_kind.lower().strip(), span_kind)
         if span_kind:
             attributes[SpanAttributes.SPAN_KIND] = span_kind
         is_llm = span_kind == "LLM"
