@@ -172,3 +172,5 @@ changelog/
 # build. The CE base image must not carry cloud code — Dockerfile.ee in the
 # private repo overlays it at runtime.
 futureagi/ee/cloud/
+# Private runtime tarballs must never enter a backend image build context.
+**/.artifacts/
