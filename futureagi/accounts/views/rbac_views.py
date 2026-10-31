@@ -210,7 +210,20 @@ class InviteCreateAPIView(APIView):
                     )
 
                     existing = User.objects.filter(email=email).first()
-                    if existing and existing.is_active:
+                    # Accept only when this invite activated the membership.
+                    # A first invite of a user from another org stays pending
+                    # until they accept; marking it accepted here would hide
+                    # the invite while the membership is still inactive.
+                    if (
+                        existing
+                        and existing.is_active
+                        and OrganizationMembership.all_objects.filter(
+                            user=existing,
+                            organization=organization,
+                            is_active=True,
+                            deleted=False,
+                        ).exists()
+                    ):
                         invite.status = InviteStatus.ACCEPTED
                         invite.save(update_fields=["status"])
 
@@ -290,14 +303,13 @@ class InviteCreateAPIView(APIView):
                     pk=existing_membership.pk
                 ).update(**update_fields)
             else:
-                # Existing inactive membership (deactivated or cancelled) →
-                # always reactivate so the user can log in instead of being
-                # stuck with requires_org_setup=True.
-                # Brand-new membership for an inactive user → keep False so
-                # they go through the invite-accept flow first.
-                membership_active = (
-                    True if existing_membership is not None else existing_user.is_active
-                )
+                # A prior membership in THIS org (deactivated or cancelled) is
+                # reactivated: that user already accepted this org once.
+                # A user who has never had a membership here stays inactive,
+                # even if their account is active in another org. Activating
+                # them here would satisfy the SAML membership check before
+                # they accept the invite.
+                membership_active = existing_membership is not None
                 OrganizationMembership.all_objects.update_or_create(
                     user=existing_user,
                     organization=organization,
@@ -340,13 +352,15 @@ class InviteCreateAPIView(APIView):
         # Use _base_manager (plain Django Manager) to bypass both soft-delete
         # and workspace context filtering — both can cause IntegrityError on
         # re-invite after cancel (soft-deleted row not found → INSERT → unique violation).
-        is_existing_active = existing_user is not None and existing_user.is_active
         org_membership = OrganizationMembership._base_manager.filter(
             deleted=False,
         ).get(
             user=target_user,
             organization=organization,
         )
+        # Workspace access follows the org membership. An active account in
+        # another org is not consent for this org's workspaces.
+        is_existing_active = existing_user is not None and org_membership.is_active
         unfiltered_ws_qs = WorkspaceMembership._base_manager
         for ws_entry in workspace_access:
             ws_id = ws_entry.get("workspace_id")

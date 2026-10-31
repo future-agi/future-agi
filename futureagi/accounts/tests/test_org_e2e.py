@@ -1515,3 +1515,51 @@ class TestSoftDeleteVerification:
 
         # User should not be able to access the org
         assert member.can_access_organization(org) is False
+
+
+@pytest.mark.django_db
+def test_invite_of_other_org_user_stays_inactive_until_accept(
+    owner_client, org, default_ws
+):
+    """An admin invite must not activate a user who has not accepted.
+
+    SAML login treats an active membership as consent. Creating that row
+    before accept lets the inviting org's IdP sign in as the other org's user.
+    """
+    other_org = Organization.objects.create(name="Other Org")
+    victim = _make_user(
+        other_org,
+        "victim@other.example",
+        OrganizationRoles.OWNER,
+        Level.OWNER,
+    )
+
+    resp = _invite_user(
+        owner_client,
+        ["victim@other.example"],
+        Level.MEMBER,
+        workspace_access=[
+            {"workspace_id": str(default_ws.id), "level": Level.WORKSPACE_MEMBER}
+        ],
+    )
+
+    assert resp.status_code == status.HTTP_200_OK
+    membership = OrganizationMembership.no_workspace_objects.get(
+        user=victim, organization=org
+    )
+    assert membership.is_active is False
+    assert membership.deleted is False
+    invite = OrganizationInvite.objects.get(
+        organization=org, target_email="victim@other.example"
+    )
+    assert invite.status == InviteStatus.PENDING
+    workspace_membership = WorkspaceMembership.no_workspace_objects.get(
+        user=victim, workspace=default_ws
+    )
+    assert workspace_membership.is_active is False
+
+    invite.accept(victim)
+    membership.refresh_from_db()
+    workspace_membership.refresh_from_db()
+    assert membership.is_active is True
+    assert workspace_membership.is_active is True

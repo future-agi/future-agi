@@ -145,6 +145,13 @@ class OrganizationSelectionView(APIView):
             seen_org_ids = set()
             user_organizations = []
 
+            # An already-open session never posts /accounts/token/ again.
+            # Loading the org list is the request that session already makes,
+            # so a pending invite is accepted here before the list is built.
+            from accounts.services.token_service import accept_pending_invites
+
+            accept_pending_invites(user)
+
             # Get all active memberships (primary source of truth)
             memberships = OrganizationMembership.no_workspace_objects.filter(
                 user=user, is_active=True
