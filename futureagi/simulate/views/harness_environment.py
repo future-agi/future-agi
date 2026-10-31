@@ -34,6 +34,7 @@ from simulate.serializers.harness_environment import (
     HarnessNudgeSerializer,
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
+    HarnessCapabilityQuerySerializer,
     HarnessCapabilityReportSerializer,
     HarnessSuiteMemberSerializer,
     HarnessVersionDiffQuerySerializer,
@@ -478,17 +479,22 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         nudge = stop_rebuild(job, identifier, user=request.user)
         return Response(nudge_item(_nudges(job).get(id=nudge.id)))
 
-    @validated_request(responses={200: HarnessCapabilityReportSerializer})
+    @validated_request(
+        query_serializer=HarnessCapabilityQuerySerializer,
+        responses={200: HarnessCapabilityReportSerializer},
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["get"], url_path="capabilities")
     def capabilities(self, request, pk=None):
-        """What this environment was shown to support, one status per capability, computed now from its build's
-        evidence; Stale once the environment version has moved on. No writes."""
+        """What this environment was shown to support with an agent version (its own when none is named), one status
+        per capability, computed now from its build's evidence; Stale once the environment version moved on or the
+        agent is another version. No writes."""
         from simulate.services.capability_evidence import environment_capability_report
 
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        return Response(environment_capability_report(job))
+        return Response(environment_capability_report(job, request.validated_query_data.get("agent_version_id")))
 
     @validated_request(
         query_serializer=HarnessRunPlanQuerySerializer,

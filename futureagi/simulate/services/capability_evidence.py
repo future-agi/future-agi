@@ -168,8 +168,10 @@ def affected_scenarios(rows: list[dict[str, Any]], requirements: dict[str, Any])
     return {**counts, "requirements_recorded": bool(requirements)}
 
 
-def environment_capability_report(job: HostedHarnessJob) -> dict[str, Any]:
-    """The capability report for an environment: its latest build evidence, Stale once its environment version moved on."""
+def environment_capability_report(job: HostedHarnessJob, agent_version_id: Any = None) -> dict[str, Any]:
+    """The capability report for an environment and an agent version (the environment's own when none is named): its
+    latest build evidence, Stale once the environment version moved on or the agent is not the one it was checked
+    with."""
     evidence = (
         HarnessCapabilityEvidence.no_workspace_objects.filter(
             job=job,
@@ -179,10 +181,17 @@ def environment_capability_report(job: HostedHarnessJob) -> dict[str, Any]:
         .order_by("-captured_at")
         .first()
     )
-    current = {"environment_version_id": str(job.environment_version_id or "")}
+    current = {
+        "environment_version_id": str(job.environment_version_id or ""),
+        "agent_version_id": str(agent_version_id or job.agent_version_id or ""),
+    }
     document = (
         {
-            "inputs": {**evidence.inputs, "environment_version_id": str(evidence.environment_version_id or "")},
+            "inputs": {
+                **evidence.inputs,
+                "environment_version_id": str(evidence.environment_version_id or ""),
+                "agent_version_id": str(evidence.agent_version_id or ""),
+            },
             "capabilities": evidence.capabilities,
         }
         if evidence is not None
@@ -192,6 +201,7 @@ def environment_capability_report(job: HostedHarnessJob) -> dict[str, Any]:
     selection = affected_scenarios(rows, evidence.scenario_requirements if evidence is not None else {})
     return {
         "environment_version_id": current["environment_version_id"] or None,
+        "agent_version_id": current["agent_version_id"] or None,
         "catalog_version": evidence.catalog_version if evidence is not None else None,
         "checked_at": evidence.captured_at.isoformat() if evidence is not None else None,
         "capabilities": rows,

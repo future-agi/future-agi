@@ -1184,6 +1184,7 @@ import type {
   SimulateApiCallExecutionsListParams,
   SimulateApiHarnessConversationsCommandsParams,
   SimulateApiHarnessConversationsSessionStoreParams,
+  SimulateApiHarnessEnvironmentsCapabilitiesParams,
   SimulateApiHarnessEnvironmentsCompareParams,
   SimulateApiHarnessEnvironmentsListParams,
   SimulateApiHarnessEnvironmentsNudgesParams,
@@ -59835,20 +59836,39 @@ export type simulateApiHarnessEnvironmentsCapabilitiesResponse =
 
 export const getSimulateApiHarnessEnvironmentsCapabilitiesUrl = (
   id: string,
+  params?: SimulateApiHarnessEnvironmentsCapabilitiesParams,
 ) => {
-  return `/simulate/api/harness-environments/${id}/capabilities/`;
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/capabilities/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/capabilities/`;
 };
 
 /**
- * What this environment was shown to support, one status per capability, computed now from its build's
-evidence; Stale once the environment version has moved on. No writes.
+ * What this environment was shown to support with an agent version (its own when none is named), one status
+per capability, computed now from its build's evidence; Stale once the environment version moved on or the
+agent is another version. No writes.
  */
 export const simulateApiHarnessEnvironmentsCapabilities = async (
   id: string,
+  params?: SimulateApiHarnessEnvironmentsCapabilitiesParams,
   options?: RequestInit,
 ): Promise<simulateApiHarnessEnvironmentsCapabilitiesResponse> => {
   return apiMutator<simulateApiHarnessEnvironmentsCapabilitiesResponse>(
-    getSimulateApiHarnessEnvironmentsCapabilitiesUrl(id),
+    getSimulateApiHarnessEnvironmentsCapabilitiesUrl(id, params),
     {
       ...options,
       method: "GET",

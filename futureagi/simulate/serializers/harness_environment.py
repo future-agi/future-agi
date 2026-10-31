@@ -791,8 +791,13 @@ class HarnessCapabilitySelectionSerializer(serializers.Serializer):
     requirements_recorded = serializers.BooleanField()
 
 
+class HarnessCapabilityQuerySerializer(serializers.Serializer):
+    agent_version_id = serializers.UUIDField(required=False)
+
+
 class HarnessCapabilityReportSerializer(serializers.Serializer):
     environment_version_id = serializers.CharField(allow_null=True)
+    agent_version_id = serializers.CharField(allow_null=True)
     catalog_version = serializers.CharField(allow_null=True)
     checked_at = serializers.CharField(allow_null=True)
     capabilities = HarnessCapabilityRowSerializer(many=True)

@@ -111,3 +111,43 @@ def test_a_later_archive_of_the_same_build_refreshes_its_row(job):
     assert HarnessCapabilityEvidence.no_workspace_objects.filter(job=job).count() == 1
     assert later.capabilities["start_health"]["finding"] == "failed"
     assert later.scenario_requirements == {"refund": {"capabilities": ["start_health"]}}
+
+
+def _versions(organization, workspace):
+    from simulate.models import AgentDefinition, AgentVersion
+
+    definition = AgentDefinition.objects.create(
+        agent_name="Refunds agent",
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        description="",
+        organization=organization,
+        workspace=workspace,
+        languages=["en"],
+    )
+    return [
+        definition.create_version(description="", commit_message=name, status=AgentVersion.StatusChoices.DRAFT)
+        for name in ("v1", "v2")
+    ]
+
+
+def test_the_report_goes_stale_once_the_agent_is_another_version_than_the_one_checked(job, organization, workspace):
+    from simulate.services.capability_evidence import environment_capability_report
+
+    first, second = _versions(organization, workspace)
+    job.agent_version = first
+    job.save(update_fields=["agent_version"])
+    record_capability_evidence(job, _archive({"generic-harness/capability-evidence.json": json.dumps(_DOCUMENT).encode()}))
+
+    def row(**kwargs):
+        return environment_capability_report(job, **kwargs)["capabilities"][0]
+
+    assert row()["status"] == "supported"
+    assert row(agent_version_id=first.id)["status"] == "supported"
+    asked = row(agent_version_id=second.id)
+    assert (asked["status"], asked["stale_because"]) == ("stale", "agent_version_id")
+    assert environment_capability_report(job, agent_version_id=second.id)["agent_version_id"] == str(second.id)
+    # The environment itself moved to the new agent version: its own report is Stale too.
+    job.agent_version = second
+    job.save(update_fields=["agent_version"])
+    assert row()["status"] == "stale"

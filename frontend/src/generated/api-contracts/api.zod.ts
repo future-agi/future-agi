@@ -37206,15 +37206,23 @@ export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
 });
 
 /**
- * What this environment was shown to support, one status per capability, computed now from its build's
-evidence; Stale once the environment version has moved on. No writes.
+ * What this environment was shown to support with an agent version (its own when none is named), one status
+per capability, computed now from its build's evidence; Stale once the environment version moved on or the
+agent is another version. No writes.
  */
 export const SimulateApiHarnessEnvironmentsCapabilitiesParams = zod.object({
   id: zod.string(),
 });
 
+export const SimulateApiHarnessEnvironmentsCapabilitiesQueryParams = zod.object(
+  {
+    agent_version_id: zod.string().uuid().optional(),
+  },
+);
+
 export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
   environment_version_id: zod.string().min(1),
+  agent_version_id: zod.string().min(1),
   catalog_version: zod.string().min(1),
   checked_at: zod.string().min(1),
   capabilities: zod.array(

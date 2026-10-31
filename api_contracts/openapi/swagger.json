@@ -51575,8 +51575,16 @@
         "/simulate/api/harness-environments/{id}/capabilities/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_capabilities",
-                "description": "What this environment was shown to support, one status per capability, computed now from its build's\nevidence; Stale once the environment version has moved on. No writes.",
-                "parameters": [],
+                "description": "What this environment was shown to support with an agent version (its own when none is named), one status\nper capability, computed now from its build's evidence; Stale once the environment version moved on or the\nagent is another version. No writes.",
+                "parameters": [
+                    {
+                        "name": "agent_version_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
@@ -51594,6 +51602,7 @@
                 "tags": [
                     "simulate"
                 ],
+                "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
             "parameters": [
@@ -129080,6 +129089,7 @@
         "HarnessCapabilityReport": {
             "required": [
                 "environment_version_id",
+                "agent_version_id",
                 "catalog_version",
                 "checked_at",
                 "capabilities",
@@ -129091,6 +129101,12 @@
             "properties": {
                 "environment_version_id": {
                     "title": "Environment version id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "agent_version_id": {
+                    "title": "Agent version id",
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true

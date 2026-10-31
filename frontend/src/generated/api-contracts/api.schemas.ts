@@ -18572,6 +18572,8 @@ export interface HarnessCapabilityReportApi {
   /** @minLength 1 */
   environment_version_id: string;
   /** @minLength 1 */
+  agent_version_id: string;
+  /** @minLength 1 */
   catalog_version: string;
   /** @minLength 1 */
   checked_at: string;
@@ -36928,6 +36930,10 @@ export type SimulateApiHarnessEnvironmentsListParams = {
    */
   limit?: number;
   agent_definition_id?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsCapabilitiesParams = {
+  agent_version_id?: string;
 };
 
 export type SimulateApiHarnessEnvironmentsCompareParams = {
