@@ -5,7 +5,6 @@ import {
   Box,
   Button,
   Chip as MuiChip,
-  Dialog,
   Menu,
   MenuItem,
   Select,
@@ -54,6 +53,7 @@ const VERSION_ACTION = {
   borderColor: "divider",
 };
 import { versionChecksLine, versionChecksOf } from "../_mock/versionChecks";
+import ClosableDialog from "../components/ClosableDialog";
 
 const TONE = {
   added: "status.success.fg",
@@ -536,7 +536,7 @@ export default function AgentVersionsTab({
         </Box>
       )}
 
-      <Dialog
+      <ClosableDialog
         open={!!rollbackTo}
         onClose={() => setRollbackTo(null)}
         PaperProps={{
@@ -594,7 +594,7 @@ export default function AgentVersionsTab({
               : `Roll back to ${rollbackTo}`}
           </Button>
         </Stack>
-      </Dialog>
+      </ClosableDialog>
 
       <Menu
         anchorEl={runPick?.anchor}

@@ -27,6 +27,7 @@ import {
 import { useTestDetailContext } from "../context/TestDetailContext";
 import { useTestRunsGridStore } from "../states";
 import { useTestRunsSearchStoreShallow } from "./states";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -36,14 +37,14 @@ function DateCell({ getValue }) {
   const value = getValue();
   if (!value) {
     return (
-      <Typography variant="body2" sx={{ fontSize: 13, color: "text.disabled" }}>
+      <Typography variant="body2" sx={{ fontSize: 12, color: "text.disabled" }}>
         —
       </Typography>
     );
   }
   try {
     return (
-      <Typography variant="body2" sx={{ fontSize: 13 }}>
+      <Typography variant="body2" sx={{ fontSize: 12 }}>
         {format(new Date(value), "yyyy-MM-dd HH:mm")}
       </Typography>
     );
@@ -55,7 +56,7 @@ function DateCell({ getValue }) {
 function DurationCell({ getValue }) {
   const v = getValue();
   return (
-    <Typography variant="body2" sx={{ fontSize: 13 }}>
+    <Typography variant="body2" sx={{ fontSize: 12 }}>
       {v ? formatDuration(v) : "—"}
     </Typography>
   );
@@ -64,7 +65,7 @@ function DurationCell({ getValue }) {
 function PercentCell({ getValue }) {
   const v = getValue();
   return (
-    <Typography variant="body2" sx={{ fontSize: 13 }}>
+    <Typography variant="body2" sx={{ fontSize: 12 }}>
       {v == null ? "—" : `${v}%`}
     </Typography>
   );
@@ -73,7 +74,7 @@ function PercentCell({ getValue }) {
 function NumberCell({ getValue }) {
   const v = getValue();
   return (
-    <Typography variant="body2" sx={{ fontSize: 13 }}>
+    <Typography variant="body2" sx={{ fontSize: 12 }}>
       {v ?? 0}
     </Typography>
   );
@@ -82,7 +83,7 @@ function NumberCell({ getValue }) {
 function TextCell({ getValue }) {
   const v = getValue();
   return (
-    <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+    <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
       {v || "—"}
     </Typography>
   );
@@ -92,7 +93,7 @@ function AgentDefinitionCell({ row }) {
   const { agent_definition: name, agent_version: version } = row.original;
   const label = name && version ? `${name} (${version})` : "—";
   return (
-    <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+    <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
       {label}
     </Typography>
   );
@@ -247,7 +248,7 @@ function buildColumns(agentType, simulationType) {
         cell: ({ getValue }) => {
           const v = getValue();
           return (
-            <Typography variant="body2" sx={{ fontSize: 13 }}>
+            <Typography variant="body2" sx={{ fontSize: 12 }}>
               {v ?? "—"}
             </Typography>
           );
@@ -461,7 +462,7 @@ const TestRunsGrid = ({ agentType, simulationType }) => {
         onRowClick={handleRowClick}
         getRowId={(row) => row.id}
         enableSelection
-        rowHeight={44}
+        rowHeight={ROW_HEIGHT.default}
         emptyMessage="No test runs to show"
       />
       <DataTablePagination

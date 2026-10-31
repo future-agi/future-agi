@@ -346,7 +346,7 @@ export default function CostTab({ run, env, envState, tasks, onOpenTask }) {
         },
     waived.length
       ? {
-          label: "Not measured",
+          label: "Couldn't measure",
           status: `${plural(waived.length, "scenario")} · waived, not charged`,
           amount: "0",
         }

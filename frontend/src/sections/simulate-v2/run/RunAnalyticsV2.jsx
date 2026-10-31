@@ -107,6 +107,7 @@ import { scenarioTitle } from "../_mock/scenarios";
 import { resolveEval } from "../_mock/evals";
 import { fmtMs as fmtDuration } from "../_mock/runTrace";
 import { judgeCreditsOf, judgesOf, usageOfTask } from "../_mock/pricing";
+import ClosableDialog from "../components/ClosableDialog";
 
 /* Credits as the run's Cost tab counts them; the agent's own model spend is
    dollars on the customer's key, never credits. */
@@ -414,7 +415,7 @@ const FILTER_TABS = [
       },
       {
         key: "Status",
-        values: ["Passed", "Flaky", "Failed", "Not measured"],
+        values: ["Passed", "Flaky", "Failed", "Couldn't measure"],
         test: (t, v) => OUTCOME_LABELS[outcomeOf(t)] === v,
       },
       {
@@ -6608,7 +6609,7 @@ DragGhost.propTypes = { label: PropTypes.node };
    the common "just fix the title" case. */
 function RenameWidgetDialog({ open, title, onClose, onChange, onSave }) {
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       maxWidth={false}
@@ -6662,7 +6663,7 @@ function RenameWidgetDialog({ open, title, onClose, onChange, onSave }) {
           </Button>
         </Stack>
       </Box>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 RenameWidgetDialog.propTypes = {

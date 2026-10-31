@@ -91,7 +91,7 @@ const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
           backgroundColor,
           padding: "0 12px",
           margin: 0,
-          fontSize: "13px",
+          fontSize: "12px",
           color,
         }}
       >
@@ -110,7 +110,7 @@ const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
           padding: "0 12px",
           height: "100%",
           overflow: "hidden",
-          fontSize: 13,
+          fontSize: 12,
           color: "text.primary",
         }}
       >
@@ -168,7 +168,7 @@ const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
         color,
         paddingInline: "12px",
         fontWeight: 500,
-        fontSize: "13px",
+        fontSize: "12px",
         height: "100%",
         display: "flex",
         alignItems: "center",

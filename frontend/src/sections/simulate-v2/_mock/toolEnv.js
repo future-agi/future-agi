@@ -41,6 +41,8 @@ export const TIERS = [
     word: "Recorded",
     short: "Replay",
     note: "A real response recorded once and played back. Deterministic, but can go stale.",
+    /* Recorded-tool replay is Later (clarified plan, 30 Oct). */
+    unavailable: "Recorded tool responses come later.",
   },
   {
     id: "stateful",
@@ -55,6 +57,7 @@ export const TIERS = [
     word: "Live",
     short: "Live",
     note: "The real tool. Not deterministic. Only for read-only tools, and only once you allow it for that tool.",
+    unavailable: "Live tools aren't available yet.",
   },
 ];
 export const tierOf = (id) => TIERS.find((t) => t.id === id) || TIERS[2];

@@ -27,6 +27,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { LoadingButton } from "@mui/lab";
 import { useCallLogsSearchStore } from "./states";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const LogDetailDrawerContent = ({
   logDetail,
@@ -239,7 +240,7 @@ const LogDetailDrawerContent = ({
             borderColor: "divider",
           }}
         >
-          <Tabs
+          <Tabs sx={{ boxShadow: "none" }}
             textColor="primary"
             value={tabValue}
             onChange={(e, value) => setTabValue(value)}
@@ -313,7 +314,7 @@ const LogDetailDrawerContent = ({
                 getRowId={({ data }) => data.key}
                 pagination={false}
                 suppressScrollOnNewData={true}
-                rowHeight={44}
+                rowHeight={ROW_HEIGHT.default}
                 domLayout="autoHeight"
                 rowData={filteredRows}
               />

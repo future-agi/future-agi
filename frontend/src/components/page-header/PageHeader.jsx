@@ -28,7 +28,7 @@ export default function PageHeader({ title, badge, description, info, actions, b
             <Typography
               component="h1"
               noWrap
-              sx={{ fontSize: 16, lineHeight: "24px", fontWeight: 600, color: "text.primary" }}
+              sx={{ fontSize: 15, lineHeight: "22px", fontWeight: 600, color: "text.primary" }}
             >
               {title}
             </Typography>

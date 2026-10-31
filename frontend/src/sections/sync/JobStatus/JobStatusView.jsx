@@ -70,7 +70,7 @@ const JobStatusView = () => {
         }}
       >
         <Tabs
-          sx={{ borderBottom: 1, borderColor: "divider" }}
+          sx={{ boxShadow: "none", borderBottom: 1, borderColor: "divider" }}
           value={selectedTab}
           onChange={handleChange}
           aria-label="basic tabs example"

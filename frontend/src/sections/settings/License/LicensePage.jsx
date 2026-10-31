@@ -1,17 +1,11 @@
+import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
 import PageHeader from "src/components/page-header";
 import PropTypes from "prop-types";
-import {
-  Box,
-  Typography,
-  Chip,
-  Stack,
-  CircularProgress,
-  Divider,
-} from "@mui/material";
+import { Box, Typography, Chip, Stack, Divider } from "@mui/material";
 import Section from "src/components/section";
-import Iconify from "src/components/iconify";
 import { useCapabilities } from "src/hooks/useCapabilities";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const LICENSE_STATE_COLOR = {
   active: "success",
@@ -60,7 +54,7 @@ export default function LicensePage() {
         alignItems="center"
         minHeight={360}
       >
-        <CircularProgress />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -78,24 +72,12 @@ export default function LicensePage() {
 
   if (!license) {
     return (
-      <Stack
-        alignItems="center"
-        justifyContent="center"
-        spacing={1}
-        minHeight={360}
-      >
-        <Iconify
-          icon="solar:document-text-linear"
-          width={48}
-          sx={{ color: "text.disabled" }}
-        />
-        <Typography variant="subtitle1" color="text.secondary">
-          No license found
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          No active license is configured on this instance.
-        </Typography>
-      </Stack>
+      <EmptyState
+        icon="solar:document-text-linear"
+        title="No license yet"
+        description="No active license is configured on this instance."
+        sx={{ pt: 6, pb: 6, minHeight: 360, justifyContent: "center" }}
+      />
     );
   }
 

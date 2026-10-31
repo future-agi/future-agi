@@ -329,7 +329,7 @@ export default function ClientSetupGuide({ config }) {
         <Tabs
           value={tab}
           onChange={(_, v) => setTab(v)}
-          sx={{
+          sx={{ boxShadow: "none",
             "& .MuiTab-root": {
               gap: 0.75,
             },

@@ -378,7 +378,7 @@ function AgentReadPanel({ agent, onCheck }) {
   const steps = [
     "Build its environment from what we read — simulated tools, seeded data, rules and scenarios. A few minutes.",
     "Run it once, to see where it fails.",
-    "Improve from what that run finds — up to 4 trials, proven on held-back scenarios.",
+    "Improve from what that run finds — up to 4 candidates, proven on held-back scenarios.",
   ];
   return (
     <Stack spacing={3} sx={{ mt: 2.5 }}>

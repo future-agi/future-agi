@@ -238,3 +238,28 @@ DisputeNotes.propTypes = {
   task: PropTypes.object.isRequired,
   score: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
 };
+
+/* world.md WO-1: why a trial whose sub-goals held still failed. */
+export function DuplicateWriteNote({ task, sx }) {
+  if (!task?.duplicateWrite) return null;
+  const { summary, times } = task.duplicateWrite;
+  return (
+    <Typography
+      role="alert"
+      sx={{
+        typography: "s2",
+        color: "status.danger.fg",
+        bgcolor: "status.danger.bg",
+        px: 1.5,
+        py: 1,
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: "status.danger.border",
+        ...sx,
+      }}
+    >
+      {`Failed: money written twice — ${summary} went through ${times} times. A retry has to check whether the first one landed.`}
+    </Typography>
+  );
+}
+DuplicateWriteNote.propTypes = { task: PropTypes.object, sx: PropTypes.object };

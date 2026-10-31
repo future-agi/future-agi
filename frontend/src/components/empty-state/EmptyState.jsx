@@ -241,7 +241,7 @@ export default function EmptyState({
           <Typography
             component="h2"
             sx={{
-              fontSize: compact ? 13 : 14,
+              fontSize: 13,
               lineHeight: "20px",
               fontWeight: 600,
               color: "text.primary",
@@ -251,7 +251,7 @@ export default function EmptyState({
           </Typography>
           {description && (
             <Typography
-              sx={{ fontSize: 13, lineHeight: "20px", color: "text.tertiary" }}
+              sx={{ fontSize: 12, lineHeight: "18px", color: "text.tertiary" }}
             >
               {description}
             </Typography>

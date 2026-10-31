@@ -67,7 +67,7 @@ export default function ReviewChangesFirstDrawer({
               Review the changes before they run
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {`${candidates.length} change${candidates.length === 1 ? "" : "s"} written from the failing cases. None is tested yet. Keep, edit or drop each; it then tries up to ${maxTrials} trials made from the ones you keep.`}
+              {`${candidates.length} change${candidates.length === 1 ? "" : "s"} written from the failing cases. None is tested yet. Keep, edit or drop each; it then tries up to ${maxTrials} candidates made from the ones you keep.`}
             </Typography>
           </Box>
           <IconButton size="small" aria-label="Close" onClick={onClose}>

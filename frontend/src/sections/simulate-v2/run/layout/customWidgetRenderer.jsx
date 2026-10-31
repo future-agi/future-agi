@@ -176,7 +176,7 @@ export function groupKey(row, groupBy) {
         return row.status === "passed" ? "Successful" : "Unsuccessful";
       const o = outcomeOf(row);
       return o === "unmeasured"
-        ? "Not measured"
+        ? "Couldn't measure"
         : o === "passed"
           ? "Successful"
           : "Unsuccessful";

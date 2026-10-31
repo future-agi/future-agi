@@ -5,14 +5,13 @@ import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import SideDrawer from "../components/SideDrawer";
 import TemplateBuildPanel from "./TemplateBuildPanel";
-import WorldPreview, { SampleRecipe } from "./WorldPreview";
+import WorldPreview from "./WorldPreview";
 import { QuietTag } from "./LandingBits";
 import { READINESS, adoptBlockOf, catalogueById } from "../_mock/catalogue";
 
 /*
   A prebuilt world, opened from its card (catalogue.md): what it is first —
-  the task package — then its sample agent, apart from the world, then Try
-  it now or Use it with your agent. A task that can't be adopted (Coming
+  the task package — then Use it with your agent. A task that can't be adopted (Coming
   soon, Withdrawn) says why and can't be started; a retired release can
   still be used, with a notice.
 */
@@ -63,7 +62,7 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
               >
                 {entry
                   ? `${entry.id} · ${entry.task} · release ${entry.release.version}`
-                  : "Try it now with its sample agent, or use it with one of your agents."}
+                  : "Use it with one of your agents."}
               </Typography>
             </Box>
             <IconButton
@@ -130,6 +129,7 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
             value={tab}
             onChange={(_, v) => setTab(v)}
             sx={{
+              boxShadow: "none",
               px: 2.5,
               borderBottom: "1px solid",
               borderColor: "divider",
@@ -137,13 +137,11 @@ export default function WorldDrawer({ world, onClose, onOpenWorld }) {
             }}
           >
             <Tab value="world" label="World" />
-            <Tab value="sample" label="Sample agent" />
-            <Tab value="start" label="Try or use" />
+            <Tab value="start" label="Use with your agent" />
           </CustomTabs>
 
           <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
             {tab === "world" && <WorldPreview world={world} />}
-            {tab === "sample" && <SampleRecipe world={world} />}
             {tab === "start" && (
               <TemplateBuildPanel
                 key={world.id}

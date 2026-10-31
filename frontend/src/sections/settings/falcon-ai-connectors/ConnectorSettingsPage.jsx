@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
@@ -380,50 +381,33 @@ export default function ConnectorSettingsPage() {
               onRefresh={() => refreshSelected(selected.id)}
             />
           ) : (
-            <Box
-              sx={{
-                flex: 1,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                px: 4,
-              }}
-            >
-              <Iconify
-                icon="solar:widget-linear"
-                width={48}
-                sx={{ color: "text.disabled", mb: 2 }}
-              />
-              <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 0.5 }}>
-                {connectors.length === 0
-                  ? "No connectors configured"
-                  : "Select a connector"}
-              </Typography>
-              <Typography
-                sx={{
-                  fontSize: 13,
-                  color: "text.secondary",
-                  textAlign: "center",
-                  maxWidth: 320,
-                }}
-              >
-                {connectors.length === 0
+            <EmptyState
+              icon="solar:widget-linear"
+              title={
+                connectors.length === 0
+                  ? "No connectors yet"
+                  : "Select a connector"
+              }
+              description={
+                connectors.length === 0
                   ? "Add an external MCP server to give Falcon AI access to additional tools."
-                  : "Choose a connector from the list to view its details and tools."}
-              </Typography>
-              {connectors.length === 0 && (
-                <Button
-                  type="button"
-                  variant="outlined"
-                  startIcon={<Iconify icon="solar:add-linear" width={16} />}
-                  onClick={handleNew}
-                  sx={{ mt: 2 }}
-                >
-                  Add your first connector
-                </Button>
-              )}
-            </Box>
+                  : "Choose a connector from the list to view its details and tools."
+              }
+              action={
+                connectors.length === 0 ? (
+                  <Button
+                    type="button"
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    onClick={handleNew}
+                  >
+                    Add connector
+                  </Button>
+                ) : undefined
+              }
+              sx={{ pt: 6, pb: 6, justifyContent: "center" }}
+            />
           )}
         </Box>
       </Box>
@@ -779,17 +763,12 @@ function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
           trailing="switch"
         />
       ) : tools.length === 0 ? (
-        <Box sx={{ textAlign: "center", py: 4 }}>
-          <Iconify
-            icon="solar:toolbox-linear"
-            width={36}
-            sx={{ color: "text.disabled", mb: 1 }}
-          />
-          <Typography sx={{ fontSize: 13, color: "text.disabled" }}>
-            No tools discovered yet. Click &ldquo;Discover Tools&rdquo; or
-            &ldquo;Re-authenticate&rdquo; to fetch available tools.
-          </Typography>
-        </Box>
+        <EmptyState
+          icon="solar:toolbox-linear"
+          title="No tools yet"
+          description="Click Discover Tools or Re-authenticate to fetch available tools."
+          sx={{ pt: 6, pb: 6 }}
+        />
       ) : (
         <Box
           sx={{

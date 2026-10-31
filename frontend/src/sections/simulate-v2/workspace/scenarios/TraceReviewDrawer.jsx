@@ -138,13 +138,22 @@ export default function TraceReviewDrawer({
         >
           <Box flex={1} minWidth={0}>
             <Typography sx={{ typography: "m3", fontWeight: 600 }}>
-              Review drafts from production traces
+              Review imported drafts
             </Typography>
             <Typography
               noWrap
               sx={{ typography: "s3", color: "text.tertiary" }}
             >
-              {`${(info.ids || []).join(", ")} · project ${info.project || "—"} · ${info.range || ""} · goal: ${info.goal || "—"}`}
+              {[
+                (info.ids || []).join(", "),
+                !info.sourceKind || info.sourceKind === "observe"
+                  ? `project ${info.project || "—"}`
+                  : null,
+                info.range || null,
+                `goal: ${info.goal || "—"}`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </Typography>
           </Box>
           <IconButton size="small" aria-label="Close" onClick={onClose}>
@@ -258,7 +267,20 @@ export default function TraceReviewDrawer({
                         <Box component="span" sx={{ fontFamily: MONO, mr: 1 }}>
                           {s.traceId}
                         </Box>
-                        {`agent ${s.agentVersion} · ${s.outcome === "failed" ? "failed" : "passed"} · transcript${s.evidence.tools ? " · tool calls" : ""}${s.evidence.startingState ? " · starting state" : ""}`}
+                        {[
+                          s.sourceName && s.sourceKind ? s.sourceName : null,
+                          s.agentVersion ? `agent ${s.agentVersion}` : null,
+                          s.outcome === "failed"
+                            ? "failed"
+                            : s.outcome === "passed"
+                              ? "passed"
+                              : null,
+                          s.evidence.transcript ? "transcript" : null,
+                          s.evidence.tools ? "tool calls" : null,
+                          s.evidence.startingState ? "starting state" : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                         {!s.evidence.startingState && (
                           <Box
                             component="span"

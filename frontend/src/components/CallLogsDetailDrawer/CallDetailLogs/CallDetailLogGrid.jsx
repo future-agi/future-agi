@@ -14,6 +14,7 @@ import {
   useCallLogsSearchStore,
   useCallLogsSearchStoreShallow,
 } from "./states";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 // Custom overlay component for errors
 const CustomErrorOverlay = () => (
@@ -234,7 +235,7 @@ const CallDetailLogGrid = forwardRef(
           getRowId={({ data }) => data.id}
           pagination={false}
           suppressScrollOnNewData={true}
-          rowHeight={44}
+          rowHeight={ROW_HEIGHT.twoLine}
           onCellClicked={(params) => {
             setLogDetailDrawerOpen({
               data: params.data,

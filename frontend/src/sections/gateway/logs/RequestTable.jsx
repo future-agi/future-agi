@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
@@ -392,20 +393,12 @@ const RequestTable = ({ filters, setFilter, setFilters, onSelectLog }) => {
             {!isLoading && !error && results.length === 0 && (
               <TableRow>
                 <TableCell colSpan={COLUMNS.length}>
-                  <Stack alignItems="center" spacing={1.5} py={6}>
-                    <Iconify
-                      icon="solar:magnifier-close-linear"
-                      width={48}
-                      sx={{ color: "text.disabled" }}
-                    />
-                    <Typography variant="h6" color="text.secondary">
-                      No requests found
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Try adjusting your filters or check that your gateway is
-                      forwarding logs.
-                    </Typography>
-                  </Stack>
+                  <EmptyState
+                    icon="solar:magnifier-close-linear"
+                    title="No requests found"
+                    description="Try adjusting your filters or check that your gateway is forwarding logs."
+                    sx={{ pt: 6, pb: 6 }}
+                  />
                 </TableCell>
               </TableRow>
             )}

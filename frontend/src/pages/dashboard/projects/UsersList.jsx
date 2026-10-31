@@ -103,7 +103,7 @@ const UserList = () => {
           <Box display="flex" flexDirection="column" width="100%">
             <PageHeader
               title="Users"
-              description="All users across your projects"
+              description="See each user's sessions, cost and eval pass rate across your projects."
               sx={{ mb: 0 }}
             />
             <Divider sx={{ mt: 1.5, borderColor: "divider" }} />

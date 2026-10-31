@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import PageHeader from "src/components/page-header";
 import { Helmet } from "react-helmet-async";
 import Typography from "@mui/material/Typography";
-import { Box, useTheme, Skeleton, CircularProgress } from "@mui/material";
+import { Box, useTheme, Skeleton } from "@mui/material";
 import axios, { endpoints } from "src/utils/axios";
 import Tooltip from "@mui/material/Tooltip";
 import ProfileInfoModal from "./ProfileInfoModal";
@@ -16,6 +16,7 @@ import { LoadingButton } from "@mui/lab";
 import TotpSection from "src/sections/settings/Security/TotpSection";
 import PasskeySection from "src/sections/settings/Security/PasskeySection";
 import RecoveryCodesSection from "src/sections/settings/Security/RecoveryCodesSection";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const ProfileSettings = () => {
   const theme = useTheme();
@@ -380,7 +381,7 @@ const ProfileSettings = () => {
                 height: "100px",
               }}
             >
-              <CircularProgress size={24} />
+              <ContentSkeleton variant="panel" />
             </Box>
           ) : (
             <Box

@@ -1,11 +1,12 @@
 import PropTypes from "prop-types";
 import { useSnackbar } from "notistack";
-import { Box, Button, Dialog, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { snapshotRollbackPlan } from "../_mock/rlContract";
 import { plural } from "../_mock/nudgeEffects";
 import { envRollbackCli } from "../_mock/envCopy";
 import CopyCommandButton from "../components/CopyCommandButton";
+import ClosableDialog from "../components/ClosableDialog";
 
 /**
  * Roll back an environment to an older version — the whole of it: world and
@@ -50,7 +51,7 @@ export default function RollbackDialog({
     : [plan.error];
 
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       maxWidth={false}
@@ -120,7 +121,7 @@ export default function RollbackDialog({
           {`Roll back to ${targetLabel}`}
         </Button>
       </Stack>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 

@@ -1,4 +1,4 @@
-import { Box, CircularProgress } from "@mui/material";
+import { Box } from "@mui/material";
 import React, {
   useCallback,
   useEffect,
@@ -33,6 +33,7 @@ import { useParams, useSearchParams, Navigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import useExecutionSync from "../hooks/useExecutionSync";
 import useCanEditAgent from "../hooks/useCanEditAgent";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const SELECTION_PANEL_WIDTH = "230px";
 
@@ -222,7 +223,7 @@ export default function AgentBuilder() {
             height: "100%",
           }}
         >
-          <CircularProgress size={32} />
+          <ContentSkeleton variant="panel" />
         </Box>
       );
     }

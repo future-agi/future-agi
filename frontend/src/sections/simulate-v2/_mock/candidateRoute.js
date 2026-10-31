@@ -29,8 +29,18 @@
 */
 import { PROVIDER_LABELS, definitionOf, sourceKindOf } from "./agentRegistry";
 
-const TEST_COPY = { vapi: "a test copy", retell: "a draft version", elevenlabs: "a branch", bland: "a branch" };
-const SHIPS_AS = { vapi: "a Vapi copy for you to swap in", retell: "an unpublished Retell version", elevenlabs: "an ElevenLabs branch", bland: "a Bland branch" };
+const TEST_COPY = {
+  vapi: "a test copy",
+  retell: "a draft version",
+  elevenlabs: "a branch",
+  bland: "a branch",
+};
+const SHIPS_AS = {
+  vapi: "a Vapi copy for you to swap in",
+  retell: "an unpublished Retell version",
+  elevenlabs: "an ElevenLabs branch",
+  bland: "a Bland branch",
+};
 
 /** { id, submits, tested, ships, tier } for the agent. */
 export const candidateRouteOf = (agent) => {
@@ -39,25 +49,31 @@ export const candidateRouteOf = (agent) => {
   const v = agent?.values || {};
   if (kind === "framework" && v.runLocation === "sdk" && v.localSdk) {
     return {
-      id: "local", tier: "local",
+      id: "local",
+      tier: "local",
       submits: "the commit it's on, plus a fingerprint of uncommitted changes",
-      tested: "Our SDK runs it on your machine against the same scenarios; we score it.",
+      tested:
+        "Our SDK runs it on your machine against the same scenarios; we score it.",
       ships: "a pull request from your machine",
     };
   }
   if (kind === "repo" || (kind === "framework" && def.repoUrl)) {
     return {
-      id: "commit", tier: "future-agi",
+      id: "commit",
+      tier: "future-agi",
       submits: "a commit it pushed to a branch — or its draft PR's head commit",
-      tested: "We build that commit into a sealed snapshot and run it next to today's version on the same scenarios.",
+      tested:
+        "We build that commit into a sealed snapshot and run it next to today's version on the same scenarios.",
       ships: "its pull request, carrying our proof",
     };
   }
   if (kind === "upload") {
     return {
-      id: "archive", tier: "future-agi",
+      id: "archive",
+      tier: "future-agi",
       submits: "an archive of the patched code",
-      tested: "We store it as a snapshot and run it next to today's version on the same scenarios.",
+      tested:
+        "We store it as a snapshot and run it next to today's version on the same scenarios.",
       ships: "a patch for you to upload",
     };
   }
@@ -65,7 +81,8 @@ export const candidateRouteOf = (agent) => {
     const label = PROVIDER_LABELS[v.provider] || "the platform";
     return {
       /* A live assistant isn't ours to control; a sealed imported copy is. */
-      id: "settings", tier: v.importedCopy ? "future-agi" : "deployed",
+      id: "settings",
+      tier: v.importedCopy ? "future-agi" : "deployed",
       submits: `a settings patch — the ${label} settings the change policy allows`,
       tested: `We apply it to ${TEST_COPY[v.provider]} in your ${label} account — never the live assistant — and run it next to the live settings.`,
       ships: SHIPS_AS[v.provider],
@@ -73,16 +90,20 @@ export const candidateRouteOf = (agent) => {
   }
   if (kind === "builtin") {
     return {
-      id: "version", tier: "future-agi",
+      id: "version",
+      tier: "future-agi",
       submits: "a draft prompt or agent version",
-      tested: "We save it as a draft — never active — and run it next to the active version.",
+      tested:
+        "We save it as a draft — never active — and run it next to the active version.",
       ships: "a draft version a workspace admin activates",
     };
   }
   return {
-    id: "deployed", tier: "deployed",
+    id: "deployed",
+    tier: "deployed",
     submits: "the address or version it deployed",
-    tested: "We run our scenarios against it. We can't see what runs there, so the proof says Deployed by you.",
+    tested:
+      "We run our scenarios against it. We can't see what runs there, so the proof says Deployed by you.",
     ships: "your own deploy",
   };
 };
@@ -93,22 +114,48 @@ export const submitStepOf = (agent) => {
   /* Every route goes through the same MCP tool — our MCP server or the
      Claude Code plugin — never a CLI of ours. */
   const how = {
-    commit: "Push a branch, then call the `submit_candidate` tool with the commit.",
-    archive: "Call the `submit_candidate` tool with an archive of the patched code.",
-    settings: "Call the `submit_candidate` tool with the settings you changed, as a patch. Don't edit the live assistant — we apply your patch to a test copy.",
-    version: "Call the `submit_candidate` tool with the new prompt or agent definition. It's saved as a draft, never made active.",
-    deployed: "Deploy your change, then call the `submit_candidate` tool with its address or version.",
-    local: "Call the `submit_candidate` tool from your working copy with the commit you're on.",
+    commit:
+      "Push a branch, then call the `submit_candidate` tool with the commit.",
+    archive:
+      "Call the `submit_candidate` tool with an archive of the patched code.",
+    settings:
+      "Call the `submit_candidate` tool with the settings you changed, as a patch. Don't edit the live assistant — we apply your patch to a test copy.",
+    version:
+      "Call the `submit_candidate` tool with the new prompt or agent definition. It's saved as a draft, never made active.",
+    deployed:
+      "Deploy your change, then call the `submit_candidate` tool with its address or version.",
+    local:
+      "Call the `submit_candidate` tool from your working copy with the commit you're on.",
   }[r.id];
   return `${how} (The tool comes with the Future AGI MCP server and Claude Code plugin.) ${r.tested} Future AGI computes the verdict — read it with \`get_verdict\`.`;
 };
 
 /** The same, for the three ways listed on the Coding agents page. */
 export const CANDIDATE_ROUTES = [
-  { source: "Code in a repository", submits: "A commit on a branch, or its draft PR", tested: "Built into a sealed snapshot, run next to today's version" },
-  { source: "Uploaded code", submits: "An archive of the patched code", tested: "Stored as a snapshot, run next to today's version" },
-  { source: "Vapi, Retell and other hosted platforms", submits: "A settings patch, through submit_candidate", tested: "Applied to a test copy or draft version in your account — never the live assistant" },
-  { source: "Built in Future AGI", submits: "A draft prompt or agent version", tested: "Saved as a draft, never active, run next to the active version" },
-  { source: "Local code through our SDK", submits: "The commit it's on, plus a fingerprint of uncommitted changes", tested: "Our SDK runs it on your machine against the same scenarios; we score it — the proof says Run on your machine" },
-  { source: "Endpoint or phone number", submits: "The address or version it deployed", tested: "Our scenarios against it — the proof says Deployed by you" },
+  {
+    source: "Code in a repository",
+    submits: "A commit on a branch, or its draft PR",
+    tested: "Built into a sealed snapshot, run next to today's version",
+  },
+  {
+    source: "Uploaded code",
+    submits: "An archive of the patched code",
+    tested: "Stored as a snapshot, run next to today's version",
+  },
+  {
+    source: "Vapi, Retell and other hosted platforms",
+    submits: "A settings patch, through submit_candidate",
+    tested:
+      "Applied to a test copy or draft version in your account — never the live assistant",
+  },
+  {
+    source: "Built in Future AGI",
+    submits: "A draft prompt or agent version",
+    tested: "Saved as a draft, never active, run next to the active version",
+  },
+  {
+    source: "Endpoint or phone number",
+    submits: "The address or version it deployed",
+    tested: "Our scenarios against it — the proof says Deployed by you",
+  },
 ];

@@ -20,6 +20,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { format, formatDistanceToNow, differenceInSeconds } from "date-fns";
 import { enrichErrorGroups } from "./classifyTaskError";
 import { readEvalTaskLogs } from "./task_log_read";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // ── Stat Card ──
 
@@ -566,7 +567,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           minHeight: 200,
         }}
       >
-        <CircularProgress size={32} />
+        <ContentSkeleton variant="rows" />
       </Box>
     );
   }

@@ -1864,6 +1864,9 @@ export const useQueueItemsForSource = (sources = [], options = {}) => {
             })),
           ),
         },
+        // A slow server shouldn't leave the annotate panel loading forever:
+        // give up after 15 s so the panel can offer a retry.
+        timeout: 15000,
       }),
     select: (d) =>
       selectContractedList(d, {
@@ -1872,6 +1875,13 @@ export const useQueueItemsForSource = (sources = [], options = {}) => {
         label: "annotation-queues/for-source",
       }),
     enabled: validSources.length > 0,
+    // A slow or failing server (timeout, 5xx) won't get faster on retry;
+    // show the panel's Retry state now instead of waiting through retries.
+    // (The app's axios rejects with { statusCode, message }.)
+    retry: (count, error) =>
+      !(error?.statusCode >= 500) &&
+      !/timeout/i.test(error?.message || "") &&
+      count < 2,
     staleTime: 1000 * 30,
     ...options,
   });

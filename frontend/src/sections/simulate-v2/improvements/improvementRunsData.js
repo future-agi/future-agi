@@ -15,7 +15,7 @@ export const trialRowsFor = (env, envState, record, candidates = []) => {
     return {
       runId: `${record.id}-t${t.n}`,
       n: t.n,
-      name: `Trial ${t.n}`,
+      name: `Candidate ${t.n}`,
       tried: triedLabelOf(t, r.trials),
       /* A retry that learned from the last run: what it read and what it adds. */
       feedback: t.feedback || null,
@@ -54,8 +54,21 @@ export const chartRunOf = (row, record) => {
     finishedAt: row.createdAt,
     repeats: 1,
     scores: {},
-    tasks: Array.from({ length: total }, (_, k) => ({ id: ids[k] || `s${k}`, scenarioId: ids[k] || `s${k}`, status: k < passed ? "passed" : "failed" })),
+    tasks: Array.from({ length: total }, (_, k) => ({
+      id: ids[k] || `s${k}`,
+      scenarioId: ids[k] || `s${k}`,
+      status: k < passed ? "passed" : "failed",
+    })),
     /* Its own score, as the table shows it — not re-counted off rounded tasks. */
-    stats: { measured: total, scenarioPassed: passed, scenarioRate: row.score, callRate: row.score, calls: total, flaky: 0, failed: total - passed, tookMs: null },
+    stats: {
+      measured: total,
+      scenarioPassed: passed,
+      scenarioRate: row.score,
+      callRate: row.score,
+      calls: total,
+      flaky: 0,
+      failed: total - passed,
+      tookMs: null,
+    },
   };
 };

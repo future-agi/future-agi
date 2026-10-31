@@ -51,7 +51,7 @@ const LeftSection = () => {
         <List>
           {[
             {
-              icon: <SvgColor src="/assets/icons/auth/ic_bulb_brain.svg" />,
+              icon: <SvgColor width={24} src="/assets/icons/auth/ic_bulb_brain.svg" />,
               primary: "Exponentially better than Manual process:",
               secondary:
                 "Critique AI agent saves 95% of human effort, time and cost",
@@ -62,7 +62,7 @@ const LeftSection = () => {
               secondary: "Open source solutions are not working for most teams",
             },
             {
-              icon: <SvgColor src="/assets/icons/auth/ic_scale_up.svg" />,
+              icon: <SvgColor width={24} src="/assets/icons/auth/ic_scale_up.svg" />,
               primary: "Highly Scalable for enterprise grade apps:",
               secondary:
                 "Can handle billions of inferences instead of just a sample",

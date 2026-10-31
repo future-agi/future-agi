@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
+import EmptyState from "src/components/empty-state";
 import React from "react";
-import { Stack, Typography, Button, Chip, Alert, Box } from "@mui/material";
+import { Stack, Typography, Button, Chip, Alert } from "@mui/material";
 import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
@@ -44,26 +45,24 @@ const ProviderConfigTab = ({ providers: _providers, onChange: _onChange }) => {
       </Alert>
 
       {configuredProviders.length === 0 ? (
-        <Section variant="panel">
-          <Box sx={{ textAlign: "center" }}>
-            <Iconify
-              icon="solar:server-bold-duotone"
-              width={40}
-              sx={{ color: "text.disabled", mb: 1 }}
-            />
-            <Typography variant="body2" color="text.secondary">
-              No providers configured yet.
-            </Typography>
-            <Button
-              size="small"
-              sx={{ mt: 1 }}
-              component={RouterLink}
-              href={paths.dashboard.gateway.providers}
-              startIcon={<Iconify icon="solar:add-circle-bold" width={20} />}
-            >
-              Add Provider
-            </Button>
-          </Box>
+        <Section variant="panel" sx={{ p: 0 }}>
+          <EmptyState
+            icon="solar:server-linear"
+            title="No providers yet"
+            description="Add a provider to configure per-org overrides."
+            action={
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                component={RouterLink}
+                href={paths.dashboard.gateway.providers}
+              >
+                Add provider
+              </Button>
+            }
+            sx={{ pt: 6, pb: 6 }}
+          />
         </Section>
       ) : (
         configuredProviders.map((p) => {

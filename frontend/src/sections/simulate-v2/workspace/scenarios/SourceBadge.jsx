@@ -31,6 +31,8 @@ const SHORT = {
   "Added by a rebuild": "Rebuild",
   "From persona library": "Personas",
   "From production trace": "Production",
+  "From an uploaded transcript": "Transcript",
+  "From a failed simulation": "Simulation",
   "From chat": "Chat",
 };
 export default function SourceBadge({

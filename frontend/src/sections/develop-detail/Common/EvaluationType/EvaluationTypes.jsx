@@ -147,7 +147,7 @@ const EvaluationTypes = ({
             borderColor: "divider",
           }}
         >
-          <Tabs
+          <Tabs sx={{ boxShadow: "none" }}
             value={selectedCategory}
             onChange={(e, value) => setSelectedCategory(value)}
             TabScrollButtonProps={{

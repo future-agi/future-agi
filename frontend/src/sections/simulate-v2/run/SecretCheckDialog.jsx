@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
-import { Box, Button, Dialog, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import ClosableDialog from "../components/ClosableDialog";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -21,7 +22,7 @@ export default function SecretCheckDialog({
   if (!open || !failed.length) return null;
   const n = failed.length;
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       maxWidth={false}
@@ -121,7 +122,7 @@ export default function SecretCheckDialog({
           </Button>
         )}
       </Stack>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 

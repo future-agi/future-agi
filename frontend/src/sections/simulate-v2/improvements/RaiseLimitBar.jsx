@@ -104,7 +104,7 @@ export default function RaiseLimitBar({
   /* What Continue keeps and what it starts over — before it acts. */
   const resumeNote = before
     ? "Continue runs the whole search. Reproduce already ran, so it isn't repeated."
-    : `Continue keeps the ${s.trials} trial${s.trials === 1 ? "" : "s"} it finished — not repeated or charged again — and runs the other ${Math.max(0, (s.of || 0) - s.trials)}. A trial that was partway starts over from its seed.`;
+    : `Continue keeps the ${s.trials} candidate${s.trials === 1 ? "" : "s"} it finished — not repeated or charged again — and runs the other ${Math.max(0, (s.of || 0) - s.trials)}. A candidate that was partway starts over from its seed.`;
   const controls = steps.length > 0 && (
     <Box>
       <Stack

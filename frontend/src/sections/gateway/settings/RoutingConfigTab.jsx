@@ -71,7 +71,7 @@ const ConfigSection = ({
         </Stack>
       </Box>
       <Collapse in={open}>
-        <Divider />
+        <Divider sx={{ my: 2 }} />
         <Box onClick={(e) => e.stopPropagation()}>{children}</Box>
       </Collapse>
     </Section>

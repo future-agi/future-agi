@@ -7,6 +7,7 @@
  * - Daily time-series charts + workspace drill-down
  */
 
+import EmptyState from "src/components/empty-state";
 import { useState, useMemo, useCallback } from "react";
 import PropTypes from "prop-types";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1018,18 +1019,13 @@ export default function UsageSummaryV2() {
 
       {/* Empty state */}
       {(!overview?.dimensions || overview.dimensions.length === 0) && (
-        <Section variant="panel" sx={{ p: 5, textAlign: "center" }}>
-          <Iconify
+        <Section variant="panel" sx={{ p: 0 }}>
+          <EmptyState
             icon="solar:pie-chart-2-linear"
-            width={56}
-            sx={{ color: "text.disabled", mb: 1.5 }}
+            title="No usage data yet"
+            description="Start using FutureAGI features and your usage will appear here."
+            sx={{ pt: 6, pb: 6 }}
           />
-          <Typography variant="h6" color="text.secondary" gutterBottom>
-            No usage data yet
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Start using FutureAGI features and your usage will appear here.
-          </Typography>
         </Section>
       )}
 

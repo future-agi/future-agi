@@ -167,7 +167,7 @@ describe("FallbacksSection", () => {
       hookReturn.routing = { ...DEFAULT_ROUTING, model_fallbacks: {} };
       render(<FallbacksSection />);
       expect(
-        screen.getByText(/No fallback chains configured/),
+        screen.getByText(/No fallback chains yet/),
       ).toBeInTheDocument();
     });
 

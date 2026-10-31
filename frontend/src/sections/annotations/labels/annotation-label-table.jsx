@@ -19,6 +19,7 @@ import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import "src/styles/clean-data-table.css";
 import { getAnnotationLabelUsageCount } from "./annotation-label-usage";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const SkeletonCell = () => (
   <Box sx={{ display: "flex", alignItems: "center", height: "100%", px: 1 }}>
@@ -299,7 +300,7 @@ export default function AnnotationLabelTable({
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             context={gridContext}
-            rowHeight={36}
+            rowHeight={ROW_HEIGHT.default}
             headerHeight={32}
             pagination={false}
             animateRows={false}

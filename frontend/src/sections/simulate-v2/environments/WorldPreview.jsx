@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import { estimateRunPlan, rangeLabel } from "../_mock/pricing";
 import { resolveEval } from "../_mock/evals";
-import { sampleAgentOf, worldPacksOf } from "./worldSource";
+import { worldPacksOf } from "./worldSource";
 
 /* A spec-sheet section: a title, then rows or text. */
 function Section({ title, aside, children }) {
@@ -179,7 +179,9 @@ export default function WorldPreview({ world }) {
               const [k, ...v] = a.split(" — ");
               return v.length ? { k, v: v.join(" — ") } : { k: a, v: "" };
             })}
-            labelWidth={entry.actors.every((a) => a.includes(" — ")) ? 150 : 520}
+            labelWidth={
+              entry.actors.every((a) => a.includes(" — ")) ? 150 : 520
+            }
           />
         </Section>
       )}
@@ -209,72 +211,3 @@ export default function WorldPreview({ world }) {
   );
 }
 WorldPreview.propTypes = { world: PropTypes.object.isRequired };
-
-/**
- * The sample agent's recipe, shown apart from the world (catalogue.md): its
- * model, prompt and tools, and what it's known to get wrong. A different
- * agent never changes the world or what counts as success.
- */
-export function SampleRecipe({ world }) {
-  const t = world.template;
-  const recipe = world.entry?.recipe || {
-    model: "gpt-4.1-mini",
-    limitations: [],
-  };
-  const sample = sampleAgentOf(t);
-  const prompt = [
-    `You are the ${t.name} agent. ${t.description}`,
-    "",
-    "Follow these rules exactly:",
-    ...(t.rules || []).map((r) => `- ${r}`),
-    "",
-    "Use the tools for every fact you state; never guess a record.",
-  ].join("\n");
-  return (
-    <Stack spacing={2.5}>
-      <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-        The agent this world was designed and proved with. It&apos;s shown apart
-        from the world: using your own agent never changes the world&apos;s
-        cases or what counts as success.
-      </Typography>
-      <Rows
-        rows={[
-          { k: "Agent", v: sample.name },
-          { k: "Model", v: recipe.model },
-          { k: "Tools", v: (t.tools || []).map((x) => x.name).join(", ") },
-        ]}
-        labelWidth={90}
-      />
-      <Section title="Prompt">
-        <Box
-          component="pre"
-          sx={{
-            m: 0,
-            p: 1.5,
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 1,
-            typography: "s2",
-            fontFamily: "monospace",
-            whiteSpace: "pre-wrap",
-            color: "text.secondary",
-          }}
-        >
-          {prompt}
-        </Box>
-      </Section>
-      {recipe.limitations.length > 0 && (
-        <Section
-          title="Known limitations"
-          aside="Its failures are shown, not hidden"
-        >
-          <Rows
-            rows={recipe.limitations.map((l, i) => ({ k: `${i + 1}`, v: l }))}
-            labelWidth={16}
-          />
-        </Section>
-      )}
-    </Stack>
-  );
-}
-SampleRecipe.propTypes = { world: PropTypes.object.isRequired };

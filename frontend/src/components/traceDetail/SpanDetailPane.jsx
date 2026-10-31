@@ -1933,7 +1933,7 @@ const SpanDetailPane = ({
         variant="scrollable"
         scrollButtons="auto"
         allowScrollButtonsMobile
-        sx={{
+        sx={{ boxShadow: "none",
           borderBottom: "1px solid",
           borderColor: "divider",
           "& .MuiTabs-flexContainer": { gap: 0 },

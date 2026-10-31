@@ -219,7 +219,7 @@ export const decideApprovalPatch = (
 });
 
 export const approvalCli = {
-  list: (runId) => `agent-learn approval list --run ${runId || "<run-id>"}`,
+  list: (runId) => `fi api approval list --run ${runId || "<run-id>"}`,
   decide: (id, decision = "approve") =>
-    `agent-learn approval decide ${id} --decision ${decision}`,
+    `fi api approval decide ${id} --decision ${decision}`,
 };

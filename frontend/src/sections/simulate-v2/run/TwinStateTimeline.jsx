@@ -10,7 +10,7 @@ import {
   Slider,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { twinById, twinTimelineFor } from "../_mock/twins";
+import { duplicateWritesOf, twinById, twinTimelineFor } from "../_mock/twins";
 import TwinLogo from "./../components/TwinLogo";
 
 /**
@@ -74,8 +74,33 @@ export default function TwinStateTimeline({ envState, task }) {
   const step = (delta) =>
     setTurn((prev) => Math.max(0, Math.min(totalTurns - 1, prev + delta)));
 
+  const duplicates = duplicateWritesOf(timeline);
+
   return (
     <Box sx={{ p: 2 }}>
+      {duplicates.length > 0 && (
+        <Box
+          role="alert"
+          sx={{
+            mb: 1.5,
+            px: 1.5,
+            py: 1,
+            borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "status.danger.border",
+            bgcolor: "status.danger.bg",
+          }}
+        >
+          {duplicates.map((list) => (
+            <Typography
+              key={`${list[0].service}-${list[0].kind}-${list[0].target}`}
+              sx={{ typography: "s2", color: "status.danger.fg" }}
+            >
+              {`Duplicate write — "${list[0].summary}" was committed ${list.length} times (turns ${list.map((e) => e.turn + 1).join(", ")}). A retry has to check whether the first one landed before committing again.`}
+            </Typography>
+          ))}
+        </Box>
+      )}
       {/*
         Scrubber row — big-enough tap targets on the step buttons,
         turn N/M readout in a monospace face so the digits don't wiggle,

@@ -200,6 +200,7 @@ export default function SourceDrawer({
           onChange={(_, v) => setTab(v)}
           variant="scrollable"
           sx={{
+            boxShadow: "none",
             px: 2.5,
             borderBottom: "1px solid",
             borderColor: "divider",

@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { Box, Button, Stack, Typography } from "@mui/material";
-import { allowedLine } from "../_mock/rlContract";
+import { allowedLine, unitOf } from "../_mock/rlContract";
 
 const MONO = "ui-monospace, Menlo, monospace";
 const TYPE_WORD = {
@@ -29,7 +29,7 @@ export default function ToolArgsGrid({
       sx={{
         display: "grid",
         gridTemplateColumns:
-          "minmax(140px, 260px) minmax(90px, 120px) 1fr auto",
+          "minmax(140px, 260px) minmax(90px, 170px) 1fr auto",
         columnGap: 1.5,
         rowGap,
         alignItems: "baseline",
@@ -80,7 +80,7 @@ function ArgCells({ arg, changedIn, onEdit }) {
         )}
       </Typography>
       <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-        {`${TYPE_WORD[arg.type] || arg.type}${arg.required ? "" : " · optional"}`}
+        {`${TYPE_WORD[arg.type] || arg.type}${unitOf(arg) ? ` · ${unitOf(arg)}` : ""}${arg.required ? "" : " · optional"}`}
       </Typography>
       <Stack
         direction="row"

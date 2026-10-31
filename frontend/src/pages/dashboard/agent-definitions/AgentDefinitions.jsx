@@ -27,6 +27,7 @@ import {
 import { camelCaseToTitleCase } from "src/utils/utils";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import PageHeader from "src/components/page-header";
+import { ROW_HEIGHT } from "src/theme/sizes";
 // ── Cell renderers (inlined, MUI-native) ──
 
 function AgentNameCell({ row }) {
@@ -86,7 +87,7 @@ function LanguagesCell({ getValue }) {
     .map((lang) => languageMap[lang] || lang);
   const remaining = value.length - maxVisible;
   return (
-    <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+    <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
       {visible.join(", ")}
       {remaining > 0 ? `, +${remaining}` : ""}
     </Typography>
@@ -166,7 +167,7 @@ function AgentDefinitions() {
         size: 140,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {getValue() ? camelCaseToTitleCase(getValue()) : "-"}
           </Typography>
         ),
@@ -180,7 +181,7 @@ function AgentDefinitions() {
         cell: ({ row, getValue }) => {
           const isChat = row.original.agent_type === AGENT_TYPES.CHAT;
           return (
-            <Typography variant="body2" sx={{ fontSize: 13 }}>
+            <Typography variant="body2" sx={{ fontSize: 12 }}>
               {isChat ? "NA" : getValue() || "-"}
             </Typography>
           );
@@ -201,7 +202,7 @@ function AgentDefinitions() {
         size: 100,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {getValue() ? `v${getValue()}` : "-"}
           </Typography>
         ),
@@ -273,7 +274,7 @@ function AgentDefinitions() {
                   >
                     <SvgColor
                       src="/assets/icons/agent/docs.svg"
-                      sx={{ height: 20, width: 20, mr: 1 }}
+                      sx={{ height: 16, width: 16, mr: 1 }}
                     />
                     <Typography typography="s1" fontWeight="fontWeightMedium">
                       View Docs
@@ -282,7 +283,7 @@ function AgentDefinitions() {
                   <Button
                     variant="contained"
                     color="primary"
-                    startIcon={<Iconify icon="solar:add-linear" width={20} />}
+                    startIcon={<Iconify icon="solar:add-linear" width={16} />}
                     disabled={
                       !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]
                     }
@@ -348,7 +349,7 @@ function AgentDefinitions() {
               onRowClick={handleRowClick}
               getRowId={(row) => row.id}
               enableSelection
-              rowHeight={44}
+              rowHeight={ROW_HEIGHT.default}
               emptyMessage="No agent definitions found"
             />
 

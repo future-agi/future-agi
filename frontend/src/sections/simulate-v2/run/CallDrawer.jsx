@@ -34,7 +34,12 @@ import ApprovalTimeline from "./ApprovalTimeline";
 import { approvalOf } from "../_mock/approvals";
 import { membersOf } from "../_mock/improvementPolicy";
 import { trialArtifactsOf } from "../_mock/trialEvidence";
-import { CheckSource, DisputeNotes, TrialArtifacts } from "./TrialEvidence";
+import {
+  CheckSource,
+  DisputeNotes,
+  DuplicateWriteNote,
+  TrialArtifacts,
+} from "./TrialEvidence";
 
 /**
  * One call, in full.
@@ -285,7 +290,11 @@ export default function CallDrawer({
           <Box
             sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider" }}
           >
-            <CustomTabs value={pane} onChange={(_, v) => setPane(v)}>
+            <CustomTabs
+              sx={{ boxShadow: "none" }}
+              value={pane}
+              onChange={(_, v) => setPane(v)}
+            >
               <Tab
                 value="transcript"
                 label={conversational ? "Transcript" : "Actions"}
@@ -294,7 +303,7 @@ export default function CallDrawer({
               <Tab value="graph" label="Graph" />
               <Tab value="trace" label="Trace" />
               {membersOf(envState?.agent).length > 1 && (
-                <Tab value="handoffs" label="Handoffs" />
+                <Tab value="handoffs" label="Participants" />
               )}
               {env && approvalOf({ env, envState, task }) && (
                 <Tab value="approvals" label="Approvals" />
@@ -604,6 +613,19 @@ export default function CallDrawer({
               />
             )}
 
+            {pane === "twin" && (
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  px: 2,
+                  pt: 1.5,
+                }}
+              >
+                This trial started from the environment&apos;s seed data — a
+                fresh copy, never another trial&apos;s end state.
+              </Typography>
+            )}
             {pane === "twin" && envState?.twinBacking && (
               <TwinStateTimeline envState={envState} task={task} />
             )}
@@ -791,10 +813,13 @@ export default function CallDrawer({
             </Stack>
           )}
 
+          <DuplicateWriteNote task={task} sx={{ mx: 2, mb: 1.5 }} />
+
           <Box
             sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider" }}
           >
             <CustomTabs
+              sx={{ boxShadow: "none" }}
               value={side}
               onChange={(_, v) => setSide(v)}
               variant="scrollable"

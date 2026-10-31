@@ -45,8 +45,9 @@ import {
   OBSERVE_LIST_PAGE_SIZE_OPTIONS,
 } from "src/config/runtime_limits";
 import { dispatchObservePageChanged } from "src/sections/projects/observeEvents";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
-const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };
+const CELL_HEIGHT_MAP = { Short: ROW_HEIGHT.default, Medium: 52, Large: 68, "Extra Large": 88 };
 
 // Padding matches CallLogsCellRenderer.jsx so custom-col cells align with
 // the rest of the row.
@@ -63,7 +64,7 @@ const CustomColCellRenderer = (params) => {
         height: "100%",
       }}
     >
-      <Typography variant="body2" sx={{ fontSize: 13 }} noWrap>
+      <Typography variant="body2" sx={{ fontSize: 12 }} noWrap>
         {String(display)}
       </Typography>
     </Box>

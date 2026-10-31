@@ -44,7 +44,7 @@ const TAG_GAP_PX = 4; // matches sx gap: 0.5 → 4px
 const PLUS_CHIP_RESERVE_PX = 44; // rough reservation for the "+N" chip
 
 const TAG_TEXT_SX = {
-  fontSize: 13,
+  fontSize: 12,
   color: "text.secondary",
   whiteSpace: "nowrap",
 };
@@ -660,7 +660,7 @@ const EvalsListView = () => {
                     getInitials(name)
                   )}
                 </Avatar>
-                <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+                <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
                   {name}
                 </Typography>
               </Box>
@@ -678,7 +678,7 @@ const EvalsListView = () => {
           if (!val) return null;
           try {
             return (
-              <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
                 {formatDistanceToNow(new Date(val), { addSuffix: true })}
               </Typography>
             );
@@ -701,7 +701,7 @@ const EvalsListView = () => {
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontSize: "13px", fontVariantNumeric: "tabular-nums" }}
+              sx={{ fontSize: "12px", fontVariantNumeric: "tabular-nums" }}
             >
               {version}
             </Typography>
@@ -715,7 +715,7 @@ const EvalsListView = () => {
         size: 120,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+          <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
             {OUTPUT_TYPE_LABELS[getValue()] || getValue()}
           </Typography>
         ),
@@ -727,7 +727,7 @@ const EvalsListView = () => {
         size: 110,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+          <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
             {getValue() === "composite" ? "Composite" : "Single"}
           </Typography>
         ),

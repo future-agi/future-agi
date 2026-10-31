@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Button, CircularProgress, Stack } from "@mui/material";
+import { Box, Button, Stack } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { useParams } from "react-router";
@@ -25,6 +25,7 @@ import ChatLeftPanel from "./ChatLeftPanel";
 import ChatRightPanel from "./ChatRightPanel";
 import ChatCompareView from "./Compare/ChatCompareView";
 import { CHAT_IMAGINE_PROMPTS, CHAT_EXPORT_FIELDS } from "./constants";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Chat-specific peer of VoiceDetailDrawerV2 — content-only drawer body
 // (the header/width/fullscreen chrome is provided by TestDetailSideDrawer).
@@ -374,7 +375,7 @@ const ChatDetailDrawerV2 = ({
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={28} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : compareReplay ? (
           // Compare body owns the whole content area; back-to-chat

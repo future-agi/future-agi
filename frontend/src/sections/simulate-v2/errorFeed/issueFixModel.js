@@ -1215,7 +1215,7 @@ export const fixStatusOf = (
   if (ending.key === "failed")
     return { ...at, key: "no-fix", label: "Failed for infrastructure reasons" };
   if (ending.key === "no-fix")
-    return { ...at, key: "no-fix", label: "No safe improvement" };
+    return { ...at, key: "no-fix", label: "No improvement" };
   /* Stopped by a person: nothing was checked, so nothing to review. */
   if (ending.key === "stopped")
     return { ...at, key: "stopped", label: "Stopped" };

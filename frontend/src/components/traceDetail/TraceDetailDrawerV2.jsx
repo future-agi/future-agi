@@ -1,14 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
-import {
-  Box,
-  Button,
-  CircularProgress,
-  Drawer,
-  Menu,
-  MenuItem,
-  Typography,
-} from "@mui/material";
+import { Box, Button, Drawer, Menu, MenuItem, Typography } from "@mui/material";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
@@ -53,6 +45,7 @@ import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel"
 import ImagineTab from "src/components/imagine/ImagineTab";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import useImagineStore from "src/components/imagine/useImagineStore";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const PANEL_WIDTH = "60vw";
 
@@ -1144,7 +1137,7 @@ const TraceDetailDrawerV2 = ({
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={32} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : viewMode === "timeline" ? (
           /* ── Timeline layout: full-width timeline on top, detail panel on bottom ── */

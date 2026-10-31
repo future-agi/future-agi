@@ -362,8 +362,8 @@ const ModelContainer = ({
           >
             <SvgColor
               sx={{
-                height: 20,
-                width: 20,
+                height: 16,
+                width: 16,
                 color: "text.primary",
               }}
               src={"/assets/icons/ic_import.svg"}

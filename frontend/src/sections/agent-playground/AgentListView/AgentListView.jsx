@@ -146,7 +146,7 @@ export default function AgentListView({ embedded = false }) {
         size: 120,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {getValue()}
           </Typography>
         ),
@@ -158,7 +158,7 @@ export default function AgentListView({ embedded = false }) {
         meta: { flex: 1 },
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+          <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
             {getValue() || "-"}
           </Typography>
         ),
@@ -176,7 +176,7 @@ export default function AgentListView({ embedded = false }) {
               <Typography
                 variant="body2"
                 color="text.secondary"
-                sx={{ fontSize: 13 }}
+                sx={{ fontSize: 12 }}
               >
                 -
               </Typography>
@@ -220,7 +220,7 @@ export default function AgentListView({ embedded = false }) {
             );
           try {
             return (
-              <Typography variant="body2" sx={{ fontSize: 13 }}>
+              <Typography variant="body2" sx={{ fontSize: 12 }}>
                 {format(new Date(val), "dd-MM-yyyy, h:mm a")}
               </Typography>
             );
@@ -249,7 +249,7 @@ export default function AgentListView({ embedded = false }) {
             );
           try {
             return (
-              <Typography variant="body2" sx={{ fontSize: 13 }}>
+              <Typography variant="body2" sx={{ fontSize: 12 }}>
                 {format(new Date(val), "dd-MM-yyyy, h:mm a")}
               </Typography>
             );

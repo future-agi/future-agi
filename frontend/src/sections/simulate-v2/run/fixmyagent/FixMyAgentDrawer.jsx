@@ -107,7 +107,7 @@ export default function FixMyAgentDrawer({
   );
   /* A person's wording for a proposed change, before the search runs:
      { [proposalId]: ["line", …] } — it replaces the change's added lines,
-     here and in the search's pool, so the trials try that wording. */
+     here and in the search's pool, so the candidates try that wording. */
   const [edits, setEdits] = useState({});
   useEffect(() => {
     if (open) setEdits({});

@@ -1,5 +1,6 @@
-import { Box, CircularProgress, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import React from "react";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const FixMyAgentLoading = () => {
   return (
@@ -23,10 +24,7 @@ const FixMyAgentLoading = () => {
           backgroundColor: "action.hover",
         }}
       >
-        <CircularProgress
-          sx={{ width: "23px !important", height: "23px !important" }}
-          color="inherit"
-        />
+        <ContentSkeleton variant="panel" />
       </Box>
       <Box
         sx={{

@@ -1,4 +1,5 @@
 /* eslint-disable react/prop-types */
+import EmptyState from "src/components/empty-state";
 import React, { useState } from "react";
 import {
   Box,
@@ -202,7 +203,12 @@ const ExperimentDetailSection = ({ experimentId, onBack }) => {
       <Tabs
         value={activeTab}
         onChange={(_, val) => setActiveTab(val)}
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+        sx={{
+          boxShadow: "none",
+          mb: 3,
+          borderBottom: 1,
+          borderColor: "divider",
+        }}
       >
         {TAB_LABELS.map((label) => (
           <Tab key={label} label={label} />
@@ -388,19 +394,12 @@ const ResultsTab = ({ experimentId, experiment }) => {
 
   if (results.length === 0) {
     return (
-      <Box display="flex" flexDirection="column" alignItems="center" py={6}>
-        <Iconify
-          icon="solar:table-linear"
-          width={40}
-          sx={{ color: "text.disabled", mb: 1 }}
-        />
-        <Typography variant="body1" color="text.secondary">
-          No shadow results yet
-        </Typography>
-        <Typography variant="body2" color="text.secondary" mt={0.5}>
-          Results will appear here once the gateway starts mirroring traffic.
-        </Typography>
-      </Box>
+      <EmptyState
+        icon="solar:table-linear"
+        title="No shadow results yet"
+        description="Results will appear here once the gateway starts mirroring traffic."
+        sx={{ pt: 6, pb: 6 }}
+      />
     );
   }
 

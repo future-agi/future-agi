@@ -355,7 +355,7 @@ const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
               aria-label="session drawer tabs"
               textColor="primary"
               indicatorColor="primary"
-              sx={{
+              sx={{ boxShadow: "none",
                 "& .MuiTab-root": {
                   paddingX: 1.75,
                 },

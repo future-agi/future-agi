@@ -4,6 +4,7 @@ import PropTypes from "prop-types";
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 export default function WidgetDataTable({ config }) {
   const agTheme = useAgTheme();
@@ -55,7 +56,7 @@ export default function WidgetDataTable({ config }) {
         defaultColDef={defaultColDef}
         domLayout="normal"
         headerHeight={32}
-        rowHeight={30}
+        rowHeight={ROW_HEIGHT.default}
         suppressCellFocus
         animateRows={false}
       />

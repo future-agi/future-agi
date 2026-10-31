@@ -242,7 +242,7 @@ const AddNewMonitor = ({
                     value={tabValue}
                     onChange={handleTabChange}
                     textColor="primary"
-                    sx={{
+                    sx={{ boxShadow: "none",
                       "& .MuiTab-root": {
                         marginRight: theme.spacing(0) + "!important",
                       },

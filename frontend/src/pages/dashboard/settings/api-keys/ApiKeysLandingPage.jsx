@@ -127,7 +127,7 @@ const ApiKeysLandingPage = () => {
     <Box sx={{ height: "100%" }}>
       <PageHeader
         title="API Keys"
-        description="Your secret API keys are listed below. These keys are encrypted"
+        description="Create and manage API keys to send traces and call Future AGI from your code."
         sx={{ mb: 0 }}
       />
       <ListToolbar>
@@ -146,7 +146,7 @@ const ApiKeysLandingPage = () => {
           color="primary"
           startIcon={
             <Iconify
-              width={20}
+              width={16}
               icon="solar:add-linear"
               color="background.paper"
             />

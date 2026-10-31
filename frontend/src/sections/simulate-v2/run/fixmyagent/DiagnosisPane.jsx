@@ -764,6 +764,7 @@ export default function DiagnosisPane({
           }}
         >
           <Tabs
+            sx={{ boxShadow: "none" }}
             value={tab}
             onChange={(_, v) => setTab(v)}
             aria-label="Debug failures"
@@ -1562,7 +1563,7 @@ export default function DiagnosisPane({
           >
             {/*
               The primary path is an improvement run: it searches over the
-              diagnosis's changes, trying combinations as trials scored on
+              diagnosis's changes, trying combinations as candidates scored on
               the training scenarios. Hand-off stays as the quiet
               alternative for teams that would rather skip the search.
             */}

@@ -30,6 +30,7 @@ import { useGatewayContext } from "../context/useGatewayContext";
 import { useSessions, useCloseSession } from "./hooks/useSessions";
 import SessionDetailDrawer from "./SessionDetailDrawer";
 import { formatDateTime as formatDate } from "../utils/formatters";
+import EmptyState from "src/components/empty-state";
 
 const STATUS_FILTERS = [
   { value: "", label: "All" },
@@ -119,52 +120,53 @@ const SessionExplorerSection = () => {
         subtitle="Browse and manage active conversation sessions"
       />
 
-      <ListToolbar>
-        <TextField
-          placeholder="Search by session ID or name..."
-          size="small"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          sx={{ width: 280 }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Iconify icon="solar:magnifier-linear" width={16} />
-              </InputAdornment>
-            ),
-          }}
-        />
-        <ToggleButtonGroup
-          value={statusFilter}
-          exclusive
-          onChange={(_, val) => val !== null && setStatusFilter(val)}
-          size="small"
-        >
-          {STATUS_FILTERS.map((f) => (
-            <ToggleButton key={f.value} value={f.value}>
-              {f.label}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
-      </ListToolbar>
+      {sessions?.length !== 0 && (
+        <ListToolbar>
+          <TextField
+            placeholder="Search by session ID or name..."
+            size="small"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            sx={{ width: 280 }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Iconify icon="solar:magnifier-linear" width={16} />
+                </InputAdornment>
+              ),
+            }}
+          />
+          <ToggleButtonGroup
+            value={statusFilter}
+            exclusive
+            onChange={(_, val) => val !== null && setStatusFilter(val)}
+            size="small"
+          >
+            {STATUS_FILTERS.map((f) => (
+              <ToggleButton key={f.value} value={f.value}>
+                {f.label}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+        </ListToolbar>
+      )}
 
       {filteredSessions.length === 0 ? (
-        <Box display="flex" flexDirection="column" alignItems="center" py={8}>
-          <Iconify
-            icon="solar:graph-new-linear"
-            width={48}
-            sx={{ color: "text.disabled", mb: 2 }}
-          />
-          <Typography variant="h6" color="text.secondary">
-            {sessions?.length === 0
+        <EmptyState
+          variant={sessions?.length === 0 ? "first-run" : "no-results"}
+          icon="solar:graph-new-linear"
+          title={
+            sessions?.length === 0
               ? "No sessions yet"
-              : "No sessions match your filters"}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" mt={1}>
-            Sessions are automatically created when requests include a session
-            ID
-          </Typography>
-        </Box>
+              : "No sessions match your filters"
+          }
+          description={
+            sessions?.length === 0
+              ? "Sessions appear here when your requests include a session ID."
+              : undefined
+          }
+          sx={{ pt: 6, pb: 6 }}
+        />
       ) : (
         <>
           <TableContainer>

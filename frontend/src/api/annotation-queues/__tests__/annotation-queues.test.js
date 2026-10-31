@@ -1372,6 +1372,7 @@ describe("Annotation Queues API", () => {
               },
             ]),
           },
+          timeout: 15000,
         },
       );
     });

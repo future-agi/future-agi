@@ -18,7 +18,7 @@ const CompactTabs = ({ value, onChange, tabs }) => {
       variant="scrollable"
       scrollButtons="auto"
       allowScrollButtonsMobile
-      sx={{
+      sx={{ boxShadow: "none",
         borderBottom: "1px solid",
         borderColor: "divider",
         "& .MuiTabs-flexContainer": { gap: 0 },

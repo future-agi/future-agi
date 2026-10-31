@@ -422,7 +422,7 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
       action={
         <Stack direction="row" spacing={1} alignItems="center">
           <CopyCommandButton
-            command={`agent-learn tool list --environment ${env?.id || "<env>"}`}
+            command={`fi api tool list --environment ${env?.id || "<env>"}`}
           />
           {patch && onAddMcp && (
             <Button

@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import ApexCharts from "apexcharts";
@@ -2919,20 +2920,12 @@ export default function OverviewTab({ _error: currentError }) {
               />
             </Stack>
           ) : !trace ? (
-            <Stack
-              alignItems="center"
-              justifyContent="center"
-              sx={{ height: "100%", p: 4 }}
-            >
-              <Iconify
-                icon="solar:file-search-linear"
-                width={40}
-                sx={{ color: "text.disabled", mb: 1.5 }}
-              />
-              <Typography fontSize="13px" color="text.disabled">
-                No trace evidence available for this issue yet.
-              </Typography>
-            </Stack>
+            <EmptyState
+              icon="solar:file-search-linear"
+              title="No trace evidence yet"
+              description="No trace evidence available for this cluster yet."
+              sx={{ pt: 6, pb: 6 }}
+            />
           ) : (
             <Stack gap={1.5} sx={{ p: 1.75 }}>
               <ConversationFindings trace={trace} />

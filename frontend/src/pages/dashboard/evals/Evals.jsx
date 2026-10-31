@@ -23,7 +23,7 @@ const Evals = () => {
       >
         <PageHeader
           title="Evaluations"
-          info="Create and manage evaluations to measure your AI agent's performance — bias, toxicity, accuracy, and response quality."
+          description="Create, test and reuse evals that score responses for accuracy, safety, tone and more."
           sx={{ mb: 0 }}
         />
         <EvalsListView />

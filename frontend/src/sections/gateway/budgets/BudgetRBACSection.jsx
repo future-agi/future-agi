@@ -684,7 +684,7 @@ const BudgetRBACSection = () => {
       <Tabs
         value={tab}
         onChange={handleTabChange}
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+        sx={{ boxShadow: "none", mb: 3, borderBottom: 1, borderColor: "divider" }}
       >
         <Tab label="Budget Dashboard" />
         <Tab label="Budget Config" />

@@ -228,8 +228,8 @@ export default function EditFile({ params, onClose, onCellValueChanged }) {
             <SvgColor
               src={`/assets/icons/components/ic_save.svg`}
               sx={{
-                width: 20,
-                height: 20,
+                width: 16,
+                height: 16,
                 mr: 1,
                 color: "divider",
               }}

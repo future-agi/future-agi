@@ -8,6 +8,7 @@
  * - Billing details
  */
 
+import EmptyState from "src/components/empty-state";
 import PageHeader from "src/components/page-header";
 import { useState } from "react";
 import PropTypes from "prop-types";
@@ -372,16 +373,13 @@ function InvoiceHistory() {
 
   if (invoices.length === 0) {
     return (
-      <Section variant="panel" sx={{ p: 3, textAlign: "center" }}>
-        <Iconify
+      <Section variant="panel" sx={{ p: 0 }}>
+        <EmptyState
           icon="solar:document-text-linear"
-          width={40}
-          sx={{ color: "text.disabled", mb: 1 }}
+          title="No invoices yet"
+          description="Your first invoice will appear at the end of the billing period."
+          sx={{ pt: 6, pb: 6 }}
         />
-        <Typography variant="body2" color="text.secondary">
-          No invoices yet. Your first invoice will appear at the end of the
-          billing period.
-        </Typography>
       </Section>
     );
   }

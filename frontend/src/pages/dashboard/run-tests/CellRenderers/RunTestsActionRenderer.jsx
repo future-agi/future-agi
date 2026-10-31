@@ -87,8 +87,8 @@ const RunTestsActionRenderer = (params) => {
             <SvgColor
               src="/assets/icons/ic_hide.svg"
               sx={{
-                width: 20,
-                height: 20,
+                width: 16,
+                height: 16,
               }}
             />
           </ListItemIcon>
@@ -109,8 +109,8 @@ const RunTestsActionRenderer = (params) => {
             <SvgColor
               src="/assets/icons/ic_delete.svg"
               sx={{
-                height: 20,
-                width: 20,
+                height: 16,
+                width: 16,
               }}
             />
           </ListItemIcon>

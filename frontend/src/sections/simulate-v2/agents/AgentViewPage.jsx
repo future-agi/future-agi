@@ -15,7 +15,6 @@ import {
   Box,
   Button,
   Chip,
-  Dialog,
   IconButton,
   Menu,
   MenuItem,
@@ -134,6 +133,7 @@ import {
   runsOfAgent,
   showsSetup,
 } from "./agentViewUtils";
+import ClosableDialog from "../components/ClosableDialog";
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -745,16 +745,6 @@ export default function AgentViewPage() {
                   </Tooltip>
                 );
               })()}
-            {agent.sample && (
-              <Tooltip
-                arrow
-                title="Comes with a prebuilt world — the agent it was designed and proven with. Connect your own agent to that environment to test yours there."
-              >
-                <Box component="span">
-                  <QuietTag>Sample</QuietTag>
-                </Box>
-              </Tooltip>
-            )}
             {status.status !== "connected" && (
               <Tooltip arrow title={status.reason || ""}>
                 <Box
@@ -1038,7 +1028,11 @@ export default function AgentViewPage() {
       </Stack>
 
       <Box sx={{ borderBottom: "1px solid", borderColor: "divider", mb: 2 }}>
-        <CustomTabs value={tab} onChange={(_, v) => setQuery({ tab: v })}>
+        <CustomTabs
+          sx={{ boxShadow: "none" }}
+          value={tab}
+          onChange={(_, v) => setQuery({ tab: v })}
+        >
           {TABS.map((t) => (
             <Tab
               key={t.id}
@@ -1485,8 +1479,8 @@ function EnvironmentsTab({
         <Typography
           sx={{ typography: "s2", color: "text.subtitle", mt: 0.5, mb: 2 }}
         >
-          An environment gives this agent a world to act in — tools, seeded
-          data, rules and scenarios to run.
+          An environment gives this agent a world to act in: tools, seeded data,
+          rules and scenarios to run.
         </Typography>
         <Button
           variant="contained"
@@ -2370,7 +2364,7 @@ ConnectionTab.propTypes = {
 
 function DisconnectDialog({ open, agent, onClose, onConfirm }) {
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       PaperProps={{
@@ -2413,7 +2407,7 @@ function DisconnectDialog({ open, agent, onClose, onConfirm }) {
           Delete
         </Button>
       </Stack>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 DisconnectDialog.propTypes = {

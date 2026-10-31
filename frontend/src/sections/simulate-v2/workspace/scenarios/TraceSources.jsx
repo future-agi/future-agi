@@ -33,7 +33,7 @@ const RESULT = {
   passed: "Passed",
   failed: "Failed",
   flaky: "Flaky",
-  unmeasured: "Not measured",
+  unmeasured: "Couldn't measure",
 };
 const when = (iso) =>
   iso
@@ -295,7 +295,7 @@ export default function TraceSources({ row, env, envState }) {
       </Box>
       <Box>
         <CopyCommandButton
-          command={`agent-learn scenario show ${row.name || row.id}`}
+          command={`fi sim scenarios show ${row.name || row.id}`}
           label="Copy as command"
         />
       </Box>

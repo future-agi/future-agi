@@ -1,5 +1,5 @@
 import SelectionBar from "src/components/selection-bar";
-import { Box, Button, Divider, IconButton, Typography } from "@mui/material";
+import { Box, Button, Divider, IconButton } from "@mui/material";
 import { LoadingScreen } from "src/components/loading-screen";
 import React, { useEffect, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
@@ -204,7 +204,7 @@ const EvalsTasksView = ({ observeId = null }) => {
       {observeId === null && (
         <PageHeader
           title="Tasks"
-          description="Create and run automated actions on your data"
+          description="Run evals automatically on incoming traces, with filters and sampling to control what gets scored."
           sx={{ mb: 0 }}
         />
       )}
@@ -227,8 +227,8 @@ const EvalsTasksView = ({ observeId = null }) => {
           }}
         >
           <EmptyLayout
-            title="Add your first task"
-            description="Run functions on your data to evaluate LLM outputs, automate testing, and track performance in one place"
+            title="No tasks yet"
+            description="Create a task to score incoming traces with your evals automatically."
             link="https://docs.futureagi.com/docs/observe/features/evals"
             linkText="Check docs"
             onLinkClick={() => handleOnDocsClicked("tasks_page")}
@@ -236,13 +236,7 @@ const EvalsTasksView = ({ observeId = null }) => {
               <Button
                 variant="contained"
                 color="primary"
-                startIcon={
-                  <Iconify
-                    width={20}
-                    icon="solar:add-linear"
-                    color="background.paper"
-                  />
-                }
+                size="small"
                 onClick={() => toggleDrawer(true)}
                 disabled={
                   !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
@@ -250,9 +244,7 @@ const EvalsTasksView = ({ observeId = null }) => {
                   ]
                 }
               >
-                <Typography variant="s1" fontWeight={"fontWeightSemiBold"}>
-                  Add Task
-                </Typography>
+                Create task
               </Button>
             }
             icon="/assets/icons/navbar/ic_dash_tasks.svg"

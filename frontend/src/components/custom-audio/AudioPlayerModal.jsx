@@ -293,7 +293,7 @@ const AudioWaveformModal = ({ onClose, params, onCellValueChanged }) => {
                 }}
                 textColor="primary"
                 indicatorColor="primary"
-                sx={{
+                sx={{ boxShadow: "none",
                   marginLeft: "2%",
                 }}
               >

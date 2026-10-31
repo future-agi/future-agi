@@ -78,7 +78,7 @@ const CallLogsCellRenderer = (props) => {
     content = (
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, color: "text.secondary" }}
+        sx={{ fontSize: 12, color: "text.secondary" }}
       >
         {fmtStarted}
       </Typography>
@@ -92,7 +92,7 @@ const CallLogsCellRenderer = (props) => {
     content = value ? (
       <Typography
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           fontWeight: 400,
           color: palette ? `status.${palette}.fg` : "text.secondary",
           textTransform: "capitalize",
@@ -125,7 +125,7 @@ const CallLogsCellRenderer = (props) => {
       <CustomTooltip show={value.length > 20} arrow title={value}>
         <Typography
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: 400,
             color: reasonPalette
               ? `status.${reasonPalette}.fg`
@@ -149,7 +149,7 @@ const CallLogsCellRenderer = (props) => {
     content = (
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+        sx={{ fontSize: 12, fontVariantNumeric: "tabular-nums" }}
       >
         {formatted}
       </Typography>
@@ -159,7 +159,7 @@ const CallLogsCellRenderer = (props) => {
     content = (
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+        sx={{ fontSize: 12, fontVariantNumeric: "tabular-nums" }}
       >
         {Number.isFinite(n) ? String(n) : "-"}
       </Typography>
@@ -169,7 +169,7 @@ const CallLogsCellRenderer = (props) => {
     content = (
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+        sx={{ fontSize: 12, fontVariantNumeric: "tabular-nums" }}
       >
         {Number.isFinite(n) ? `${n}%` : "-"}
       </Typography>
@@ -184,7 +184,7 @@ const CallLogsCellRenderer = (props) => {
     content = (
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+        sx={{ fontSize: 12, fontVariantNumeric: "tabular-nums" }}
       >
         {formatted}
       </Typography>
@@ -194,7 +194,7 @@ const CallLogsCellRenderer = (props) => {
     content = (
       <Typography
         variant="body2"
-        sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}
+        sx={{ fontSize: 12, fontVariantNumeric: "tabular-nums" }}
       >
         {Number.isFinite(n) ? String(Math.round(n)) : "-"}
       </Typography>
@@ -209,7 +209,7 @@ const CallLogsCellRenderer = (props) => {
       <Typography
         variant="body2"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           color: hasInterrupts ? "status.warning.fg" : "text.primary",
           fontWeight: hasInterrupts ? 600 : 400,
           fontVariantNumeric: "tabular-nums",

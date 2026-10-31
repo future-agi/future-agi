@@ -56,7 +56,6 @@ import { runCreditsOf } from "../_mock/usageLedger";
 import { resolveEval } from "../_mock/evals";
 import { useConnectedAgents, useEnvState } from "../store";
 import { improvementRowsOf } from "../improvements/improvementRows";
-import { isReferenceRun } from "../_mock/referenceRuns";
 import { neutralCheckboxSx } from "../components/primitives";
 import { Head, MetricCell, ScoreCell } from "./RunsTableCells";
 import { compactTokens } from "./runsTableFormat";
@@ -953,7 +952,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           >
                             {r.kind === "trial"
                               ? `Run ${r.trialN}${r.selfImprovementName ? ` · ${r.selfImprovementName}` : ""}`
-                              : `Run ${r.ordinal}${isReferenceRun(r, envState) ? " · Reference" : ""}`}{" "}
+                              : `Run ${r.ordinal}`}{" "}
                             · {identityOf(r).label}
                           </Typography>
                           <RunDetail text="waiting to start" />
@@ -1344,7 +1343,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           >
                             {r.kind === "trial"
                               ? `Run ${r.trialN}${r.selfImprovementName ? ` · ${r.selfImprovementName}` : ""}`
-                              : `Run ${r.ordinal}${isReferenceRun(r, envState) ? " · Reference" : ""}`}{" "}
+                              : `Run ${r.ordinal}`}{" "}
                             · {identityOf(r).label}
                           </Typography>
                           <RunDetail
@@ -1816,21 +1815,22 @@ const QUEUED_ID = "demo-queued";
    "failed" — which is the verdict, not the state. Trials are always done. */
 const runStatus = (r) => {
   const raw = String(r?.status || "").toLowerCase();
-  if (r?.kind === "trial") return "Completed";
-  /* The spending limit (or the person) stopped new scenarios starting. */
-  if (r?.finishedAt && r?.budget?.stoppedBy)
-    return r.budget.stoppedBy === "stopped" ? "Cancelled" : "At limit";
-  /* Unfinished for over a day: it ran past its deadline — an infrastructure
-     outcome, not an agent failure. */
+  if (r?.kind === "trial") return "Finished";
+  /* The spending limit or the person stopped new scenarios starting. */
+  if (r?.finishedAt && r?.budget?.stoppedBy) return "Stopped";
+  /* Asked to stop, still finishing what had started. */
+  if (r?.stopping && !r?.finishedAt) return "Stopping…";
+  /* Unfinished for over a day, or lost to infrastructure: Interrupted —
+     not an agent failure; Retry interrupted picks it up. */
   if ((raw === "running" || raw === "queued") && !r.finishedAt && staleSince(r))
-    return "Timed out";
-  if (raw === "queued") return "Queued";
-  if (raw === "pending") return "Pending";
+    return "Interrupted";
+  if (raw === "queued" || raw === "pending") return "Queued";
   if (raw === "running" && !r.finishedAt) return "Running";
   if (["cancelled", "canceled", "stopped", "aborted"].includes(raw))
-    return "Cancelled";
-  if (["error", "errored", "crashed"].includes(raw)) return "Failed";
-  return "Completed";
+    return "Stopped";
+  if (["error", "errored", "crashed", "interrupted"].includes(raw))
+    return "Interrupted";
+  return "Finished";
 };
 
 /* Running reads blue here; the neutral chip the legacy table uses for
@@ -1838,10 +1838,12 @@ const runStatus = (r) => {
 const RUN_CHIP_STYLES = {
   ...statusStyles,
   Running: statusStyles.Pending,
+  "Stopping…": statusStyles.Pending,
   Queued: statusStyles.Running,
-  /* Stopped by the spending limit: amber, like the limit everywhere else. */
-  "At limit": statusStyles.Inactive,
-  "Timed out": statusStyles.Failed,
+  Finished: statusStyles.Completed,
+  Stopped: statusStyles.Inactive,
+  /* Lost to infrastructure, not the agent: red, and Retry picks it up. */
+  Interrupted: statusStyles.Failed,
 };
 
 /**

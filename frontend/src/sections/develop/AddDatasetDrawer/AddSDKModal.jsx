@@ -8,7 +8,6 @@ import {
   IconButton,
   Modal,
   Typography,
-  CircularProgress,
   Tab,
 } from "@mui/material";
 import { SegmentedTabs } from "src/components/tabs/tabs";
@@ -29,6 +28,7 @@ import { FormCodeEditor } from "src/components/form-code-editor";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const defaultValues = {
   name: "",
@@ -274,7 +274,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
               minHeight="200px"
               margin="25px 0"
             >
-              <CircularProgress size={40} />
+              <ContentSkeleton variant="panel" />
             </Box>
           ) : (
             <Box

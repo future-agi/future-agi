@@ -1,12 +1,12 @@
 import PropTypes from "prop-types";
 import {
   Button,
-  Dialog,
   DialogTitle,
   DialogContent,
   DialogContentText,
   DialogActions,
 } from "@mui/material";
+import ClosableDialog from "../components/ClosableDialog";
 
 /**
  * Confirmation before dropping an environment — a delete strips the env AND
@@ -16,7 +16,7 @@ import {
  */
 export default function DeleteEnvironmentDialog({ env, onCancel, onConfirm }) {
   return (
-    <Dialog
+    <ClosableDialog
       open={!!env}
       onClose={onCancel}
       maxWidth={false}
@@ -44,7 +44,7 @@ export default function DeleteEnvironmentDialog({ env, onCancel, onConfirm }) {
           Delete
         </Button>
       </DialogActions>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 

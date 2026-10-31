@@ -3,6 +3,7 @@ import { useCallback, useMemo } from "react";
 import { DataGrid } from "@mui/x-data-grid";
 import { Box, useTheme } from "@mui/material";
 import EmptyContent from "src/components/empty-content";
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 
 /**
  * DataTable — thin wrapper on MUI X DataGrid (already in the project).
@@ -22,8 +23,8 @@ export default function DataTable({
   columnVisibility,
   onColumnVisibilityChange,
   emptyMessage = "No data found",
-  rowHeight = 36,
-  headerHeight = 32,
+  rowHeight = ROW_HEIGHT.default,
+  headerHeight = TABLE_HEADER_HEIGHT.default,
   enableSelection = false,
 }) {
   const theme = useTheme();
@@ -182,10 +183,12 @@ export default function DataTable({
             maxHeight: `${headerHeight}px !important`,
           },
           "--DataGrid-containerBackground": theme.palette.background.paper,
+          // Design system table: headers 11/500 in fg.tertiary, values 12/18.
           "& .MuiDataGrid-columnHeaderTitle": {
-            fontSize: "13px",
+            fontSize: "11px",
+            lineHeight: "16px",
             fontWeight: 500,
-            color: theme.palette.text.secondary,
+            color: theme.palette.text.subtitle,
           },
           "& .MuiDataGrid-iconButtonContainer": {
             color: theme.palette.text.secondary,
@@ -194,7 +197,7 @@ export default function DataTable({
           "& .MuiDataGrid-cell": {
             borderBottom: "1px solid",
             borderColor: "divider",
-            fontSize: "13px",
+            fontSize: "12px",
             cursor: onRowClick ? "pointer" : "default",
             "&:focus, &:focus-within": { outline: "none" },
           },

@@ -666,13 +666,8 @@ export default function CompareRuns() {
                 decides releases. */}
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {(() => {
-                /* The sample agent (Reference) is another agent at any label. */
                 const labels = [
-                  ...new Set(
-                    comparison.runs.map((r) =>
-                      r.reference ? `sample ${r.agentVersion}` : r.agentVersion,
-                    ),
-                  ),
+                  ...new Set(comparison.runs.map((r) => r.agentVersion)),
                 ];
                 const n = labels.length;
                 /* A credentials-only version behaves as its base — said, so
@@ -753,7 +748,6 @@ export default function CompareRuns() {
                 noWrap
                 sx={{ typography: "s3", fontWeight: 600, maxWidth: 280 }}
               >
-                {r.reference ? "Reference · sample " : ""}
                 {identityOf(r).agentLabel}
                 {identityOf(r).env && (
                   <Box
@@ -1091,6 +1085,13 @@ export default function CompareRuns() {
                 envHeadline={envHeadline}
                 onExcludeRechecked={setExcludeRechecked}
                 onFix={(fix) => startFix(fix)}
+                onImprove={() => {
+                  const latest = comparison.runs[comparison.runs.length - 1];
+                  if (latest?.id)
+                    navigate(
+                      `${paths.dashboard.simulate.simulationRun(env.id, latest.id)}?improveNew=1`,
+                    );
+                }}
                 onWarning={(w) => {
                   if (w.kind === "regrade" && read) {
                     /* Re-grading reads stored traces — recorded on the environment

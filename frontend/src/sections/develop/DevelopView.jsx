@@ -198,7 +198,7 @@ const DevelopView = () => {
         header: "Datapoints",
         size: 120,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: "13px" }}>
+          <Typography variant="body2" sx={{ fontSize: "12px" }}>
             {formatNumberWithCommas(getValue())}
           </Typography>
         ),
@@ -210,7 +210,7 @@ const DevelopView = () => {
         size: 120,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: "13px" }}>
+          <Typography variant="body2" sx={{ fontSize: "12px" }}>
             {formatNumberWithCommas(getValue())}
           </Typography>
         ),
@@ -222,7 +222,7 @@ const DevelopView = () => {
         size: 120,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: "13px" }}>
+          <Typography variant="body2" sx={{ fontSize: "12px" }}>
             {formatNumberWithCommas(getValue())}
           </Typography>
         ),
@@ -252,7 +252,7 @@ const DevelopView = () => {
           if (!val) return null;
           try {
             return (
-              <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
                 {formatDistanceToNow(
                   new Date(/[Z+-]/.test(val.slice(-6)) ? val : val + "Z"),
                   { addSuffix: true },

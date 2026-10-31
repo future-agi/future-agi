@@ -1,4 +1,5 @@
-import { Box, CircularProgress } from "@mui/material";
+import { Box } from "@mui/material";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Design System in-content loader: a single small centred spinner.
 const Loader = () => {
@@ -11,7 +12,7 @@ const Loader = () => {
         minHeight: 100,
       }}
     >
-      <CircularProgress size={20} />
+      <ContentSkeleton variant="panel" />
     </Box>
   );
 };

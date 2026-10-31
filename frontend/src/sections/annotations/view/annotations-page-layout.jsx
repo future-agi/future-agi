@@ -36,7 +36,7 @@ export default function AnnotationsPageLayout({
         <AnnotationsTabs />
       </Box>
 
-      <ListToolbar sx={{ px: 3 }}>{toolbar}</ListToolbar>
+      {toolbar && <ListToolbar sx={{ px: 3 }}>{toolbar}</ListToolbar>}
 
       <Box
         sx={{

@@ -7,6 +7,7 @@ import EvalsCustomCellRenderer from "./CustomRenderer/EvalsCustomCellRenderer";
 import EvalCustomHeaderCellRenderer from "./CustomRenderer/EvalCustomHeaderCellRenderer";
 import ViewDetailsModal from "./dialogue-boxes/view-details";
 import AddFeedbackForm from "./dialogue-boxes/add-feedback-form";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const SkeletonCellRenderer = () => {
   return (
@@ -151,7 +152,7 @@ const BottomEvalsTab = ({
           domLayout="autoHeight"
           className={rows.length > 0 ? "no-min-height-grid" : undefined}
           headerHeight={44}
-          rowHeight={44}
+          rowHeight={ROW_HEIGHT.default}
           suppressContextMenu
           suppressHorizontalScroll={false}
           suppressVerticalScroll={false}

@@ -77,6 +77,7 @@ export default function CompareVerdict({
   mustPass = [],
   onShowMustPass,
   promote = null,
+  onImprove = null,
 }) {
   const [pinsOpen, setPinsOpen] = useState(false);
   if (!read) return null;
@@ -119,6 +120,41 @@ export default function CompareVerdict({
         overflow: "hidden",
       }}
     >
+      {/* A confirmed regression: improve the agent from these failures. */}
+      {onImprove && (label.id === "regressed" || mustPass.length > 0) && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 2,
+            py: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            Confirmed regression — improve the agent from these failing cases.
+          </Typography>
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            onClick={onImprove}
+            startIcon={<Iconify icon="solar:magic-stick-3-linear" width={14} />}
+            sx={{ flexShrink: 0 }}
+          >
+            Improve agent
+          </Button>
+        </Stack>
+      )}
       {/* A must-pass case that regressed comes first, whatever the average says. */}
       {mustPass.length > 0 && (
         <Stack
@@ -523,7 +559,7 @@ export default function CompareVerdict({
             }}
           >
             {promote.disabled ||
-              `Comparing deploys nothing. Promote agent ${promote.candidate} after reviewing ${mustPass.length ? "the regressions above" : "the rows below"}; ${promote.baseline} stays available.`}
+              `Comparing deploys nothing. Make agent ${promote.candidate} active after reviewing ${mustPass.length ? "the regressions above" : "the rows below"}; ${promote.baseline} stays available.`}
           </Typography>
           <Button
             size="small"
@@ -536,7 +572,7 @@ export default function CompareVerdict({
               flexShrink: 0,
             }}
           >
-            {`Promote ${promote.candidate}…`}
+            {`Make ${promote.candidate} active…`}
           </Button>
         </Stack>
       )}
@@ -650,6 +686,7 @@ CompareVerdict.propTypes = {
   identityOf: PropTypes.func,
   onExcludeRechecked: PropTypes.func,
   onFix: PropTypes.func,
+  onImprove: PropTypes.func,
   onWarning: PropTypes.func,
   questions: PropTypes.array,
   onAnswer: PropTypes.func,

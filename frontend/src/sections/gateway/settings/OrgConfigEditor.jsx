@@ -134,7 +134,7 @@ const OrgConfigEditor = ({
           onChange={(_, v) => setTab(v)}
           variant="scrollable"
           scrollButtons="auto"
-          sx={{ mb: 2, borderBottom: 1, borderColor: "divider" }}
+          sx={{ boxShadow: "none", mb: 2, borderBottom: 1, borderColor: "divider" }}
         >
           <Tab label="Providers" />
           <Tab label="Guardrails" />

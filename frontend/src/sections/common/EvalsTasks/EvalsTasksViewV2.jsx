@@ -40,7 +40,7 @@ const EvalsTasksViewV2 = ({ observeId = null }) => {
       {!observeId && (
         <PageHeader
           title="Tasks"
-          description="Create and run automated actions on your data"
+          description="Run evals automatically on incoming traces, with filters and sampling to control what gets scored."
           sx={{ mb: 0 }}
         />
       )}

@@ -514,7 +514,7 @@ const AddedEvalsSection = ({ addedEvals, searchQuery }) => {
           width={16}
           sx={{ color: "text.secondary" }}
         />
-        <Typography sx={{ fontSize: "13px", fontWeight: 600 }}>
+        <Typography sx={{ fontSize: "12px", fontWeight: 600 }}>
           Added evaluations
         </Typography>
         <Typography
@@ -570,7 +570,7 @@ const AddedEvalsSection = ({ addedEvals, searchQuery }) => {
                 />
                 <Typography
                   noWrap
-                  sx={{ fontSize: "13px", fontWeight: 500, minWidth: 0 }}
+                  sx={{ fontSize: "12px", fontWeight: 500, minWidth: 0 }}
                 >
                   {e.name}
                 </Typography>
@@ -707,7 +707,7 @@ const EvalPickerList = ({ onSelectEval }) => {
     borderColor: "divider",
   };
   const bodyCellSx = {
-    fontSize: "13px",
+    fontSize: "12px",
     py: 0.75,
     px: 1,
     borderBottom: "1px solid",
@@ -989,7 +989,7 @@ const EvalPickerList = ({ onSelectEval }) => {
                         <Typography
                           variant="body2"
                           noWrap
-                          sx={{ fontWeight: 500, fontSize: "13px" }}
+                          sx={{ fontWeight: 500, fontSize: "12px" }}
                         >
                           {evalItem.name}
                         </Typography>

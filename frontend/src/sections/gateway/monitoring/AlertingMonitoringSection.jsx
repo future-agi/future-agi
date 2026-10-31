@@ -492,7 +492,7 @@ const AlertingMonitoringSection = () => {
       <Tabs
         value={tab}
         onChange={handleTabChange}
-        sx={{ mb: 1.5, borderBottom: 1, borderColor: "divider" }}
+        sx={{ boxShadow: "none", mb: 1.5, borderBottom: 1, borderColor: "divider" }}
       >
         <Tab label="Live Metrics" />
         <Tab label="Alert Rules" />

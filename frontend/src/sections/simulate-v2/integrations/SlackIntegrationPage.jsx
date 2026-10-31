@@ -6,7 +6,6 @@ import {
   Box,
   Button,
   Chip,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
@@ -36,6 +35,7 @@ import SlackInstallDialog from "./SlackInstallDialog";
 import SlackMessage from "./SlackMessage";
 import { StatusPill } from "./GithubIntegrationPage";
 import { DemoLabel } from "../agents/AgentBits";
+import ClosableDialog from "../components/ClosableDialog";
 
 /* What each kind of message looks like when it lands. */
 const SAMPLES = {
@@ -179,7 +179,7 @@ export default function SlackIntegrationPage() {
                   Remove from Slack
                 </MenuItem>
               </Menu>
-              <Dialog
+              <ClosableDialog
                 open={removing}
                 onClose={() => setRemoving(false)}
                 maxWidth={false}
@@ -213,7 +213,7 @@ export default function SlackIntegrationPage() {
                     Remove
                   </Button>
                 </DialogActions>
-              </Dialog>
+              </ClosableDialog>
             </>
           ) : (
             <Stack alignItems="flex-end" spacing={0.5}>

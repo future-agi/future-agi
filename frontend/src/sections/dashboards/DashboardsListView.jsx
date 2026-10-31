@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useMemo } from "react";
 import PageHeader from "src/components/page-header";
 import PropTypes from "prop-types";
@@ -373,161 +374,167 @@ export default function DashboardsListView() {
     >
       <PageHeader
         title="Dashboard"
-        description="Create dashboard to monitor"
+        description="Build charts from traces, evals and cost to monitor your agents over time."
         sx={{ mb: 0 }}
       />
 
       {/* Search + Actions row */}
-      <Stack direction="row" justifyContent="space-between" alignItems="center">
-        <Stack direction="row" gap={1} alignItems="center">
-          <FormSearchField
-            size="small"
-            placeholder="Search"
-            searchQuery={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            sx={{
-              minWidth: "250px",
-              "& .MuiOutlinedInput-root": { height: "30px" },
-            }}
-          />
-          <Button
-            size="small"
-            variant={creatorFilter.length > 0 ? "contained" : "outlined"}
-            onClick={(e) => setCreatorMenuAnchor(e.currentTarget)}
-            startIcon={<Iconify icon="solar:user-linear" width={20} />}
-            endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={16} />}
-            sx={{
-              borderColor: "divider",
-              color: creatorFilter.length > 0 ? undefined : "text.secondary",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {creatorFilter.length === 0
-              ? "Created by anyone"
-              : creatorFilter.length === 1
-                ? creators.find((c) => c.email === creatorFilter[0])?.name ||
-                  creatorFilter[0]
-                : `${creatorFilter.length} creators`}
-          </Button>
-          <Menu
-            anchorEl={creatorMenuAnchor}
-            open={Boolean(creatorMenuAnchor)}
-            onClose={() => setCreatorMenuAnchor(null)}
-            slotProps={{
-              paper: {
-                sx: { minWidth: 240, mt: 0.5 },
-              },
-            }}
-          >
-            <MenuItem onClick={() => setCreatorFilter([])} sx={{ py: 0.5 }}>
-              <Checkbox
-                size="small"
-                checked={creatorFilter.length === 0}
-                sx={{ mr: 0.5 }}
-              />
-              <Stack direction="row" alignItems="center" gap={1}>
-                <Iconify icon="solar:users-group-rounded-linear" width={16} />
-                <Typography variant="body2">Anyone</Typography>
-              </Stack>
-            </MenuItem>
-            <Divider />
-            {creators.map((c) => {
-              const checked = creatorFilter.includes(c.email);
-              return (
-                <MenuItem
-                  key={c.email}
-                  onClick={() => {
-                    setCreatorFilter((prev) =>
-                      checked
-                        ? prev.filter((e) => e !== c.email)
-                        : [...prev, c.email],
-                    );
-                  }}
-                  sx={{ py: 0.5 }}
-                >
-                  <Checkbox size="small" checked={checked} sx={{ mr: 0.5 }} />
-                  <Stack direction="row" alignItems="center" gap={1}>
-                    <Avatar
-                      sx={{
-                        width: 22,
-                        height: 22,
-                        fontSize: "12px",
-                        fontWeight: 600,
-                      }}
-                    >
-                      {getInitials(c.name)}
-                    </Avatar>
-                    <Typography variant="body2">{c.name}</Typography>
-                  </Stack>
-                </MenuItem>
-              );
-            })}
-          </Menu>
-        </Stack>
-        <Stack direction="row" gap={1}>
-          <Button
-            variant="outlined"
-            size="small"
-            sx={{
-              flexShrink: 0,
-            }}
-            onClick={() => {
-              window.open(
-                "https://docs.futureagi.com/docs/observe/features/dashboard",
-                "_blank",
-              );
-            }}
-          >
-            <SvgColor
-              src="/assets/icons/agent/docs.svg"
-              sx={{ height: 16, width: 16, mr: 1 }}
+      {dashboards.length > 0 && (
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
+        >
+          <Stack direction="row" gap={1} alignItems="center">
+            <FormSearchField
+              size="small"
+              placeholder="Search"
+              searchQuery={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              sx={{
+                minWidth: "250px",
+                "& .MuiOutlinedInput-root": { height: "30px" },
+              }}
             />
-            <Typography typography="s2" fontWeight="fontWeightMedium">
-              View Docs
-            </Typography>
-          </Button>
-          <CustomTooltip
-            show={!canCreate}
-            type=""
-            title="You don't have permission to create dashboards."
-            size="small"
-            arrow
-          >
-            <span>
-              <Button
-                variant="contained"
-                color="primary"
-                startIcon={
-                  createMutation.isPending ? (
-                    <CircularProgress size={16} color="inherit" />
-                  ) : (
-                    <Iconify icon="solar:add-linear" />
-                  )
-                }
-                onClick={handleCreate}
-                disabled={createMutation.isPending || !canCreate}
-              >
-                {createMutation.isPending ? "Creating..." : "Create Dashboard"}
-              </Button>
-            </span>
-          </CustomTooltip>
+            <Button
+              size="small"
+              variant={creatorFilter.length > 0 ? "contained" : "outlined"}
+              onClick={(e) => setCreatorMenuAnchor(e.currentTarget)}
+              startIcon={<Iconify icon="solar:user-linear" width={20} />}
+              endIcon={
+                <Iconify icon="solar:alt-arrow-down-linear" width={16} />
+              }
+              sx={{
+                borderColor: "divider",
+                color: creatorFilter.length > 0 ? undefined : "text.secondary",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {creatorFilter.length === 0
+                ? "Created by anyone"
+                : creatorFilter.length === 1
+                  ? creators.find((c) => c.email === creatorFilter[0])?.name ||
+                    creatorFilter[0]
+                  : `${creatorFilter.length} creators`}
+            </Button>
+            <Menu
+              anchorEl={creatorMenuAnchor}
+              open={Boolean(creatorMenuAnchor)}
+              onClose={() => setCreatorMenuAnchor(null)}
+              slotProps={{
+                paper: {
+                  sx: { minWidth: 240, mt: 0.5 },
+                },
+              }}
+            >
+              <MenuItem onClick={() => setCreatorFilter([])} sx={{ py: 0.5 }}>
+                <Checkbox
+                  size="small"
+                  checked={creatorFilter.length === 0}
+                  sx={{ mr: 0.5 }}
+                />
+                <Stack direction="row" alignItems="center" gap={1}>
+                  <Iconify icon="solar:users-group-rounded-linear" width={16} />
+                  <Typography variant="body2">Anyone</Typography>
+                </Stack>
+              </MenuItem>
+              <Divider />
+              {creators.map((c) => {
+                const checked = creatorFilter.includes(c.email);
+                return (
+                  <MenuItem
+                    key={c.email}
+                    onClick={() => {
+                      setCreatorFilter((prev) =>
+                        checked
+                          ? prev.filter((e) => e !== c.email)
+                          : [...prev, c.email],
+                      );
+                    }}
+                    sx={{ py: 0.5 }}
+                  >
+                    <Checkbox size="small" checked={checked} sx={{ mr: 0.5 }} />
+                    <Stack direction="row" alignItems="center" gap={1}>
+                      <Avatar
+                        sx={{
+                          width: 22,
+                          height: 22,
+                          fontSize: "12px",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {getInitials(c.name)}
+                      </Avatar>
+                      <Typography variant="body2">{c.name}</Typography>
+                    </Stack>
+                  </MenuItem>
+                );
+              })}
+            </Menu>
+          </Stack>
+          <Stack direction="row" gap={1}>
+            <Button
+              variant="outlined"
+              size="small"
+              sx={{
+                flexShrink: 0,
+              }}
+              onClick={() => {
+                window.open(
+                  "https://docs.futureagi.com/docs/observe/features/dashboard",
+                  "_blank",
+                );
+              }}
+            >
+              <SvgColor
+                src="/assets/icons/agent/docs.svg"
+                sx={{ height: 16, width: 16, mr: 1 }}
+              />
+              <Typography typography="s2" fontWeight="fontWeightMedium">
+                View Docs
+              </Typography>
+            </Button>
+            <CustomTooltip
+              show={!canCreate}
+              type=""
+              title="You don't have permission to create dashboards."
+              size="small"
+              arrow
+            >
+              <span>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={
+                    createMutation.isPending ? (
+                      <CircularProgress size={16} color="inherit" />
+                    ) : (
+                      <Iconify icon="solar:add-linear" />
+                    )
+                  }
+                  onClick={handleCreate}
+                  disabled={createMutation.isPending || !canCreate}
+                >
+                  {createMutation.isPending
+                    ? "Creating..."
+                    : "Create Dashboard"}
+                </Button>
+              </span>
+            </CustomTooltip>
+          </Stack>
         </Stack>
-      </Stack>
+      )}
 
       {/* Dashboard list */}
       <Box sx={{ flex: 1 }}>
         {filteredDashboards.length === 0 ? (
           searchQuery ? (
-            <Stack alignItems="center" gap={1} sx={{ py: 8 }}>
-              <Iconify
-                icon="solar:magnifier-linear"
-                width={48}
-                sx={{ color: "text.disabled" }}
-              />
-              <Typography variant="body2" color="text.secondary">
-                No dashboards match your search
-              </Typography>
-            </Stack>
+            <EmptyState
+              variant="no-results"
+              icon="solar:magnifier-linear"
+              title="No dashboards match your search"
+              onClearFilters={() => setSearchQuery("")}
+            />
           ) : (
             <EmptyLayout
               title="No dashboards yet"
@@ -535,6 +542,29 @@ export default function DashboardsListView() {
               link="https://docs.futureagi.com"
               linkText="Read the docs"
               icon="/assets/icons/navbar/ic_dashboard.svg"
+              action={
+                <CustomTooltip
+                  show={!canCreate}
+                  type=""
+                  title="You don't have permission to create dashboards."
+                  size="small"
+                  arrow
+                >
+                  <span>
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      size="small"
+                      onClick={handleCreate}
+                      disabled={createMutation.isPending || !canCreate}
+                    >
+                      {createMutation.isPending
+                        ? "Creating..."
+                        : "Create dashboard"}
+                    </Button>
+                  </span>
+                </CustomTooltip>
+              }
             />
           )
         ) : (

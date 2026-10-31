@@ -112,7 +112,7 @@ const VersionDetails = () => {
           value={activeTab || agentDetailsTabData[0].id}
           onChange={handleTabChange}
           textColor="primary"
-          sx={{
+          sx={{ boxShadow: "none",
             borderBottom: 1,
             borderColor: "divider",
             "& .MuiTabs-flexContainer": { gap: 0 },

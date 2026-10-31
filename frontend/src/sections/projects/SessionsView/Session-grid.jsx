@@ -203,7 +203,7 @@ const SessionGrid = React.forwardRef(
         suppressSizeToFit: false,
         cellStyle: {
           padding: "0px 20px",
-          fontSize: "13px",
+          fontSize: "12px",
           height: "100%",
         },
       }),

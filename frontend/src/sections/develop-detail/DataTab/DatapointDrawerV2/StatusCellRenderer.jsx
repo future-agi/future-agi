@@ -29,7 +29,7 @@ const StatusCellRenderer = ({ cellValue, status, isLoading, type }) => {
         sx={{
           marginLeft: theme.spacing(1),
           color: statusColors(theme, "danger").fg,
-          fontSize: "13px",
+          fontSize: "12px",
         }}
       >
         Error

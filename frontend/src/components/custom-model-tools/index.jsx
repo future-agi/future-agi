@@ -67,8 +67,8 @@ const CustomModelTools = ({
           <SvgColor
             src="/assets/prompt/tools.svg"
             sx={{
-              height: "20px",
-              width: "20px",
+              height: "16px",
+              width: "16px",
               flexShrink: 0,
             }}
           />

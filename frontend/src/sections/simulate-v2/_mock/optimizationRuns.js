@@ -363,7 +363,7 @@ const SURFACE_LABEL = {
   code: "code",
   structure: "structure",
 };
-/* The same surfaces as `agent-learn improve create --allow` names them. */
+/* The same surfaces as `fi api fix-runs create --allow` names them. */
 const SURFACE_CLI = {
   prompt: "prompt",
   tools: "tools",
@@ -1136,7 +1136,7 @@ const outcomeOf = (rec, { model } = {}) => {
   }
   if (record?.status === OPT_STATUS.FAILED) {
     return {
-      ending: { key: "failed", label: "Failed for infrastructure reasons" },
+      ending: { key: "failed", label: "Infrastructure error" },
       headline: `${record.infra?.reason || "The environment couldn't run the search."} An infrastructure problem, not the agent — no run was counted as a pass or a fail, and the crashed runs aren't charged to the budget.`,
     };
   }
@@ -1144,7 +1144,7 @@ const outcomeOf = (rec, { model } = {}) => {
      it out as an infrastructure failure instead of showing it running. */
   if (record?.status === OPT_STATUS.RUNNING && staleSince(record)) {
     return {
-      ending: { key: "failed", label: "Failed for infrastructure reasons" },
+      ending: { key: "failed", label: "Infrastructure error" },
       headline:
         "It stopped reporting progress more than a day ago and was timed out. An infrastructure problem, not the agent — nothing it hadn't finished was charged. Start it again to retry.",
     };
@@ -1520,7 +1520,7 @@ const outcomeOf = (rec, { model } = {}) => {
   if (!winner) {
     return {
       ...base,
-      ending: { key: "no-fix", label: "No safe improvement" },
+      ending: { key: "no-fix", label: "No improvement" },
       headline: `No safe improvement — ${blockingVerdict(r).title.replace(/^No eligible winner — /, "")}.`,
     };
   }
@@ -1548,14 +1548,14 @@ const outcomeOf = (rec, { model } = {}) => {
       }[failedCheck.id] || failedCheck.label.toLowerCase();
     return {
       ...base,
-      ending: { key: "no-fix", label: "No safe improvement" },
+      ending: { key: "no-fix", label: "No improvement" },
       headline: `No safe improvement — the ${chosen ? "trial you chose" : "best trial"} ${why.replace(/^it /, "")}.`,
     };
   }
   if (blocking && !chosen) {
     return {
       ...base,
-      ending: { key: "no-fix", label: "No safe improvement" },
+      ending: { key: "no-fix", label: "No improvement" },
       headline: `No safe improvement — ${blocking.title.charAt(0).toLowerCase()}${blocking.title.slice(1)}.`,
     };
   }
@@ -1564,7 +1564,7 @@ const outcomeOf = (rec, { model } = {}) => {
   if (issue && issue.targets && !issue.fixed) {
     return {
       ...base,
-      ending: { key: "no-fix", label: "No safe improvement" },
+      ending: { key: "no-fix", label: "No improvement" },
       headline: `No fix for ${issue.id} — the best trial didn't fix it on any of the ${plural(issue.targets, "scenario")} where it failed.`,
     };
   }
@@ -1572,7 +1572,7 @@ const outcomeOf = (rec, { model } = {}) => {
   if (issue && issue.held && !issue.heldFixed) {
     return {
       ...base,
-      ending: { key: "no-fix", label: "No safe improvement" },
+      ending: { key: "no-fix", label: "No improvement" },
       headline: `No fix for ${issue.id} — the best trial fixed it on scenarios the search saw, but not on the ${issue.held === 1 ? "one" : issue.held} it never saw.`,
     };
   }
@@ -1590,7 +1590,7 @@ const outcomeOf = (rec, { model } = {}) => {
   ) {
     return {
       ...base,
-      ending: { key: "no-fix", label: "No safe improvement" },
+      ending: { key: "no-fix", label: "No improvement" },
       headline: `No safe improvement — the held-back gain (${r.heldScore - r.heldBase >= 0 ? "+" : "−"}${Math.abs(r.heldScore - r.heldBase)} pts) is within run-to-run noise (±${r.noise}).`,
     };
   }
@@ -1691,7 +1691,7 @@ export const proofStrength = (r, issue, held) => {
   if (goalRel?.tier === "unreliable") {
     return {
       key: "none",
-      label: "Not proven",
+      label: "Not verified",
       note: `${of}, but scored on ${r.goal.label}, which agrees with your annotators about as often as chance (κ ${goalRel.kappa.toFixed(2)})`,
     };
   }
@@ -1705,13 +1705,18 @@ export const proofStrength = (r, issue, held) => {
       ? ", and again on a re-run after the pick"
       : ", but not on the re-run after the pick"
     : ", on the same run that picked it";
+  /* Fewer held-back scenarios than HELD_BACK.minimum (improvementStart.js):
+     never Verified, only Limited validation. */
+  const heldSize = r.heldMeasured ?? (r.heldTasks || []).length;
+  const enoughHeld = !heldSize || heldSize >= 4;
   if (
     confirmed &&
+    enoughHeld &&
     fixed >= PROVEN_MIN &&
     share >= 0.75 &&
     (issue || lift >= 2 * noise)
   ) {
-    return { key: "proven", label: "Proven", note: `${of}${rerun}` };
+    return { key: "proven", label: "Verified", note: `${of}${rerun}` };
   }
   if (
     (confirmed || !r.confirm) &&
@@ -1726,11 +1731,11 @@ export const proofStrength = (r, issue, held) => {
         : "three in four fixed";
     return {
       key: "likely",
-      label: "Likely",
+      label: "Limited validation",
       note: `${of}${rerun} — ${short} would prove it`,
     };
   }
-  return { key: "none", label: "Not proven", note: `${of}${rerun}` };
+  return { key: "none", label: "Not verified", note: `${of}${rerun}` };
 };
 
 /* Marked must-pass but not passing every repeat today — named, never gating. */
@@ -2337,7 +2342,10 @@ export const settleImprovements = (es, now = Date.now()) => {
  * (roadmap runs.md: repeated submission reuses the existing handle) — same
  * source run, base version and goal. Null when nothing matches.
  */
-export const runningTwinOf = (envState, { fromRunId, baseAgentVersion, goalId = null }) =>
+export const runningTwinOf = (
+  envState,
+  { fromRunId, baseAgentVersion, goalId = null },
+) =>
   optimizations(envState).find(
     (o) =>
       o.status === OPT_STATUS.RUNNING &&

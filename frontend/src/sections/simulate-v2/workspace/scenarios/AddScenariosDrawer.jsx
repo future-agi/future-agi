@@ -2,12 +2,11 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import {
   Box,
+  Button,
+  ButtonBase,
+  IconButton,
   Stack,
   Typography,
-  IconButton,
-  Button,
-  Collapse,
-  ButtonBase,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
@@ -25,12 +24,6 @@ import FailingCasesImport from "./FailingCasesImport";
 import ChatSource from "./ChatSource";
 import GenerateScenarios from "./GenerateScenarios";
 import ProductionReplayImport from "./ProductionReplayImport";
-import {
-  ChatThumb,
-  ProductionThumb,
-  GenerateThumb,
-  FailingCasesThumb,
-} from "./RouteThumbs";
 import { injectComposerScaffold } from "../../_mock/composerScaffoldBus";
 import { openBuilderChat } from "../../_mock/builderPromptBus";
 import {
@@ -38,7 +31,7 @@ import {
   PRODUCTION_OFF_REASON,
 } from "../../_mock/rsiModel";
 import { useWorkspaceSettings } from "../../store";
-import { clickable, focusRing } from "../../components/clickable";
+import { focusRing } from "../../components/clickable";
 
 /* The builder chat is the other way to add scenarios — say what's missing and
    it writes them. This is the skill chip that hands the job over. */
@@ -58,68 +51,71 @@ const ADD_IN_CHAT = {
  * not how you get scenarios, they are how you add ones the derivation could
  * not know to write.
  *
- * Four sources lead: generate more, build them from an Error Feed issue,
- * reproduce the cases that failed in this environment's runs, or describe
- * them in chat. Production conversations word for word, a dataset and a
- * script are still here, behind More sources — real routes, but not where
- * most scenarios come from.
+ * Every source is shown the same way, in two rows: ways to write new
+ * scenarios, and ways to turn what already happened into scenarios.
  *
  * Behind a button, and in a drawer, so the page leads with the scenarios you
  * have and the routes stay one click away.
  */
-const ROUTES = [
+const GROUPS = [
   {
-    id: "generate",
-    label: "Generate",
-    blurb: "New scenarios across tasks, callers, moods and lines.",
-    Thumb: GenerateThumb,
+    label: "Write new",
+    routes: [
+      {
+        id: "generate",
+        label: "Generate",
+        icon: "solar:magic-stick-3-linear",
+        blurb: "More across callers and moods",
+      },
+      {
+        id: "chat",
+        label: "From chat",
+        icon: "solar:chat-round-line-linear",
+        blurb: "Describe it; the builder writes it",
+      },
+      {
+        id: "manual",
+        label: "By hand",
+        icon: "solar:pen-new-square-linear",
+        blurb: "Write one yourself",
+      },
+      {
+        id: "script",
+        label: "From a script",
+        icon: "solar:document-text-linear",
+        blurb: "Call script, SOP or runbook",
+      },
+    ],
   },
   {
-    id: "error-feed",
-    label: "From Error Feed",
-    blurb: "Turn an issue's failing traces into scenarios.",
-    Thumb: ProductionThumb,
-  },
-  {
-    id: "failing",
-    label: "From failing cases",
-    blurb: "Re-test what failed or was flaky in past runs.",
-    Thumb: FailingCasesThumb,
-  },
-  {
-    id: "chat",
-    label: "From chat",
-    blurb: "Say what's missing and the builder chat writes it.",
-    Thumb: ChatThumb,
-  },
-];
-
-/* Kept, but quieter: one line each under More sources. */
-const MORE_ROUTES = [
-  {
-    id: "manual",
-    label: "By hand",
-    icon: "solar:pen-new-square-linear",
-    hint: "Write one: situation, starting state, what passes, what must not happen",
-  },
-  /* Production traces — exact picked traces become reviewed drafts. */
-  {
-    id: "replay",
-    label: "Production traces",
-    icon: "solar:server-linear",
-    hint: "Pick exact production traces, then reproduce, keep, replay, vary or pull out a pattern",
-  },
-  {
-    id: "dataset",
-    label: "A dataset",
-    icon: "solar:database-linear",
-    hint: "Turn a dataset's rows into tasks",
-  },
-  {
-    id: "script",
-    label: "A script",
-    icon: "solar:document-text-linear",
-    hint: "Pull scenarios out of a call script, SOP or runbook",
+    label: "From what already happened",
+    routes: [
+      {
+        id: "error-feed",
+        label: "From Error Feed",
+        icon: "solar:bug-linear",
+        blurb: "Real users · an issue's failing conversations",
+      },
+      {
+        id: "failing",
+        label: "From failing cases",
+        icon: "solar:restart-linear",
+        blurb: "Simulated · failed or flaky in this environment's runs",
+      },
+      /* Exact picked evidence becomes reviewed drafts. */
+      {
+        id: "replay",
+        label: "Import evidence",
+        icon: "solar:server-linear",
+        blurb: "Transcripts or CSV/JSON files you upload",
+      },
+      {
+        id: "dataset",
+        label: "From a dataset",
+        icon: "solar:database-linear",
+        blurb: "Each row becomes a task",
+      },
+    ],
   },
 ];
 
@@ -138,10 +134,6 @@ export default function AddScenariosDrawer({
 }) {
   const first = ROUTE_ALIASES[initialRoute] || initialRoute || null;
   const [route, setRoute] = useState(first);
-  const more = MORE_ROUTES;
-  const [moreOpen, setMoreOpen] = useState(() =>
-    more.some((r) => r.id === first),
-  );
   /* Production-derived sources follow the workspace-admin switch in Settings. */
   const { settings: workspaceSettings } = useWorkspaceSettings();
   const productionOff = !productionScenariosOn(envState, workspaceSettings);
@@ -261,81 +253,45 @@ export default function AddScenariosDrawer({
             below the grid rather than replacing it, so switching to a
             different route is one click, not click-back-click.
           */}
-          <Box
-            sx={{
-              display: "grid",
-              gap: 1.5,
-              gridTemplateColumns: {
-                xs: "repeat(2, 1fr)",
-                md: `repeat(${ROUTES.length}, 1fr)`,
-              },
-              flexShrink: 0,
-            }}
-          >
-            {ROUTES.map((r) => (
-              <RouteCard
-                key={r.id}
-                route={
-                  productionOff && PRODUCTION_ROUTES.has(r.id)
-                    ? {
-                        ...r,
-                        blurb:
-                          "Off — scenarios from production are turned off in Settings.",
-                      }
-                    : r
-                }
-                active={route === r.id}
-                off={productionOff && PRODUCTION_ROUTES.has(r.id)}
-                onClick={() => toggle(r.id)}
-              />
+          <Stack spacing={1.5} sx={{ flexShrink: 0, mb: route ? 2.5 : 0 }}>
+            {GROUPS.map((g) => (
+              <Box key={g.label}>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    fontWeight: 500,
+                    mb: 0.75,
+                  }}
+                >
+                  {g.label}
+                </Typography>
+                <Box
+                  sx={{
+                    display: "grid",
+                    gap: 1,
+                    gridTemplateColumns: {
+                      xs: "repeat(2, minmax(0, 1fr))",
+                      md: "repeat(4, minmax(0, 1fr))",
+                    },
+                  }}
+                >
+                  {g.routes.map((r) => {
+                    const off = productionOff && PRODUCTION_ROUTES.has(r.id);
+                    return (
+                      <SourceTile
+                        key={r.id}
+                        route={r}
+                        active={route === r.id}
+                        off={off}
+                        onClick={() => toggle(r.id)}
+                      />
+                    );
+                  })}
+                </Box>
+              </Box>
             ))}
-          </Box>
-
-          {/* More sources — a quiet disclosure, one line when open. */}
-          {more.length > 0 && (
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={1}
-              sx={{
-                mt: 1.25,
-                mb: route ? 2.5 : 0,
-                flexShrink: 0,
-                minHeight: 30,
-              }}
-            >
-              <Button
-                size="small"
-                onClick={() => setMoreOpen((v) => !v)}
-                endIcon={
-                  <Iconify
-                    icon={
-                      moreOpen
-                        ? "solar:alt-arrow-left-linear"
-                        : "solar:alt-arrow-right-linear"
-                    }
-                    width={12}
-                  />
-                }
-                sx={{ color: "text.secondary", ml: -0.75, flexShrink: 0 }}
-              >
-                More sources
-              </Button>
-              <Collapse in={moreOpen} orientation="horizontal" unmountOnExit>
-                <Stack direction="row" spacing={0.75}>
-                  {more.map((r) => (
-                    <MoreSource
-                      key={r.id}
-                      route={r}
-                      active={route === r.id}
-                      off={productionOff && PRODUCTION_ROUTES.has(r.id)}
-                      onClick={() => toggle(r.id)}
-                    />
-                  ))}
-                </Stack>
-              </Collapse>
-            </Stack>
-          )}
+          </Stack>
 
           {/* picker fills the remaining vertical space so the section-card
               frame reaches the bottom of the drawer instead of clipping
@@ -346,7 +302,6 @@ export default function AddScenariosDrawer({
               minHeight: 0,
               display: "flex",
               flexDirection: "column",
-              mt: more.length || !route ? 0 : 2.5,
             }}
           >
             {offRoute && (
@@ -543,18 +498,28 @@ const selectedTint = (t) => {
   return `linear-gradient(${c}, ${c})`;
 };
 
-function RouteCard({ route, active, off = false, onClick }) {
-  const { Thumb } = route;
+/* One source: icon, name and one line — every source the same shape. */
+function SourceTile({ route, active, off = false, onClick }) {
   return (
-    <Box
-      {...clickable(onClick, { pressed: active })}
+    <ButtonBase
+      type="button"
+      title={off ? PRODUCTION_OFF_REASON : undefined}
+      onClick={onClick}
+      aria-pressed={active}
       sx={{
         ...focusRing,
-        borderRadius: "8px",
-        overflow: "hidden",
-        height: "100%",
-        cursor: "pointer",
         ...(off && { opacity: 0.6 }),
+        display: "flex",
+        width: 1,
+        minWidth: 0,
+        alignItems: "flex-start",
+        justifyContent: "flex-start",
+        gap: 1,
+        px: 1.25,
+        py: 1,
+        textAlign: "left",
+        font: "inherit",
+        borderRadius: "8px",
         border: "1px solid",
         borderColor: active ? "text.primary" : "divider",
         bgcolor: "background.paper",
@@ -563,31 +528,12 @@ function RouteCard({ route, active, off = false, onClick }) {
         "&:hover": { borderColor: active ? "text.primary" : "text.tertiary" },
       }}
     >
-      {/*
-        Thumb area shrunk and the SVG scaled 0.68× — the original 108px
-        strip with a full-size illustration ate a third of the drawer
-        every time the picker rendered below. Cards read at a glance
-        without the extra whitespace.
-      */}
-      <Box
-        sx={{
-          height: 72,
-          display: "grid",
-          placeItems: "center",
-          overflow: "hidden",
-          bgcolor: "background.neutral",
-          backgroundImage: active ? selectedTint : "none",
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          "& > svg": {
-            transform: "scale(0.68)",
-            transformOrigin: "center center",
-          },
-        }}
-      >
-        <Thumb />
-      </Box>
-      <Box sx={{ px: 1.5, py: 1 }}>
+      <Iconify
+        icon={route.icon}
+        width={16}
+        sx={{ color: "text.secondary", mt: "2px", flexShrink: 0 }}
+      />
+      <Box minWidth={0}>
         <Typography
           sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}
         >
@@ -603,60 +549,13 @@ function RouteCard({ route, active, off = false, onClick }) {
             overflow: "hidden",
           }}
         >
-          {route.blurb}
+          {off ? "Off in Settings" : route.blurb}
         </Typography>
       </Box>
-    </Box>
-  );
-}
-RouteCard.propTypes = {
-  route: PropTypes.object,
-  active: PropTypes.bool,
-  off: PropTypes.bool,
-  onClick: PropTypes.func,
-};
-
-/* One of the extra routes — a single line, the same selected treatment as the cards. */
-function MoreSource({ route, active, off = false, onClick }) {
-  return (
-    <ButtonBase
-      type="button"
-      title={off ? PRODUCTION_OFF_REASON : route.hint}
-      onClick={onClick}
-      sx={{
-        ...(off && { opacity: 0.6 }),
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 0.75,
-        height: 30,
-        px: 1.25,
-        whiteSpace: "nowrap",
-        cursor: "pointer",
-        font: "inherit",
-        borderRadius: 1,
-        border: "1px solid",
-        borderColor: active ? "text.primary" : "divider",
-        bgcolor: "background.paper",
-        backgroundImage: active ? selectedTint : "none",
-        color: active ? "text.primary" : "text.secondary",
-        transition: "border-color .16s ease",
-        "&:hover": {
-          borderColor: active ? "text.primary" : "text.tertiary",
-          color: "text.primary",
-        },
-      }}
-    >
-      <Iconify icon={route.icon} width={14} />
-      <Typography
-        component="span"
-        sx={{ typography: "s2", fontWeight: 600, color: "inherit" }}
-      >
-        {route.label}
-      </Typography>
     </ButtonBase>
   );
 }
-MoreSource.propTypes = {
+SourceTile.propTypes = {
   route: PropTypes.object,
   active: PropTypes.bool,
   off: PropTypes.bool,

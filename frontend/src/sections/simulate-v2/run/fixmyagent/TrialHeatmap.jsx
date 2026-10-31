@@ -64,7 +64,7 @@ export default function TrialHeatmap({ trials = [], scenarios = [], winner }) {
   /*
     Per scenario: how many candidates moved it, and which way. Sorted so the
     rows that need a decision are at the top — blockers first, then whatever
-    the fewest trials could fix.
+    the fewest candidates could fix.
   */
   const rows = useMemo(() => {
     const list = scenarios.map((s) => {

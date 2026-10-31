@@ -10,7 +10,6 @@ import {
   IconButton,
   Tabs,
   Tab,
-  Dialog,
   Checkbox,
   TextField,
 } from "@mui/material";
@@ -90,10 +89,7 @@ import {
   reproduceAgainPatch,
   visibleFailingOf,
 } from "./improvementView";
-import {
-  agentDefinitionOf,
-  agentSourceOf,
-} from "../../_mock/agentRegistry";
+import { agentDefinitionOf, agentSourceOf } from "../../_mock/agentRegistry";
 import { useNavigate } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import { changeFileFor } from "../../_mock/optimize";
@@ -130,6 +126,7 @@ import CandidateSourcePicker from "../CandidateSourcePicker";
 import NotReproducedBody from "./NotReproducedBody";
 import { creditsLabel } from "../../_mock/metering";
 import { envVersionNameOf } from "../../_mock/codeRefs";
+import ClosableDialog from "../../components/ClosableDialog";
 
 /**
  * One improvement run.
@@ -362,7 +359,7 @@ export default function OptimizationRunView({
         agentId: connectedCodingAgent()?.id || null,
         envId: env.id,
         optId: record.id,
-        where: deployed ? "deployed" : "local",
+        where: deployed ? "deployed" : "future-agi",
       });
     }
     return brief();
@@ -532,7 +529,7 @@ export default function OptimizationRunView({
           <Box flex={1} minWidth={0}>
             <Typography
               sx={{ typography: "s1", fontWeight: 600 }}
-            >{`Ship Run ${ships.n}`}</Typography>
+            >{`Ship Candidate ${ships.n}`}</Typography>
             <Typography
               noWrap
               sx={{ typography: "s3", color: "text.tertiary" }}
@@ -606,7 +603,16 @@ export default function OptimizationRunView({
               "Nothing goes live from here — it's released when someone makes it live where the agent runs."
             }
           </Typography>
-          {verified || lifecycle ? (
+          {/* The verdict controls the actions: a candidate that didn't
+              verify gets no pull request or default — the current version stays. */}
+          {outcome.strength?.key === "none" && !lifecycle ? (
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              Not verified — it didn&apos;t fix enough of the held-back
+              scenarios to call it a fix, so there&apos;s nothing to ship. The
+              current version stays. Look at the evidence, or run it again with
+              more held-back scenarios.
+            </Typography>
+          ) : verified || lifecycle ? (
             handoffOf()
           ) : (
             <Button
@@ -617,7 +623,7 @@ export default function OptimizationRunView({
               disabled={!onRunWinner}
               startIcon={<Iconify icon="solar:play-bold" width={14} />}
             >
-              {`Verify Run ${ships.n}`}
+              {`Verify Candidate ${ships.n}`}
             </Button>
           )}
         </Box>
@@ -703,7 +709,7 @@ export default function OptimizationRunView({
                   ? "stopped before searching"
                   : suggestion
                     ? `${record.reproduce?.total ? `Reproduced on ${record.reproduce.reproduced || 0} of ${record.reproduce.total} scenarios` : `${result.trainMeasured + result.heldMeasured} scenarios measured`} · no change tried`
-                    : `${record.stoppedAtBudget ? `${result.trials.length} of ${record.stoppedAtBudget.of}` : result.stoppedEarly && !running ? `${result.trials.length} of up to ${result.stoppedEarly.of}` : result.trials.length} trials × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.stoppedEarly && !running ? (result.stoppedEarly.complete ? " · stopped once every failing target was fixed" : ` · stopped early, no gain in the last ${noGainRunsOf(result.stoppedEarly)}`) : ""}`}
+                    : `${record.stoppedAtBudget ? `${result.trials.length} of ${record.stoppedAtBudget.of}` : result.stoppedEarly && !running ? `${result.trials.length} of up to ${result.stoppedEarly.of}` : result.trials.length} candidates × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.stoppedEarly && !running ? (result.stoppedEarly.complete ? " · stopped once every failing target was fixed" : ` · stopped early, no gain in the last ${noGainRunsOf(result.stoppedEarly)}`) : ""}`}
           </Typography>
         </Box>
         {!running && result && (
@@ -902,7 +908,7 @@ export default function OptimizationRunView({
             subtitle={
               record.fixDepth === "suggestion"
                 ? `${result.trainMeasured + result.heldMeasured} scenarios on the agent as it runs today`
-                : `${result.trials.length} trials × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.textSearch ? " in text" : ""}`
+                : `${result.trials.length} candidates × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.textSearch ? " in text" : ""}`
             }
             steps={searchTrace(result, record)}
             trials={record.fixDepth === "suggestion" ? [] : result.trials}
@@ -1312,7 +1318,11 @@ export default function OptimizationRunView({
                     borderColor: "divider",
                   }}
                 >
-                  <Tabs value={tab} onChange={(_, v) => setTab(v)}>
+                  <Tabs
+                    sx={{ boxShadow: "none" }}
+                    value={tab}
+                    onChange={(_, v) => setTab(v)}
+                  >
                     {!decisionOnly && <Tab value="trials" label="Runs" />}
                     {!!result.finalists?.length && (
                       <Tab value="finalists" label="Finalists" />
@@ -1720,7 +1730,7 @@ function IssueScenarioEditor({
     setEdits((e) => ({ ...e, [id]: { ...e[id], ...patchIn } }));
   const included = drafts.filter((d) => edits[d.id]?.include !== false).length;
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       maxWidth={false}
@@ -1822,7 +1832,7 @@ function IssueScenarioEditor({
           Reproduce again
         </Button>
       </Stack>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 IssueScenarioEditor.propTypes = {
@@ -1925,7 +1935,7 @@ function Growth({ trials, base, theme, winner }) {
   const T = 10;
   const B = 20;
   /*
-    Monotonic view of the score. Each trial is displayed at the running
+    Monotonic view of the score. Each candidate is displayed at the running
     max, not its own raw score — improvement, in the way the user
     reads it, only goes up. The raw scatter of "this candidate lost" is a
     detail the trials grid can carry; the headline chart states the story.
@@ -2355,7 +2365,7 @@ function ImprovementSteps({
       !running &&
       record.result?.stoppedEarly?.window &&
       !record.result.stoppedEarly.complete
-        ? `${record.result.stoppedEarly.after} of up to ${record.result.stoppedEarly.of} trials · no gain in the last ${noGainRunsOf(record.result.stoppedEarly)}`
+        ? `${record.result.stoppedEarly.after} of up to ${record.result.stoppedEarly.of} candidates · no gain in the last ${noGainRunsOf(record.result.stoppedEarly)}`
         : null,
     ]
       .filter(Boolean)
@@ -3045,7 +3055,7 @@ function SearchDetails({ record, result, model }) {
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", px: 0.5 }}
           >
-            {`${methodLabelOf(result.optimizer?.id)} search (${result.optimizer?.label}) · changes ${record.writerModel ? improverModelsText(record.model, record.writerModel) : `written by ${model?.label || record.model}`}, judged by ${judgeFor(record.model)} — a different model family, so no model grades its own work · ${result.trials.length}${result.planned && result.planned !== result.trials.length ? ` of ${result.planned}` : ""} trials · ${result.trainMeasured} target / ${result.heldMeasured} held-back${result.mustPassMeasured != null ? ` / ${result.mustPassMeasured} must-pass` : ""} scenarios${result.goal ? ` · targets: scenarios short of ${goalWords(result.goal)}` : ""}`}
+            {`${methodLabelOf(result.optimizer?.id)} search (${result.optimizer?.label}) · changes ${record.writerModel ? improverModelsText(record.model, record.writerModel) : `written by ${model?.label || record.model}`}, judged by ${judgeFor(record.model)} — a different model family, so no model grades its own work · ${result.trials.length}${result.planned && result.planned !== result.trials.length ? ` of ${result.planned}` : ""} candidates · ${result.trainMeasured} target / ${result.heldMeasured} held-back${result.mustPassMeasured != null ? ` / ${result.mustPassMeasured} must-pass` : ""} scenarios${result.goal ? ` · targets: scenarios short of ${goalWords(result.goal)}` : ""}`}
           </Typography>
           {/* GEPA keeps the best candidate for each scenario, not one overall best. */}
           {result.optimizer?.id === "gepa" && <ParetoPool result={result} />}

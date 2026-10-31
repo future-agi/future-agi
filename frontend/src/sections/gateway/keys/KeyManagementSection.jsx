@@ -29,6 +29,7 @@ import { useGatewayContext } from "../context/useGatewayContext";
 import CreateKeyDialog from "./CreateKeyDialog";
 import KeyDetailDrawer from "./KeyDetailDrawer";
 import { formatDate } from "../utils/formatters";
+import EmptyState from "src/components/empty-state";
 
 const STATUS_FILTERS = [
   { value: "", label: "All" },
@@ -143,75 +144,81 @@ const KeyManagementSection = () => {
             onClick: handleSync,
             disabled: syncMutation.isPending,
           },
-          {
-            label: "Create Key",
-            variant: "contained",
-            size: "small",
-            icon: "solar:add-linear",
-            onClick: () => setCreateDialogOpen(true),
-          },
+          ...(keys?.length === 0
+            ? []
+            : [
+                {
+                  label: "Create Key",
+                  variant: "contained",
+                  size: "small",
+                  icon: "solar:add-linear",
+                  onClick: () => setCreateDialogOpen(true),
+                },
+              ]),
         ]}
       />
 
       {/* Filters */}
-      <ListToolbar>
-        <TextField
-          placeholder="Search by name or owner..."
-          size="small"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          sx={{ width: 280 }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Iconify icon="solar:magnifier-linear" width={16} />
-              </InputAdornment>
-            ),
-          }}
-        />
-        <ToggleButtonGroup
-          value={statusFilter}
-          exclusive
-          onChange={(_, val) => val !== null && setStatusFilter(val)}
-          size="small"
-        >
-          {STATUS_FILTERS.map((f) => (
-            <ToggleButton key={f.value} value={f.value}>
-              {f.label}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
-      </ListToolbar>
+      {keys?.length !== 0 && (
+        <ListToolbar>
+          <TextField
+            placeholder="Search by name or owner..."
+            size="small"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            sx={{ width: 280 }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Iconify icon="solar:magnifier-linear" width={16} />
+                </InputAdornment>
+              ),
+            }}
+          />
+          <ToggleButtonGroup
+            value={statusFilter}
+            exclusive
+            onChange={(_, val) => val !== null && setStatusFilter(val)}
+            size="small"
+          >
+            {STATUS_FILTERS.map((f) => (
+              <ToggleButton key={f.value} value={f.value}>
+                {f.label}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+        </ListToolbar>
+      )}
 
       {/* Table */}
       {filteredKeys.length === 0 ? (
-        <Box
-          display="flex"
-          flexDirection="column"
-          alignItems="center"
-          justifyContent="center"
-          py={8}
-        >
-          <Iconify
-            icon="solar:key-linear"
-            width={48}
-            sx={{ color: "text.disabled", mb: 2 }}
-          />
-          <Typography variant="h6" color="text.secondary" mb={1}>
-            {keys?.length === 0
+        <EmptyState
+          variant={keys?.length === 0 ? "first-run" : "no-results"}
+          icon="solar:key-linear"
+          title={
+            keys?.length === 0
               ? "No API keys yet"
-              : "No keys match your filters"}
-          </Typography>
-          {keys?.length === 0 && (
-            <Button
-              variant="outlined"
-              startIcon={<Iconify icon="solar:add-linear" width={20} />}
-              onClick={() => setCreateDialogOpen(true)}
-            >
-              Create Your First Key
-            </Button>
-          )}
-        </Box>
+              : "No keys match your filters"
+          }
+          description={
+            keys?.length === 0
+              ? "Create a key to send requests through the gateway from your code."
+              : undefined
+          }
+          action={
+            keys?.length === 0 ? (
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() => setCreateDialogOpen(true)}
+              >
+                Create key
+              </Button>
+            ) : undefined
+          }
+          sx={{ pt: 6, pb: 6 }}
+        />
       ) : (
         <>
           <TableContainer>

@@ -214,7 +214,7 @@ const ProjectWrapperView = () => {
                 color="text.tertiary"
                 fontWeight={"fontWeightRegular"}
               >
-                Create a project to experiment on your model
+                Send traces from your agents to inspect every step, debug failures and track cost and latency.
               </Typography>
             </Box>
           </Box>

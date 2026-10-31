@@ -433,4 +433,4 @@ export const snapshotPatch = (envState, p, name) => ({
 });
 
 export const previewCli = (env, pointId) =>
-  `agent-learn env preview start --environment ${(env?.name || "env").toLowerCase().replace(/[^a-z0-9]+/g, "-")}${pointId && pointId !== "seed" ? ` --from-snapshot ${pointId}` : ""}`;
+  `fi sim env preview start --environment ${(env?.name || "env").toLowerCase().replace(/[^a-z0-9]+/g, "-")}${pointId && pointId !== "seed" ? ` --from-snapshot ${pointId}` : ""}`;

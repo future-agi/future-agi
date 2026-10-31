@@ -1,15 +1,7 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import {
-  Box,
-  Button,
-  Dialog,
-  Menu,
-  MenuItem,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Button, Menu, MenuItem, Stack, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { SectionCard } from "../../components/primitives";
@@ -17,6 +9,8 @@ import CopyCommandButton from "../../components/CopyCommandButton";
 import {
   ORG_SOURCES,
   SUPPORTED_LINE,
+  KB_LIMIT_LINE,
+  UNAVAILABLE_CONNECTORS,
   participantViewsOf,
   readFile,
   roleLabel,
@@ -26,6 +20,7 @@ import {
 } from "../../_mock/orgData";
 import DataProposalCard from "./DataProposalCard";
 import SourceDrawer from "./SourceDrawer";
+import ClosableDialog from "../../components/ClosableDialog";
 
 const STATUS = {
   ready: "Ready",
@@ -96,10 +91,13 @@ export default function SourcesSection({
       );
       return;
     }
+    /* From the Knowledge base, pinned to the revision chosen: a newer
+       revision is offered as a refresh to review, never applied on its own. */
     const s = {
       ...readFile({ name: o.name, size: 64000 }),
       owner: o.owner,
       byReference: true,
+      kb: { collection: o.collection, revision: o.revision },
     };
     patch({ sources: [...(envState.sources || []), s] });
     setReview([s.id]);
@@ -165,7 +163,7 @@ export default function SourcesSection({
             pb: 0.5,
           }}
         >
-          From your organization
+          Choose from Knowledge base
         </Typography>
         {ORG_SOURCES.map((o) => (
           <MenuItem key={o.id} onClick={() => addOrg(o)} sx={{ gap: 1 }}>
@@ -184,8 +182,45 @@ export default function SourcesSection({
               </Typography>
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                 {o.access
-                  ? `${o.owner} · added by reference`
+                  ? `${o.collection} · revision ${o.revision} · pinned`
                   : "No access — Request access"}
+              </Typography>
+            </Box>
+          </MenuItem>
+        ))}
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            px: 2,
+            pt: 0.5,
+            pb: 1,
+          }}
+        >
+          {`${KB_LIMIT_LINE} Updates are never pulled in on their own — a new revision waits for you to review it.`}
+        </Typography>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            px: 2,
+            pt: 1,
+            pb: 0.5,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          Other connectors
+        </Typography>
+        {UNAVAILABLE_CONNECTORS.map((c) => (
+          <MenuItem key={c.id} disabled sx={{ gap: 1 }}>
+            <Iconify icon={c.icon} width={16} />
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography noWrap sx={{ typography: "s2" }}>
+                {c.name}
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                Not available yet
               </Typography>
             </Box>
           </MenuItem>
@@ -282,7 +317,7 @@ export default function SourcesSection({
                 <Typography
                   sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}
                 >
-                  {`v${s.version}${s.pendingRefresh ? ` · v${s.pendingRefresh.v} kept` : ""}`}
+                  {`${s.kb ? `rev ${s.kb.revision}` : `v${s.version}`}${s.pendingRefresh ? ` · v${s.pendingRefresh.v} kept` : ""}`}
                 </Typography>
                 <Typography
                   noWrap
@@ -348,7 +383,7 @@ export default function SourcesSection({
         sourceId={open}
         readOnly={readOnly}
       />
-      <Dialog
+      <ClosableDialog
         open={!!review}
         onClose={() => setReview(null)}
         fullWidth
@@ -368,7 +403,7 @@ export default function SourcesSection({
             }}
           />
         )}
-      </Dialog>
+      </ClosableDialog>
     </SectionCard>
   );
 }

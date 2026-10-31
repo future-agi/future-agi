@@ -1,14 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { SegmentedTabs } from "src/components/tabs/tabs";
-import {
-  Alert,
-  Box,
-  Button,
-  CircularProgress,
-  Stack,
-  Tab,
-  Typography,
-} from "@mui/material";
+import { Alert, Box, Button, Stack, Tab, Typography } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -34,6 +26,7 @@ import {
 import TaskConfirmDialog from "src/sections/common/EvalsTasks/EditTaskDrawer/TaskConfirmBox";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const getTaskDetailsErrorMessage = (error) =>
   getSafeActionErrorMessage(error, "Task details could not be loaded.");
@@ -269,7 +262,7 @@ const TaskDetailPage = () => {
           height: "100%",
         }}
       >
-        <CircularProgress size={28} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }

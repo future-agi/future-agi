@@ -43,21 +43,21 @@ const ResultsCellRenderer = (props) => {
   const renderEvaluationData = () => {
     if (valueObject?.output === "Pass/Fail") {
       return (
-        <Typography fontSize="13px" color="text.secondary">
+        <Typography fontSize="12px" color="text.secondary">
           {valueObject.value}
         </Typography>
       );
     }
     if (valueObject?.output === "score") {
       return (
-        <Typography fontSize="13px" color="text.secondary">
+        <Typography fontSize="12px" color="text.secondary">
           {valueObject?.value * 100}%
         </Typography>
       );
     }
     if (valueObject?.output === "choices") {
       return (
-        <Typography fontSize="13px" color="text.primary">
+        <Typography fontSize="12px" color="text.primary">
           {valueObject.value.join(" · ")}
         </Typography>
       );
@@ -81,7 +81,7 @@ const ResultsCellRenderer = (props) => {
   if (column.field === "evaluation") {
     return (
       <Typography
-        fontSize="13px"
+        fontSize="12px"
         color="text.secondary"
         sx={{
           padding: 1,
@@ -159,7 +159,7 @@ const ResultsCellRenderer = (props) => {
             alignItems: "center",
           }}
         >
-          <Typography fontSize="13px" color="error.main">
+          <Typography fontSize="12px" color="error.main">
             Error
           </Typography>
         </Box>

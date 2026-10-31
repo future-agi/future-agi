@@ -859,7 +859,7 @@ const GuardrailManagementSection = () => {
       <Tabs
         value={tab}
         onChange={handleTabChange}
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+        sx={{ boxShadow: "none", mb: 3, borderBottom: 1, borderColor: "divider" }}
       >
         {TAB_LABELS.map((label) => (
           <Tab key={label} label={label} />

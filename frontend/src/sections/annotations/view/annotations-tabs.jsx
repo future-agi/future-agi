@@ -24,7 +24,7 @@ export default function AnnotationsTabs() {
     <Tabs
       value={currentTabId}
       onChange={handleTabChange}
-      sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+      sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
     >
       {TABS.map((tab) => (
         <Tab key={tab.id} label={tab.label} value={tab.id} />

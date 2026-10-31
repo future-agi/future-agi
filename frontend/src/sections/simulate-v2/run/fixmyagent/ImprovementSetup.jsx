@@ -10,7 +10,6 @@ import {
   Box,
   Button,
   ButtonBase,
-  Dialog,
   IconButton,
   ListSubheader,
   MenuItem,
@@ -89,6 +88,7 @@ import { creditsLabel } from "../../_mock/metering";
 import CopyCommandButton from "../../components/CopyCommandButton";
 import { creditsForUsd } from "../../_mock/metering";
 import { casesForSkillOf, loadedVOf, skillSetOf } from "../../_mock/skills";
+import ClosableDialog from "../../components/ClosableDialog";
 
 /* "Raise the pass rate", "Raise booking success rate", "Raise Policy adherence". */
 const goalText = (g) =>
@@ -889,8 +889,8 @@ export default function ImprovementSetup({
             <ConfirmRow k="Cost">
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 {overBudget
-                  ? `Up to ${trials} trials, stopping at ${creditsLabel(spend)} with the best it found — the full plan would need about ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`
-                  : `Up to ${trials} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min. Stops at the limit with the best it found.`}
+                  ? `Up to ${trials} candidates, stopping at ${creditsLabel(spend)} with the best it found — the full plan would need about ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`
+                  : `Up to ${trials} candidates · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min. Stops at the limit with the best it found.`}
               </Typography>
               {estimate.parts?.length > 0 && (
                 <Box sx={{ mt: 0.5 }}>
@@ -1123,13 +1123,9 @@ export default function ImprovementSetup({
                           Search and prove — tries changes, proves the best on
                           held-back scenarios
                         </MenuItem>
-                        <MenuItem value="review">
-                          Review the changes first — see each change, edit or
-                          drop it, then search and prove
-                        </MenuItem>
                         <MenuItem value="suggest">
                           Suggest only — diagnoses and suggests a change, no
-                          trials
+                          candidates
                         </MenuItem>
                       </Select>
                       <Typography
@@ -1442,7 +1438,7 @@ export default function ImprovementSetup({
         {/* The same experiment from code — what Start improvement would make. */}
         {main && (
           <CopyCommandButton
-            command={`agent-learn improve create --baseline ${base?.id || "<run-id>"} \\\n  --goal "${goalOf?.label || "Raise the pass rate"}" --allow ${allowFlagOf(limits.allowed)} \\\n  --suite ${main.id}/target --holdout ${main.id}/holdout \\\n  --budget ${creditsForUsd(spend)} --budget-unit credits${suggestOnly ? " --suggest-only" : ""}`}
+            command={`fi api fix-runs create --baseline ${base?.id || "<run-id>"} \\\n  --goal "${goalOf?.label || "Raise the pass rate"}" --allow ${allowFlagOf(limits.allowed)} \\\n  --suite ${main.id}/target --holdout ${main.id}/holdout \\\n  --budget ${creditsForUsd(spend)} --budget-unit credits${suggestOnly ? " --suggest-only" : ""}`}
           />
         )}
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
@@ -1530,7 +1526,7 @@ function HeldBackLine({ heldBack }) {
         }}
       >
         {heldBack.tooFew
-          ? `Too few held-back scenarios to tell a real fix from noise. The fix will be proven on the targets only. ${heldBack.n} of at least ${heldBack.minimum}; ${heldBack.recommended} recommended.`
+          ? `Too few held-back scenarios to tell a real fix from noise. The result can only be Limited validation, never Verified. ${heldBack.n} of at least ${heldBack.minimum}; ${heldBack.recommended} recommended.`
           : `${heldBack.n} held back — ${heldBack.recommended} recommended for a surer read.`}
       </Typography>
     </Stack>
@@ -1573,7 +1569,7 @@ function SetupFrame({ bare, open, onClose, children }) {
   if (bare)
     return <Stack sx={{ height: "100%", minHeight: 0 }}>{children}</Stack>;
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       maxWidth={false}
@@ -1583,7 +1579,7 @@ function SetupFrame({ bare, open, onClose, children }) {
       }}
     >
       {children}
-    </Dialog>
+    </ClosableDialog>
   );
 }
 SetupFrame.propTypes = {

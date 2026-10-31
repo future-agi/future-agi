@@ -23,7 +23,14 @@
 import { goalLabel } from "./scenarios";
 
 const paletteFail = ["#DC2626", "#F97316", "#F59E0B", "#EAB308", "#84CC16"];
-const paletteMix = ["#7857FC", "#2563EB", "#0EA5E9", "#22C55E", "#F59E0B", "#DC2626"];
+const paletteMix = [
+  "#7857FC",
+  "#2563EB",
+  "#0EA5E9",
+  "#22C55E",
+  "#F59E0B",
+  "#DC2626",
+];
 
 /* ── task classifiers used by every builder ─────────────────────────────── */
 
@@ -41,7 +48,11 @@ const goalOf = (t) => goalLabel(t?.useCase) || t?.title || "Unknown goal";
 const ruleOf = (t) => {
   /* The stored goal carries it — rule scenarios' titles are plain names now
      ("Instruction override"), so matching the title alone found none. */
-  const m = [t?.useCase, t?.title].map((x) => String(x || "").match(/^Refuse a request that would break:\s*(.+)$/)).find(Boolean);
+  const m = [t?.useCase, t?.title]
+    .map((x) =>
+      String(x || "").match(/^Refuse a request that would break:\s*(.+)$/),
+    )
+    .find(Boolean);
   return m ? m[1].trim() : null;
 };
 
@@ -71,7 +82,12 @@ function widgetPersonaFailBar(tasks) {
   const byPersona = groupCounts(tasks, personaOf);
   const rows = [...byPersona.entries()]
     .filter(([, v]) => v.total > 0)
-    .map(([name, v]) => ({ name, failed: v.failed, passed: v.passed, passRate: pct(v.passed, v.total) }))
+    .map(([name, v]) => ({
+      name,
+      failed: v.failed,
+      passed: v.passed,
+      passRate: pct(v.passed, v.total),
+    }))
     .sort((a, b) => b.failed - a.failed || b.passed - a.passed);
   if (!rows.length) return null;
   return {
@@ -105,7 +121,8 @@ function widgetRuleBrokenDonut(tasks) {
     id: `w-rule-${Date.now()}`,
     type: "donut_chart",
     title: "Rules broken most often",
-    subtitle: "Only rule-check scenarios contribute — happy-path and edge cases are excluded",
+    subtitle:
+      "Only rule-check scenarios contribute — happy-path and edge cases are excluded",
     config: {
       labels: rows.map((r) => truncate(r.rule)),
       series: rows.map((r) => r.failed),
@@ -130,8 +147,12 @@ function widgetOutcomeDonut(tasks) {
     title: "Run outcome",
     subtitle: `${c.passed} of ${total - c.unmeasured} measured passed`,
     config: {
-      labels: ["Passed", "Failed", "Error", "Not measured"].filter((_, i) => [c.passed, c.failed, c.errored, c.unmeasured][i] > 0),
-      series: [c.passed, c.failed, c.errored, c.unmeasured].filter((v) => v > 0),
+      labels: ["Passed", "Failed", "Error", "Couldn't measure"].filter(
+        (_, i) => [c.passed, c.failed, c.errored, c.unmeasured][i] > 0,
+      ),
+      series: [c.passed, c.failed, c.errored, c.unmeasured].filter(
+        (v) => v > 0,
+      ),
       colors: ["#16A34A", "#DC2626", "#F97316", "#6B7280"],
       centerLabel: `${pct(c.passed, total - c.unmeasured)}%`,
     },
@@ -139,8 +160,14 @@ function widgetOutcomeDonut(tasks) {
 }
 
 function widgetTurnDistribution(tasks) {
-  const failed = tasks.filter(isFailed).map((t) => t.turns).filter((n) => Number.isFinite(n));
-  const passed = tasks.filter(isPassed).map((t) => t.turns).filter((n) => Number.isFinite(n));
+  const failed = tasks
+    .filter(isFailed)
+    .map((t) => t.turns)
+    .filter((n) => Number.isFinite(n));
+  const passed = tasks
+    .filter(isPassed)
+    .map((t) => t.turns)
+    .filter((n) => Number.isFinite(n));
   const both = [...failed, ...passed];
   if (!both.length) return null;
   const min = Math.floor(Math.min(...both));
@@ -150,11 +177,16 @@ function widgetTurnDistribution(tasks) {
   const step = Math.max(1, Math.ceil((max - min) / buckets));
   const edges = Array.from({ length: buckets + 1 }, (_, i) => min + i * step);
   const categories = edges.slice(0, -1).map((e, i) => `${e}–${edges[i + 1]}`);
-  const bucketOf = (n) => Math.min(buckets - 1, Math.max(0, Math.floor((n - min) / step)));
+  const bucketOf = (n) =>
+    Math.min(buckets - 1, Math.max(0, Math.floor((n - min) / step)));
   const failSeries = new Array(buckets).fill(0);
   const passSeries = new Array(buckets).fill(0);
-  failed.forEach((n) => { failSeries[bucketOf(n)] += 1; });
-  passed.forEach((n) => { passSeries[bucketOf(n)] += 1; });
+  failed.forEach((n) => {
+    failSeries[bucketOf(n)] += 1;
+  });
+  passed.forEach((n) => {
+    passSeries[bucketOf(n)] += 1;
+  });
   return {
     id: `w-turns-${Date.now()}`,
     type: "bar_chart",
@@ -191,10 +223,13 @@ function widgetLatencyByGoal(tasks) {
     id: `w-latency-${Date.now()}`,
     type: "bar_chart",
     title: "Average duration by goal",
-    subtitle: "Slowest 12 goals — cross-check against the pass-rate column in the table",
+    subtitle:
+      "Slowest 12 goals — cross-check against the pass-rate column in the table",
     config: {
       horizontal: true,
-      categories: rows.map((r) => r.goal.length > 50 ? `${r.goal.slice(0, 47)}…` : r.goal),
+      categories: rows.map((r) =>
+        r.goal.length > 50 ? `${r.goal.slice(0, 47)}…` : r.goal,
+      ),
       series: [{ name: "Avg ms", data: rows.map((r) => r.avgMs) }],
       colors: ["#7857FC"],
     },
@@ -233,10 +268,18 @@ function widgetGoalPassRateTable(tasks) {
 function widgetFailStepDistribution(tasks) {
   const failed = tasks.filter(isFailed);
   if (!failed.length) return null;
-  const zones = { "Opening (0-25%)": 0, "Mid-call (25-75%)": 0, "Closing (75-100%)": 0, "No fail step": 0 };
+  const zones = {
+    "Opening (0-25%)": 0,
+    "Mid-call (25-75%)": 0,
+    "Closing (75-100%)": 0,
+    "No fail step": 0,
+  };
   failed.forEach((t) => {
     const steps = (t.steps || []).length;
-    if (!steps || typeof t.failStep !== "number") { zones["No fail step"] += 1; return; }
+    if (!steps || typeof t.failStep !== "number") {
+      zones["No fail step"] += 1;
+      return;
+    }
     const p = t.failStep / steps;
     if (p < 0.25) zones["Opening (0-25%)"] += 1;
     else if (p < 0.75) zones["Mid-call (25-75%)"] += 1;
@@ -267,24 +310,32 @@ function widgetSummaryMarkdown(tasks, env) {
   const critical = tasks.filter((t) => isFailed(t) && t.critical).length;
 
   const personaCounts = groupCounts(tasks, personaOf);
-  const worstPersona = [...personaCounts.entries()]
-    .sort((a, b) => b[1].failed - a[1].failed)[0];
+  const worstPersona = [...personaCounts.entries()].sort(
+    (a, b) => b[1].failed - a[1].failed,
+  )[0];
 
   const ruleCounts = groupCounts(tasks, ruleOf);
-  const worstRule = [...ruleCounts.entries()]
-    .sort((a, b) => b[1].failed - a[1].failed)[0];
+  const worstRule = [...ruleCounts.entries()].sort(
+    (a, b) => b[1].failed - a[1].failed,
+  )[0];
 
   const lines = [
     `**${passed} of ${measured} measured passed** (${pct(passed, measured)}%). ${failed} failed, ${critical} of them critical rule-breakers.`,
     "",
     ...(worstPersona && worstPersona[1].failed > 0
-      ? [`- **Weakest persona:** ${worstPersona[0]} — ${worstPersona[1].failed} of ${worstPersona[1].total} calls failed.`]
+      ? [
+          `- **Weakest persona:** ${worstPersona[0]} — ${worstPersona[1].failed} of ${worstPersona[1].total} calls failed.`,
+        ]
       : []),
     ...(worstRule && worstRule[1].failed > 0
-      ? [`- **Rule broken most:** _${worstRule[0]}_ — ${worstRule[1].failed} failure${worstRule[1].failed === 1 ? "" : "s"}.`]
+      ? [
+          `- **Rule broken most:** _${worstRule[0]}_ — ${worstRule[1].failed} failure${worstRule[1].failed === 1 ? "" : "s"}.`,
+        ]
       : []),
     ...(env?.rules?.length
-      ? [`- **Contract:** ${env.rules.length} hard rule${env.rules.length === 1 ? "" : "s"} defined, ${ruleCounts.size} touched by this run.`]
+      ? [
+          `- **Contract:** ${env.rules.length} hard rule${env.rules.length === 1 ? "" : "s"} defined, ${ruleCounts.size} touched by this run.`,
+        ]
       : []),
   ];
   return {
@@ -305,7 +356,8 @@ const RECIPES = [
   },
   {
     match: /rule|policy|adherence|refus|break/i,
-    reply: "Counting which hard rules broke most across the rule-check scenarios in this run.",
+    reply:
+      "Counting which hard rules broke most across the rule-check scenarios in this run.",
     build: (tasks) => [widgetRuleBrokenDonut(tasks)],
   },
   /* Before the outcome recipe: "Pass rate by goal" is about goals, not the overall pass rate. */
@@ -331,7 +383,8 @@ const RECIPES = [
   },
   {
     match: /where.*(fail|break)|opening|closing|mid.?call|step.*(fail|break)/i,
-    reply: "Where in the call the agent tends to break down — grouped by position in the conversation.",
+    reply:
+      "Where in the call the agent tends to break down — grouped by position in the conversation.",
     build: (tasks) => [widgetFailStepDistribution(tasks)],
   },
   {
@@ -342,7 +395,10 @@ const RECIPES = [
   {
     match: /compare.*(pass|fail)|failing vs passing|fail.*vs.*pass/i,
     reply: "Comparing failing vs passing calls across turn count and duration.",
-    build: (tasks) => [widgetTurnDistribution(tasks), widgetLatencyByGoal(tasks)],
+    build: (tasks) => [
+      widgetTurnDistribution(tasks),
+      widgetLatencyByGoal(tasks),
+    ],
   },
 ];
 
@@ -358,7 +414,8 @@ export function resolvePrompt(prompt, ctx = {}) {
     const widget = widgetSummaryMarkdown(tasks, env);
     return widget
       ? {
-          reply: "I couldn't map that to a chart directly, so here's the run summary — try asking about personas, rules, latency, or where in the call things break.",
+          reply:
+            "I couldn't map that to a chart directly, so here's the run summary — try asking about personas, rules, latency, or where in the call things break.",
           widgets: [widget],
         }
       : null;
@@ -367,7 +424,8 @@ export function resolvePrompt(prompt, ctx = {}) {
   const widgets = recipe.build(tasks, env).filter(Boolean);
   if (!widgets.length) {
     return {
-      reply: "That angle has no data on this run — everything measured on that dimension came back empty.",
+      reply:
+        "That angle has no data on this run — everything measured on that dimension came back empty.",
       widgets: [],
     };
   }
@@ -379,8 +437,14 @@ export function resolvePrompt(prompt, ctx = {}) {
 export const IMAGINE_SUGGESTIONS = [
   { label: "Which persona fails most?", icon: "solar:user-rounded-linear" },
   { label: "Which rules break most often?", icon: "solar:shield-cross-linear" },
-  { label: "Where in the call does the agent fail?", icon: "solar:map-arrow-square-linear" },
-  { label: "Compare failing vs passing calls", icon: "solar:transfer-horizontal-linear" },
+  {
+    label: "Where in the call does the agent fail?",
+    icon: "solar:map-arrow-square-linear",
+  },
+  {
+    label: "Compare failing vs passing calls",
+    icon: "solar:transfer-horizontal-linear",
+  },
   { label: "Pass rate by goal", icon: "solar:target-linear" },
   { label: "Summarize the run", icon: "solar:document-text-linear" },
 ];

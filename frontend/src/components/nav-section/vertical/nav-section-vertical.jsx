@@ -76,13 +76,13 @@ function Group({ subheader, items, slotProps }) {
               fontSize: 11,
               lineHeight: "16px",
               fontWeight: 500,
-              color: "text.subtitle",
+              color: "text.secondary",
               transition: (theme) =>
                 theme.transitions.create(["color"], {
                   duration: theme.transitions.duration.shortest,
                 }),
               "&:hover": {
-                color: "text.secondary",
+                color: "text.primary",
               },
               ...slotProps?.subheader,
             }}

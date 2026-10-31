@@ -21,6 +21,7 @@ import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2"
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2/VoiceDetailDrawerV2";
 import { statusColors } from "src/utils/runStatus";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const EMPTY_AGG = {
   total_traces: 0,
@@ -122,7 +123,7 @@ function ScoreCellRenderer({ value }) {
         backgroundColor,
         paddingInline: 12,
         fontWeight: 500,
-        fontSize: 13,
+        fontSize: 12,
         color: color ?? theme.palette.text.primary,
       }}
     >
@@ -269,7 +270,7 @@ function TracesGrid({ rows, onRowClick }) {
         rowData={rows}
         columnDefs={colDefs}
         defaultColDef={defaultColDef}
-        rowHeight={36}
+        rowHeight={ROW_HEIGHT.default}
         headerHeight={38}
         rowBuffer={10}
         suppressCellFocus

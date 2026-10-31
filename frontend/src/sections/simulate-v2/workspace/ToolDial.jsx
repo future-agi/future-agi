@@ -43,6 +43,8 @@ export function TierDial({ setting, onChange, onAllowLive }) {
   const [allowAnchor, setAllowAnchor] = useState(null);
   const live = liveAllowedOf(setting);
   const tip = (t) => {
+    if (t.unavailable && setting.tier !== t.id)
+      return `${t.label} — ${t.unavailable}`;
     const base = `${t.label} — ${t.note}${t.id === setting.defaultTier ? ` Default for a ${EFFECT_WORD[setting.effect] || "tool like this"}.` : ""}`;
     if (t.id === "live" && setting.tier !== "live" && !live.allowed)
       return live.needsAllow && onAllowLive
@@ -91,8 +93,11 @@ export function TierDial({ setting, onChange, onAllowLive }) {
           const isDefault = t.id === setting.defaultTier;
           /* Live: offered for read-only tools once allowed, never for writes. */
           const gated = t.id === "live" && !on && !live.allowed;
-          const canAllow = gated && live.needsAllow && !!onAllowLive;
-          const disabled = gated && !canAllow;
+          /* Not offered yet (Live, Recorded): a tool already set to one keeps showing it. */
+          const unavailable = !!t.unavailable && !on;
+          const canAllow =
+            gated && !unavailable && live.needsAllow && !!onAllowLive;
+          const disabled = unavailable || (gated && !canAllow);
           return (
             <Tooltip key={t.id} arrow title={tip(t)}>
               <ButtonBase

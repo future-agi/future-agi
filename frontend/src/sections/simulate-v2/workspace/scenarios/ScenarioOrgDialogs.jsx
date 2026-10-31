@@ -309,10 +309,10 @@ const BULK = {
     line: "Tags describe and filter. No version is made; past results don't change.",
   },
   group: {
-    title: (n) => `Add ${n} scenarios to a group`,
-    verb: "Add to group",
+    title: (n) => `Add ${n} scenarios to a suite`,
+    verb: "Add to suite",
     input: "group",
-    line: "The same scenarios, not copies — they stay in any other group too.",
+    line: "The same scenarios, not copies — they stay in any other suite too.",
   },
   duplicate: {
     title: (n) => `Duplicate ${n} scenarios?`,

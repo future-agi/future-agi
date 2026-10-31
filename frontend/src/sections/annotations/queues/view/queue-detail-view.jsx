@@ -506,8 +506,13 @@ export default function QueueDetailView() {
       )}
 
       {/* Tabs */}
-      <Box sx={{ mb: 2, px: 3 }}>
-        <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)}>
+      {/* Design system tab rail: full-width hairline under the tabs, 12px to the toolbar. */}
+      <Box sx={{ mb: 1.5, px: 3 }}>
+        <Tabs
+          value={activeTab}
+          onChange={(_, v) => setActiveTab(v)}
+          sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
+        >
           <Tab label="Items" />
           {isManager && <Tab label="Settings" />}
           <Tab label="Analytics" />

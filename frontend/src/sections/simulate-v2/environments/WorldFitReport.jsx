@@ -277,7 +277,7 @@ export default function WorldFitReport({
           >
             To measure them: repair a mapping above, add the tool to your agent,
             or adapt the scenarios to your agent — that makes a fork whose
-            results don&apos;t compare with the sample.
+            results don&apos;t compare with other agents in this world.
           </Typography>
           {/* The other two ways forward: run only what's measurable, or another world. */}
           <Stack

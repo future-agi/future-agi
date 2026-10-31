@@ -27,7 +27,11 @@ const CURRENT_USER = {
 };
 
 const SYSTEM_ACTOR = { kind: "system", id: "sys", name: "System" };
-const ASSISTANT_ACTOR = { kind: "assistant", id: "sim_builder", name: "Simulation builder" };
+const ASSISTANT_ACTOR = {
+  kind: "assistant",
+  id: "sim_builder",
+  name: "Simulation builder",
+};
 
 /** Actor for the currently signed-in user. Kept in one place so a real
  *  auth wiring later swaps one function, not many call-sites. */
@@ -122,6 +126,23 @@ export const SOURCES = {
     actor: CURRENT_USER,
     formKind: "user",
   },
+  /* Other evidence through the same import review — never called production. */
+  transcript: {
+    id: "transcript",
+    label: "From an uploaded transcript",
+    short: "Transcript",
+    icon: "solar:document-text-linear",
+    actor: SYSTEM_ACTOR,
+    formKind: "auto",
+  },
+  simulation: {
+    id: "simulation",
+    label: "From a failed simulation",
+    short: "Simulation",
+    icon: "solar:play-circle-linear",
+    actor: SYSTEM_ACTOR,
+    formKind: "auto",
+  },
   production: {
     id: "production",
     label: "From production trace",
@@ -195,7 +216,8 @@ export function stampProvenance(scenario, opts = {}) {
  * shimmer.
  */
 export function ensureProvenance(scenario) {
-  if (scenario?.addedAt && scenario?.addedBy && scenario?.source) return scenario;
+  if (scenario?.addedAt && scenario?.addedBy && scenario?.source)
+    return scenario;
   /* Back-fill for demo data, shaped like a real suite's history: most
      scenarios arrived in one batch when the environment was built, and a
      few smaller batches were added later — by you and by teammates, days
@@ -215,15 +237,49 @@ export function ensureProvenance(scenario) {
   });
 }
 
-const TEAMMATE_MAYA = { kind: "user", id: "u_maya", name: "Maya Rao", email: "maya@example.com" };
-const TEAMMATE_ARJUN = { kind: "user", id: "u_arjun", name: "Arjun Kapoor", email: "arjun@example.com" };
+const TEAMMATE_MAYA = {
+  kind: "user",
+  id: "u_maya",
+  name: "Maya Rao",
+  email: "maya@example.com",
+};
+const TEAMMATE_ARJUN = {
+  kind: "user",
+  id: "u_arjun",
+  name: "Arjun Kapoor",
+  email: "arjun@example.com",
+};
 
 /* Oldest first. `upTo` is the cumulative share of scenarios in the lane. */
 const BACKFILL_LANES = [
-  { id: "build", upTo: 76, source: "derived", actor: CURRENT_USER, hoursAgo: 24 * 8 + 3 },
-  { id: "chat", upTo: 88, source: "builder-chat", actor: CURRENT_USER, hoursAgo: 24 * 4 + 6 },
-  { id: "dataset", upTo: 96, source: "dataset-import", actor: TEAMMATE_MAYA, hoursAgo: 24 * 2 - 2 },
-  { id: "manual", upTo: 100, source: "manual", actor: TEAMMATE_ARJUN, hoursAgo: 5 },
+  {
+    id: "build",
+    upTo: 76,
+    source: "derived",
+    actor: CURRENT_USER,
+    hoursAgo: 24 * 8 + 3,
+  },
+  {
+    id: "chat",
+    upTo: 88,
+    source: "builder-chat",
+    actor: CURRENT_USER,
+    hoursAgo: 24 * 4 + 6,
+  },
+  {
+    id: "dataset",
+    upTo: 96,
+    source: "dataset-import",
+    actor: TEAMMATE_MAYA,
+    hoursAgo: 24 * 2 - 2,
+  },
+  {
+    id: "manual",
+    upTo: 100,
+    source: "manual",
+    actor: TEAMMATE_ARJUN,
+    hoursAgo: 5,
+  },
 ];
 
 /**
@@ -243,7 +299,8 @@ export function defaultBatchId(source, atIso) {
 function hashInt(s) {
   const str = String(s || "");
   let h = 0;
-  for (let i = 0; i < str.length; i += 1) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  for (let i = 0; i < str.length; i += 1)
+    h = ((h << 5) - h + str.charCodeAt(i)) | 0;
   return Math.abs(h);
 }
 
@@ -264,7 +321,11 @@ export function groupByBatch(scenarios) {
       /* Why the batch exists, when the batch knows (a rebuild does). */
       /* Older rebuilds named the stored world label, which can differ from
          the version the bar shows — read them without it. */
-      note: s.batchNote?.replace(/^when environment v\d+ learned/, "when the environment learned") || null,
+      note:
+        s.batchNote?.replace(
+          /^when environment v\d+ learned/,
+          "when the environment learned",
+        ) || null,
       scenarios: [],
     };
     cur.scenarios.push(s);
@@ -273,7 +334,9 @@ export function groupByBatch(scenarios) {
     if (new Date(s.addedAt) < new Date(cur.addedAt)) cur.addedAt = s.addedAt;
     map.set(key, cur);
   });
-  return [...map.values()].sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+  return [...map.values()].sort(
+    (a, b) => new Date(b.addedAt) - new Date(a.addedAt),
+  );
 }
 
 /**
@@ -325,11 +388,19 @@ export function sourceLinkOf(scenario, ctx = {}) {
   const src = sourceOf(s.source);
   const by = s.addedBy?.kind === "user" ? s.addedBy.name : src.short;
   const when = relativeTime(s.addedAt);
-  const base = { source: src, label: src.label, ref: null, to: null, chat: false };
+  const base = {
+    source: src,
+    label: src.label,
+    ref: null,
+    to: null,
+    chat: false,
+  };
 
   const issue = s.errorFeedIssue;
   if (issue?.id) {
-    const traces = issue.traceIds?.length ? `Built from traces ${issue.traceIds.join(", ")}` : null;
+    const traces = issue.traceIds?.length
+      ? `Built from traces ${issue.traceIds.join(", ")}`
+      : null;
     return {
       ...base,
       source: SOURCES["error-feed"],
@@ -347,9 +418,10 @@ export function sourceLinkOf(scenario, ctx = {}) {
   }
   const fc = s.failingCase;
   if (fc?.runId && fc?.envId) {
-    const how = fc.verdict === "flaky"
-      ? `came out flaky${fc.passes != null ? ` (${fc.passes} of ${fc.repeats} passed)` : ""}`
-      : "failed";
+    const how =
+      fc.verdict === "flaky"
+        ? `came out flaky${fc.passes != null ? ` (${fc.passes} of ${fc.repeats} passed)` : ""}`
+        : "failed";
     return {
       ...base,
       source: SOURCES["failing-case"],
@@ -369,13 +441,21 @@ export function sourceLinkOf(scenario, ctx = {}) {
       label: SOURCES.production.label,
       ref: "Replay",
       title: `From production · ${replay.channel || "conversation"} replayed word for word`,
-      detail: [`${replay.turns?.length || 0} caller turns`, `${by} · ${when}`].join(" · "),
-      observe: { line: "The original conversation stays in Observe.", to: `${paths.dashboard.observe}?trace=${replay.conversationId}` },
+      detail: [
+        `${replay.turns?.length || 0} caller turns`,
+        `${by} · ${when}`,
+      ].join(" · "),
+      observe: {
+        line: "The original conversation stays in Observe.",
+        to: `${paths.dashboard.observe}?trace=${replay.conversationId}`,
+      },
     };
   }
   if (s.fromImprovement?.id && !s.failingCase) {
     /* Links to the improvement that wrote it — its run. */
-    const record = (ctx.envState?.optimizations || []).find((o) => o.id === s.fromImprovement.id);
+    const record = (ctx.envState?.optimizations || []).find(
+      (o) => o.id === s.fromImprovement.id,
+    );
     const envId = ctx.envId || ctx.env?.id || s.env || null;
     return {
       ...base,
@@ -403,7 +483,10 @@ export function sourceLinkOf(scenario, ctx = {}) {
       ...base,
       title: src.label,
       detail: `${by} · ${when}`,
-      observe: { line: "The original conversation stays in Observe.", to: `${paths.dashboard.observe}${trace ? `?trace=${trace}` : ""}` },
+      observe: {
+        line: "The original conversation stays in Observe.",
+        to: `${paths.dashboard.observe}${trace ? `?trace=${trace}` : ""}`,
+      },
     };
   }
   return { ...base, title: src.label, detail: `${by} · ${when}` };

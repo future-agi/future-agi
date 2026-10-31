@@ -322,20 +322,20 @@ export const exportScenarios = (rows) =>
 /* The commands a developer would type — roadmap CLI names. */
 export const scenarioCli = {
   create: (env) =>
-    `agent-learn scenario create --environment ${env?.id || "<env>"} --file ./scenario.yaml`,
+    `fi sim scenarios create --environment ${env?.id || "<env>"} --file ./scenario.yaml`,
   tag: (ids, tag) =>
-    `agent-learn scenario tag ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""} --add ${tag || "risk=duplicate"}`,
+    `fi sim scenarios tag ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""} --add ${tag || "risk=duplicate"}`,
   group: (ids, group) =>
-    `agent-learn scenario group add "${group || "Refund release gate"}" ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""}`,
+    `fi sim scenarios group add "${group || "Refund release gate"}" ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""}`,
   ground: (id) =>
-    `agent-learn scenario ground ${id} --source <source-ref> --supports expected`,
+    `fi sim scenarios ground ${id} --source <source-ref> --supports expected`,
   validate: (ids) =>
-    `agent-learn scenario validate ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""}`,
-  duplicate: (id) => `agent-learn scenario duplicate ${id}`,
+    `fi sim scenarios validate ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""}`,
+  duplicate: (id) => `fi sim scenarios duplicate ${id}`,
   promote: (ids, kind = "regression") =>
-    `agent-learn scenario promote ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""} --to ${kind}`,
+    `fi sim scenarios promote ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""} --to ${kind}`,
   export: (env) =>
-    `agent-learn scenario export --environment ${env?.id || "<env>"} --destination ./scenarios.json`,
+    `fi sim scenarios export --environment ${env?.id || "<env>"} --destination ./scenarios.json`,
 };
 
 /**

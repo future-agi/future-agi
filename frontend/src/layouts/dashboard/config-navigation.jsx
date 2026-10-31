@@ -15,6 +15,7 @@ import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 /* Agent improvement sits behind an internal workspace flag (RSI PRD rollout). */
 import { useAgentImprovementFlag } from "src/sections/simulate-v2/_mock/featureFlags";
+import { useRunningNow } from "src/sections/simulate-v2/_mock/runningNow";
 import {
   ROLES,
   showRoleSpecific,
@@ -41,6 +42,7 @@ const SOLAR_NAV_ICONS = {
   ic_prototype: "solar:box-linear",
   ic_annotate: "solar:pen-2-linear",
   ic_knowledge_base: "solar:book-2-linear",
+  ic_skills: "solar:lightbulb-bolt-linear",
   ic_alert: "solar:bell-linear",
   ic_experiment: "solar:test-tube-linear",
   ic_project: "solar:folder-linear",
@@ -82,6 +84,7 @@ const ICONS = {
   prototype: icon("ic_prototype"),
   annotate: icon("ic_annotate"),
   knowledge_base: icon("ic_knowledge_base"),
+  skills: icon("ic_skills"),
   alerts: icon("ic_alert"),
   falconAI: icon("ic_falcon_ai"),
   chat: icon("ic_chat_nav"),
@@ -108,6 +111,8 @@ export function useNavData() {
   const isAdmin =
     userOrgRole === "Admin" || effectiveWsRole === "workspace_admin";
   const improving = useAgentImprovementFlag();
+  /* Runs going right now — a count beside Environments, nothing more. */
+  const runningNow = useRunningNow();
   const data = useMemo(() => {
     const buildItems = [
       {
@@ -159,6 +164,12 @@ export function useNavData() {
             [PropertyName.click]: true,
           });
         },
+      },
+      /* Skills library (clarified plan): reusable skills, versioned, tested and promoted. */
+      {
+        title: "Skills",
+        path: paths.dashboard.simulate.skills,
+        icon: ICONS.skills,
       },
       {
         title: "Evals",
@@ -256,6 +267,16 @@ export function useNavData() {
             title: "Environments",
             path: paths.dashboard.simulate.environments,
             icon: ICONS.simulatorAgent,
+            ...(runningNow > 0 && {
+              info: (
+                <span
+                  title={`${runningNow} run${runningNow === 1 ? "" : "s"} running now`}
+                  style={{ fontVariantNumeric: "tabular-nums" }}
+                >
+                  {runningNow}
+                </span>
+              ),
+            }),
           },
           /* Improvements — workspace-wide runs surface. Each row is
              one source (an env or a dataset); clicking drills into
@@ -335,7 +356,7 @@ export function useNavData() {
     });
 
     return sections;
-  }, [isOwner, isAdmin, improving]);
+  }, [isOwner, isAdmin, improving, runningNow]);
   return data;
 }
 

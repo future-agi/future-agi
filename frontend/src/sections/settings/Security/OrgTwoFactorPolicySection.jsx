@@ -8,7 +8,6 @@ import {
   TextField,
   Typography,
   useTheme,
-  CircularProgress,
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -16,6 +15,7 @@ import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import SvgColor from "src/components/svg-color";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const ORG_2FA_GRACE_PERIOD_MAX_DAYS = 30;
 
@@ -113,7 +113,7 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
           justifyContent: "center",
         }}
       >
-        <CircularProgress size={24} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }

@@ -45,8 +45,8 @@ export default function AgentMembersCard({
     });
   return (
     <PanelCard
-      title={`Members · ${members.length}`}
-      note="One agent · one version history"
+      title={`Participants · ${members.length}`}
+      note="Coordinator first · one version history"
     >
       {/* What a run can know about them, and what each may touch in the
           test world (roadmap connect.md, Week 2). */}
@@ -56,9 +56,12 @@ export default function AgentMembersCard({
             {`Declared by ${evidence.source === "provider" ? "its platform" : evidence.source === "instrumented" ? "its code" : "you"}. ${evidence.line}`}
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            Each member may use only its own tools, answered by the test world.
-            Hidden grading material — reference answers, the end state a check
-            expects — is kept from every member and the simulated callers.
+            {evidence.source === "instrumented"
+              ? "The runtime enforces each worker's own tools; their calls are answered by the test world."
+              : "Each worker's tools are declared by the app — the runtime doesn't enforce them, so no run claims it does."}{" "}
+            These are real parts of your agent, run together as it orchestrates
+            them — not simulated people (those are the environment&apos;s
+            Actors). Hidden grading material is kept from all of them.
           </Typography>
         </Stack>
       )}
@@ -107,6 +110,7 @@ export default function AgentMembersCard({
                   >
                     {m.name}
                   </Typography>
+                  <QuietTag>{i === 0 ? "Coordinator" : "Worker"}</QuietTag>
                   {locked && (
                     <QuietTag icon="solar:lock-keyhole-minimalistic-linear">
                       Protected

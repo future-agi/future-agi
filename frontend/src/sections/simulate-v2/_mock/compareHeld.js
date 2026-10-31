@@ -4,7 +4,14 @@
   differs no longer makes runs "not comparable": it changes the class of the
   pairs it touches (pairs.js), and the comparison is never blocked.
 */
-import { displayEnvLabel, heldFixed, isConnectOnly, runPinsOf, subGoalCatalogOf, subGoalsOfScenario } from "./envModel";
+import {
+  displayEnvLabel,
+  heldFixed,
+  isConnectOnly,
+  runPinsOf,
+  subGoalCatalogOf,
+  subGoalsOfScenario,
+} from "./envModel";
 import { environmentVersions } from "./versions";
 import { runResultOf } from "./runResult";
 
@@ -26,14 +33,26 @@ export const heldFixedAcross = (runs, env, envState) => {
       ...row,
       /* The world version underneath the environment version — a drill-down,
          so it's named as the part it is (E vN). */
-      values: row.id === "env" ? values.map((v) => `E ${displayEnvLabel(v, versions)}`) : values,
+      values:
+        row.id === "env"
+          ? values.map((v) => `E ${displayEnvLabel(v, versions)}`)
+          : values,
       same: values.length <= 1,
     };
   });
   const differs = rows.filter((r) => !r.same);
-  /* The sample agent's (Reference) runs are another agent, even at the same version label. */
-  const agents = [...new Set(pins.map((p, i) => (p.agent && runs[i]?.reference ? `sample ${p.agent}` : p.agent)).filter(Boolean))];
-  return { rows, differs, agents, drift: driftOf(runs, env, envState, !differs.some((r) => r.hard) && agents.length <= 1) };
+  const agents = [...new Set(pins.map((p) => p.agent).filter(Boolean))];
+  return {
+    rows,
+    differs,
+    agents,
+    drift: driftOf(
+      runs,
+      env,
+      envState,
+      !differs.some((r) => r.hard) && agents.length <= 1,
+    ),
+  };
 };
 
 /*
@@ -73,14 +92,25 @@ export const subGoalGroups = (rows, runs, env, envState) => {
   const catalog = subGoalCatalogOf(env, envState);
   const critical = new Set();
   (envState?.scenarios || []).forEach((sc) => {
-    subGoalsOfScenario(sc, env, envState).forEach((g) => { if (g.mark === "critical") critical.add(g.id); });
+    subGoalsOfScenario(sc, env, envState).forEach((g) => {
+      if (g.mark === "critical") critical.add(g.id);
+    });
   });
   const byId = new Map(rows.map((r) => [r.id, r]));
   const placed = new Set();
   const rateOf = (groupRows, i) => {
-    const shared = groupRows.filter((r) => r.cells.every((c) => ran(c) && c.measured));
-    const shares = shared.map((r) => r.cells[i].passShare).filter((v) => v != null);
-    return { rate: shares.length ? Math.round((shares.reduce((a, b) => a + b, 0) / shares.length) * 100) : null, n: shares.length };
+    const shared = groupRows.filter((r) =>
+      r.cells.every((c) => ran(c) && c.measured),
+    );
+    const shares = shared
+      .map((r) => r.cells[i].passShare)
+      .filter((v) => v != null);
+    return {
+      rate: shares.length
+        ? Math.round((shares.reduce((a, b) => a + b, 0) / shares.length) * 100)
+        : null,
+      n: shares.length,
+    };
   };
   const groups = catalog
     .map((g) => {
@@ -91,11 +121,24 @@ export const subGoalGroups = (rows, runs, env, envState) => {
         label: g.name,
         mark: critical.has(g.id) ? "critical" : "supporting",
         rows: members,
-        rates: (runs || []).map((run, i) => ({ runId: run.id, letter: run.letter, color: run.color, ...rateOf(members, i) })),
+        rates: (runs || []).map((run, i) => ({
+          runId: run.id,
+          letter: run.letter,
+          color: run.color,
+          ...rateOf(members, i),
+        })),
       };
     })
     .filter((g) => g.rows.length);
-  const ordered = [...groups.filter((g) => g.mark === "critical"), ...groups.filter((g) => g.mark !== "critical")];
+  const ordered = [
+    ...groups.filter((g) => g.mark === "critical"),
+    ...groups.filter((g) => g.mark !== "critical"),
+  ];
   const loose = rows.filter((r) => !placed.has(r.id));
-  return loose.length ? [...ordered, { id: "no-sub-goal", label: "No shared sub-goal", rows: loose }] : ordered;
+  return loose.length
+    ? [
+        ...ordered,
+        { id: "no-sub-goal", label: "No shared sub-goal", rows: loose },
+      ]
+    : ordered;
 };

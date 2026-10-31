@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from "react";
 import {
   Box,
-  CircularProgress,
   Typography,
   Breadcrumbs,
   Button,
@@ -24,6 +23,7 @@ import Growth from "src/sections/test-detail/FixMyAgentDrawer/OptimizationResult
 import PromptPanel from "src/sections/test-detail/FixMyAgentDrawer/OptimizationDetail/PrompDetails/PromptPanel";
 import PromptDiffView from "src/sections/test-detail/FixMyAgentDrawer/OptimizationDetail/PrompDetails/PromptDiffView";
 import { SegmentedTabs } from "src/components/tabs/tabs";
+import ContentSkeleton from "src/components/content-skeleton";
 
 /**
  * Column configuration function matching simulation's getTrialItemsColumnConfig.
@@ -176,7 +176,7 @@ const DatasetOptimizationTrialDetail = ({
   if (isLoading) {
     return (
       <Box sx={{ p: 3, display: "flex", justifyContent: "center" }}>
-        <CircularProgress size={20} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -212,7 +212,7 @@ const DatasetOptimizationTrialDetail = ({
         separator={
           <SvgColor
             src="/assets/icons/custom/lucide--chevron-right.svg"
-            sx={{ width: 20, height: 20, bgcolor: "text.primary" }}
+            sx={{ width: 16, height: 16, bgcolor: "text.primary" }}
           />
         }
       >

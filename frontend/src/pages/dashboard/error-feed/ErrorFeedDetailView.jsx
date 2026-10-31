@@ -346,7 +346,7 @@ export default function ErrorFeedDetailView() {
             bgcolor: "background.paper",
           }}
         >
-          <Tabs
+          <Tabs sx={{ boxShadow: "none" }}
             value={safeTabIndex}
             onChange={(_, v) => setActiveTab(TABS[v].key)}
           >

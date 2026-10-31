@@ -9,7 +9,6 @@ import {
   IconButton,
   Tooltip,
   Switch,
-  Dialog,
   DialogTitle,
   DialogContent,
   DialogContentText,
@@ -35,6 +34,7 @@ import NextStepBanner from "./NextStepBanner";
 import { worldToolsFor } from "../_mock/toolFit";
 import { runScopeOf } from "../_mock/runScope";
 import { evalCreditsPerRun, evalRailOf } from "../_mock/metering";
+import ClosableDialog from "../components/ClosableDialog";
 
 /* The catalogue eval behind the "tool call evaluation" switch. */
 const TOOL_CALL_EVAL_ID = TOOL_CALL_JUDGE_ID;
@@ -493,7 +493,7 @@ export default function EvalsStep({
         )}
       </SectionCard>
 
-      <Dialog
+      <ClosableDialog
         open={!!confirmRemove}
         onClose={() => setConfirmRemove(null)}
         maxWidth={false}
@@ -535,7 +535,7 @@ export default function EvalsStep({
             Remove evaluation
           </Button>
         </DialogActions>
-      </Dialog>
+      </ClosableDialog>
 
       {atCap && !locked && (
         <Typography

@@ -30,12 +30,26 @@
  */
 
 import { rng, hashSeed } from "./runStream";
-import { proposalsFor, skillProposalsFor, issueProposals, projectedRate, optimisable, generalisesTo, passShareOf, changeFileFor, SECTION_FOR } from "./optimize";
+import {
+  proposalsFor,
+  skillProposalsFor,
+  issueProposals,
+  projectedRate,
+  optimisable,
+  generalisesTo,
+  passShareOf,
+  changeFileFor,
+  SECTION_FOR,
+} from "./optimize";
 import { staleForAgentOf } from "./decoupled";
 import { contractCandidateOf } from "./improvementPolicy";
 import { withScenarioSetSeed } from "./scenarioSetSeed";
 import { scenarioTitle } from "./scenarios";
-import { mustPassOf, passesEveryRepeat, flakyToday as flakyTodayOf } from "./mustPass";
+import {
+  mustPassOf,
+  passesEveryRepeat,
+  flakyToday as flakyTodayOf,
+} from "./mustPass";
 
 /* ── the algorithms ──────────────────────────────────────────────────────── */
 
@@ -53,7 +67,12 @@ export const OPTIMIZERS = [
     label: "ProTeGi",
     desc: "Textual gradients — reads what failed and edits toward it",
     fit: "Strongest when failures cluster into a few causes, which is what the diagnosis above found.",
-    config: { numGradients: 4, errorsPerGradient: 4, beamSize: 4, numRounds: 3 },
+    config: {
+      numGradients: 4,
+      errorsPerGradient: 4,
+      beamSize: 4,
+      numRounds: 3,
+    },
     trialsFor: (c) => c.numRounds * c.beamSize,
   },
   {
@@ -100,7 +119,8 @@ export const OPTIMIZERS = [
   },
 ];
 
-export const optimizerById = (id) => OPTIMIZERS.find((o) => o.id === id) || OPTIMIZERS[0];
+export const optimizerById = (id) =>
+  OPTIMIZERS.find((o) => o.id === id) || OPTIMIZERS[0];
 
 /* ── the scope ───────────────────────────────────────────────────────────── */
 
@@ -120,12 +140,18 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
  *
  * `holdable` says which of the kept scenarios may be held back.
  */
-export const searchScope = ({ env, envState, tasks = [], agentVersion = null }) => {
+export const searchScope = ({
+  env,
+  envState,
+  tasks = [],
+  agentVersion = null,
+}) => {
   /* Read through the same seed migration every screen reads. */
   const es = withScenarioSetSeed(env?.id, envState) || envState;
   const rows = new Map((es?.scenarios || []).map((r) => [r.id, r]));
   const rowOf = (t) => rows.get(t.id) || rows.get(t.scenarioId) || t;
-  const staleFor = (row) => !!agentVersion && staleForAgentOf(row, agentVersion, env, es).stale;
+  const staleFor = (row) =>
+    !!agentVersion && staleForAgentOf(row, agentVersion, env, es).stale;
 
   const left = { proposed: 0, archived: 0, stale: 0 };
   const kept = [];
@@ -135,8 +161,11 @@ export const searchScope = ({ env, envState, tasks = [], agentVersion = null }) 
     /* Rows from the removed cheat checks never reach a search. */
     if (row.canary || t.canary) return;
     if (row.archived) left.archived += 1;
-    /* Outdated, Re-check or Stale: it counts toward no decision. */
-    else if (isStale(row) || staleFor(row)) left.stale += 1;
+    /* Outdated, Re-check or Stale: it counts toward no decision. */ else if (
+      isStale(row) ||
+      staleFor(row)
+    )
+      left.stale += 1;
     else if (row.proposed && !t.fromIssue) left.proposed += 1;
     else {
       kept.push(t);
@@ -157,7 +186,12 @@ export const searchScope = ({ env, envState, tasks = [], agentVersion = null }) 
 };
 
 /* Outdated or Re-check — the scenario's grading no longer matches the set. */
-const isStale = (row) => !!(row?.outdatedBy || row?.subGoalsUnproved || ["outdated", "recheck"].includes(row?.state));
+const isStale = (row) =>
+  !!(
+    row?.outdatedBy ||
+    row?.subGoalsUnproved ||
+    ["outdated", "recheck"].includes(row?.state)
+  );
 
 /* ── the split ───────────────────────────────────────────────────────────── */
 
@@ -197,7 +231,11 @@ const shuffle = (list, r) => {
   return out;
 };
 
-export const splitScenarios = (all = [], seed = "split", holdable = () => true) => {
+export const splitScenarios = (
+  all = [],
+  seed = "split",
+  holdable = () => true,
+) => {
   const tasks = all.filter(holdable);
   const trainOnly = all.filter((t) => !holdable(t));
   const r = rng(hashSeed(seed));
@@ -209,7 +247,9 @@ export const splitScenarios = (all = [], seed = "split", holdable = () => true) 
 
   const failing = (t) => t.status !== "unmeasured" && passShareOf(t) < 1;
   const bucket = (crit, fail) =>
-    tasks.filter((t) => !t.fromIssue && !!t.critical === crit && failing(t) === fail);
+    tasks.filter(
+      (t) => !t.fromIssue && !!t.critical === crit && failing(t) === fail,
+    );
   /*
     A fix's own scenarios — built from an Error Feed issue's traces — are
     dealt last and into both halves, so the held-back set always has some of
@@ -217,7 +257,8 @@ export const splitScenarios = (all = [], seed = "split", holdable = () => true) 
     nothing about the issue the fix was for. Dealing them last leaves the
     environment's own split exactly where it was.
   */
-  const issue = (fail) => tasks.filter((t) => t.fromIssue && failing(t) === fail);
+  const issue = (fail) =>
+    tasks.filter((t) => t.fromIssue && failing(t) === fail);
 
   const dealt = [
     deal(bucket(true, true)),
@@ -266,7 +307,11 @@ export const HELD_SHARE = 0.35;
   a reproduction — it's no target, so it never makes a group reproduce (new
   improvements only: `inconclusiveOut`).
 */
-export const isInconclusive = (t) => !!t && (t.reproduce === "inconclusive" || t.reproduce === "not-reproduced" || (!!t.fromIssue && t.status === "flaky"));
+export const isInconclusive = (t) =>
+  !!t &&
+  (t.reproduce === "inconclusive" ||
+    t.reproduce === "not-reproduced" ||
+    (!!t.fromIssue && t.status === "flaky"));
 /*
   Environment scenarios held back with a fix (new improvements): the rest of
   the suite's scenarios that fail today the way the issue does — a tool the
@@ -274,31 +319,56 @@ export const isInconclusive = (t) => !!t && (t.reproduce === "inconclusive" || t
   issue's own scenarios can't prove a fix; these widen the set it's proven on.
 */
 export const ENV_HELD_MAX = 8;
-export const splitIssueScenarios = (all = [], seed = "split", { groupOf = (t) => t.id, inconclusiveOut = false, sameFailure = false } = {}) => {
+export const splitIssueScenarios = (
+  all = [],
+  seed = "split",
+  { groupOf = (t) => t.id, inconclusiveOut = false, sameFailure = false } = {},
+) => {
   const issue = all.filter((t) => t.fromIssue);
   const others = all.filter((t) => !t.fromIssue);
-  const failing = (t) => t.status !== "unmeasured" && passShareOf(t) < 1 && !(inconclusiveOut && isInconclusive(t));
+  const failing = (t) =>
+    t.status !== "unmeasured" &&
+    passShareOf(t) < 1 &&
+    !(inconclusiveOut && isInconclusive(t));
   const groups = new Map();
   issue.forEach((t) => {
     const g = groupOf(t);
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(t);
   });
-  const reproducing = [...groups.entries()].filter(([, list]) => list.some(failing));
+  const reproducing = [...groups.entries()].filter(([, list]) =>
+    list.some(failing),
+  );
   const quiet = [...groups.entries()].filter(([, list]) => !list.some(failing));
   const r = rng(hashSeed(seed));
   const dealt = shuffle(reproducing, r);
-  const heldN = Math.min(Math.round(dealt.length * HELD_SHARE), Math.max(0, dealt.length - 1));
+  const heldN = Math.min(
+    Math.round(dealt.length * HELD_SHARE),
+    Math.max(0, dealt.length - 1),
+  );
   const heldGroups = dealt.slice(0, heldN);
   const trainGroups = dealt.slice(heldN);
   const issueFailing = issue.filter(failing);
-  const skipped = new Set(issueFailing.flatMap((t) => t.callLog?.missing || []));
+  const skipped = new Set(
+    issueFailing.flatMap((t) => t.callLog?.missing || []),
+  );
   const claims = issueFailing.some((t) => t.callLog?.unsupportedClaim);
-  const failsSameWay = (t) => (t.callLog?.missing || []).some((m) => skipped.has(m)) || (claims && !!t.callLog?.unsupportedClaim);
-  const envHeld = sameFailure && heldN
-    ? shuffle(others.filter((t) => !t.proposed && failing(t) && !isInconclusive(t) && failsSameWay(t)), r)
-      .slice(0, ENV_HELD_MAX)
-    : [];
+  const failsSameWay = (t) =>
+    (t.callLog?.missing || []).some((m) => skipped.has(m)) ||
+    (claims && !!t.callLog?.unsupportedClaim);
+  const envHeld =
+    sameFailure && heldN
+      ? shuffle(
+          others.filter(
+            (t) =>
+              !t.proposed &&
+              failing(t) &&
+              !isInconclusive(t) &&
+              failsSameWay(t),
+          ),
+          r,
+        ).slice(0, ENV_HELD_MAX)
+      : [];
   const envHeldIds = new Set(envHeld.map((t) => t.id));
   const rest = others.filter((t) => !envHeldIds.has(t.id));
   /* One fresh variation per held-back group: the same failure, worded anew. */
@@ -316,12 +386,26 @@ export const splitIssueScenarios = (all = [], seed = "split", { groupOf = (t) =>
     };
   });
   return {
-    train: [...trainGroups.flatMap(([, list]) => list), ...quiet.flatMap(([, list]) => list), ...rest],
+    train: [
+      ...trainGroups.flatMap(([, list]) => list),
+      ...quiet.flatMap(([, list]) => list),
+      ...rest,
+    ],
     /* The target set alone — the reproducing groups not held back. New
        improvements keep it apart from the rest of the suite. */
     target: trainGroups.flatMap(([, list]) => list),
-    held: [...heldGroups.flatMap(([, list]) => list), ...fresh, ...envHeld.map((t) => ({ ...t, envHeld: true }))],
-    groups: { reproducing: dealt.length, held: heldN, train: trainGroups.length, fresh: fresh.length, ...(sameFailure && { envHeld: envHeld.length }) },
+    held: [
+      ...heldGroups.flatMap(([, list]) => list),
+      ...fresh,
+      ...envHeld.map((t) => ({ ...t, envHeld: true })),
+    ],
+    groups: {
+      reproducing: dealt.length,
+      held: heldN,
+      train: trainGroups.length,
+      fresh: fresh.length,
+      ...(sameFailure && { envHeld: envHeld.length }),
+    },
     thin: heldN === 0,
   };
 };
@@ -333,19 +417,28 @@ export const splitIssueScenarios = (all = [], seed = "split", { groupOf = (t) =>
  * whose every scenario may be held back (not proposed) can be;
  * the rest train. Too few failing groups to hold any back reads as thin.
  */
-export const splitGoalScenarios = (all = [], seed = "split", { groupOf = (t) => t.id, isTarget = () => false, holdable = () => true } = {}) => {
+export const splitGoalScenarios = (
+  all = [],
+  seed = "split",
+  { groupOf = (t) => t.id, isTarget = () => false, holdable = () => true } = {},
+) => {
   const groups = new Map();
   all.forEach((t) => {
     const g = groupOf(t);
     if (!groups.has(g)) groups.set(g, []);
     groups.get(g).push(t);
   });
-  const failingGroups = [...groups.entries()].filter(([, list]) => list.some(isTarget) && list.every(holdable));
+  const failingGroups = [...groups.entries()].filter(
+    ([, list]) => list.some(isTarget) && list.every(holdable),
+  );
   const failingIds = new Set(failingGroups.map(([g]) => g));
   const quiet = [...groups.entries()].filter(([g]) => !failingIds.has(g));
   const r = rng(hashSeed(seed));
   const dealt = shuffle(failingGroups, r);
-  const heldN = Math.min(Math.round(dealt.length * HELD_SHARE), Math.max(0, dealt.length - 1));
+  const heldN = Math.min(
+    Math.round(dealt.length * HELD_SHARE),
+    Math.max(0, dealt.length - 1),
+  );
   const heldGroups = dealt.slice(0, heldN);
   const trainGroups = dealt.slice(heldN);
   const fresh = heldGroups.map(([g, list]) => {
@@ -362,10 +455,18 @@ export const splitGoalScenarios = (all = [], seed = "split", { groupOf = (t) => 
     };
   });
   return {
-    train: [...trainGroups.flatMap(([, list]) => list), ...quiet.flatMap(([, list]) => list)],
+    train: [
+      ...trainGroups.flatMap(([, list]) => list),
+      ...quiet.flatMap(([, list]) => list),
+    ],
     target: trainGroups.flatMap(([, list]) => list),
     held: [...heldGroups.flatMap(([, list]) => list), ...fresh],
-    groups: { reproducing: dealt.length, held: heldN, train: trainGroups.length, fresh: fresh.length },
+    groups: {
+      reproducing: dealt.length,
+      held: heldN,
+      train: trainGroups.length,
+      fresh: fresh.length,
+    },
     thin: heldN === 0,
   };
 };
@@ -387,12 +488,15 @@ export const failsGoal = (t, goal) => {
     const tool = String(goal.id).replace(/^outcome:/, "");
     return (t.callLog?.missing || []).includes(tool);
   }
-  const ev = (t.evalResults || []).find((e) => e.id === goal.id || e.name === goal.label || e.name === goal.id);
+  const ev = (t.evalResults || []).find(
+    (e) => e.id === goal.id || e.name === goal.label || e.name === goal.id,
+  );
   return ev ? ev.passed === false : failing;
 };
 
 /** "the pass rate", "Booking success rate", "Policy adherence" — for a sentence. */
-export const goalWords = (goal) => (!goal || goal.id === "pass-rate" ? "the pass rate" : goal.label || goal.id);
+export const goalWords = (goal) =>
+  !goal || goal.id === "pass-rate" ? "the pass rate" : goal.label || goal.id;
 
 /* ── settings, typed ─────────────────────────────────────────────────────── */
 
@@ -402,10 +506,35 @@ export const goalWords = (goal) => (!goal || goal.id === "pass-rate" ? "the pass
   at Static checks.
 */
 export const SETTING_SCHEMA = {
-  temperature: { label: "Temperature", min: 0, max: 1, step: 0.1, area: "model" },
-  interruptionSensitivity: { label: "Interruption sensitivity", min: 0.1, max: 0.9, step: 0.05, area: "turnTaking" },
-  silenceTimeoutMs: { label: "Silence before answering", min: 200, max: 1500, step: 50, unit: "ms", area: "turnTaking" },
-  topK: { label: "Retrieved passages", min: 1, max: 10, step: 1, area: "knowledge" },
+  temperature: {
+    label: "Temperature",
+    min: 0,
+    max: 1,
+    step: 0.1,
+    area: "model",
+  },
+  interruptionSensitivity: {
+    label: "Interruption sensitivity",
+    min: 0.1,
+    max: 0.9,
+    step: 0.05,
+    area: "turnTaking",
+  },
+  silenceTimeoutMs: {
+    label: "Silence before answering",
+    min: 200,
+    max: 1500,
+    step: 50,
+    unit: "ms",
+    area: "turnTaking",
+  },
+  topK: {
+    label: "Retrieved passages",
+    min: 1,
+    max: 10,
+    step: 1,
+    area: "knowledge",
+  },
 };
 export const settingRange = (key) => {
   const s = SETTING_SCHEMA[key];
@@ -425,25 +554,52 @@ const settingOf = (p) => {
 };
 /* Now and then the proposer writes a value the platform doesn't accept — by
    hash on the run and the change, so a new search sometimes shows one. */
-const OUT_OF_RANGE = { temperature: 1.4, silenceTimeoutMs: 2400, interruptionSensitivity: 0.95, topK: 14 };
+const OUT_OF_RANGE = {
+  temperature: 1.4,
+  silenceTimeoutMs: 2400,
+  interruptionSensitivity: 0.95,
+  topK: 14,
+};
 const typedSetting = (seed, p) => {
   const s = settingOf(p);
   if (!s) return null;
   const schema = SETTING_SCHEMA[s.key];
-  const value = hashSeed(`${seed}:${p.id}:range`) % 9 === 0 ? OUT_OF_RANGE[s.key] : s.value;
-  return { ...s, value, label: schema.label, range: settingRange(s.key), inRange: value >= schema.min && value <= schema.max };
+  const value =
+    hashSeed(`${seed}:${p.id}:range`) % 9 === 0 ? OUT_OF_RANGE[s.key] : s.value;
+  return {
+    ...s,
+    value,
+    label: schema.label,
+    range: settingRange(s.key),
+    inRange: value >= schema.min && value <= schema.max,
+  };
 };
 
 /* ── configuration areas ─────────────────────────────────────────────────── */
 
 /* Which of the twelve configuration areas a change edits (null: code). */
-const SETTING_AREA = { turn_taking: "turnTaking", model_settings: "model", retrieval: "knowledge", voice: "speechOut", transcriber: "speechIn", variables: "variables" };
+const SETTING_AREA = {
+  turn_taking: "turnTaking",
+  model_settings: "model",
+  retrieval: "knowledge",
+  voice: "speechOut",
+  transcriber: "speechIn",
+  variables: "variables",
+};
 export const areaOfProposal = (p) => {
   if (!p) return null;
   if (p.area) return p.area;
-  if (p.kind === "System prompt") return ["Opening", "Greeting"].includes(SECTION_FOR(p)) ? "opening" : "instructions";
+  if (p.kind === "System prompt")
+    return ["Opening", "Greeting"].includes(SECTION_FOR(p))
+      ? "opening"
+      : "instructions";
   if (p.kind === "Tool description") return "tools";
-  if (p.kind === "Agent setting") return SETTING_AREA[p.step] || (settingOf(p) && SETTING_SCHEMA[settingOf(p).key]?.area) || "model";
+  if (p.kind === "Agent setting")
+    return (
+      SETTING_AREA[p.step] ||
+      (settingOf(p) && SETTING_SCHEMA[settingOf(p).key]?.area) ||
+      "model"
+    );
   if (p.kind === "Model") return "model";
   if (p.kind === "Architecture") return "structure";
   return null;
@@ -459,44 +615,98 @@ export const areaOfProposal = (p) => {
   repository's tests. The real rules are checked as they are; now and then a
   candidate trips one by hash, the way a real proposer sometimes does.
 */
-const SPEECH_PROVIDERS = ["Deepgram", "AssemblyAI", "Whisper", "ElevenLabs", "Cartesia", "Azure Speech"];
+const SPEECH_PROVIDERS = [
+  "Deepgram",
+  "AssemblyAI",
+  "Whisper",
+  "ElevenLabs",
+  "Cartesia",
+  "Azure Speech",
+];
 const staticOf = (key, candidate, cfg) => {
   const fail = (kind, reason) => ({ pass: false, kind, reason });
   const rsi = cfg.rsi || {};
   const off = new Set(rsi.areasOff || []);
   for (const p of candidate) {
-    if (p.setting && !p.setting.inRange) return fail("range", `Sets ${p.setting.label.toLowerCase()} to ${p.setting.value} — allowed ${p.setting.range}.`);
-    if (p.area && off.has(p.area)) return fail("area", `Changes ${rsi.areaLabels?.[p.area] || p.area}, which this agent doesn't allow.`);
-    if (p.kind === "Model" && !(cfg.models || []).includes(p.model)) return fail("model", `Switches the model to ${p.model} while the model is locked.`);
-    if ((p.addsTool || p.removesTool) && !(rsi.codeAgent && rsi.areaRules?.toolsAddRemove)) {
-      return fail("tools", rsi.codeAgent
-        ? `${p.addsTool ? "Adds" : "Removes"} a tool, which this agent's Tools area doesn't allow.`
-        : `${p.addsTool ? "Adds" : "Removes"} a tool — only code agents can add or remove tools.`);
+    if (p.setting && !p.setting.inRange)
+      return fail(
+        "range",
+        `Sets ${p.setting.label.toLowerCase()} to ${p.setting.value} — allowed ${p.setting.range}.`,
+      );
+    if (p.area && off.has(p.area))
+      return fail(
+        "area",
+        `Changes ${rsi.areaLabels?.[p.area] || p.area}, which this agent doesn't allow.`,
+      );
+    if (p.kind === "Model" && !(cfg.models || []).includes(p.model))
+      return fail(
+        "model",
+        `Switches the model to ${p.model} while the model is locked.`,
+      );
+    if (
+      (p.addsTool || p.removesTool) &&
+      !(rsi.codeAgent && rsi.areaRules?.toolsAddRemove)
+    ) {
+      return fail(
+        "tools",
+        rsi.codeAgent
+          ? `${p.addsTool ? "Adds" : "Removes"} a tool, which this agent's Tools area doesn't allow.`
+          : `${p.addsTool ? "Adds" : "Removes"} a tool — only code agents can add or remove tools.`,
+      );
     }
-    if (p.whoSpeaksFirst && !rsi.areaRules?.whoSpeaksFirst) return fail("opening", "Changes who speaks first, which this agent's Opening and closing area doesn't allow.");
-    if (p.area === "variables" && !p.defaultOnly) return fail("variables", "Changes a variable's value for every conversation — only its default may change.");
+    if (p.whoSpeaksFirst && !rsi.areaRules?.whoSpeaksFirst)
+      return fail(
+        "opening",
+        "Changes who speaks first, which this agent's Opening and closing area doesn't allow.",
+      );
+    if (p.area === "variables" && !p.defaultOnly)
+      return fail(
+        "variables",
+        "Changes a variable's value for every conversation — only its default may change.",
+      );
   }
   const h = hashSeed(`${key}:static`);
-  const prot = (cfg.protected || []);
+  const prot = cfg.protected || [];
   const promptChange = candidate.find((p) => p.kind === "System prompt");
   if (prot.length && promptChange && h % 29 === 0) {
     const x = prot[h % prot.length];
-    const what = x.startsWith("section:") ? `prompt section '${x.split("#")[1]}'` : x.startsWith("tool:") ? `tool ${x.slice(5)}` : x.replace(/^.*\//, "");
+    const what = x.startsWith("section:")
+      ? `prompt section '${x.split("#")[1]}'`
+      : x.startsWith("tool:")
+        ? `tool ${x.slice(5)}`
+        : x.replace(/^.*\//, "");
     return fail("protected", `Edits ${what}, which is protected.`);
   }
   if (h % 47 === 7) {
     const evals = rsi.evalNames?.length ? rsi.evalNames : ["Task success"];
     const name = evals[h % evals.length];
-    return fail("judges", h % 2 ? `Edits the pass threshold of the ${name} evaluation — the improver may not change its judges.` : `Edits scenarios/ — a scenario rewritten to pass. Scenarios and evaluations are frozen.`);
+    return fail(
+      "judges",
+      h % 2
+        ? `Edits the pass threshold of the ${name} evaluation — the improver may not change its judges.`
+        : `Edits scenarios/ — a scenario rewritten to pass. Scenarios and evaluations are frozen.`,
+    );
   }
-  const speech = candidate.find((p) => ["speechIn", "speechOut", "turnTaking"].includes(p.area));
+  const speech = candidate.find((p) =>
+    ["speechIn", "speechOut", "turnTaking"].includes(p.area),
+  );
   if (speech && (rsi.approvedSpeech || []).length && h % 7 === 3) {
     const approved = rsi.approvedSpeech;
-    const other = SPEECH_PROVIDERS.find((x) => !approved.includes(x)) || "Whisper";
-    return fail("speech", `Switches the ${speech.area === "speechOut" ? "voice" : "transcriber"} to ${other}, which isn't an approved speech provider (${approved.join(", ")}).`);
+    const other =
+      SPEECH_PROVIDERS.find((x) => !approved.includes(x)) || "Whisper";
+    return fail(
+      "speech",
+      `Switches the ${speech.area === "speechOut" ? "voice" : "transcriber"} to ${other}, which isn't an approved speech provider (${approved.join(", ")}).`,
+    );
   }
-  const code = candidate.some((p) => ["code", "structure"].includes(KIND_SURFACE[p.kind] || "code"));
-  if (code && !cfg.repoTests) return fail("repoTests", "A code change needs the repository's own tests, and none are configured.");
+  const code = candidate.some((p) =>
+    ["code", "structure"].includes(KIND_SURFACE[p.kind] || "code"),
+  );
+  if (code && !cfg.repoTests)
+    return fail(
+      "repoTests",
+      "A code change needs the repository's own tests, and none are configured.",
+    );
   return { pass: true };
 };
 /*
@@ -508,13 +718,18 @@ export const triedLabelOf = (t, trials = []) => {
   if (!raw) return null;
   if (/^re-ran the incumbent|^ran the best change again/.test(raw)) {
     const prev = trials.filter((x) => x.n < t.n && x.improved).pop();
-    return prev ? `Trial ${prev.n}'s change again, to check it holds` : "The best change again, to check it holds";
+    return prev
+      ? `Candidate ${prev.n}'s change again, to check it holds`
+      : "The best change again, to check it holds";
   }
-  if (/^dropped a change|^removed one change/.test(raw)) return "One change removed, to check it's needed";
+  if (/^dropped a change|^removed one change/.test(raw))
+    return "One change removed, to check it's needed";
   if (t.feedback) return `Revised: ${t.feedback.why}`;
   const m = /^(kept|tried) (.+)$/.exec(raw);
   const what = m ? m[2] : raw;
-  return m ? `Tried: ${what}` : `${what.charAt(0).toUpperCase()}${what.slice(1)}`;
+  return m
+    ? `Tried: ${what}`
+    : `${what.charAt(0).toUpperCase()}${what.slice(1)}`;
 };
 
 /** A candidate stopped at Static checks. */
@@ -568,8 +783,17 @@ const otherEnvRun = (key, e) => {
   const h = hashSeed(`${key}:env:${e.id}`);
   const list = e.mustPass || [];
   const broke = list.length && h % 9 === 0 ? list[h % list.length] : null;
-  const repeated = broke ? hashSeed(`${key}:env:${e.id}:rerun`) % 100 < 50 : false;
-  return { envId: e.id, name: e.name, mustPass: list.length, scenarios: e.scenarios || list.length, broke: broke ? { id: broke.id, title: broke.title, repeated } : null, held: !repeated };
+  const repeated = broke
+    ? hashSeed(`${key}:env:${e.id}:rerun`) % 100 < 50
+    : false;
+  return {
+    envId: e.id,
+    name: e.name,
+    mustPass: list.length,
+    scenarios: e.scenarios || list.length,
+    broke: broke ? { id: broke.id, title: broke.title, repeated } : null,
+    held: !repeated,
+  };
 };
 
 /* ── GEPA's pool ─────────────────────────────────────────────────────────── */
@@ -580,17 +804,32 @@ const otherEnvRun = (key, e) => {
  * training scenario it fixed.
  */
 export const paretoPool = (result) => {
-  const trials = (result?.trials || []).filter((t) => !t.brokeBlocker && !t.cheats && !compatFailed(t) && !staticFailed(t) && !overLimitFailed(t) && !(t.repoTests && !t.repoTests.pass));
+  const trials = (result?.trials || []).filter(
+    (t) =>
+      !t.brokeBlocker &&
+      !t.cheats &&
+      !compatFailed(t) &&
+      !staticFailed(t) &&
+      !overLimitFailed(t) &&
+      !(t.repoTests && !t.repoTests.pass),
+  );
   const tasks = result?.trainMeasuredTasks || [];
   const byTrial = new Map();
   tasks.forEach((s) => {
     const fixers = trials.filter((t) => t.perScenario?.[s.id] === "fixed");
     if (!fixers.length) return;
-    const best = fixers.reduce((a, t) => (t.score > a.score || (t.score === a.score && t.n < a.n) ? t : a), fixers[0]);
-    if (!byTrial.has(best.n)) byTrial.set(best.n, { n: best.n, score: best.score, scenarios: [] });
+    const best = fixers.reduce(
+      (a, t) =>
+        t.score > a.score || (t.score === a.score && t.n < a.n) ? t : a,
+      fixers[0],
+    );
+    if (!byTrial.has(best.n))
+      byTrial.set(best.n, { n: best.n, score: best.score, scenarios: [] });
     byTrial.get(best.n).scenarios.push(s.title);
   });
-  return [...byTrial.values()].sort((a, b) => b.scenarios.length - a.scenarios.length || a.n - b.n);
+  return [...byTrial.values()].sort(
+    (a, b) => b.scenarios.length - a.scenarios.length || a.n - b.n,
+  );
 };
 
 /* ── the search ──────────────────────────────────────────────────────────── */
@@ -633,7 +872,9 @@ const scoreOf = (all, perScenario, cheated = new Set()) => {
     if (state === "flaky") return Math.max(passShareOf(t), 2 / 3);
     return passShareOf(t);
   };
-  return Math.round((tasks.reduce((a, t) => a + after(t), 0) / tasks.length) * 100);
+  return Math.round(
+    (tasks.reduce((a, t) => a + after(t), 0) / tasks.length) * 100,
+  );
 };
 
 /* What part of the agent a change touches — what an agent's limits allow or not. */
@@ -655,15 +896,16 @@ export const KIND_SURFACE = {
   model and the scenario, not of the search — so it's decided by both ids,
   the same way on every run.
 */
-const modelProposals = (models, failing) => models.map((m) => ({
-  id: `model-${m}`,
-  kind: "Model",
-  title: `Switch the model to ${m}`,
-  why: `${m} is on this agent's approved list. Tried like any other change: it has to fix more than it breaks, within the cost and latency limits.`,
-  diff: [{ type: "add", text: `model: ${m}` }],
-  addresses: failing.filter((t) => modelHelps(m, t)).map((t) => t.id),
-  model: m,
-}));
+const modelProposals = (models, failing) =>
+  models.map((m) => ({
+    id: `model-${m}`,
+    kind: "Model",
+    title: `Switch the model to ${m}`,
+    why: `${m} is on this agent's approved list. Tried like any other change: it has to fix more than it breaks, within the cost and latency limits.`,
+    diff: [{ type: "add", text: `model: ${m}` }],
+    addresses: failing.filter((t) => modelHelps(m, t)).map((t) => t.id),
+    model: m,
+  }));
 const modelHelps = (m, t) => hashSeed(`${m}:${t.id}`) % 3 === 0;
 
 /*
@@ -671,23 +913,37 @@ const modelHelps = (m, t) => hashSeed(`${m}:${t.id}`) % 3 === 0;
   candidates — a rule a later edit dropped, or wording that worked before.
   Each is a prompt change, so it's only tried when prompts may change.
 */
-const lineageProposals = (lineage, failing) => lineage.flatMap((v) => (v.changes || []).map((c, i) => {
-  const id = `lineage-${v.label}-${i}`;
-  return {
-    id,
-    kind: "System prompt",
-    title: `Bring back ${v.label}'s change: ${String(c.title || "instructions").replace(/\.$/, "").toLowerCase()}`,
-    why: `${v.label} ${c.detail ? `${c.detail.charAt(0).toLowerCase()}${c.detail.slice(1)}` : "made this change"}. Tried again from the agent's history rather than written fresh.`,
-    diff: [{ type: "add", text: (c.addendum || c.detail || c.title || "").replace(/^- /, "") }],
-    addresses: failing.filter((t) => hashSeed(`${id}:${t.id}`) % 3 === 0).map((t) => t.id),
-    fromVersion: v.label,
-  };
-}));
+const lineageProposals = (lineage, failing) =>
+  lineage.flatMap((v) =>
+    (v.changes || []).map((c, i) => {
+      const id = `lineage-${v.label}-${i}`;
+      return {
+        id,
+        kind: "System prompt",
+        title: `Bring back ${v.label}'s change: ${String(
+          c.title || "instructions",
+        )
+          .replace(/\.$/, "")
+          .toLowerCase()}`,
+        why: `${v.label} ${c.detail ? `${c.detail.charAt(0).toLowerCase()}${c.detail.slice(1)}` : "made this change"}. Tried again from the agent's history rather than written fresh.`,
+        diff: [
+          {
+            type: "add",
+            text: (c.addendum || c.detail || c.title || "").replace(/^- /, ""),
+          },
+        ],
+        addresses: failing
+          .filter((t) => hashSeed(`${id}:${t.id}`) % 3 === 0)
+          .map((t) => t.id),
+        fromVersion: v.label,
+      };
+    }),
+  );
 
 /* A protected entry names the agent's file ("prompts/system.md"); a change
    names it under the environment ("<envId>/prompts/system.md"). Either matches. */
-export const isProtected = (path, protectedPaths = []) => !!path
-  && protectedPaths.some((x) => path === x || path.endsWith(`/${x}`));
+export const isProtected = (path, protectedPaths = []) =>
+  !!path && protectedPaths.some((x) => path === x || path.endsWith(`/${x}`));
 
 /*
   Protected parts are files, tools ("tool:<name>") or prompt sections
@@ -698,20 +954,51 @@ export const isProtected = (path, protectedPaths = []) => !!path
 const fileName = (x) => x.replace(/^.*\//, "");
 export const protectedHit = (proposal, list = []) => {
   if (!list.length || !proposal) return null;
-  if (isProtected(proposal.path, list.filter((x) => !/^(tool|section):/.test(x)))) return proposal.path;
-  if (proposal.kind === "Tool description" && proposal.step && list.includes(`tool:${proposal.step}`)) return `tool ${proposal.step}`;
+  if (
+    isProtected(
+      proposal.path,
+      list.filter((x) => !/^(tool|section):/.test(x)),
+    )
+  )
+    return proposal.path;
+  if (
+    proposal.kind === "Tool description" &&
+    proposal.step &&
+    list.includes(`tool:${proposal.step}`)
+  )
+    return `tool ${proposal.step}`;
   /* A system-prompt change edits the agent's main prompt, whatever its file
      is called; headings written as "Rules", "Tools" or "Style" are the same
      sections as Policies, Tool use and Closing. */
   const section = SECTION_FOR(proposal);
   const ALIAS = { Rules: "Policies", Tools: "Tool use", Style: "Closing" };
-  const sec = section && list.find((x) => x.startsWith("section:") && (ALIAS[x.split("#")[1]] || x.split("#")[1]) === section);
-  return sec ? `${fileName(sec.slice(8).split("#")[0])} › ${sec.split("#")[1]}` : null;
+  const sec =
+    section &&
+    list.find(
+      (x) =>
+        x.startsWith("section:") &&
+        (ALIAS[x.split("#")[1]] || x.split("#")[1]) === section,
+    );
+  return sec
+    ? `${fileName(sec.slice(8).split("#")[0])} › ${sec.split("#")[1]}`
+    : null;
 };
 
 /* How deep a change goes — a search prefers the shallowest that verifies. */
-const DEPTH = { prompt: 0, tools: 1, skills: 1, settings: 2, model: 2, code: 3, structure: 4 };
-export const depthOf = (proposals) => Math.max(0, ...proposals.map((p) => DEPTH[KIND_SURFACE[p.kind] || "code"] ?? 3));
+const DEPTH = {
+  prompt: 0,
+  tools: 1,
+  skills: 1,
+  settings: 2,
+  model: 2,
+  code: 3,
+  structure: 4,
+};
+export const depthOf = (proposals) =>
+  Math.max(
+    0,
+    ...proposals.map((p) => DEPTH[KIND_SURFACE[p.kind] || "code"] ?? 3),
+  );
 
 /*
   Outcomes a repeat can't settle. A scenario that passed some repeats and
@@ -745,16 +1032,22 @@ export const MIN_RUNS_BEFORE_STOP = 4;
 */
 const PLATEAU_SHARE = 5;
 const PLATEAU_ENVS = new Set(["env-clinic-line"]);
-export const plateausFor = (seed, envId) => PLATEAU_ENVS.has(envId) || hashSeed(`${seed}:plateau`) % PLATEAU_SHARE === 0;
+export const plateausFor = (seed, envId) =>
+  PLATEAU_ENVS.has(envId) || hashSeed(`${seed}:plateau`) % PLATEAU_SHARE === 0;
 const LEGACY_NO_GAIN = { runs: 4, after: 6 };
 /* How many runs a search could have used — the planned count, before any early stop. */
-export const maxRunsOf = (result) => result?.stoppedEarly?.of || (result?.trials || []).length;
+export const maxRunsOf = (result) =>
+  result?.stoppedEarly?.of || (result?.trials || []).length;
 /* A stop on runs that stopped gaining while there was still something to
    gain — the "Stopped early" ending. Null for older records and for a
    search that stopped because every failing target was already fixed. */
-export const plateauStopOf = (result) => (result?.stoppedEarly?.window && !result.stoppedEarly.complete ? result.stoppedEarly : null);
+export const plateauStopOf = (result) =>
+  result?.stoppedEarly?.window && !result.stoppedEarly.complete
+    ? result.stoppedEarly
+    : null;
 /* The rule a stop was made under — its own window, or the older four. */
-export const noGainRunsOf = (stoppedEarly) => stoppedEarly?.window || LEGACY_NO_GAIN.runs;
+export const noGainRunsOf = (stoppedEarly) =>
+  stoppedEarly?.window || LEGACY_NO_GAIN.runs;
 
 /*
   A must-pass failure counts only when it repeats on a re-run — one bad run
@@ -785,42 +1078,81 @@ const repoTestsPass = (key) => hashSeed(`${key}:repo-tests`) % 9 !== 0;
   change pulls in a new dependency. A change whose own files include a
   build file always fails.
 */
-export const BUILD_FILES = /(^|\/)(Dockerfile|docker-compose\.ya?ml|requirements[^/]*\.txt|package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|pyproject\.toml|poetry\.lock|uv\.lock|setup\.py)$/i;
+export const BUILD_FILES =
+  /(^|\/)(Dockerfile|docker-compose\.ya?ml|requirements[^/]*\.txt|package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|pyproject\.toml|poetry\.lock|uv\.lock|setup\.py)$/i;
 const COMPAT_SURFACES = ["code", "structure"];
-const dirOf = (path) => (String(path).includes("/") ? String(path).replace(/\/[^/]*$/, "") : "agent");
+const dirOf = (path) =>
+  String(path).includes("/") ? String(path).replace(/\/[^/]*$/, "") : "agent";
 const DEPENDENCY_FOR = {
-  Memory: { python: ["redis>=5.0", "requirements.txt"], node: ["ioredis@5", "package.json"] },
-  Architecture: { python: ["langgraph-checkpoint-postgres", "requirements.txt"], node: ["@langchain/langgraph-checkpoint-postgres", "package.json"] },
+  Memory: {
+    python: ["redis>=5.0", "requirements.txt"],
+    node: ["ioredis@5", "package.json"],
+  },
+  Architecture: {
+    python: ["langgraph-checkpoint-postgres", "requirements.txt"],
+    node: ["@langchain/langgraph-checkpoint-postgres", "package.json"],
+  },
 };
 const compatOf = (key, candidate, { entry, envVersion, runtime } = {}) => {
-  const own = candidate.filter((p) => COMPAT_SURFACES.includes(KIND_SURFACE[p.kind] || "code"));
+  const own = candidate.filter((p) =>
+    COMPAT_SURFACES.includes(KIND_SURFACE[p.kind] || "code"),
+  );
   if (!own.length) return null;
   const from = String(entry || "agent/main.py").replace(/:.*$/, "");
   const node = runtime === "node" || /\.(t|j)s$/.test(from);
   const sealed = `the sealed environment ${envVersion || "version"}`;
   const tail = `it no longer fits ${sealed}. Rebuild the environment from this commit to test it.`;
   /* A change that edits a build file itself. */
-  const buildFile = own.flatMap((p) => [p.path, ...(p.files || []).map((f) => f.path || f)]).find((f) => f && BUILD_FILES.test(f));
+  const buildFile = own
+    .flatMap((p) => [p.path, ...(p.files || []).map((f) => f.path || f)])
+    .find((f) => f && BUILD_FILES.test(f));
   if (buildFile) {
     const name = buildFile.replace(/^.*\//, "");
-    return { pass: false, kind: "build", file: name, reason: `Edits ${name}, which changes the build — ${tail}` };
+    return {
+      pass: false,
+      kind: "build",
+      file: name,
+      reason: `Edits ${name}, which changes the build — ${tail}`,
+    };
   }
   for (const p of own) {
     const h = hashSeed(`${key}:${p.id}:fits`);
     if (p.kind === "Architecture" && h % 16 === 0) {
       const to = `${dirOf(from)}/router${node ? ".ts" : ".py"}`;
-      return { pass: false, kind: "entry", from, to, reason: `Moves the entry point from ${from} to ${to} — ${tail}` };
+      return {
+        pass: false,
+        kind: "entry",
+        from,
+        to,
+        reason: `Moves the entry point from ${from} to ${to} — ${tail}`,
+      };
     }
     if (p.kind === "Architecture" && h % 16 === 8) {
-      const cmd = node ? `node ${dirOf(from)}/router.js` : `uvicorn ${dirOf(from).replace(/\//g, ".")}.router:app`;
-      return { pass: false, kind: "run", to: cmd, reason: `Changes the start command to ${cmd} — ${tail}` };
+      const cmd = node
+        ? `node ${dirOf(from)}/router.js`
+        : `uvicorn ${dirOf(from).replace(/\//g, ".")}.router:app`;
+      return {
+        pass: false,
+        kind: "run",
+        to: cmd,
+        reason: `Changes the start command to ${cmd} — ${tail}`,
+      };
     }
     const dep = DEPENDENCY_FOR[p.kind]?.[node ? "node" : "python"];
     if (dep && h % 20 === 0) {
-      return { pass: false, kind: "build", file: dep[1], dep: dep[0], reason: `Adds ${dep[0]} to ${dep[1]}, which needs a rebuild of the sealed image — ${tail}` };
+      return {
+        pass: false,
+        kind: "build",
+        file: dep[1],
+        dep: dep[0],
+        reason: `Adds ${dep[0]} to ${dep[1]}, which needs a rebuild of the sealed image — ${tail}`,
+      };
     }
   }
-  return { pass: true, note: `entry point ${from}, build and start command unchanged` };
+  return {
+    pass: true,
+    note: `entry point ${from}, build and start command unchanged`,
+  };
 };
 /** A candidate that doesn't fit the sealed environment. */
 export const compatFailed = (t) => !!t?.compat && t.compat.pass === false;
@@ -843,26 +1175,35 @@ const revisionOf = (baseP, still, last, repeats, n) => {
   const first = still[0];
   const tool = first.callLog?.missing?.[0] || baseP.step || null;
   const claim = !!first.callLog?.unsupportedClaim;
-  const when = lowerFirst(scenarioTitle(first.title)).replace(/\.$/, "").replace(/^(caller|guest|traveller|customer|user|patient)\b/, "the $1");
+  const when = lowerFirst(scenarioTitle(first.title))
+    .replace(/\.$/, "")
+    .replace(/^(caller|guest|traveller|customer|user|patient)\b/, "the $1");
   const line = claim
     ? `Including when ${when}: say only what the tool returned. If it failed, say so and offer another way.`
     : tool
       ? `Including when ${when}: call ${tool} before you answer, and wait for it to return.`
       : `Including when ${when}: follow the same rule.`;
-  const reason = claim ? "still told the caller it was done" : tool ? `still answered without ${tool}` : "still failed";
+  const reason = claim
+    ? "still told the caller it was done"
+    : tool
+      ? `still answered without ${tool}`
+      : "still failed";
   return {
     ...baseP,
     id: `${baseP.revisionOf || baseP.id}~r${n}`,
     revisionOf: baseP.revisionOf || baseP.id,
-    title: `${(baseP.title || "").replace(/ — revised after (Run|Trial) \d+$/, "")} — revised after Trial ${last.n}`,
-    addresses: [...new Set([...(baseP.addresses || []), ...still.map((t) => t.id)])],
+    title: `${(baseP.title || "").replace(/ — revised after (Run|Trial|Candidate) \d+$/, "")} — revised after Candidate ${last.n}`,
+    addresses: [
+      ...new Set([...(baseP.addresses || []), ...still.map((t) => t.id)]),
+    ],
     diff: [...(baseP.diff || []), { type: "add", text: line }],
     feedback: {
       from: last.n,
-      fixed: Object.values(last.perScenario || {}).filter((v) => v === "fixed").length,
+      fixed: Object.values(last.perScenario || {}).filter((v) => v === "fixed")
+        .length,
       stillFailing: still.map((t) => ({ id: t.id, title: t.title })),
       conversations: still.length * repeats,
-      why: `Trial ${last.n} ${reason} on “${scenarioTitle(first.title).replace(/\.$/, "")}”${still.length > 1 ? ` and ${still.length - 1} more` : ""}`,
+      why: `Candidate ${last.n} ${reason} on “${scenarioTitle(first.title).replace(/\.$/, "")}”${still.length > 1 ? ` and ${still.length - 1} more` : ""}`,
       adds: line,
     },
   };
@@ -872,16 +1213,29 @@ const revisionOf = (baseP, still, last, repeats, n) => {
    the same skill replaces the earlier one rather than stacking on it. */
 const oneVersionPerSkill = (pool, ids) => {
   const skillOf = (id) => pool.find((p) => p.id === id)?.skillId || null;
-  return ids.filter((id, i) => !skillOf(id) || !ids.slice(i + 1).some((x) => skillOf(x) === skillOf(id)));
+  return ids.filter(
+    (id, i) =>
+      !skillOf(id) || !ids.slice(i + 1).some((x) => skillOf(x) === skillOf(id)),
+  );
 };
 
-export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope: given, limitGate = null }) => {
+export const runSearch = ({
+  env,
+  tasks,
+  optimizerId,
+  config,
+  seed = "opt",
+  scope: given,
+  limitGate = null,
+}) => {
   const scope = given || searchScope({ env, tasks });
   const optimizer = optimizerById(optimizerId);
   const cfg = { ...optimizer.config, ...config };
   /* A budget caps the trials — the search stops with what it found so far. */
   const planned = Math.max(2, Math.min(24, optimizer.trialsFor(cfg)));
-  const count = cfg.maxTrials ? Math.max(1, Math.min(planned, cfg.maxTrials)) : planned;
+  const count = cfg.maxTrials
+    ? Math.max(1, Math.min(planned, cfg.maxTrials))
+    : planned;
 
   /*
     The split is a property of the suite, not of the run.
@@ -908,9 +1262,17 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
   const goalMode = !!rsi && !issueFix;
   const goalTarget = (t) => failsGoal(t, cfg.goal);
   const issueSplit = issueFix
-    ? splitIssueScenarios(scope.tasks, `${env?.id || seed}-split-issue`, { groupOf, inconclusiveOut: !!rsi, sameFailure: !!rsi })
+    ? splitIssueScenarios(scope.tasks, `${env?.id || seed}-split-issue`, {
+        groupOf,
+        inconclusiveOut: !!rsi,
+        sameFailure: !!rsi,
+      })
     : goalMode
-      ? splitGoalScenarios(scope.tasks, `${env?.id || seed}-split-goal`, { groupOf, isTarget: goalTarget, holdable: scope.holdable })
+      ? splitGoalScenarios(scope.tasks, `${env?.id || seed}-split-goal`, {
+          groupOf,
+          isTarget: goalTarget,
+          holdable: scope.holdable,
+        })
       : null;
   /*
     Must-pass: what the user marked must-pass, regression memory, and every
@@ -935,10 +1297,14 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     (failing for some other reason, flaky today) aren't part of this
     improvement. Older records search on target plus the rest, as before.
   */
-  const split = issueSplit || splitScenarios(scope.tasks, `${env?.id || seed}-split`, scope.holdable);
+  const split =
+    issueSplit ||
+    splitScenarios(scope.tasks, `${env?.id || seed}-split`, scope.holdable);
   /* An issue that reproduced nowhere (Continue anyway) still aims at its own scenarios. */
-  const train0 = !rsi ? split.train
-    : split.target.length || !issueFix ? split.target
+  const train0 = !rsi
+    ? split.train
+    : split.target.length || !issueFix
+      ? split.target
       : scope.tasks.filter((t) => t.fromIssue && !split.held.includes(t));
   /*
     The person's own pick (Edit plan → Cases to fix / Cases to protect):
@@ -953,10 +1319,16 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
   const fixPool = new Set([...train0, ...split.held].map((t) => t.id));
   const inSets = new Set([...train, ...held].map((t) => t.id));
   /* From the whole suite when the search kept a slice of it (voice). */
-  const protectPool = rsi ? (cfg.mustPassPool || scope.tasks).filter((t) => !fixPool.has(t.id)) : [];
+  const protectPool = rsi
+    ? (cfg.mustPassPool || scope.tasks).filter((t) => !fixPool.has(t.id))
+    : [];
   const protecting = casePick?.protect ? new Set(casePick.protect) : null;
   const mustPassSet = rsi
-    ? protectPool.filter((t) => !inSets.has(t.id) && (protecting ? protecting.has(t.id) : mustPass(t)))
+    ? protectPool.filter(
+        (t) =>
+          !inSets.has(t.id) &&
+          (protecting ? protecting.has(t.id) : mustPass(t)),
+      )
     : [];
   const trainMeasured = train.filter((t) => t.status !== "unmeasured");
   const heldMeasured = held.filter((t) => t.status !== "unmeasured");
@@ -973,11 +1345,15 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     return { ...p, ...(area && { area }), ...(setting && { setting }) };
   };
   const suggestions = [];
-  const permitted = (list) => list
-    .map((p) => tag({ ...p, path: changeFileFor(env, p)?.path || null }))
-    .filter((p) => !(rsi && p.knowledgeContent && suggestions.push(p)))
-    .filter((p) => !cfg.allowed || cfg.allowed.includes(KIND_SURFACE[p.kind] || "code"))
-    .filter((p) => !protectedHit(p, cfg.protected || []));
+  const permitted = (list) =>
+    list
+      .map((p) => tag({ ...p, path: changeFileFor(env, p)?.path || null }))
+      .filter((p) => !(rsi && p.knowledgeContent && suggestions.push(p)))
+      .filter(
+        (p) =>
+          !cfg.allowed || cfg.allowed.includes(KIND_SURFACE[p.kind] || "code"),
+      )
+      .filter((p) => !protectedHit(p, cfg.protected || []));
   /*
     A Fix on a run's issue writes its first candidates from the issue's root
     cause and suggested fix, aimed at the issue's scenarios the search can see
@@ -986,33 +1362,54 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
   */
   /* The issue's scenarios the search can see that still fail — the target
      strata a run issue's Fix is judged on first. */
-  const isTargetIssue = (t) => t.fromIssue && passShareOf(t) < 1 && !(rsi && isInconclusive(t));
+  const isTargetIssue = (t) =>
+    t.fromIssue && passShareOf(t) < 1 && !(rsi && isInconclusive(t));
   const issueTargets = cfg.issue ? trainMeasured.filter(isTargetIssue) : [];
-  const feedTargets = issueFix && !cfg.issue ? trainMeasured.filter(isTargetIssue) : [];
+  const feedTargets =
+    issueFix && !cfg.issue ? trainMeasured.filter(isTargetIssue) : [];
   /* A goal's targets: the scenarios the search can see that fall short of it. */
   const goalTargets = goalMode ? trainMeasured.filter(goalTarget) : [];
-  const allGoalTargets = goalMode ? [...trainMeasured, ...heldMeasured].filter(goalTarget).length : null;
-  const issuePool = cfg.issue ? permitted(issueProposals(env, cfg.issue, issueTargets, trainMeasured)) : [];
+  const allGoalTargets = goalMode
+    ? [...trainMeasured, ...heldMeasured].filter(goalTarget).length
+    : null;
+  const issuePool = cfg.issue
+    ? permitted(issueProposals(env, cfg.issue, issueTargets, trainMeasured))
+    : [];
   /* What the changes are written for — a goal's targets when it has them. */
-  const failingTrain = goalMode && goalTargets.length ? goalTargets : optimisable(train);
+  const failingTrain =
+    goalMode && goalTargets.length ? goalTargets : optimisable(train);
   const pool = [
     ...issuePool,
     ...permitted(proposalsFor(env, failingTrain, trainMeasured)),
     /* New versions of the skills it may change — description, or description and steps. */
     ...(cfg.skills?.length
-      ? permitted(skillProposalsFor(cfg.skills, failingTrain, { depth: cfg.skillDepth, observed: !!cfg.skillObserved }))
+      ? permitted(
+          skillProposalsFor(cfg.skills, failingTrain, {
+            depth: cfg.skillDepth,
+            observed: !!cfg.skillObserved,
+          }),
+        )
       : []),
-    ...modelProposals(cfg.models || [], failingTrain).map(tag).filter((p) => p.addresses.length),
+    ...modelProposals(cfg.models || [], failingTrain)
+      .map(tag)
+      .filter((p) => p.addresses.length),
     ...(!cfg.allowed || cfg.allowed.includes("prompt")
-      ? lineageProposals(cfg.lineage || [], failingTrain).map(tag).filter((p) => p.addresses.length)
+      ? lineageProposals(cfg.lineage || [], failingTrain)
+          .map(tag)
+          .filter((p) => p.addresses.length)
       : []),
   ];
   /* Reviewed before running: only the changes kept, as edited. */
-  if (cfg.candidates?.items?.length) pool.splice(0, pool.length, ...cfg.candidates.items);
+  if (cfg.candidates?.items?.length)
+    pool.splice(0, pool.length, ...cfg.candidates.items);
   /* A fix searches from the issue outwards: changes that address its
      scenarios are tried first, then whatever else helps. A goal does the
      same from its targets. */
-  const focus = new Set(goalMode ? goalTargets.map((t) => t.id) : train.filter((t) => t.fromIssue).map((t) => t.id));
+  const focus = new Set(
+    goalMode
+      ? goalTargets.map((t) => t.id)
+      : train.filter((t) => t.fromIssue).map((t) => t.id),
+  );
   const onFocus = (p) => p.addresses.some((id) => focus.has(id));
   /* The issue's own proposals, tried before anything else, in the order they
      were written (the suggested fix first). */
@@ -1020,13 +1417,24 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
   const triedIssue = new Set();
   /* A fix's diagnosis says what kind of change fits — a skipped tool or a
      claim no tool backs. Changes of that kind are tried first. */
-  const framed = (p) => (cfg.frame === "claim" ? p.id === "unsupported-claims" || p.mechanism === "claim"
-    : cfg.frame === "tool" ? p.id.startsWith("missing-") || p.mechanism === "tool" : false);
+  const framed = (p) =>
+    cfg.frame === "claim"
+      ? p.id === "unsupported-claims" || p.mechanism === "claim"
+      : cfg.frame === "tool"
+        ? p.id.startsWith("missing-") || p.mechanism === "tool"
+        : false;
 
   const r = rng(hashSeed(`${seed}-${optimizerId}`));
   const base = projectedRate(trainMeasured, []);
   /* Baseline twice, before any candidate (new improvements only). */
-  const calibration = rsi?.calibration ? calibrate(seed, [...trainMeasured, ...heldMeasured], rsi.version, rsi.todayRuns || []) : null;
+  const calibration = rsi?.calibration
+    ? calibrate(
+        seed,
+        [...trainMeasured, ...heldMeasured],
+        rsi.version,
+        rsi.todayRuns || [],
+      )
+    : null;
   const noisyIds = new Set(calibration?.noisyIds || []);
 
   const trials = [];
@@ -1046,23 +1454,34 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       does. The undirected ones sample subsets of increasing size, so random
       search still explores but does not get to start from the finish line.
     */
-    const directed = ["protegi", "metaprompt", "promptwizard", "gepa"].includes(optimizer.id);
+    const directed = ["protegi", "metaprompt", "promptwizard", "gepa"].includes(
+      optimizer.id,
+    );
     let picks;
 
     if (directed) {
       /* `keep`, not `held` — the held-out split is already bound in this scope. */
-      const keep = r() < 0.2 && best.picks.length > 1
-        ? best.picks.slice(0, -1)          // drop the least recent, try without it
-        : best.picks;
+      const keep =
+        r() < 0.2 && best.picks.length > 1
+          ? best.picks.slice(0, -1) // drop the least recent, try without it
+          : best.picks;
       /* A change the incumbent already carries a revision of isn't offered
          again beside it, and a revision is only ever made, never drawn. */
-      const revised = new Set(keep.map((id) => pool.find((p) => p.id === id)?.revisionOf).filter(Boolean));
-      const rest = pool.filter((p) => !keep.includes(p.id) && !revised.has(p.id) && !p.revisionOf);
+      const revised = new Set(
+        keep
+          .map((id) => pool.find((p) => p.id === id)?.revisionOf)
+          .filter(Boolean),
+      );
+      const rest = pool.filter(
+        (p) => !keep.includes(p.id) && !revised.has(p.id) && !p.revisionOf,
+      );
       /* A run issue's Fix tries each of the issue's own proposals first; once
          each has had a turn, an issue proposal that didn't stick is tried
          again half the time while none is in the incumbent. */
       const carried = (id) => keep.includes(id) || revised.has(id);
-      const untriedIssue = issueIds.filter((id) => !carried(id) && !triedIssue.has(id));
+      const untriedIssue = issueIds.filter(
+        (id) => !carried(id) && !triedIssue.has(id),
+      );
       const issueLeft = issueIds.filter((id) => !carried(id));
       let next;
       if (untriedIssue.length) {
@@ -1071,11 +1490,22 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
         next = issueLeft[Math.floor(r() * issueLeft.length)];
       } else {
         const toward = rest.filter(onFocus);
-        const framedFirst = cfg.frame && !keep.some((id) => framed(pool.find((p) => p.id === id) || { id: "" })) ? toward.filter(framed) : [];
+        const framedFirst =
+          cfg.frame &&
+          !keep.some((id) =>
+            framed(pool.find((p) => p.id === id) || { id: "" }),
+          )
+            ? toward.filter(framed)
+            : [];
         const towardIssue = framedFirst.length ? framedFirst : toward;
-        const from = towardIssue.length && (!keep.some((id) => onFocus(pool.find((p) => p.id === id) || { addresses: [] })) || r() < 0.5)
-          ? towardIssue
-          : rest;
+        const from =
+          towardIssue.length &&
+          (!keep.some((id) =>
+            onFocus(pool.find((p) => p.id === id) || { addresses: [] }),
+          ) ||
+            r() < 0.5)
+            ? towardIssue
+            : rest;
         next = from.length ? from[Math.floor(r() * from.length)].id : null;
       }
       if (next && issueIds.includes(next)) triedIssue.add(next);
@@ -1083,9 +1513,14 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       /* Nothing new to add: revise the incumbent's newest change from what
          the last run still failed, rather than run it again unchanged. */
       const last = trials[trials.length - 1];
-      const still = !next && rsi && last && keep.length
-        ? trainMeasured.filter((t) => focus.has(t.id) && ["still-failing", "flaky"].includes(last.perScenario?.[t.id]))
-        : [];
+      const still =
+        !next && rsi && last && keep.length
+          ? trainMeasured.filter(
+              (t) =>
+                focus.has(t.id) &&
+                ["still-failing", "flaky"].includes(last.perScenario?.[t.id]),
+            )
+          : [];
       if (still.length) {
         const baseP = pool.find((p) => p.id === keep[keep.length - 1]);
         if (baseP) {
@@ -1095,8 +1530,17 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
         }
       }
     } else {
-      const size = 1 + Math.floor(r() * Math.min(pool.length, 1 + Math.ceil((n / count) * pool.length)));
-      picks = oneVersionPerSkill(pool, shuffle(pool, r).slice(0, size).map((p) => p.id));
+      const size =
+        1 +
+        Math.floor(
+          r() * Math.min(pool.length, 1 + Math.ceil((n / count) * pool.length)),
+        );
+      picks = oneVersionPerSkill(
+        pool,
+        shuffle(pool, r)
+          .slice(0, size)
+          .map((p) => p.id),
+      );
     }
 
     const candidate = pool.filter((p) => picks.includes(p.id));
@@ -1118,16 +1562,26 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       } else if (wasPassing && r() < 0.12) {
         perScenario[t.id] = "broke";
         /* Newer records check must-pass on its own set, for finalists only. */
-        if (!rsi && mustPass(t)) mustPassFails.push({ id: t.id, title: t.title, repeated: repeatsOnRerun(`${seed}:${n}:${t.id}`) });
+        if (!rsi && mustPass(t))
+          mustPassFails.push({
+            id: t.id,
+            title: t.title,
+            repeated: repeatsOnRerun(`${seed}:${n}:${t.id}`),
+          });
       } else {
         perScenario[t.id] = wasPassing ? "same" : "still-failing";
       }
       /* Some outcomes don't settle across repeats — read off the ids, so
          the search's own draws stay where they were. */
-      if (perScenario[t.id] === "fixed" || perScenario[t.id] === "still-failing") {
-        perScenario[t.id] = unsettled(`${seed}:${n}:${t.id}`) || perScenario[t.id];
+      if (
+        perScenario[t.id] === "fixed" ||
+        perScenario[t.id] === "still-failing"
+      ) {
+        perScenario[t.id] =
+          unsettled(`${seed}:${n}:${t.id}`) || perScenario[t.id];
       }
-      if (rsi && offScript(`${seed}:${n}:${t.id}`)) perScenario[t.id] = "off-script";
+      if (rsi && offScript(`${seed}:${n}:${t.id}`))
+        perScenario[t.id] = "off-script";
     });
     /*
       Fits the environment — new improvements only (`cfg.compat`); drawn by
@@ -1137,12 +1591,19 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     */
     /* Static checks first, new improvements only — a candidate that fails
        one stops before anything runs, like one that doesn't fit. */
-    const stat = rsi ? (candidate.length ? staticOf(`${seed}:${n}`, candidate, cfg) : { pass: true }) : null;
+    const stat = rsi
+      ? candidate.length
+        ? staticOf(`${seed}:${n}`, candidate, cfg)
+        : { pass: true }
+      : null;
     const statOk = !stat || stat.pass;
-    const compat = cfg.compat && statOk ? compatOf(seed, candidate, cfg.compat) : null;
+    const compat =
+      cfg.compat && statOk ? compatOf(seed, candidate, cfg.compat) : null;
     const fits = statOk && (!compat || compat.pass);
     if (!fits) {
-      trainMeasured.forEach((t) => { perScenario[t.id] = passShareOf(t) >= 1 ? "same" : "still-failing"; });
+      trainMeasured.forEach((t) => {
+        perScenario[t.id] = passShareOf(t) >= 1 ? "same" : "still-failing";
+      });
       mustPassFails.length = 0;
     }
     /* Disqualified only when a must-pass failure repeats on a re-run. */
@@ -1152,22 +1613,44 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     /* A fix that turns failing conversations into passing ones also makes
        them shorter — no retries, no loops back — which pays for some of the
        tokens it adds (new improvements only). */
-    const failingBefore = rsi ? trainMeasured.filter((t) => passShareOf(t) < 1).length : 0;
-    const fixedNow = rsi && fits ? trainMeasured.filter((t) => perScenario[t.id] === "fixed").length : 0;
-    const costSavings = failingBefore ? Math.round((COST_SAVED_IF_ALL_FIXED * fixedNow) / failingBefore * 10) / 10 : 0;
-    const overLimit = limitGate && fits && candidate.length ? limitGate(candidate, costSavings) : null;
+    const failingBefore = rsi
+      ? trainMeasured.filter((t) => passShareOf(t) < 1).length
+      : 0;
+    const fixedNow =
+      rsi && fits
+        ? trainMeasured.filter((t) => perScenario[t.id] === "fixed").length
+        : 0;
+    const costSavings = failingBefore
+      ? Math.round(
+          ((COST_SAVED_IF_ALL_FIXED * fixedNow) / failingBefore) * 10,
+        ) / 10
+      : 0;
+    const overLimit =
+      limitGate && fits && candidate.length
+        ? limitGate(candidate, costSavings)
+        : null;
 
     /* A search that plateaus never fixes every failing target — something
        is always left that no run can reach. */
     if (rsi && plateau && fits) {
-      const failing = trainMeasured.filter((t) => passShareOf(t) < 1 && perScenario[t.id] !== "off-script");
-      if (failing.length && failing.every((t) => perScenario[t.id] === "fixed")) perScenario[failing[failing.length - 1].id] = "still-failing";
+      const failing = trainMeasured.filter(
+        (t) => passShareOf(t) < 1 && perScenario[t.id] !== "off-script",
+      );
+      if (failing.length && failing.every((t) => perScenario[t.id] === "fixed"))
+        perScenario[failing[failing.length - 1].id] = "still-failing";
     }
     let score = fits ? scoreOf(trainMeasured, perScenario) : base;
-    let issueFixed = issueTargets.filter((t) => perScenario[t.id] === "fixed").length;
-    const beatsBest = () => fits && !overLimit && (cfg.issue
-      ? !mustPassFails.some((f) => f.repeated) && (issueFixed > best.issueFixed || (issueFixed === best.issueFixed && score > best.score))
-      : score > best.score);
+    let issueFixed = issueTargets.filter(
+      (t) => perScenario[t.id] === "fixed",
+    ).length;
+    const beatsBest = () =>
+      fits &&
+      !overLimit &&
+      (cfg.issue
+        ? !mustPassFails.some((f) => f.repeated) &&
+          (issueFixed > best.issueFixed ||
+            (issueFixed === best.issueFixed && score > best.score))
+        : score > best.score);
     let improved = beatsBest();
     /*
       A search that doesn't plateau builds on the best so far after a run
@@ -1182,33 +1665,55 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
         if (was[t.id] === "fixed") perScenario[t.id] = "fixed";
         else if (perScenario[t.id] === "broke") perScenario[t.id] = "same";
       });
-      const open = (t) => passShareOf(t) < 1 && perScenario[t.id] !== "fixed" && perScenario[t.id] !== "off-script";
-      const next = trainMeasured.find((t) => open(t) && (cfg.issue ? issueTargets.includes(t) : focus.has(t.id))) || trainMeasured.find(open);
+      const open = (t) =>
+        passShareOf(t) < 1 &&
+        perScenario[t.id] !== "fixed" &&
+        perScenario[t.id] !== "off-script";
+      const next =
+        trainMeasured.find(
+          (t) =>
+            open(t) && (cfg.issue ? issueTargets.includes(t) : focus.has(t.id)),
+        ) || trainMeasured.find(open);
       if (next) perScenario[next.id] = "fixed";
       mustPassFails.length = 0;
       brokeBlocker = false;
       score = scoreOf(trainMeasured, perScenario);
-      issueFixed = issueTargets.filter((t) => perScenario[t.id] === "fixed").length;
+      issueFixed = issueTargets.filter(
+        (t) => perScenario[t.id] === "fixed",
+      ).length;
       improved = beatsBest();
     }
     /* A search that plateaus keeps its first gain and finds nothing past
        it: what a later run fixes beyond the best doesn't hold. */
     if (rsi && plateau && improved && best.per) {
       trainMeasured.forEach((t) => {
-        if (perScenario[t.id] === "fixed" && best.per[t.id] !== "fixed") perScenario[t.id] = "still-failing";
+        if (perScenario[t.id] === "fixed" && best.per[t.id] !== "fixed")
+          perScenario[t.id] = "still-failing";
       });
       score = scoreOf(trainMeasured, perScenario);
-      issueFixed = issueTargets.filter((t) => perScenario[t.id] === "fixed").length;
+      issueFixed = issueTargets.filter(
+        (t) => perScenario[t.id] === "fixed",
+      ).length;
       improved = beatsBest();
     }
     const added = candidate.filter((p) => !best.picks.includes(p.id))[0];
     const revised = added?.feedback ? added : null;
     /* The repository's tests, on any candidate that changes code. */
-    const touchesCode = cfg.repoTests && candidate.some((p) => ["code", "structure"].includes(KIND_SURFACE[p.kind] || "code"));
-    const repoTests = touchesCode && fits ? { command: cfg.repoTests, pass: repoTestsPass(`${seed}:${n}`) } : null;
+    const touchesCode =
+      cfg.repoTests &&
+      candidate.some((p) =>
+        ["code", "structure"].includes(KIND_SURFACE[p.kind] || "code"),
+      );
+    const repoTests =
+      touchesCode && fits
+        ? { command: cfg.repoTests, pass: repoTestsPass(`${seed}:${n}`) }
+        : null;
 
     /* For the stop rule: a gain that clears run-to-run noise (an issue fix is a count, so any new one counts). */
-    const clearGain = improved && (cfg.issue && issueFixed > best.issueFixed || score > best.score + gainMargin);
+    const clearGain =
+      improved &&
+      ((cfg.issue && issueFixed > best.issueFixed) ||
+        score > best.score + gainMargin);
     trials.push({
       n,
       picks,
@@ -1224,7 +1729,11 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       ...(costSavings > 0 && { costSavings }),
       ...(compat && { compat }),
       ...(repoTests && { repoTests }),
-      ...(goalMode && { goalFixed: goalTargets.filter((t) => perScenario[t.id] === "fixed").length, goalTargets: goalTargets.length }),
+      ...(goalMode && {
+        goalFixed: goalTargets.filter((t) => perScenario[t.id] === "fixed")
+          .length,
+        goalTargets: goalTargets.length,
+      }),
       ...(rsi && { depth: depthOf(candidate) }),
       fixed: Object.values(perScenario).filter((v) => v === "fixed").length,
       broke: Object.values(perScenario).filter((v) => v === "broke").length,
@@ -1232,28 +1741,53 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       tried: revised
         ? `revised Run ${revised.feedback.from}'s change`
         : added
-        ? `${improved ? "kept" : "tried"} ${added.trialLabel || added.title.toLowerCase()}`
-        : picks.length < best.picks.length
-          ? "removed one change, to check it's needed"
-          : "ran the best change again, to check it holds",
-      lines: candidate.flatMap((p) => p.diff.filter((d) => d.type === "add").map((d) => d.text)),
+          ? `${improved ? "kept" : "tried"} ${added.trialLabel || added.title.toLowerCase()}`
+          : picks.length < best.picks.length
+            ? "removed one change, to check it's needed"
+            : "ran the best change again, to check it holds",
+      lines: candidate.flatMap((p) =>
+        p.diff.filter((d) => d.type === "add").map((d) => d.text),
+      ),
       addresses: [...new Set(candidate.flatMap((p) => p.addresses))],
       bestSoFar: improved ? score : best.score,
       ...(cfg.issue ? { issueFixed, issueTargets: issueTargets.length } : {}),
       /* An Error Feed fix is judged on its issue too — shown, not searched on. */
-      ...(!cfg.issue && issueFix && feedTargets.length ? { issueFixed: feedTargets.filter((t) => perScenario[t.id] === "fixed").length, issueTargets: feedTargets.length } : {}),
+      ...(!cfg.issue && issueFix && feedTargets.length
+        ? {
+            issueFixed: feedTargets.filter((t) => perScenario[t.id] === "fixed")
+              .length,
+            issueTargets: feedTargets.length,
+          }
+        : {}),
     });
     if (improved) best = { score, picks, issueFixed, per: { ...perScenario } };
     /* Stop after runs with no gain: two in a row that don't beat the best so
        far on the target scenarios (new improvements); older records, four in
        a row once the search has had six to find its footing. */
-    const sinceGain = trials.length - 1 - trials.map((t) => (rsi ? t.clearGain : t.improved)).lastIndexOf(true);
+    const sinceGain =
+      trials.length -
+      1 -
+      trials.map((t) => (rsi ? t.clearGain : t.improved)).lastIndexOf(true);
     const noGain = rsi ? NO_GAIN_RUNS : LEGACY_NO_GAIN.runs;
-    if (n >= (rsi ? MIN_RUNS_BEFORE_STOP : LEGACY_NO_GAIN.after) && n < count && sinceGain >= noGain) {
+    if (
+      n >= (rsi ? MIN_RUNS_BEFORE_STOP : LEGACY_NO_GAIN.after) &&
+      n < count &&
+      sinceGain >= noGain
+    ) {
       /* With every failing target already fixed there was nothing left to
          gain: the search is done, not stalled (`complete`). */
-      const headroom = trainMeasured.some((t) => passShareOf(t) < 1 && best.per?.[t.id] !== "fixed" && best.per?.[t.id] !== "off-script");
-      stoppedEarly = { after: n, of: count, ...(rsi && { window: noGain }), ...(rsi && !headroom && { complete: true }) };
+      const headroom = trainMeasured.some(
+        (t) =>
+          passShareOf(t) < 1 &&
+          best.per?.[t.id] !== "fixed" &&
+          best.per?.[t.id] !== "off-script",
+      );
+      stoppedEarly = {
+        after: n,
+        of: count,
+        ...(rsi && { window: noGain }),
+        ...(rsi && !headroom && { complete: true }),
+      };
       break;
     }
   }
@@ -1264,8 +1798,24 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     kept and shown rather than deleted.
   */
   const repoFailed = (t) => !!t.repoTests && !t.repoTests.pass;
-  const eligible = trials.filter((t) => !t.brokeBlocker && !t.cheats && !repoFailed(t) && !compatFailed(t) && !staticFailed(t) && !overLimitFailed(t));
-  const rejected = trials.filter((t) => t.brokeBlocker || t.cheats || repoFailed(t) || compatFailed(t) || staticFailed(t) || overLimitFailed(t));
+  const eligible = trials.filter(
+    (t) =>
+      !t.brokeBlocker &&
+      !t.cheats &&
+      !repoFailed(t) &&
+      !compatFailed(t) &&
+      !staticFailed(t) &&
+      !overLimitFailed(t),
+  );
+  const rejected = trials.filter(
+    (t) =>
+      t.brokeBlocker ||
+      t.cheats ||
+      repoFailed(t) ||
+      compatFailed(t) ||
+      staticFailed(t) ||
+      overLimitFailed(t),
+  );
   const evidenceKinds = ["Tool description", "Architecture", "Memory"];
   const hollowOf = (t) => {
     const picked = pool.filter((p) => t.picks.includes(p.id));
@@ -1273,23 +1823,58 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       if (t.perScenario?.[x.id] !== "fixed") return false;
       if (!(x.callLog?.missing || []).length) return false;
       const by = picked.filter((p) => p.addresses.includes(x.id));
-      return by.length > 0 && !by.some((p) => evidenceKinds.includes(p.kind) || p.evidence || (p.issueId && x.fromIssue === p.issueId));
+      return (
+        by.length > 0 &&
+        !by.some(
+          (p) =>
+            evidenceKinds.includes(p.kind) ||
+            p.evidence ||
+            (p.issueId && x.fromIssue === p.issueId),
+        )
+      );
     });
   };
-  const mostFixed = cfg.issue && eligible.length ? Math.max(...eligible.map((t) => t.issueFixed)) : null;
-  const ranked = mostFixed == null ? eligible : eligible.filter((t) => t.issueFixed === mostFixed);
+  const mostFixed =
+    cfg.issue && eligible.length
+      ? Math.max(...eligible.map((t) => t.issueFixed))
+      : null;
+  const ranked =
+    mostFixed == null
+      ? eligible
+      : eligible.filter((t) => t.issueFixed === mostFixed);
   const clean = ranked.filter((t) => !hollowOf(t).length);
-  const beats = (t, a) => (cfg.issue && t.issueFixed !== a.issueFixed ? t.issueFixed > a.issueFixed : t.score > a.score);
+  const beats = (t, a) =>
+    cfg.issue && t.issueFixed !== a.issueFixed
+      ? t.issueFixed > a.issueFixed
+      : t.score > a.score;
   const topOf = (list) => list.reduce((a, t) => (beats(t, a) ? t : a), list[0]);
-  const top = clean.length ? topOf(clean) : ranked.length ? topOf(ranked) : null;
+  const top = clean.length
+    ? topOf(clean)
+    : ranked.length
+      ? topOf(ranked)
+      : null;
   /* The smallest surface that fixes it: within two points of the best, the shallowest change. */
   const depthTrial = (t) => depthOf(pool.filter((p) => t.picks.includes(p.id)));
-  const near = top ? (clean.length ? clean : ranked).filter((t) => top.score - t.score <= 2 && (!cfg.issue || t.issueFixed === top.issueFixed)) : [];
+  const near = top
+    ? (clean.length ? clean : ranked).filter(
+        (t) =>
+          top.score - t.score <= 2 &&
+          (!cfg.issue || t.issueFixed === top.issueFixed),
+      )
+    : [];
   const shallowest = near.length
-    ? near.reduce((a, t) => (depthTrial(t) < depthTrial(a) || (depthTrial(t) === depthTrial(a) && t.score > a.score) ? t : a), near[0])
+    ? near.reduce(
+        (a, t) =>
+          depthTrial(t) < depthTrial(a) ||
+          (depthTrial(t) === depthTrial(a) && t.score > a.score)
+            ? t
+            : a,
+        near[0],
+      )
     : null;
   /* The search's own pick — the first finalist. */
-  const pick = shallowest && depthTrial(shallowest) < depthTrial(top) ? shallowest : top;
+  const pick =
+    shallowest && depthTrial(shallowest) < depthTrial(top) ? shallowest : top;
 
   /*
     Finalists — three by default. Only they are scored on the held-back set,
@@ -1298,16 +1883,23 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     score). A candidate never sees the held-back set before this.
   */
   const sig = (t) => [...t.picks].sort().join("|");
-  const order = [...eligible].sort((a, b) => (hollowOf(a).length ? 1 : 0) - (hollowOf(b).length ? 1 : 0)
-    || (cfg.issue ? b.issueFixed - a.issueFixed : 0)
-    || b.score - a.score
-    || a.n - b.n);
+  const order = [...eligible].sort(
+    (a, b) =>
+      (hollowOf(a).length ? 1 : 0) - (hollowOf(b).length ? 1 : 0) ||
+      (cfg.issue ? b.issueFixed - a.issueFixed : 0) ||
+      b.score - a.score ||
+      a.n - b.n,
+  );
   const finalistTrials = [];
   if (pick) {
     const seen = new Set([sig(pick)]);
     finalistTrials.push(pick);
     order.forEach((t) => {
-      if (finalistTrials.length >= (cfg.finalists || FINALISTS) || seen.has(sig(t))) return;
+      if (
+        finalistTrials.length >= (cfg.finalists || FINALISTS) ||
+        seen.has(sig(t))
+      )
+        return;
       seen.add(sig(t));
       finalistTrials.push(t);
     });
@@ -1317,13 +1909,22 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     The noise floor, from baseline-versus-baseline calibration: two runs of
     the same agent differ by about this much. A gain inside it isn't a gain.
   */
-  const binomialNoise = Math.max(1, Math.round(100 * Math.sqrt((0.05 * 0.95) / Math.max(1, heldMeasured.length))));
+  const binomialNoise = Math.max(
+    1,
+    Math.round(
+      100 * Math.sqrt((0.05 * 0.95) / Math.max(1, heldMeasured.length)),
+    ),
+  );
   /* A new improvement measures it: the larger of the formula and what its
      own baseline-twice run found. */
-  const noise = calibration ? Math.max(binomialNoise, calibration.noise) : binomialNoise;
+  const noise = calibration
+    ? Math.max(binomialNoise, calibration.noise)
+    : binomialNoise;
   const heldBase = projectedRate(heldMeasured, []);
   /* The issue's held-back scenarios that failed today — what a fix must move there. */
-  const heldIssueTargets = heldMeasured.filter((t) => t.fromIssue && passShareOf(t) < 1 && !(rsi && isInconclusive(t)));
+  const heldIssueTargets = heldMeasured.filter(
+    (t) => t.fromIssue && passShareOf(t) < 1 && !(rsi && isInconclusive(t)),
+  );
   /* Deeper changes need stronger proof: a code or structural finalist gets
      two more repeats and the full regression set (new improvements only). */
   const baseRepeats = cfg.repeats || 3;
@@ -1338,14 +1939,27 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
   */
   const scoreHeld = (f, i, stream = null) => {
     const winning = pool.filter((p) => f.picks.includes(p.id));
-    const key = stream ? `${seed}:held:${stream}` : i === 0 ? `${seed}:held` : `${seed}:held:f${f.n}`;
-    const rh = rng(hashSeed(stream ? `${seed}-held-${stream}` : i === 0 ? `${seed}-held` : `${seed}-held-f${f.n}`));
+    const key = stream
+      ? `${seed}:held:${stream}`
+      : i === 0
+        ? `${seed}:held`
+        : `${seed}:held:f${f.n}`;
+    const rh = rng(
+      hashSeed(
+        stream
+          ? `${seed}-held-${stream}`
+          : i === 0
+            ? `${seed}-held`
+            : `${seed}-held-f${f.n}`,
+      ),
+    );
     const per = {};
     heldMeasured.forEach((t) => {
       const helped = winning.some((p) => generalisesTo(p, t));
       const wasPassing = passShareOf(t) >= 1;
       if (helped) {
-        per[t.id] = rh() < (t.fromIssue ? 0.85 : 0.62) ? "fixed" : "still-failing";
+        per[t.id] =
+          rh() < (t.fromIssue ? 0.85 : 0.62) ? "fixed" : "still-failing";
       } else if (wasPassing && rh() < 0.1) {
         per[t.id] = "broke";
       } else {
@@ -1356,7 +1970,12 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       }
       /* A flip on a scenario that disagreed with itself at calibration
          counts only when it repeats. */
-      if (per[t.id] === "fixed" && noisyIds.has(t.id) && hashSeed(`${key}:${t.id}:repeat`) % 2 === 1) per[t.id] = "flaky";
+      if (
+        per[t.id] === "fixed" &&
+        noisyIds.has(t.id) &&
+        hashSeed(`${key}:${t.id}:repeat`) % 2 === 1
+      )
+        per[t.id] = "flaky";
       if (rsi && offScript(`${key}:${t.id}`)) per[t.id] = "off-script";
     });
     /* No held-back set (a thin one) means no held-back run to check. */
@@ -1368,51 +1987,117 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       records read must-pass scenarios off the held-back set.
     */
     /* A confirmation re-runs the held-back set only — must-pass already ran. */
-    const drawnFails = rsi && !stream
-      ? mustPassMeasured
-        .filter((t) => passShareOf(t) >= 1 && hashSeed(`${key}:mp:${t.id}`) % 100 < 3)
-        .map((t) => ({ id: t.id, title: t.title, critical: !!t.critical, repeated: repeatsOnRerun(`${key}:mp:${t.id}`) }))
-      : [];
+    const drawnFails =
+      rsi && !stream
+        ? mustPassMeasured
+            .filter(
+              (t) =>
+                passShareOf(t) >= 1 && hashSeed(`${key}:mp:${t.id}`) % 100 < 3,
+            )
+            .map((t) => ({
+              id: t.id,
+              title: t.title,
+              critical: !!t.critical,
+              repeated: repeatsOnRerun(`${key}:mp:${t.id}`),
+            }))
+        : [];
     /* A skill broadened past what it was written for loads on a protected
        case it shouldn't, and breaks it — on the re-run too. */
     const overReach = winning.find((p) => p.overReach);
-    const reached = overReach && rsi && !stream
-      ? mustPassMeasured.find((t) => passShareOf(t) >= 1 && !overReach.addresses.includes(t.id) && !drawnFails.some((x) => x.id === t.id))
-      : null;
+    const reached =
+      overReach && rsi && !stream
+        ? mustPassMeasured.find(
+            (t) =>
+              passShareOf(t) >= 1 &&
+              !overReach.addresses.includes(t.id) &&
+              !drawnFails.some((x) => x.id === t.id),
+          )
+        : null;
     const mustPassFails = reached
-      ? [...drawnFails, { id: reached.id, title: reached.title, critical: !!reached.critical, repeated: true, skill: overReach.skillId }]
+      ? [
+          ...drawnFails,
+          {
+            id: reached.id,
+            title: reached.title,
+            critical: !!reached.critical,
+            repeated: true,
+            skill: overReach.skillId,
+          },
+        ]
       : drawnFails;
     const blockers = rsi
-      ? mustPassFails.filter((x) => x.repeated).map(({ id, title, critical, skill }) => ({ id, title, critical, ...(skill && { skill }) }))
+      ? mustPassFails
+          .filter((x) => x.repeated)
+          .map(({ id, title, critical, skill }) => ({
+            id,
+            title,
+            critical,
+            ...(skill && { skill }),
+          }))
       : heldMeasured
-        .filter((t) => mustPass(t) && per[t.id] === "broke" && repeatsOnRerun(`${key}:${t.id}`))
-        .map((t) => ({ id: t.id, title: t.title, critical: !!t.critical }));
+          .filter(
+            (t) =>
+              mustPass(t) &&
+              per[t.id] === "broke" &&
+              repeatsOnRerun(`${key}:${t.id}`),
+          )
+          .map((t) => ({ id: t.id, title: t.title, critical: !!t.critical }));
     const lift = score - heldBase;
     const hollow = hollowOf(f).length > 0;
-    const issueHeldFixed = heldIssueTargets.filter((t) => per[t.id] === "fixed").length;
+    const issueHeldFixed = heldIssueTargets.filter(
+      (t) => per[t.id] === "fixed",
+    ).length;
     /* Once in each other environment picked; each must-pass set there holds. */
-    const envs = rsi && !stream && (cfg.otherEnvs || []).length ? cfg.otherEnvs.map((e) => otherEnvRun(`${key}:f${f.n}`, e)) : null;
+    const envs =
+      rsi && !stream && (cfg.otherEnvs || []).length
+        ? cfg.otherEnvs.map((e) => otherEnvRun(`${key}:f${f.n}`, e))
+        : null;
     const envBroke = (envs || []).find((e) => !e.held);
     /* The acceptance rule, as the verdict reads it. */
     const skillBlock = blockers.find((b) => b.skill);
-    const why = skillBlock ? `${skillBlock.skill} loaded on “${skillBlock.title}”, a protected case it wasn't written for, and broke it again on a re-run`
-      : blockers.length ? "a must-pass scenario failed again on a re-run"
-        : envBroke ? `a must-pass scenario failed in ${envBroke.name}, and again on a re-run`
-        : issueFix
-          ? (heldIssueTargets.length && !issueHeldFixed ? "didn't fix the issue on the held-back set"
-            : score < heldBase ? "held-back rate fell" : null)
-          : hollow ? "fixes without tool evidence"
-            : heldBase >= 100 ? (score < heldBase ? "broke a held-back scenario" : null)
-              : score < heldBase ? "held-back rate fell"
-                : lift <= noise ? "gain within run-to-run noise" : null;
+    const why = skillBlock
+      ? `${skillBlock.skill} loaded on “${skillBlock.title}”, a protected case it wasn't written for, and broke it again on a re-run`
+      : blockers.length
+        ? "a must-pass scenario failed again on a re-run"
+        : envBroke
+          ? `a must-pass scenario failed in ${envBroke.name}, and again on a re-run`
+          : issueFix
+            ? heldIssueTargets.length && !issueHeldFixed
+              ? "didn't fix the issue on the held-back set"
+              : score < heldBase
+                ? "held-back rate fell"
+                : null
+            : hollow
+              ? "fixes without tool evidence"
+              : heldBase >= 100
+                ? score < heldBase
+                  ? "broke a held-back scenario"
+                  : null
+                : score < heldBase
+                  ? "held-back rate fell"
+                  : lift <= noise
+                    ? "gain within run-to-run noise"
+                    : null;
     return {
-      per, score, blockers, lift, accepted: !why, why, issueHeldFixed,
+      per,
+      score,
+      blockers,
+      lift,
+      accepted: !why,
+      why,
+      issueHeldFixed,
       ...(rsi && { mustPassFails }),
       ...(envs && { envs }),
-      ...(rsi && { repeats: deep(f) ? baseRepeats + 2 : baseRepeats, ...(deep(f) && { fullRegression: true }) }),
+      ...(rsi && {
+        repeats: deep(f) ? baseRepeats + 2 : baseRepeats,
+        ...(deep(f) && { fullRegression: true }),
+      }),
     };
   };
-  const scored = finalistTrials.map((f, i) => ({ trial: f, ...scoreHeld(f, i) }));
+  const scored = finalistTrials.map((f, i) => ({
+    trial: f,
+    ...scoreHeld(f, i),
+  }));
   /* The winner is the best finalist that passes; none passing, the search's
      pick stands so the verdict can say why. */
   const chosen = scored.find((x) => x.accepted) || scored[0] || null;
@@ -1422,20 +2107,42 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     held-back set once more, on fresh draws, and the verdict reads that run
     (new improvements).
   */
-  const confirm = rsi && chosen?.accepted && heldMeasured.length && !issueSplit?.thin ? scoreHeld(chosen.trial, 0, "confirm") : null;
+  const confirm =
+    rsi && chosen?.accepted && heldMeasured.length && !issueSplit?.thin
+      ? scoreHeld(chosen.trial, 0, "confirm")
+      : null;
   const proof = confirm || chosen;
   const winner = chosen?.trial || null;
   const winning = winner ? pool.filter((p) => winner.picks.includes(p.id)) : [];
-  const shallower = winner && winner === pick && top && pick.n !== top.n ? { over: top.n, gap: top.score - pick.score } : null;
-  const topOverall = trials.reduce((a, t) => (t.score > a.score ? t : a), trials[0]);
+  const shallower =
+    winner && winner === pick && top && pick.n !== top.n
+      ? { over: top.n, gap: top.score - pick.score }
+      : null;
+  const topOverall = trials.reduce(
+    (a, t) => (t.score > a.score ? t : a),
+    trials[0],
+  );
   const hollow = winner ? hollowOf(winner) : [];
-  const heldPerScenario = proof ? proof.per : Object.fromEntries(heldMeasured.map((t) => [t.id, passShareOf(t) >= 1 ? "same" : "still-failing"]));
-  const heldScore = proof ? proof.score : scoreOf(heldMeasured, heldPerScenario);
+  const heldPerScenario = proof
+    ? proof.per
+    : Object.fromEntries(
+        heldMeasured.map((t) => [
+          t.id,
+          passShareOf(t) >= 1 ? "same" : "still-failing",
+        ]),
+      );
+  const heldScore = proof
+    ? proof.score
+    : scoreOf(heldMeasured, heldPerScenario);
   const heldBlockers = chosen ? chosen.blockers : [];
 
   /* A candidate that adds a tool parameter can't be proven on this
      environment version — set aside, said, never trialled. */
-  const contract = contractCandidateOf({ env, allowed: cfg.allowed || [], failing: optimisable(train) });
+  const contract = contractCandidateOf({
+    env,
+    allowed: cfg.allowed || [],
+    failing: optimisable(train),
+  });
 
   /* The suite must-pass was drawn from is read, never stored. */
   const { mustPassPool: _pool, ...kept } = cfg;
@@ -1454,28 +2161,46 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     pickable: rsi
       ? {
           fix: [...train0, ...split.held].map((t) => ({
-            id: t.id, title: t.title, status: t.status,
-            held: split.held.includes(t), suggested: true,
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            held: split.held.includes(t),
+            suggested: true,
           })),
           protect: protectPool.map((t) => ({
-            id: t.id, title: t.title, status: t.status,
-            suggested: mustPass(t), flakyToday: !!flakyToday(t),
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            suggested: mustPass(t),
+            flakyToday: !!flakyToday(t),
           })),
         }
       : null,
     trainMeasured: trainMeasured.length,
     trainMeasuredTasks: trainMeasured.map((t) => ({
-      id: t.id, title: t.title, critical: !!t.critical,
+      id: t.id,
+      title: t.title,
+      critical: !!t.critical,
       ...(scope.anchor(t) && { anchor: true }),
       ...(scope.remembered?.(t) && { remembered: true }),
       ...(flakyToday(t) && { flakyToday: true }),
-      ...(t.fromIssue && { fromIssue: t.fromIssue, before: t.status, groupId: groupOf(t) }),
+      ...(t.fromIssue && {
+        fromIssue: t.fromIssue,
+        before: t.status,
+        groupId: groupOf(t),
+      }),
     })),
     heldMeasured: heldMeasured.length,
     heldPerScenario,
     heldTasks: heldMeasured.map((t) => ({
-      id: t.id, title: t.title, critical: !!t.critical,
-      ...(t.fromIssue && { fromIssue: t.fromIssue, before: t.status, groupId: t.groupId || groupOf(t) }),
+      id: t.id,
+      title: t.title,
+      critical: !!t.critical,
+      ...(t.fromIssue && {
+        fromIssue: t.fromIssue,
+        before: t.status,
+        groupId: t.groupId || groupOf(t),
+      }),
       ...(t.fresh && { fresh: true }),
       ...(t.envHeld && { envHeld: true, before: t.status }),
     })),
@@ -1510,44 +2235,82 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
         lift: confirm.lift,
         held: confirm.accepted,
         why: confirm.why,
-        ...(issueFix && { selectionIssueFixed: chosen.issueHeldFixed, issueFixed: confirm.issueHeldFixed }),
+        ...(issueFix && {
+          selectionIssueFixed: chosen.issueHeldFixed,
+          issueFixed: confirm.issueHeldFixed,
+        }),
       },
     }),
     /* The three sets, for the proof. */
     split: issueSplit
-      ? { kind: issueFix ? "issue" : "goal", ...issueSplit.groups, thin: issueSplit.thin }
+      ? {
+          kind: issueFix ? "issue" : "goal",
+          ...issueSplit.groups,
+          thin: issueSplit.thin,
+        }
       : { kind: "core" },
     /* The must-pass set: its own scenarios (new improvements), else read off the two halves. */
     mustPass: (() => {
-      const list = rsi ? mustPassMeasured : [...trainMeasured, ...heldMeasured].filter(mustPass);
+      const list = rsi
+        ? mustPassMeasured
+        : [...trainMeasured, ...heldMeasured].filter(mustPass);
       return {
         total: list.length,
         marked: list.filter((t) => t.critical).length,
         remembered: list.filter((t) => scope.remembered?.(t)).length,
-        passing: list.filter((t) => !t.critical && !scope.remembered?.(t) && passesAll(t)).length,
+        passing: list.filter(
+          (t) => !t.critical && !scope.remembered?.(t) && passesAll(t),
+        ).length,
       };
     })(),
     ...(rsi && {
       /* Marked must-pass (or regression memory) but not passing every repeat today. */
-      markedNotCounted: mustPassOf((cfg.mustPassPool || scope.tasks).filter((t) => !inSets.has(t.id)), { marked }).markedNotCounted,
+      markedNotCounted: mustPassOf(
+        (cfg.mustPassPool || scope.tasks).filter((t) => !inSets.has(t.id)),
+        { marked },
+      ).markedNotCounted,
       mustPassMeasured: mustPassMeasured.length,
-      mustPassTasks: mustPassMeasured.map((t) => ({ id: t.id, title: t.title, critical: !!t.critical, ...(scope.remembered?.(t) && { remembered: true }) })),
+      mustPassTasks: mustPassMeasured.map((t) => ({
+        id: t.id,
+        title: t.title,
+        critical: !!t.critical,
+        ...(scope.remembered?.(t) && { remembered: true }),
+      })),
     }),
-    flakyToday: (rsi ? scope.tasks.filter((t) => !inSets.has(t.id)) : [...trainMeasured, ...heldMeasured]).filter(flakyToday).map((t) => ({ id: t.id, title: t.title })),
+    flakyToday: (rsi
+      ? scope.tasks.filter((t) => !inSets.has(t.id))
+      : [...trainMeasured, ...heldMeasured]
+    )
+      .filter(flakyToday)
+      .map((t) => ({ id: t.id, title: t.title })),
     /*
       An issue's fix: what else failed on today's agent — not the issue's, so
       never a target and never protected. The winner is re-run on them once,
       so the review can say what it also fixed along the way, and what's
       still failing to fix separately.
     */
-    ...(rsi && issueFix && {
-      /* From the whole suite when the search kept a slice of it (voice) —
+    ...(rsi &&
+      issueFix && {
+        /* From the whole suite when the search kept a slice of it (voice) —
          the same pool must-pass reads, so it matches the run's own count. */
-      otherFailing: (cfg.mustPassPool || scope.tasks)
-        .filter((t) => !inSets.has(t.id) && !t.fromIssue && !t.fixScenario && t.status !== "unmeasured" && passShareOf(t) < 1)
-        .map((t) => ({ id: t.id, title: t.title, fixed: hashSeed(`${seed}:${t.id}:along`) % 10 < 3 })),
-    }),
-    failingToday: [...trainMeasured, ...heldMeasured].filter((t) => passShareOf(t) < 1).length,
+        otherFailing: (cfg.mustPassPool || scope.tasks)
+          .filter(
+            (t) =>
+              !inSets.has(t.id) &&
+              !t.fromIssue &&
+              !t.fixScenario &&
+              t.status !== "unmeasured" &&
+              passShareOf(t) < 1,
+          )
+          .map((t) => ({
+            id: t.id,
+            title: t.title,
+            fixed: hashSeed(`${seed}:${t.id}:along`) % 10 < 3,
+          })),
+      }),
+    failingToday: [...trainMeasured, ...heldMeasured].filter(
+      (t) => passShareOf(t) < 1,
+    ).length,
     ...(contract && { contract }),
     ...(cfg.textSearch && { textSearch: true }),
     ...(cfg.repoTests && { repoTests: cfg.repoTests }),
@@ -1559,24 +2322,42 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       staticChecked: true,
       ...(calibration && { calibration }),
       binomialNoise,
-      ...(goalMode && { goal: cfg.goal || { id: "pass-rate", label: "Pass rate" }, goalTargets: allGoalTargets, goalTrainTargets: goalTargets.length }),
+      ...(goalMode && {
+        goal: cfg.goal || { id: "pass-rate", label: "Pass rate" },
+        goalTargets: allGoalTargets,
+        goalTrainTargets: goalTargets.length,
+      }),
       ...(suggestions.length && { suggestions }),
-      ...((cfg.otherEnvs || []).length && { otherEnvs: cfg.otherEnvs.map((e) => ({ id: e.id, name: e.name, mustPass: (e.mustPass || []).length, scenarios: e.scenarios || 0 })) }),
+      ...((cfg.otherEnvs || []).length && {
+        otherEnvs: cfg.otherEnvs.map((e) => ({
+          id: e.id,
+          name: e.name,
+          mustPass: (e.mustPass || []).length,
+          scenarios: e.scenarios || 0,
+        })),
+      }),
       ...(cfg.voiceCap && { voiceCap: cfg.voiceCap }),
       mustPassIds: mustPassMeasured.map((t) => t.id),
-      inconclusive: [...trainMeasured, ...heldMeasured].filter((t) => isInconclusive(t)).map((t) => t.id),
+      inconclusive: [...trainMeasured, ...heldMeasured]
+        .filter((t) => isInconclusive(t))
+        .map((t) => t.id),
     }),
     scope: {
       left: scope.left,
       proposedTargets: scope.proposedTargets,
     },
-    overruled: winner && topOverall.n !== winner.n && topOverall.score > winner.score ? topOverall : null,
+    overruled:
+      winner && topOverall.n !== winner.n && topOverall.score > winner.score
+        ? topOverall
+        : null,
     hollow: hollow.map((t) => ({ id: t.id, title: t.title })),
     noise,
     stoppedEarly,
     shallower,
     underpowered: trainMeasured.length < 8,
-    resolution: trainMeasured.length ? Math.round(100 / trainMeasured.length) : 0,
+    resolution: trainMeasured.length
+      ? Math.round(100 / trainMeasured.length)
+      : 0,
     wonEarly: !!winner && winner.n <= 2,
   };
 };
@@ -1591,12 +2372,23 @@ export const blockingVerdict = (result) => {
   if (!result) return null;
   if (!result.winner) {
     const broke = (result.trials || []).filter((t) => t.brokeBlocker).length;
-    const tests = (result.trials || []).filter((t) => t.repoTests && !t.repoTests.pass).length;
+    const tests = (result.trials || []).filter(
+      (t) => t.repoTests && !t.repoTests.pass,
+    ).length;
     const unfit = (result.trials || []).filter(compatFailed).length;
     const stat = (result.trials || []).filter(staticFailed).length;
     const over = (result.trials || []).filter(overLimitFailed).length;
-    const reasons = [broke ? "failed a must-pass scenario twice" : null, tests ? "broke the repository's tests" : null, unfit ? "didn't fit the sealed environment" : null, stat ? "failed a static check" : null, over ? "went over the cost or latency limit" : null].filter(Boolean);
-    const why = reasons.length > 1 ? `${reasons.slice(0, -1).join(", ")} or ${reasons[reasons.length - 1]}` : reasons[0] || "failed a check";
+    const reasons = [
+      broke ? "failed a must-pass scenario twice" : null,
+      tests ? "broke the repository's tests" : null,
+      unfit ? "didn't fit the sealed environment" : null,
+      stat ? "failed a static check" : null,
+      over ? "went over the cost or latency limit" : null,
+    ].filter(Boolean);
+    const why =
+      reasons.length > 1
+        ? `${reasons.slice(0, -1).join(", ")} or ${reasons[reasons.length - 1]}`
+        : reasons[0] || "failed a check";
     return {
       tone: "#DC2626",
       title: `No eligible winner — every run ${why}`,
@@ -1607,9 +2399,10 @@ export const blockingVerdict = (result) => {
     const [first] = result.heldBlockers;
     return {
       tone: "#DC2626",
-      title: result.heldBlockers.length === 1
-        ? `The winner failed the must-pass scenario “${first.title}”, and again on a re-run`
-        : `The winner failed ${result.heldBlockers.length} must-pass scenarios, each again on a re-run`,
+      title:
+        result.heldBlockers.length === 1
+          ? `The winner failed the must-pass scenario “${first.title}”, and again on a re-run`
+          : `The winner failed ${result.heldBlockers.length} must-pass scenarios, each again on a re-run`,
       body: "A must-pass failure that repeats stops the winner whatever the pass rate says. Must-pass scenarios are run only for finalists, so this shows up at the end.",
     };
   }
@@ -1619,8 +2412,16 @@ export const blockingVerdict = (result) => {
 /** What a person calls an improvement — its place in the environment's list. */
 export const improvementRunName = (envState, record) => {
   /* A name given when it started wins; the default numbers itself by position. */
-  if (record?.name && !/^(self[- ]?improvement|improvement|optimization)( run)? \d+$/i.test(record.name)) return record.name;
-  const i = (envState?.optimizations || []).findIndex((o) => o.id === record?.id);
+  if (
+    record?.name &&
+    !/^(self[- ]?improvement|improvement|optimization)( run)? \d+$/i.test(
+      record.name,
+    )
+  )
+    return record.name;
+  const i = (envState?.optimizations || []).findIndex(
+    (o) => o.id === record?.id,
+  );
   return `Improvement ${i >= 0 ? i + 1 : (envState?.optimizations || []).length + 1}`;
 };
 
@@ -1635,7 +2436,8 @@ export const improvementRunName = (envState, record) => {
  */
 /* A held-back set dealt by group — a fix's (reproducing groups) or, for a
    new goal improvement, the groups failing its goal. */
-export const groupedSplit = (result) => (["issue", "goal"].includes(result?.split?.kind) ? result.split : null);
+export const groupedSplit = (result) =>
+  ["issue", "goal"].includes(result?.split?.kind) ? result.split : null;
 
 /**
  * The split in one line — "12 target · 6 held back · 30 must-pass · 3 proposed left out".
@@ -1643,12 +2445,12 @@ export const groupedSplit = (result) => (["issue", "goal"].includes(result?.spli
 export const splitLine = (result) => {
   if (!result) return "";
   const { left = {}, proposedTargets = 0 } = result.scope || {};
-  const out = [
-    `${left.proposed || 0} proposed`,
-  ].filter((x) => !/^0 /.test(x));
+  const out = [`${left.proposed || 0} proposed`].filter((x) => !/^0 /.test(x));
   const off = [
     left.archived ? `${left.archived} archived` : null,
-    (left.stale || 0) + (left.na || 0) ? `${(left.stale || 0) + (left.na || 0)} stale` : null,
+    (left.stale || 0) + (left.na || 0)
+      ? `${(left.stale || 0) + (left.na || 0)} stale`
+      : null,
   ].filter(Boolean);
   const issue = groupedSplit(result);
   const groupWord = result.split?.kind === "goal" ? "failing" : "reproducing";
@@ -1659,35 +2461,60 @@ export const splitLine = (result) => {
         ? "none held back — held-back check is thin"
         : `${result.heldMeasured} held back · ${issue.held} of ${issue.reproducing} ${groupWord} groups + ${plural(issue.fresh, "fresh variation")}`
       : `${result.heldMeasured} held back`,
-    result.mustPassMeasured != null ? `${result.mustPassMeasured} must-pass` : null,
+    result.mustPassMeasured != null
+      ? `${result.mustPassMeasured} must-pass`
+      : null,
     out.length ? `${out.join(" and ")} left out` : null,
     off.length ? `${off.join(" and ")} not run` : null,
     proposedTargets && !issue
       ? `${plural(proposedTargets, "proposed issue scenario")} used as the target — approve ${proposedTargets === 1 ? "it" : "them"} into the set from the Scenarios tab`
       : null,
-  ].filter(Boolean).join(" · ");
+  ]
+    .filter(Boolean)
+    .join(" · ");
 };
 
 /* Why a trial was rejected, in a phrase. */
 export const rejectedFor = (t) => {
-  if (staticFailed(t)) return `failed static checks — ${t.static.reason.replace(/\.$/, "").replace(/^./, (c) => c.toLowerCase())}`;
-  if (compatFailed(t)) return `doesn't fit the sealed environment — ${t.compat.kind === "entry" ? `moves the entry point to ${t.compat.to}` : t.compat.kind === "run" ? "changes the start command" : `changes the build (${t.compat.dep ? `adds ${t.compat.dep} to ` : "edits "}${t.compat.file})`}`;
-  if (t?.brokeBlocker) return "failed a must-pass scenario, and again on a re-run";
-  if (t?.repoTests && !t.repoTests.pass) return `broke the repository's tests (${t.repoTests.command})`;
-  if (overLimitFailed(t)) return `over the ${t.overLimit.id === "cost" ? "cost" : "latency"} limit — ${t.overLimit.actual}`;
+  if (staticFailed(t))
+    return `failed static checks — ${t.static.reason.replace(/\.$/, "").replace(/^./, (c) => c.toLowerCase())}`;
+  if (compatFailed(t))
+    return `doesn't fit the sealed environment — ${t.compat.kind === "entry" ? `moves the entry point to ${t.compat.to}` : t.compat.kind === "run" ? "changes the start command" : `changes the build (${t.compat.dep ? `adds ${t.compat.dep} to ` : "edits "}${t.compat.file})`}`;
+  if (t?.brokeBlocker)
+    return "failed a must-pass scenario, and again on a re-run";
+  if (t?.repoTests && !t.repoTests.pass)
+    return `broke the repository's tests (${t.repoTests.command})`;
+  if (overLimitFailed(t))
+    return `over the ${t.overLimit.id === "cost" ? "cost" : "latency"} limit — ${t.overLimit.actual}`;
   return null;
 };
 
 /* The smallest kind of change that fits the cause — the winner's, else the
    shallowest the diagnosis wrote. */
-const SURFACE_WORDS = { prompt: "prompt", tools: "tool descriptions", skills: "skills", settings: "settings", model: "model", code: "code", structure: "structure" };
+const SURFACE_WORDS = {
+  prompt: "prompt",
+  tools: "tool descriptions",
+  skills: "skills",
+  settings: "settings",
+  model: "model",
+  code: "code",
+  structure: "structure",
+};
 export const smallestSurfaceOf = (result) => {
-  const list = result?.winner?.proposals?.length ? result.winner.proposals : result?.pool || [];
+  const list = result?.winner?.proposals?.length
+    ? result.winner.proposals
+    : result?.pool || [];
   if (!list.length) return null;
   const surfaces = list.map((p) => KIND_SURFACE[p.kind] || "code");
   const pickOne = result?.winner?.proposals?.length
-    ? surfaces.reduce((a, x) => ((DEPTH[x] ?? 3) > (DEPTH[a] ?? 3) ? x : a), surfaces[0])
-    : surfaces.reduce((a, x) => ((DEPTH[x] ?? 3) < (DEPTH[a] ?? 3) ? x : a), surfaces[0]);
+    ? surfaces.reduce(
+        (a, x) => ((DEPTH[x] ?? 3) > (DEPTH[a] ?? 3) ? x : a),
+        surfaces[0],
+      )
+    : surfaces.reduce(
+        (a, x) => ((DEPTH[x] ?? 3) < (DEPTH[a] ?? 3) ? x : a),
+        surfaces[0],
+      );
   return { id: pickOne, label: SURFACE_WORDS[pickOne] || pickOne };
 };
 
@@ -1699,14 +2526,30 @@ export const smallestSurfaceOf = (result) => {
 export const diagnosisSummaryOf = (record, result = record?.result) => {
   if (!record?.frozen?.diagnoseStep) return null;
   const d = (record.diagnosis || [])[0] || null;
-  const fromPool = (result?.pool || []).slice().sort((a, b) => (b.addresses?.length || 0) - (a.addresses?.length || 0))[0];
+  const fromPool = (result?.pool || [])
+    .slice()
+    .sort((a, b) => (b.addresses?.length || 0) - (a.addresses?.length || 0))[0];
   const code = record.snapshot?.diagnosis || null;
-  const cause = code?.cause || record.snapshot?.rootCause || d?.headline || d?.label || fromPool?.why || null;
+  const cause =
+    code?.cause ||
+    record.snapshot?.rootCause ||
+    d?.headline ||
+    d?.label ||
+    fromPool?.why ||
+    null;
   const surface = smallestSurfaceOf(result);
   return {
     cause,
     layer: record.snapshot?.fixLayer || d?.layer || null,
-    source: code ? (code.edited ? "the diagnosis, as you edited it" : "the code-level diagnosis") : record.snapshot ? "Error Feed" : d ? "Debug failures" : "the search's diagnosis",
+    source: code
+      ? code.edited
+        ? "the diagnosis, as you edited it"
+        : "the code-level diagnosis"
+      : record.snapshot
+        ? "Error Feed"
+        : d
+          ? "Debug failures"
+          : "the search's diagnosis",
     surface,
     ...(code && { code }),
   };
@@ -1725,46 +2568,92 @@ export const searchTrace = (result, record = null) => {
      stamped with them (and their results). */
   const cal = result.calibration || null;
   const diag = record ? diagnosisSummaryOf(record, result) : null;
-  const repro = record?.reproduce && result.rsi ? [{
-    id: "reproduce",
-    label: `Reproduced on ${record.reproduce.reproduced || 0} of ${plural(record.reproduce.total || 0, "scenario")}`,
-    result: record.reproduce.inconclusive ? `${record.reproduce.inconclusive} inconclusive — not targets` : "every reproducing scenario is a target",
-    lines: [`each issue scenario run ${repWord} on the agent as it runs today`, ...(record.reproduce.inconclusive ? ["a scenario that failed once is inconclusive, not a reproduction — kept as a scenario, never a target"] : [])],
-  }] : [];
-  const calibrateStep = cal ? [{
-    id: "calibrate",
-    label: `Baseline twice · ${cal.version || "current version"} against itself`,
-    result: `${cal.disagreed} of ${plural(cal.scenarios, "scenario")} disagreed`,
-    lines: [
-      cal.reused?.length
-        ? `ran ${cal.version || "the current version"} twice on every scenario before any run — ${cal.reused.map((r) => `${r.label} already covered ${r.covered} of ${cal.scenarios}`).join(", ")}, so those weren't run again`
-        : `ran ${cal.version || "the current version"} twice on every scenario before any run`,
-      cal.disagreed ? "a flip on one of those must show up on more than one repeat to count" : "no scenario disagreed with itself — every flip counts",
-      `run-to-run noise ±${result.noise} pts`,
-    ],
-  }] : [];
-  const diagnoseStep = diag ? [{
-    id: "diagnose",
-    label: "Diagnosing the cause",
-    result: diag.surface ? `smallest surface that fits the cause: ${diag.surface.label}` : "no cause found",
-    lines: [
-      ...(diag.cause ? [`root cause (${diag.source}): ${String(diag.cause).replace(/\.$/, "")}`] : []),
-      ...(diag.code?.where?.length ? [`where: ${diag.code.where.map((w) => `${w.kind} · ${w.ref}`).join(", ")}`] : []),
-      ...(diag.code?.change ? [`change to make: ${String(diag.code.change).replace(/\.$/, "")}`] : []),
-      ...(diag.layer ? [`fix layer: ${diag.layer}`] : []),
-      "the search starts from the shallowest change that fits — prompt before settings before code",
-    ],
-  }] : [];
+  const repro =
+    record?.reproduce && result.rsi
+      ? [
+          {
+            id: "reproduce",
+            label: `Reproduced on ${record.reproduce.reproduced || 0} of ${plural(record.reproduce.total || 0, "scenario")}`,
+            result: record.reproduce.inconclusive
+              ? `${record.reproduce.inconclusive} inconclusive — not targets`
+              : "every reproducing scenario is a target",
+            lines: [
+              `each issue scenario run ${repWord} on the agent as it runs today`,
+              ...(record.reproduce.inconclusive
+                ? [
+                    "a scenario that failed once is inconclusive, not a reproduction — kept as a scenario, never a target",
+                  ]
+                : []),
+            ],
+          },
+        ]
+      : [];
+  const calibrateStep = cal
+    ? [
+        {
+          id: "calibrate",
+          label: `Baseline twice · ${cal.version || "current version"} against itself`,
+          result: `${cal.disagreed} of ${plural(cal.scenarios, "scenario")} disagreed`,
+          lines: [
+            cal.reused?.length
+              ? `ran ${cal.version || "the current version"} twice on every scenario before any run — ${cal.reused.map((r) => `${r.label} already covered ${r.covered} of ${cal.scenarios}`).join(", ")}, so those weren't run again`
+              : `ran ${cal.version || "the current version"} twice on every scenario before any run`,
+            cal.disagreed
+              ? "a flip on one of those must show up on more than one repeat to count"
+              : "no scenario disagreed with itself — every flip counts",
+            `run-to-run noise ±${result.noise} pts`,
+          ],
+        },
+      ]
+    : [];
+  const diagnoseStep = diag
+    ? [
+        {
+          id: "diagnose",
+          label: "Diagnosing the cause",
+          result: diag.surface
+            ? `smallest surface that fits the cause: ${diag.surface.label}`
+            : "no cause found",
+          lines: [
+            ...(diag.cause
+              ? [
+                  `root cause (${diag.source}): ${String(diag.cause).replace(/\.$/, "")}`,
+                ]
+              : []),
+            ...(diag.code?.where?.length
+              ? [
+                  `where: ${diag.code.where.map((w) => `${w.kind} · ${w.ref}`).join(", ")}`,
+                ]
+              : []),
+            ...(diag.code?.change
+              ? [
+                  `change to make: ${String(diag.code.change).replace(/\.$/, "")}`,
+                ]
+              : []),
+            ...(diag.layer ? [`fix layer: ${diag.layer}`] : []),
+            "the search starts from the shallowest change that fits — prompt before settings before code",
+          ],
+        },
+      ]
+    : [];
 
   const first = reread
-    ? [{
-      id: "reread",
-      label: reread.changed ? `Changed outside Future AGI → baseline on ${reread.version || "the new version"}` : "Re-read the agent — no outside change",
-      result: reread.changed ? "the baseline matches production" : "baseline is what runs in production",
-      lines: [reread.changed
-        ? `the agent was edited outside Future AGI since the last run, so the baseline runs on ${reread.version || "the new version"}`
-        : "the agent's definition matches the version the environment last ran"],
-    }]
+    ? [
+        {
+          id: "reread",
+          label: reread.changed
+            ? `Changed outside Future AGI → baseline on ${reread.version || "the new version"}`
+            : "Re-read the agent — no outside change",
+          result: reread.changed
+            ? "the baseline matches production"
+            : "baseline is what runs in production",
+          lines: [
+            reread.changed
+              ? `the agent was edited outside Future AGI since the last run, so the baseline runs on ${reread.version || "the new version"}`
+              : "the agent's definition matches the version the environment last ran",
+          ],
+        },
+      ]
     : [];
 
   /* An agent we can only call: reproduce, diagnose, suggest — nothing is tried. */
@@ -1775,19 +2664,25 @@ export const searchTrace = (result, record = null) => {
         id: "reproduce",
         label: "Reproducing the failure",
         result: `${result.trainMeasured + result.heldMeasured} scenarios`,
-        lines: [`each scenario called ${repWord} on the agent as it runs today`],
+        lines: [
+          `each scenario called ${repWord} on the agent as it runs today`,
+        ],
       },
       {
         id: "diagnose",
         label: "Reading what went wrong",
         result: `${result.pool.length} ${result.pool.length === 1 ? "cause" : "causes"} found`,
-        lines: ["from the calls themselves — tool calls, what the agent said, where it stopped"],
+        lines: [
+          "from the calls themselves — tool calls, what the agent said, where it stopped",
+        ],
       },
       {
         id: "suggest",
         label: "Writing a suggested fix",
         result: "no change can be tried on an agent we can only call",
-        lines: ["apply it, mark the new version released, then re-run on the same environment version to prove it"],
+        lines: [
+          "apply it, mark the new version released, then re-run on the same environment version to prove it",
+        ],
       },
     ];
   }
@@ -1799,27 +2694,42 @@ export const searchTrace = (result, record = null) => {
     ...diagnoseStep,
     {
       id: "split",
-      label: result.mustPassMeasured != null ? "Splitting target, held-back and must-pass scenarios" : "Splitting target and held-back scenarios",
+      label:
+        result.mustPassMeasured != null
+          ? "Splitting target, held-back and must-pass scenarios"
+          : "Splitting target and held-back scenarios",
       result: splitLine(result),
       lines: [
         ...(issue
           ? [
-            "held back by group: a scenario and its variations always land on one side, so near-copies can't leak",
-            issue.thin
-              ? `too few groups ${goalSplit ? "fail the goal" : "reproduced"} to hold any back — the held-back check is thin`
-              : `${issue.held} of ${issue.reproducing} ${goalSplit ? "failing" : "reproducing"} groups held back, plus one fresh variation of each, kept because it ${goalSplit ? "fails" : "reproduces"} today`,
-            ...(goalSplit && result.goal ? [`targets: ${plural(result.goalTargets || 0, "scenario")} falling short of ${goalWords(result.goal)} — ${result.goalTrainTargets || 0} visible to the search`] : []),
-            ...((result.inconclusive || []).length ? [`${plural(result.inconclusive.length, "inconclusive scenario")} kept, never a target`] : []),
-          ]
+              "held back by group: a scenario and its variations always land on one side, so near-copies can't leak",
+              issue.thin
+                ? `too few groups ${goalSplit ? "fail the goal" : "reproduced"} to hold any back — the held-back check is thin`
+                : `${issue.held} of ${issue.reproducing} ${goalSplit ? "failing" : "reproducing"} groups held back, plus one fresh variation of each, kept because it ${goalSplit ? "fails" : "reproduces"} today`,
+              ...(goalSplit && result.goal
+                ? [
+                    `targets: ${plural(result.goalTargets || 0, "scenario")} falling short of ${goalWords(result.goal)} — ${result.goalTrainTargets || 0} visible to the search`,
+                  ]
+                : []),
+              ...((result.inconclusive || []).length
+                ? [
+                    `${plural(result.inconclusive.length, "inconclusive scenario")} kept, never a target`,
+                  ]
+                : []),
+            ]
           : [
-            "held back from the set, never shown while searching",
-            "critical scenarios dealt into both halves, so neither is only routine work",
-          ]),
+              "held back from the set, never shown while searching",
+              "critical scenarios dealt into both halves, so neither is only routine work",
+            ]),
         ...(result.mustPassMeasured != null
-          ? ["the search sees target scenarios in full and must-pass scenarios as pass or fail only — must-pass runs for finalists"]
+          ? [
+              "the search sees target scenarios in full and must-pass scenarios as pass or fail only — must-pass runs for finalists",
+            ]
           : []),
         ...(result.mustPass
-          ? [`must-pass: ${result.mustPass.total} — ${[result.mustPass.marked ? `${result.mustPass.marked} marked` : null, result.mustPass.remembered ? `${result.mustPass.remembered} regression memory` : null, `${result.mustPass.passing} passing every repeat today`].filter(Boolean).join(", ")}${result.flakyToday?.length ? ` · ${plural(result.flakyToday.length, "flaky scenario")} shown, never disqualifying` : ""}`]
+          ? [
+              `must-pass: ${result.mustPass.total} — ${[result.mustPass.marked ? `${result.mustPass.marked} marked` : null, result.mustPass.remembered ? `${result.mustPass.remembered} regression memory` : null, `${result.mustPass.passing} passing every repeat today`].filter(Boolean).join(", ")}${result.flakyToday?.length ? ` · ${plural(result.flakyToday.length, "flaky scenario")} shown, never disqualifying` : ""}`,
+            ]
           : []),
         `starting prompt scores ${result.base}% on the target scenarios`,
         result.underpowered
@@ -1830,39 +2740,75 @@ export const searchTrace = (result, record = null) => {
     {
       id: "candidates",
       label: "Reading the changes the diagnosis found",
-      result: (() => { const n = new Set(trials.flatMap((t) => t.picks)).size; return `${n} ${n === 1 ? "change" : "changes"} to try`; })(),
+      result: (() => {
+        const n = new Set(trials.flatMap((t) => t.picks)).size;
+        return `${n} ${n === 1 ? "change" : "changes"} to try`;
+      })(),
       lines: [
         "every run's prompt is assembled from those, so each run can be read line by line",
-        ...(result.contract ? [`${result.contract.title.toLowerCase()} — set aside: it changes the environment's contract, so it can't be proven on the frozen version`] : []),
+        ...(result.contract
+          ? [
+              `${result.contract.title.toLowerCase()} — set aside: it changes the environment's contract, so it can't be proven on the frozen version`,
+            ]
+          : []),
       ],
     },
     {
       id: "trials",
       label: `Running ${trials.length} trials against the environment${result.textSearch ? " · in text" : ""}`,
-      result: trials.some((t) => !t.brokeBlocker && !t.cheats) ? `best ${Math.max(...trials.filter((t) => !t.brokeBlocker && !t.cheats).map((t) => t.score))}% on the target scenarios` : "every run was rejected",
+      result: trials.some((t) => !t.brokeBlocker && !t.cheats)
+        ? `best ${Math.max(...trials.filter((t) => !t.brokeBlocker && !t.cheats).map((t) => t.score))}% on the target scenarios`
+        : "every run was rejected",
       tone: "#16A34A",
       /* Every trial, because watching the incumbent hold is the point. */
       lines: [
-        ...(result.textSearch ? ["voice agent searched in text — faster and cheaper; only finalists run as real calls"] : []),
-        ...(result.staticChecked ? ["static checks on every run before it starts — areas, protected parts, settings in range, judges untouched"] : []),
+        ...(result.textSearch
+          ? [
+              "voice agent searched in text — faster and cheaper; only finalists run as real calls",
+            ]
+          : []),
+        ...(result.staticChecked
+          ? [
+              "static checks on every run before it starts — areas, protected parts, settings in range, judges untouched",
+            ]
+          : []),
         ...trials.map(
-          (t) => `run ${t.n} — ${staticFailed(t) ? "not run" : `${t.score}%`} ${t.improved ? "· new best" : "· no better"} · ${triedLabelOf(t, trials)}${rejectedFor(t) ? ` · rejected, ${rejectedFor(t)}` : ""}${t.repoTests?.pass ? ` · ${t.repoTests.command} passed` : ""}`,
+          (t) =>
+            `run ${t.n} — ${staticFailed(t) ? "not run" : `${t.score}%`} ${t.improved ? "· new best" : "· no better"} · ${triedLabelOf(t, trials)}${rejectedFor(t) ? ` · rejected, ${rejectedFor(t)}` : ""}${t.repoTests?.pass ? ` · ${t.repoTests.command} passed` : ""}`,
         ),
-        ...(result.stoppedEarly?.window ? [result.stoppedEarly.complete
-          ? `stopped after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} trials — the best already fixes every failing target, nothing left to gain`
-          : `stopped early after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} runs — the last ${result.stoppedEarly.window} didn't beat the best by more than run-to-run noise, so the best goes straight to verifying`] : []),
+        ...(result.stoppedEarly?.window
+          ? [
+              result.stoppedEarly.complete
+                ? `stopped after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} trials — the best already fixes every failing target, nothing left to gain`
+                : `stopped early after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} runs — the last ${result.stoppedEarly.window} didn't beat the best by more than run-to-run noise, so the best goes straight to verifying`,
+            ]
+          : []),
       ],
     },
     {
       id: "holdout",
       label: `Scoring ${plural(finalists.length, "finalist")} once on held-back${result.mustPassMeasured != null ? " and must-pass" : ""} scenarios${result.textSearch ? " · as real calls" : ""}`,
-      result: winner ? `run ${winner.n} wins · ${result.heldScore}% held back` : "no finalist to score",
-      tone: result.gap > 12 ? "#DC2626" : result.gap > 6 ? "#CA8A04" : "#16A34A",
+      result: winner
+        ? `run ${winner.n} wins · ${result.heldScore}% held back`
+        : "no finalist to score",
+      tone:
+        result.gap > 12 ? "#DC2626" : result.gap > 6 ? "#CA8A04" : "#16A34A",
       lines: [
         `${result.heldMeasured} held-back scenarios, from ${result.heldBase}% before the change`,
-        ...(result.mustPassMeasured != null ? [`${result.mustPassMeasured} must-pass scenarios for each finalist — pass or fail, a failure counts only when it repeats on a re-run`] : []),
-        ...finalists.map((f) => `run ${f.n} — ${f.heldScore}% held back${f.accepted ? " · passes" : ` · ${f.why}`}${f.winner ? " · winner" : ""}${f.fullRegression ? ` · code change → ${f.repeats} repeats and the full regression set` : ""}`),
-        ...((result.otherEnvs || []).length ? [`each finalist also ran once in ${result.otherEnvs.map((e) => e.name).join(", ")} — its must-pass set there has to hold`] : []),
+        ...(result.mustPassMeasured != null
+          ? [
+              `${result.mustPassMeasured} must-pass scenarios for each finalist — pass or fail, a failure counts only when it repeats on a re-run`,
+            ]
+          : []),
+        ...finalists.map(
+          (f) =>
+            `run ${f.n} — ${f.heldScore}% held back${f.accepted ? " · passes" : ` · ${f.why}`}${f.winner ? " · winner" : ""}${f.fullRegression ? ` · code change → ${f.repeats} repeats and the full regression set` : ""}`,
+        ),
+        ...((result.otherEnvs || []).length
+          ? [
+              `each finalist also ran once in ${result.otherEnvs.map((e) => e.name).join(", ")} — its must-pass set there has to hold`,
+            ]
+          : []),
         result.gap > 6
           ? `${result.gap} points below the target score — the change fitted the scenarios it was tuned on`
           : "in line with the target score",

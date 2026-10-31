@@ -3,6 +3,7 @@ import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { Box } from "@mui/material";
 import PropTypes from "prop-types";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const GRID_TABLE_THEME_PARAMS = { headerHeight: "39px" };
 
@@ -36,7 +37,7 @@ const GridTable = forwardRef(
     return (
       <Box height={"100%"}>
         <AgGridReact
-          rowHeight={36}
+          rowHeight={ROW_HEIGHT.default}
           ref={ref}
           theme={agTheme}
           defaultColDef={defaultColDef}

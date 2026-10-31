@@ -214,7 +214,7 @@ export default function VersionBar({
                   borderColor: "divider",
                 }}
               >
-                {`Save as environment ${cost?.label}`}
+                {`Save release ${cost?.label}`}
               </Button>
             )}
           </Stack>

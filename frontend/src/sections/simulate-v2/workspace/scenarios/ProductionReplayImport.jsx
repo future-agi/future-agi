@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Box,
   Stack,
@@ -25,6 +26,11 @@ import {
   traceProjectOf,
 } from "../../_mock/traceImport";
 import { ensureTag, groupPatch, groupsOf } from "../../_mock/scenarioOrg";
+import {
+  EVIDENCE_KINDS,
+  parseDataset,
+  parseTranscript,
+} from "../../_mock/evidenceSources";
 import { useEnvState } from "../../store";
 import CopyCommandButton from "../../components/CopyCommandButton";
 import { TextLink } from "../../agents/connect/connectBits";
@@ -55,10 +61,25 @@ export default function ProductionReplayImport({
   onAdd,
   selected,
 }) {
-  const traces = useMemo(
-    () => productionTracesOf(env, envState),
-    [env, envState],
-  );
+  /* Evidence brought from outside — an uploaded transcript or a CSV/JSON
+     dataset. Observe traces arrive here only from Observe's "Create
+     environment test" (?from=observe); an issue's traces come through From
+     Error Feed, and failed simulations through From failing cases. */
+  const [searchParams] = useSearchParams();
+  const kinds = [
+    ...(searchParams.get("from") === "observe" ? ["observe"] : []),
+    "transcript",
+    "dataset",
+  ];
+  const [src, setSrc] = useState(kinds[0]);
+  const fileRef = useRef(null);
+  const traces = useMemo(() => {
+    if (src === "observe") return productionTracesOf(env, envState);
+    return (envState?.evidenceUploads || []).filter(
+      (u) => u.sourceKind === src,
+    );
+  }, [src, env, envState]);
+  const noun = EVIDENCE_KINDS[src].noun;
   const project = traceProjectOf(env, envState);
   /* What each becomes as a replay, already scrubbed — the only form shown. */
   const drafts = useMemo(
@@ -76,6 +97,28 @@ export default function ProductionReplayImport({
   const [group, setGroup] = useState("");
   const [tags, setTags] = useState("");
   const { patch } = useEnvState(env?.id);
+  const onUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    const read = await Promise.all(
+      files.map((f) => f.text().then((t) => [f.name, t])),
+    );
+    const items = read.flatMap(([name, text], i) =>
+      src === "transcript"
+        ? [
+            parseTranscript(
+              text,
+              name,
+              (envState?.evidenceUploads || []).length + i + 1,
+            ),
+          ].filter(Boolean)
+        : parseDataset(text, name),
+    );
+    if (items.length)
+      patch({
+        evidenceUploads: [...(envState?.evidenceUploads || []), ...items],
+      });
+  };
   /* A large import's queue: { importId, rows, done, running }. */
   const [queue, setQueue] = useState(null);
   useEffect(() => {
@@ -135,15 +178,25 @@ export default function ProductionReplayImport({
 
   const create = () => {
     const importInfo = {
+      sourceKind: src,
       id: `imp_${Date.now().toString(36)}`,
       at: new Date().toISOString(),
       project,
       range: rangeOf(frozenTraces),
       ids: frozenTraces.map((t) => t.traceId),
     };
-    const rows = traceDraftsOf(frozenTraces, goal, env, importInfo).filter(
-      (r) => !alreadyIn.has(r.id),
+    /* A dataset row's expected behaviour is the draft's claim to review. */
+    const expectedOf = new Map(
+      frozenTraces
+        .filter((t) => t.expected)
+        .map((t) => [t.traceId, t.expected]),
     );
+    const rows = traceDraftsOf(frozenTraces, goal, env, importInfo)
+      .filter((r) => !alreadyIn.has(r.id))
+      .map((r) => {
+        const e = expectedOf.get(r.traceImport?.sourceIds?.[0]);
+        return e ? { ...r, expected: e } : r;
+      });
     /* A large selection drafts as a queue — progress, cost, cancel. */
     if (frozenTraces.length >= QUEUE_FROM)
       return setQueue({
@@ -181,7 +234,15 @@ export default function ProductionReplayImport({
     if (Object.keys(org).length) patch(org);
     onAdd(
       rows.map((r) =>
-        asProposal(tagIds.length ? { ...r, tagIds } : r, "production"),
+        asProposal(
+          tagIds.length ? { ...r, tagIds } : r,
+          src === "observe"
+            ? "production"
+            : {
+                transcript: "transcript",
+                dataset: "dataset-import",
+              }[src],
+        ),
       ),
     );
   };
@@ -337,7 +398,7 @@ export default function ProductionReplayImport({
               </Typography>
               <Stack spacing={0.75}>
                 {TRACE_GOALS.map((g) => {
-                  const off = (g.min || 1) > frozenTraces.length;
+                  const off = g.later || (g.min || 1) > frozenTraces.length;
                   const on = goal === g.id;
                   return (
                     <Box
@@ -368,9 +429,11 @@ export default function ProductionReplayImport({
                       <Typography
                         sx={{ typography: "s3", color: "text.tertiary" }}
                       >
-                        {off
-                          ? `Needs ${g.min} or more traces`
-                          : `Needs: ${g.needs}`}
+                        {g.later
+                          ? "Comes later"
+                          : off
+                            ? `Needs ${g.min} or more traces`
+                            : `Needs: ${g.needs}`}
                       </Typography>
                     </Box>
                   );
@@ -512,11 +575,75 @@ export default function ProductionReplayImport({
       >
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            Production traces
+            Import evidence
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {`Observe project ${project} · ${rangeOf(traces)} · pick the exact traces — personal data is already replaced`}
+            {src === "observe"
+              ? `Observe project ${project} · ${rangeOf(traces)} · pick the exact traces — personal data is already replaced`
+              : src === "transcript"
+                ? "Upload transcripts with Customer: / Agent: lines — personal data is replaced at review"
+                : "Upload CSV or JSON with a prompt column (and expected, if you have it) — a row isn't a whole conversation"}
           </Typography>
+          <Stack
+            direction="row"
+            spacing={0.5}
+            sx={{ mt: 0.75, flexWrap: "wrap" }}
+          >
+            {kinds
+              .map((id) => [id, EVIDENCE_KINDS[id]])
+              .map(([id, k]) => (
+                <Button
+                  key={id}
+                  size="small"
+                  onClick={() => {
+                    setSrc(id);
+                    setPicked({});
+                  }}
+                  sx={{
+                    px: 1,
+                    minWidth: 0,
+                    height: 24,
+                    typography: "s3",
+                    color: src === id ? "text.primary" : "text.secondary",
+                    bgcolor: src === id ? "action.selected" : "transparent",
+                  }}
+                >
+                  {k.label}
+                </Button>
+              ))}
+            {(src === "transcript" || src === "dataset") && (
+              <>
+                <input
+                  ref={fileRef}
+                  hidden
+                  multiple
+                  type="file"
+                  accept={
+                    src === "transcript" ? ".txt,.md,.json" : ".csv,.json"
+                  }
+                  onChange={onUpload}
+                />
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => fileRef.current?.click()}
+                  startIcon={
+                    <Iconify
+                      icon="solar:upload-minimalistic-linear"
+                      width={14}
+                    />
+                  }
+                  sx={{
+                    height: 24,
+                    color: "text.primary",
+                    borderColor: "divider",
+                  }}
+                >
+                  Upload
+                </Button>
+              </>
+            )}
+          </Stack>
         </Box>
         <Button
           variant="contained"
@@ -535,8 +662,8 @@ export default function ProductionReplayImport({
           sx={{ whiteSpace: "nowrap", flexShrink: 0, minWidth: 148 }}
         >
           {chosen.length
-            ? `Continue with ${chosen.length} trace${chosen.length === 1 ? "" : "s"}`
-            : "Pick traces"}
+            ? `Continue with ${chosen.length} ${noun}${chosen.length === 1 ? "" : "s"}`
+            : `Pick ${noun}s`}
         </Button>
       </Stack>
       <Stack
@@ -553,7 +680,7 @@ export default function ProductionReplayImport({
         <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
           {chosen.length
             ? `${chosen.length} of ${traces.length} picked`
-            : `${traces.length} traces in this range`}
+            : `${traces.length} ${noun}${traces.length === 1 ? "" : "s"}${src === "observe" ? " in this range" : ""}`}
         </Typography>
         <Button
           size="small"
@@ -684,7 +811,25 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
               noWrap
               sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
             >
-              {`${conv.traceId} · agent ${conv.agentVersion} · ${conv.channel} · ${fmtDuration(conv.durationS)} · ${relativeTime(conv.at)} · ${conv.spans} spans${conv.outcome === "failed" ? " · failed in production" : " · passed"}`}
+              {[
+                conv.traceId,
+                conv.agentVersion ? `agent ${conv.agentVersion}` : null,
+                conv.channel,
+                conv.durationS ? fmtDuration(conv.durationS) : null,
+                relativeTime(conv.at),
+                conv.spans ? `${conv.spans} spans` : null,
+                conv.sourceKind
+                  ? conv.outcome === "failed"
+                    ? "failed in simulation"
+                    : conv.expected
+                      ? `expected: ${conv.expected}`
+                      : null
+                  : conv.outcome === "failed"
+                    ? "failed in production"
+                    : "passed",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             </Typography>
             <PersonalDataTag row={draft} />
             {/* What this trace actually holds — missing evidence named up front. */}

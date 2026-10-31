@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import {
   Box,
   Button,
-  Dialog,
   Link,
   MenuItem,
   Select,
@@ -37,6 +36,8 @@ import {
   issueRunFor,
   scenarioGroupsOf,
 } from "./issueFix";
+import ImportReviewSteps from "./ImportReviewSteps";
+import ClosableDialog from "../components/ClosableDialog";
 
 /*
   Fix, confirmed in place: what it tests, where, and what it may spend —
@@ -91,7 +92,7 @@ export default function FixStartDialog({
   onAdjust,
 }) {
   const navigate = useNavigate();
-  const { commit } = useSimStore();
+  const { commit, state: simState } = useSimStore();
   const { setAgentValues } = useConnectedAgents();
   const { agent, main, mainState, drafts, limits, estimate, budgets } = plan;
   const envs = plan.envs || [];
@@ -99,6 +100,27 @@ export default function FixStartDialog({
   const mainId = envs[0]?.id;
   const others = envs.filter((e) => e.id !== main?.id);
   const [buildOpen, setBuildOpen] = useState(false);
+  /* The import review the issue's traces go through before any fix. */
+  /* The review is kept per issue, so closing the box doesn't lose it. */
+  const savedReviews = simState?.workspaceSettings?.issueReviews || {};
+  const reviewKey = issue?.cluster_id || "issue";
+  const review = savedReviews[reviewKey] || {
+    redacted: false,
+    expected: drafts[0]?.expected || "",
+    facts: false,
+  };
+  const setReview = (next) =>
+    commit({
+      type: "setWorkspaceSetting",
+      key: "issueReviews",
+      value: { ...savedReviews, [reviewKey]: next },
+    });
+  const reviewed = !!(
+    review.redacted &&
+    String(review.expected || "").trim() &&
+    review.expectedOk &&
+    review.facts
+  );
   /* Tools the agent calls that this environment can't answer: taught here,
      in seconds — the same rebuild as the World tab's, never a trip there. */
   const patchMain = (p) =>
@@ -261,7 +283,7 @@ export default function FixStartDialog({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <ClosableDialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <Box sx={{ px: 2.5, pt: 2.5, pb: 1 }}>
         <Typography sx={{ typography: "s1", fontWeight: 600 }}>
           {`Fix ${issueId}`}
@@ -317,6 +339,17 @@ export default function FixStartDialog({
             <Row k="Runs in">
               <Typography sx={{ typography: "s2" }}>{main.name}</Typography>
             </Row>
+            {main && drafts.length > 0 && (
+              <Box sx={{ mb: 1.5 }}>
+                <ImportReviewSteps
+                  drafts={drafts}
+                  traceTotal={traceTotal}
+                  envName={main?.name}
+                  value={review}
+                  onChange={setReview}
+                />
+              </Box>
+            )}
             <Row k="Scenarios">
               <Typography sx={{ typography: "s2" }}>
                 {`${drafts.length} ${drafts.length === 1 ? "scenario" : "scenarios"} from ${traceTotal} failing traces${plan.capped ? ` — the ${drafts.length} most common of ${plan.allDrafts.length}` : ""} · reproduced first, some held back to prove the fix`}
@@ -488,6 +521,17 @@ export default function FixStartDialog({
                 </Stack>
               )}
             </Row>
+            {main && drafts.length > 0 && (
+              <Box sx={{ mb: 1.5 }}>
+                <ImportReviewSteps
+                  drafts={drafts}
+                  traceTotal={traceTotal}
+                  envName={main?.name}
+                  value={review}
+                  onChange={setReview}
+                />
+              </Box>
+            )}
             <Row k="Scenarios">
               <Typography sx={{ typography: "s2" }}>
                 {`${drafts.length} ${drafts.length === 1 ? "scenario" : "scenarios"} from ${traceTotal} failing traces${plan.capped ? ` — the ${drafts.length} most common of ${plan.allDrafts.length}` : ""} · reproduced first, some held back to prove the fix`}
@@ -738,11 +782,15 @@ export default function FixStartDialog({
             size="small"
             variant="contained"
             color="primary"
-            disabled={waiting || starting}
+            disabled={
+              waiting || starting || (!!main && drafts.length > 0 && !reviewed)
+            }
             onClick={start}
             startIcon={<Iconify icon="solar:play-bold" width={14} />}
           >
-            Start fix
+            {main && drafts.length > 0
+              ? "Run to reproduce, then fix"
+              : "Start fix"}
           </Button>
         )}
       </Stack>
@@ -765,7 +813,7 @@ export default function FixStartDialog({
           }}
         />
       )}
-    </Dialog>
+    </ClosableDialog>
   );
 }
 FixStartDialog.propTypes = {

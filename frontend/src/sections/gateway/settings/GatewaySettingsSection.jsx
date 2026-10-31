@@ -1,4 +1,5 @@
 /* eslint-disable react/prop-types */
+import EmptyState from "src/components/empty-state";
 import React, { useState, useMemo, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -390,17 +391,22 @@ const BatchJobsTab = ({ config, gatewayId }) => {
           Batch Jobs
         </Typography>
         {trackedJobs.length === 0 ? (
-          <Stack alignItems="center" spacing={1} sx={{ py: 3 }}>
-            <Iconify
-              icon="solar:upload-minimalistic-linear"
-              width={40}
-              sx={{ color: "text.disabled" }}
-            />
-            <Typography variant="body2" color="text.secondary">
-              No batch jobs submitted yet. Click &quot;Submit Batch Job&quot; to
-              get started.
-            </Typography>
-          </Stack>
+          <EmptyState
+            icon="solar:upload-minimalistic-linear"
+            title="No batch jobs yet"
+            description="Submitted batch jobs will appear here."
+            action={
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() => setSubmitOpen(true)}
+              >
+                Submit batch job
+              </Button>
+            }
+            sx={{ pt: 6, pb: 6 }}
+          />
         ) : (
           <TableContainer>
             <Table size="small">
@@ -950,7 +956,12 @@ const GatewaySettingsSection = () => {
       <Tabs
         value={tab}
         onChange={handleTabChange}
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+        sx={{
+          boxShadow: "none",
+          mb: 3,
+          borderBottom: 1,
+          borderColor: "divider",
+        }}
       >
         <Tab label="Settings" />
         <Tab label="Org Config" />

@@ -41,7 +41,7 @@ const QuickFilter = ({ onClick, children, show = true }) => {
             {
               name: "offset",
               options: {
-                offset: [10, -50],
+                offset: [10, -43],
               },
             },
           ],

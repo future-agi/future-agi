@@ -103,7 +103,7 @@ const FieldInputImage = ({ data, onChange, type, internalState }) => {
           }}
         >
           <IconButton disabled={isPending}>
-            <SvgColor src="/icons/datasets/upload_file.svg" />
+            <SvgColor width={24} src="/icons/datasets/upload_file.svg" />
           </IconButton>
           <Box textAlign="center">
             <Typography

@@ -9,7 +9,6 @@ import {
   Button,
   TextField,
   Tooltip,
-  Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
@@ -30,6 +29,7 @@ import { firstSnapshotOfWorld, nextSnapshotLabel } from "../_mock/envSnapshot";
 import BuildStreamNote from "../environments/BuildStreamNote";
 import ToolArgsGrid from "./ToolArgsGrid";
 import { goalLabel } from "../_mock/scenarios";
+import ClosableDialog from "../components/ClosableDialog";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -673,7 +673,7 @@ function ContractEditDialog({ edit, env, envState, onClose, onApply }) {
       `${{ add: "Add", edit: "Edit", remove: "Remove" }[edit.op]} ${what}${edit.id ? ` ${edit.id}` : ""}`
     );
   return (
-    <Dialog
+    <ClosableDialog
       open
       onClose={onClose}
       maxWidth={false}
@@ -782,7 +782,7 @@ function ContractEditDialog({ edit, env, envState, onClose, onApply }) {
           </span>
         </Tooltip>
       </DialogActions>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 ContractEditDialog.propTypes = {

@@ -95,7 +95,7 @@ export default function ImprovementDecision({
             How it was decided
           </Typography>
           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-            {`${name}${shipped ? ` · Trial ${shipped.n} ${chosen ? `chosen by you${unverified ? " · not verified yet" : " · verified"}` : "kept"}` : ""}`}
+            {`${name}${shipped ? ` · Candidate ${shipped.n} ${chosen ? `chosen by you${unverified ? " · not verified yet" : " · verified"}` : "kept"}` : ""}`}
           </Typography>
         </Box>
         <IconButton size="small" onClick={onClose} aria-label="Close">
@@ -185,7 +185,7 @@ export default function ImprovementDecision({
                 v={
                   outcome.costKnown
                     ? signed(outcome.effect.cost, "%")
-                    : "Not measured"
+                    : "Couldn't measure"
                 }
               />
               <Line k="Latency" v={signed(outcome.effect.latency, "%")} />
@@ -271,7 +271,7 @@ export default function ImprovementDecision({
                 >
                   <Typography
                     sx={{ ...cell, flex: 1, fontWeight: f.winner ? 600 : 500 }}
-                  >{`Trial ${f.n}`}</Typography>
+                  >{`Candidate ${f.n}`}</Typography>
                   <Typography
                     sx={{ ...cell, width: 84, textAlign: "right", ...num }}
                   >{`${f.score}%`}</Typography>
@@ -324,10 +324,10 @@ export default function ImprovementDecision({
             >
               {chosen
                 ? unverified
-                  ? `Trial ${shipped.n} was chosen over the search's pick. It can't ship until it's verified on the full suite${projected ? " — its held-back result is projected until then" : ""}.`
-                  : `Trial ${shipped.n} was chosen over the search's pick and verified on the full suite.`
+                  ? `Candidate ${shipped.n} was chosen over the search's pick. It can't ship until it's verified on the full suite${projected ? " — its held-back result is projected until then" : ""}.`
+                  : `Candidate ${shipped.n} was chosen over the search's pick and verified on the full suite.`
                 : confirm
-                  ? `Finalists are ranked on one held-back run; of those that pass, the highest target score is kept. Trial ${shipped.n} then ran on the held-back set again — ${confirm.held ? "it held" : "it didn't hold"}.`
+                  ? `Finalists are ranked on one held-back run; of those that pass, the highest target score is kept. Candidate ${shipped.n} then ran on the held-back set again — ${confirm.held ? "it held" : "it didn't hold"}.`
                   : "Finalists are scored once on held-back scenarios; of those that pass, the highest target score is kept."}
             </Typography>
           </Box>

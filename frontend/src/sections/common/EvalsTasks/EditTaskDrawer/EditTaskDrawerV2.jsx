@@ -6,7 +6,6 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
   Drawer,
   FormHelperText,
   IconButton,
@@ -57,6 +56,7 @@ import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
 import { useTaskEvalAttributeInventory } from "../use_task_eval_attribute_inventory";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // ── Configured Eval Card ──
 
@@ -433,7 +433,11 @@ const EditTaskDrawerV2Content = ({
       {/* Tabs */}
       {isView && (
         <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 2 }}>
-          <Tabs value={selectedTab} onChange={(_, val) => setSelectedTab(val)}>
+          <Tabs
+            sx={{ boxShadow: "none" }}
+            value={selectedTab}
+            onChange={(_, val) => setSelectedTab(val)}
+          >
             {TAB_OPTIONS.map((tab) => (
               <Tab key={tab.value} label={tab.label} value={tab.value} />
             ))}
@@ -727,7 +731,7 @@ const EditTaskDrawerV2 = ({
             height: "100%",
           }}
         >
-          <CircularProgress size={28} />
+          <ContentSkeleton variant="panel" />
         </Box>
       )}
       {isError && (

@@ -23,9 +23,28 @@ import { actorsOf } from "./actors";
 import { toolImplFor } from "./envInternals";
 import { argSpecOf } from "./toolArgSpec";
 import { contractFor } from "./contract";
-import { legacyUseCaseId, rulesOf, ruleOfScenario, subGoalsOfScenario, useCaseId as stableCaseId } from "./envModel";
-import { currentEnvVersion, environmentVersions, envLineage, holdsInEnv, nextEnvVersion, pendingEnvChanges, WORLD_CONFIG_KEYS } from "./versions";
-import { currentEnvSnapshot, envSnapshotsOf, nextSnapshotLabel, SAME_ACTION_MS } from "./envSnapshot";
+import {
+  legacyUseCaseId,
+  rulesOf,
+  ruleOfScenario,
+  subGoalsOfScenario,
+  useCaseId as stableCaseId,
+} from "./envModel";
+import {
+  currentEnvVersion,
+  environmentVersions,
+  envLineage,
+  holdsInEnv,
+  nextEnvVersion,
+  pendingEnvChanges,
+  WORLD_CONFIG_KEYS,
+} from "./versions";
+import {
+  currentEnvSnapshot,
+  envSnapshotsOf,
+  nextSnapshotLabel,
+  SAME_ACTION_MS,
+} from "./envSnapshot";
 import { callerChangePatch, simulatorOf } from "./envModel";
 import { suiteLogPatch, largerBump } from "./suiteLog";
 import { bumpScenario } from "./decoupled";
@@ -42,38 +61,59 @@ import { knownToolsFor, requiredToolsOf, withPinnedWorld } from "./toolFit";
 
 export const ADAPTERS = [
   {
-    id: "chat", label: "Chat", icon: "solar:chat-round-line-linear", color: "#2563EB",
+    id: "chat",
+    label: "Chat",
+    icon: "solar:chat-round-line-linear",
+    color: "#2563EB",
     blurb: "Turn-taking text. The counterpart types.",
     observation: { transcript: "list[turn]", ui_state: "null" },
     action: ["say", "call_tool", "finish"],
   },
   {
-    id: "voice", label: "Voice", icon: "solar:phone-calling-linear", color: "#7857FC",
+    id: "voice",
+    label: "Voice",
+    icon: "solar:phone-calling-linear",
+    color: "#7857FC",
     blurb: "Duplex audio. Interruptions and dead air are part of the state.",
-    observation: { transcript: "list[turn]", audio_state: "{noise, barge_in, latency_ms}" },
+    observation: {
+      transcript: "list[turn]",
+      audio_state: "{noise, barge_in, latency_ms}",
+    },
     action: ["say", "call_tool", "finish"],
   },
   {
-    id: "cua", label: "Computer use", icon: "solar:monitor-linear", color: "#0D9488",
+    id: "cua",
+    label: "Computer use",
+    icon: "solar:monitor-linear",
+    color: "#0D9488",
     blurb: "A screen the agent looks at and clicks.",
     observation: { screenshot: "image", dom: "tree" },
     action: ["click", "type", "scroll", "call_tool", "finish"],
   },
   {
-    id: "coding", label: "Coding", icon: "solar:code-square-linear", color: "#EA580C",
+    id: "coding",
+    label: "Coding",
+    icon: "solar:code-square-linear",
+    color: "#EA580C",
     blurb: "A repo, a test suite and a shell.",
     observation: { repo_diff: "patch", test_report: "junit" },
     action: ["edit_file", "run_tests", "call_tool", "finish"],
   },
   {
-    id: "physical", label: "Physical", icon: "solar:cpu-bolt-linear", color: "#DC2626",
+    id: "physical",
+    label: "Physical",
+    icon: "solar:cpu-bolt-linear",
+    color: "#DC2626",
     blurb: "Robotics and worldsims. Continuous control, real clock.",
     observation: { sensors: "dict[str, float]", frame: "image", pose: "se3" },
     action: ["actuate", "grasp", "move_to", "finish"],
     future: true,
   },
   {
-    id: "custom", label: "Custom", icon: "solar:widget-4-linear", color: "#CA8A04",
+    id: "custom",
+    label: "Custom",
+    icon: "solar:widget-4-linear",
+    color: "#CA8A04",
     blurb: "Bring your own spaces. The core five fields still apply.",
     observation: { payload: "your schema" },
     action: ["your verbs"],
@@ -106,7 +146,8 @@ export const effectiveModality = (env, envState) => {
 
 /** The adapter in force, resolved the same single way. */
 export const adapterOf = (env, envState) =>
-  ADAPTERS.find((a) => a.id === effectiveModality(env, envState)) || ADAPTERS[0];
+  ADAPTERS.find((a) => a.id === effectiveModality(env, envState)) ||
+  ADAPTERS[0];
 
 /**
  * True when the connected agent moved the modality off the environment's own
@@ -125,7 +166,8 @@ export const effectiveEnv = (env, envState) => ({
 });
 
 export const adapterFor = (env) =>
-  ADAPTERS.find((a) => a.id === (MODALITY_FOR[env?.surface] || "chat")) || ADAPTERS[0];
+  ADAPTERS.find((a) => a.id === (MODALITY_FOR[env?.surface] || "chat")) ||
+  ADAPTERS[0];
 
 export const getAdapter = (id) => ADAPTERS.find((a) => a.id === id);
 
@@ -139,12 +181,35 @@ export const getAdapter = (id) => ADAPTERS.find((a) => a.id === id);
 export const observationSpace = (env, adapter) => {
   const a = adapter || adapterFor(env);
   return [
-    { field: "goal", type: "str", filled: "The scenario's task, as the persona states it.", generic: true },
-    { field: "world", type: "dict", filled: `${env?.seed?.tables?.length || 0} seeded tables, reset each episode.`, generic: true },
-    { field: "history", type: "list[step]", filled: "Every action and result so far this episode.", generic: true },
-    { field: "sub_goals", type: "list[check]", filled: "The checks not yet settled.", generic: true },
+    {
+      field: "goal",
+      type: "str",
+      filled: "The scenario's task, as the persona states it.",
+      generic: true,
+    },
+    {
+      field: "world",
+      type: "dict",
+      filled: `${env?.seed?.tables?.length || 0} seeded tables, reset each episode.`,
+      generic: true,
+    },
+    {
+      field: "history",
+      type: "list[step]",
+      filled: "Every action and result so far this episode.",
+      generic: true,
+    },
+    {
+      field: "sub_goals",
+      type: "list[check]",
+      filled: "The checks not yet settled.",
+      generic: true,
+    },
     ...Object.entries(a.observation).map(([field, type]) => ({
-      field, type, filled: `Filled by the ${a.label.toLowerCase()} adapter.`, generic: false,
+      field,
+      type,
+      filled: `Filled by the ${a.label.toLowerCase()} adapter.`,
+      generic: false,
     })),
   ];
 };
@@ -155,13 +220,18 @@ export const actionSpace = (env, adapter) => {
   return a.action.map((verb) => ({
     verb,
     args:
-      verb === "call_tool" ? `name: enum[${tools.length} tools], args: dict`
-        : verb === "say" ? "text: str"
-          : verb === "finish" ? "summary: str"
+      verb === "call_tool"
+        ? `name: enum[${tools.length} tools], args: dict`
+        : verb === "say"
+          ? "text: str"
+          : verb === "finish"
+            ? "summary: str"
             : "adapter-defined",
     note:
-      verb === "call_tool" ? "The tools on the contract, with their real argument names."
-        : verb === "finish" ? "Ends the episode. Terminal — see the episode contract."
+      verb === "call_tool"
+        ? "The tools on the contract, with their real argument names."
+        : verb === "finish"
+          ? "Ends the episode. Terminal — see the episode contract."
           : `Provided by the ${a.label.toLowerCase()} adapter.`,
   }));
 };
@@ -175,7 +245,9 @@ export const actionSpace = (env, adapter) => {
  */
 export const transitionDynamics = (env, envState) => {
   const tools = env?.tools || [];
-  const stubbed = tools.filter((t) => /refund|issue|charge|send|delete|book/i.test(t.name));
+  const stubbed = tools.filter((t) =>
+    /refund|issue|charge|send|delete|book/i.test(t.name),
+  );
   return [
     {
       id: "actors",
@@ -233,25 +305,62 @@ export const transitionDynamics = (env, envState) => {
 /* ── 4. reward spec ──────────────────────────────────────────────────────── */
 
 export const VERIFIER_KINDS = [
-  { id: "goal", label: "Goal", color: "#16A34A", blurb: "Did the task get done. Terminal, sparse." },
-  { id: "rubric", label: "Rubric", color: "#2563EB", blurb: "How well, judged per turn. Dense." },
-  { id: "constraint", label: "Constraints", color: "#DC2626", blurb: "What must never happen. Penalty." },
+  {
+    id: "goal",
+    label: "Goal",
+    color: "#16A34A",
+    blurb: "Did the task get done. Terminal, sparse.",
+  },
+  {
+    id: "rubric",
+    label: "Rubric",
+    color: "#2563EB",
+    blurb: "How well, judged per turn. Dense.",
+  },
+  {
+    id: "constraint",
+    label: "Constraints",
+    color: "#DC2626",
+    blurb: "What must never happen. Penalty.",
+  },
 ];
 
 export const rewardSpec = (env) => {
   const rules = env?.rules || [];
   return {
     goal: [
-      { name: "task_completed", weight: 1.0, note: "The scenario's stated outcome was reached." },
-      { name: "under_reference_length", weight: 0.2, note: "Done in no more steps than the reference solution." },
+      {
+        name: "task_completed",
+        weight: 1.0,
+        note: "The scenario's stated outcome was reached.",
+      },
+      {
+        name: "under_reference_length",
+        weight: 0.2,
+        note: "Done in no more steps than the reference solution.",
+      },
     ],
     rubric: [
-      { name: "sub_goal_settled", weight: 0.15, note: "Each check that settles pays out when it settles." },
-      { name: "grounded", weight: 0.1, note: "Claims trace to a tool result or seeded row." },
+      {
+        name: "sub_goal_settled",
+        weight: 0.15,
+        note: "Each check that settles pays out when it settles.",
+      },
+      {
+        name: "grounded",
+        weight: 0.1,
+        note: "Claims trace to a tool result or seeded row.",
+      },
     ],
     constraint: [
-      ...rules.slice(0, 3).map((r) => ({ name: "hard_rule_violation", weight: -1.0, note: r })),
-      { name: "step_cost", weight: -0.01, note: "Every step, so dithering is not free." },
+      ...rules
+        .slice(0, 3)
+        .map((r) => ({ name: "hard_rule_violation", weight: -1.0, note: r })),
+      {
+        name: "step_cost",
+        weight: -0.01,
+        note: "Every step, so dithering is not free.",
+      },
     ],
   };
 };
@@ -271,13 +380,28 @@ export const episodeContract = (env, envState) => {
   const turns = envTurnLimitOf(envState);
   return {
     terminate: [
-      { when: "The agent says it's done", note: "The checks decide whether it passed, from where the conversation ended up." },
-      { when: "A hard rule is broken", note: "It ends there and fails — nothing after it could make up for it." },
-      { when: "The caller hangs up or leaves", note: "It's graded on what was settled by then." },
+      {
+        when: "The agent says it's done",
+        note: "The checks decide whether it passed, from where the conversation ended up.",
+      },
+      {
+        when: "A hard rule is broken",
+        note: "It ends there and fails — nothing after it could make up for it.",
+      },
+      {
+        when: "The caller hangs up or leaves",
+        note: "It's graded on what was settled by then.",
+      },
     ],
     truncate: [
-      { when: `${turns} agent turns`, note: "It stops and fails with “Hit the turn limit”. Change the limit in Settings, under Simulation defaults." },
-      { when: realTime ? "8 minutes" : "12 minutes", note: "It stops and the sandbox is cleared. This one isn't counted as a failure." },
+      {
+        when: `${turns} agent turns`,
+        note: "It stops and fails with “Hit the turn limit”. Change the limit in Settings, under Simulation defaults.",
+      },
+      {
+        when: realTime ? "8 minutes" : "12 minutes",
+        note: "It stops and the sandbox is cleared. This one isn't counted as a failure.",
+      },
     ],
     clock: {
       mode: realTime ? "Real time" : "Turn by turn",
@@ -301,7 +425,11 @@ export const contractParts = (env, envState) => [
      it true anyway, and `envState.personas` is never populated (actors live on
      envState.actors). */
   { id: "dynamics", label: "Transition dynamics", done: true },
-  { id: "reward", label: "Reward spec", done: (envState?.evals || []).length > 0 },
+  {
+    id: "reward",
+    label: "Reward spec",
+    done: (envState?.evals || []).length > 0,
+  },
   { id: "episode", label: "Episode contract", done: true },
 ];
 
@@ -328,13 +456,35 @@ export const contractParts = (env, envState) => [
   and argument where it differs, else by argument name.
 */
 /* "order_id: str, email: str | None = None" → [{ name, pyType, optional }]. */
-const parseSignature = (sig) => String(sig || "").split(/,(?![^[]*\])/).map((x) => x.trim()).filter((x) => x && !x.startsWith("*")).map((x) => {
-  const [name, rest = ""] = x.split(":").map((y) => y.trim());
-  return { name, pyType: rest.split("=")[0].replace(/\| None/, "").trim(), optional: /=/.test(rest) };
-});
-const PY_TYPE = { str: "str", int: "int", float: "float", bool: "bool", dict: "object", "list[str]": "enum" };
+const parseSignature = (sig) =>
+  String(sig || "")
+    .split(/,(?![^[]*\])/)
+    .map((x) => x.trim())
+    .filter((x) => x && !x.startsWith("*"))
+    .map((x) => {
+      const [name, rest = ""] = x.split(":").map((y) => y.trim());
+      return {
+        name,
+        pyType: rest
+          .split("=")[0]
+          .replace(/\| None/, "")
+          .trim(),
+        optional: /=/.test(rest),
+      };
+    });
+const PY_TYPE = {
+  str: "str",
+  int: "int",
+  float: "float",
+  bool: "bool",
+  dict: "object",
+  "list[str]": "enum",
+};
 
-const specFor = (tool, name, pyType) => ({ type: PY_TYPE[pyType] || "str", ...argSpecOf(tool, name) });
+const specFor = (tool, name, pyType) => ({
+  type: PY_TYPE[pyType] || "str",
+  ...argSpecOf(tool, name),
+});
 
 /* Any other tool: an id named for what it acts on ("cancel_booking" → booking_id). */
 const derivedArgs = (tool) => {
@@ -345,11 +495,20 @@ const derivedArgs = (tool) => {
 
 const baseArgsOf = (tool) => {
   if (Array.isArray(tool?.args)) {
-    return tool.args.map((name) => ({ name, required: true, ...specFor(tool.name, name, null) }));
+    return tool.args.map((name) => ({
+      name,
+      required: true,
+      ...specFor(tool.name, name, null),
+    }));
   }
-  const sig = toolImplFor(tool).code.match(/def [a-z0-9_]+\((.*?)\) ->/)?.[1] || "";
+  const sig =
+    toolImplFor(tool).code.match(/def [a-z0-9_]+\((.*?)\) ->/)?.[1] || "";
   if (sig.includes("**")) return derivedArgs(tool);
-  return parseSignature(sig).map((a) => ({ name: a.name, required: !a.optional, ...specFor(tool.name, a.name, a.pyType) }));
+  return parseSignature(sig).map((a) => ({
+    name: a.name,
+    required: !a.optional,
+    ...specFor(tool.name, a.name, a.pyType),
+  }));
 };
 
 const argKey = (tool, arg) => `${tool}.${arg}`;
@@ -385,21 +544,39 @@ export const contractWordingIn = (env, envState, label) => {
       if (c.removal) return; // the re-check twin of a removal, not a change of words
       const before = words.get(c.id) ?? null;
       if (c.envVersion === label) {
-        out.push({ what: `${name} ${c.id}`, kind: c.kind, from: c.kind === "added" ? null : before, to: c.kind === "removed" ? null : c.to });
+        out.push({
+          what: `${name} ${c.id}`,
+          kind: c.kind,
+          from: c.kind === "added" ? null : before,
+          to: c.kind === "removed" ? null : c.to,
+        });
       }
       if (c.kind === "removed") words.delete(c.id);
       else words.set(c.id, c.to);
     });
   };
-  walk(envState?.ruleChanges, (env?.rules || []).map((text, i) => [`R${i + 1}`, text]), "Rule");
-  walk(envState?.useCaseChanges, contractFor(env).useCases.map((text) => [stableCaseId(text), text]), "Use case");
+  walk(
+    envState?.ruleChanges,
+    (env?.rules || []).map((text, i) => [`R${i + 1}`, text]),
+    "Rule",
+  );
+  walk(
+    envState?.useCaseChanges,
+    contractFor(env).useCases.map((text) => [stableCaseId(text), text]),
+    "Use case",
+  );
   Object.entries(envState?.toolArgEdits || {}).forEach(([key, e]) => {
     if (e?.envVersion !== label) return;
     const [toolName, argName] = key.split(".");
     const tool = (env?.tools || []).find((t) => t.name === toolName);
     const arg = tool ? baseArgsOf(tool).find((a) => a.name === argName) : null;
     const { at, envVersion, from, ...change } = e;
-    out.push({ what: key, kind: "changed", from: from || null, to: allowedLine({ ...(arg || {}), ...change }) });
+    out.push({
+      what: key,
+      kind: "changed",
+      from: from || null,
+      to: allowedLine({ ...(arg || {}), ...change }),
+    });
   });
   return out;
 };
@@ -408,32 +585,44 @@ export const contractWordingIn = (env, envState, label) => {
 export const allowedLine = (a) => {
   if (!a) return "";
   if (a.type === "enum") return (a.values || []).join(" · ");
-  if (a.type === "bool") return a.values?.length === 1 ? `${a.values[0]} only` : "true · false";
+  if (a.type === "bool")
+    return a.values?.length === 1 ? `${a.values[0]} only` : "true · false";
   if (a.min != null || a.max != null) {
     const words = typeof a.min !== "number" || typeof a.max !== "number";
-    const unit = a.unit && a.unit !== "£" ? (words ? `, in ${a.unit}` : ` ${a.unit}`) : "";
+    const unit =
+      a.unit && a.unit !== "£" ? (words ? `, in ${a.unit}` : ` ${a.unit}`) : "";
     const pre = a.unit === "£" ? "£" : "";
-    const lo = a.min != null ? `${typeof a.min === "number" ? pre : ""}${a.min}` : "any";
-    const hi = a.max != null ? `${typeof a.max === "number" ? pre : ""}${a.max}` : "any";
+    const lo =
+      a.min != null ? `${typeof a.min === "number" ? pre : ""}${a.min}` : "any";
+    const hi =
+      a.max != null ? `${typeof a.max === "number" ? pre : ""}${a.max}` : "any";
     return a.min === a.max ? `${lo} only${unit}` : `${lo}–${hi}${unit}`;
   }
   return a.format || "any";
 };
 
 /** "order_id: str (A-#####) · amount: float (£0–order total)" — one tool's signature, as the build narrates it. */
-export const argsSignatureLine = (tool, envState) => toolArgsOf(tool, envState)
-  .map((a) => {
-    const allowed = allowedLine(a);
-    const extra = [allowed !== "any" ? allowed : null, a.note].filter(Boolean).join(" — ");
-    return `${a.name}: ${a.type}${extra ? ` (${extra})` : ""}`;
-  })
-  .join(" · ");
+export const argsSignatureLine = (tool, envState) =>
+  toolArgsOf(tool, envState)
+    .map((a) => {
+      const allowed = allowedLine(a);
+      const extra = [allowed !== "any" ? allowed : null, a.note]
+        .filter(Boolean)
+        .join(" — ");
+      return `${a.name}: ${a.type}${extra ? ` (${extra})` : ""}`;
+    })
+    .join(" · ");
 
 /** An argument that rules values out — a list, a fixed yes/no, or a range. Plain formats (A-#####) aren't limits. */
-export const isArgLimit = (a) => a.type === "enum" || (a.type === "bool" && a.values?.length === 1) || a.min != null || a.max != null;
+export const isArgLimit = (a) =>
+  a.type === "enum" ||
+  (a.type === "bool" && a.values?.length === 1) ||
+  a.min != null ||
+  a.max != null;
 
 /** Every tool on the contract with its arguments — what the Contract tab lists. */
-export const contractToolsOf = (env, envState) => (env?.tools || []).map((t) => ({ ...t, args: toolArgsOf(t, envState) }));
+export const contractToolsOf = (env, envState) =>
+  (env?.tools || []).map((t) => ({ ...t, args: toolArgsOf(t, envState) }));
 
 /* ── use cases, with corrections ─────────────────────────────────────────── */
 
@@ -444,19 +633,48 @@ export const contractToolsOf = (env, envState) => (env?.tools || []).map((t) => 
  */
 export const contractUseCasesOf = (env, envState) => {
   const lineage = envLineage(env, envState);
-  const changes = (envState?.useCaseChanges || []).filter((c) => holdsInEnv(lineage, c.envVersion));
-  const removed = new Set(changes.filter((c) => c.kind === "removed").map((c) => c.id));
+  const changes = (envState?.useCaseChanges || []).filter((c) =>
+    holdsInEnv(lineage, c.envVersion),
+  );
+  const removed = new Set(
+    changes.filter((c) => c.kind === "removed").map((c) => c.id),
+  );
   /* Corrections saved under the older, shorter id still apply — where that id
      named only one use case. */
   const legacyCount = new Map();
-  contractFor(env).useCases.forEach((t) => legacyCount.set(legacyUseCaseId(t), (legacyCount.get(legacyUseCaseId(t)) || 0) + 1));
+  contractFor(env).useCases.forEach((t) =>
+    legacyCount.set(
+      legacyUseCaseId(t),
+      (legacyCount.get(legacyUseCaseId(t)) || 0) + 1,
+    ),
+  );
   const base = contractFor(env).useCases.map((text) => {
     const id = stableCaseId(text);
-    const legacy = legacyCount.get(legacyUseCaseId(text)) === 1 ? legacyUseCaseId(text) : null;
-    const last = [...changes].reverse().find((c) => (c.id === id || (legacy && c.id === legacy)) && c.kind === "changed");
-    return { id, text: last?.to || text, original: text, changedIn: last?.envVersion || null };
+    const legacy =
+      legacyCount.get(legacyUseCaseId(text)) === 1
+        ? legacyUseCaseId(text)
+        : null;
+    const last = [...changes]
+      .reverse()
+      .find(
+        (c) =>
+          (c.id === id || (legacy && c.id === legacy)) && c.kind === "changed",
+      );
+    return {
+      id,
+      text: last?.to || text,
+      original: text,
+      changedIn: last?.envVersion || null,
+    };
   });
-  const added = changes.filter((c) => c.kind === "added").map((c) => ({ id: c.id, text: c.to, original: null, changedIn: c.envVersion }));
+  const added = changes
+    .filter((c) => c.kind === "added")
+    .map((c) => ({
+      id: c.id,
+      text: c.to,
+      original: null,
+      changedIn: c.envVersion,
+    }));
   return [...base, ...added].filter((u) => !removed.has(u.id));
 };
 
@@ -477,9 +695,13 @@ export const contractUseCasesOf = (env, envState) => {
   `contractEditPlan` → `plan.patch(latestEnvState)`.
 */
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
-const clip = (s, n = 64) => (String(s || "").length > n ? `${String(s).slice(0, n - 1)}…` : String(s || ""));
+const clip = (s, n = 64) =>
+  String(s || "").length > n
+    ? `${String(s).slice(0, n - 1)}…`
+    : String(s || "");
 
-const rowsOf = (envState) => (envState?.scenarios || []).filter((r) => !r.retired && !r.archived);
+const rowsOf = (envState) =>
+  (envState?.scenarios || []).filter((r) => !r.retired && !r.archived);
 
 /* The scenarios a rule touches — the ones testing it, and the ones whose
    flow calls a tool it names — exactly as the Scenarios tab will read them. */
@@ -487,29 +709,63 @@ const ruleDependents = (env, envState, change) => {
   const known = knownToolsFor(env, envState);
   const probe = { ...envState, ruleChanges: [change] };
   const rules = rulesOf(env, envState);
-  return rowsOf(envState).filter((row) => ruleOfScenario(row, rules)?.id === change.id
-    || ruleChangesOnFlow(row, { env, envState: probe, tools: requiredToolsOf(row, known) }).length > 0).map((r) => r.id);
+  return rowsOf(envState)
+    .filter(
+      (row) =>
+        ruleOfScenario(row, rules)?.id === change.id ||
+        ruleChangesOnFlow(row, {
+          env,
+          envState: probe,
+          tools: requiredToolsOf(row, known),
+        }).length > 0,
+    )
+    .map((r) => r.id);
 };
 
 const toolDependents = (env, envState, tool) => {
   const known = knownToolsFor(env, envState);
-  return rowsOf(envState).filter((row) => requiredToolsOf(row, known).includes(tool)
-    || subGoalsOfScenario(row, env, envState).some((g) => g.id === `SG-tool-${tool}`)).map((r) => r.id);
+  return rowsOf(envState)
+    .filter(
+      (row) =>
+        requiredToolsOf(row, known).includes(tool) ||
+        subGoalsOfScenario(row, env, envState).some(
+          (g) => g.id === `SG-tool-${tool}`,
+        ),
+    )
+    .map((r) => r.id);
 };
 
 const caseDependents = (env, envState, uc) => {
-  const tool = String(uc.original || uc.text).match(/using ([a-z0-9_]+)\.?$/i)?.[1];
-  const byTool = tool ? new Set(toolDependents(env, envState, tool)) : new Set();
-  return rowsOf(envState).filter((row) => (row.useCase && (stableCaseId(row.useCase) === uc.id || row.useCase === uc.text || row.useCase === uc.original))
-    || byTool.has(row.id)).map((r) => r.id);
+  const tool = String(uc.original || uc.text).match(
+    /using ([a-z0-9_]+)\.?$/i,
+  )?.[1];
+  const byTool = tool
+    ? new Set(toolDependents(env, envState, tool))
+    : new Set();
+  return rowsOf(envState)
+    .filter(
+      (row) =>
+        (row.useCase &&
+          (stableCaseId(row.useCase) === uc.id ||
+            row.useCase === uc.text ||
+            row.useCase === uc.original)) ||
+        byTool.has(row.id),
+    )
+    .map((r) => r.id);
 };
 
 const nextRuleId = (env, envState) => {
-  const ids = [...(env?.rules || []).map((_, i) => i + 1), ...(envState?.ruleChanges || []).map((c) => parseInt(String(c.id).replace(/\D/g, ""), 10) || 0)];
+  const ids = [
+    ...(env?.rules || []).map((_, i) => i + 1),
+    ...(envState?.ruleChanges || []).map(
+      (c) => parseInt(String(c.id).replace(/\D/g, ""), 10) || 0,
+    ),
+  ];
   return `R${Math.max(0, ...ids) + 1}`;
 };
 
-const sameList = (a = [], b = []) => a.length === b.length && a.every((x, i) => x === b[i]);
+const sameList = (a = [], b = []) =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
 
 /**
  * What a correction would do, before it lands: { ok, error?, title, subject,
@@ -530,73 +786,165 @@ export const contractEditPlan = (env, envState, edit) => {
 
   if (edit.target === "rule") {
     const rules = rulesOf(env, envState);
-    const rule = edit.op === "add" ? null : rules.find((r) => r.id.toLowerCase() === String(edit.id || "").toLowerCase());
-    if (edit.op !== "add" && !rule) return fail(`There's no rule ${edit.id || ""} on this contract. Rules are ${rules.map((r) => r.id).join(", ") || "none yet"}.`);
-    const text = String(edit.text || "").trim().replace(/^["“]|["”]$/g, "");
-    if (edit.op !== "remove" && !text) return fail("Say what the rule should read.");
-    if (edit.op === "edit" && text === rule.text) return fail(`${rule.id} already reads that way — nothing to change.`);
+    const rule =
+      edit.op === "add"
+        ? null
+        : rules.find(
+            (r) => r.id.toLowerCase() === String(edit.id || "").toLowerCase(),
+          );
+    if (edit.op !== "add" && !rule)
+      return fail(
+        `There's no rule ${edit.id || ""} on this contract. Rules are ${rules.map((r) => r.id).join(", ") || "none yet"}.`,
+      );
+    const text = String(edit.text || "")
+      .trim()
+      .replace(/^["“]|["”]$/g, "");
+    if (edit.op !== "remove" && !text)
+      return fail("Say what the rule should read.");
+    if (edit.op === "edit" && text === rule.text)
+      return fail(`${rule.id} already reads that way — nothing to change.`);
     kind = "rules";
     const id = rule?.id || nextRuleId(env, envState);
-    const probe = edit.op === "add"
-      ? { id, kind: "added", to: text }
-      : { id, kind: "changed", to: edit.op === "remove" ? rule.text : text };
+    const probe =
+      edit.op === "add"
+        ? { id, kind: "added", to: text }
+        : { id, kind: "changed", to: edit.op === "remove" ? rule.text : text };
     affected = ruleDependents(env, envState, probe);
-    subject = rule ? `that test or walk through rule ${id}` : "that the new rule touches";
-    title = edit.op === "add" ? `Add rule ${id}` : edit.op === "remove" ? `Remove rule ${id}` : `Change rule ${id}`;
-    detail = edit.op === "add" ? `Rule ${id} added: ${clip(text)}` : edit.op === "remove" ? `Rule ${id} removed: ${clip(rule.text)}` : `Rule ${id} changed: ${clip(text)}`;
+    subject = rule
+      ? `that test or walk through rule ${id}`
+      : "that the new rule touches";
+    title =
+      edit.op === "add"
+        ? `Add rule ${id}`
+        : edit.op === "remove"
+          ? `Remove rule ${id}`
+          : `Change rule ${id}`;
+    detail =
+      edit.op === "add"
+        ? `Rule ${id} added: ${clip(text)}`
+        : edit.op === "remove"
+          ? `Rule ${id} removed: ${clip(rule.text)}`
+          : `Rule ${id} changed: ${clip(text)}`;
     apply = (es, label, now) => {
-      const entries = edit.op === "remove"
-        ? [{ id, kind: "removed", envVersion: label, at: now, scenarios: affected },
-          /* Re-check the scenarios that tested it or walked through it. */
-          { id, kind: "changed", to: rule.text, envVersion: label, at: now, scenarios: affected, removal: true }]
-        : [{ ...probe, envVersion: label, at: now, scenarios: affected }];
+      const entries =
+        edit.op === "remove"
+          ? [
+              {
+                id,
+                kind: "removed",
+                envVersion: label,
+                at: now,
+                scenarios: affected,
+              },
+              /* Re-check the scenarios that tested it or walked through it. */
+              {
+                id,
+                kind: "changed",
+                to: rule.text,
+                envVersion: label,
+                at: now,
+                scenarios: affected,
+                removal: true,
+              },
+            ]
+          : [{ ...probe, envVersion: label, at: now, scenarios: affected }];
       return { ruleChanges: [...(es?.ruleChanges || []), ...entries] };
     };
   } else if (edit.target === "useCase") {
     const list = contractUseCasesOf(env, envState);
-    const uc = edit.op === "add" ? null : list.find((u) => u.id.toLowerCase() === String(edit.id || "").toLowerCase());
-    if (edit.op !== "add" && !uc) return fail(`There's no use case ${edit.id || ""} on this contract.`);
-    const text = String(edit.text || "").trim().replace(/^["“]|["”]$/g, "");
-    if (edit.op !== "remove" && !text) return fail("Say what the use case should read.");
+    const uc =
+      edit.op === "add"
+        ? null
+        : list.find(
+            (u) => u.id.toLowerCase() === String(edit.id || "").toLowerCase(),
+          );
+    if (edit.op !== "add" && !uc)
+      return fail(`There's no use case ${edit.id || ""} on this contract.`);
+    const text = String(edit.text || "")
+      .trim()
+      .replace(/^["“]|["”]$/g, "");
+    if (edit.op !== "remove" && !text)
+      return fail("Say what the use case should read.");
     kind = "contract";
     const id = uc?.id || stableCaseId(text);
-    if (edit.op === "add" && list.some((u) => u.id === id)) return fail(`That use case is already on the contract (${id}).`);
+    if (edit.op === "add" && list.some((u) => u.id === id))
+      return fail(`That use case is already on the contract (${id}).`);
     affected = uc ? caseDependents(env, envState, uc) : [];
     subject = uc ? `in use case ${id}` : "in the new use case";
-    title = edit.op === "add" ? "Add a use case" : edit.op === "remove" ? `Remove use case ${id}` : `Change use case ${id}`;
-    detail = edit.op === "add" ? `Use case ${id} added: ${clip(text)}` : edit.op === "remove" ? `Use case ${id} removed: ${clip(uc.text)}` : `Use case ${id} reworded: ${clip(text)}`;
+    title =
+      edit.op === "add"
+        ? "Add a use case"
+        : edit.op === "remove"
+          ? `Remove use case ${id}`
+          : `Change use case ${id}`;
+    detail =
+      edit.op === "add"
+        ? `Use case ${id} added: ${clip(text)}`
+        : edit.op === "remove"
+          ? `Use case ${id} removed: ${clip(uc.text)}`
+          : `Use case ${id} reworded: ${clip(text)}`;
     apply = (es, label, now) => ({
-      useCaseChanges: [...(es?.useCaseChanges || []), {
-        id, kind: { add: "added", edit: "changed", remove: "removed" }[edit.op], ...(edit.op !== "remove" && { to: text }), envVersion: label, at: now, scenarios: affected,
-      }],
+      useCaseChanges: [
+        ...(es?.useCaseChanges || []),
+        {
+          id,
+          kind: { add: "added", edit: "changed", remove: "removed" }[edit.op],
+          ...(edit.op !== "remove" && { to: text }),
+          envVersion: label,
+          at: now,
+          scenarios: affected,
+        },
+      ],
     });
   } else if (edit.target === "toolArg") {
     const tool = (world?.tools || []).find((t) => t.name === edit.tool);
-    if (!tool) return fail(`There's no tool ${edit.tool || ""} on this contract.`);
+    if (!tool)
+      return fail(`There's no tool ${edit.tool || ""} on this contract.`);
     const args = toolArgsOf(tool, envState);
-    const arg = args.find((a) => a.name === edit.arg) || (args.length === 1 ? args[0] : null);
-    if (!arg) return fail(`${tool.name} takes ${args.map((a) => a.name).join(", ") || "no arguments"} — say which one.`);
+    const arg =
+      args.find((a) => a.name === edit.arg) ||
+      (args.length === 1 ? args[0] : null);
+    if (!arg)
+      return fail(
+        `${tool.name} takes ${args.map((a) => a.name).join(", ") || "no arguments"} — say which one.`,
+      );
     let change = null;
     if (arg.type === "enum" || (arg.type === "bool" && edit.values)) {
       const cur = arg.values || [];
       const values = edit.values
         ? edit.values
-        : edit.add ? [...new Set([...cur, ...edit.add])]
-          : edit.remove ? cur.filter((v) => !edit.remove.includes(v)) : cur;
-      if (!values.length) return fail(`${tool.name}.${arg.name} has to allow at least one value.`);
-      if (edit.remove && edit.remove.every((v) => !cur.includes(v))) return fail(`${tool.name}.${arg.name} doesn't allow ${edit.remove.join(", ")} now — it allows ${cur.join(", ")}.`);
-      if (sameList(values, cur)) return fail(`${tool.name}.${arg.name} already allows exactly that.`);
+        : edit.add
+          ? [...new Set([...cur, ...edit.add])]
+          : edit.remove
+            ? cur.filter((v) => !edit.remove.includes(v))
+            : cur;
+      if (!values.length)
+        return fail(
+          `${tool.name}.${arg.name} has to allow at least one value.`,
+        );
+      if (edit.remove && edit.remove.every((v) => !cur.includes(v)))
+        return fail(
+          `${tool.name}.${arg.name} doesn't allow ${edit.remove.join(", ")} now — it allows ${cur.join(", ")}.`,
+        );
+      if (sameList(values, cur))
+        return fail(`${tool.name}.${arg.name} already allows exactly that.`);
       change = { type: arg.type === "bool" ? "bool" : "enum", values };
     } else if (edit.min != null || edit.max != null) {
       const min = edit.min != null ? edit.min : arg.min;
       const max = edit.max != null ? edit.max : arg.max;
-      if (typeof min === "number" && typeof max === "number" && min > max) return fail(`The lowest value (${min}) is above the highest (${max}).`);
-      if (min === arg.min && max === arg.max) return fail(`${tool.name}.${arg.name} already allows ${allowedLine(arg)}.`);
+      if (typeof min === "number" && typeof max === "number" && min > max)
+        return fail(`The lowest value (${min}) is above the highest (${max}).`);
+      if (min === arg.min && max === arg.max)
+        return fail(
+          `${tool.name}.${arg.name} already allows ${allowedLine(arg)}.`,
+        );
       change = { min, max };
     } else if (edit.values) {
       change = { type: "enum", values: edit.values };
     } else {
-      return fail(`Say what ${tool.name}.${arg.name} should allow — a list of values, or a range like 0 to 500.`);
+      return fail(
+        `Say what ${tool.name}.${arg.name} should allow — a list of values, or a range like 0 to 500.`,
+      );
     }
     kind = "contract";
     affected = toolDependents(env, envState, tool.name);
@@ -605,7 +953,15 @@ export const contractEditPlan = (env, envState, edit) => {
     title = `${tool.name}.${arg.name}: ${allowedLine(arg)} → ${allowedLine(after)}`;
     detail = `${tool.name}.${arg.name} allows ${allowedLine(after)} (was ${allowedLine(arg)})`;
     apply = (es, label, now) => ({
-      toolArgEdits: { ...(es?.toolArgEdits || {}), [argKey(tool.name, arg.name)]: { ...change, from: allowedLine(arg), envVersion: label, at: now } },
+      toolArgEdits: {
+        ...(es?.toolArgEdits || {}),
+        [argKey(tool.name, arg.name)]: {
+          ...change,
+          from: allowedLine(arg),
+          envVersion: label,
+          at: now,
+        },
+      },
     });
   } else {
     return fail("That isn't a part of the contract I can change.");
@@ -614,25 +970,38 @@ export const contractEditPlan = (env, envState, edit) => {
   const n = affected.length;
   /* One draft per environment: edits still unsaved ride along, said up front. */
   const waiting = pendingEnvChanges(envState).length;
-  const alsoSaves = waiting ? ` Your ${plural(waiting, "unsaved edit")} ${waiting === 1 ? "is" : "are"} saved with it.` : "";
-  const costLine = (n
-    ? `This creates environment ${next}; ${plural(n, "scenario")} ${subject} will be marked Re-check.`
-    : `This creates environment ${next}; there are no scenarios ${subject}, so none is marked Re-check.`) + alsoSaves;
+  const alsoSaves = waiting
+    ? ` Your ${plural(waiting, "unsaved edit")} ${waiting === 1 ? "is" : "are"} saved with it.`
+    : "";
+  const costLine =
+    (n
+      ? `This creates environment ${next}; ${plural(n, "scenario")} ${subject} will be marked Re-check.`
+      : `This creates environment ${next}; there are no scenarios ${subject}, so none is marked Re-check.`) +
+    alsoSaves;
 
   /* Against the newest state: mint the version (folding in any edits still
      pending, as saving them would), record the correction, and carry every
      scenario that doesn't depend on it over to the new version. */
   const patch = (latest = envState) => {
     const now = new Date().toISOString();
-    const list = latest?.envVersions?.length ? latest.envVersions : [...environmentVersions(env, latest)].reverse();
+    const list = latest?.envVersions?.length
+      ? latest.envVersions
+      : [...environmentVersions(env, latest)].reverse();
     /* Edits still pending are folded in by nextEnvVersion. */
-    const minted = nextEnvVersion(env, latest, { changed: [kind], note: detail, now });
+    const minted = nextEnvVersion(env, latest, {
+      changed: [kind],
+      note: detail,
+      now,
+    });
     const hit = new Set(affected);
     const scenarios = (latest?.scenarios || []).map((row) => {
       if (hit.has(row.id) || row.retired || row.archived) return row;
       if (proofStatus(row, env, latest).stale) return row;
       const on = row.provedOn || [provedAgainst(row, env, latest)];
-      return { ...row, provedOn: [...new Set([...on.filter(Boolean), minted.label])] };
+      return {
+        ...row,
+        provedOn: [...new Set([...on.filter(Boolean), minted.label])],
+      };
     });
     return {
       envVersions: [...list, minted],
@@ -643,7 +1012,17 @@ export const contractEditPlan = (env, envState, edit) => {
     };
   };
 
-  return { ok: true, title, subject, next, affected, costLine, detail, kind, patch };
+  return {
+    ok: true,
+    title,
+    subject,
+    next,
+    affected,
+    costLine,
+    detail,
+    kind,
+    patch,
+  };
 };
 
 /* ── rolling back ─────────────────────────────────────────────────────────── */
@@ -662,49 +1041,82 @@ export const contractEditPlan = (env, envState, edit) => {
 
   { ok, target, next, changes: [lines], discards, recheck, patch(latest) }
 */
-const sameJson = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+const sameJson = (a, b) =>
+  JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
-export const rollbackPlan = (env, envState, targetLabel, { displayName } = {}) => {
+export const rollbackPlan = (
+  env,
+  envState,
+  targetLabel,
+  { displayName } = {},
+) => {
   const list = environmentVersions(env, envState);
   const target = list.find((v) => v.label === targetLabel);
   const current = list.find((v) => v.current) || list[0];
-  if (!target || !current || target.label === current.label) return { ok: false, error: "That's the version in use." };
+  if (!target || !current || target.label === current.label)
+    return { ok: false, error: "That's the version in use." };
   const then = { ...envState, activeEnvVersion: target.label };
-  const name = (v) => (displayName && v === target ? displayName : `environment ${envLabelOf(env, envState, v.label)}`);
+  const name = (v) =>
+    displayName && v === target
+      ? displayName
+      : `environment ${envLabelOf(env, envState, v.label)}`;
 
   /* What actually moves, said before it does. */
-  const toolNames = (v) => new Set((v.tools || env?.tools || []).map((t) => t.name));
+  const toolNames = (v) =>
+    new Set((v.tools || env?.tools || []).map((t) => t.name));
   const toolsNow = toolNames(current);
   const toolsThen = toolNames(target);
   const gone = [...toolsNow].filter((t) => !toolsThen.has(t));
   const back = [...toolsThen].filter((t) => !toolsNow.has(t));
   const rulesNow = rulesOf(env, envState);
   const rulesThen = rulesOf(env, then);
-  const ruleMoves = [...new Set([...rulesNow, ...rulesThen].map((r) => r.id))]
-    .filter((id) => rulesNow.find((r) => r.id === id)?.text !== rulesThen.find((r) => r.id === id)?.text);
-  const casesMoved = !sameJson(contractUseCasesOf(env, envState).map((u) => u.text), contractUseCasesOf(env, then).map((u) => u.text));
+  const ruleMoves = [
+    ...new Set([...rulesNow, ...rulesThen].map((r) => r.id)),
+  ].filter(
+    (id) =>
+      rulesNow.find((r) => r.id === id)?.text !==
+      rulesThen.find((r) => r.id === id)?.text,
+  );
+  const casesMoved = !sameJson(
+    contractUseCasesOf(env, envState).map((u) => u.text),
+    contractUseCasesOf(env, then).map((u) => u.text),
+  );
   /* Versions made before settings were kept with them can't restore them —
      said, never guessed. */
   const config = target.config || null;
-  const settingsMoved = config ? WORLD_CONFIG_KEYS.filter((k) => !sameJson(config[k], envState?.[k])) : [];
+  const settingsMoved = config
+    ? WORLD_CONFIG_KEYS.filter((k) => !sameJson(config[k], envState?.[k]))
+    : [];
   const discards = config ? pendingEnvChanges(envState).length : 0;
 
   const changes = [
     gone.length && `The world stops answering ${gone.join(", ")}`,
     back.length && `The world answers ${back.join(", ")} again`,
-    ruleMoves.length && `${plural(ruleMoves.length, "rule")} ${ruleMoves.length === 1 ? "reads" : "read"} as in ${name(target)} (${ruleMoves.join(", ")})`,
+    ruleMoves.length &&
+      `${plural(ruleMoves.length, "rule")} ${ruleMoves.length === 1 ? "reads" : "read"} as in ${name(target)} (${ruleMoves.join(", ")})`,
     casesMoved && `Use cases read as in ${name(target)}`,
-    settingsMoved.length && `Tool behaviour, actors and seed as in ${name(target)}`,
-    !config && "Tool behaviour, actors and seed stay as they are — that version didn't keep them",
+    settingsMoved.length &&
+      `Tool behaviour, actors and seed as in ${name(target)}`,
+    !config &&
+      "Tool behaviour, actors and seed stay as they are — that version didn't keep them",
   ].filter(Boolean);
 
   /* Scenarios whose proof holds in the older line keep it; the rest are
      re-checked, and the ones needing a tool the world drops sit out. */
   const thenLine = envLineage(env, envState, target.label);
-  const holds = (row) => (row.provedOn || [provedAgainst(row, env, envState)]).some((l) => l && thenLine.has(l));
-  const live = (envState?.scenarios || []).filter((r) => !r.retired && !r.archived);
+  const holds = (row) =>
+    (row.provedOn || [provedAgainst(row, env, envState)]).some(
+      (l) => l && thenLine.has(l),
+    );
+  const live = (envState?.scenarios || []).filter(
+    (r) => !r.retired && !r.archived,
+  );
   const recheck = live.filter((r) => !holds(r)).length;
-  const sitOut = live.filter((r) => requiredToolsOf(r, knownToolsFor(env, envState)).some((t) => gone.includes(t))).length;
+  const sitOut = live.filter((r) =>
+    requiredToolsOf(r, knownToolsFor(env, envState)).some((t) =>
+      gone.includes(t),
+    ),
+  ).length;
 
   const patch = (latest = envState) => {
     const base = config ? { ...latest, unsavedEnvChanges: [] } : latest;
@@ -721,22 +1133,38 @@ export const rollbackPlan = (env, envState, targetLabel, { displayName } = {}) =
       }),
       ...(config && { config }),
     };
-    const stored = latest?.envVersions?.length ? latest.envVersions : [...environmentVersions(env, latest)].reverse();
+    const stored = latest?.envVersions?.length
+      ? latest.envVersions
+      : [...environmentVersions(env, latest)].reverse();
     const scenarios = (latest?.scenarios || []).map((row) => {
       if (row.retired || row.archived || !holds(row)) return row;
       const on = row.provedOn || [provedAgainst(row, env, latest)];
-      return { ...row, provedOn: [...new Set([...on.filter(Boolean), minted.label])] };
+      return {
+        ...row,
+        provedOn: [...new Set([...on.filter(Boolean), minted.label])],
+      };
     });
     return {
       envVersions: [...stored, minted],
       activeEnvVersion: minted.label,
       unsavedEnvChanges: [],
       scenarios,
-      ...(config && Object.fromEntries(WORLD_CONFIG_KEYS.map((k) => [k, config[k]]))),
+      ...(config &&
+        Object.fromEntries(WORLD_CONFIG_KEYS.map((k) => [k, config[k]]))),
     };
   };
 
-  return { ok: true, target, targetName: name(target), next: nextSnapshotLabel(env, envState), changes, discards, recheck, sitOut, patch };
+  return {
+    ok: true,
+    target,
+    targetName: name(target),
+    next: nextSnapshotLabel(env, envState),
+    changes,
+    discards,
+    recheck,
+    sitOut,
+    patch,
+  };
 };
 
 /* ── rolling back a whole environment version ─────────────────────────────── */
@@ -762,17 +1190,24 @@ export const rollbackPlan = (env, envState, targetLabel, { displayName } = {}) =
 */
 const msOf = (iso) => Date.parse(iso || "") || 0;
 const rowName = (r) => r.title || r.name || "scenario";
-const evalName = (e) => (typeof e === "string" ? resolveEval(e)?.name || e : e?.name || resolveEval(e)?.name || e?.id);
+const evalName = (e) =>
+  typeof e === "string"
+    ? resolveEval(e)?.name || e
+    : e?.name || resolveEval(e)?.name || e?.id;
 const named = (rows, max = 3) => {
   const names = rows.slice(0, max).map(rowName);
-  return rows.length > max ? `${names.join(", ")} and ${rows.length - max} more` : names.join(", ");
+  return rows.length > max
+    ? `${names.join(", ")} and ${rows.length - max} more`
+    : names.join(", ");
 };
 
 /* The applied evaluations at a moment: the list the first later change
    replaced, or the list the last earlier change left. `undefined` = nothing
    changed since; `null` = changed since, but the list then wasn't kept. */
 const evalsAt = (envState, until) => {
-  const log = [...(envState?.evalChanges || [])].sort((a, b) => msOf(a.at) - msOf(b.at));
+  const log = [...(envState?.evalChanges || [])].sort(
+    (a, b) => msOf(a.at) - msOf(b.at),
+  );
   const later = log.filter((c) => msOf(c.at) > until);
   if (!later.length) return undefined;
   if (later[0].before) return later[0].before;
@@ -784,7 +1219,8 @@ export const snapshotRollbackPlan = (env, envState, snapLabel) => {
   const list = envSnapshotsOf(env, envState);
   const snap = list.find((s) => s.label === snapLabel);
   const current = currentEnvSnapshot(env, envState);
-  if (!snap || !current || snap.label === current.label) return { ok: false, error: "That's the version in use." };
+  if (!snap || !current || snap.label === current.label)
+    return { ok: false, error: "That's the version in use." };
   const name = `environment ${snap.label}`;
   /* Everything made after this snapshot's own changes is newer than it —
      half the gap the snapshot folding leaves between two actions. */
@@ -792,53 +1228,97 @@ export const snapshotRollbackPlan = (env, envState, snapLabel) => {
 
   /* World and contract — only when it's an older world. */
   const worldNow = currentEnvVersion(env, envState)?.label;
-  const world = snap.parts.env && snap.parts.env !== worldNow ? rollbackPlan(env, envState, snap.parts.env, { displayName: name }) : null;
+  const world =
+    snap.parts.env && snap.parts.env !== worldNow
+      ? rollbackPlan(env, envState, snap.parts.env, { displayName: name })
+      : null;
   const worldOk = world?.ok ? world : null;
 
   /* Scenario set membership and wording. Proposals aren't in the set. */
   const rows = (envState?.scenarios || []).filter((r) => !r.proposed);
   const leave = rows.filter((r) => !archivedOf(r) && msOf(r.addedAt) > until);
-  const comeBack = rows.filter((r) => archivedOf(r) && msOf(archivedOf(r).at) > until && !(msOf(r.addedAt) > until));
+  const comeBack = rows.filter(
+    (r) =>
+      archivedOf(r) &&
+      msOf(archivedOf(r).at) > until &&
+      !(msOf(r.addedAt) > until),
+  );
   const leaving = new Set(leave.map((r) => r.id));
-  const editedSince = rows.filter((r) => !leaving.has(r.id) && (r.versionLog || []).some((e) => msOf(e.at) > until));
-  const firstLaterEdit = (r) => (r.versionLog || []).find((e) => msOf(e.at) > until);
+  const editedSince = rows.filter(
+    (r) =>
+      !leaving.has(r.id) &&
+      (r.versionLog || []).some((e) => msOf(e.at) > until),
+  );
+  const firstLaterEdit = (r) =>
+    (r.versionLog || []).find((e) => msOf(e.at) > until);
   const reword = editedSince.filter((r) => firstLaterEdit(r)?.snapshot);
   const keepWording = editedSince.filter((r) => !firstLaterEdit(r)?.snapshot);
 
   /* Sub-goals published since go back to their criteria then. */
   const edits = envState?.subGoalEdits || [];
-  const goalIds = [...new Set(edits.filter((e) => !e.shadow && msOf(e.at) > until).map((e) => e.id))];
-  const goalName = (id) => [...edits].reverse().find((e) => e.id === id)?.name || id.replace(/^SG-(tool-|rule-)?/, "");
+  const goalIds = [
+    ...new Set(
+      edits.filter((e) => !e.shadow && msOf(e.at) > until).map((e) => e.id),
+    ),
+  ];
+  const goalName = (id) =>
+    [...edits].reverse().find((e) => e.id === id)?.name ||
+    id.replace(/^SG-(tool-|rule-)?/, "");
 
   /* Evaluations and caller. */
   const evalsThen = evalsAt(envState, until);
-  const evalsMove = Array.isArray(evalsThen) && !sameJson(evalsThen, envState?.evals || []);
+  const evalsMove =
+    Array.isArray(evalsThen) && !sameJson(evalsThen, envState?.evals || []);
   const callerThen = snap.parts.caller;
   const callerNow = simulatorOf(env, envState).model;
   const callerMoves = !!callerThen && callerThen !== callerNow;
 
   const changes = [
     ...(worldOk ? worldOk.changes : []),
-    !worldOk && (world ? null : "World and contract stay — this version uses the same world"),
-    leave.length && `${plural(leave.length, "scenario")} added since ${leave.length === 1 ? "leaves" : "leave"} the set (archived, not deleted): ${named(leave)}`,
-    comeBack.length && `${plural(comeBack.length, "scenario")} archived since ${comeBack.length === 1 ? "comes" : "come"} back: ${named(comeBack)}`,
-    reword.length && `${plural(reword.length, "scenario")} edited since ${reword.length === 1 ? "goes" : "go"} back to ${name}'s wording, as a new scenario version: ${named(reword)}`,
-    goalIds.length && `${plural(goalIds.length, "sub-goal")} ${goalIds.length === 1 ? "goes" : "go"} back to ${name}'s criteria: ${goalIds.map(goalName).slice(0, 3).join(", ")}`,
-    evalsMove && `Evaluations go back to ${evalsThen.length ? evalsThen.map(evalName).join(", ") : "none"}`,
+    !worldOk &&
+      (world
+        ? null
+        : "World and contract stay — this version uses the same world"),
+    leave.length &&
+      `${plural(leave.length, "scenario")} added since ${leave.length === 1 ? "leaves" : "leave"} the set (archived, not deleted): ${named(leave)}`,
+    comeBack.length &&
+      `${plural(comeBack.length, "scenario")} archived since ${comeBack.length === 1 ? "comes" : "come"} back: ${named(comeBack)}`,
+    reword.length &&
+      `${plural(reword.length, "scenario")} edited since ${reword.length === 1 ? "goes" : "go"} back to ${name}'s wording, as a new scenario version: ${named(reword)}`,
+    goalIds.length &&
+      `${plural(goalIds.length, "sub-goal")} ${goalIds.length === 1 ? "goes" : "go"} back to ${name}'s criteria: ${goalIds.map(goalName).slice(0, 3).join(", ")}`,
+    evalsMove &&
+      `Evaluations go back to ${evalsThen.length ? evalsThen.map(evalName).join(", ") : "none"}`,
     callerMoves && `Simulated caller → ${callerThen}`,
   ].filter(Boolean);
   const keeps = [
-    keepWording.length && `${plural(keepWording.length, "edited scenario")} ${keepWording.length === 1 ? "keeps its" : "keep their"} current wording — ${name} didn't keep the earlier one`,
-    evalsThen === null && `Evaluations stay as they are — ${name} didn't keep its list`,
+    keepWording.length &&
+      `${plural(keepWording.length, "edited scenario")} ${keepWording.length === 1 ? "keeps its" : "keep their"} current wording — ${name} didn't keep the earlier one`,
+    evalsThen === null &&
+      `Evaluations stay as they are — ${name} didn't keep its list`,
   ].filter(Boolean);
-  const moves = worldOk || leave.length || comeBack.length || reword.length || goalIds.length || evalsMove || callerMoves;
-  if (!moves) return { ok: false, error: `Nothing differs from ${name} that can be restored.` };
+  const moves =
+    worldOk ||
+    leave.length ||
+    comeBack.length ||
+    reword.length ||
+    goalIds.length ||
+    evalsMove ||
+    callerMoves;
+  if (!moves)
+    return {
+      ok: false,
+      error: `Nothing differs from ${name} that can be restored.`,
+    };
 
   const patch = (latest = envState) => {
     const now = new Date().toISOString();
     let out = worldOk ? worldOk.patch(latest) : {};
     let working = { ...latest, ...out };
-    const merge = (p) => { out = { ...out, ...p }; working = { ...working, ...p }; };
+    const merge = (p) => {
+      out = { ...out, ...p };
+      working = { ...working, ...p };
+    };
 
     /* Scenarios: wording first, then membership. */
     const leaveIds = new Set(leave.map((r) => r.id));
@@ -849,25 +1329,40 @@ export const snapshotRollbackPlan = (env, envState, snapLabel) => {
       let row = r;
       if (rewordIds.has(r.id)) {
         const later = (r.versionLog || []).filter((e) => msOf(e.at) > until);
-        const level = later.reduce((m, e) => largerBump(m, e.level), null) || "major";
+        const level =
+          later.reduce((m, e) => largerBump(m, e.level), null) || "major";
         bump = largerBump(bump, level);
         // eslint-disable-next-line no-unused-vars
         const { v: _v, versionLog: _log, ...then } = firstLaterEdit(r).snapshot;
-        row = bumpScenario({ ...r, ...then, versionLog: r.versionLog, archived: r.archived }, level, `Rolled back to ${name}`, r);
+        row = bumpScenario(
+          { ...r, ...then, versionLog: r.versionLog, archived: r.archived },
+          level,
+          `Rolled back to ${name}`,
+          r,
+        );
       }
-      if (leaveIds.has(r.id)) row = archiveScenario(row, `Rolled back to ${name}`);
+      if (leaveIds.has(r.id))
+        row = archiveScenario(row, `Rolled back to ${name}`);
       if (backIds.has(r.id)) row = restoreScenario(row);
       return row;
     });
     if (leave.length || comeBack.length || reword.length) {
-      merge(suiteLogPatch(working, { scenarios }, {
-        summary: `Rolled back to ${name}'s scenarios — ${[
-          leave.length && `${leave.length} archived`,
-          comeBack.length && `${comeBack.length} restored`,
-          reword.length && `${reword.length} reworded`,
-        ].filter(Boolean).join(", ")}`,
-        largestBump: bump,
-      }));
+      merge(
+        suiteLogPatch(
+          working,
+          { scenarios },
+          {
+            summary: `Rolled back to ${name}'s scenarios — ${[
+              leave.length && `${leave.length} archived`,
+              comeBack.length && `${comeBack.length} restored`,
+              reword.length && `${reword.length} reworded`,
+            ]
+              .filter(Boolean)
+              .join(", ")}`,
+            largestBump: bump,
+          },
+        ),
+      );
     }
 
     /* Sub-goals: a revert each, never an edit in place. */
@@ -875,11 +1370,18 @@ export const snapshotRollbackPlan = (env, envState, snapLabel) => {
       const all = working.subGoalEdits || [];
       const first = Number(nextCatalogVersion(working).slice(1));
       const reverts = goalIds.map((id, i) => {
-        const then = all.filter((e) => e.id === id && !e.shadow && msOf(e.at) <= until).pop();
+        const then = all
+          .filter((e) => e.id === id && !e.shadow && msOf(e.at) <= until)
+          .pop();
         return {
-          id, name: then?.name || null, criterion: then?.criterion, kind: "revert",
-          n: subGoalVersionOf(working, id) + 1, version: `c${first + i}`,
-          note: `Rolled back to ${name}`, at: now,
+          id,
+          name: then?.name || null,
+          criterion: then?.criterion,
+          kind: "revert",
+          n: subGoalVersionOf(working, id) + 1,
+          version: `c${first + i}`,
+          note: `Rolled back to ${name}`,
+          at: now,
         };
       });
       merge({ subGoalEdits: [...all, ...reverts] });
@@ -888,7 +1390,15 @@ export const snapshotRollbackPlan = (env, envState, snapLabel) => {
     if (evalsMove) {
       merge({
         evals: evalsThen,
-        evalChanges: [...(working.evalChanges || []), { detail: `Rolled back to ${name}'s evaluations`, at: now, before: working.evals || [], evals: evalsThen }],
+        evalChanges: [
+          ...(working.evalChanges || []),
+          {
+            detail: `Rolled back to ${name}'s evaluations`,
+            at: now,
+            before: working.evals || [],
+            evals: evalsThen,
+          },
+        ],
       });
     }
 
@@ -907,4 +1417,25 @@ export const snapshotRollbackPlan = (env, envState, snapLabel) => {
     discards: worldOk?.discards || 0,
     patch,
   };
+};
+
+/*
+  A field's unit or format (world.md "Field representation"): name it, so
+  refund_amount=1099 reads as 10.99 USD in cents, not 1,099 dollars. A unit
+  declared on the argument wins; otherwise it's read from the name.
+*/
+export const unitOf = (arg) => {
+  if (arg?.unit) return arg.unit;
+  const n = String(arg?.name || "").toLowerCase();
+  const numeric = ["int", "float", "number"].includes(arg?.type);
+  if (!numeric) return /(_at|_date|date)$/.test(n) ? "ISO 8601" : null;
+  if (/cents?$/.test(n)) return "cents";
+  if (/(amount|price|total|fee|refund|credit|balance|cost)/.test(n))
+    return arg.type === "int" ? "cents, USD" : "USD";
+  if (/(_ms|millis)/.test(n)) return "milliseconds";
+  if (/(_s|_sec|seconds|timeout)$/.test(n)) return "seconds";
+  if (/minutes?$|_min$/.test(n)) return "minutes";
+  if (/days?$/.test(n)) return "days";
+  if (/(pct|percent|rate)$/.test(n)) return "percent";
+  return null;
 };

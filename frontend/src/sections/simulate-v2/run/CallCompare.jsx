@@ -923,7 +923,11 @@ function RunColumn({
           <Box
             sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider" }}
           >
-            <CustomTabs value={tab} onChange={(_, v) => onTab(v)}>
+            <CustomTabs
+              sx={{ boxShadow: "none" }}
+              value={tab}
+              onChange={(_, v) => onTab(v)}
+            >
               <Tab
                 value="transcript"
                 icon={<Iconify icon="solar:document-text-linear" width={14} />}

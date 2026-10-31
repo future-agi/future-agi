@@ -17,6 +17,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { copyToClipboard as copyTextToClipboard } from "src/utils/utils";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const defaultValues = {
   Pcode: "",
@@ -112,7 +113,7 @@ const AddRowData = ({ dataset }) => {
             alignItems="center"
             minHeight="400px"
           >
-            <CircularProgress size={40} />
+            <ContentSkeleton variant="panel" />
           </Box>
         </Box>
       </Box>

@@ -240,7 +240,7 @@ const PersonaListView = ({
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontWeight: 500, fontSize: "13px" }}
+              sx={{ fontWeight: 500, fontSize: "12px" }}
             >
               {row.original?.name}
             </Typography>
@@ -272,7 +272,7 @@ const PersonaListView = ({
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontSize: "13px", color: "text.secondary" }}
+              sx={{ fontSize: "12px", color: "text.secondary" }}
             >
               {getValue() || "—"}
             </Typography>
@@ -305,7 +305,7 @@ const PersonaListView = ({
                 }
                 width={12}
               />
-              <Typography variant="body2" sx={{ fontSize: "13px" }}>
+              <Typography variant="body2" sx={{ fontSize: "12px" }}>
                 {isVoice ? "Voice" : "Chat"}
               </Typography>
             </Box>
@@ -336,7 +336,7 @@ const PersonaListView = ({
               <Typography
                 variant="body2"
                 noWrap
-                sx={{ fontSize: "13px", color: "text.primary" }}
+                sx={{ fontSize: "12px", color: "text.primary" }}
               >
                 {displayed.join(" · ")}
               </Typography>
@@ -344,7 +344,7 @@ const PersonaListView = ({
                 <Typography
                   variant="body2"
                   sx={{
-                    fontSize: "13px",
+                    fontSize: "12px",
                     color: "text.tertiary",
                     flexShrink: 0,
                     fontVariantNumeric: "tabular-nums",
@@ -389,7 +389,7 @@ const PersonaListView = ({
                     getInitials(name)
                   )}
                 </Avatar>
-                <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+                <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
                   {name}
                 </Typography>
               </Box>
@@ -408,7 +408,7 @@ const PersonaListView = ({
           if (!val) return null;
           try {
             return (
-              <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
                 {formatDistanceToNow(new Date(val), { addSuffix: true })}
               </Typography>
             );
@@ -432,7 +432,7 @@ const PersonaListView = ({
                     <Typography
                       variant="body2"
                       noWrap
-                      sx={{ fontSize: "13px", color: "text.disabled" }}
+                      sx={{ fontSize: "12px", color: "text.disabled" }}
                     >
                       Not used yet
                     </Typography>
@@ -443,7 +443,7 @@ const PersonaListView = ({
                     <Typography
                       variant="body2"
                       noWrap
-                      sx={{ fontSize: "13px" }}
+                      sx={{ fontSize: "12px" }}
                     >
                       {`${u.scenarios} scenario${u.scenarios === 1 ? "" : "s"} · ${u.envs.length} env${u.envs.length === 1 ? "" : "s"}`}
                     </Typography>

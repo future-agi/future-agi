@@ -7,6 +7,7 @@
  * a mount-time effect refetches the card list and shows a toast.
  */
 
+import EmptyState from "src/components/empty-state";
 import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -150,15 +151,23 @@ export default function PaymentMethods() {
       </Stack>
 
       {!methods || methods.length === 0 ? (
-        <Section variant="panel" sx={{ p: 3, textAlign: "center" }}>
-          <Iconify
+        <Section variant="panel" sx={{ p: 0 }}>
+          <EmptyState
             icon="solar:card-linear"
-            width={36}
-            sx={{ color: "text.disabled", mb: 1 }}
+            title="No payment methods yet"
+            description="Add a card to enable paid features."
+            action={
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() => setAddDialogOpen(true)}
+              >
+                Add card
+              </Button>
+            }
+            sx={{ pt: 6, pb: 6 }}
           />
-          <Typography variant="body2" color="text.secondary">
-            No payment methods on file. Add a card to enable paid features.
-          </Typography>
         </Section>
       ) : (
         <Stack spacing={0}>

@@ -8,6 +8,9 @@ import _ from "lodash";
 // Call statuses the product shows, with the role each one takes. Anything
 // the run-status map already knows resolves from the status itself.
 const CALL_STATUS_ROLE = {
+  // A call that ended normally reads as done-and-fine (green), as in the
+  // live product — unlike a run, where "completed" says nothing about pass.
+  completed: "success",
   dropped: "warning",
   "not-connected": "danger",
 };

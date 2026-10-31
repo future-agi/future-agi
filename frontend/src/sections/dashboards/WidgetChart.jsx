@@ -1,7 +1,7 @@
 import { statusColors } from "src/utils/runStatus";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Alert, Box, CircularProgress, Stack, Typography } from "@mui/material";
+import { Alert, Box, Stack, Typography } from "@mui/material";
 import ChartLegend from "./ChartLegend";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
@@ -37,6 +37,7 @@ import {
   getQueryCompletedAt,
 } from "src/utils/queryReadState";
 import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const CHART_HEIGHT_FALLBACK = 280;
 const COLORS = [
@@ -646,7 +647,7 @@ export default function WidgetChart({
           minHeight: 0,
         }}
       >
-        <CircularProgress size={24} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }

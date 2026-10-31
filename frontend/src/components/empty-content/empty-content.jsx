@@ -10,7 +10,7 @@ import Iconify from "src/components/iconify";
 
 // ----------------------------------------------------------------------
 // Design System empty state: a 40px rounded square holding a 20px icon, a
-// 14/600 title, a 13px tertiary body (max 340px) and at most one action.
+// 13/600 title, a 12px tertiary body (max 340px) and at most one action.
 // ErrorState (src/components/error-state) reuses this layout.
 
 export default function EmptyContent({
@@ -92,8 +92,8 @@ export default function EmptyContent({
         <Typography
           component="span"
           sx={{
-            fontSize: 13,
-            lineHeight: "20px",
+            fontSize: 12,
+            lineHeight: "18px",
             fontWeight: 400,
             color: "text.tertiary",
             maxWidth: 340,
@@ -113,7 +113,7 @@ EmptyContent.propTypes = {
   action: PropTypes.node,
   description: PropTypes.node,
   filled: PropTypes.bool,
-  /** Iconify name, or a node sized 20px (e.g. <SvgColor />). */
+  /** Iconify name, or a node sized 20px (e.g. <SvgColor width={24} />). */
   icon: PropTypes.oneOfType([PropTypes.string, PropTypes.node]),
   img: PropTypes.string,
   imgUrl: PropTypes.string,

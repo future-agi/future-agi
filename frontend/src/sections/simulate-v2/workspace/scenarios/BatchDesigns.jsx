@@ -52,6 +52,8 @@ const HOW = {
   "dataset-import": "from a dataset",
   rebuild: "by a rebuild",
   production: "from production traces",
+  transcript: "from an uploaded transcript",
+  simulation: "from a failed simulation",
 };
 
 const who = (b) => b.meta.addedBy?.name || "System";

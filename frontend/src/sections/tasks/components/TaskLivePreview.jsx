@@ -75,6 +75,7 @@ import {
   parseVoiceCallDetailResponse,
   parseVoiceCallListResponse,
 } from "src/api/project/observe-contracts";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // One form row → one wire entry. No cross-row merging: it would collapse
 // "not_contains A AND not_contains B" into "in [A, B]" (inverting intent) and
@@ -998,7 +999,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
               height: 160,
             }}
           >
-            <CircularProgress size={20} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : retryableListContinuationError ? (
           <Box
@@ -1138,7 +1139,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                   size="small"
                   disabled={listFetching || currentRowIndex === 0}
                   onClick={() => setCurrentRowIndex((i) => Math.max(0, i - 1))}
-                  sx={{ width: 24, }}
+                  sx={{ width: 24 }}
                 >
                   <Iconify icon="solar:alt-arrow-left-linear" width={16} />
                 </IconButton>
@@ -1151,7 +1152,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                       (!isCursorPreview || !pendingListContinuation))
                   }
                   onClick={handleNextRow}
-                  sx={{ width: 24, }}
+                  sx={{ width: 24 }}
                 >
                   <Iconify icon="solar:alt-arrow-right-linear" width={16} />
                 </IconButton>

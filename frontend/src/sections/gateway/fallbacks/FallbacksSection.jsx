@@ -28,6 +28,7 @@ import { GATEWAY_ICONS } from "../constants/gatewayIcons";
 import { useFallbackConfig } from "./hooks/useFallbackConfig";
 import { useProviderHealth } from "../providers/hooks/useGatewayConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
+import EmptyState from "src/components/empty-state";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -101,7 +102,7 @@ const ConfigSection = ({
         </Stack>
       </Box>
       <Collapse in={open}>
-        <Divider />
+        <Divider sx={{ my: 2 }} />
         <Box onClick={(e) => e.stopPropagation()}>{children}</Box>
       </Collapse>
     </Section>
@@ -535,34 +536,22 @@ const FallbacksSection = () => {
           actions={[]}
         />
         <Section variant="panel" sx={{ mt: 3 }}>
-          <Stack alignItems="center" spacing={2} py={4}>
-            <Iconify
-              icon="solar:shield-warning-bold-duotone"
-              width={56}
-              sx={{ color: "text.disabled" }}
-            />
-            <Typography variant="h6" color="text.secondary">
-              No models configured yet
-            </Typography>
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              textAlign="center"
-              maxWidth={460}
-            >
-              Fallback chains route requests to backup models when the primary
-              model is unavailable. To get started, add a provider with at least
-              one model in the <strong>Providers</strong> tab.
-            </Typography>
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<Iconify icon="solar:add-circle-bold" />}
-              onClick={() => navigate("/dashboard/gateway/providers")}
-            >
-              Configure Providers
-            </Button>
-          </Stack>
+          <EmptyState
+            icon="solar:shield-warning-linear"
+            title="No models configured yet"
+            description="Fallback chains send requests to a backup model when the primary one is unavailable. Add a provider with at least one model first."
+            action={
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() => navigate("/dashboard/gateway/providers")}
+              >
+                Add provider
+              </Button>
+            }
+            sx={{ pt: 6, pb: 6 }}
+          />
         </Section>
       </Box>
     );
@@ -653,17 +642,12 @@ const FallbacksSection = () => {
 
             {/* Chains */}
             {fallbackChains.length === 0 ? (
-              <Box py={3} textAlign="center">
-                <Iconify
-                  icon="solar:link-broken-linear"
-                  width={40}
-                  sx={{ color: "text.disabled", mb: 1 }}
-                />
-                <Typography variant="body2" color="text.secondary" mb={2}>
-                  No fallback chains configured. When a model&apos;s providers
-                  all fail, the request will fail.
-                </Typography>
-              </Box>
+              <EmptyState
+                icon="solar:link-broken-linear"
+                title="No fallback chains yet"
+                description="When all of a model's providers fail, the request will fail."
+                sx={{ py: 3 }}
+              />
             ) : (
               fallbackChains.map(([primary, fbs]) => (
                 <FallbackChainEditor

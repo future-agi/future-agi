@@ -36,6 +36,7 @@ import { fToNow } from "src/utils/format-time";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import "src/styles/clean-data-table.css";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const CHIP_ROLE = {
   success: "success",
@@ -764,7 +765,7 @@ export default function QueueItemsTable({
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             context={gridContext}
-            rowHeight={44}
+            rowHeight={ROW_HEIGHT.default}
             headerHeight={32}
             pagination={false}
             animateRows={false}
@@ -796,7 +797,7 @@ export default function QueueItemsTable({
             alignItems: "center",
             py: 1.5,
             px: 2,
-            fontSize: 13,
+            fontSize: 12,
             color: "text.secondary",
             flexShrink: 0,
           }}

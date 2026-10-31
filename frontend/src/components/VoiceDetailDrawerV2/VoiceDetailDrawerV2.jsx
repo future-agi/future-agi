@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Button, CircularProgress, Stack } from "@mui/material";
+import { Box, Button, Stack } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { useParams } from "react-router";
@@ -23,6 +23,7 @@ import {
 import VoiceDrawerHeader from "./VoiceDrawerHeader";
 import VoiceLeftPanel from "./VoiceLeftPanel";
 import VoiceRightPanel from "./VoiceRightPanel";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const VOICE_IMAGINE_PROMPTS = [
   { label: "Summarize this call", icon: "solar:notes-linear" },
@@ -400,7 +401,7 @@ const VoiceDetailDrawerV2 = ({
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={28} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : isImagineActive ? (
           <ImagineTab

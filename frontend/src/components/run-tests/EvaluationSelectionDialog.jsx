@@ -1,12 +1,6 @@
 import React, { useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
-import {
-  Box,
-  Drawer,
-  useTheme,
-  CircularProgress,
-  Collapse,
-} from "@mui/material";
+import { Box, Drawer, useTheme, Collapse } from "@mui/material";
 import EvaluationsSelectionGrid from "../../sections/common/EvaluationDrawer/EvaluationsSelectionGrid";
 import EvaluationMappingForm from "../../sections/common/EvaluationDrawer/EvaluationMappingForm";
 import EvaluationProvider from "../../sections/common/EvaluationDrawer/context/EvaluationProvider";
@@ -18,6 +12,7 @@ import { useScenarioColumnConfig } from "src/sections/test/common";
 import { voiceEvalColumns, chatEvalColumns } from "./common";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const EvaluationSelectionContent = ({
   onClose,
@@ -153,7 +148,7 @@ const EvaluationSelectionContent = ({
           height: "100%",
         }}
       >
-        <CircularProgress />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }

@@ -33,6 +33,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 import { SIMULATION_TYPE } from "./common";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 // ── Hover popover with chip list (same pattern as TaskListView) ──
 
@@ -61,8 +62,8 @@ function HoverChipList({ items, label, emptyText, getLabel, getTooltip }) {
   const itemStyles = {
     color: "text.primary",
     fontWeight: 400,
-    fontSize: "13px",
-    lineHeight: "22px",
+    fontSize: "12px",
+    lineHeight: "18px",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -87,7 +88,7 @@ function HoverChipList({ items, label, emptyText, getLabel, getTooltip }) {
         {remaining > 0 && (
           <Typography
             variant="caption"
-            sx={{ color: "text.secondary", fontSize: "12px", pl: 0.5 }}
+            sx={{ color: "text.subtitle", fontSize: "11px", pl: 0.5 }}
           >
             +{remaining} other{remaining > 1 ? "s" : ""}
           </Typography>
@@ -417,7 +418,7 @@ const RunTestsContent = ({
               <Typography
                 variant="body2"
                 noWrap
-                sx={{ fontSize: 13, color: "text.primary" }}
+                sx={{ fontSize: 12, color: "text.primary" }}
               >
                 {agent.agent_name}
               </Typography>
@@ -493,7 +494,7 @@ const RunTestsContent = ({
             <Typography
               variant="body2"
               color="text.secondary"
-              sx={{ fontSize: 13 }}
+              sx={{ fontSize: 12 }}
             >
               {v ? formatDistanceToNow(new Date(v), { addSuffix: true }) : "-"}
             </Typography>
@@ -551,8 +552,7 @@ const RunTestsContent = ({
                 Run Simulation
               </Typography>
               <Typography typography="s1" color="text.secondary">
-                Create and manage comprehensive tests for your AI agents with
-                scenarios, evaluations, and automated runs.
+                Run your agent through scenarios at scale and score every conversation with your evals.
               </Typography>
             </Box>
           </Box>
@@ -656,7 +656,7 @@ const RunTestsContent = ({
               rowCount={total}
               onRowClick={handleRowClick}
               getRowId={(row) => row.id}
-              rowHeight={44}
+              rowHeight={ROW_HEIGHT.default}
               emptyMessage="No tests found"
             />
 

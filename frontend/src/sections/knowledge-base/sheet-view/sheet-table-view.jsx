@@ -12,6 +12,7 @@ import { formatFileSize } from "src/utils/utils";
 import { NUMBER_OF_ROWS_THAT_CAN_BE_SELECTED } from "./utils";
 import logger from "src/utils/logger";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const cellCenterStyle = {
   display: "flex",
@@ -292,7 +293,7 @@ const SheetTableView = forwardRef((props, ref) => {
     >
       <AgGridReact
         ref={ref}
-        rowHeight={44}
+        rowHeight={ROW_HEIGHT.default}
         defaultColDef={defaultColDef}
         theme={agTheme}
         columnDefs={columnDefs}

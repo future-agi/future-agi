@@ -68,7 +68,7 @@ export default function PromoteDialog({
       open
       onClose={onClose}
       PaperProps={{ sx: { maxWidth: 560 } }}
-      title={`Promote agent ${candidate}`}
+      title={`Make agent ${candidate} active`}
       content={
         <Stack spacing={1.5}>
           <Box sx={box}>
@@ -147,7 +147,7 @@ export default function PromoteDialog({
             })
           }
         >
-          {`Promote ${candidate}`}
+          {`Make ${candidate} active`}
         </Button>
       }
     />

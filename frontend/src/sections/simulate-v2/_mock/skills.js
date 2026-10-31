@@ -499,7 +499,7 @@ const slug = (name) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 export const skillImportCli = (agent, path) =>
-  `agent-learn skill import ${path || "skills/<name>"} --agent ${slug(agent?.name)}`;
+  `fi api skill import ${path || "skills/<name>"} --agent ${slug(agent?.name)}`;
 
 /* ── Testing a skill (skills.md "Choose tests", "Run and compare") ────── */
 
@@ -680,7 +680,7 @@ export const skillTestCli = ({ skill, agent, env, cases, repeats }) => {
       .map((c) => c.scenarioId)
       .join(",");
   return [
-    `agent-learn skill test ${skill?.id || "<skill>"} --agent ${slug(agent?.name)}`,
+    `fi api skill test ${skill?.id || "<skill>"} --agent ${slug(agent?.name)}`,
     `--environment ${slug(env?.name)}`,
     ids("positive") && `--positive ${ids("positive")}`,
     ids("negative") && `--negative ${ids("negative")}`,

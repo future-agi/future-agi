@@ -11,7 +11,9 @@ import { hashSeed } from "./runStream";
 /** The Observe project these traces come from. */
 export const traceProjectOf = (env, envState) =>
   envState?.agent?.values?.observeProject?.id ||
-  `${String(env?.name || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-prod`;
+  `${String(env?.name || "agent")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")}-prod`;
 
 /**
  * The production traces for this environment's agent: each with its trace ID,
@@ -26,7 +28,14 @@ export const productionTracesOf = (env, envState) => {
     return {
       ...c,
       traceId: `T-${101 + i}`,
-      agentVersion: versions.length ? versions[Math.max(0, versions.length - 1 - (h % Math.min(2, versions.length)))] : "v1",
+      agentVersion: versions.length
+        ? versions[
+            Math.max(
+              0,
+              versions.length - 1 - (h % Math.min(2, versions.length)),
+            )
+          ]
+        : "v1",
       spans: 6 + (h % 9),
       evidence: {
         transcript: true,
@@ -42,15 +51,18 @@ export const TRACE_GOALS = [
   {
     id: "reproduce",
     label: "Reproduce the failure",
-    keeps: "The triggering situation, what the caller said and the failure evidence",
-    makes: "What should have happened — written from the policy, never copied from the agent's answer",
+    keeps:
+      "The triggering situation, what the caller said and the failure evidence",
+    makes:
+      "What should have happened — written from the policy, never copied from the agent's answer",
     needs: "The starting state of the records, for an exact reproduction",
   },
   {
     id: "preserve",
     label: "Keep a success as a regression",
     keeps: "The workflow that worked, step by step",
-    makes: "Explicit checks — an observed success still needs a reviewed expected outcome",
+    makes:
+      "Explicit checks — an observed success still needs a reviewed expected outcome",
     needs: "Tool calls and their responses",
   },
   {
@@ -59,12 +71,15 @@ export const TRACE_GOALS = [
     keeps: "The caller's words, said verbatim, and the recorded tool responses",
     makes: "Nothing — but it can't recreate state the trace didn't record",
     needs: "A transcript; tool responses to replay them",
+    /* Recorded-tool replay is Later (clarified plan, 30 Oct). */
+    later: true,
   },
   {
     id: "variants",
     label: "Make variations",
     keeps: "A link to the trace each one comes from",
-    makes: "Neighbouring cases — changed data, ambiguity, a tool failing, a pushy caller — labelled Generated, never as something that happened",
+    makes:
+      "Neighbouring cases — changed data, ambiguity, a tool failing, a pushy caller — labelled Generated, never as something that happened",
     needs: "A transcript",
   },
   {
@@ -74,10 +89,15 @@ export const TRACE_GOALS = [
     makes: "One situation that stands for the group",
     needs: "Two or more traces with the same symptom",
     min: 2,
+    later: true,
   },
 ];
 
-const day = (iso) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+const day = (iso) =>
+  new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 
 /** The time range the selected traces span. */
 export const rangeOf = (traces) => {
@@ -102,12 +122,16 @@ export const traceDraftsOf = (traces, goal, env, importInfo) => {
   if (goal === "pattern") {
     const base = replayScenarioOf(traces[0], env);
     return [
-      stamp(base, traces.map((t) => t.traceId), {
-        id: `pattern::${traces.map((t) => t.id).join("+")}`,
-        title: `${traces[0].topic} — pattern across ${traces.length} traces`,
-        summary: `One situation standing for production traces ${traces.map((t) => t.traceId).join(", ")}`,
-        productionReplay: undefined,
-      }),
+      stamp(
+        base,
+        traces.map((t) => t.traceId),
+        {
+          id: `pattern::${traces.map((t) => t.id).join("+")}`,
+          title: `${traces[0].topic} — pattern across ${traces.length} traces`,
+          summary: `One situation standing for production traces ${traces.map((t) => t.traceId).join(", ")}`,
+          productionReplay: undefined,
+        },
+      ),
     ];
   }
   return traces.flatMap((t) => {
@@ -127,14 +151,28 @@ export const traceDraftsOf = (traces, goal, env, importInfo) => {
       preserve: `${t.topic} — keeps what worked in ${t.traceId}`,
       replay: base.title,
     };
+    /* Where it came from, said as it is — an upload isn't a production trace. */
+    const origin =
+      {
+        transcript: "uploaded transcript",
+        dataset: "dataset row",
+        simulation: "failed simulation trial",
+      }[t.sourceKind] || "production trace";
     const summaries = {
-      reproduce: `Reproduces production trace ${t.traceId} — the situation and the failure, judged against the policy`,
-      preserve: `Keeps what worked in production trace ${t.traceId} as a regression`,
+      reproduce: `Reproduces ${origin} ${t.traceId} — the situation and the failure, judged against the policy`,
+      preserve: `Keeps what worked in ${origin} ${t.traceId} as a regression`,
     };
     return [
       stamp(base, [t.traceId], {
         id: goal === "replay" ? base.id : `${goal}::${t.id}`,
         title: titles[goal],
+        ...(t.sourceKind && {
+          source: {
+            transcript: "transcript",
+            dataset: "dataset-import",
+            simulation: "simulation",
+          }[t.sourceKind],
+        }),
         ...(goal !== "replay" && {
           productionReplay: undefined,
           summary: summaries[goal],
@@ -146,7 +184,7 @@ export const traceDraftsOf = (traces, goal, env, importInfo) => {
 
 /** The same import from the CLI. */
 export const fromTracesCli = ({ env, ids, goal, group }) =>
-  `agent-learn scenario from-traces --environment ${env?.id} ${ids.map((id) => `--trace ${id}`).join(" ")} --scope-unit trace --intent ${goal}${group ? ` --group "${group}"` : ""}`;
+  `fi sim scenarios from-traces --environment ${env?.id} ${ids.map((id) => `--trace ${id}`).join(" ")} --scope-unit trace --intent ${goal}${group ? ` --group "${group}"` : ""}`;
 
 /** Drafting cost for an import: the model reads each trace and writes its draft. */
 export const draftingCostOf = (n) => ({ low: n * 6, high: n * 11 });

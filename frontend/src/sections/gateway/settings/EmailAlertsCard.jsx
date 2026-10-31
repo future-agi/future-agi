@@ -1,9 +1,9 @@
+import EmptyState from "src/components/empty-state";
 import { useState } from "react";
 import {
   Box,
   Button,
   IconButton,
-  Stack,
   Switch,
   Table,
   TableBody,
@@ -75,27 +75,22 @@ export default function EmailAlertsCard() {
         {isLoading && <CircularProgress size={20} />}
 
         {!isLoading && alerts.length === 0 && (
-          <Stack alignItems="center" spacing={1} py={3}>
-            <Iconify
-              icon="solar:letter-linear"
-              width={40}
-              sx={{ color: "text.disabled" }}
-            />
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              No email alerts configured
-            </Typography>
-            <Typography
-              sx={{
-                typography: "s2",
-                color: "text.disabled",
-                textAlign: "center",
-                maxWidth: 320,
-              }}
-            >
-              Set up email alerts to get notified about budget overages, errors,
-              guardrail triggers, and more.
-            </Typography>
-          </Stack>
+          <EmptyState
+            icon="solar:letter-linear"
+            title="No email alerts yet"
+            description="Get notified about budget overages, errors, guardrail triggers, and more."
+            action={
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={handleAdd}
+              >
+                Add alert
+              </Button>
+            }
+            sx={{ pt: 6, pb: 6 }}
+          />
         )}
 
         {!isLoading && alerts.length > 0 && (

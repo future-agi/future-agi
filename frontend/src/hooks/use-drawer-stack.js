@@ -41,7 +41,13 @@ export function useDrawerCovered(open) {
    drawer on top. */
 export const COVERED_DRAWER_SX = {
   pointerEvents: "none",
-  "& .MuiDrawer-paper, & .MuiDialog-container, & .MuiBackdrop-root": { visibility: "hidden" },
+  "& .MuiDrawer-paper, & .MuiDialog-container, & .MuiBackdrop-root": {
+    visibility: "hidden",
+  },
+  // Children too: some libraries (the trace graph) set their own
+  // visibility: visible, which would show through a hidden panel.
+  "& .MuiDrawer-paper *, & .MuiDialog-container *": { visibility: "hidden" },
 };
 
-export const coveredDrawerSx = (covered) => (covered ? COVERED_DRAWER_SX : undefined);
+export const coveredDrawerSx = (covered) =>
+  covered ? COVERED_DRAWER_SX : undefined;

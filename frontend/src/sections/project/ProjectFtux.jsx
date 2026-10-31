@@ -42,7 +42,7 @@ const ProjectFtux = () => {
         </Typography>
         <Box sx={{ height: "5px" }} />
         <Typography fontSize="13px" color="text.secondary">
-          Create a project to experiment on your model
+          Send traces from your agents to inspect every step, debug failures and track cost and latency.
         </Typography>
         <Box sx={{ height: "20px" }} />
       </Box>

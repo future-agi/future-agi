@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import React, { useState, useMemo } from "react";
 import {
@@ -168,64 +169,68 @@ const CustomPropertySection = () => {
         title="Custom Properties"
         subtitle="Define custom metadata schemas for your request logs"
         actions={[
-          {
-            label: "Add Property",
-            variant: "contained",
-            size: "small",
-            icon: "solar:add-linear",
-            onClick: () => setCreateOpen(true),
-          },
+          ...(properties?.length === 0
+            ? []
+            : [
+                {
+                  label: "Add Property",
+                  variant: "contained",
+                  size: "small",
+                  icon: "solar:add-linear",
+                  onClick: () => setCreateOpen(true),
+                },
+              ]),
         ]}
       />
 
-      <TextField
-        placeholder="Search properties..."
-        size="small"
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        sx={{ width: 300, mb: 3 }}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <Iconify icon="solar:magnifier-linear" width={16} />
-            </InputAdornment>
-          ),
-        }}
-      />
+      {properties?.length !== 0 && (
+        <TextField
+          placeholder="Search properties..."
+          size="small"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          sx={{ width: 300, mb: 3 }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <Iconify icon="solar:magnifier-linear" width={16} />
+              </InputAdornment>
+            ),
+          }}
+        />
+      )}
 
       {filteredProperties.length === 0 ? (
-        <Box display="flex" flexDirection="column" alignItems="center" py={8}>
-          <Iconify
-            icon="solar:text-field-linear"
-            width={48}
-            sx={{ color: "text.disabled", mb: 2 }}
-          />
-          <Typography variant="h6" color="text.secondary" mb={1}>
-            {properties?.length === 0
-              ? "No custom properties defined"
-              : "No properties match your search"}
-          </Typography>
-          {properties?.length === 0 && (
-            <>
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                mb={2}
-                textAlign="center"
-              >
-                Custom properties let you attach structured metadata to request
-                logs.
-              </Typography>
+        <EmptyState
+          variant={properties?.length === 0 ? "first-run" : "no-results"}
+          icon="solar:text-field-linear"
+          title={
+            properties?.length === 0
+              ? "No custom properties yet"
+              : "No properties match your search"
+          }
+          description={
+            properties?.length === 0
+              ? "Custom properties let you attach structured metadata to request logs."
+              : undefined
+          }
+          action={
+            properties?.length === 0 ? (
               <Button
-                variant="outlined"
-                startIcon={<Iconify icon="solar:add-linear" width={20} />}
+                variant="contained"
+                color="primary"
+                size="small"
                 onClick={() => setCreateOpen(true)}
               >
-                Define Your First Property
+                Create property
               </Button>
-            </>
-          )}
-        </Box>
+            ) : undefined
+          }
+          onClearFilters={
+            properties?.length === 0 ? undefined : () => setSearchQuery("")
+          }
+          sx={{ pt: 6, pb: 6 }}
+        />
       ) : (
         <>
           <TableContainer>

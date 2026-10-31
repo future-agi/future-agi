@@ -58,6 +58,8 @@ import {
   readNextGroundTruthDatasetPage,
 } from "./ground_truth_dataset_pagination";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // ═══════════════════════════════════════════════════════════════
 // Status Badge
@@ -772,7 +774,7 @@ export const UploadDrawer = ({
                   />
                 ),
               }}
-              sx={{ "& .MuiInputBase-input": { fontSize: "13px" } }}
+              sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
             />
 
             <Box
@@ -1043,7 +1045,7 @@ export const UploadDrawer = ({
               value={name}
               onChange={(e) => setName(e.target.value)}
               fullWidth
-              sx={{ "& .MuiInputBase-input": { fontSize: "13px" } }}
+              sx={{ "& .MuiInputBase-input": { fontSize: "12px" } }}
             />
 
             {/* Variable mapping */}
@@ -1911,7 +1913,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
           height: "100%",
         }}
       >
-        <CircularProgress size={24} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -2093,7 +2095,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                   rowData={previewData?.rows || []}
                   defaultColDef={defaultColDef}
                   headerHeight={34}
-                  rowHeight={32}
+                  rowHeight={ROW_HEIGHT.default}
                   animateRows={false}
                   suppressCellFocus
                   enableCellTextSelection

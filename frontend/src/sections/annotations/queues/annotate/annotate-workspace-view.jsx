@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, {
   useState,
   useCallback,
@@ -1520,44 +1521,36 @@ export default function AnnotateWorkspaceView() {
       : progress?.total ?? 0;
 
     return (
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "80vh",
-          gap: 2,
-        }}
-      >
-        <Iconify
-          icon="solar:check-circle-bold"
-          width={64}
-          color="success.main"
-        />
-        <Typography variant="h5">All Done!</Typography>
-        <Typography color="text.secondary">
-          {isReviewWorkspaceMode
-            ? "No items are waiting for review."
-            : completedCount > 0 &&
-              `${completedCount} of ${totalCount} items completed.`}
-          {!isReviewWorkspaceMode &&
-            completedCount === 0 &&
-            "No more pending items in this queue."}
-        </Typography>
-
-        {skippedCount > 0 && (
-          <Alert severity="info" sx={{ maxWidth: 480 }}>
-            You have {skippedCount} skipped{" "}
-            {skippedCount === 1 ? "item" : "items"}. You can review them from
-            the queue items list.
-          </Alert>
-        )}
-
-        <Button variant="outlined" onClick={handleBack} sx={{ mt: 1 }}>
-          Back to Queue
-        </Button>
-      </Box>
+      <EmptyState
+        icon="solar:check-circle-linear"
+        title="All done"
+        description={
+          <>
+            {isReviewWorkspaceMode
+              ? "No items are waiting for review."
+              : completedCount > 0 &&
+                `${completedCount} of ${totalCount} items completed.`}
+            {!isReviewWorkspaceMode &&
+              completedCount === 0 &&
+              "No more pending items in this queue."}
+            {skippedCount > 0 &&
+              ` You have ${skippedCount} skipped ${
+                skippedCount === 1 ? "item" : "items"
+              }. You can review them from the queue items list.`}
+          </>
+        }
+        action={
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={handleBack}
+          >
+            Back to queue
+          </Button>
+        }
+        sx={{ minHeight: "80vh" }}
+      />
     );
   }
 

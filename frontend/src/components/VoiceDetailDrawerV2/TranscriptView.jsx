@@ -70,7 +70,9 @@ const useSpeakerColors = () => {
         theme.palette.mode === "dark"
           ? theme.palette.primary.light
           : theme.palette.primary.main,
-      user: statusColors(theme, "info").fg,
+      // The caller (customer) reads orange, as in the live product — the
+      // design system's orange data colour (light and dark).
+      user: theme.palette.data?.[5] || statusColors(theme, "warning").fg,
       system: theme.palette.text.secondary,
       tool: statusColors(theme, "warning").fg,
       unknown: theme.palette.text.disabled,

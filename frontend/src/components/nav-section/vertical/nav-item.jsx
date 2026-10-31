@@ -60,9 +60,9 @@ const NavItem = forwardRef(
         sx={(theme) => ({
           width: "100%",
           px: 1,
-          color: active
-            ? theme.palette.text.primary
-            : theme.palette.text.secondary,
+          // Labels read in the main text colour, like a dense app sidebar;
+          // the active row is told apart by its fill and weight.
+          color: theme.palette.text.primary,
           backgroundColor: active
             ? theme.palette.action.selected
             : "transparent",
@@ -246,7 +246,7 @@ const StyledNavItem = styled(ListItemButton, {
     item: {
       marginBottom: 0,
       borderRadius: 6,
-      color: theme.palette.text.secondary,
+      color: theme.palette.text.primary,
       padding: theme.spacing(0, 1),
       transition: theme.transitions.create(["background-color", "color"], {
         duration: theme.transitions.duration.shortest,

@@ -11,7 +11,6 @@ import {
   Tooltip,
   Typography,
   useTheme,
-  CircularProgress,
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,6 +20,7 @@ import axios, { endpoints } from "src/utils/axios";
 import Iconify from "src/components/iconify";
 import PasskeyRegisterDialog from "./PasskeyRegisterDialog";
 import RecoveryCodesDialog from "./RecoveryCodesDialog";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const PasskeySection = ({ passkey: _passkey, onStatusChange }) => {
   const theme = useTheme();
@@ -196,7 +196,7 @@ const PasskeySection = ({ passkey: _passkey, onStatusChange }) => {
               padding: theme.spacing(2),
             }}
           >
-            <CircularProgress size={24} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : (
           passkeys &&

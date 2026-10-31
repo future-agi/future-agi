@@ -1,29 +1,24 @@
 import React from "react";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box } from "@mui/material";
 import PropTypes from "prop-types";
 import { format } from "date-fns";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
-import { statusIcons } from "../sheet-view/icons";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 
-const cellStyles = {
-  Processing: {
-    backgroundColor: "status.info.bg",
-    color: "status.info.fg",
-  },
-  Failed: {
-    backgroundColor: "status.danger.bg",
-    color: "status.danger.fg",
-  },
-  Completed: {
-    backgroundColor: "status.success.bg",
-    color: "status.success.fg",
-  },
+// Design system: a file's processing state renders through the shared
+// StatusBadge. "Completed" here means the files are processed and ready to
+// use, so it takes the success role (green) — unlike a run's "Completed",
+// which means finished with mixed results and stays neutral.
+const STATUS_KEY = {
+  Processing: "running",
+  Failed: "failed",
+  Completed: "completed",
 };
+const STATUS_ROLE = { Completed: "success" };
 
 export const ProcessingStatusCell = ({ value, data }) => {
   const status = value === "PartialCompleted" ? "Processing" : value;
-  const statusIconSrc = statusIcons[status];
 
   return (
     <Box
@@ -33,43 +28,24 @@ export const ProcessingStatusCell = ({ value, data }) => {
         display: "flex",
         justifyContent: "flex-start",
         alignItems: "center",
+        gap: 0.5,
       }}
     >
-      <Stack
-        sx={{
-          px: "12px",
-          py: "4px",
-          gap: "8px",
-          height: "24px",
-          borderRadius: "12px",
-          ...cellStyles[status],
-        }}
-        direction={"row"}
-        alignItems={"center"}
-      >
-        <Box
-          component={"img"}
-          sx={{
-            height: "12px",
-            width: "12px",
-          }}
-          alt="document icon"
-          src={statusIconSrc}
-        />
-        <Typography variant="s2" fontWeight={"fontWeightMedium"}>
-          {status}
-        </Typography>
-        {status === "Failed" && (
-          <CustomTooltip show={true} title={data?.error || ""} arrow>
-            <Iconify
-              icon="solar:info-circle-outline"
-              color="text.primary"
-              width={12}
-              height={12}
-            />
-          </CustomTooltip>
-        )}
-      </Stack>
+      <StatusBadge
+        status={STATUS_KEY[status] || "queued"}
+        role={STATUS_ROLE[status]}
+        label={status}
+      />
+      {status === "Failed" && data?.error && (
+        <CustomTooltip show={true} title={data.error} arrow>
+          <Iconify
+            icon="solar:info-circle-linear"
+            color="text.secondary"
+            width={14}
+            height={14}
+          />
+        </CustomTooltip>
+      )}
     </Box>
   );
 };

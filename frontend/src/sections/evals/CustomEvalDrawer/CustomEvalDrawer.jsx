@@ -146,7 +146,7 @@ const CustomEvalDrawer = ({ onClose, onOptionClick }) => {
           <Tabs
             value={selectedCategory}
             onChange={(e, value) => setSelectedCategory(value)}
-            sx={{ ml: -3 }}
+            sx={{ boxShadow: "none", ml: -3 }}
           >
             <Tab
               label="All"

@@ -136,7 +136,7 @@ export default function SelectionBar({
           >
             {[
               ["tag", "Add tag…", "solar:tag-linear"],
-              ["group", "Add to group…", "solar:folder-2-linear"],
+              ["group", "Add to suite…", "solar:folder-2-linear"],
               ["duplicate", "Duplicate to edit", "solar:copy-linear"],
               ["validate", "Validate", "solar:shield-check-linear"],
               [

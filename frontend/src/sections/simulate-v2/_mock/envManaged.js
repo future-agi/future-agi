@@ -1,7 +1,7 @@
 /*
   Where an environment is managed. "code" when it was built from the CLI
-  (`agent-learn env build` / `run --mode local`) or exported with
-  `agent-learn env pull`; otherwise "console", where edits here make the versions.
+  (`fi sim env create`) or exported with
+  `fi sim env pull`; otherwise "console", where edits here make the versions.
 */
 export const managedOf = (env, envState) => {
   const explicit = envState?.managedIn || env?.managedIn;

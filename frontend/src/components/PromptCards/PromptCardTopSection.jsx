@@ -328,7 +328,7 @@ const PromptTopSection = ({
             >
               <SVGColor
                 src="/assets/icons/components/ic_improve_prompt.svg"
-                sx={{ width: "20px", height: "20px", color: "text.primary" }}
+                sx={{ width: "16px", height: "16px", color: "text.primary" }}
               />
             </IconButton>
           </CustomTooltip>
@@ -344,7 +344,7 @@ const PromptTopSection = ({
             >
               <SVGColor
                 src="/assets/icons/components/ic_attachment.svg"
-                sx={{ width: "20px", height: "20px", color: "text.primary" }}
+                sx={{ width: "16px", height: "16px", color: "text.primary" }}
               />
             </IconButton>
           </CustomTooltip>

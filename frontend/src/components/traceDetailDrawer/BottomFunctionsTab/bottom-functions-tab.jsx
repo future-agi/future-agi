@@ -58,7 +58,7 @@ const BottomFunctionsTab = ({ toolCalls, toolDefinitions = [] }) => {
           aria-label="function tabs"
           textColor="primary"
           indicatorColor="primary"
-          sx={{
+          sx={{ boxShadow: "none",
             "& .MuiTab-root": {
               margin: "0 !important",
             },

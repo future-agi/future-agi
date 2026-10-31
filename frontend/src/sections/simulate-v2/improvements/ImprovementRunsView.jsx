@@ -7,7 +7,6 @@ import {
   Button,
   Checkbox,
   Chip,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -67,6 +66,7 @@ import {
 } from "../_mock/agentRegistry";
 import { behindProductionOf } from "./behindProduction";
 import ImprovementStages from "./ImprovementStages";
+import ClosableDialog from "../components/ClosableDialog";
 
 const RED = "status.danger.fg";
 const DELTA = 56;
@@ -124,7 +124,7 @@ export default function ImprovementRunsView({
   );
   const [selected, setSelected] = useState([]);
   const [picking, setPicking] = useState(false);
-  /* The experiment's ID — what agent-learn improve results / promote and
+  /* The experiment's ID — what fi api fix-runs results / promote and
      the SDK take, so code reads this same experiment. */
   const experimentId = `${env.id}/${record.id}`;
   const [idCopied, setIdCopied] = useState(false);
@@ -191,8 +191,11 @@ export default function ImprovementRunsView({
     () => improvementOutcome(record, { model: agentModel }),
     [record, agentModel],
   );
+  /* Only a verified (or limited-validation) candidate ships — never the
+     least-bad of a search that didn't verify. */
   const shippable =
     ["ready", "stopped-early", "budget"].includes(outcome.ending.key) &&
+    outcome.strength?.key !== "none" &&
     !!record.result?.winner;
   const result = record.result;
   /* What ships — the search's pick or the run someone chose — and which
@@ -410,7 +413,7 @@ export default function ImprovementRunsView({
           arrow
           title={
             r.n === searchWinner
-              ? "The search kept this trial — verified on the held-back scenarios."
+              ? "The search kept this candidate — verified on the held-back scenarios."
               : needsVerify
                 ? "Chosen by you — not yet run on the held-back scenarios. Verify it before review."
                 : "Chosen by you and run on the full suite."
@@ -541,7 +544,7 @@ export default function ImprovementRunsView({
               >
                 Stop
               </Button>
-              <Dialog
+              <ClosableDialog
                 open={stopAsk}
                 onClose={() => setStopAsk(false)}
                 maxWidth="xs"
@@ -552,7 +555,7 @@ export default function ImprovementRunsView({
                 </DialogTitle>
                 <DialogContent>
                   <Typography sx={{ typography: "s2" }}>
-                    {`${progress.runsDone} of up to ${progress.runsMax || progress.runsTotal} trials ${progress.runsDone === 1 ? "has" : "have"} run · ${creditsLabel(improvementTotalSpend(stopImprovement(record, progress), env.surface))} spent so far.`}
+                    {`${progress.runsDone} of up to ${progress.runsMax || progress.runsTotal} candidates ${progress.runsDone === 1 ? "has" : "have"} run · ${creditsLabel(improvementTotalSpend(stopImprovement(record, progress), env.surface))} spent so far.`}
                   </Typography>
                   <Typography
                     sx={{ typography: "s2", color: "text.secondary", mt: 1 }}
@@ -579,7 +582,7 @@ export default function ImprovementRunsView({
                     Stop
                   </Button>
                 </DialogActions>
-              </Dialog>
+              </ClosableDialog>
             </>
           )}
           <Tooltip
@@ -587,7 +590,7 @@ export default function ImprovementRunsView({
             title={
               idCopied
                 ? "Copied"
-                : `Copy experiment ID · ${experimentId} — for agent-learn improve results and the SDK`
+                : `Copy experiment ID · ${experimentId} — for fi api fix-runs results and the SDK`
             }
           >
             <IconButton
@@ -711,7 +714,7 @@ export default function ImprovementRunsView({
                 title={
                   row?.output
                     ? ""
-                    : `Makes ${kept.name}'s version the default in ${env?.name || "this environment"}. A rejected trial can't ship.`
+                    : `Makes ${kept.name}'s version the default in ${env?.name || "this environment"}. A rejected candidate can't ship.`
                 }
               >
                 <Button
@@ -735,7 +738,7 @@ export default function ImprovementRunsView({
       </Box>
 
       {rebaseFirst && (
-        <Dialog
+        <ClosableDialog
           open={rebaseOpen}
           onClose={() => setRebaseOpen(false)}
           maxWidth="sm"
@@ -771,7 +774,7 @@ export default function ImprovementRunsView({
               Accept rebase
             </Button>
           </DialogActions>
-        </Dialog>
+        </ClosableDialog>
       )}
 
       {/* Fell behind production while it waited — re-check before shipping. */}
@@ -866,13 +869,14 @@ export default function ImprovementRunsView({
           value={view}
           onChange={(_, v) => setTab(v)}
           sx={{
+            boxShadow: "none",
             mb: 2,
             flexShrink: 0,
             borderBottom: "1px solid",
             borderColor: "divider",
           }}
         >
-          <Tab value="runs" label={`Trials (${runs.length})`} />
+          <Tab value="runs" label={`Candidates (${runs.length})`} />
           {!stopped && <Tab value="changes" label="Changes" />}
           {!stopped && <Tab value="scenarios" label="Per scenario" />}
           <Tab value="cost" label="Cost" />
@@ -912,7 +916,7 @@ export default function ImprovementRunsView({
                     ? "stopped at its budget — the best it found is kept"
                     : null,
                   `${RATE_PLAN.name} · ${RATE_PLAN.version} rates`,
-                  "each part charged once; its trials' own Cost tabs list their calls",
+                  "each part charged once; its candidates' own Cost tabs list their calls",
                 ]
                   .filter(Boolean)
                   .join(" · ")}
@@ -935,7 +939,7 @@ export default function ImprovementRunsView({
         <Box sx={{ mb: 2, flexShrink: 0 }}>
           <RunsOverview
             runs={chartRuns}
-            unit="trial"
+            unit="candidate"
             evals={[]}
             headline={headline}
             onOpenRun={(r) =>
@@ -966,8 +970,8 @@ export default function ImprovementRunsView({
                 return (
                   <Typography sx={{ typography: "s1", fontWeight: 600 }}>
                     {c.stopped
-                      ? `Trials (${runs.length}) · ${c.stopped}`
-                      : `Trials (${runs.length} of ${c.upTo ? "up to " : ""}${c.max})`}
+                      ? `Candidates (${runs.length}) · ${c.stopped}`
+                      : `Candidates (${runs.length} of ${c.upTo ? "up to " : ""}${c.max})`}
                   </Typography>
                 );
               })()}
@@ -975,7 +979,7 @@ export default function ImprovementRunsView({
               sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}
             >
               {running && progress.stage === "reproduce" ? (
-                "Each trial is the agent with one change, simulated on this environment — open one to see its conversations"
+                "Each candidate is the agent with one change, simulated on this environment — open one to see its conversations"
               ) : selected.length ? (
                 `${selected.length} selected`
               ) : baselineRow ? (
@@ -985,7 +989,7 @@ export default function ImprovementRunsView({
                     component="span"
                     sx={{ color: "text.primary", fontWeight: 600 }}
                   >
-                    {baselineRow.name || `Trial ${baselineRow.n}`}
+                    {baselineRow.name || `Candidate ${baselineRow.n}`}
                   </Box>{" "}
                   — rates in points, everything else in percent
                 </>
@@ -1048,9 +1052,9 @@ export default function ImprovementRunsView({
                 arrow
                 title={
                   running
-                    ? "Once every trial has finished and been checked."
+                    ? "Once every candidate has finished and been checked."
                     : field.length < 2
-                      ? "Fewer than two trials passed the checks — there's nothing to choose between."
+                      ? "Fewer than two candidates passed the checks — there's nothing to choose between."
                       : ""
                 }
                 disableHoverListener={!running && field.length >= 2}
@@ -1102,7 +1106,7 @@ export default function ImprovementRunsView({
                 <Head>Status</Head>
                 <Head
                   right
-                  title="Scenarios this trial passed, on the target scenarios it was scored on"
+                  title="Scenarios this candidate passed, on the target scenarios it was scored on"
                 >
                   Pass
                 </Head>
@@ -1183,7 +1187,7 @@ export default function ImprovementRunsView({
                           checked={picked}
                           onChange={() => toggle(r.runId)}
                           inputProps={{
-                            "aria-label": `Select ${r.name || `Trial ${r.n}`}`,
+                            "aria-label": `Select ${r.name || `Candidate ${r.n}`}`,
                           }}
                           sx={{
                             p: 0.5,
@@ -1387,7 +1391,7 @@ export default function ImprovementRunsView({
                           fontWeight: 600,
                           color: "text.subtitle",
                         }}
-                      >{`Trial ${pendingN}`}</Typography>
+                      >{`Candidate ${pendingN}`}</Typography>
                     </Stack>
                     <Stack direction="row" alignItems="center" spacing={0.75}>
                       <Box
@@ -1442,8 +1446,8 @@ export default function ImprovementRunsView({
                     }}
                   >
                     {progress.stage === "reproduce"
-                      ? "Trials appear here as they finish. First it checks the failure happens on today's version."
-                      : "Trials appear here as they finish."}
+                      ? "Candidates appear here as they finish. First it checks the failure happens on today's version."
+                      : "Candidates appear here as they finish."}
                   </Typography>
                 )}
               </Stack>
@@ -1482,7 +1486,7 @@ export default function ImprovementRunsView({
         scenarioCount={envState?.scenarios?.length || 0}
         env={env}
         envState={envState}
-        nameOf={(r) => `Trial ${r.trialN}`}
+        nameOf={(r) => `Candidate ${r.trialN}`}
         showSummary={false}
         onApply={choose}
       />
@@ -1499,7 +1503,7 @@ export default function ImprovementRunsView({
 */
 /* What a retry read from the run before it, and what it changed because of it. */
 const feedbackText = (f) =>
-  `Fed Trial ${f.from}'s per-scenario results and its ${f.conversations} failing ${f.conversations === 1 ? "conversation" : "conversations"}: ${f.stillFailing.length} still failing (${f.stillFailing.map((x) => `“${x.title.replace(/\.$/, "")}”`).join(", ")}). Adds: “${f.adds}”`;
+  `Fed Candidate ${f.from}'s per-scenario results and its ${f.conversations} failing ${f.conversations === 1 ? "conversation" : "conversations"}: ${f.stillFailing.length} still failing (${f.stillFailing.map((x) => `“${x.title.replace(/\.$/, "")}”`).join(", ")}). Adds: “${f.adds}”`;
 const signedPct = (n) =>
   `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(Math.round(n * 10) / 10)}%`;
 /*

@@ -130,12 +130,12 @@ export default function DeveloperPage() {
           <CodeBlock code={INSTALL_CMD} />
           <Note>
             {lang === "python" ? (
-              "Installs agent-learning-kit: the Python SDK and the agent-learn CLI. Check it with agent-learn auth status."
+              "Installs the fi CLI. Check it with fi doctor."
             ) : (
               <>
                 The TypeScript SDK is coming soon. Until then, register a
-                TypeScript agent by its URL: agent-learn agent add my-agent
-                --type http --url http://localhost:3000/chat, then agent-learn
+                TypeScript agent by its URL: fi agents push --repo .
+                --type http --url http://localhost:3000/chat, then fi
                 run --env &lt;environment&gt; --agent my-agent
               </>
             )}
@@ -155,11 +155,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install agent-learning-kit
+      - run: pip install futureagi
       - run: |
-          agent-learn run --env <environment-id> --mode hosted --group must-pass --budget 100 --budget-unit credits --non-interactive --yes --output json > run.json
-          agent-learn compare <baseline-run> $(jq -r .run_id run.json) --scope identical --fail-on-regression
-          agent-learn export $(jq -r .run_id run.json) --format junit --destination ./results.xml
+          fi sim run --env <environment-id> --suite must-pass --budget 100 --budget-unit credits --non-interactive --yes --output json > run.json
+          fi experiments compare <baseline-run> $(jq -r .run_id run.json) --scope identical --fail-on-regression
+          fi sim runs export $(jq -r .run_id run.json) --format junit --destination ./results.xml
         env:
           FI_API_KEY: \${{ secrets.FI_API_KEY }}
           FI_SECRET_KEY: \${{ secrets.FI_SECRET_KEY }}`}
@@ -214,7 +214,7 @@ jobs:
             <CodeBlock code={serveCmd()} />
           </Box>
           <Note>
-            The first trainer is TRL. agent-learn env pull downloads a copy for
+            The first trainer is TRL. fi sim env pull downloads a copy for
             a trainer on another machine.
           </Note>
         </Section>

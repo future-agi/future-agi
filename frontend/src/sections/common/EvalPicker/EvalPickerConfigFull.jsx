@@ -83,6 +83,7 @@ import {
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
 import RequiredMark from "src/components/RequiredMark";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const ERROR_LOCALIZER_LOCKED_TOOLTIP =
   "Error Localization isn't enabled for this workspace.";
@@ -1179,7 +1180,7 @@ const EvalPickerConfigFull = ({
           py: 8,
         }}
       >
-        <CircularProgress size={32} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -1293,9 +1294,7 @@ const EvalPickerConfigFull = ({
               displayEmpty
               sx={{ fontSize: "12px", minWidth: 130, height: 30 }}
             >
-              <MenuItem value="">
-                Default version
-              </MenuItem>
+              <MenuItem value="">Default version</MenuItem>
               {versions.map((v) => (
                 <MenuItem key={v.id} value={v.id}>
                   V{v.version_number}

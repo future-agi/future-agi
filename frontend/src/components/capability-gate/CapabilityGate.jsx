@@ -2,10 +2,10 @@ import PropTypes from "prop-types";
 import Button from "@mui/material/Button";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
-import CircularProgress from "@mui/material/CircularProgress";
 import Iconify from "src/components/iconify";
 import OSSUpgradeGate from "src/components/oss-upgrade-gate";
 import { CAPABILITY, useCapabilities } from "src/hooks/useCapabilities";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const CONTACT_URL = "https://futureagi.com/talk-to-human";
 
@@ -24,7 +24,7 @@ export default function CapabilityGate({ feature, children }) {
         justifyContent="center"
         sx={{ height: 1, minHeight: 240 }}
       >
-        <CircularProgress size={32} />
+        <ContentSkeleton variant="panel" />
       </Stack>
     );
   }

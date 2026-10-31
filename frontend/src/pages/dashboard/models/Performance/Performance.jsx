@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   ButtonGroup,
-  CircularProgress,
   FormControl,
   InputLabel,
   MenuItem,
@@ -40,6 +39,7 @@ import PerformanceTagDistribution from "./PerformanceTagDistribution";
 import PerformanceGraphDatapoints from "./PerformanceGraphDatapoints";
 import SaveReport from "./SaveReport";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // const formatDate = (date) => format(date, "yyyy-MM-dd HH:mm:ss");
 
@@ -568,7 +568,7 @@ const Performance = () => {
               alignItems: "center",
             }}
           >
-            <CircularProgress size={22} />
+            <ContentSkeleton variant="rows" />
           </Box>
         ) : (
           <PerformanceGraph data={graphData} />

@@ -245,7 +245,7 @@ export default function ReviewChangesDrawer({
               color="primary"
               onClick={onSave}
             >
-              {`Save as environment ${cost?.label}`}
+              {`Save release ${cost?.label}`}
             </Button>
           </Stack>
         )}

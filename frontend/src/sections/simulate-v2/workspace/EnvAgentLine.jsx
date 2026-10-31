@@ -166,9 +166,6 @@ export default function EnvAgentLine({
       agentName: n,
       state,
     });
-    /* Taking the sample agent's place: its runs stay, labelled Reference,
-       so they're never read as this agent's. */
-    const fromSample = !!agent?.sample;
     applyAgentSwitch({
       env,
       envState,
@@ -179,16 +176,6 @@ export default function EnvAgentLine({
       changeEnvAgent,
       patch,
     });
-    if (fromSample && (envState?.runs || []).length)
-      storeDispatch({
-        type: "patchEnvState",
-        envId: env.id,
-        patch: {
-          runs: envState.runs.map((r) =>
-            r.kind === "trial" ? r : { ...r, reference: true },
-          ),
-        },
-      });
     if (read) {
       storeDispatch({
         type: "patchEnvironment",
@@ -297,13 +284,9 @@ export default function EnvAgentLine({
               color: "text.secondary",
             }}
           >
-            {agent.sample
-              ? locked
-                ? `Tests ${agent.name}, the sample agent this world ships with. Fork the environment to test your own agent.`
-                : `Tests ${agent.name}, the sample agent this world ships with. Connect your agent to test yours in this world.`
-              : locked
-                ? "Tests the placeholder this template ships with. Fork the environment to test your own agent."
-                : `Tests ${agent.name || "a template placeholder"} until you connect your agent.`}
+            {locked
+              ? "Tests the placeholder this template ships with. Fork the environment to test your own agent."
+              : `Tests ${agent.name || "a template placeholder"} until you connect your agent.`}
           </Typography>
           {locked ? (
             onFork && (

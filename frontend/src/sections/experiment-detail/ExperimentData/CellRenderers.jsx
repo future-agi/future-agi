@@ -125,7 +125,7 @@ export const ViewDetailCellRenderer = (params) => {
         cursor: "pointer",
         pointerEvents: "auto",
         fontWeight: 400,
-        fontSize: "13px",
+        fontSize: "12px",
       }}
     >
       View Detail

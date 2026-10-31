@@ -124,7 +124,7 @@ const RunInsights = ({ setSelectedTraceIds }) => {
             onChange={handleTabChange}
             indicatorColor="primary"
             textColor="primary"
-            sx={{
+            sx={{ boxShadow: "none",
               "& .MuiTab-root": {
                 margin: "0 !important",
               },

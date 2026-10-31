@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { Box, Button, Dialog, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import {
   HOSTED_PLATFORMS_BY_TYPE,
   PLATFORM_KEY_HELPER,
@@ -16,6 +16,7 @@ import {
 import SecretRefField from "./connect/SecretRefField";
 import { keyRefOf, preflightRecord } from "../_mock/secretRefs";
 import { PROVIDER_LABELS } from "../_mock/agentRegistry";
+import ClosableDialog from "../components/ClosableDialog";
 
 /**
  * The same agent, reached somewhere new: moved to another platform (Vapi →
@@ -94,7 +95,7 @@ export default function MovePlatformDialog({ open, onClose, agent, onSave }) {
   };
 
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       PaperProps={{
@@ -206,7 +207,7 @@ export default function MovePlatformDialog({ open, onClose, agent, onSave }) {
               : "Move"}
         </Button>
       </Stack>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 

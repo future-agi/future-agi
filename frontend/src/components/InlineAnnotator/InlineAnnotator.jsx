@@ -23,6 +23,7 @@ import { useScoresForSource, useBulkCreateScores } from "src/api/scores/scores";
 import LabelInput from "src/sections/annotations/queues/annotate/label-input";
 import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
 import { useGetOrCreateDefaultQueue } from "src/api/annotation-queues/annotation-queues";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // ---------------------------------------------------------------------------
 // Score value display (read-only chip for existing scores)
@@ -210,7 +211,7 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
   if (scoresLoading) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
-        <CircularProgress size={20} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }

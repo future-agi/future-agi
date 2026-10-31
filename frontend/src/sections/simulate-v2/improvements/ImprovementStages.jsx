@@ -164,10 +164,10 @@ export default function ImprovementStages({
       text: suggestion
         ? "No change is tried — this agent can only be called. You get a suggested change to apply yourself."
         : stateOf("search") === "todo"
-          ? "Tries changes one at a time, each as a trial on this environment — it stops early once trials stop beating the best"
+          ? "Tries changes one at a time, each as a candidate on this environment — it stops early once candidates stop beating the best"
           : count.stopped
-            ? `${plural(count.done, "trial")} of up to ${count.max} · ${count.stopped}${best != null ? ` · best ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`
-            : `${count.done} of ${count.upTo ? "up to " : ""}${plural(count.max, "trial")}${best != null ? ` · best so far ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`,
+            ? `${plural(count.done, "candidate")} of up to ${count.max} · ${count.stopped}${best != null ? ` · best ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`
+            : `${count.done} of ${count.upTo ? "up to " : ""}${plural(count.max, "candidate")}${best != null ? ` · best so far ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`,
       sub:
         [
           /* A goal aims at the scenarios short of it; an issue or a run's
@@ -199,7 +199,7 @@ export default function ImprovementStages({
       text: suggestion
         ? "Writes up the cause and the change to make"
         : [
-            `${stateOf("verify") === "done" ? "Checked" : "Checks"} the best trial on`,
+            `${stateOf("verify") === "done" ? "Checked" : "Checks"} the best candidate on`,
             r.heldMeasured
               ? `${plural(r.heldMeasured, "held-back scenario")} it never saw`
               : null,

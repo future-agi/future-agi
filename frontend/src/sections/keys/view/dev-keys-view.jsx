@@ -12,6 +12,7 @@ import CreateApiKey from "./CreateApiKey";
 import ActionMenu from "./ActionMenu";
 import SecretKeyRenderer from "./SecretKeyRenderer";
 import stringAvatar from "src/utils/stringAvatar";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 export default function DevKeysView() {
   const queryClient = useQueryClient();
@@ -81,7 +82,7 @@ export default function DevKeysView() {
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontSize: 13, minWidth: 0, flex: "0 1 auto" }}
+              sx={{ fontSize: 12, minWidth: 0, flex: "0 1 auto" }}
             >
               {getValue()}
             </Typography>
@@ -133,7 +134,7 @@ export default function DevKeysView() {
                   height: 24,
                 }}
               />
-              <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
                 {val}
               </Typography>
             </Box>
@@ -151,7 +152,7 @@ export default function DevKeysView() {
           const date = new Date(val);
           if (isNaN(date.getTime())) return "";
           return (
-            <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+            <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
               {format(date, "MM-dd-yyyy")}
             </Typography>
           );
@@ -186,7 +187,7 @@ export default function DevKeysView() {
     >
       <PageHeader
         title="Keys"
-        description="Your secret API keys are listed below. These keys are encrypted"
+        description="Create and manage API keys to send traces and call Future AGI from your code."
         sx={{ mb: 0 }}
       />
       <ApiKeyBar
@@ -204,7 +205,7 @@ export default function DevKeysView() {
             sorting={sorting}
             onSortingChange={setSorting}
             getRowId={(row) => row.id}
-            rowHeight={36}
+            rowHeight={ROW_HEIGHT.default}
             emptyMessage="No keys found"
           />
           <DataTablePagination

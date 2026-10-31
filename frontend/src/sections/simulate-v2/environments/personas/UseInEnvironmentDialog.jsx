@@ -7,7 +7,6 @@ import {
   Box,
   Button,
   Chip,
-  Dialog,
   MenuItem,
   Select,
   Stack,
@@ -25,6 +24,7 @@ import {
 } from "../../_mock/personaScenarios";
 import PersonaTaskPlan from "../../components/PersonaTaskPlan";
 import { unanswerableNote } from "../../_mock/addScenarios";
+import ClosableDialog from "../../components/ClosableDialog";
 
 const typeOf = (p) => p.simulationType ?? p.simulation_type ?? null;
 
@@ -114,7 +114,7 @@ export default function UseInEnvironmentDialog({
   };
 
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       PaperProps={{
@@ -234,7 +234,7 @@ export default function UseInEnvironmentDialog({
           {`Add ${total} scenario${total === 1 ? "" : "s"}`}
         </Button>
       </Stack>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 

@@ -6,7 +6,6 @@ import {
   IconButton,
   Box,
   Button,
-  CircularProgress,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState, useEffect, useMemo } from "react";
@@ -25,6 +24,7 @@ import { useGetGraphDataset } from "../../../../api/agent-playground/agent-playg
 import EmptyVariable from "src/components/VariableDrawer/EmptyVariable";
 import { escapeModelKey } from "src/sections/develop-detail/Experiment/utils";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Dummy API call for uploading JSON - replace with actual endpoint
 const uploadGlobalVariablesJson = async (file) => {
@@ -309,7 +309,7 @@ export default function GlobalVariableDrawer({ open, onClose }) {
             height: 200,
           }}
         >
-          <CircularProgress size={24} />
+          <ContentSkeleton variant="panel" />
         </Box>
       );
     }

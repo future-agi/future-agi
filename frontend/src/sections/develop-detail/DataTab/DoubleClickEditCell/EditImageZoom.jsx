@@ -1,10 +1,4 @@
-import {
-  Box,
-  CircularProgress,
-  DialogActions,
-  Typography,
-  IconButton,
-} from "@mui/material";
+import { Box, DialogActions, Typography, IconButton } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useEffect, useRef, useState } from "react";
 import ErrorMessage from "./ErrorMessage";
@@ -14,6 +8,7 @@ import SvgColor from "src/components/svg-color";
 import { ShowComponent } from "src/components/show";
 import { enqueueSnackbar } from "notistack";
 import DeleteMediaDialog from "./ConfirmDelete";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const EditImageZoom = ({
   setImageZoomModal,
@@ -220,7 +215,7 @@ const EditImageZoom = ({
                     height: "100%",
                   }}
                 >
-                  <CircularProgress />
+                  <ContentSkeleton variant="panel" />
                 </Box>
               </ShowComponent>
               <ShowComponent condition={!isLoading && Boolean(imageUrl)}>
@@ -304,7 +299,10 @@ const EditImageZoom = ({
                     }}
                   >
                     <IconButton onClick={handleButtonClick}>
-                      <Iconify icon="solar:refresh-linear" color="common.white" />
+                      <Iconify
+                        icon="solar:refresh-linear"
+                        color="common.white"
+                      />
                     </IconButton>
                   </Box>
                 </Box>

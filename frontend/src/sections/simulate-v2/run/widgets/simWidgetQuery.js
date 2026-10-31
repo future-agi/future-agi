@@ -235,7 +235,7 @@ const BASE_METRICS = [
   },
   {
     id: "not_measured",
-    name: "Not measured",
+    name: "Couldn't measure",
     category: "outcome",
     unit: "",
     aggregation: "sum",
@@ -464,7 +464,7 @@ export const SIM_ATTRIBUTES = [
     get: (r) => {
       const o = outcomeOf(r);
       return o === "unmeasured"
-        ? "Not measured"
+        ? "Couldn't measure"
         : o === "passed"
           ? "Successful"
           : "Unsuccessful";

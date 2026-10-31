@@ -218,7 +218,6 @@ import {
   useSpanGridStoreShallow,
   useTraceGridStoreShallow,
 } from "./states";
-import { CircularProgress } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 // import ReplayTraces from "./ReplayTraces";
 import {
@@ -229,6 +228,7 @@ import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { REPLAY_TYPES } from "../SessionsView/ReplaySessions/constants";
 import { filtersContentEqual } from "../saved-view-utils";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
+import { envsForObserveProject } from "src/sections/simulate-v2/_mock/runningNow";
 import { enqueueSnackbar } from "notistack";
 import {
   useUpdateSavedView,
@@ -257,6 +257,7 @@ import TraceGrid from "./TraceGrid";
 import SpanGrid from "./SpanGrid";
 import { useAgentGraph } from "src/api/project/agent-graph";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Lazy load graph components — only loaded when viewMode changes
 const PrimaryGraph = lazy(() => import("./GraphSection/PrimaryGraph"));
@@ -356,7 +357,7 @@ const ComponentLoader = () => (
       minHeight: 200,
     }}
   >
-    <CircularProgress size={24} />
+    <ContentSkeleton variant="panel" />
   </Box>
 );
 
@@ -3636,7 +3637,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 justifyContent: "center",
               }}
             >
-              <CircularProgress size={20} />
+              <ContentSkeleton variant="panel" />
             </Box>
           }
         >
@@ -3909,6 +3910,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 aria-label="changes tabs"
                 textColor="primary"
                 sx={{
+                  boxShadow: "none",
                   "& .MuiTab-root": {
                     margin: "0 !important",
                   },
@@ -4037,6 +4039,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       icon: "solar:play-linear",
                     },
                     {
+                      id: "environment-test",
+                      label: "Create environment test",
+                      icon: "solar:test-tube-linear",
+                    },
+                    {
                       id: "dataset",
                       label: "Move to dataset",
                       icon: "solar:move-to-folder-linear",
@@ -4061,6 +4068,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   ];
                 }
                 const all = [
+                  {
+                    id: "environment-test",
+                    label: "Create environment test",
+                    icon: "solar:test-tube-linear",
+                  },
                   {
                     id: "dataset",
                     label: "Move to dataset",
@@ -4133,6 +4145,23 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               }}
               onBulkAction={(actionId, event) => {
                 const anchor = event?.currentTarget || null;
+                /* Picked calls or traces become reviewed tests in the linked
+                   agent's environment (clarified plan) — not legacy Replay. */
+                if (actionId === "environment-test") {
+                  const [target] = envsForObserveProject(observeId);
+                  if (!target) {
+                    enqueueSnackbar(
+                      "This project isn't linked to an agent's environment yet. Link it from the agent, then try again.",
+                      { variant: "info" },
+                    );
+                    navigate("/dashboard/simulate/environments");
+                    return;
+                  }
+                  navigate(
+                    `/dashboard/simulate/environments/${target.envId}/scenarios?add=replay&from=observe`,
+                  );
+                  return;
+                }
                 const isSimulator = projectSource === PROJECT_SOURCE.SIMULATOR;
                 // Voice/calls path: route only its own actions.
                 if (isSimulator) {
@@ -4323,6 +4352,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   }}
                   aria-label="change tabs"
                   sx={{
+                    boxShadow: "none",
                     "& .MuiTab-root": {
                       margin: "0 !important",
                     },
@@ -4866,6 +4896,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="primary"
+                    hideDetailDrawer={selectedGraph !== "primary"}
                     projectId={observeId}
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
@@ -4906,6 +4937,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="compare"
+                    hideDetailDrawer={selectedGraph !== "compare"}
                     hasEvalFilter={hasEvalFilter}
                     cellHeight={cellHeight}
                     metricFilters={metricFilters}
@@ -4982,6 +5014,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="primary"
+                    hideDetailDrawer={selectedGraph !== "primary"}
                     enabled={
                       traceListProjectReady &&
                       selectedTab === "spans" &&
@@ -5020,6 +5053,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="compare"
+                    hideDetailDrawer={selectedGraph !== "compare"}
                     enabled={
                       traceListProjectReady &&
                       selectedTab === "spans" &&

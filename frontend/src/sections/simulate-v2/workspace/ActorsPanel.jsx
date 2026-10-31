@@ -22,7 +22,6 @@ import { enqueueSnackbar } from "notistack";
 import { personaFor } from "../_mock/scenarios";
 import { stampNewBatch } from "../_mock/addScenarios";
 import { asProposal } from "../_mock/scenarioSources";
-import { membersOf } from "../_mock/improvementPolicy";
 import SideDrawer from "../components/SideDrawer";
 import { textTone } from "../components/textTone";
 import Iconify from "src/components/iconify";
@@ -46,7 +45,6 @@ import {
   ACTOR_KINDS,
   actorKindOf,
   primaryActorOf,
-  subAgentActorsOf,
   actorEditPatch,
   resetActorPatch,
 } from "../_mock/actors";
@@ -54,21 +52,12 @@ import { SectionCard, EmptyState } from "../components/primitives";
 import { clickable, focusRing } from "../components/clickable";
 
 /**
- * Actors.
- *
- * The distinction this screen has to earn in one sentence: a persona is who
- * the agent is serving, an actor is someone else in the world who wants
- * something different. You are booking a cab; your colleague wants pizza.
- *
- * So every row leads with the actor's *goal*, not its personality — the goal
- * is the whole mechanism. Traits are decoration on top of it.
- *
- * Colour states the pressure kind once, on the chip that names it. The row
- * used to say it three times — a filled tile, the "Wants:" label and the chip
- * — so seven actors meant twenty-one coloured marks in five hues carrying
- * seven facts. The tile is neutral and "Wants:" is plain text; the chip keeps
- * its colour because it is the only one of the three that says what the
- * colour means.
+ * Actors (clarified plan, world.md): every simulated person in the world —
+ * the customer included — with what they know, when they join and what
+ * they're allowed to do. A persona is how one of them behaves; the agent's
+ * own sub-agents aren't actors (they're its Participants). The builder
+ * proposes the cast and the person reviews it; a goal of their own is
+ * optional, never assumed.
  */
 export default function ActorsPanel({ env, envState, patch, locked = false }) {
   const navigate = useNavigate();
@@ -84,6 +73,11 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
   */
   /* As this environment has them — its edits layered over the library. */
   const inCast = useMemo(() => castOf(env, envState), [env, envState]);
+  /* Proposed by the builder and not yet looked at: reviewed once accepted
+     or edited here. */
+  const unreviewed = inCast
+    .filter((a) => !a.edited && !(envState.actorsReviewed || []).includes(a.id))
+    .map((a) => a.id);
 
   const drop = (id) =>
     patch({
@@ -105,15 +99,11 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
       patch(createActorPatch(env, envState, fields));
     setEditing(null);
   };
-  /* The agent's own sub-agents act in the same world — listed, never simulated. */
-  const workers = useMemo(
-    () => subAgentActorsOf(membersOf(envState?.agent)),
-    [envState?.agent],
-  );
   const primary = primaryActorOf(envState);
   const relations = useMemo(
-    () => relationsOf(inCast, { primary, workers }),
-    [inCast, primary, workers],
+    /* Sub-agents are the agent's Participants, not part of this cast. */
+    () => relationsOf(inCast, { primary, workers: [] }),
+    [inCast, primary],
   );
   const [libAnchor, setLibAnchor] = useState(null);
   const notInCast = ACTOR_LIBRARY.filter((a) => !cast.includes(a.id));
@@ -200,8 +190,9 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
           <Typography
             sx={{ typography: "s2", color: "text.secondary", maxWidth: 780 }}
           >
-            Other parties in the world, each with a goal that pulls the
-            conversation off the task.
+            Every simulated person in this world, the customer included — what
+            each knows, when they join and what they&apos;re allowed to do. A
+            persona is how one of them behaves.
           </Typography>
         </Box>
         <CopyCommandButton command={actorCli.list(env)} />
@@ -292,10 +283,11 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
               component="span"
               sx={{ fontWeight: 600, color: "text.primary" }}
             >
-              Not the same as a persona.
+              Actors and personas.
             </Box>{" "}
-            The persona is who your agent serves; an actor is someone else — the
-            colleague who wants pizza instead.{" "}
+            An actor is any simulated person here, the customer included; a
+            persona is how one of them behaves — impatient, terse, in Spanish.
+            Your agent&apos;s own sub-agents aren&apos;t actors.{" "}
             <Box
               component="span"
               {...clickable(
@@ -319,10 +311,49 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
       </Box>
 
       <SectionCard
-        title={`In this environment (${inCast.length})`}
-        subtitle="Injected into every run, at the version pinned here"
+        title={`In this environment (${inCast.length + 1})`}
+        subtitle={
+          unreviewed.length
+            ? `${unreviewed.length} proposed by the builder — check what each knows and can do, then accept.`
+            : "Injected into every run, at the version pinned here"
+        }
         sx={{ mb: 2 }}
       >
+        {/* The customer is an actor too: the one each scenario's task belongs to. */}
+        <Stack
+          direction="row"
+          spacing={1.5}
+          alignItems="center"
+          sx={{
+            px: 2.5,
+            py: 1.25,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Iconify
+            icon="solar:user-speak-rounded-linear"
+            width={16}
+            sx={{ color: "text.secondary", flexShrink: 0 }}
+          />
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+              Customer
+            </Typography>
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.secondary" }}
+            >
+              Starts the conversation · has the scenario&apos;s task · its
+              persona sets how it behaves
+            </Typography>
+          </Box>
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+          >
+            present from the start
+          </Typography>
+        </Stack>
         {inCast.length === 0 ? (
           <EmptyState
             icon="solar:users-group-two-rounded-linear"
@@ -339,6 +370,12 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
               <ActorRow
                 key={a.id}
                 actor={a}
+                proposed={!locked && unreviewed.includes(a.id)}
+                onAccept={() =>
+                  patch({
+                    actorsReviewed: [...(envState.actorsReviewed || []), a.id],
+                  })
+                }
                 onEdit={locked ? null : () => setEditing(a)}
                 onReset={locked || !a.edited ? null : () => reset(a.id)}
                 onBranches={locked ? null : () => proposeBranches(a)}
@@ -358,42 +395,6 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
               />
             ))}
           </Stack>
-        )}
-        {workers.length > 0 && (
-          <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
-            <Typography
-              sx={{
-                typography: "s3",
-                color: "text.tertiary",
-                px: 2.5,
-                pt: 1.25,
-                pb: 0.5,
-              }}
-            >
-              {`Your agent's sub-agents (${workers.length}) — real, from its definition; they act in the same world and are never simulated`}
-            </Typography>
-            {workers.map((w) => (
-              <Stack
-                key={w.id}
-                direction="row"
-                spacing={1.5}
-                alignItems="center"
-                sx={{ px: 2.5, py: 1 }}
-              >
-                <Iconify
-                  icon="solar:cpu-bolt-linear"
-                  width={16}
-                  sx={{ color: "text.secondary", flexShrink: 0 }}
-                />
-                <Typography sx={{ typography: "s2_1", fontWeight: 500 }}>
-                  {w.name}
-                </Typography>
-                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                  {`· Sub-agent · ${w.goal}`}
-                </Typography>
-              </Stack>
-            ))}
-          </Box>
         )}
       </SectionCard>
 
@@ -500,7 +501,15 @@ ActorsPanel.propTypes = {
 
 /* ── one actor ───────────────────────────────────────────────────────────── */
 
-function ActorRow({ actor, action, onEdit, onReset, onBranches }) {
+function ActorRow({
+  actor,
+  action,
+  onEdit,
+  onReset,
+  onBranches,
+  proposed = false,
+  onAccept,
+}) {
   const [open, setOpen] = useState(false);
   const pressure = getPressure(actor.pressure);
   const entry = getEntry(actor.entry);
@@ -547,6 +556,17 @@ function ActorRow({ actor, action, onEdit, onReset, onBranches }) {
             >
               · {actor.version}
             </Typography>
+            {proposed && (
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "status.warning.fg",
+                  flexShrink: 0,
+                }}
+              >
+                · Proposed by the builder
+              </Typography>
+            )}
             {actor.kind === "external-agent" && (
               <Typography
                 sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
@@ -604,15 +624,21 @@ function ActorRow({ actor, action, onEdit, onReset, onBranches }) {
               </Typography>
             )}
           </Stack>
-          {/* The goal leads, because the goal is the mechanism. */}
+          {/* Role, what they know and what they may do lead; a goal of
+              their own is optional. */}
           <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
-            <Box
-              component="span"
-              sx={{ color: "text.primary", fontWeight: 600 }}
-            >
-              Wants:
-            </Box>{" "}
-            {actor.goal}
+            {[
+              actor.blurb || actorKindOf(actor).label,
+              actor.knowledge?.length
+                ? `knows ${actor.knowledge.length} fact${actor.knowledge.length === 1 ? "" : "s"}`
+                : "knows only what the scenario gives them",
+              actor.actions?.length
+                ? `can ${actor.actions.join(", ")}`
+                : "no actions of their own",
+              actor.goal ? `wants: ${actor.goal}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </Typography>
         </Box>
 
@@ -661,7 +687,23 @@ function ActorRow({ actor, action, onEdit, onReset, onBranches }) {
             </IconButton>
           </Tooltip>
         )}
-        <Box sx={{ flexShrink: 0 }}>{action}</Box>
+        <Box sx={{ flexShrink: 0 }}>
+          {proposed && onAccept && (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={onAccept}
+              sx={{
+                color: "text.primary",
+                borderColor: "divider",
+                flexShrink: 0,
+              }}
+            >
+              Accept
+            </Button>
+          )}
+          {action}
+        </Box>
       </Stack>
 
       <Collapse in={open} unmountOnExit>
@@ -755,6 +797,8 @@ function ActorRow({ actor, action, onEdit, onReset, onBranches }) {
   );
 }
 ActorRow.propTypes = {
+  proposed: PropTypes.bool,
+  onAccept: PropTypes.func,
   actor: PropTypes.object,
   action: PropTypes.node,
   onEdit: PropTypes.func,
@@ -797,6 +841,7 @@ const formOf = (actor) => ({
   fallback: actor?.fallback || "silent",
   behaviour: actor?.behaviour || "cooperative",
   knowledge: (actor?.knowledge || []).join("\n"),
+  actions: (actor?.actions || []).join("\n"),
   sources: actor?.sources || [],
   tools: actor?.tools || [],
   canApprove: !!actor?.canApprove,
@@ -866,6 +911,10 @@ function ActorForm({
       .split("\n")
       .map((t) => t.trim())
       .filter(Boolean),
+    actions: form.actions
+      .split("\n")
+      .map((t) => t.trim())
+      .filter(Boolean),
   };
   const toggle = (k, v) =>
     setForm((f) => ({
@@ -883,7 +932,7 @@ function ActorForm({
   );
   const before = formOf(actor);
   const dirty = JSON.stringify(form) !== JSON.stringify(before);
-  const valid = !!fields.name && !!fields.goal;
+  const valid = !!fields.name;
 
   return (
     <Stack sx={{ height: "100%" }}>
@@ -946,17 +995,17 @@ function ActorForm({
         />
         <TextField
           size="small"
-          label="What they want"
+          label="Goal of their own (optional)"
           value={form.goal}
           onChange={set("goal")}
           fullWidth
           multiline
           minRows={2}
-          helperText="The goal, and it must not be the task's goal — that is what makes this an actor."
+          helperText="Only if they want something besides the scenario's task. Never assumed."
         />
         <TextField
           size="small"
-          label="What they do"
+          label="Role"
           value={form.blurb}
           onChange={set("blurb")}
           fullWidth
@@ -1072,6 +1121,18 @@ function ActorForm({
           ))}
         </TextField>
 
+        <Box>
+          <Label>What they&apos;re allowed to do</Label>
+          <TextField
+            size="small"
+            value={form.actions}
+            onChange={set("actions")}
+            fullWidth
+            multiline
+            minRows={2}
+            placeholder="One per line — approve a refund up to $200, transfer to billing. Only actions the world supports."
+          />
+        </Box>
         <Box>
           <Label>What they know</Label>
           <TextField

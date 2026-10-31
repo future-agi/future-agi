@@ -30,6 +30,7 @@ import {
   isAlertMuted,
   normalizeAlertListRow,
 } from "../../common";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const AlertsSheetView = lazy(
   () => import("../AlertsSheetView/AlertsSheetView"),
@@ -253,7 +254,7 @@ export default function AlertsListView() {
         meta: { flex: 1 },
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {getValue() || "-"}
           </Typography>
         ),
@@ -268,19 +269,19 @@ export default function AlertsListView() {
           const val = getValue();
           if (!val || val === "-")
             return (
-              <Typography variant="body2" sx={{ fontSize: 13 }}>
+              <Typography variant="body2" sx={{ fontSize: 12 }}>
                 -
               </Typography>
             );
           try {
             return (
-              <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
                 {formatDistanceToNow(new Date(val), { addSuffix: true })}
               </Typography>
             );
           } catch {
             return (
-              <Typography variant="body2" sx={{ fontSize: 13 }}>
+              <Typography variant="body2" sx={{ fontSize: 12 }}>
                 -
               </Typography>
             );
@@ -294,7 +295,7 @@ export default function AlertsListView() {
         size: 120,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {formatNumberWithCommas(getValue())}
           </Typography>
         ),
@@ -310,7 +311,7 @@ export default function AlertsListView() {
           if (!val) return null;
           try {
             return (
-              <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+              <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
                 {formatDistanceToNow(new Date(val), { addSuffix: true })}
               </Typography>
             );
@@ -386,7 +387,7 @@ export default function AlertsListView() {
           onRowClick={handleRowClick}
           getRowId={(row) => row.id}
           enableSelection
-          rowHeight={44}
+          rowHeight={ROW_HEIGHT.default}
           emptyMessage="No alerts found"
         />
 

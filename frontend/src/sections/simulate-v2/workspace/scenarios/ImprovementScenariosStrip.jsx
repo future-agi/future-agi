@@ -7,7 +7,6 @@ import {
   Typography,
   Button,
   Checkbox,
-  Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
@@ -19,6 +18,7 @@ import {
 } from "../../_mock/improvementScenarios";
 import SourceBadge from "./SourceBadge";
 import { scenarioTitle } from "../../_mock/scenarios";
+import ClosableDialog from "../../components/ClosableDialog";
 
 const CHECKBOX_SX = {
   p: 0.5,
@@ -153,7 +153,7 @@ export function ImprovementScenariosDialog({
   };
 
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       maxWidth={false}
@@ -271,7 +271,7 @@ export function ImprovementScenariosDialog({
           {count ? `Add ${count} to environment` : "Add to environment"}
         </Button>
       </DialogActions>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 ImprovementScenariosDialog.propTypes = {

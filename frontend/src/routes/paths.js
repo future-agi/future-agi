@@ -146,6 +146,7 @@ export const paths = {
              it tried — chart, compare, choose winner.
          L3: a run opens its run page. */
       improvements: `${ROOTS.DASHBOARD}/simulate/improvements`,
+      skills: `${ROOTS.DASHBOARD}/simulate/skills`,
       improvementDataset: (datasetId) =>
         `${ROOTS.DASHBOARD}/simulate/improvements/dataset/${datasetId}`,
       // Where a finished run reports. The legacy execution-detail screen, fed

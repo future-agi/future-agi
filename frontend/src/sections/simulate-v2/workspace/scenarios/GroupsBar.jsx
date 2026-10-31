@@ -63,7 +63,7 @@ export default function GroupsBar({
       sx={{ mb: 1.25, flexWrap: "wrap", rowGap: 0.75 }}
     >
       <Typography sx={{ typography: "s3", color: "text.tertiary", mr: 0.25 }}>
-        Groups
+        Suites
       </Typography>
       <ButtonBase onClick={() => onPick(null)} sx={pill(!current)}>
         All scenarios
@@ -98,7 +98,7 @@ export default function GroupsBar({
           }}
         >
           <Iconify icon="solar:add-circle-linear" width={12} />
-          New group
+          New suite
         </ButtonBase>
       )}
       <Box flex={1} />
@@ -123,7 +123,7 @@ export default function GroupsBar({
         slotProps={{ paper: { sx: { p: 1.5, width: 300, mt: 0.5 } } }}
       >
         <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
-          New group
+          New suite
         </Typography>
         <TextField
           size="small"
@@ -136,7 +136,7 @@ export default function GroupsBar({
         <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
           {selectedCount
             ? `Starts with the ${selectedCount} selected scenario${selectedCount === 1 ? "" : "s"}.`
-            : "Starts empty — select scenarios and choose Organise → Add to group."}
+            : "Starts empty — select scenarios and choose Organise → Add to suite."}
         </Typography>
         <Stack
           direction="row"
@@ -227,7 +227,7 @@ export default function GroupsBar({
               )}
               <Box>
                 <CopyCommandButton
-                  command={`agent-learn run --env ${envId || "<env>"} --group "${confirm.name}" --attempts ${repeats}`}
+                  command={`fi sim run --env ${envId || "<env>"} --suite "${confirm.name}" --trials ${repeats}`}
                 />
               </Box>
             </Stack>

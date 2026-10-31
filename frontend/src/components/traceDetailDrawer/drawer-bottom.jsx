@@ -283,7 +283,7 @@ const DrawerBottom = ({
           aria-label="basic tabs example"
           textColor="primary"
           indicatorColor="primary"
-          sx={{
+          sx={{ boxShadow: "none",
             marginLeft: "2%",
             marginRight: 1,
             "& .MuiTab-root": {

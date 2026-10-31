@@ -43,7 +43,8 @@ export const FaceInfo = styled(Typography)(({ theme }) => ({
   fontSize: "12px",
   gap: "5px",
   fontWeight: theme.typography.fontWeightRegular,
-  color: theme.palette.text.disabled,
+  // Counts are content, so the secondary text colour (not the disabled grey).
+  color: theme.palette.text.secondary,
 }));
 export const DatasetInfo = styled(Typography)(({ theme }) => ({
   borderRadius: "8px",

@@ -31,6 +31,7 @@ import {
 } from "./hooks/useExperiments";
 import CreateExperimentDialog from "./CreateExperimentDialog";
 import ExperimentDetailSection from "./ExperimentDetailSection";
+import EmptyState from "src/components/empty-state";
 
 const STATUS_FILTERS = [
   { value: "", label: "All" },
@@ -174,72 +175,80 @@ const ExperimentsListView = ({ gatewayId }) => {
         title="Shadow Experiments"
         subtitle="Run shadow tests against alternate models without affecting production traffic"
         actions={[
-          {
-            label: "New Experiment",
-            variant: "contained",
-            size: "small",
-            icon: "solar:add-linear",
-            onClick: () => setCreateOpen(true),
-          },
+          ...(experiments?.length === 0
+            ? []
+            : [
+                {
+                  label: "New Experiment",
+                  variant: "contained",
+                  size: "small",
+                  icon: "solar:add-linear",
+                  onClick: () => setCreateOpen(true),
+                },
+              ]),
         ]}
       />
 
-      <Stack direction="row" spacing={2} alignItems="center" mb={3}>
-        <ToggleButtonGroup
-          value={statusFilter}
-          exclusive
-          onChange={(_, val) => val !== null && setStatusFilter(val)}
-          size="small"
-        >
-          {STATUS_FILTERS.map((f) => (
-            <ToggleButton key={f.value} value={f.value}>
-              {f.label}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
+      {experiments?.length !== 0 && (
+        <Stack direction="row" spacing={2} alignItems="center" mb={3}>
+          <ToggleButtonGroup
+            value={statusFilter}
+            exclusive
+            onChange={(_, val) => val !== null && setStatusFilter(val)}
+            size="small"
+          >
+            {STATUS_FILTERS.map((f) => (
+              <ToggleButton key={f.value} value={f.value}>
+                {f.label}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
 
-        <TextField
-          placeholder="Search experiments..."
-          size="small"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          sx={{ width: 300 }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Iconify icon="solar:magnifier-linear" width={16} />
-              </InputAdornment>
-            ),
-          }}
-        />
-      </Stack>
+          <TextField
+            placeholder="Search experiments..."
+            size="small"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            sx={{ width: 300 }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Iconify icon="solar:magnifier-linear" width={16} />
+                </InputAdornment>
+              ),
+            }}
+          />
+        </Stack>
+      )}
 
       {filtered.length === 0 ? (
-        <Box display="flex" flexDirection="column" alignItems="center" py={8}>
-          <Iconify
-            icon="solar:test-tube-linear"
-            width={48}
-            sx={{ color: "text.disabled", mb: 2 }}
-          />
-          <Typography variant="h6" color="text.secondary">
-            {experiments?.length === 0
+        <EmptyState
+          variant={experiments?.length === 0 ? "first-run" : "no-results"}
+          icon="solar:test-tube-linear"
+          title={
+            experiments?.length === 0
               ? "No experiments yet"
-              : "No experiments match your filters"}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" mt={1} mb={3}>
-            Shadow experiments let you compare models by routing a sample of
-            production traffic to a secondary model in the background.
-          </Typography>
-          {experiments?.length === 0 && (
-            <Button
-              variant="outlined"
-              startIcon={<Iconify icon="solar:add-linear" />}
-              onClick={() => setCreateOpen(true)}
-            >
-              Create Your First Experiment
-            </Button>
-          )}
-        </Box>
+              : "No experiments match your filters"
+          }
+          description={
+            experiments?.length === 0
+              ? "Compare models by sending a sample of production traffic to a second model in the background."
+              : undefined
+          }
+          action={
+            experiments?.length === 0 ? (
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() => setCreateOpen(true)}
+              >
+                Create experiment
+              </Button>
+            ) : undefined
+          }
+          sx={{ pt: 6, pb: 6 }}
+        />
       ) : (
         <Stack spacing={2}>
           {filtered.map((exp) => (

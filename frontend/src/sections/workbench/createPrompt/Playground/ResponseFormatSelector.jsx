@@ -20,8 +20,8 @@ const getIconForResponseFormat = (value) => {
       return (
         <SvgColor
           src="/assets/icons/prompt_outputs/ic_text.svg"
-          width={20}
-          height={20}
+          width={16}
+          height={16}
         />
       );
     case "json_object":
@@ -29,29 +29,29 @@ const getIconForResponseFormat = (value) => {
       return (
         <SvgColor
           src="/assets/icons/prompt_outputs/ic_json.svg"
-          width={20}
-          height={20}
+          width={16}
+          height={16}
         />
       );
     case "audio":
       return (
         <SvgColor
           src="/assets/icons/prompt_outputs/ic_audio.svg"
-          width={20}
-          height={20}
+          width={16}
+          height={16}
         />
       );
     case "image":
       return (
         <SvgColor
           src="/assets/icons/prompt_outputs/ic_image.svg"
-          width={20}
-          height={20}
+          width={16}
+          height={16}
         />
       );
     default:
       return (
-        <Iconify icon="solar:document-text-linear" width={20} height={20} />
+        <Iconify icon="solar:document-text-linear" width={16} height={16} />
       );
   }
 };

@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
 import Dialog from "@mui/material/Dialog";
@@ -16,6 +17,7 @@ import {
   discoverConnectorTools,
   updateConnectorTools,
 } from "src/sections/falcon-ai/hooks/useFalconAPI";
+import ContentSkeleton from "src/components/content-skeleton";
 
 export default function ConnectorToolList({ open, connector, onClose }) {
   const _theme = useTheme();
@@ -96,19 +98,15 @@ export default function ConnectorToolList({ open, connector, onClose }) {
       <DialogContent dividers>
         {loading ? (
           <Box display="flex" justifyContent="center" py={4}>
-            <CircularProgress size={28} />
+            <ContentSkeleton variant="rows" />
           </Box>
         ) : tools.length === 0 ? (
-          <Box py={4} textAlign="center">
-            <Iconify
-              icon="solar:toolbox-linear"
-              width={36}
-              sx={{ color: "text.disabled", mb: 1 }}
-            />
-            <Typography variant="body2" color="text.disabled">
-              No tools discovered. Try refreshing.
-            </Typography>
-          </Box>
+          <EmptyState
+            icon="solar:toolbox-linear"
+            title="No tools yet"
+            description="Try refreshing to discover tools."
+            sx={{ pt: 4, pb: 4 }}
+          />
         ) : (
           tools.map((tool, index) => (
             <React.Fragment key={tool.name || index}>

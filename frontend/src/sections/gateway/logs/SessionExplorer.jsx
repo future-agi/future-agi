@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
@@ -381,25 +382,12 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
 
       {/* ---- Empty state ---- */}
       {!isLoading && sessions.length === 0 && (
-        <Stack alignItems="center" spacing={1.5} py={6}>
-          <Iconify
-            icon="solar:users-group-rounded-linear"
-            width={48}
-            sx={{ color: "text.disabled" }}
-          />
-          <Typography variant="h6" color="text.secondary">
-            No sessions found
-          </Typography>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            textAlign="center"
-            maxWidth={400}
-          >
-            Requests with session IDs appear here. Check that your gateway is
-            configured to capture session IDs.
-          </Typography>
-        </Stack>
+        <EmptyState
+          icon="solar:users-group-rounded-linear"
+          title="No sessions yet"
+          description="Requests with session IDs appear here. Check that your gateway captures session IDs."
+          sx={{ pt: 6, pb: 6 }}
+        />
       )}
 
       {/* ---- Pagination ---- */}

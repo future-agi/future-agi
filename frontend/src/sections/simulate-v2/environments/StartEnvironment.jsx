@@ -70,12 +70,7 @@ import {
 import DescribeFlowStep from "./intake/DescribeFlowStep";
 import MyEnvironmentsTable from "./MyEnvironmentsTable";
 import PersonaLibraryTab from "./personas/PersonaLibraryTab";
-import JobsPage from "../jobs/JobsPage";
 
-/* Jobs (package validation, training) is on hold until open product
-   questions are answered — the tab and its links stay hidden. Flip to bring
-   it back; the screen and its model are kept as built. */
-const SHOW_JOBS = false;
 import {
   PLATFORM_LOGOS,
   AGENT_TYPES,
@@ -160,9 +155,7 @@ export default function StartEnvironment({ entry = false }) {
      ?tab=build link opens the drawer. Deep-linkable via ?tab=. */
   const initialParams = new URLSearchParams(window.location.search);
   const [tab, setTabState] = useState(() =>
-    (SHOW_JOBS ? ["personas", "jobs"] : ["personas"]).includes(
-      initialParams.get("tab"),
-    )
+    ["personas"].includes(initialParams.get("tab"))
       ? initialParams.get("tab")
       : "my",
   );
@@ -348,9 +341,7 @@ export default function StartEnvironment({ entry = false }) {
           entry
             ? tab === "personas"
               ? "Reusable callers for voice and chat agents. Use writes an environment's tasks in a persona's voice."
-              : tab === "jobs"
-                ? "Long background work on your environments — package validation and training — with its stage, checkpoints and where its evidence came from."
-                : "Build a simulated world for your agent, then run callers against it and read the failures."
+              : "Build a simulated world for your agent, then run callers against it and read the failures."
             : "Every environment needs a world to simulate in. Start by telling us where the agent lives — or start blank if you don't have one yet."
         }
         back={
@@ -424,7 +415,11 @@ export default function StartEnvironment({ entry = false }) {
             flexShrink: 0,
           }}
         >
-          <Tabs value={tab} onChange={(_, v) => setTab(v)}>
+          <Tabs
+            sx={{ boxShadow: "none" }}
+            value={tab}
+            onChange={(_, v) => setTab(v)}
+          >
             <Tab
               value="my"
               disableRipple
@@ -450,9 +445,6 @@ export default function StartEnvironment({ entry = false }) {
               sx={TAB_SX}
             />
             <Tab value="personas" disableRipple label="Personas" sx={TAB_SX} />
-            {SHOW_JOBS && (
-              <Tab value="jobs" disableRipple label="Jobs" sx={TAB_SX} />
-            )}
           </Tabs>
         </Box>
       )}
@@ -531,7 +523,7 @@ export default function StartEnvironment({ entry = false }) {
                     sx={{ typography: "s2", color: "text.secondary" }}
                   >
                     {view === "worlds"
-                      ? "Tables, tools and rules, as designed. Try one now with its sample agent, or use it with one of your agents."
+                      ? "Tables, tools and rules, as designed. Use one with your agent."
                       : "Every environment belongs to one agent — pick yours, or connect one, then start from its own world or one of these."}
                   </Typography>
                 </Box>
@@ -705,7 +697,6 @@ export default function StartEnvironment({ entry = false }) {
       )}
 
       {entry && tab === "personas" && <PersonaLibraryTab />}
-      {SHOW_JOBS && entry && tab === "jobs" && <JobsPage embedded />}
 
       {entry && tab === "my" && hasEnvs && (
         /* Datasets-page pattern — flex column that fills the remaining
@@ -2597,7 +2588,7 @@ function PanelMcpServer() {
   /* A build runs in our sandbox, and a pasted command never runs there. */
   const transports = MCP_TRANSPORTS.map((t) =>
     t.id === "stdio"
-      ? { ...t, disabled: true, tag: "On your machine only" }
+      ? { ...t, disabled: true, tag: "Not available: runs are in the cloud" }
       : t,
   );
   return (
@@ -3070,13 +3061,11 @@ function PanelBuildLocally() {
   const [mode, setMode] = useState("cli");
   const [os, setOs] = useState("mac");
   const install =
-    os === "windows"
-      ? "py -m pip install agent-learning-kit"
-      : "pip install agent-learning-kit";
+    os === "windows" ? "py -m pip install futureagi" : "pip install futureagi";
   const steps = [
     {
       title: "Install the CLI",
-      body: "Once per machine — it adds agent-learn to your path. Then sign in with agent-learn auth login.",
+      body: "Once per machine — it adds fi to your path. Then sign in with fi auth login.",
       extra: (
         <Box sx={{ mb: 1 }}>
           <ProviderRow options={OS_OPTIONS} value={os} onChange={setOs} />
@@ -3088,13 +3077,12 @@ function PanelBuildLocally() {
       title: "Register your agent and build for it",
       body: "Every environment belongs to one agent in Agents — register it, then build its environment.",
       hint: "--request says what to test; you review the proposed world and scenarios before it's saved.",
-      cmd: 'agent-learn agent add my-agent --type process --command python --arg agent.py\nagent-learn env build my-environment --agent my-agent --request "Refunds and cancellations"',
+      cmd: 'fi agents push --repo .\nfi sim env create --repo . --name my-environment --request "Refunds and cancellations"',
     },
     {
-      title: "Run it on your machine",
-      body: "Runs your agent and the world locally; results stay on your machine until you export them.",
-      hint: "--mode hybrid keeps your agent local and runs the world here instead.",
-      cmd: "agent-learn run --env my-environment --mode local --attempts 3 --budget 100 --budget-unit credits",
+      title: "Run it",
+      body: "Runs in Future AGI; the terminal only starts and watches it. Results show here.",
+      cmd: "fi sim run --env my-environment --trials 3 --budget 100 --budget-unit credits",
     },
   ];
   return (
@@ -3120,7 +3108,7 @@ function PanelBuildLocally() {
               sx={{ fontSize: 13, lineHeight: "20px", color: "text.secondary" }}
             >
               Define the environment next to your agent and run it from Python.
-              Install with pip install agent-learning-kit.
+              Install with pip install futureagi.
             </Typography>
             <CodeBlock code={PYTHON_DEFINE} />
             <Typography

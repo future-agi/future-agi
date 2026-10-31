@@ -54,7 +54,7 @@ export default function DataTablePagination({
         minHeight: 44,
         py: 1,
         px: 2,
-        fontSize: 13,
+        fontSize: 12,
         color: "text.secondary",
         flexShrink: 0,
         borderTop: "1px solid",
@@ -89,7 +89,7 @@ export default function DataTablePagination({
             border: "none",
             background: "transparent",
             color: "text.primary",
-            fontSize: 13,
+            fontSize: 12,
             cursor: "pointer",
             outline: "none",
           }}

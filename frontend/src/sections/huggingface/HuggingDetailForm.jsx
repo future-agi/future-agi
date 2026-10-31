@@ -48,24 +48,24 @@ const HuggingDetailForm = ({
           <Box sx={{ display: "flex", alignItems: "center", gap: "5px" }}>
             <Iconify
               icon="solar:download-minimalistic-linear"
-              sx={{ color: "text.disabled" }}
+              sx={{ color: "text.secondary" }}
             />
             <Typography
               component="span"
               sx={{
-                color: "text.disabled",
+                color: "text.secondary",
                 textAlign: "center",
                 fontSize: "12px",
               }}
             >
               {huggingFaceDetail?.downloads}
             </Typography>
-            <Iconify icon="solar:like-linear" sx={{ color: "text.disabled" }} />
+            <Iconify icon="solar:like-linear" sx={{ color: "text.secondary" }} />
             <Typography
               variant="span"
               component="span"
               sx={{
-                color: "text.disabled",
+                color: "text.secondary",
                 textAlign: "center",
                 fontSize: "12px",
               }}
@@ -95,7 +95,7 @@ const HuggingDetailForm = ({
             variant="p"
             component="span"
             sx={{
-              color: "text.disabled",
+              color: "text.secondary",
               textAlign: "center",
               fontWeight: "500",
               fontSize: "12px",
@@ -144,10 +144,11 @@ const HuggingDetailForm = ({
           </Typography>
           <Typography
             sx={{
-              color: "text.disabled",
-              fontWeight: "400",
-              fontSize: "13px",
-              pt: "6px",
+              // Reading text: body size in the secondary text colour.
+              // text.disabled is for unavailable controls, not content.
+              typography: "m3",
+              color: "text.secondary",
+              pt: 0.75,
             }}
           >
             {huggingFaceDetail?.description}

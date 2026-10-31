@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Button, Dialog, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { latestEnvVersion, toolFit } from "../_mock/toolFit";
 import { ToolList } from "../workspace/toolFitParts";
@@ -9,6 +9,7 @@ import { envLabelOf } from "../_mock/envVersionKinds";
 import { addAndSaveMcpToolsPatch, mcpRunGapOf } from "../_mock/worldTools";
 import { gatewayServerForHost, gatewayServerTools } from "../_mock/gatewayMcp";
 import { pendingEnvChanges, saveEnvChangesPatch } from "../_mock/versions";
+import ClosableDialog from "../components/ClosableDialog";
 
 /**
  * Asked before a run whose agent calls a tool the world can't answer.
@@ -99,7 +100,7 @@ export default function RunFitDialog({
   if (gapOnly) {
     const n = gap.missing.length;
     return (
-      <Dialog
+      <ClosableDialog
         open={open}
         onClose={onClose}
         maxWidth={false}
@@ -185,12 +186,12 @@ export default function RunFitDialog({
             </Button>
           )}
         </Stack>
-      </Dialog>
+      </ClosableDialog>
     );
   }
 
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       maxWidth={false}
@@ -286,7 +287,7 @@ export default function RunFitDialog({
           </Button>
         )}
       </Stack>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 

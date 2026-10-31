@@ -21,7 +21,7 @@ const EvalCustomHeaderCellRenderer = ({ displayName }) => {
         />
       ) : null}
       <Typography
-        sx={{ fontSize: "13px", fontWeight: 600, color: "text.secondary" }}
+        sx={{ fontSize: "11px", fontWeight: 500, color: "text.secondary" }}
       >
         {displayName}
       </Typography>

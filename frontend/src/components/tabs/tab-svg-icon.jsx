@@ -4,9 +4,11 @@ import SvgColor from "src/components/svg-color";
 // SVG icon for a <Tab icon={...}>. Lives outside the Tab element so the
 // per-screen "don't restyle tabs" lint rule doesn't see the sizing, and so the
 // icon size/colour is defined once. Pass `active` to tint the selected tab.
-export default function TabSvgIcon({ src, size = 16, active, sx }) {
+// `...other` carries MUI's iconWrapper class, which gives the gap to the label.
+export default function TabSvgIcon({ src, size = 16, active, sx, ...other }) {
   return (
     <SvgColor
+      {...other}
       src={src}
       sx={{
         width: size,

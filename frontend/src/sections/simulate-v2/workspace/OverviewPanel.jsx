@@ -47,6 +47,7 @@ import ConnectOnlyWorld, {
 } from "./ConnectOnlyWorld";
 import { BlockingGapsInline } from "./SetupGapsPanel";
 import EnvAgentLine from "./EnvAgentLine";
+import ReleasePanel from "./ReleasePanel";
 import useEnvViewAs from "./useEnvViewAs";
 import { agentNameOf } from "../_mock/agentRegistry";
 import { clickable, focusRing } from "../components/clickable";
@@ -292,6 +293,18 @@ export default function OverviewPanel({
         </FadeIn>
       )}
       <ResultsMovedNote move={moved} sx={{ mt: -1.5, mb: 3 }} />
+
+      {/* The release: checks that gate Ready, Lock, and RL access once locked.
+          A template or an older version can't change it; a locked release
+          still takes RL keys. */}
+      {showSummary && !buildMode && (
+        <ReleasePanel
+          env={env}
+          envState={envState}
+          patch={viewAs || (locked && !envState.lockedRelease) ? null : patch}
+          onCopy={onFork}
+        />
+      )}
 
       {/*
         Getting-started checklist for envs that haven't been seeded

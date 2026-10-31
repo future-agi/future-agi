@@ -140,6 +140,11 @@ import {
   runDefaultsOf,
 } from "../_mock/rsiModel";
 import { finishBuildPatch } from "../_mock/quickBuild";
+import PrivateUpdateBanner from "./PrivateUpdateBanner";
+import { privateUpdateOf } from "../_mock/envCopy";
+import DesignReview from "../environments/DesignReview";
+import { DESIGN_PARK_MS } from "../_mock/builder";
+import { getBuilderMode } from "../_mock/builderModeBus";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { isConnectOnly } from "../_mock/envModel";
 import { currentEnvSnapshot } from "../_mock/envSnapshot";
@@ -166,6 +171,7 @@ import WorldPanel from "./WorldPanel";
 import SettingsPanel from "./SettingsPanel";
 import { clickable, focusRing } from "../components/clickable";
 import { compatibilityOf } from "../_mock/compatibility";
+import { buildableAgentsOf } from "../environments/worldSource";
 
 /**
  * `setup` marks the items that gate a run — those carry a completion tick and
@@ -324,6 +330,9 @@ export default function EnvironmentWorkspace() {
   /* Locked = a catalogue template opened as-is. A copy adopted with "Use
      this template" carries `templateId` and is the user's own — editable. */
   const isSeededTemplate = !!envState.seededFromTemplate && !env?.templateId;
+  /* A locked release is read-only the same way: copy it to edit. */
+  const lockedRelease = envState.lockedRelease || null;
+  const readOnlyEnv = isSeededTemplate || !!lockedRelease;
   /* The newest state, for chat confirmations answered after a re-render. */
   const latestEnvState = useRef(envState);
   latestEnvState.current = envState;
@@ -338,7 +347,7 @@ export default function EnvironmentWorkspace() {
     env,
     envState,
     patch,
-    { locked: isSeededTemplate },
+    { locked: readOnlyEnv },
   );
 
   // Opening an environment goes straight to it — a boot sequence on every entry
@@ -419,7 +428,7 @@ export default function EnvironmentWorkspace() {
   /* Three samples by default — the fewest where a scenario can be flaky
      ("passed twice, failed once") rather than a coin flip read as a verdict. */
   /* …or the environment's own default, set in Settings → Simulation defaults. */
-  /* The code drawer, open on a tab: "cli" from Run from code, "train" or
+  /* The code drawer, open on a tab: "cli" from Run from code, or
      "package" from the ⋯ menu. */
   const [codeOpen, setCodeOpen] = useState(null);
   /* The run plan a Run button opened: { scenarioIds, trials, also }. */
@@ -529,9 +538,11 @@ export default function EnvironmentWorkspace() {
                 {
                   kind: "note",
                   text:
-                    env.buildStatus === "building"
-                      ? `${env.name} is still building. Once it's ready, ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`
-                      : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`,
+                    env.buildStatus === "awaiting_approval"
+                      ? `${env.name}'s design is waiting for your approval — review it above. Nothing is built until you approve.`
+                      : env.buildStatus === "building"
+                        ? `${env.name} is still building. Once it's ready, ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`
+                        : `${env.name} is ready. Ask me to add scenarios, change a rule, or add an evaluation — or edit directly on the right.`,
                 },
               ],
             },
@@ -723,6 +734,7 @@ export default function EnvironmentWorkspace() {
       limits,
       toolReplay,
       compatSubset,
+      withAgent,
     } = {},
   ) => {
     const runId = protoRunId(envId, Date.now().toString(36));
@@ -756,6 +768,8 @@ export default function EnvironmentWorkspace() {
     if (limits?.runDeadline) params.set("deadline", String(limits.runDeadline));
     if (limits?.stepLimit) params.set("steps", String(limits.stepLimit));
     if (toolReplay) params.set("tools", toolReplay);
+    /* Another compatible agent, picked in run setup. */
+    if (withAgent) params.set("with", withAgent.key);
     /* A reviewed eligible subset: the requested count and what was blocked travel with it. */
     if (compatSubset) {
       params.set("requested", String(compatSubset.requested));
@@ -781,7 +795,7 @@ export default function EnvironmentWorkspace() {
   /* Runs always use a saved version; with edits unsaved, the person picks —
      the saved one, or save the edits first — never half-finished edits. */
   const runNow = (scenarioIds, trials, { also, saved } = {}) => {
-    if (!saved && !isSeededTemplate && pendingEnvChanges(envState).length)
+    if (!saved && !readOnlyEnv && pendingEnvChanges(envState).length)
       return setDraftAsk({ scenarioIds, trials, also });
     return checkRunFit(() => setRunPlanReq({ scenarioIds, trials, also }));
   };
@@ -793,6 +807,8 @@ export default function EnvironmentWorkspace() {
     alertAt,
     limits,
     compatSubset,
+    withAgent,
+    suiteIds,
   }) => {
     const req = runPlanReq;
     setRunPlanReq(null);
@@ -804,10 +820,10 @@ export default function EnvironmentWorkspace() {
         cap,
         alertAt,
       });
-    if (req.also?.length && !req.scenarioIds?.length)
+    if (req.also?.length && !req.scenarioIds?.length && !suiteIds)
       return runGroup.start(req.also, { trials: attempts, cap, alertAt });
     return launchRun(
-      compatSubset ? compatSubset.ids : req.scenarioIds,
+      suiteIds || (compatSubset ? compatSubset.ids : req.scenarioIds),
       attempts,
       {
         agent: versions[0] && versions[0] !== current ? versions[0] : undefined,
@@ -819,7 +835,8 @@ export default function EnvironmentWorkspace() {
         candidate,
         limits,
         toolReplay: req.toolReplay,
-        compatSubset,
+        compatSubset: suiteIds ? null : compatSubset,
+        withAgent,
       },
     );
   };
@@ -916,6 +933,37 @@ export default function EnvironmentWorkspace() {
   const connectedAgent =
     connectedAgents.find((a) => a.key === agentKey) || envState.agent;
   const agentName = connectedAgent?.name || "the agent";
+  /* Run setup: this environment's agent first, then any other connected
+     agent of the same type — each with whether it's ready to run here. */
+  const runAgentChoices = (() => {
+    const typeId = envState.agent?.typeId;
+    const others = buildableAgentsOf(connectedAgents).filter(
+      (a) => a.key !== agentKey && typeId && a.typeId === typeId,
+    );
+    const readinessOf = (a) => {
+      const c = compatibilityOf({ env, envState, agent: a });
+      const blocked = c?.scope?.blocked?.length || 0;
+      const requested = c?.scope?.requested || 0;
+      return blocked
+        ? `${requested - blocked} of ${requested} scenarios can run with this agent here.`
+        : "Ready to run here.";
+    };
+    return [
+      {
+        key: agentKey,
+        name: agentName,
+        version: currentAgentVersion(envState)?.label,
+        current: true,
+      },
+      ...others.map((a) => ({
+        key: a.key,
+        name: a.name,
+        version: a.production || a.latest || "v1",
+        current: false,
+        readiness: readinessOf(a),
+      })),
+    ];
+  })();
   const nextStep = (() => {
     if (viewingOlder) return null;
     /* Sealed runs go ahead on what we read; the review is still worth doing. */
@@ -1097,6 +1145,10 @@ export default function EnvironmentWorkspace() {
       unsavedEnvChanges,
       envVersions,
       activeEnvVersion,
+      lockedRelease: lockedFrom,
+      releaseChecks,
+      rlKeys,
+      rlSessions,
       ...carried
     } = envState;
     const twin = envState.twinBacking;
@@ -1106,6 +1158,10 @@ export default function EnvironmentWorkspace() {
       envId: forkedId,
       patch: {
         ...carried,
+        /* A copy of a locked release is editable and not comparable with its scores. */
+        ...(lockedFrom && {
+          copiedFromLocked: { envId: env.id, version: lockedFrom.version },
+        }),
         twinBacking: twin
           ? {
               ...twin,
@@ -1336,7 +1392,7 @@ export default function EnvironmentWorkspace() {
                   multiSelect: false,
                   options: [
                     {
-                      label: `Save as environment ${plan.next}`,
+                      label: `Save release ${plan.next}`,
                       description: plan.detail,
                     },
                     {
@@ -1617,7 +1673,11 @@ export default function EnvironmentWorkspace() {
                 />
                 {/* "Ready", not "Live" — Live now names how a run reaches the agent (the chip beside it). */}
                 <Typography sx={{ typography: "s3", fontWeight: 600 }}>
-                  {envLive ? "Ready" : "Building"}
+                  {env.buildStatus === "awaiting_approval"
+                    ? "Awaiting approval"
+                    : envLive
+                      ? "Ready"
+                      : "Building"}
                 </Typography>
               </Stack>
             </Tooltip>
@@ -2533,14 +2593,8 @@ export default function EnvironmentWorkspace() {
                 {
                   id: "package",
                   icon: "solar:box-linear",
-                  title: "Package this world",
-                  body: "Publish it privately so another agent can run the same tasks.",
-                },
-                {
-                  id: "train",
-                  icon: "solar:graph-up-linear",
-                  title: "Train on this world",
-                  body: "One training run, then tested on cases it never saw.",
+                  title: "Save an environment release",
+                  body: "A private, fixed copy another agent can run the same tasks on.",
                 },
               ].map((m) => (
                 <MenuItem
@@ -2809,6 +2863,17 @@ export default function EnvironmentWorkspace() {
           onStart={startPlannedRun}
           env={env}
           envState={envState}
+          agentChoices={
+            runPlanReq && !runPlanReq.continues && !runPlanReq.snapshot
+              ? runAgentChoices
+              : []
+          }
+          suites={
+            runPlanReq && !runPlanReq.continues && !runPlanReq.snapshot
+              ? orgGroupsOf(envState).filter((g) => g.ids?.length)
+              : []
+          }
+          envLabel={currentEnvVersion(env, envState)?.label}
           scenarioCount={runPlanReq?.scenarioIds?.length || meteredScenarios}
           scopeNote={
             runPlanReq?.scenarioIds?.length &&
@@ -2891,7 +2956,6 @@ export default function EnvironmentWorkspace() {
           initialTab={codeOpen || "cli"}
           budget={defaultRunCap(codeEstimate)}
           estimate={codeEstimate}
-          trainEvals={(envState.evals || []).map(resolveEval).filter(Boolean)}
           onClose={() => setCodeOpen(null)}
           env={env}
           agentName={currentAgentVersion(envState)?.label}
@@ -2992,7 +3056,7 @@ export default function EnvironmentWorkspace() {
               envState={envState}
               /* Read-only while viewing an older version: answers and rebuilds
                  belong to the version in use. */
-              patch={isSeededTemplate || viewingOlder ? null : patch}
+              patch={readOnlyEnv || viewingOlder ? null : patch}
               onGo={go}
               focusId={inbox.focus}
               onClose={() => setInbox({ open: false, focus: null })}
@@ -3005,7 +3069,59 @@ export default function EnvironmentWorkspace() {
         Template lock banner — a neutral bordered strip: the lock, what it
         means, and the way out. The state is in the words, not a tint.
       */}
-      {isSeededTemplate && (
+      {/* Left at Review design: the same proposal waits here. Approving
+          finishes the build; nothing was built before. */}
+      {env.buildStatus === "awaiting_approval" && (
+        <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
+          <Box
+            sx={{
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "8px",
+              bgcolor: "background.paper",
+              overflow: "hidden",
+              "& > div": { borderBottom: 0 },
+            }}
+          >
+            <DesignReview
+              env={env}
+              draftCount={env.builtFrom?.scenarioCount || 10}
+              waiting
+              parked={
+                Date.now() - (env.designPendingAt || Date.now()) >
+                DESIGN_PARK_MS
+              }
+              since={env.designPendingAt || Date.now()}
+              autoMode={getBuilderMode() === "auto"}
+              onApprove={() => {
+                const fin = finishBuildPatch(
+                  { ...env, buildStatus: "building" },
+                  envState,
+                );
+                if (!fin) return;
+                dispatch({
+                  type: "patchEnvState",
+                  envId: env.id,
+                  patch: fin.statePatch,
+                });
+                dispatch({
+                  type: "patchEnvironment",
+                  envId: env.id,
+                  patch: { ...fin.envPatch, designPendingAt: null },
+                });
+              }}
+              onContinue={() =>
+                dispatch({
+                  type: "patchEnvironment",
+                  envId: env.id,
+                  patch: { designPendingAt: Date.now() },
+                })
+              }
+            />
+          </Box>
+        </Box>
+      )}
+      {readOnlyEnv && (
         <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
           <Stack
             direction="row"
@@ -3035,14 +3151,17 @@ export default function EnvironmentWorkspace() {
                   mb: 0.25,
                 }}
               >
-                You&apos;re viewing a template
+                {lockedRelease
+                  ? `Locked release ${lockedRelease.version}`
+                  : "You're viewing a template"}
               </Typography>
               <Typography
                 noWrap
                 sx={{ typography: "s3", color: "text.tertiary" }}
               >
-                Scenarios, evaluations, contract and agent are read-only. Run
-                as-is, or fork to make changes.
+                {lockedRelease
+                  ? "Tasks, splits and the scorer are frozen so scores stay comparable. Run it as-is, or copy it to edit — the copy isn't comparable."
+                  : "Scenarios, evaluations, contract and agent are read-only. Run as-is, or fork to make changes."}
               </Typography>
             </Box>
 
@@ -3057,7 +3176,7 @@ export default function EnvironmentWorkspace() {
                 flexShrink: 0,
               }}
             >
-              Fork to edit
+              {lockedRelease ? "Copy to edit" : "Fork to edit"}
             </Button>
           </Stack>
         </Box>
@@ -3076,6 +3195,23 @@ export default function EnvironmentWorkspace() {
           a budget warning lets it go and says so quietly. */}
       {/* Built from an Error Feed issue's Fix: the way back to it. */}
       <IssueReturnBanner envId={env.id} />
+      {/* A private copy whose source saved a newer version: review it. */}
+      <PrivateUpdateBanner
+        update={privateUpdateOf(env, envState, state)}
+        onTake={() => {
+          const u = privateUpdateOf(env, envState, state);
+          if (!u) return;
+          dispatch({
+            type: "patchEnvironment",
+            envId: env.id,
+            patch: { copyOf: { ...env.copyOf, version: u.to } },
+          });
+        }}
+        onSkip={() => {
+          const u = privateUpdateOf(env, envState, state);
+          if (u) patch({ privateUpdateSkipped: `${u.sourceId}@${u.to}` });
+        }}
+      />
 
       {/* ── body: rail + panel ── */}
       {/* A run is a pairing — this environment version × that agent version. */}
@@ -3083,7 +3219,7 @@ export default function EnvironmentWorkspace() {
         env={env}
         envState={envState}
         patch={patch}
-        locked={isSeededTemplate}
+        locked={readOnlyEnv}
         onOpenHistory={() => go("history")}
         onSave={() => requestSave()}
       />
@@ -3094,7 +3230,7 @@ export default function EnvironmentWorkspace() {
       )}
       {/* The world's release: a newer one to review, or a withdrawn/retired notice. */}
       {(() => {
-        if (isSeededTemplate || viewingOlder) return null;
+        if (readOnlyEnv || viewingOlder) return null;
         const entry = catalogueOfEnv(env);
         const update = releaseUpdateOf(env, envState);
         const banner = update
@@ -3209,6 +3345,8 @@ export default function EnvironmentWorkspace() {
                 onChange={(_, v) => go(v)}
                 variant="scrollable"
                 scrollButtons={false}
+                /* The full-width border above draws the rail. */
+                sx={{ boxShadow: "none" }}
               >
                 {/* The Tooltip forwards the props Tabs clones onto its child
                   (value, selected, onChange…) to the Tab inside it. */}
@@ -3262,7 +3400,7 @@ export default function EnvironmentWorkspace() {
                 onBuilderPrompt={sendChat}
                 onStartRun={startRun}
                 groupCandidates={runGroup.candidates}
-                locked={isSeededTemplate}
+                locked={readOnlyEnv}
                 onFork={() => setCopyOpen({})}
                 selectionRun={{
                   repeats: headerTrials,
@@ -3279,7 +3417,7 @@ export default function EnvironmentWorkspace() {
                 envState={envState}
                 patch={patch}
                 onGo={go}
-                locked={isSeededTemplate}
+                locked={readOnlyEnv}
                 onFork={() => setCopyOpen({})}
                 repeats={Number(headerTrials) || 3}
               />
@@ -3291,7 +3429,7 @@ export default function EnvironmentWorkspace() {
                 envState={envState}
                 patch={patch}
                 onGo={go}
-                locked={isSeededTemplate || !!viewingOlder}
+                locked={readOnlyEnv || !!viewingOlder}
               />
             ) : panel === "contract" ? (
               <RlContractPanel
@@ -3299,7 +3437,7 @@ export default function EnvironmentWorkspace() {
                 envState={envState}
                 patch={patch}
                 onGo={go}
-                locked={isSeededTemplate || !!viewingOlder}
+                locked={readOnlyEnv || !!viewingOlder}
                 onFork={() => setCopyOpen({})}
               />
             ) : panel === "actors" ? (
@@ -3307,7 +3445,7 @@ export default function EnvironmentWorkspace() {
                 env={worldEnv}
                 envState={envState}
                 patch={patch}
-                locked={isSeededTemplate || !!viewingOlder}
+                locked={readOnlyEnv || !!viewingOlder}
               />
             ) : panel === "analytics" ? (
               <AnalyticsPanel env={worldEnv} envState={envState} />
@@ -3316,7 +3454,7 @@ export default function EnvironmentWorkspace() {
                 env={worldEnv}
                 envState={envState}
                 patch={patch}
-                readOnly={isSeededTemplate}
+                readOnly={readOnlyEnv}
                 onCopy={(label) => setCopyOpen({ version: label })}
               />
             ) : panel === "settings" ? (
@@ -3324,7 +3462,7 @@ export default function EnvironmentWorkspace() {
                 env={worldEnv}
                 envState={envState}
                 patch={patch}
-                locked={isSeededTemplate}
+                locked={readOnlyEnv}
                 onFork={() => setCopyOpen({})}
                 onDelete={
                   isSeededTemplate ? undefined : () => setConfirmDelete(env)
@@ -3343,7 +3481,7 @@ export default function EnvironmentWorkspace() {
                 patch={patch}
                 onGo={go}
                 agentConnected={!!envState.agent}
-                locked={isSeededTemplate}
+                locked={readOnlyEnv}
                 onFork={() => setCopyOpen({})}
               />
             )}

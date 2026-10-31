@@ -490,7 +490,7 @@ const DetailsEdit = ({
                     justifyContent: "space-between",
                   }}
                 >
-                  <Tabs
+                  <Tabs sx={{ boxShadow: "none" }}
                     textColor="primary"
                     value={selectedTab}
                     onChange={(e, value) => {

@@ -5,7 +5,6 @@ import { useRoleGates } from "../_mock/previewRole";
 import {
   Box,
   Button,
-  Dialog,
   MenuItem,
   Select,
   Stack,
@@ -28,6 +27,7 @@ import useCreditBalance from "../usage/useCreditBalance";
 import ConnectPreflight from "./connect/ConnectPreflight";
 import { credentialCheck, factCheck, usePreflight } from "./connect/preflight";
 import CopyCommandButton from "../components/CopyCommandButton";
+import ClosableDialog from "../components/ClosableDialog";
 
 const MONO = "ui-monospace, Menlo, monospace";
 /* Quick picks; any count from 1 to 1,000 can be typed — the range the build accepts. */
@@ -179,7 +179,7 @@ export default function BuildEnvironmentDialog({
           : null;
 
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       PaperProps={{
@@ -395,7 +395,7 @@ export default function BuildEnvironmentDialog({
         )}
         {/* The same build from code — what Build environment would start. */}
         <CopyCommandButton
-          command={`agent-learn env build ${(
+          command={`fi sim env create --repo . --name ${(
             name.trim() || `${agent?.name || "my"} environment`
           )
             .toLowerCase()
@@ -422,7 +422,7 @@ export default function BuildEnvironmentDialog({
           Build environment
         </Button>
       </Stack>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 

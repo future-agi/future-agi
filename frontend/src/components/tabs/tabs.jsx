@@ -27,6 +27,7 @@ export const SegmentedTabs = styled((props) => (
 // one a surface pill with a hairline ring.
 export const segmentedTrack = (theme) => ({
   minHeight: 28,
+  boxShadow: "none",
   width: "fit-content",
   padding: 2,
   borderRadius: 6,

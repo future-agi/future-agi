@@ -96,7 +96,7 @@ const useColumns = () =>
               <Typography
                 variant="body2"
                 sx={{
-                  fontSize: "13px",
+                  fontSize: "12px",
                   color: isPassed
                     ? "status.success.fg"
                     : isFailed
@@ -142,7 +142,7 @@ const useColumns = () =>
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontSize: "13px", color: "text.tertiary" }}
+              sx={{ fontSize: "12px", color: "text.tertiary" }}
             >
               {v === "retune"
                 ? "Re-tune"
@@ -171,7 +171,7 @@ const useColumns = () =>
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontSize: "13px", color: "text.tertiary" }}
+              sx={{ fontSize: "12px", color: "text.tertiary" }}
             >
               {label}
             </Typography>

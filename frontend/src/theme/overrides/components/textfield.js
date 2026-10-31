@@ -218,6 +218,9 @@ export function textField(theme) {
             fontWeight: 500,
             color: theme.palette.text.primary,
           },
+          // A field without a label reserves no space above it, so it lines
+          // up with the buttons beside it.
+          "&&&:empty": { display: "none" },
           [`&&&.${inputLabelClasses.error}`]: {
             color: theme.palette.error.main,
           },

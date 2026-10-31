@@ -105,7 +105,7 @@ const TraceCardRightSection = ({
         </Stack>
       </Stack>
       <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
-        <Tabs
+        <Tabs sx={{ boxShadow: "none" }}
           value={value}
           onChange={handleChange}
           aria-label="trace detail tabs"

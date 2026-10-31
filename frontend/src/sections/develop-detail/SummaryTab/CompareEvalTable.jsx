@@ -20,7 +20,7 @@ const RankCellRenderer = (params) => {
       >
         <Typography
           sx={{
-            fontSize: "13px",
+            fontSize: "12px",
             fontWeight: 400,
             color: "14px",
             textAlign: "center",
@@ -38,8 +38,8 @@ const RankCellRenderer = (params) => {
         >
           <Iconify
             icon="solar:crown-bold"
-            width={20}
-            height={20}
+            width={16}
+            height={16}
             // eslint-disable-next-line no-restricted-syntax -- ds: data colour
             sx={{ color: "#FFD700" }}
           />
@@ -52,7 +52,7 @@ const RankCellRenderer = (params) => {
     <Typography
       sx={{
         width: "100%",
-        fontSize: "13px",
+        fontSize: "12px",
         fontWeight: 400,
         color: "14px",
         alignItems: "flex-start",
@@ -106,7 +106,7 @@ const CompareEvalTable = ({
           {String.fromCharCode(65 + index)}
         </Typography>
         <Typography
-          sx={{ fontSize: "13px", fontWeight: 400, color: "text.primary" }}
+          sx={{ fontSize: "12px", fontWeight: 400, color: "text.primary" }}
         >
           {params.value}
         </Typography>
@@ -275,7 +275,7 @@ const CompareEvalTable = ({
         <Typography
           sx={{
             marginLeft: "49.9%",
-            fontSize: "13px",
+            fontSize: "12px",
             color: "text.primary",
             fontWeight: 500,
             borderTop: "1px solid var(--border-light)",

@@ -22,7 +22,7 @@ export const OUTCOME_LABELS = {
   passed: "Passed",
   flaky: "Flaky",
   failed: "Failed",
-  unmeasured: "Not measured",
+  unmeasured: "Couldn't measure",
 };
 
 export function outcomeOf(t) {
@@ -44,14 +44,22 @@ export const measuredOnly = (tasks = []) => tasks.filter(isMeasured);
 /** Mean passShare over measured tasks, 0–100; null when nothing was measured. */
 export function passRateOf(tasks = []) {
   const shares = tasks.map(passShareOf).filter((v) => v != null);
-  return shares.length ? (shares.reduce((a, b) => a + b, 0) / shares.length) * 100 : null;
+  return shares.length
+    ? (shares.reduce((a, b) => a + b, 0) / shares.length) * 100
+    : null;
 }
 
 /** Counts per outcome, plus how many samples (calls / chats) were placed. */
 export function outcomeTally(tasks = []) {
   const tally = { passed: 0, flaky: 0, failed: 0, unmeasured: 0 };
-  tasks.forEach((t) => { tally[outcomeOf(t)] += 1; });
-  return { ...tally, measured: tasks.length - tally.unmeasured, total: tasks.length };
+  tasks.forEach((t) => {
+    tally[outcomeOf(t)] += 1;
+  });
+  return {
+    ...tally,
+    measured: tasks.length - tally.unmeasured,
+    total: tasks.length,
+  };
 }
 
 /**
@@ -64,7 +72,8 @@ export function attributionOf(t) {
   const outcome = outcomeOf(t);
   if (outcome === "passed") return null;
   if (outcome === "unmeasured") return attribute(t);
-  if (outcome === "flaky" && flakySource(t) === "simulator") return DOMAINS.simulator;
+  if (outcome === "flaky" && flakySource(t) === "simulator")
+    return DOMAINS.simulator;
   return DOMAINS.agent;
 }
 
@@ -76,7 +85,8 @@ export const samplesOf = (t) => Math.max(1, Number(t?.repeats) || 1);
 const hashId = (id) => {
   const s = String(id || "");
   let h = 0;
-  for (let i = 0; i < s.length; i += 1) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  for (let i = 0; i < s.length; i += 1)
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
   return Math.abs(h);
 };
 
@@ -87,14 +97,16 @@ export function sentimentOf(t) {
   if (t?.sentiment) return t.sentiment;
   const outcome = outcomeOf(t);
   if (outcome === "unmeasured") return null;
-  if (outcome === "passed") return hashId(t.id) % 5 === 0 ? "neutral" : "positive";
+  if (outcome === "passed")
+    return hashId(t.id) % 5 === 0 ? "neutral" : "positive";
   return hashId(t.id) % 3 === 0 ? "negative" : "neutral";
 }
 
 export function endReasonOf(t) {
   if (t?.endReason) return t.endReason;
   if (t?.fault?.transport) return "dropped";
-  if (t?.fault?.environment || t?.fault?.simulator || t?.fault?.grading) return "error";
+  if (t?.fault?.environment || t?.fault?.simulator || t?.fault?.grading)
+    return "error";
   if (outcomeOf(t) === "passed") return "complete";
   const h = hashId(t?.id) % 3;
   if (h === 0) return "timeout";

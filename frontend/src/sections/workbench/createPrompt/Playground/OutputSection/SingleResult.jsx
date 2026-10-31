@@ -303,8 +303,8 @@ const SingleResult = ({
             >
               <SvgColor
                 sx={{
-                  height: 20,
-                  width: 20,
+                  height: 16,
+                  width: 16,
                   color: selectedVersion?.is_draft ? "divider" : "text.primary",
                 }}
                 src="/assets/icons/ic_tag.svg"
@@ -335,8 +335,8 @@ const SingleResult = ({
             >
               <SvgColor
                 sx={{
-                  height: 20,
-                  width: 20,
+                  height: 16,
+                  width: 16,
                   color: selectedVersion?.is_draft ? "divider" : "text.primary",
                 }}
                 src="/assets/icons/ic_template.svg"

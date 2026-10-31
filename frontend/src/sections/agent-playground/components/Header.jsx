@@ -86,22 +86,21 @@ export default function Header() {
         ) : (
           <Skeleton animation="pulse" variant="text" width={100} height={42} />
         )}
+        {/* Design system tag: a neutral label for what this is (purple is
+            reserved for the main action and AI suggestions). */}
         <Box
           sx={{
-            height: "30px",
-            width: "54px",
-            borderRadius: "100px",
-            bgcolor: "status.discovery.bg",
-            display: "flex",
+            height: 20,
+            px: 0.75,
+            borderRadius: "4px",
+            bgcolor: "action.selected",
+            display: "inline-flex",
             alignItems: "center",
-            justifyContent: "center",
-            padding: (theme) => theme.spacing(0.5, 1),
           }}
         >
           <Typography
-            color={"status.discovery.fg"}
-            typography={"s1"}
-            fontWeight={"fontWeightMedium"}
+            sx={{ fontSize: 11, lineHeight: "16px", fontWeight: 500 }}
+            color="text.secondary"
           >
             Agent
           </Typography>

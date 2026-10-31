@@ -39,7 +39,7 @@ const NavButton = ({ icon, tooltip, onClick, disabled }) => (
         onClick={onClick}
         disabled={disabled}
       >
-        <Iconify icon={icon} width={20} sx={{ color: "text.primary" }} />
+        <Iconify icon={icon} width={16} sx={{ color: "text.primary" }} />
       </IconButton>
     </span>
   </Tooltip>
@@ -222,7 +222,7 @@ const DrawerHeader = ({
           <IconButton size="small" aria-label="Close" onClick={onClose}>
             <Iconify
               icon="solar:close-linear"
-              width={20}
+              width={16}
               sx={{ color: "text.primary" }}
             />
           </IconButton>

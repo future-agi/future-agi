@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   ButtonBase,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
@@ -34,6 +33,7 @@ import Iconify from "src/components/iconify";
 import FixedTab from "src/components/observe-tabs/FixedTab";
 import CustomViewTab from "src/components/observe-tabs/CustomViewTab";
 import SaveViewPopover from "src/components/traceDetail/SaveViewDialog";
+import ClosableDialog from "../../components/ClosableDialog";
 
 /*
   Analytics views as tabs — the Observe tab bar flow (fixed tab, saved-view
@@ -142,7 +142,7 @@ const ViewContextMenu = ({
         </MenuItem>
       </Menu>
 
-      <Dialog
+      <ClosableDialog
         open={confirmOpen}
         onClose={() => {
           setConfirmOpen(false);
@@ -180,7 +180,7 @@ const ViewContextMenu = ({
             Delete
           </Button>
         </DialogActions>
-      </Dialog>
+      </ClosableDialog>
     </>
   );
 };

@@ -1,7 +1,6 @@
 import ErrorState from "src/components/error-state";
 import {
   Box,
-  CircularProgress,
   Table,
   TableBody,
   TableCell,
@@ -15,6 +14,7 @@ import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { useMCPSessions } from "src/api/mcp";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const TRANSPORT_LABELS = {
   streamable_http: "HTTP",
@@ -81,7 +81,7 @@ export default function ActiveSessions() {
 
       {isLoading && (
         <Box display="flex" justifyContent="center" py={4}>
-          <CircularProgress size={24} />
+          <ContentSkeleton variant="rows" />
         </Box>
       )}
 

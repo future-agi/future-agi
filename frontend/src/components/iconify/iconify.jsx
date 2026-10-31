@@ -40,7 +40,8 @@ addIcon("fagi:fix", {
  * A wrapper component for displaying Iconify icons with customizable width and styling
  * Get Iconify icons from https://iconify.design/
  */
-const Iconify = forwardRef(({ icon, width = 20, sx, ...other }, ref) => (
+// Design system: icons default to 16px; pass width for anything larger.
+const Iconify = forwardRef(({ icon, width = 16, sx, ...other }, ref) => (
   <Box
     ref={ref}
     component={Icon}

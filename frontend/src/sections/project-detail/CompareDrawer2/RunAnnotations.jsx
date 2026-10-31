@@ -286,7 +286,7 @@ const RunAnnotations = ({ traceData }) => {
               padding: theme.spacing(2),
             }}
           >
-            <Typography sx={{ fontSize: 13, fontWeight: 400 }}>
+            <Typography sx={{ fontSize: 12, fontWeight: 400 }}>
               Labels have been created but no values added yet. Configure
               annotations or add values.
             </Typography>
@@ -353,7 +353,7 @@ const RunAnnotations = ({ traceData }) => {
               padding: theme.spacing(2),
             }}
           >
-            <Typography sx={{ fontSize: 13, fontWeight: 400 }}>
+            <Typography sx={{ fontSize: 12, fontWeight: 400 }}>
               No Annotations have been added
             </Typography>
 

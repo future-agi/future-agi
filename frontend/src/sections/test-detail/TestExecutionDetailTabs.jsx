@@ -50,7 +50,7 @@ const TestExecutionDetailTabsComponent = ({
         alignItems: "center",
       }}
     >
-      <Tabs value={currentTab?.id || tabs[0]?.id} onChange={handleTabChange}>
+      <Tabs sx={{ boxShadow: "none" }} value={currentTab?.id || tabs[0]?.id} onChange={handleTabChange}>
         {tabs.map((tab) => {
           return (
             <Tab

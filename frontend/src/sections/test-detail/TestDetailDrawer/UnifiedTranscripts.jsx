@@ -1,7 +1,7 @@
+import EmptyState from "src/components/empty-state";
 import React from "react";
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
-import Iconify from "src/components/iconify";
+import { Stack } from "@mui/material";
 import ConversationCard from "./ConversationCard";
 import { getContentMessage } from "src/sections/test/CallLogs/common";
 
@@ -54,48 +54,12 @@ const UnifiedCallTranscript = ({
       }}
     >
       {transcript?.length === 0 ? (
-        <Stack
-          minHeight={200}
-          alignItems="center"
-          justifyContent="center"
-          spacing={1}
-          sx={{
-            border: "1px dashed",
-            borderColor: "divider",
-            borderRadius: 1,
-            p: 3,
-            backgroundColor: "background.neutral",
-          }}
-        >
-          <Iconify
-            icon="solar:chat-round-line-linear"
-            width={36}
-            sx={{ color: "text.disabled" }}
-          />
-          <Typography
-            typography="s2_1"
-            fontWeight="fontWeightMedium"
-            color="text.secondary"
-          >
-            No transcript available
-          </Typography>
-          {endReason && (
-            <Box
-              sx={{
-                px: 1.5,
-                py: 0.5,
-                borderRadius: 1,
-                backgroundColor: "warning.lighter",
-                color: "warning.darker",
-                maxWidth: "80%",
-              }}
-            >
-              <Typography variant="caption" sx={{ wordBreak: "break-word" }}>
-                {endReason}
-              </Typography>
-            </Box>
-          )}
-        </Stack>
+        <EmptyState
+          icon="solar:chat-round-line-linear"
+          title="No transcript yet"
+          description={endReason || undefined}
+          sx={{ pt: 4, pb: 4 }}
+        />
       ) : (
         transcript?.map((item) => {
           const itemProps = getItemProps(item);

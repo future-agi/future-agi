@@ -87,7 +87,7 @@ const UploadMediaChild = ({ control, type, onClose, onSubmit, isPending }) => {
           onChange={(e, value) => {
             setCurrentTab(value);
           }}
-          sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+          sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
         >
           {tabItems.map((tab) => (
             <Tab

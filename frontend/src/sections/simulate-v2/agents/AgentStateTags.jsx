@@ -1,6 +1,10 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Tooltip } from "@mui/material";
-import { COMING_SOON_NOTE, agentStatusOf, isComingSoon } from "../_mock/rsiModel";
+import {
+  COMING_SOON_NOTE,
+  agentStatusOf,
+  isComingSoon,
+} from "../_mock/rsiModel";
 import { QuietTag } from "./AgentBits";
 
 /**
@@ -11,22 +15,25 @@ import { QuietTag } from "./AgentBits";
 export default function AgentStateTags({ agent }) {
   const status = agentStatusOf(agent);
   const soon = isComingSoon(agent);
-  if (!soon && !agent.sample && status.status === "connected") return null;
+  if (!soon && status.status === "connected") return null;
   return (
     <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
-      {agent.sample && (
-        <Tooltip arrow title="Comes with a prebuilt world — the agent it was designed and proven with. Connect your own agent to that environment to test yours there.">
-          <Box component="span"><QuietTag>Sample</QuietTag></Box>
-        </Tooltip>
-      )}
       {soon && (
         <Tooltip arrow title={COMING_SOON_NOTE}>
-          <Box component="span"><QuietTag>Coming soon</QuietTag></Box>
+          <Box component="span">
+            <QuietTag>Coming soon</QuietTag>
+          </Box>
         </Tooltip>
       )}
       {status.status !== "connected" && (
         <Tooltip arrow title={status.reason || ""}>
-          <Box component="span"><QuietTag tone={status.status === "disconnected" ? "error" : undefined}>{status.label}</QuietTag></Box>
+          <Box component="span">
+            <QuietTag
+              tone={status.status === "disconnected" ? "error" : undefined}
+            >
+              {status.label}
+            </QuietTag>
+          </Box>
         </Tooltip>
       )}
     </Stack>

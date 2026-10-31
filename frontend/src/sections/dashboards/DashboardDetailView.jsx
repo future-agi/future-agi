@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, {
   forwardRef,
   useCallback,
@@ -1442,50 +1443,37 @@ export default function DashboardDetailView() {
         sx={{ px: 3, pt: 2, pb: 4, flex: 1, overflow: "visible" }}
       >
         {!hasWidgets ? (
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              height: "50vh",
-              gap: 2,
-            }}
-          >
-            <Iconify
-              icon="solar:graph-up-linear"
-              width={64}
-              sx={{ color: "text.disabled" }}
-            />
-            <Typography variant="h6" color="text.secondary">
-              No widgets yet
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Add your first widget to start visualizing data
-            </Typography>
-            <CustomTooltip
-              show={isReadOnly}
-              type=""
-              title="You don't have permission to add widgets."
-              size="small"
-              arrow
-            >
-              <span>
-                <Button
-                  variant="outlined"
-                  startIcon={<Iconify icon="solar:add-linear" />}
-                  disabled={isReadOnly}
-                  onClick={() =>
-                    navigate(
-                      `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                    )
-                  }
-                >
-                  Add Widget
-                </Button>
-              </span>
-            </CustomTooltip>
-          </Box>
+          <EmptyState
+            icon="solar:graph-up-linear"
+            title="No widgets yet"
+            description="Add a widget to start visualizing data."
+            action={
+              <CustomTooltip
+                show={isReadOnly}
+                type=""
+                title="You don't have permission to add widgets."
+                size="small"
+                arrow
+              >
+                <span>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    disabled={isReadOnly}
+                    onClick={() =>
+                      navigate(
+                        `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                      )
+                    }
+                  >
+                    Add widget
+                  </Button>
+                </span>
+              </CustomTooltip>
+            }
+            sx={{ pt: 6, pb: 6 }}
+          />
         ) : (
           <>
             <DndContext

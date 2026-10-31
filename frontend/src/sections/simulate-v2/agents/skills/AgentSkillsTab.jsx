@@ -46,6 +46,13 @@ import { FactBox, FactRow } from "./SkillFacts";
 import SkillDrawer from "./SkillDrawer";
 import SkillImportDrawer from "./SkillImportDrawer";
 import SkillTestDrawer from "./SkillTestDrawer";
+import {
+  addFromRepo,
+  attachmentsOf,
+  detach,
+  libraryOf,
+  refLabel,
+} from "../../_mock/skillLibrary";
 
 const STATE_TEXT = { on: "Loaded", off: "Off", library: "Not loaded" };
 const head = {
@@ -120,6 +127,18 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
         },
       },
     });
+  /* The workspace library: what's attached to this agent, and adding a
+     repo skill to it (the repo copy still changes through a pull request). */
+  const library = libraryOf(state.workspaceSettings);
+  const attachedHere = (attachmentsOf(state.workspaceSettings)[agent.key] || [])
+    .map((a) => ({ ...a, skill: library.find((x) => x.id === a.skillId) }))
+    .filter((a) => a.skill);
+  const saveLib = (patch) =>
+    Object.entries(patch).forEach(([key, value]) => {
+      if (key !== "skill")
+        dispatch({ type: "setWorkspaceSetting", key, value });
+    });
+  const inLibrary = (id) => library.some((x) => x.name === id);
   const toggle = (skill) => {
     const now = draftStateOf(skill, set.draft);
     const to = now === "on" ? "off" : "on";
@@ -329,6 +348,66 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
           Import skill
         </Button>
       </Stack>
+
+      <Box
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "8px",
+        }}
+      >
+        <Stack direction="row" alignItems="center" sx={{ px: 1.5, py: 1 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
+            {`From the Skills library · ${attachedHere.length}`}
+          </Typography>
+          <Button
+            size="small"
+            onClick={() => navigate(paths.dashboard.simulate.skills)}
+            sx={{ color: "text.secondary" }}
+          >
+            Open Skills
+          </Button>
+        </Stack>
+        {attachedHere.length === 0 ? (
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", px: 1.5, pb: 1.25 }}
+          >
+            None attached. Attach a library skill from Build → Skills; this
+            agent then loads that version or tag.
+          </Typography>
+        ) : (
+          attachedHere.map((a) => (
+            <Stack
+              key={a.skillId}
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{
+                px: 1.5,
+                py: 0.75,
+                borderTop: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Typography sx={{ typography: "s2", fontWeight: 500, flex: 1 }}>
+                {a.skill.name}
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                {refLabel(a.skill, a.ref)}
+              </Typography>
+              <Button
+                size="small"
+                onClick={() =>
+                  saveLib(detach(state.workspaceSettings, agent.key, a.skillId))
+                }
+                sx={{ color: "text.secondary" }}
+              >
+                Detach
+              </Button>
+            </Stack>
+          ))
+        )}
+      </Box>
 
       <FactBox>
         <FactRow k="Loaded by">{runtime.mechanism}</FactRow>
@@ -623,6 +702,24 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
         >
           Test this skill
         </MenuItem>
+        {menu && latestOf(menu.skill).source?.kind === "repo" && (
+          <MenuItem
+            disabled={inLibrary(menu.skill.id)}
+            onClick={() => {
+              saveLib(
+                addFromRepo(state.workspaceSettings, menu.skill, agent.name),
+              );
+              setMenu(null);
+              enqueueSnackbar(
+                `Added ${menu.skill.id} to Skills as v1. The copy in the repository still changes only through a pull request.`,
+              );
+            }}
+          >
+            {inLibrary(menu.skill.id)
+              ? "In the Skills library"
+              : "Add to library"}
+          </MenuItem>
+        )}
         {menu?.skill.state === "library" && (
           <MenuItem
             onClick={() => {

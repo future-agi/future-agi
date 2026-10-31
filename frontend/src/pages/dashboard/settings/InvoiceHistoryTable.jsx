@@ -5,6 +5,7 @@ import PropTypes from "prop-types";
 import { Icon } from "@iconify/react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const defaultColDef = {
   lockVisible: true,
@@ -117,7 +118,7 @@ const InvoiceHistoryTable = ({ userData }) => {
           suppressContextMenu={true}
           serverSideInitialRowCount={5}
           animateRows={true}
-          rowHeight={44}
+          rowHeight={ROW_HEIGHT.default}
           headerHeight={50}
         />
       </Box>

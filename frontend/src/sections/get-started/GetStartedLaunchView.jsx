@@ -40,8 +40,8 @@ import KeyStrip from "./KeyStrip";
 
   The main path is testing your agent in simulation: your coding agent
   (recommended), the CLI or Python, three numbered steps, and step 3 waits
-  for the first run and links to it — with a way out (a sample agent) if
-  nothing arrives. Tracing, evals and the gateway are one row below; Trace
+  for the first run and links to it, with troubleshooting if nothing
+  arrives. Tracing, evals and the gateway are one row below; Trace
   your app swaps the main path for the tracing setup (`?start=trace`), the
   same three steps waiting for the first trace.
 
@@ -69,7 +69,7 @@ const body = { fontSize: 13, lineHeight: "20px", color: "text.secondary" };
 const clean = (code) =>
   typeof code === "string" ? code.replace(/^\n+/, "").replace(/\n+$/, "") : "";
 
-/* How the agent is built → how `agent-learn agent add` registers it. */
+/* How the agent is built → how `fi agent add` registers it. */
 const SIM_FRAMEWORKS = [
   {
     id: "openai-agents",
@@ -645,11 +645,7 @@ function SimulateSection({ keys }) {
         }
         wayOut={
           <>
-            Not seeing it?{" "}
-            <InlineLink to={paths.dashboard.simulate.environmentTemplates}>
-              Try a sample agent
-            </InlineLink>{" "}
-            · <InlineLink href={DOCS}>Troubleshooting</InlineLink>
+            Not seeing it? <InlineLink href={DOCS}>Troubleshooting</InlineLink>
           </>
         }
       />
@@ -711,8 +707,8 @@ function SimulateSection({ keys }) {
         <>
           <Step n={1} title="Install and sign in">
             <Body>
-              Once per machine — installs agent-learning-kit: the Python SDK and
-              the agent-learn CLI.
+              Once per machine — installs the futureagi Python SDK and
+              the fi CLI.
             </Body>
             <CodeBlock code={INSTALL_CMD} />
             <Typography
@@ -747,7 +743,7 @@ function SimulateSection({ keys }) {
               ))}
             </TextField>
             <CodeBlock
-              code={`agent-learn agent add my-agent ${framework.agent}\nagent-learn env build my-first-env --agent my-agent --request "What my agent should handle"\nagent-learn run --env my-first-env --attempts 3 --budget 100 --budget-unit credits`}
+              code={`fi agents push --repo .\nfi sim env create --repo . --name my-first-env --request "What my agent should handle"\nfi sim run --env my-first-env --trials 3 --budget 100 --budget-unit credits`}
             />
           </Step>
           {listen(3)}
@@ -759,8 +755,8 @@ function SimulateSection({ keys }) {
           <Step n={1} title="Install and add your keys">
             <Body>Your keys are already in — copy and run.</Body>
             <CodeBlock
-              code={`pip install agent-learning-kit\n${keys.envShown}`}
-              copyText={`pip install agent-learning-kit\n${keys.envCopy}`}
+              code={`pip install futureagi\n${keys.envShown}`}
+              copyText={`pip install futureagi\n${keys.envCopy}`}
             />
           </Step>
           <Step n={2} title="Define it and run it">
@@ -770,44 +766,6 @@ function SimulateSection({ keys }) {
           {listen(3)}
         </>
       )}
-
-      {/* The way out when there's no agent to hand. */}
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1.5}
-        sx={{
-          mt: 3,
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 1,
-          px: 1.5,
-          py: 1.25,
-        }}
-      >
-        <Iconify
-          icon="solar:play-circle-linear"
-          width={20}
-          sx={{ color: "text.secondary", flexShrink: 0 }}
-        />
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            No agent handy?
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            Run a ready-made world with its sample agent — nothing to connect,
-            results in a minute.
-          </Typography>
-        </Box>
-        <Button
-          component={RouterLink}
-          href={paths.dashboard.simulate.environmentTemplates}
-          size="small"
-          variant="outlined"
-        >
-          Try a sample agent
-        </Button>
-      </Stack>
     </Box>
   );
 }

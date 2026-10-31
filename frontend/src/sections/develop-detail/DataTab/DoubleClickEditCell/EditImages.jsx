@@ -1,10 +1,4 @@
-import {
-  Box,
-  CircularProgress,
-  DialogActions,
-  Typography,
-  IconButton,
-} from "@mui/material";
+import { Box, DialogActions, Typography, IconButton } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useEffect, useRef, useState } from "react";
 import ErrorMessage from "./ErrorMessage";
@@ -29,6 +23,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Sortable Image Item Component
 const SortableImageItem = ({ url, index, onDelete }) => {
@@ -346,7 +341,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                 alignItems: "center",
               }}
             >
-              <CircularProgress />
+              <ContentSkeleton variant="panel" />
             </Box>
           </ShowComponent>
 

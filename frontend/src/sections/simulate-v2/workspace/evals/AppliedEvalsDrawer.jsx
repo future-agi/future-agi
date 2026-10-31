@@ -8,7 +8,6 @@ import {
   IconButton,
   Tooltip,
   Checkbox,
-  Dialog,
   DialogTitle,
   DialogContent,
   DialogContentText,
@@ -22,6 +21,7 @@ import EditEvalDrawer from "./EditEvalDrawer";
 import { canEditEval } from "./canEditEval";
 import { MAPPING_NOTE, mappingWithout } from "./evalMapping";
 import { clickable, focusRing } from "../../components/clickable";
+import ClosableDialog from "../../components/ClosableDialog";
 
 /**
  * All Evaluations — mirrors the prod dataset drawer
@@ -285,7 +285,7 @@ export default function AppliedEvalsDrawer({
       )}
 
       {/* Single-delete confirm */}
-      <Dialog
+      <ClosableDialog
         open={!!confirmOne}
         onClose={() => setConfirmOne(null)}
         maxWidth={false}
@@ -327,10 +327,10 @@ export default function AppliedEvalsDrawer({
             Remove evaluation
           </Button>
         </DialogActions>
-      </Dialog>
+      </ClosableDialog>
 
       {/* Bulk-delete confirm */}
-      <Dialog
+      <ClosableDialog
         open={confirmBulk}
         onClose={() => setConfirmBulk(false)}
         maxWidth={false}
@@ -369,7 +369,7 @@ export default function AppliedEvalsDrawer({
             Remove {selected.size}
           </Button>
         </DialogActions>
-      </Dialog>
+      </ClosableDialog>
     </>
   );
 }

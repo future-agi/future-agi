@@ -1,4 +1,5 @@
 import { tableRowClasses } from "@mui/material/TableRow";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 // ----------------------------------------------------------------------
 
@@ -36,8 +37,8 @@ export function table(theme) {
           lineHeight: "18px",
           color: theme.palette.text.secondary,
           borderBottom: `1px solid ${theme.palette.border.default}`,
-          paddingTop: 7,
-          paddingBottom: 7,
+          paddingTop: (ROW_HEIGHT.default - 18) / 2,
+          paddingBottom: (ROW_HEIGHT.default - 18) / 2,
           paddingLeft: 12,
           paddingRight: 12,
         },

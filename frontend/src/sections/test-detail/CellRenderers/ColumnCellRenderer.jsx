@@ -23,7 +23,7 @@ const ColumnCellRenderer = (params) => {
       <CustomTooltip show size="small" arrow title={displayName}>
         <Typography
           fontWeight={500}
-          fontSize="13px"
+          fontSize="12px"
           color={"text.secondary"}
           sx={{
             textOverflow: "ellipsis",

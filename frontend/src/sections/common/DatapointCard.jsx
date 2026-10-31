@@ -77,7 +77,7 @@ const DatapointCard = ({
       return (
         <SvgColor
           src={`/assets/icons/action_buttons/ic_run_prompt.svg`}
-          sx={{ width: 20, height: 20, color: "info.main" }}
+          sx={{ width: 16, height: 16, color: "info.main" }}
         />
       );
     } else if (column?.originType === "evaluation") {
@@ -94,7 +94,7 @@ const DatapointCard = ({
       return (
         <SvgColor
           src={`/assets/icons/action_buttons/ic_optimize.svg`}
-          sx={{ width: 20, height: 20, color: "primary.main" }}
+          sx={{ width: 16, height: 16, color: "primary.main" }}
         />
       );
     } else if (column?.originType === "annotation_label") {
@@ -201,8 +201,8 @@ const DatapointCard = ({
       src="/assets/icons/ic_copy.svg"
       alt="Copy"
       sx={{
-        width: 20,
-        height: 20,
+        width: 16,
+        height: 16,
         color: "text.disabled",
         cursor: "pointer",
       }}
@@ -298,8 +298,8 @@ const DatapointCard = ({
                   <SvgColor
                     src={"/assets/icons/ic_thoughts.svg"}
                     sx={{
-                      height: "20px",
-                      width: "20px",
+                      height: "16px",
+                      width: "16px",
                       bgcolor: "primary.main",
                     }}
                   />

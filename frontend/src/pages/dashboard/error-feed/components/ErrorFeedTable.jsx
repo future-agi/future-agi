@@ -26,6 +26,7 @@ import ErrorTrendSparkline from "./ErrorTrendSparkline";
 import { useErrorFeedList } from "src/api/errorFeed/mockAdapter";
 import { useErrorFeedApiParams, useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import {
   clickable,
   focusRing,
@@ -172,7 +173,7 @@ function SkeletonRow({ withAgent = false }) {
     },
   };
   return (
-    <TableRow sx={{ height: 56 }}>
+    <TableRow sx={{ height: ROW_HEIGHT.twoLine }}>
       <TableCell padding="checkbox">
         <Checkbox disabled size="small" />
       </TableCell>
@@ -357,7 +358,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                       {...clickable(() => setSortBy(col.id))}
                     >
                       <Typography
-                        fontSize={13}
+                        typography="s3"
                         fontWeight="fontWeightMedium"
                         color="text.secondary"
                       >
@@ -367,7 +368,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                     </Stack>
                   ) : (
                     <Typography
-                      fontSize={13}
+                      typography="s3"
                       fontWeight="fontWeightMedium"
                       color="text.secondary"
                     >
@@ -403,7 +404,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                     sx={{
                       ...focusRing,
                       cursor: "pointer",
-                      height: 56,
+                      height: ROW_HEIGHT.twoLine,
                       "&.MuiTableRow-hover:hover": { bgcolor: hoverBg },
                       "&.Mui-selected": { bgcolor: selectedBg },
                       "&.Mui-selected:hover": { bgcolor: selectedBg },

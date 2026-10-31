@@ -16,8 +16,8 @@ const NodeCardSkeleton = () => (
     <Stack direction="row" spacing={1.5} alignItems="flex-start">
       <Skeleton
         variant="rounded"
-        width={36}
-        height={36}
+        width={28}
+        height={28}
         sx={{ flexShrink: 0 }}
       />
       <Stack sx={{ flex: 1 }} gap={0.5}>

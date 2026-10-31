@@ -126,6 +126,7 @@ const DevelopBar = ({
           }}
         >
           <Tabs
+            sx={{ boxShadow: "none" }}
             value={currentTab}
             onChange={(e, value) => {
               setCurrentTab(value);

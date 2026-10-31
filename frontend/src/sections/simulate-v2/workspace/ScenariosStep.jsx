@@ -111,6 +111,7 @@ import {
   needsReview,
   stateActionOf,
   STATE_CHOICES,
+  uncoveredUseCasesOf,
   archiveScenario,
   restoreScenario,
   liveScenarios,
@@ -157,6 +158,8 @@ import {
 import GroupsBar from "./scenarios/GroupsBar";
 import { clickable, focusRing } from "../components/clickable";
 import TraceReviewDrawer from "./scenarios/TraceReviewDrawer";
+import { contractUseCasesOf } from "../_mock/rlContract";
+import { sendToBuilder } from "../_mock/builderPromptBus";
 
 /**
  * Scenarios.
@@ -651,7 +654,7 @@ export default function ScenariosStep({
       },
       {
         value: "group",
-        label: "Group",
+        label: "Suite",
         type: "enum",
         choices: orgGroups.map((g) => g.name),
       },
@@ -1354,13 +1357,16 @@ export default function ScenariosStep({
         title: [
           review.outdated.length > 0 && {
             n: review.outdated.length,
-            label: "Outdated",
+            label: "to rewrite",
             red: true,
           },
-          review.stale.length > 0 && { n: review.stale.length, label: "Stale" },
+          review.stale.length > 0 && {
+            n: review.stale.length,
+            label: "blocked by a removed tool",
+          },
           review.recheck.length > 0 && {
             n: review.recheck.length,
-            label: "Re-check",
+            label: "to re-check",
           },
         ]
           .filter(Boolean)
@@ -1385,8 +1391,7 @@ export default function ScenariosStep({
           {
             label: "Review",
             primary: true,
-            onClick: () =>
-              setFilters({ status: ["Outdated", "Stale", "Re-check"] }),
+            onClick: () => setFilters({ status: ["Draft", "Blocked"] }),
           },
           !ro &&
             review.reprovable.length > 0 && {
@@ -1403,7 +1408,7 @@ export default function ScenariosStep({
         id: `trace-${importId}`,
         icon: "solar:server-linear",
         attention: true,
-        title: `${n} draft${n === 1 ? "" : "s"} from production traces waiting for review`,
+        title: `${n} imported draft${n === 1 ? "" : "s"} waiting for review`,
         sub: `From ${(ids || []).join(", ")}. Review the starting state, mapping, personal data and what should happen — only ready drafts are added.`,
         actions: [
           {
@@ -1661,10 +1666,10 @@ export default function ScenariosStep({
                         Tags &amp; groups
                       </Button>
                     ) : barFit === "compact" ? (
-                      <Tooltip arrow title="Tags & groups">
+                      <Tooltip arrow title="Tags & suites">
                         <IconButton
                           size="small"
-                          aria-label="Tags & groups"
+                          aria-label="Tags & suites"
                           onClick={() => setOrgOpen(true)}
                           sx={{
                             flexShrink: 0,
@@ -1768,7 +1773,7 @@ export default function ScenariosStep({
                       <>
                         <Tooltip
                           arrow
-                          title="More — tags & groups, coverage, history"
+                          title="More — tags & suites, coverage, history"
                         >
                           <IconButton
                             size="small"
@@ -1793,7 +1798,7 @@ export default function ScenariosStep({
                         >
                           {[
                             [
-                              "Tags & groups",
+                              "Tags & suites",
                               "solar:tag-linear",
                               () => setOrgOpen(true),
                             ],
@@ -2066,6 +2071,63 @@ export default function ScenariosStep({
                     }
                     onBack={() => setAsOf(null)}
                   />
+                  {/* Use cases the contract names with no scenario yet. */}
+                  {!asOfBatch &&
+                    !ro &&
+                    (() => {
+                      const rows = (envState.scenarios || []).filter(
+                        (r) => !r.archived,
+                      );
+                      const missing = uncoveredUseCasesOf(
+                        contractUseCasesOf(env, envState),
+                        rows,
+                        env,
+                      );
+                      if (!missing.length) return null;
+                      return (
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          spacing={1.5}
+                          sx={{
+                            px: 1.5,
+                            py: 1,
+                            mb: 1,
+                            border: "1px solid",
+                            borderColor: "divider",
+                            borderRadius: "8px",
+                          }}
+                        >
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s2",
+                              color: "text.secondary",
+                              flex: 1,
+                              minWidth: 0,
+                            }}
+                          >
+                            {`${missing.length} use case${missing.length === 1 ? " has" : "s have"} no scenario yet: ${missing.map((m) => m.text).join(" · ")}`}
+                          </Typography>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() =>
+                              sendToBuilder(
+                                `Write scenarios for the use cases that have none: ${missing.map((m) => m.text).join("; ")}`,
+                              )
+                            }
+                            sx={{
+                              color: "text.primary",
+                              borderColor: "divider",
+                              flexShrink: 0,
+                            }}
+                          >
+                            Add missing
+                          </Button>
+                        </Stack>
+                      );
+                    })()}
                   {!asOfBatch && mode === "scenarios" && (
                     <Box data-scenarios-safe="groups-bar">
                       <GroupsBar
@@ -2528,7 +2590,7 @@ const groupKeyOf = (row, mode, env) => {
     const g = env?.__org?.groupNamesOf(row)?.[0];
     return g
       ? { id: `group:${g}`, label: g }
-      : { id: "group:none", label: "Not in a group" };
+      : { id: "group:none", label: "Not in a suite" };
   }
   if (mode === "tag") {
     const t = env?.__org?.tagNamesOf(row)?.[0];
@@ -2582,7 +2644,7 @@ const SCENARIO_GROUPINGS = [
   { id: "subgoal", label: "Sub-goal", icon: "solar:map-linear" },
   { id: "source", label: "Source", icon: "solar:magic-stick-3-linear" },
   { id: "addedBy", label: "Added by", icon: "solar:user-plus-linear" },
-  { id: "group", label: "Group", icon: "solar:folder-2-linear" },
+  { id: "group", label: "Suite", icon: "solar:folder-2-linear" },
   { id: "tag", label: "Tag", icon: "solar:tag-linear" },
 ];
 

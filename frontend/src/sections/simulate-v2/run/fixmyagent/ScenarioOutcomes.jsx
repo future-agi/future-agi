@@ -10,7 +10,7 @@ const OUTCOME = {
   "still-failing": "Still failing",
   flaky: "Flaky",
   inconclusive: "Inconclusive",
-  "off-script": "Not counted",
+  "off-script": "Couldn't measure",
   same: "Unchanged",
 };
 const OUTCOME_ORDER = [
@@ -28,7 +28,7 @@ const CHIP = { "off-script": "Caller went off script" };
 /*
   What the winner did to each scenario — fixed, broke, still failing,
   unchanged — on the held-back set it never saw and the target scenarios it
-  was tuned on. Every trial against every scenario is one click further.
+  was tuned on. Every candidate against every scenario is one click further.
 */
 export default function ScenarioOutcomes({ result, winner }) {
   const [only, setOnly] = useState(null);

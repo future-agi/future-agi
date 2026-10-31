@@ -32,6 +32,7 @@ import { paths } from "src/routes/paths";
 import "src/styles/clean-data-table.css";
 import { QUEUE_ROLES, hasQueueRole, queueRoleList } from "./constants";
 import { SS_KEY_USER_ID } from "src/utils/sessionKeys";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 // Skeleton cell renderer shown during loading
 const SkeletonCell = () => (
@@ -69,15 +70,17 @@ function NameCellRenderer({ data }) {
   return (
     <Box
       sx={{
-        py: 1,
+        // Two-line row (44px): name 12/500 over meta 11, no extra padding
+        // or gap, so neither line gets clipped.
         display: "flex",
         flexDirection: "column",
         justifyContent: "center",
         gap: 0.5,
+        minWidth: 0,
         height: "100%",
       }}
     >
-      <Typography variant="body2" fontWeight={600} noWrap>
+      <Typography variant="body2" fontWeight={500} noWrap>
         {data.name}
       </Typography>
       {data.description && (
@@ -706,7 +709,7 @@ export default function AnnotationQueueTable({
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             context={gridContext}
-            rowHeight={44}
+            rowHeight={ROW_HEIGHT.twoLine}
             pagination={false}
             animateRows={false}
             suppressRowClickSelection

@@ -678,7 +678,7 @@ export default function OmegaHandoff({
               />
             }
           >
-            {`Open draft ${review.short}`}
+            {`Create ${review.long}`}
           </Button>
         </Box>
       )}
@@ -696,7 +696,7 @@ export default function OmegaHandoff({
               setCanary(null);
               markReleased({
                 origin: "platform",
-                note: `Promoted from a ${canary.share}% canary on ${source.label} — ${summaryLine}`,
+                note: `Made active from a ${canary.share}% canary on ${source.label} — ${summaryLine}`,
               });
             }}
             onRollBack={() => setCanary(null)}
@@ -973,23 +973,40 @@ export default function OmegaHandoff({
               hidden
               onChange={onUploadPatched}
             />
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              onClick={() => uploadInput.current?.click()}
-              startIcon={
-                <Iconify icon="solar:upload-minimalistic-linear" width={16} />
-              }
-            >
-              Upload the patched code
-            </Button>
+            {/* Supported uploads: the verified candidate becomes this
+                environment's default (clarified plan) — your choice, never automatic. */}
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={() =>
+                  markReleased(
+                    {
+                      origin: "candidate",
+                      note: `Verified candidate set as ${env?.name || "this environment"}'s default — ${summaryLine}`,
+                    },
+                    { draftSource: "upload" },
+                  )
+                }
+                startIcon={
+                  <Iconify icon="solar:check-circle-linear" width={16} />
+                }
+              >
+                Use as environment default
+              </Button>
+              <Button
+                size="small"
+                onClick={() => uploadInput.current?.click()}
+                sx={{ color: "text.secondary" }}
+              >
+                Or upload patched code
+              </Button>
+            </Stack>
             <Typography
               sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}
             >
-              {draftVersion
-                ? `Draft ${draftVersion.label} is waiting on it — uploading releases it.`
-                : "Copy the patch, apply it to your code, then upload the bundle here."}
+              {`From now on, runs in ${env?.name || "this environment"} use the verified candidate. Your own copy of the code isn't changed.`}
             </Typography>
           </Box>
         ) : (
@@ -1613,7 +1630,7 @@ function CanaryPanel({
         sx={{ px: 1.5, pb: 1.25 }}
       >
         <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
-          {`Promote or roll back in ${where} — that's your call. Tell us which, so results and regressions are read against what's live.`}
+          {`Make it active or roll back in ${where} — that's your call. Tell us which, so results and regressions are read against what's live.`}
         </Typography>
         <Button
           size="small"
@@ -1735,7 +1752,7 @@ function ShipParts({
                   flexShrink: 0,
                 }}
               >
-                {`Open draft ${reviewShort}`}
+                {`Create ${reviewShort === "MR" ? "merge request" : "pull request"}`}
               </Button>
             ))}
           {delivery === "patch" && (

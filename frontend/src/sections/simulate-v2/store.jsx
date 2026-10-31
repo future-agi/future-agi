@@ -21,20 +21,48 @@ import { SEEDED_PROJECTS } from "./_mock/projectLinks";
 import { runReadiness } from "./_mock/setupGaps";
 import { getEnvironment } from "./_mock/environments";
 import { generatedPool } from "./_mock/scenarios";
-import { agentPinPatch, agentVersions, defaultAgentVersionOf, isPendingDraft, majorOf, productionAgentVersion, versionNumber } from "./_mock/versions";
+import {
+  agentPinPatch,
+  agentVersions,
+  defaultAgentVersionOf,
+  isPendingDraft,
+  majorOf,
+  productionAgentVersion,
+  versionNumber,
+} from "./_mock/versions";
 import { raiseNudgesIn } from "./_mock/nudgeEffects";
 /* Which agent this is, across environments: where it lives. Two
    environments connected to the same repo, endpoint or hosted assistant are
    testing one agent. */
-import { envAgentKey, connectedAgentsFrom, repairAgentRecord } from "./_mock/agentRegistry";
+import {
+  envAgentKey,
+  connectedAgentsFrom,
+  repairAgentRecord,
+} from "./_mock/agentRegistry";
 /* Secrets are held as secret-manager references, never values (AC-6.12). */
 import { scrubAgentSecrets } from "./_mock/secretRefs";
 import { recordCredentialSets } from "./_mock/envConfig";
 /* Topping a stored copy up with what the seed gained since it was saved. */
-import { SEED_VERSION, topUpSeed, scrubEnvState, scrubPatch, withRsiSeed } from "./_mock/seedTopUp";
-import { withCommitHistory, withCommitTies, withFixPr } from "./_mock/commitHistorySeed";
+import {
+  SEED_VERSION,
+  topUpSeed,
+  scrubEnvState,
+  scrubPatch,
+  withRsiSeed,
+} from "./_mock/seedTopUp";
+import {
+  withCommitHistory,
+  withCommitTies,
+  withFixPr,
+} from "./_mock/commitHistorySeed";
 import { withProjectLinkRepair } from "./_mock/projectLinkRepair";
 import { readStored, writeStored, updateStored } from "./_mock/storeStorage";
+import {
+  publishRunning,
+  runningCountOf,
+  publishObserveEnvs,
+  observeEnvsOf,
+} from "./_mock/runningNow";
 /* A search that played out while nobody watched has finished. */
 import { settleImprovements } from "./_mock/optimizationRuns";
 import { settleAbandonedRuns } from "./_mock/runGroup";
@@ -133,7 +161,15 @@ const initialState = {
   like work already in progress — and only when nothing is stored, so it never
   overwrites what someone actually did.
 */
-const firstRunState = () => ({ ...initialState, ...withFixPr(withProjectLinkRepair(withCommitTies(withCommitHistory(withRsiSeed(seededState()))))), seedVersion: SEED_VERSION });
+const firstRunState = () => ({
+  ...initialState,
+  ...withFixPr(
+    withProjectLinkRepair(
+      withCommitTies(withCommitHistory(withRsiSeed(seededState()))),
+    ),
+  ),
+  seedVersion: SEED_VERSION,
+});
 
 /* ── agent versions: one way in ──────────────────────────────────────────────
    A version belongs to the agent. Every environment testing that agent, and
@@ -143,13 +179,21 @@ const firstRunState = () => ({ ...initialState, ...withFixPr(withProjectLinkRepa
 
 const unionVersions = (a = [], b = []) => {
   const byLabel = new Map(a.map((v) => [v.label, v]));
-  b.forEach((v) => { if (!byLabel.has(v.label)) byLabel.set(v.label, v); });
-  return [...byLabel.values()].sort((x, y) => versionNumber(x.label) - versionNumber(y.label));
+  b.forEach((v) => {
+    if (!byLabel.has(v.label)) byLabel.set(v.label, v);
+  });
+  return [...byLabel.values()].sort(
+    (x, y) => versionNumber(x.label) - versionNumber(y.label),
+  );
 };
 
 const knownVersions = (state, key) => [
-  ...Object.entries(state.byEnv || {}).filter(([id, es]) => envAgentKey(es?.agent, id) === key).flatMap(([, es]) => agentVersions(es)),
-  ...(state.connectedAgents || []).filter((a) => a.key === key).flatMap((a) => a.versions || []),
+  ...Object.entries(state.byEnv || {})
+    .filter(([id, es]) => envAgentKey(es?.agent, id) === key)
+    .flatMap(([, es]) => agentVersions(es)),
+  ...(state.connectedAgents || [])
+    .filter((a) => a.key === key)
+    .flatMap((a) => a.versions || []),
 ];
 
 const mintVersion = (state, key, version, activateEnvId) => {
@@ -157,19 +201,30 @@ const mintVersion = (state, key, version, activateEnvId) => {
   /* A label already taken — another environment or the Agents page got there
      first — takes the next free number instead of being silently dropped. */
   const v = known.some((k) => k.label === version.label)
-    ? (() => { const n = Math.max(0, ...known.map((k) => majorOf(k.label))) + 1; return { ...version, id: `agent-v${n}`, label: `v${n}` }; })()
+    ? (() => {
+        const n = Math.max(0, ...known.map((k) => majorOf(k.label))) + 1;
+        return { ...version, id: `agent-v${n}`, label: `v${n}` };
+      })()
     : version;
   const byEnv = { ...state.byEnv };
   Object.entries(state.byEnv).forEach(([id, es]) => {
     if (envAgentKey(es?.agent, id) !== key) return;
-    const next = { ...es, agentVersions: unionVersions(agentVersions(es), [v]) };
+    const next = {
+      ...es,
+      agentVersions: unionVersions(agentVersions(es), [v]),
+    };
     /* Environments that follow production move with it on their own; a
        pinned one stays put. The environment it was minted in (when asked)
        tests it straight away — unless it's a draft: a draft is never what
        an environment tests; its runs name it (?agent=) until it's released. */
-    byEnv[id] = id === activateEnvId && v.status !== "draft" ? { ...next, ...agentPinPatch(next, v.label) } : next;
+    byEnv[id] =
+      id === activateEnvId && v.status !== "draft"
+        ? { ...next, ...agentPinPatch(next, v.label) }
+        : next;
   });
-  const connectedAgents = (state.connectedAgents || []).map((a) => (a.key === key ? { ...a, versions: unionVersions(a.versions, [v]) } : a));
+  const connectedAgents = (state.connectedAgents || []).map((a) =>
+    a.key === key ? { ...a, versions: unionVersions(a.versions, [v]) } : a,
+  );
   return { ...state, byEnv, connectedAgents };
 };
 
@@ -243,7 +298,8 @@ function reducer(state, action) {
            envs (built from agent code) carry their own scenarios and are
            left untouched.
         */
-        const fromTemplate = !!getEnvironment(env.id) || es.scenarioSource === "templates";
+        const fromTemplate =
+          !!getEnvironment(env.id) || es.scenarioSource === "templates";
         if (!fromTemplate) return;
         /*
            Fill a template env's scenarios only when it has none — a cache from
@@ -269,7 +325,10 @@ function reducer(state, action) {
       envs.forEach((env) => {
         const es = nextByEnv[env.id];
         if (!es || !(es.runs || []).some((r) => r.synthetic)) return;
-        nextByEnv[env.id] = { ...es, runs: es.runs.filter((r) => !r.synthetic) };
+        nextByEnv[env.id] = {
+          ...es,
+          runs: es.runs.filter((r) => !r.synthetic),
+        };
       });
       /* `hydrated` marks that the store has loaded from the cache (or the
          seed). Screens that would otherwise render "Environment not found"
@@ -281,11 +340,28 @@ function reducer(state, action) {
       Object.keys(nextByEnv).forEach((id) => {
         /* An improvement whose search finished while nobody watched is done —
            and so is a run whose page was closed before it finished. */
-        const es = settleAbandonedRuns({ ...state, ...payload, myEnvironments: envs }, id, settleImprovements(scrubEnvState(nextByEnv[id])));
-        nextByEnv[id] = es?.agent ? { ...es, agent: repairAgentRecord(es.agent, `env:${id}`) } : es;
+        const es = settleAbandonedRuns(
+          { ...state, ...payload, myEnvironments: envs },
+          id,
+          settleImprovements(scrubEnvState(nextByEnv[id])),
+        );
+        nextByEnv[id] = es?.agent
+          ? { ...es, agent: repairAgentRecord(es.agent, `env:${id}`) }
+          : es;
       });
-      const connectedAgents = (payload.connectedAgents || state.connectedAgents || []).map((a) => repairAgentRecord(scrubAgentSecrets(a)));
-      return { ...state, ...payload, myEnvironments: envs, byEnv: nextByEnv, connectedAgents, hydrated: true };
+      const connectedAgents = (
+        payload.connectedAgents ||
+        state.connectedAgents ||
+        []
+      ).map((a) => repairAgentRecord(scrubAgentSecrets(a)));
+      return {
+        ...state,
+        ...payload,
+        myEnvironments: envs,
+        byEnv: nextByEnv,
+        connectedAgents,
+        hydrated: true,
+      };
     }
 
     case "adoptEnvironment": {
@@ -306,7 +382,12 @@ function reducer(state, action) {
       return {
         ...state,
         myEnvironments: [
-          { ...env, ...(name && { name }), adoptedAt: action.now, custom: !!env.custom },
+          {
+            ...env,
+            ...(name && { name }),
+            adoptedAt: action.now,
+            custom: !!env.custom,
+          },
           ...state.myEnvironments,
         ],
         byEnv: { ...state.byEnv, [env.id]: seededEnvState },
@@ -342,16 +423,35 @@ function reducer(state, action) {
       const key = envAgentKey(es?.agent, action.envId);
       if (key) {
         const env = state.myEnvironments.find((e) => e.id === action.envId);
-        connectedAgents = keepInRegistry(connectedAgents, key, es.agent, agentVersions(es), {
-          name: es.agent.name || `${env?.name || "Environment"} agent`, origin: "environment", firstEnvName: env?.name,
-        });
+        connectedAgents = keepInRegistry(
+          connectedAgents,
+          key,
+          es.agent,
+          agentVersions(es),
+          {
+            name: es.agent.name || `${env?.name || "Environment"} agent`,
+            origin: "environment",
+            firstEnvName: env?.name,
+          },
+        );
         /* The agent remembers it was tested there — "Not tested yet" would be false. */
-        const gone = { envId: action.envId, envName: env?.name || "An environment", removedAt: new Date().toISOString(), runs: (es?.runs || []).length };
-        connectedAgents = connectedAgents.map((a) => (a.key === key ? { ...a, deletedIn: [...(a.deletedIn || []), gone] } : a));
+        const gone = {
+          envId: action.envId,
+          envName: env?.name || "An environment",
+          removedAt: new Date().toISOString(),
+          runs: (es?.runs || []).length,
+        };
+        connectedAgents = connectedAgents.map((a) =>
+          a.key === key
+            ? { ...a, deletedIn: [...(a.deletedIn || []), gone] }
+            : a,
+        );
       }
       return {
         ...state,
-        myEnvironments: state.myEnvironments.filter((e) => e.id !== action.envId),
+        myEnvironments: state.myEnvironments.filter(
+          (e) => e.id !== action.envId,
+        ),
         byEnv,
         connectedAgents,
       };
@@ -369,21 +469,47 @@ function reducer(state, action) {
          change of default, never a silent one. */
       const before = defaultAgentVersionOf(prev);
       const after = defaultAgentVersionOf(next);
-      const changes = before === after ? prev.agentDefaultChanges : [
-        ...(prev.agentDefaultChanges || []),
-        { from: before, to: after, production: productionAgentVersion(prev)?.label || null, at: new Date().toISOString(), by: action.by || "You" },
-      ];
-      return { ...state, byEnv: { ...state.byEnv, [action.envId]: { ...next, ...(changes && { agentDefaultChanges: changes }) } } };
+      const changes =
+        before === after
+          ? prev.agentDefaultChanges
+          : [
+              ...(prev.agentDefaultChanges || []),
+              {
+                from: before,
+                to: after,
+                production: productionAgentVersion(prev)?.label || null,
+                at: new Date().toISOString(),
+                by: action.by || "You",
+              },
+            ];
+      return {
+        ...state,
+        byEnv: {
+          ...state.byEnv,
+          [action.envId]: {
+            ...next,
+            ...(changes && { agentDefaultChanges: changes }),
+          },
+        },
+      };
     }
 
     case "patchEnvState": {
       const prev = state.byEnv[action.envId] || emptyEnvState();
       /* An edit remembers what it replaced, so it can be undone on its own. */
-      const byEnv = { ...state.byEnv, [action.envId]: { ...prev, ...scrubPatch(stampEdit(prev, action.patch)) } };
+      const byEnv = {
+        ...state.byEnv,
+        [action.envId]: {
+          ...prev,
+          ...scrubPatch(stampEdit(prev, action.patch)),
+        },
+      };
       /* A version released here is released for the agent: every environment
          testing it learns so, and those following production move to it. */
       const before = new Set((prev.releases || []).map((r) => r.version));
-      const fresh = (action.patch?.releases || []).map((r) => r.version).filter((l) => l && !before.has(l));
+      const fresh = (action.patch?.releases || [])
+        .map((r) => r.version)
+        .filter((l) => l && !before.has(l));
       const key = fresh.length ? envAgentKey(prev.agent, action.envId) : null;
       if (!key) return { ...state, byEnv };
       /* Released is production: whatever an admin made active before gives
@@ -391,26 +517,52 @@ function reducer(state, action) {
          just following production — so every environment that follows
          production, the one that shipped it included, tests it next. */
       const now = new Date().toISOString();
-      const shipped = [...fresh].sort((a, b) => versionNumber(a) - versionNumber(b)).pop();
-      const mark = (list) => (list || []).map((v) => (fresh.includes(v.label) && v.status === "draft" ? { ...v, status: "released", releasedAt: v.releasedAt || now } : v));
-      const madeActive = (values) => (values?.activeVersion?.label && values.activeVersion.label !== shipped
-        ? { ...values, activeVersion: { label: shipped, at: now, by: "release" } }
-        : values);
+      const shipped = [...fresh]
+        .sort((a, b) => versionNumber(a) - versionNumber(b))
+        .pop();
+      const mark = (list) =>
+        (list || []).map((v) =>
+          fresh.includes(v.label) && v.status === "draft"
+            ? { ...v, status: "released", releasedAt: v.releasedAt || now }
+            : v,
+        );
+      const madeActive = (values) =>
+        values?.activeVersion?.label && values.activeVersion.label !== shipped
+          ? {
+              ...values,
+              activeVersion: { label: shipped, at: now, by: "release" },
+            }
+          : values;
       const others = [];
       Object.entries(byEnv).forEach(([id, es]) => {
         if (envAgentKey(es?.agent, id) !== key) return;
-        let next = { ...es, agentVersions: mark(agentVersions(es)), ...(es.agent?.values && { agent: { ...es.agent, values: madeActive(es.agent.values) } }) };
-        if (next.agentVersionPinned && fresh.includes(next.activeAgentVersion)) next = { ...next, ...agentPinPatch(next, next.activeAgentVersion) };
+        let next = {
+          ...es,
+          agentVersions: mark(agentVersions(es)),
+          ...(es.agent?.values && {
+            agent: { ...es.agent, values: madeActive(es.agent.values) },
+          }),
+        };
+        if (next.agentVersionPinned && fresh.includes(next.activeAgentVersion))
+          next = { ...next, ...agentPinPatch(next, next.activeAgentVersion) };
         byEnv[id] = next;
         if (id !== action.envId) others.push(id);
       });
-      const connectedAgents = (state.connectedAgents || []).map((a) => (a.key === key ? { ...a, versions: mark(a.versions), values: madeActive(a.values) } : a));
+      const connectedAgents = (state.connectedAgents || []).map((a) =>
+        a.key === key
+          ? { ...a, versions: mark(a.versions), values: madeActive(a.values) }
+          : a,
+      );
       /* A released fix is an agent change everywhere else the agent is
          tested: those environments get its one card — a changed rule still
          gets its question. The environment that verified it doesn't. */
       const released = { ...state, byEnv, connectedAgents };
-      const version = agentVersions(byEnv[action.envId]).find((v) => v.label === shipped);
-      const envs = others.map((id) => state.myEnvironments.find((e) => e.id === id)).filter(Boolean);
+      const version = agentVersions(byEnv[action.envId]).find(
+        (v) => v.label === shipped,
+      );
+      const envs = others
+        .map((id) => state.myEnvironments.find((e) => e.id === id))
+        .filter(Boolean);
       if (version && envs.length) {
         raiseNudgesIn(released, envs, version).forEach((r) => {
           byEnv[r.envId] = { ...byEnv[r.envId], ...r.patch };
@@ -434,15 +586,21 @@ function reducer(state, action) {
       const idx = runs.findIndex((r) => r.id === action.run.id);
       /* A run records which agent it tested, not just the version label —
          after the environment changes agent, "v3" means a different thing. */
-      const keyed = action.run.agentKey ? action.run : { ...action.run, agentKey: envAgentKey(prev.agent, action.envId) };
+      const keyed = action.run.agentKey
+        ? action.run
+        : { ...action.run, agentKey: envAgentKey(prev.agent, action.envId) };
       /* And which credential set it used — once, when it's first recorded;
          the set is written down so its label never moves. */
-      const needsSet = !keyed.credentialSet && !(idx >= 0 && runs[idx].credentialSet);
+      const needsSet =
+        !keyed.credentialSet && !(idx >= 0 && runs[idx].credentialSet);
       const sets = needsSet ? recordCredentialSets(prev) : null;
-      const stamped = needsSet ? { ...keyed, credentialSet: sets.credentialSets.slice(-1)[0]?.label } : keyed;
-      const nextRuns = idx >= 0
-        ? runs.map((r, i) => (i === idx ? { ...r, ...stamped } : r))
-        : [stamped, ...runs];
+      const stamped = needsSet
+        ? { ...keyed, credentialSet: sets.credentialSets.slice(-1)[0]?.label }
+        : keyed;
+      const nextRuns =
+        idx >= 0
+          ? runs.map((r, i) => (i === idx ? { ...r, ...stamped } : r))
+          : [stamped, ...runs];
       return {
         ...state,
         byEnv: {
@@ -465,7 +623,9 @@ function reducer(state, action) {
            next; a draft changes nothing until it's released. */
         [action.envId]: (() => {
           const next = { ...prev, agentVersions: [...list, action.version] };
-          return action.version.status === "draft" ? next : { ...next, ...agentPinPatch(next, action.version.label) };
+          return action.version.status === "draft"
+            ? next
+            : { ...next, ...agentPinPatch(next, action.version.label) };
         })(),
       };
       /*
@@ -495,12 +655,25 @@ function reducer(state, action) {
       const oldName = prev.agent?.name || `${env?.name || "Environment"} agent`;
       let connectedAgents = state.connectedAgents || [];
       if (oldKey && prev.agent) {
-        connectedAgents = keepInRegistry(connectedAgents, oldKey, prev.agent, agentVersions(prev), {
-          name: oldName, origin: "environment", firstEnvName: env?.name,
-        });
+        connectedAgents = keepInRegistry(
+          connectedAgents,
+          oldKey,
+          prev.agent,
+          agentVersions(prev),
+          {
+            name: oldName,
+            origin: "environment",
+            firstEnvName: env?.name,
+          },
+        );
       }
-      const runs = (prev.runs || []).map((r) => (r.agentKey ? r : { ...r, agentKey: oldKey }))
-        .map((r) => (r.agentKey === oldKey ? { ...r, agentName: r.agentName || oldName } : r));
+      const runs = (prev.runs || [])
+        .map((r) => (r.agentKey ? r : { ...r, agentKey: oldKey }))
+        .map((r) =>
+          r.agentKey === oldKey
+            ? { ...r, agentName: r.agentName || oldName }
+            : r,
+        );
       return {
         ...state,
         connectedAgents,
@@ -510,11 +683,22 @@ function reducer(state, action) {
             ...prev,
             agent,
             agentVersions: versions,
-            ...agentPinPatch({ agent, agentVersions: versions }, activeLabel || null),
+            ...agentPinPatch(
+              { agent, agentVersions: versions },
+              activeLabel || null,
+            ),
             runs,
             previousAgents: [
               ...(prev.previousAgents || []),
-              ...(prev.agent ? [{ key: oldKey, name: oldName, replacedAt: new Date().toISOString() }] : []),
+              ...(prev.agent
+                ? [
+                    {
+                      key: oldKey,
+                      name: oldName,
+                      replacedAt: new Date().toISOString(),
+                    },
+                  ]
+                : []),
             ],
           },
         },
@@ -534,18 +718,34 @@ function reducer(state, action) {
       /* A deleted agent connected again comes back, with the history it kept. */
       const { deleted: _deleted, ...prev } = list[i];
       const next = incoming;
-      const filled = Object.fromEntries(Object.entries(next.values || {}).filter(([, val]) => val !== undefined && val !== ""));
+      const filled = Object.fromEntries(
+        Object.entries(next.values || {}).filter(
+          ([, val]) => val !== undefined && val !== "",
+        ),
+      );
       const merged = {
         ...prev,
         name: prev.name || next.name,
         values: { ...(prev.values || {}), ...filled },
-        definition: prev.definition?.repoUrl || !next.definition?.repoUrl ? prev.definition : { ...(prev.definition || {}), ...next.definition },
+        definition:
+          prev.definition?.repoUrl || !next.definition?.repoUrl
+            ? prev.definition
+            : { ...(prev.definition || {}), ...next.definition },
       };
-      return { ...state, connectedAgents: list.map((a, j) => (j === i ? merged : a)) };
+      return {
+        ...state,
+        connectedAgents: list.map((a, j) => (j === i ? merged : a)),
+      };
     }
 
     case "setAgentLimits": {
-      return { ...state, agentLimits: { ...(state.agentLimits || {}), [action.agentKey]: action.limits } };
+      return {
+        ...state,
+        agentLimits: {
+          ...(state.agentLimits || {}),
+          [action.agentKey]: action.limits,
+        },
+      };
     }
 
     /* Say which agent an Error Feed project's traffic comes from, so Fix
@@ -554,8 +754,21 @@ function reducer(state, action) {
     case "linkProjectAgent": {
       /* Unlinking leaves "no agent" in place, so the project doesn't fall
          back to the agent its seed or name once suggested. */
-      if (!action.agentKey) return { ...state, projectLinks: { ...(state.projectLinks || {}), [action.project]: "__not-an-agent__" } };
-      return { ...state, projectLinks: { ...(state.projectLinks || {}), [action.project]: action.agentKey } };
+      if (!action.agentKey)
+        return {
+          ...state,
+          projectLinks: {
+            ...(state.projectLinks || {}),
+            [action.project]: "__not-an-agent__",
+          },
+        };
+      return {
+        ...state,
+        projectLinks: {
+          ...(state.projectLinks || {}),
+          [action.project]: action.agentKey,
+        },
+      };
     }
 
     /*
@@ -575,20 +788,46 @@ function reducer(state, action) {
       /* Only environments that exist count — a build left part-way can leave
          its state behind with no environment, and it mustn't block a delete. */
       const live = new Set((state.myEnvironments || []).map((e) => e.id));
-      if (Object.entries(state.byEnv || {}).some(([envId, es]) => live.has(envId) && es?.agent && envAgentKey(es.agent, envId) === key)) return state;
+      if (
+        Object.entries(state.byEnv || {}).some(
+          ([envId, es]) =>
+            live.has(envId) &&
+            es?.agent &&
+            envAgentKey(es.agent, envId) === key,
+        )
+      )
+        return state;
       const at = new Date().toISOString();
-      const byEnv = Object.fromEntries(Object.entries(state.byEnv || {}).map(([envId, es]) => (
-        es?.agent && envAgentKey(es.agent, envId) === key
-          ? [envId, { ...es, agent: null, removedAgent: { key, name: es.agent.name || null, at } }]
-          : [envId, es]
-      )));
+      const byEnv = Object.fromEntries(
+        Object.entries(state.byEnv || {}).map(([envId, es]) =>
+          es?.agent && envAgentKey(es.agent, envId) === key
+            ? [
+                envId,
+                {
+                  ...es,
+                  agent: null,
+                  removedAgent: { key, name: es.agent.name || null, at },
+                },
+              ]
+            : [envId, es],
+        ),
+      );
       /* Its projects — linked by hand or seeded — read "no agent" now, so
          their issues say "Connect agent to fix" instead of naming a deleted agent. */
-      const projectLinks = Object.fromEntries(Object.entries(state.projectLinks || {}).map(([p, k]) => [p, k === key ? "__not-an-agent__" : k]));
-      Object.entries(SEEDED_PROJECTS).forEach(([p, k]) => { if (k === key && !projectLinks[p]) projectLinks[p] = "__not-an-agent__"; });
+      const projectLinks = Object.fromEntries(
+        Object.entries(state.projectLinks || {}).map(([p, k]) => [
+          p,
+          k === key ? "__not-an-agent__" : k,
+        ]),
+      );
+      Object.entries(SEEDED_PROJECTS).forEach(([p, k]) => {
+        if (k === key && !projectLinks[p]) projectLinks[p] = "__not-an-agent__";
+      });
       return {
         ...state,
-        connectedAgents: (state.connectedAgents || []).map((a) => (a.key === key ? { ...a, deleted: { at } } : a)),
+        connectedAgents: (state.connectedAgents || []).map((a) =>
+          a.key === key ? { ...a, deleted: { at } } : a,
+        ),
         byEnv,
         projectLinks,
       };
@@ -604,11 +843,21 @@ function reducer(state, action) {
     case "setAgentValues": {
       const { key } = action;
       const patch = scrubAgentSecrets({ values: action.patch }).values;
-      const withValues = (a) => ({ ...a, key, values: { ...(a.values || {}), ...patch } });
-      const connectedAgents = (state.connectedAgents || []).map((a) => (a.key === key ? withValues(a) : a));
-      const byEnv = Object.fromEntries(Object.entries(state.byEnv || {}).map(([envId, es]) => (
-        es?.agent && envAgentKey(es.agent, envId) === key ? [envId, { ...es, agent: withValues(es.agent) }] : [envId, es]
-      )));
+      const withValues = (a) => ({
+        ...a,
+        key,
+        values: { ...(a.values || {}), ...patch },
+      });
+      const connectedAgents = (state.connectedAgents || []).map((a) =>
+        a.key === key ? withValues(a) : a,
+      );
+      const byEnv = Object.fromEntries(
+        Object.entries(state.byEnv || {}).map(([envId, es]) =>
+          es?.agent && envAgentKey(es.agent, envId) === key
+            ? [envId, { ...es, agent: withValues(es.agent) }]
+            : [envId, es],
+        ),
+      );
       return { ...state, connectedAgents, byEnv };
     }
 
@@ -616,11 +865,21 @@ function reducer(state, action) {
       const { key, endpoint } = action;
       /* Freeze the key first — for an agent identified by how it's reached,
          a new endpoint would otherwise read as a different agent. */
-      const withEndpoint = (a) => ({ ...a, key, values: { ...(a.values || {}), endpoint } });
-      const connectedAgents = (state.connectedAgents || []).map((a) => (a.key === key ? withEndpoint(a) : a));
-      const byEnv = Object.fromEntries(Object.entries(state.byEnv || {}).map(([envId, es]) => (
-        es?.agent && envAgentKey(es.agent, envId) === key ? [envId, { ...es, agent: withEndpoint(es.agent) }] : [envId, es]
-      )));
+      const withEndpoint = (a) => ({
+        ...a,
+        key,
+        values: { ...(a.values || {}), endpoint },
+      });
+      const connectedAgents = (state.connectedAgents || []).map((a) =>
+        a.key === key ? withEndpoint(a) : a,
+      );
+      const byEnv = Object.fromEntries(
+        Object.entries(state.byEnv || {}).map(([envId, es]) =>
+          es?.agent && envAgentKey(es.agent, envId) === key
+            ? [envId, { ...es, agent: withEndpoint(es.agent) }]
+            : [envId, es],
+        ),
+      );
       return { ...state, connectedAgents, byEnv };
     }
 
@@ -638,7 +897,10 @@ function reducer(state, action) {
       const byEnv = { ...next.byEnv };
       Object.keys(byEnv).forEach((id) => {
         const a = byEnv[id]?.agent;
-        if (a?.values?.pendingOutsideChange && (a.key === key || envAgentKey(a, id) === key)) {
+        if (
+          a?.values?.pendingOutsideChange &&
+          (a.key === key || envAgentKey(a, id) === key)
+        ) {
           const { pendingOutsideChange, ...values } = a.values;
           byEnv[id] = { ...byEnv[id], agent: { ...a, values } };
         }
@@ -657,25 +919,40 @@ function reducer(state, action) {
     case "updateAgentVersion": {
       const { key, label, patch: vPatch, activateEnvId } = action;
       if (!key || !label) return state;
-      const apply = (list) => (list || []).map((v) => (v.label === label ? { ...v, ...vPatch } : v));
+      const apply = (list) =>
+        (list || []).map((v) => (v.label === label ? { ...v, ...vPatch } : v));
       const byEnv = { ...state.byEnv };
       Object.entries(state.byEnv).forEach(([id, es]) => {
         if (envAgentKey(es?.agent, id) !== key) return;
         const next = { ...es, agentVersions: apply(agentVersions(es)) };
-        byEnv[id] = id === activateEnvId ? { ...next, ...agentPinPatch(next, label) } : next;
+        byEnv[id] =
+          id === activateEnvId
+            ? { ...next, ...agentPinPatch(next, label) }
+            : next;
       });
-      const connectedAgents = (state.connectedAgents || []).map((a) => (a.key === key ? { ...a, versions: apply(a.versions) } : a));
+      const connectedAgents = (state.connectedAgents || []).map((a) =>
+        a.key === key ? { ...a, versions: apply(a.versions) } : a,
+      );
       return { ...state, byEnv, connectedAgents };
     }
 
     /* Workspace feature flags — internal, never shown: `agentImprovement` (RSI rollout). */
     case "setFlag": {
-      return { ...state, flags: { ...(state.flags || {}), [action.flag]: action.on } };
+      return {
+        ...state,
+        flags: { ...(state.flags || {}), [action.flag]: action.on },
+      };
     }
 
     /* A workspace admin's setting — applies to every environment. */
     case "setWorkspaceSetting": {
-      return { ...state, workspaceSettings: { ...(state.workspaceSettings || {}), [action.key]: action.value } };
+      return {
+        ...state,
+        workspaceSettings: {
+          ...(state.workspaceSettings || {}),
+          [action.key]: action.value,
+        },
+      };
     }
 
     case "reset":
@@ -721,8 +998,16 @@ function SimStoreRoot({ children }) {
            moment (a half-saved edit under HMR) once replaced a whole workspace
            with a fresh seed. The stored copy stays as it was until it loads. */
         // eslint-disable-next-line no-console
-        console.error("[store] stored state didn't load — showing the seed, not saving over it", err);
-        dispatch({ type: "hydrate", payload: raw ? { ...firstRunState(), storedUnreadable: true } : firstRunState() });
+        console.error(
+          "[store] stored state didn't load — showing the seed, not saving over it",
+          err,
+        );
+        dispatch({
+          type: "hydrate",
+          payload: raw
+            ? { ...firstRunState(), storedUnreadable: true }
+            : firstRunState(),
+        });
       }
     });
   }, []);
@@ -749,6 +1034,8 @@ function SimStoreRoot({ children }) {
     if (!state.hydrated || state.storedUnreadable) return;
     /* storeStorage falls back quietly — the prototype still works in-memory */
     writeStored(STORAGE_KEY, JSON.stringify(state));
+    publishRunning(runningCountOf(state));
+    publishObserveEnvs(observeEnvsOf(state));
   }, [state]);
 
   /*
@@ -770,7 +1057,9 @@ function SimStoreRoot({ children }) {
 
   const value = useMemo(() => ({ state, dispatch, commit }), [state, commit]);
   return (
-    <SimStoreContext.Provider value={value}>{children}</SimStoreContext.Provider>
+    <SimStoreContext.Provider value={value}>
+      {children}
+    </SimStoreContext.Provider>
   );
 }
 
@@ -778,7 +1067,8 @@ SimStoreRoot.propTypes = { children: PropTypes.node };
 
 export function useSimStore() {
   const ctx = useContext(SimStoreContext);
-  if (!ctx) throw new Error("useSimStore must be used inside <SimStoreProvider>");
+  if (!ctx)
+    throw new Error("useSimStore must be used inside <SimStoreProvider>");
   return ctx;
 }
 
@@ -820,8 +1110,17 @@ export function useEnvState(envId) {
   const steps = useMemo(
     () => [
       { id: "agent", label: "Connect agent", done: !!envState.agent },
-      { id: "scenarios", label: "Add scenarios", done: envState.scenarios.length > 0 },
-      { id: "evals", label: "Select evals", done: envState.evals.length > 0, optional: true },
+      {
+        id: "scenarios",
+        label: "Add scenarios",
+        done: envState.scenarios.length > 0,
+      },
+      {
+        id: "evals",
+        label: "Select evals",
+        done: envState.evals.length > 0,
+        optional: true,
+      },
       { id: "run", label: "Run simulation", done: envState.runs.length > 0 },
     ],
     [envState],
@@ -831,7 +1130,15 @@ export function useEnvState(envId) {
   const canRun = runReadiness(envState).ready;
   const nextStep = steps.find((s) => !s.done && !s.optional) || steps[3];
 
-  return { envState, patch, recordRun, addAgentVersion, steps, canRun, nextStep };
+  return {
+    envState,
+    patch,
+    recordRun,
+    addAgentVersion,
+    steps,
+    canRun,
+    nextStep,
+  };
 }
 
 /**
@@ -840,12 +1147,16 @@ export function useEnvState(envId) {
  */
 export function useWorkspaceSettings() {
   const store = useContext(SimStoreContext);
-  const settings = store?.state?.workspaceSettings || initialState.workspaceSettings;
+  const settings =
+    store?.state?.workspaceSettings || initialState.workspaceSettings;
   const dispatch = store?.dispatch;
   const role = usePreviewRole((s) => s.role);
   const isAdmin = role === "admin";
   const set = useCallback(
-    (key, value) => { if (dispatch && isAdmin) dispatch({ type: "setWorkspaceSetting", key, value }); },
+    (key, value) => {
+      if (dispatch && isAdmin)
+        dispatch({ type: "setWorkspaceSetting", key, value });
+    },
     [dispatch, isAdmin],
   );
   return {
@@ -863,23 +1174,48 @@ export function useConnectedAgents() {
   const agents = useMemo(() => connectedAgentsFrom(state), [state]);
   /* Saved at once: connecting often navigates straight on (back to an Error
      Feed issue), and that page reads the store from storage. */
-  const connectAgent = useCallback((agent) => commit({ type: "connectAgent", agent }), [commit]);
-  const removeAgent = useCallback((key) => dispatch({ type: "removeAgent", key }), [dispatch]);
-  const setAgentRuntime = useCallback((key, endpoint) => dispatch({ type: "setAgentRuntime", key, endpoint }), [dispatch]);
-  const setAgentValues = useCallback((key, patch) => dispatch({ type: "setAgentValues", key, patch }), [dispatch]);
+  const connectAgent = useCallback(
+    (agent) => commit({ type: "connectAgent", agent }),
+    [commit],
+  );
+  const removeAgent = useCallback(
+    (key) => dispatch({ type: "removeAgent", key }),
+    [dispatch],
+  );
+  const setAgentRuntime = useCallback(
+    (key, endpoint) => dispatch({ type: "setAgentRuntime", key, endpoint }),
+    [dispatch],
+  );
+  const setAgentValues = useCallback(
+    (key, patch) => dispatch({ type: "setAgentValues", key, patch }),
+    [dispatch],
+  );
   const recordAgentVersion = useCallback(
-    (key, version, activateEnvId) => dispatch({ type: "recordAgentVersion", key, version, activateEnvId }),
+    (key, version, activateEnvId) =>
+      dispatch({ type: "recordAgentVersion", key, version, activateEnvId }),
     [dispatch],
   );
   const changeEnvAgent = useCallback(
-    (envId, { agent, versions, activeLabel }) => dispatch({ type: "changeEnvAgent", envId, agent, versions, activeLabel }),
+    (envId, { agent, versions, activeLabel }) =>
+      dispatch({ type: "changeEnvAgent", envId, agent, versions, activeLabel }),
     [dispatch],
   );
   const runVersionIn = useCallback(
     (envId, label) => dispatch({ type: "pinAgentVersion", envId, label }),
     [dispatch],
   );
-  return { agents, connectAgent, removeAgent, setAgentRuntime, setAgentValues, recordAgentVersion, runVersionIn, changeEnvAgent, hydrated: !!state.hydrated, state };
+  return {
+    agents,
+    connectAgent,
+    removeAgent,
+    setAgentRuntime,
+    setAgentValues,
+    recordAgentVersion,
+    runVersionIn,
+    changeEnvAgent,
+    hydrated: !!state.hydrated,
+    state,
+  };
 }
 
 export { emptyEnvState };

@@ -394,7 +394,7 @@ export const defaultAgentDefinitionValues = {
 export const icon = (name) => (
   <SvgColor
     src={`/assets/icons/agent/${name}.svg`}
-    sx={{ width: 20, height: 20 }}
+    sx={{ width: 16, height: 16 }}
   />
 );
 

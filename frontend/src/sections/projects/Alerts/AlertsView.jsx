@@ -64,7 +64,7 @@ export default function AlertsView() {
       {mainPage && (
         <PageHeader
           title="Alerts"
-          description="Proactively monitor your LLM by setting up alerts"
+          description="Get notified on Slack or email when errors, latency, cost or eval scores cross a threshold."
           sx={{ mb: 0 }}
         />
       )}

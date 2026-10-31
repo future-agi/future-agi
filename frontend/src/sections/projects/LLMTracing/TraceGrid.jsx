@@ -111,6 +111,8 @@ const TraceGrid = React.forwardRef(
       enabled = true,
       showErrors = false,
       compareType,
+      // Only the visible grid of a primary/compare pair renders the drawer.
+      hideDetailDrawer = false,
     },
     gridRef,
   ) => {
@@ -905,7 +907,9 @@ const TraceGrid = React.forwardRef(
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
-        <LLMTracingTraceDetailDrawer refreshGrid={refreshGrid} />
+        {!hideDetailDrawer && (
+          <LLMTracingTraceDetailDrawer refreshGrid={refreshGrid} />
+        )}
         <NumberQuickFilterPopover
           open={Boolean(openQuickFilter)}
           filterData={openQuickFilter}
@@ -927,6 +931,7 @@ TraceGrid.propTypes = {
   setFilterOpen: PropTypes.func,
   setLoading: PropTypes.func,
   compareType: PropTypes.string,
+  hideDetailDrawer: PropTypes.bool,
   projectId: PropTypes.string,
   cellHeight: PropTypes.string,
   hasEvalFilter: PropTypes.bool,

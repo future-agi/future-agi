@@ -27,6 +27,7 @@ import "src/styles/clean-data-table.css";
 import CreateRuleDialog from "./create-rule-dialog";
 import { TRIGGER_FREQUENCY_OPTIONS } from "../constants";
 import EditRuleDialog from "./edit-rule-dialog";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 // ---------------------------------------------------------------------------
 // Skeleton placeholder
@@ -168,7 +169,7 @@ function ActionsCellRenderer({ data, context }) {
           context?.onDeleteConfirm(data);
         }}
       >
-        <Iconify icon="solar:close-linear" width={20} />
+        <Iconify icon="solar:close-linear" width={16} />
       </IconButton>
     </Box>
   );
@@ -361,7 +362,7 @@ export default function AutomationRulesTab({ queueId, queue }) {
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             context={gridContext}
-            rowHeight={44}
+            rowHeight={ROW_HEIGHT.default}
             headerHeight={32}
             pagination={false}
             animateRows={false}

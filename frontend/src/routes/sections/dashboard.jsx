@@ -360,6 +360,9 @@ const RunTests = lazyWithRetry(
 const SimulatedRuns = lazyWithRetry(
   () => import("src/pages/dashboard/simulate-v2/SimulatedRunsPage"),
 );
+const SimSkillsPage = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/SkillsPage"),
+);
 const SimImprovementsPage = lazyWithRetry(
   () => import("src/pages/dashboard/simulate-v2/ImprovementsPage"),
 );
@@ -1454,6 +1457,11 @@ export const dashboardRoutes = (
                  the source's runs summary. */
               path: "improvements",
               element: <SimImprovementsPage />,
+            },
+            {
+              /* Build → Skills: the workspace skills library. */
+              path: "skills",
+              element: <SimSkillsPage />,
             },
             {
               /* Jobs is on hold (hidden tab on the Environments page). */

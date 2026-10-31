@@ -8,39 +8,92 @@
  * without being rebuilt.
  *
  * This file emits rewards and exports rollouts. Training on them is the
- * separate `agent-learn train` path (one TRL trainer).
+ * separate `fi api train` path (one TRL trainer).
  */
 
 const OBSERVATION = {
   voice: [
-    { field: "transcript", type: "list[Turn]", note: "Everything said so far, both sides." },
-    { field: "audio_state", type: "dict", note: "Noise profile, whether the caller is mid-barge-in." },
-    { field: "world", type: "dict", note: "The rows the agent's tools can currently see." },
-    { field: "sub_goals", type: "dict[str, bool]", note: "Which sub-goals are settled." },
+    {
+      field: "transcript",
+      type: "list[Turn]",
+      note: "Everything said so far, both sides.",
+    },
+    {
+      field: "audio_state",
+      type: "dict",
+      note: "Noise profile, whether the caller is mid-barge-in.",
+    },
+    {
+      field: "world",
+      type: "dict",
+      note: "The rows the agent's tools can currently see.",
+    },
+    {
+      field: "sub_goals",
+      type: "dict[str, bool]",
+      note: "Which sub-goals are settled.",
+    },
   ],
   chat: [
     { field: "messages", type: "list[Message]", note: "The thread so far." },
-    { field: "world", type: "dict", note: "The rows the agent's tools can currently see." },
-    { field: "sub_goals", type: "dict[str, bool]", note: "Which sub-goals are settled." },
+    {
+      field: "world",
+      type: "dict",
+      note: "The rows the agent's tools can currently see.",
+    },
+    {
+      field: "sub_goals",
+      type: "dict[str, bool]",
+      note: "Which sub-goals are settled.",
+    },
   ],
   cua: [
     { field: "screenshot", type: "bytes", note: "The current frame." },
-    { field: "dom", type: "str", note: "Accessibility tree for the focused window." },
-    { field: "sub_goals", type: "dict[str, bool]", note: "Which sub-goals are settled." },
+    {
+      field: "dom",
+      type: "str",
+      note: "Accessibility tree for the focused window.",
+    },
+    {
+      field: "sub_goals",
+      type: "dict[str, bool]",
+      note: "Which sub-goals are settled.",
+    },
   ],
   coding: [
-    { field: "repo_diff", type: "str", note: "Working tree against the starting commit." },
+    {
+      field: "repo_diff",
+      type: "str",
+      note: "Working tree against the starting commit.",
+    },
     { field: "test_report", type: "dict", note: "Last test run, if any." },
-    { field: "sub_goals", type: "dict[str, bool]", note: "Which sub-goals are settled." },
+    {
+      field: "sub_goals",
+      type: "dict[str, bool]",
+      note: "Which sub-goals are settled.",
+    },
   ],
 };
 
-export const observationFor = (modality) => OBSERVATION[modality] || OBSERVATION.chat;
+export const observationFor = (modality) =>
+  OBSERVATION[modality] || OBSERVATION.chat;
 
 export const ACTION_SPACE = [
-  { name: "call_tool", args: "name: str, arguments: dict", note: "Any tool on the contract, with its real arguments." },
-  { name: "say", args: "text: str", note: "What the agent says to the persona this turn." },
-  { name: "finish", args: "summary: str", note: "Ends the episode; the checks settle." },
+  {
+    name: "call_tool",
+    args: "name: str, arguments: dict",
+    note: "Any tool on the contract, with its real arguments.",
+  },
+  {
+    name: "say",
+    args: "text: str",
+    note: "What the agent says to the persona this turn.",
+  },
+  {
+    name: "finish",
+    args: "summary: str",
+    note: "Ends the episode; the checks settle.",
+  },
 ];
 
 /**
@@ -48,14 +101,50 @@ export const ACTION_SPACE = [
  * given weights. That is what keeps the two uses of the environment honest
  * with each other: the thing being optimised is the thing being tested.
  */
-export const rewardTable = () => ([
-  { id: "sub_goal", label: "Sub-goal settled", detail: "Each sub-goal the scenario declares, first time only", value: 0.15, kind: "dense" },
-  { id: "task", label: "Task completed", detail: "The scenario's own success check passes", value: 1.0, kind: "terminal" },
-  { id: "policy", label: "Hard-rule violation", detail: "Any rule on the contract broken", value: -1.0, kind: "penalty" },
-  { id: "ungrounded", label: "Ungrounded claim", detail: "A statement no tool result supports", value: -0.35, kind: "penalty" },
-  { id: "step", label: "Step cost", detail: "Per action, to discourage wandering", value: -0.01, kind: "dense" },
-  { id: "efficiency", label: "Under reference length", detail: "Finished in fewer steps than the reference solution", value: 0.2, kind: "terminal" },
-]);
+export const rewardTable = () => [
+  {
+    id: "sub_goal",
+    label: "Sub-goal settled",
+    detail: "Each sub-goal the scenario declares, first time only",
+    value: 0.15,
+    kind: "dense",
+  },
+  {
+    id: "task",
+    label: "Task completed",
+    detail: "The scenario's own success check passes",
+    value: 1.0,
+    kind: "terminal",
+  },
+  {
+    id: "policy",
+    label: "Hard-rule violation",
+    detail: "Any rule on the contract broken",
+    value: -1.0,
+    kind: "penalty",
+  },
+  {
+    id: "ungrounded",
+    label: "Ungrounded claim",
+    detail: "A statement no tool result supports",
+    value: -0.35,
+    kind: "penalty",
+  },
+  {
+    id: "step",
+    label: "Step cost",
+    detail: "Per action, to discourage wandering",
+    value: -0.01,
+    kind: "dense",
+  },
+  {
+    id: "efficiency",
+    label: "Under reference length",
+    detail: "Finished in fewer steps than the reference solution",
+    value: 0.2,
+    kind: "terminal",
+  },
+];
 
 /**
  * The rollouts this environment has actually produced.
@@ -68,10 +157,16 @@ export const rewardTable = () => ([
  */
 export const rollouts = (envState, summaries = []) => {
   const runs = envState?.runs || [];
-  const episodes = runs.reduce((a, r) => a + (r.total || 0) * (r.repeats || 1), 0);
+  const episodes = runs.reduce(
+    (a, r) => a + (r.total || 0) * (r.repeats || 1),
+    0,
+  );
   const withReturn = summaries.filter((s) => s.meanReturn != null);
   const meanReturn = withReturn.length
-    ? Math.round((withReturn.reduce((a, s) => a + s.meanReturn, 0) / withReturn.length) * 100) / 100
+    ? Math.round(
+        (withReturn.reduce((a, s) => a + s.meanReturn, 0) / withReturn.length) *
+          100,
+      ) / 100
     : null;
   const measured = summaries.reduce((a, s) => a + (s.measured || 0), 0);
   const passed = summaries.reduce((a, s) => a + (s.passed || 0), 0);
@@ -81,8 +176,19 @@ export const rollouts = (envState, summaries = []) => {
     fromRuns: runs.length,
     meanReturn,
     meanLength: summaries.length
-      ? Math.round((summaries.reduce((a, s) => a + (s.tasks?.reduce((b, t) => b + (t.steps?.length || 0), 0) || 0), 0)
-        / Math.max(1, summaries.reduce((a, s) => a + s.total, 0))) * 10) / 10
+      ? Math.round(
+          (summaries.reduce(
+            (a, s) =>
+              a +
+              (s.tasks?.reduce((b, t) => b + (t.steps?.length || 0), 0) || 0),
+            0,
+          ) /
+            Math.max(
+              1,
+              summaries.reduce((a, s) => a + s.total, 0),
+            )) *
+            10,
+        ) / 10
       : 0,
     success: measured ? Math.round((passed / measured) * 100) / 100 : 0,
     format: "JSONL · one episode per line",

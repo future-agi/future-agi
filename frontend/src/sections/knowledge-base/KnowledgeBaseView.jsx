@@ -38,7 +38,7 @@ const KnowledgeBaseView = () => {
       >
         <PageHeadings
           title="Knowledge base"
-          description="Domain documents your agents and synthetic data are grounded in"
+          description="Upload documents to ground your agents and generate synthetic data from them."
         />
       </Box>
       <Box sx={{ display: hasData ? "block" : "none", flex: 1 }}>

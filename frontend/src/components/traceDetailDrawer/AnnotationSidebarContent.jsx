@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import {
@@ -16,6 +17,7 @@ import Iconify from "src/components/iconify";
 import { useQueueItemsForSource } from "src/api/annotation-queues/annotation-queues";
 import { useBulkCreateScores } from "src/api/scores/scores";
 import LabelInput from "src/sections/annotations/queues/annotate/label-input";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const SOURCE_TYPE_LABELS = {
   trace: "Trace",
@@ -160,6 +162,7 @@ export default function AnnotationSidebarContent({
   const {
     data: queueItems,
     isLoading,
+    isError,
     isFetching,
     refetch,
   } = useQueueItemsForSource(validSources);
@@ -178,7 +181,24 @@ export default function AnnotationSidebarContent({
     if (hideEmpty) return null;
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-        <CircularProgress size={24} />
+        <ContentSkeleton variant="panel" />
+      </Box>
+    );
+  }
+
+  if (isError && !queueItems) {
+    if (hideEmpty) return null;
+    return (
+      <Box sx={{ p: 3, textAlign: "center" }}>
+        <Typography sx={{ typography: "m3", fontWeight: 600, mb: 0.5 }}>
+          Couldn&apos;t load annotation queues
+        </Typography>
+        <Typography sx={{ typography: "s1", color: "text.secondary", mb: 2 }}>
+          The server took too long to answer. Try again in a moment.
+        </Typography>
+        <Button size="small" variant="outlined" onClick={() => refetch()}>
+          Retry
+        </Button>
       </Box>
     );
   }
@@ -284,46 +304,24 @@ export default function AnnotationSidebarContent({
       {/* Content */}
       <Box sx={{ flex: 1, overflowY: "auto", p: showHeader ? 2.5 : 0 }}>
         {!hasQueues ? (
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              py: 8,
-              gap: 1,
-            }}
-          >
-            <Iconify
-              icon="solar:document-text-linear"
-              width={40}
-              color="text.disabled"
-            />
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              textAlign="center"
-            >
-              No labels assigned to you for this item.
-            </Typography>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              textAlign="center"
-            >
-              This item is not part of any annotation queue assigned to you.
-            </Typography>
-            {onAddLabel && (
-              <Button
-                size="small"
-                startIcon={<Iconify icon="solar:add-linear" width={16} />}
-                onClick={onAddLabel}
-                sx={{ mt: 1 }}
-              >
-                Add Label
-              </Button>
-            )}
-          </Box>
+          <EmptyState
+            icon="solar:document-text-linear"
+            title="No labels assigned yet"
+            description="This item is not part of any annotation queue assigned to you."
+            action={
+              onAddLabel ? (
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  onClick={onAddLabel}
+                >
+                  Add label
+                </Button>
+              ) : undefined
+            }
+            sx={{ pt: 4, pb: 4 }}
+          />
         ) : (
           <Stack spacing={3}>
             {queueItems.map((queueEntry) => (

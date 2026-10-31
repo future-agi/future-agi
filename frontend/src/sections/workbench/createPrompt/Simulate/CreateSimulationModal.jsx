@@ -36,6 +36,7 @@ import { useGetScenarioList } from "src/api/scenarios/scenarios";
 import CustomTooltip from "src/components/tooltip";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { usePromptVersions } from "../hooks/use-prompt-versions";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Generate auto name based on date/time
 const generateAutoName = () => {
@@ -396,7 +397,7 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
 
             {isLoadingScenarios ? (
               <Box display="flex" justifyContent="center" py={3}>
-                <CircularProgress size={24} />
+                <ContentSkeleton variant="panel" />
               </Box>
             ) : (
               <List

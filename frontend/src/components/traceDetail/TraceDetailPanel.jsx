@@ -1,13 +1,6 @@
 import React, { useState, useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
-import {
-  Box,
-  CircularProgress,
-  Drawer,
-  IconButton,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Drawer, IconButton, Stack, Typography } from "@mui/material";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
@@ -18,6 +11,7 @@ import {
 } from "src/sections/projects/LLMTracing/formatters";
 import SpanTreeTimeline from "./SpanTreeTimeline";
 import SpanDetailPane from "./SpanDetailPane";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const PANEL_WIDTH = "60vw";
 
@@ -217,7 +211,7 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={32} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : (
           <>

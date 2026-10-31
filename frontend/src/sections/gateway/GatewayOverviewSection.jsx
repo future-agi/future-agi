@@ -200,6 +200,7 @@ const GatewayOverviewSection = () => {
   return (
     <Box p={3}>
       <PageHeader
+        description="Route every LLM call through one endpoint, with fallbacks, caching, guardrails and budgets."
         title={gateway.name}
         badge={<StatusBadge status={gateway.status} />}
         actions={

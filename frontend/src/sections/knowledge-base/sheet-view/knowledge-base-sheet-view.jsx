@@ -201,7 +201,7 @@ export default function KnowledgeBaseSheetView() {
 
         {/* tasks section */}
         <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
-          <Tabs
+          <Tabs sx={{ boxShadow: "none" }}
             value={currentTab}
             onChange={handleChangeTab}
             aria-label="basic tabs example"

@@ -201,9 +201,15 @@ const MessageCard = ({ message }) => {
         sx={{
           px: 1.5,
           py: 1,
-          fontSize: 13,
-          lineHeight: 1.5,
+          // Message text at the UI default (12/18), like the rest of the
+          // drawer; markdown blocks inherit it rather than the 13px body.
+          fontSize: 12,
+          lineHeight: "18px",
           color: "text.primary",
+          "& p, & li, & td, & th": {
+            fontSize: "inherit",
+            lineHeight: "inherit",
+          },
           "& p": { m: 0 },
           "& pre": { whiteSpace: "pre-wrap", fontSize: 12 },
         }}

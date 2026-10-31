@@ -55,7 +55,7 @@ const Results = ({ resultState, output }) => {
     if (isEvalPreset) {
       return (
         <Box sx={{ borderBottom: "1px solid", color: "divider" }}>
-          <Tabs
+          <Tabs sx={{ boxShadow: "none" }}
             value={selectedTab}
             onChange={handleChange}
             aria-label="basic tabs example"

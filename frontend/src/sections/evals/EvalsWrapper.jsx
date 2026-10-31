@@ -148,7 +148,7 @@ const EvalsWrapper = ({ currentTab, children, containerSx = {} }) => {
                 });
               }
             }}
-            sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+            sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
           >
             {tabItems.map((tab) => (
               <Tab

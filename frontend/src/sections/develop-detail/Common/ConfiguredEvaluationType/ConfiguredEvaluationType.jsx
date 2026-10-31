@@ -167,7 +167,7 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
             borderColor: "divider",
           }}
         >
-          <Tabs
+          <Tabs sx={{ boxShadow: "none" }}
             value={selectedCategory}
             onChange={(e, value) => setSelectedCategory(value)}
             TabScrollButtonProps={{

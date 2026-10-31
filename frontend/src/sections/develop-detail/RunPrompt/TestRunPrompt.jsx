@@ -68,7 +68,7 @@ const TestRunPrompt = ({ previewData, modelType }) => {
             backgroundColor: "background.paper",
           }}
         >
-          <Tabs
+          <Tabs sx={{ boxShadow: "none" }}
             value={selectedTab}
             onChange={handleChange}
             aria-label="basic tabs example"

@@ -1,5 +1,6 @@
 import { themeQuartz, iconSetMaterial } from "ag-grid-enterprise";
 import { dsPalette } from "./ds-tokens";
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "./sizes";
 
 // ----------------------------------------------------------------------
 // AG Grid params, derived from the Future AGI Design System palette so grids
@@ -19,14 +20,15 @@ function core(mode) {
       accentColor: p.border.focus,
       browserColorScheme: dark ? "dark" : "light",
       fontFamily: FONT,
-      fontSize: "13px",
+      // Design system table: values 12/18, headers 11/500 (label-sm).
+      fontSize: "12px",
       foregroundColor: p.text.primary,
       backgroundColor: p.background.paper,
       cellTextColor: p.text.secondary,
       borderColor: p.border.subtle,
       headerBackgroundColor: p.background.paper,
       headerTextColor: p.text.subtitle,
-      headerFontSize: "12px",
+      headerFontSize: "11px",
       headerFontWeight: 500,
       selectedRowBackgroundColor: p.action.selected,
       rowHoverColor: p.action.hover,
@@ -53,8 +55,8 @@ function gridParams(mode) {
     headerColumnBorder: false,
     wrapperBorder: false,
     chromeBackgroundColor: p.background.paper,
-    headerHeight: 32,
-    rowHeight: 36,
+    headerHeight: TABLE_HEADER_HEIGHT.default,
+    rowHeight: ROW_HEIGHT.default,
   };
 }
 
@@ -79,11 +81,11 @@ function promptParams(mode) {
     borderColor: p.divider,
     columnBorder: true,
     headerColumnBorder: true,
-    headerFontSize: 12,
+    headerFontSize: 11,
     headerFontWeight: 500,
     wrapperBorderRadius: 0,
     rowHoverColor: "transparent",
-    fontSize: 13,
+    fontSize: 12,
   };
 }
 

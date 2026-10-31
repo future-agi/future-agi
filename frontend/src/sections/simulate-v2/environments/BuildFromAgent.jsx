@@ -18,7 +18,6 @@ import {
   IconButton,
   Popover,
   Chip,
-  Dialog,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useSnackbar } from "notistack";
@@ -35,6 +34,7 @@ import { setupGaps, gapCounts } from "../_mock/setupGaps";
 import { useSimStore, useEnvState, useConnectedAgents } from "../store";
 import {
   HARNESS_STAGES,
+  DESIGN_PARK_MS as PARK_MS,
   DERIVATION_OUTPUTS,
   builderRun,
   derivedEnvironment,
@@ -74,6 +74,9 @@ import {
 import DerivedPanels from "./DerivedPanels";
 import AddEvalsDrawer from "../workspace/evals/AddEvalsDrawer";
 import AgentReadReceipt from "./AgentReadReceipt";
+import DesignReview from "./DesignReview";
+import { getBuilderMode, subscribeBuilderMode } from "../_mock/builderModeBus";
+
 import { clickable, focusRing } from "../components/clickable";
 import { LiveConsentCard } from "../agents/AgentLiveConsent";
 import { uniqueEnvName } from "../_mock/envNames";
@@ -152,6 +155,23 @@ export default function BuildFromAgent() {
   const [done, setDone] = useState([]);
   const [running, setRunning] = useState(false);
   const [chips, setChips] = useState([]);
+  /* Review design (builder.md): once the agent is read, the proposal waits
+     for approval — only approval starts the build, Auto mode included. A
+     question left unanswered past PARK_MS parks; Continue reopens it. */
+  const [awaitApproval, setAwaitApproval] = useState(null);
+  /* Auto mode is the builder's own Auto / Manual mode (the composer's picker). */
+  const [autoMode, setAutoModeState] = useState(getBuilderMode() === "auto");
+  useEffect(
+    () => subscribeBuilderMode((m) => setAutoModeState(m === "auto")),
+    [],
+  );
+  const [nowTick, setNowTick] = useState(Date.now());
+  useEffect(() => {
+    if (!awaitApproval) return undefined;
+    const t = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, [awaitApproval]);
+  const parked = !!awaitApproval && nowTick - awaitApproval.at > PARK_MS;
   const timers = useRef([]);
   /* A build stopped part-way: canceled by the person, or failed — with what
      the job said, and whether trying again can work. A retry runs the stage
@@ -189,15 +209,13 @@ export default function BuildFromAgent() {
   const buildDone = done.includes("build");
   const scenariosDone = done.includes("scenarios");
   /* Started from a prebuilt world: its own proven scenarios come with it
-     unchanged — the tests its sample agent runs — rather than a new set
+     unchanged — the tests every agent in that world runs — rather than a new set
      written for this agent, so the two compare on the same test. */
   /* "Adapt scenarios to my agent" writes new ones instead — a fork whose
-     results don't compare with the sample. */
+     results don't compare with other agents in that world. */
   const ws = source?.worldSource || null;
   const fixedWorld =
-    ws?.kind === "template" && !ws.adapt
-      ? getEnvironment(ws.id) || null
-      : null;
+    ws?.kind === "template" && !ws.adapt ? getEnvironment(ws.id) || null : null;
   const draftPool = () =>
     fixedWorld
       ? scenariosForPack(fixedWorld, ws.pack || "full")
@@ -314,6 +332,8 @@ export default function BuildFromAgent() {
     chat stays open the whole time for corrections and additions.
   */
   const STAGE_ORDER = ["understand", "build", "scenarios"];
+  const autoModeRef = useRef(autoMode);
+  autoModeRef.current = autoMode;
 
   const play = (title, steps, nextChips, stageId, pace = 380) => {
     setRunning(true);
@@ -339,6 +359,18 @@ export default function BuildFromAgent() {
             const next = stageId
               ? STAGE_ORDER[STAGE_ORDER.indexOf(stageId) + 1]
               : null;
+            /* The design is proposed: nothing is built until it's approved. */
+            if (stageId === "understand") {
+              setAwaitApproval({ at: Date.now() });
+              setChips(asideChips(nextChips));
+              return;
+            }
+            /* Auto mode off: each approved step waits to be started. */
+            if (next && !autoModeRef.current) {
+              const chip = HARNESS_STAGES.find((st) => st.id === next)?.chip;
+              setChips([...(chip ? [chip] : []), ...asideChips(nextChips)]);
+              return;
+            }
             if (next) {
               timers.current.push(setTimeout(() => runStage(next), 500));
             } else {
@@ -949,7 +981,13 @@ export default function BuildFromAgent() {
       ((evalIds?.length || 0) > 0 || (envState.evals?.length || 0) > 0);
     const allDone = STAGE_ORDER.every((s) => done.includes(s));
     const buildProgress = { done: done.length, total: STAGE_ORDER.length };
-    const buildStatus = allDone ? "ready" : "building";
+    /* Waiting on design approval is its own state: opening the environment
+       doesn't finish it, and its page offers the same Review design. */
+    const buildStatus = allDone
+      ? "ready"
+      : awaitApproval
+        ? "awaiting_approval"
+        : "building";
 
     if (readyToAdopt && adoptedRef.current !== env.id) {
       /* The store numbers a name that's taken; show the same name here. */
@@ -1006,7 +1044,11 @@ export default function BuildFromAgent() {
         dispatch({
           type: "patchEnvironment",
           envId: env.id,
-          patch: { buildStatus, buildProgress },
+          patch: {
+            buildStatus,
+            buildProgress,
+            designPendingAt: awaitApproval?.at || null,
+          },
         });
       }
     }
@@ -1043,6 +1085,7 @@ export default function BuildFromAgent() {
     difficulty,
     dispatch,
     buildReplication,
+    awaitApproval,
   ]);
 
   /*
@@ -1257,6 +1300,7 @@ export default function BuildFromAgent() {
         blockedReason={runBlockedReason}
         halt={halt}
         onCancel={building ? () => setCancelAsk(true) : null}
+        awaitingApproval={!!awaitApproval}
       />
 
       {halt && <BuildHaltStrip halt={halt} onRestart={restartBuild} />}
@@ -1267,7 +1311,7 @@ export default function BuildFromAgent() {
           onUse={(n) => setSource((cur) => ({ ...cur, scenarioCount: n }))}
         />
       )}
-      <Dialog
+      <ClosableDialog
         open={cancelAsk}
         onClose={() => setCancelAsk(false)}
         PaperProps={{ sx: { width: 560, p: 2.5, backgroundImage: "none" } }}
@@ -1300,7 +1344,7 @@ export default function BuildFromAgent() {
             Stop build
           </Button>
         </Stack>
-      </Dialog>
+      </ClosableDialog>
 
       {/* Sent here by an issue's Fix: once the environment exists, the shared
           banner says what's left and leads back (Continue fixing opens Fix). */}
@@ -1392,6 +1436,22 @@ export default function BuildFromAgent() {
             onAddEvals={() => setAddingEvals(true)}
             onBuilderTurn={runBuilderTurn}
             onRun={runNow}
+            review={
+              awaitApproval || done.includes("understand")
+                ? {
+                    draftCount: env ? draftPool().length : 0,
+                    waiting: !!awaitApproval,
+                    parked,
+                    since: awaitApproval?.at,
+                    autoMode,
+                    onApprove: () => {
+                      setAwaitApproval(null);
+                      runStage("build");
+                    },
+                    onContinue: () => setAwaitApproval({ at: Date.now() }),
+                  }
+                : null
+            }
           />
         )}
       </Box>
@@ -1520,6 +1580,7 @@ function Header({
   blockedReason,
   halt = null,
   onCancel = null,
+  awaitingApproval = false,
 }) {
   const [promptOpen, setPromptOpen] = useState(false);
   const navigate = useNavigate();
@@ -1795,7 +1856,9 @@ function Header({
                             {scenarioProgress?.streaming &&
                             scenarioProgress.total
                               ? `Writing scenarios · ${scenarioProgress.shown} of ${scenarioProgress.total}`
-                              : "Building"}
+                              : awaitingApproval
+                                ? "Awaiting approval"
+                                : "Building"}
                           </Typography>
                         </Stack>
                       );
@@ -1960,7 +2023,7 @@ function Header({
             prompt={agentPrompt}
           />
           {envState?.agent && (
-            <Dialog
+            <ClosableDialog
               open={consentOpen}
               onClose={() => setConsentOpen(false)}
               maxWidth={false}
@@ -1985,7 +2048,7 @@ function Header({
                   setConsentOpen(false);
                 }}
               />
-            </Dialog>
+            </ClosableDialog>
           )}
 
           {/* Spacer pushes the Run-simulation button to the far right;
@@ -2109,6 +2172,7 @@ RunButton.propTypes = {
 };
 
 Header.propTypes = {
+  awaitingApproval: PropTypes.bool,
   /* A build stopped part-way ({ kind: "canceled" | "failed", … }), and how to stop one. */
   halt: PropTypes.object,
   onCancel: PropTypes.func,
@@ -2153,6 +2217,7 @@ function Deriving({
   onAddEvals,
   onBuilderTurn,
   onRun,
+  review = null,
 }) {
   /* The builder folds to a rail here too — the same choice as the
      environment page, remembered across both. */
@@ -2215,6 +2280,7 @@ function Deriving({
           borderBottomWidth: { xs: 1, lg: 0 },
         }}
       >
+        {review && <DesignReview env={env} {...review} />}
         <AssistantConsole
           onCollapse={() => setCollapsed(true)}
           turns={turns}
@@ -2267,6 +2333,7 @@ function Deriving({
  * and keep working on the left-hand chat.
  */
 import { Component as ReactComponent } from "react";
+import ClosableDialog from "../components/ClosableDialog";
 class PanelBoundary extends ReactComponent {
   constructor(props) {
     super(props);
@@ -2345,6 +2412,7 @@ class PanelBoundary extends ReactComponent {
 PanelBoundary.propTypes = { children: PropTypes.node };
 
 Deriving.propTypes = {
+  review: PropTypes.object,
   turns: PropTypes.array,
   running: PropTypes.bool,
   chips: PropTypes.array,

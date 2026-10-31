@@ -23,7 +23,7 @@ const Develop = () => {
       >
         <PageHeader
           title="Datasets"
-          info="Manage datasets across your development lifecycle — create, update, and use them to evaluate prompts and workflows."
+          description="Build and version test data, then run prompts, evals and experiments against it."
           sx={{ mb: 0 }}
         />
         <DevelopView />

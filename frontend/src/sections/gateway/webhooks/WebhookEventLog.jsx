@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
 import React from "react";
 import {
@@ -56,16 +57,11 @@ const WebhookEventLog = ({ webhookId }) => {
 
   if (!events?.length) {
     return (
-      <Box display="flex" flexDirection="column" alignItems="center" py={6}>
-        <Iconify
-          icon="solar:inbox-linear"
-          width={48}
-          sx={{ color: "text.disabled", mb: 2 }}
-        />
-        <Typography variant="body1" color="text.secondary">
-          No delivery events yet
-        </Typography>
-      </Box>
+      <EmptyState
+        icon="solar:inbox-linear"
+        title="No delivery events yet"
+        sx={{ pt: 6, pb: 6 }}
+      />
     );
   }
 

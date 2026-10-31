@@ -182,7 +182,7 @@ const ColumnBarChart = ({
                 value={item.totalCells}
                 sx={{ marginTop: "4px" }}
               />
-              <SvgColor
+              <SvgColor width={24}
                 // @ts-ignore
                 src="/assets/icons/summary/bar-graph.svg"
                 color={generateAllColors(palette, colors || undefined)[index]}

@@ -43,6 +43,7 @@ import {
 import CreateEditWebhookDialog from "./CreateEditWebhookDialog";
 import WebhookEventLog from "./WebhookEventLog";
 import { formatDate } from "../utils/formatters";
+import EmptyState from "src/components/empty-state";
 
 const CHIP_ROLE = {
   success: "success",
@@ -209,20 +210,29 @@ const WebhookManagementSection = () => {
         title="Webhooks"
         subtitle="Configure webhook endpoints for event notifications"
         actions={[
-          {
-            label: "Create Webhook",
-            variant: "contained",
-            size: "small",
-            icon: "solar:add-linear",
-            onClick: () => setDialogOpen(true),
-          },
+          ...(webhooks?.length === 0
+            ? []
+            : [
+                {
+                  label: "Create Webhook",
+                  variant: "contained",
+                  size: "small",
+                  icon: "solar:add-linear",
+                  onClick: () => setDialogOpen(true),
+                },
+              ]),
         ]}
       />
 
       <Tabs
         value={tab}
         onChange={handleTabChange}
-        sx={{ mb: 1.5, borderBottom: 1, borderColor: "divider" }}
+        sx={{
+          boxShadow: "none",
+          mb: 1.5,
+          borderBottom: 1,
+          borderColor: "divider",
+        }}
       >
         <Tab label={`Endpoints (${webhooks?.length || 0})`} />
         <Tab label="Delivery Log" />
@@ -230,48 +240,51 @@ const WebhookManagementSection = () => {
 
       {tab === 0 && (
         <>
-          <TextField
-            placeholder="Search by name or URL..."
-            size="small"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            sx={{ width: 300, mb: 2 }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Iconify icon="solar:magnifier-linear" width={16} />
-                </InputAdornment>
-              ),
-            }}
-          />
+          {webhooks?.length !== 0 && (
+            <TextField
+              placeholder="Search by name or URL..."
+              size="small"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              sx={{ width: 300, mb: 2 }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <Iconify icon="solar:magnifier-linear" width={16} />
+                  </InputAdornment>
+                ),
+              }}
+            />
+          )}
 
           {filteredWebhooks.length === 0 ? (
-            <Box
-              display="flex"
-              flexDirection="column"
-              alignItems="center"
-              py={8}
-            >
-              <Iconify
-                icon="solar:link-circle-linear"
-                width={48}
-                sx={{ color: "text.disabled", mb: 2 }}
-              />
-              <Typography variant="h6" color="text.secondary" mb={1}>
-                {webhooks?.length === 0
+            <EmptyState
+              variant={webhooks?.length === 0 ? "first-run" : "no-results"}
+              icon="solar:link-circle-linear"
+              title={
+                webhooks?.length === 0
                   ? "No webhooks yet"
-                  : "No webhooks match your search"}
-              </Typography>
-              {webhooks?.length === 0 && (
-                <Button
-                  variant="outlined"
-                  startIcon={<Iconify icon="solar:add-linear" width={20} />}
-                  onClick={() => setDialogOpen(true)}
-                >
-                  Create Your First Webhook
-                </Button>
-              )}
-            </Box>
+                  : "No webhooks match your search"
+              }
+              description={
+                webhooks?.length === 0
+                  ? "Send gateway events to your own endpoint as they happen."
+                  : undefined
+              }
+              action={
+                webhooks?.length === 0 ? (
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    onClick={() => setDialogOpen(true)}
+                  >
+                    Create webhook
+                  </Button>
+                ) : undefined
+              }
+              sx={{ pt: 6, pb: 6 }}
+            />
           ) : (
             <>
               <TableContainer>

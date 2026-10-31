@@ -66,26 +66,9 @@ export const gridStyle = {
   },
 };
 
-export const getMetricsTabSx = (theme) => ({
-  borderBottom: 1,
-  borderColor: "divider",
-  "& .MuiTabs-flexContainer": { gap: 0 },
-  "& .MuiTab-root": {
-    paddingX: theme.spacing(2),
-    margin: theme.spacing(0),
-    marginRight: `${theme.spacing(0)} !important`,
-    minWidth: "auto",
-    color: "text.disabled",
-    transition: theme.transitions.create(["color", "background-color"], {
-      duration: theme.transitions.duration.short,
-    }),
-    "&.Mui-selected": {
-      color: theme.palette.text.primary,
-    },
-    "&:not(.Mui-selected)": { color: theme.palette.text.disabled },
-    "&:first-of-type": { marginLeft: 0 },
-  },
-});
+// Design system: these tabs use the theme as-is (underline rail, label
+// colours, spacing). Kept as a function so existing callers don't change.
+export const getMetricsTabSx = (_theme) => ({});
 
 export const defaultFilterBase = {
   column_id: "",

@@ -118,7 +118,7 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
     <Stack spacing={2}>
       {/* tags and groups */}
       <Box>
-        <Typography sx={HEAD}>Tags and groups</Typography>
+        <Typography sx={HEAD}>Tags and suites</Typography>
         <Box sx={{ ...box, p: 1.25 }}>
           <Stack
             direction="row"
@@ -176,7 +176,7 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
             sx={{ flexWrap: "wrap", rowGap: 0.75, alignItems: "center", mt: 1 }}
           >
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              In groups:
+              In suites:
             </Typography>
             {myGroups.length === 0 && (
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
@@ -218,7 +218,7 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                 renderInput={(p) => (
                   <TextField
                     {...p}
-                    placeholder="Add to group — Refund release gate"
+                    placeholder="Add to suite — Refund release gate"
                   />
                 )}
                 sx={{ width: 240 }}
@@ -226,7 +226,7 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
             )}
           </Stack>
           <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 1 }}>
-            A tag describes and filters; a group selects. Being in two groups is
+            A tag describes and filters; a suite selects. Being in two suites is
             still one scenario, with one history.
           </Typography>
         </Box>
@@ -236,7 +236,7 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
       <Box>
         <Typography
           sx={HEAD}
-        >{`Evidence and grounding${grounded ? "" : " · not grounded yet"}`}</Typography>
+        >{`Evidence${grounded ? "" : " · none attached yet"}`}</Typography>
         <Box sx={box}>
           {(live.grounding || []).length === 0 && (
             <Typography
@@ -330,7 +330,7 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                           }
                           sx={{ color: "text.primary", borderColor: "divider" }}
                         >
-                          Re-ground
+                          Re-check evidence
                         </Button>
                       </>
                     )}
@@ -637,16 +637,6 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                 sx={{ color: "text.primary", borderColor: "divider" }}
               >
                 Promote to regression
-              </Button>
-              <Button
-                size="small"
-                disabled={ro}
-                onClick={() =>
-                  patch(promotePatch(envState, [live.id], "benchmark"))
-                }
-                sx={{ color: "text.secondary" }}
-              >
-                Promote to benchmark
               </Button>
             </>
           )}

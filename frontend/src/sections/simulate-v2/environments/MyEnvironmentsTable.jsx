@@ -45,7 +45,7 @@ import { catalogueOfEnv } from "../_mock/catalogue";
 /* An environment's origin, for the list's filter. */
 const ORIGINS = {
   world: "From a ready world",
-  copy: "A copy or fork",
+  copy: "Private · your workspace",
   agent: "Built from an agent",
 };
 const originOf = (env) =>
@@ -55,6 +55,7 @@ const originOf = (env) =>
       ? "world"
       : "agent";
 import { identityOf } from "../agents/agentProfile";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 /*
   Every environment is filed under the agent type it tests — the agent
@@ -186,11 +187,13 @@ export default function MyEnvironmentsTable({
             if (!lastRun)
               return env.buildStatus === "building"
                 ? "building"
-                : env.buildStatus === "canceled"
-                  ? "canceled"
-                  : env.buildStatus === "failed"
-                    ? "build_failed"
-                    : "not_run";
+                : env.buildStatus === "awaiting_approval"
+                  ? "awaiting_approval"
+                  : env.buildStatus === "canceled"
+                    ? "canceled"
+                    : env.buildStatus === "failed"
+                      ? "build_failed"
+                      : "not_run";
             if (lastRun.status === "running") return "running";
             if (lastRun.status === "failed" || lastRun.gate === "failed")
               return "failed";
@@ -240,7 +243,9 @@ export default function MyEnvironmentsTable({
            name read apart by it. */
           version: (() => {
             const v = currentEnvVersion(env, envState)?.label;
-            return v ? envLabelOf(env, envState, v) : null;
+            if (!v) return null;
+            /* A locked release says so beside its version. */
+            return `${envLabelOf(env, envState, v)}${envState?.lockedRelease ? " · Locked" : env.copyOf || env.forkedFrom ? " · Private" : ""}`;
           })(),
           /* The agent it belongs to — its name in Agents, whether this is its
            main environment (where Fix runs), and whether its proofs are
@@ -337,7 +342,7 @@ export default function MyEnvironmentsTable({
               {row.original.managed === "code" && (
                 <Tooltip
                   arrow
-                  title="Managed in code — versions come from agent-learn env save"
+                  title="Managed in code — versions come from fi sim env save"
                 >
                   <Iconify
                     icon="solar:code-square-linear"
@@ -352,7 +357,12 @@ export default function MyEnvironmentsTable({
               <Tooltip arrow title={row.original.description} enterDelay={500}>
                 <Typography
                   noWrap
-                  sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }}
+                  sx={{
+                    typography: "s3",
+                    color: "text.secondary",
+                    minWidth: 0,
+                    mt: 0.5,
+                  }}
                 >
                   {row.original.description}
                 </Typography>
@@ -464,7 +474,8 @@ export default function MyEnvironmentsTable({
                     noWrap
                     sx={{
                       typography: "s3",
-                      color: "text.tertiary",
+                      color: "text.secondary",
+                      mt: 0.5,
                       cursor: "default",
                       width: "fit-content",
                       maxWidth: "100%",
@@ -834,7 +845,7 @@ export default function MyEnvironmentsTable({
         rowCount={shown.length}
         getRowId={(row) => row.id}
         onRowClick={(row) => onOpen?.(row.env)}
-        rowHeight={44}
+        rowHeight={ROW_HEIGHT.twoLine}
         emptyMessage={
           filtering
             ? "No environments match these filters"
@@ -980,11 +991,13 @@ MyEnvironmentsTable.propTypes = {
    gate's verdict, and not run / completed / canceled carry no verdict. */
 const STATUS_META = {
   building: { label: "Building", role: "info" },
+  /* The design is proposed; nothing is built until someone approves it. */
+  awaiting_approval: { label: "Awaiting approval", role: "warning" },
   /* A build someone stopped, or one that failed part-way — open it to restart or retry. */
   canceled: { label: "Build canceled", role: "neutral" },
   build_failed: { label: "Build failed", role: "danger" },
   not_run: { label: "Not run yet", role: "neutral" },
-  running: { label: "Running…", role: "info" },
+  running: { label: "Running", role: "info" },
   passed: { label: "Passed", role: "success" },
   failed: { label: "Failed", role: "danger" },
   /* A finished run with no gate verdict: neutral, like the Improvements

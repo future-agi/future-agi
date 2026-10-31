@@ -24,6 +24,7 @@ import {
 import logger from "src/utils/logger";
 import { canonicalEntries, formatMs } from "../../../utils/utils";
 import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 export const buildUsersRequestFilters = (filters) =>
   serializeFilterListForApi(filters || []);
@@ -555,7 +556,7 @@ export const detectTimePeriod = (start, end) => {
 
 export const userTraceRowHeightMapping = {
   Short: {
-    height: 40,
+    height: ROW_HEIGHT.default,
     autoHeight: false,
   },
   Medium: {
@@ -588,7 +589,7 @@ export const LAST_ACTIVE_STYLES = {
   fontFamily: "IBM Plex Sans",
   fontWeight: 400,
   fontStyle: "normal",
-  fontSize: "13px",
+  fontSize: "12px",
   lineHeight: "20px",
   letterSpacing: "0%",
   verticalAlign: "middle",

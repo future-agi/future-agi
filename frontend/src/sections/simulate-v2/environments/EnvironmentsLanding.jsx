@@ -319,7 +319,7 @@ function PrebuiltSection({ sectionRef, onBrowse }) {
     <Box ref={sectionRef} sx={{ scrollMarginTop: 16 }}>
       <SectionHead
         title="Use a prebuilt world"
-        subtitle="Tables, tools and rules, as designed. Try one now with its sample agent, or use it with one of your agents."
+        subtitle="Tables, tools and rules, as designed. Use one with your agent."
         action={
           <Button
             size="small"

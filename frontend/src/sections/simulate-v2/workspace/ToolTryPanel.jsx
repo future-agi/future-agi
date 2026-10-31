@@ -105,7 +105,7 @@ export default function ToolTryPanel({ tool, env, envState }) {
           Try a request in a preview world
         </Typography>
         <CopyCommandButton
-          command={`agent-learn tool preview ${tool.name} --environment ${env?.id || "<env>"} --input ./request.json`}
+          command={`fi api tool preview ${tool.name} --environment ${env?.id || "<env>"} --input ./request.json`}
         />
       </Stack>
       <Stack direction="row" spacing={1} alignItems="flex-start">

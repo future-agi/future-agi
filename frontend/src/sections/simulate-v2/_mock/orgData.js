@@ -86,8 +86,20 @@ export const PRIVACY = [
 ];
 
 export const SUPPORTED = ["pdf", "txt", "md", "csv", "json", "jsonl", "tsv"];
+/* Each route's own limits (data.md): the builder's cloud sandbox parses
+   these; the Knowledge base has its own, smaller per-file limit. */
 export const SUPPORTED_LINE =
-  "PDF, text, Markdown, CSV and JSON · up to 25 MB and 10 files at a time";
+  "PDF, DOCX, XLSX, CSV, TSV, JSON, JSONL, TXT, MD · up to 25 MB a file · 100 files or 200 MB per design";
+export const KB_LIMIT_LINE =
+  "New documents go into the Knowledge base first — up to 5 MB a file there.";
+
+/* Connectors that aren't built yet: listed, off, and saying so. */
+export const UNAVAILABLE_CONNECTORS = [
+  { id: "drive", name: "Google Drive", icon: "logos:google-drive" },
+  { id: "notion", name: "Notion", icon: "logos:notion-icon" },
+  { id: "confluence", name: "Confluence", icon: "logos:confluence" },
+  { id: "salesforce", name: "Salesforce", icon: "logos:salesforce" },
+];
 
 const extOf = (name) =>
   String(name || "")
@@ -939,6 +951,8 @@ export const ORG_SOURCES = [
     id: "org-refund-policy",
     name: "Refund policy 2026.pdf",
     owner: "Legal",
+    collection: "Policies",
+    revision: 3,
     access: true,
     role: "policy",
   },
@@ -946,6 +960,8 @@ export const ORG_SOURCES = [
     id: "org-orders-q3",
     name: "orders-q3-sample.csv",
     owner: "Data team",
+    collection: "Order exports",
+    revision: 7,
     access: true,
     role: "seed",
   },
@@ -953,6 +969,8 @@ export const ORG_SOURCES = [
     id: "org-payroll",
     name: "HR payroll 2026.xlsx",
     owner: "People team",
+    collection: "People",
+    revision: 2,
     access: false,
     role: "evaluation-reference",
   },
@@ -977,11 +995,11 @@ export const sourceEditPatch = (envState, id, fields, detail) => {
 /* The commands a developer would type — roadmap CLI names. */
 export const dataCli = {
   import: (env, s) =>
-    `agent-learn data import ./${s?.name || "orders.csv"} --environment ${env?.id || "<env>"} --role ${s?.role || "seed"} --visibility ${s?.visibility || "tool"} --preview`,
-  show: (s) => `agent-learn data show ${s.id}`,
+    `fi api data import ./${s?.name || "orders.csv"} --environment ${env?.id || "<env>"} --role ${s?.role || "seed"} --visibility ${s?.visibility || "tool"} --preview`,
+  show: (s) => `fi api data show ${s.id}`,
   refresh: (s) =>
-    `agent-learn data refresh ${s.id} --file ./${s.name.replace(/(\.[^.]+)$/, "-v2$1")} --preview`,
+    `fi api data refresh ${s.id} --file ./${s.name.replace(/(\.[^.]+)$/, "-v2$1")} --preview`,
   export: (s) =>
-    `agent-learn data export ${s.id} --destination ./export --format ${s.parsed?.kind === "table" ? "csv" : "original"}`,
-  list: "agent-learn data list",
+    `fi api data export ${s.id} --destination ./export --format ${s.parsed?.kind === "table" ? "csv" : "original"}`,
+  list: "fi api data list",
 };

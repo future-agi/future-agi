@@ -542,7 +542,7 @@ const ExistingDatasetModal = ({
                     label={""}
                     optionDirection={"column"}
                     options={[
-                      { label: "Import Data", value: "importData" },
+                      { label: "Import data", value: "importData" },
                       {
                         label: "Import data and prompt configuration",
                         value: "ImportDataPromptConfiguration",
@@ -563,6 +563,9 @@ const ExistingDatasetModal = ({
                       },
                     }}
                     optionSx={{
+                      "& .MuiTypography-root": {
+                        typography: "m3",
+                      },
                       "& .Mui-checked + .MuiTypography-root": {
                         fontWeight: "fontWeightMedium",
                       },
@@ -586,9 +589,10 @@ const ExistingDatasetModal = ({
                       border: "1px solid",
                       borderColor: "divider",
                       borderRadius: theme.spacing(1),
-                      padding: theme.spacing(2),
+                      padding: theme.spacing(1.5),
                       overflow: "auto",
-                      height: `calc(100vh - ${dataset ? "330" : "380"}px)`,
+                      // As tall as its rows, up to the space available.
+                      maxHeight: `calc(100vh - ${dataset ? "330" : "380"}px)`,
                     }}
                   >
                     <ShowComponent
@@ -603,9 +607,30 @@ const ExistingDatasetModal = ({
                         sx={{
                           display: "flex",
                           flexDirection: "column",
-                          gap: theme.spacing(1.5),
+                          gap: theme.spacing(1),
                         }}
                       >
+                        {/* Said once for the whole list, not above every row. */}
+                        <Box
+                          sx={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 1.5,
+                            pl: dataset ? 0 : 4.5,
+                            typography: "s3",
+                            color: "text.subtitle",
+                          }}
+                        >
+                          <Box sx={{ width: theme.spacing(21) }}>
+                            Source column
+                          </Box>
+                          <Box sx={{ width: 16 }} />
+                          <Box>
+                            {dataset
+                              ? "Column in this dataset"
+                              : "New column name"}
+                          </Box>
+                        </Box>
                         {isSelectedDatasetColumn ? (
                           <FieldSelectionSkeleton check={true} />
                         ) : (
@@ -675,7 +700,7 @@ const ExistingDatasetModal = ({
                       <Box
                         sx={{
                           display: "flex",
-                          height: `calc(100vh - ${dataset ? "380" : "430"}px)`,
+                          py: 6,
                           justifyContent: "center",
                           alignItems: "center",
                         }}

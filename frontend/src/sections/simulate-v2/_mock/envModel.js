@@ -40,8 +40,16 @@ import { replicationOf } from "./replication";
 import { proofKindOf } from "./rsiModel";
 import { secretsUsedOf } from "./envConfig";
 
-const short = (s) => hashSeed(String(s || "")).toString(36).slice(0, 4);
-const slug = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 40);
+const short = (s) =>
+  hashSeed(String(s || ""))
+    .toString(36)
+    .slice(0, 4);
+const slug = (s) =>
+  String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 40);
 
 /* ── contract: rules with stable ids ─────────────────────────────────────── */
 
@@ -55,25 +63,52 @@ export const rulesOf = (env, envState) => {
   /* Only changes made in this version's line hold — a rollback's parent is
      the version it rolled back to, so what was changed in between doesn't. */
   const lineage = envLineage(env, envState);
-  const changes = (envState?.ruleChanges || []).filter((c) => holdsInEnv(lineage, c.envVersion));
-  const retired = new Set(changes.filter((c) => c.kind === "removed").map((c) => c.id));
+  const changes = (envState?.ruleChanges || []).filter((c) =>
+    holdsInEnv(lineage, c.envVersion),
+  );
+  const retired = new Set(
+    changes.filter((c) => c.kind === "removed").map((c) => c.id),
+  );
   const base = (env?.rules || []).map((text, i) => {
     const id = `R${i + 1}`;
-    const last = [...changes].reverse().find((c) => c.id === id && c.kind === "changed");
-    return { id, text: last?.to || text, original: text, source: "prompt", changedIn: last?.envVersion || null };
+    const last = [...changes]
+      .reverse()
+      .find((c) => c.id === id && c.kind === "changed");
+    return {
+      id,
+      text: last?.to || text,
+      original: text,
+      source: "prompt",
+      changedIn: last?.envVersion || null,
+    };
   });
-  const added = changes.filter((c) => c.kind === "added").map((c) => ({ id: c.id, text: c.to, original: null, source: "prompt", changedIn: c.envVersion }));
+  const added = changes
+    .filter((c) => c.kind === "added")
+    .map((c) => ({
+      id: c.id,
+      text: c.to,
+      original: null,
+      source: "prompt",
+      changedIn: c.envVersion,
+    }));
   return [...base, ...added].filter((r) => !retired.has(r.id));
 };
 
 /** Which rule a scenario's expectation quotes, if any. */
-const quotedRule = (row) => (row?.expected || row?.outcome || "").match(/rule: "(.+?)"/)?.[1] || null;
+const quotedRule = (row) =>
+  (row?.expected || row?.outcome || "").match(/rule: "(.+?)"/)?.[1] || null;
 
 export const ruleOfScenario = (row, rules) => {
   const q = quotedRule(row);
   if (!q) return null;
   const key = q.toLowerCase().slice(0, 24);
-  return rules.find((r) => r.original?.toLowerCase().startsWith(key) || r.text.toLowerCase().startsWith(key)) || null;
+  return (
+    rules.find(
+      (r) =>
+        r.original?.toLowerCase().startsWith(key) ||
+        r.text.toLowerCase().startsWith(key),
+    ) || null
+  );
 };
 
 /* ── the sub-goal catalogue ──────────────────────────────────────────────── */
@@ -84,7 +119,9 @@ export const ruleOfScenario = (row, rules) => {
  * every sub-goal is judged by an LLM, and a scenario is proved against a
  * reference transcript rather than a reference solution of tool calls.
  */
-export const isConnectOnly = (env) => env?.worldMode === "connect-only" || ((env?.seed?.tables || []).length === 0 && env?.surface === "voice");
+export const isConnectOnly = (env) =>
+  env?.worldMode === "connect-only" ||
+  ((env?.seed?.tables || []).length === 0 && env?.surface === "voice");
 
 /**
  * The shared, named checks the suite grades with. Derived from the
@@ -104,15 +141,39 @@ export const subGoalCatalogOf = (env, envState) => {
   };
   (envState?.scenarios || []).forEach((row) => {
     if (row.retired || row.archived) return;
-    const goals = Array.isArray(row.subGoals) && row.subGoals.length ? row.subGoals : subTasksFor(row, env);
+    const goals =
+      Array.isArray(row.subGoals) && row.subGoals.length
+        ? row.subGoals
+        : subTasksFor(row, env);
     goals.forEach((g) => {
       const text = typeof g === "string" ? g : g?.text || g?.label || "";
       const call = text.match(/^Call ([a-z0-9_]+)/i)?.[1];
       if (call) {
-        add(`SG-tool-${call}`, { name: `Calls ${call} with the right arguments`, kind: connect ? "judged" : "code", tests: { kind: "tool", ref: call }, reads: connect ? "transcript" : "world + calls" }, row.id);
+        add(
+          `SG-tool-${call}`,
+          {
+            name: `Calls ${call} with the right arguments`,
+            kind: connect ? "judged" : "code",
+            tests: { kind: "tool", ref: call },
+            reads: connect ? "transcript" : "world + calls",
+          },
+          row.id,
+        );
       } else {
         const id = `SG-${slug(text)}`;
-        add(id, { name: text, kind: connect || !/verify|confirm|check/i.test(text) ? "judged" : "code", tests: { kind: "use case", ref: row.useCase || null, refs: [] }, reads: connect ? "transcript" : "calls" }, row.id);
+        add(
+          id,
+          {
+            name: text,
+            kind:
+              connect || !/verify|confirm|check/i.test(text)
+                ? "judged"
+                : "code",
+            tests: { kind: "use case", ref: row.useCase || null, refs: [] },
+            reads: connect ? "transcript" : "calls",
+          },
+          row.id,
+        );
         /* A shared check runs in many use cases. `ref` stays the first, for
            what already reads it; `refs` is every use case it runs in. */
         const refs = byId.get(id).tests.refs;
@@ -120,12 +181,31 @@ export const subGoalCatalogOf = (env, envState) => {
       }
     });
     const rule = ruleOfScenario(row, rules);
-    if (rule) add(`SG-rule-${rule.id}`, { name: `Holds the line: ${rule.text.replace(/\.$/, "")}`, kind: connect ? "judged" : "code", tests: { kind: "rule", ref: rule.id }, reads: connect ? "transcript" : "world + calls" }, row.id);
+    if (rule)
+      add(
+        `SG-rule-${rule.id}`,
+        {
+          name: `Holds the line: ${rule.text.replace(/\.$/, "")}`,
+          kind: connect ? "judged" : "code",
+          tests: { kind: "rule", ref: rule.id },
+          reads: connect ? "transcript" : "world + calls",
+        },
+        row.id,
+      );
   });
-  return [...byId.values()].map((e) => {
-    const edit = [...edits].reverse().find((x) => x.id === e.id);
-    return { ...e, ...(edit && { name: edit.name || e.name, criterion: edit.criterion, editedIn: edit.version }) };
-  }).sort((a, b) => b.usedBy.length - a.usedBy.length);
+  return [...byId.values()]
+    .map((e) => {
+      const edit = [...edits].reverse().find((x) => x.id === e.id);
+      return {
+        ...e,
+        ...(edit && {
+          name: edit.name || e.name,
+          criterion: edit.criterion,
+          editedIn: edit.version,
+        }),
+      };
+    })
+    .sort((a, b) => b.usedBy.length - a.usedBy.length);
 };
 
 /* ── the versions a run holds fixed ──────────────────────────────────────── */
@@ -139,28 +219,45 @@ export const suiteVersionOf = (envState) => {
   const batches = new Set(rows.map((r) => r.batchId).filter(Boolean)).size;
   /* Each retire and each restore moves the suite on, so undoing one never
      hands back an old suite number. */
-  const edits = rows.reduce((n, r) => n + (r.editedAt || r.outdatedBy ? 1 : 0) + (r.retired || r.archived ? 1 : 0) + 2 * (r.restores || 0), 0);
+  const edits = rows.reduce(
+    (n, r) =>
+      n +
+      (r.editedAt || r.outdatedBy ? 1 : 0) +
+      (r.retired || r.archived ? 1 : 0) +
+      2 * (r.restores || 0),
+    0,
+  );
   /* The S version log (suiteLog.js) records edits the row fields can't see —
      a second edit to one scenario, tier moves, sub-goal publishes — so the
      suite reads whichever is further along. Read directly: suiteLog imports
      this module. */
   const logged = (envState?.suiteVersions || [])
     .filter((l) => !/waiting to be added$/.test(String(l.summary || "")))
-    .reduce((m, l) => Math.max(m, parseInt(String(l.label || "").replace(/\D/g, ""), 10) || 0), 0);
+    .reduce(
+      (m, l) =>
+        Math.max(
+          m,
+          parseInt(String(l.label || "").replace(/\D/g, ""), 10) || 0,
+        ),
+      0,
+    );
   return `s${Math.max(count(batches + edits), logged)}`;
 };
 
-export const catalogVersionOf = (envState) => `c${count(1 + (envState?.subGoalEdits || []).length)}`;
+export const catalogVersionOf = (envState) =>
+  `c${count(1 + (envState?.subGoalEdits || []).length)}`;
 
 /** Evaluations change their own version — never the environment's. */
-export const evalVersionOf = (envState) => `e${count(1 + (envState?.evalChanges || []).length + (envState?.envVersions || []).filter((v) => (v.changed || []).includes("scoring")).length)}`;
+export const evalVersionOf = (envState) =>
+  `e${count(1 + (envState?.evalChanges || []).length + (envState?.envVersions || []).filter((v) => (v.changed || []).includes("scoring")).length)}`;
 
 const VOICE_STACK = "ElevenLabs turbo v2.5 · Deepgram nova-3";
 
 /** The simulated caller for one model — voice keeps the stack it speaks through. */
-export const simulatorForModel = (model, voice) => (voice
-  ? { model, stack: VOICE_STACK, label: `${model} · ElevenLabs + Deepgram` }
-  : { model, stack: null, label: model });
+export const simulatorForModel = (model, voice) =>
+  voice
+    ? { model, stack: VOICE_STACK, label: `${model} · ElevenLabs + Deepgram` }
+    : { model, stack: null, label: model };
 
 /**
  * The simulated caller: the model, and for voice the stack it speaks through.
@@ -168,11 +265,19 @@ export const simulatorForModel = (model, voice) => (voice
  * one chosen in Settings (`runDefaults.simulatorModel`, recorded with a
  * caller change) is the one new runs pin. Unset, the surface's default.
  */
-export const simulatorOf = (env, envState) => envState?.simulator
-  || (envState?.runDefaults?.simulatorModel
-    ? simulatorForModel(envState.runDefaults.simulatorModel, env?.surface === "voice")
+export const simulatorOf = (env, envState) =>
+  envState?.simulator ||
+  (envState?.runDefaults?.simulatorModel
+    ? simulatorForModel(
+        envState.runDefaults.simulatorModel,
+        env?.surface === "voice",
+      )
     : env?.surface === "voice"
-      ? { model: "gpt-4o-realtime", stack: VOICE_STACK, label: "gpt-4o-realtime · ElevenLabs + Deepgram" }
+      ? {
+          model: "gpt-4o-realtime",
+          stack: VOICE_STACK,
+          label: "gpt-4o-realtime · ElevenLabs + Deepgram",
+        }
       : { model: "claude-sonnet-4", stack: null, label: "claude-sonnet-4" });
 
 /**
@@ -183,12 +288,23 @@ export const simulatorOf = (env, envState) => envState?.simulator
 export const callerChangePatch = (env, envState, model) => {
   const from = simulatorOf(env, envState);
   const to = simulatorForModel(model, env?.surface === "voice");
-  if (from.model === model) return { runDefaults: { ...(envState?.runDefaults || {}), simulatorModel: model } };
+  if (from.model === model)
+    return {
+      runDefaults: { ...(envState?.runDefaults || {}), simulatorModel: model },
+    };
   const n = (envState?.callerChanges || []).length + 2;
   return {
     runDefaults: { ...(envState?.runDefaults || {}), simulatorModel: model },
     simulator: to,
-    callerChanges: [...(envState?.callerChanges || []), { label: `caller ${n}`, from: from.model, to: model, at: new Date().toISOString() }],
+    callerChanges: [
+      ...(envState?.callerChanges || []),
+      {
+        label: `caller ${n}`,
+        from: from.model,
+        to: model,
+        at: new Date().toISOString(),
+      },
+    ],
   };
 };
 
@@ -198,12 +314,20 @@ export const callerChangePatch = (env, envState, model) => {
   the fingerprint so two dials with the same counts still tell apart. A
   connect-only environment has no dial; its pin is "—".
 */
-const toolPinLabel = (summary, pin) => (summary || pin ? [summary, pin].filter(Boolean).join(" · ") : null);
-const currentToolPin = (env, envState) => (isConnectOnly(env) ? "—" : toolPinLabel(toolEnvSummary(savedWorldEnv(env, envState), envState), toolEnvPin(savedWorldEnv(env, envState), envState)));
+const toolPinLabel = (summary, pin) =>
+  summary || pin ? [summary, pin].filter(Boolean).join(" · ") : null;
+const currentToolPin = (env, envState) =>
+  isConnectOnly(env)
+    ? "—"
+    : toolPinLabel(
+        toolEnvSummary(savedWorldEnv(env, envState), envState),
+        toolEnvPin(savedWorldEnv(env, envState), envState),
+      );
 
 /* How faithfully the run reproduced the agent (replication.js) — fidelities
    never mix in one comparison (PRD v7 §4.10.3, D2). */
-const runFidelityOf = (env, envState) => (envState?.agent ? replicationOf(envState.agent, env)?.fidelity || null : null);
+const runFidelityOf = (env, envState) =>
+  envState?.agent ? replicationOf(envState.agent, env)?.fidelity || null : null;
 
 /**
  * What a run held fixed. Older runs carry less; they fall back to what was current.
@@ -216,14 +340,23 @@ export const runPinsOf = (run, env, envState) => ({
   catalog: run?.catalogVersion || catalogVersionOf(envState),
   eval: run?.evalVersion || evalVersionOf(envState),
   simulator: run?.simulator?.label || simulatorOf(env, envState).label,
-  toolEnv: run?.toolEnv ? toolPinLabel(run.toolEnvSummary, run.toolEnv) : currentToolPin(env, envState),
+  toolEnv: run?.toolEnv
+    ? toolPinLabel(run.toolEnvSummary, run.toolEnv)
+    : currentToolPin(env, envState),
   /* The rest of the comparability key (§4.10.3). */
   surface: run?.surface || env?.surface || null,
   fidelity: run?.runFidelity || runFidelityOf(env, envState),
   trials: run?.trials || run?.repeats || 1,
   /* The plan's timeouts and turn/step limits — runs from before they were recorded read none. */
   limits: run?.limits
-    ? [`${run.limits.trialTimeout} min`, run.limits.runDeadline ? `${run.limits.runDeadline} min run` : null, `${run.limits.turnLimit} turns`, run.limits.stepLimit ? `${run.limits.stepLimit} steps` : null].filter(Boolean).join(" · ")
+    ? [
+        `${run.limits.trialTimeout} min`,
+        run.limits.runDeadline ? `${run.limits.runDeadline} min run` : null,
+        `${run.limits.turnLimit} turns`,
+        run.limits.stepLimit ? `${run.limits.stepLimit} steps` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
     : null,
   /* Recorded, not compared: a new key isn't a new test. */
   secrets: run?.secrets ? Object.keys(run.secrets).length : null,
@@ -240,11 +373,17 @@ export const runPinsOf = (run, env, envState) => ({
  * kind it ran under. Seeded history and previews call without it, so they
  * replay exactly as they always did (missing → old behaviour).
  */
-export const pinsForNewRun = (env, envState, { trials, seed, rules = false } = {}) => ({
+export const pinsForNewRun = (
+  env,
+  envState,
+  { trials, seed, rules = false } = {},
+) => ({
   ...(rules && {
     outcomes: 1,
     requiredEvals: 1,
-    proofKind: (({ kind, tier }) => ({ kind, tier }))(proofKindOf(envState?.agent)),
+    proofKind: (({ kind, tier }) => ({ kind, tier }))(
+      proofKindOf(envState?.agent),
+    ),
     /* "Environments, defined": sub-goals decide pass or fail, the turn limit
        is enforced at the environment's limit as it stands now, and the run
        took its size and pace from the Settings defaults. */
@@ -270,12 +409,14 @@ export const pinsForNewRun = (env, envState, { trials, seed, rules = false } = {
   simulator: simulatorOf(env, envState),
   /* The dial, and the fault profiles themselves — a replay of this run draws
      the same faults however the dial is set later. */
-  ...(isConnectOnly(env) ? { toolEnv: "—", toolEnvSummary: null, toolFaults: null } : {
-    /* The tools of the version the run is on — tools added since aren't in it until saved. */
-    toolEnv: toolEnvPin(savedWorldEnv(env, envState), envState),
-    toolEnvSummary: toolEnvSummary(savedWorldEnv(env, envState), envState),
-    toolFaults: toolFaultsOf(savedWorldEnv(env, envState), envState),
-  }),
+  ...(isConnectOnly(env)
+    ? { toolEnv: "—", toolEnvSummary: null, toolFaults: null }
+    : {
+        /* The tools of the version the run is on — tools added since aren't in it until saved. */
+        toolEnv: toolEnvPin(savedWorldEnv(env, envState), envState),
+        toolEnvSummary: toolEnvSummary(savedWorldEnv(env, envState), envState),
+        toolFaults: toolFaultsOf(savedWorldEnv(env, envState), envState),
+      }),
 });
 
 /**
@@ -288,16 +429,56 @@ export const heldFixed = (a, b, env, envState) => {
   const pb = runPinsOf(b, env, envState);
   const rows = [
     { id: "env", label: "World + contract", a: pa.env, b: pb.env, hard: true },
-    { id: "suite", label: "Scenario suite", a: pa.suite, b: pb.suite, hard: false, note: "compared over the scenarios both runs share" },
-    { id: "catalog", label: "Sub-goal definitions", a: pa.catalog, b: pb.catalog, hard: true },
+    {
+      id: "suite",
+      label: "Scenario suite",
+      a: pa.suite,
+      b: pb.suite,
+      hard: false,
+      note: "compared over the scenarios both runs share",
+    },
+    {
+      id: "catalog",
+      label: "Sub-goal definitions",
+      a: pa.catalog,
+      b: pb.catalog,
+      hard: true,
+    },
     { id: "eval", label: "Eval version", a: pa.eval, b: pb.eval, hard: true },
-    { id: "simulator", label: "Simulated caller", a: pa.simulator, b: pb.simulator, hard: true },
-    { id: "toolEnv", label: "Tool fidelity", a: pa.toolEnv, b: pb.toolEnv, hard: true },
+    {
+      id: "simulator",
+      label: "Simulated caller",
+      a: pa.simulator,
+      b: pb.simulator,
+      hard: true,
+    },
+    {
+      id: "toolEnv",
+      label: "Tool fidelity",
+      a: pa.toolEnv,
+      b: pb.toolEnv,
+      hard: true,
+    },
     /* Soft: a different timeout or turn limit can end a trial differently, but it's still the same test. */
-    ...(pa.limits && pb.limits ? [{ id: "limits", label: "Timeouts and limits", a: pa.limits, b: pb.limits, hard: false }] : []),
+    ...(pa.limits && pb.limits
+      ? [
+          {
+            id: "limits",
+            label: "Timeouts and limits",
+            a: pa.limits,
+            b: pb.limits,
+            hard: false,
+          },
+        ]
+      : []),
   ].map((r) => ({ ...r, same: r.a === r.b }));
   const broken = rows.filter((r) => !r.same && r.hard);
-  return { rows, comparable: !broken.length, broken, agent: { a: pa.agent, b: pb.agent } };
+  return {
+    rows,
+    comparable: !broken.length,
+    broken,
+    agent: { a: pa.agent, b: pb.agent },
+  };
 };
 
 /* ── scenario states ─────────────────────────────────────────────────────── */
@@ -308,9 +489,14 @@ export const heldFixed = (a, b, env, envState) => {
  * — the rule it tests is still the intended behaviour.
  */
 export const SCENARIO_STATES = {
-  valid: { label: "Valid", note: "reuse as is" },
-  recheck: { label: "Re-check", note: "re-run its proof" },
-  outdated: { label: "Outdated", note: "rewrite it" },
+  /* Clarified plan: Draft → Validated → Active, or Blocked / Archived.
+     Re-check and outdated are drafts again until re-validated. */
+  valid: { label: "Validated", note: "every required check ran and passed" },
+  recheck: {
+    label: "Draft",
+    note: "re-check — a rule or sub-goal changed on it",
+  },
+  outdated: { label: "Draft", note: "rewrite — it no longer stages" },
   retired: { label: "Retired", note: "no longer applies" },
   new: { label: "New", note: "added since this version" },
   blocked: { label: "Blocked", note: "fix what failed, then validate" },
@@ -318,14 +504,62 @@ export const SCENARIO_STATES = {
 
 export const scenarioStateOf = (row, status, versions = []) => {
   /* Failed a check on add or on Validate: kept as a draft, never run. */
-  if (row?.blocked) return { id: "blocked", canRun: false, correct: null, ...SCENARIO_STATES.blocked, why: row.blocked.reason };
-  if (row?.retired) return { id: "retired", canRun: null, correct: false, ...SCENARIO_STATES.retired, why: row.retired.why || "Its capability is gone." };
-  if (row?.outdatedBy) return { id: "outdated", canRun: true, correct: false, ...SCENARIO_STATES.outdated, why: `Tests ${row.outdatedBy.ruleId}, which changed in ${/^agent /.test(String(row.outdatedBy.version)) ? row.outdatedBy.version : displayEnvLabel(row.outdatedBy.version, versions)} as a policy change.` };
+  if (row?.blocked)
+    return {
+      id: "blocked",
+      canRun: false,
+      correct: null,
+      ...SCENARIO_STATES.blocked,
+      why: row.blocked.reason,
+    };
+  if (row?.retired)
+    return {
+      id: "retired",
+      canRun: null,
+      correct: false,
+      ...SCENARIO_STATES.retired,
+      why: row.retired.why || "Its capability is gone.",
+    };
+  if (row?.outdatedBy)
+    return {
+      id: "outdated",
+      canRun: true,
+      correct: false,
+      ...SCENARIO_STATES.outdated,
+      why: `Tests ${row.outdatedBy.ruleId}, which changed in ${/^agent /.test(String(row.outdatedBy.version)) ? row.outdatedBy.version : displayEnvLabel(row.outdatedBy.version, versions)} as a policy change.`,
+    };
   const s = status?.id;
-  if (s === "broken" || s === "no-tool") return { id: "outdated", canRun: false, correct: null, ...SCENARIO_STATES.outdated, why: status.detail };
-  if (s === "stale" || s === "checking" || s === "quarantined") return { id: "recheck", canRun: null, correct: true, ...SCENARIO_STATES.recheck, why: status.detail };
-  if (s === "needs-env") return { id: "new", canRun: false, correct: true, ...SCENARIO_STATES.new, why: status.detail };
-  return { id: "valid", canRun: true, correct: true, ...SCENARIO_STATES.valid, why: status?.detail || null };
+  if (s === "broken" || s === "no-tool")
+    return {
+      id: "outdated",
+      canRun: false,
+      correct: null,
+      ...SCENARIO_STATES.outdated,
+      why: status.detail,
+    };
+  if (s === "stale" || s === "checking" || s === "quarantined")
+    return {
+      id: "recheck",
+      canRun: null,
+      correct: true,
+      ...SCENARIO_STATES.recheck,
+      why: status.detail,
+    };
+  if (s === "needs-env")
+    return {
+      id: "new",
+      canRun: false,
+      correct: true,
+      ...SCENARIO_STATES.new,
+      why: status.detail,
+    };
+  return {
+    id: "valid",
+    canRun: true,
+    correct: true,
+    ...SCENARIO_STATES.valid,
+    why: status?.detail || null,
+  };
 };
 
 /* ── fix or spec change ──────────────────────────────────────────────────── */
@@ -335,32 +569,84 @@ export const scenarioStateOf = (row, status, versions = []) => {
  * the sub-goals that test them. A version that touches no tested rule is a
  * fix without asking; one that does needs a person to say which it is.
  */
-const STOP = new Set(["never", "always", "with", "from", "that", "this", "than", "into", "only", "must", "should", "before", "after", "about", "your", "their", "them", "they", "when", "what", "which", "will", "have", "does", "each", "every", "other", "more", "less", "same"]);
+const STOP = new Set([
+  "never",
+  "always",
+  "with",
+  "from",
+  "that",
+  "this",
+  "than",
+  "into",
+  "only",
+  "must",
+  "should",
+  "before",
+  "after",
+  "about",
+  "your",
+  "their",
+  "them",
+  "they",
+  "when",
+  "what",
+  "which",
+  "will",
+  "have",
+  "does",
+  "each",
+  "every",
+  "other",
+  "more",
+  "less",
+  "same",
+]);
 
 export const ruleImpactOf = (version, env, envState) => {
   const rules = rulesOf(env, envState);
   const catalog = subGoalCatalogOf(env, envState);
-  const changes = (version?.changes || []).filter((c) => c.kind === "instructions" || /rule|instruction|prompt/i.test(`${c.kind} ${c.title}`));
+  const changes = (version?.changes || []).filter(
+    (c) =>
+      c.kind === "instructions" ||
+      /rule|instruction|prompt/i.test(`${c.kind} ${c.title}`),
+  );
   /* A change touches a rule when it names it, or shares most of what makes
      the rule distinctive — two common words in passing isn't enough. */
-  const touched = rules.filter((r) => changes.some((c) => {
-    const text = `${c.title} ${c.detail || ""} ${c.addendum || ""}`.toLowerCase();
-    if (new RegExp(`\\b${r.id.toLowerCase()}\\b`).test(text)) return true;
-    const words = [...new Set(r.text.toLowerCase().match(/\$?[a-z0-9]{4,}/g) || [])].filter((w) => !STOP.has(w));
-    const hits = words.filter((w) => new RegExp(`(^|[^a-z0-9])${w.replace("$", "\\$")}`).test(text)).length;
-    return hits >= Math.max(3, Math.ceil(words.length * 0.5));
-  }));
-  return touched.map((r) => {
-    const goals = catalog.filter((g) => g.tests.kind === "rule" && g.tests.ref === r.id);
-    const scenarios = [...new Set(goals.flatMap((g) => g.usedBy))];
-    return { rule: r, subGoals: goals, scenarios };
-  }).filter((x) => x.subGoals.length);
+  const touched = rules.filter((r) =>
+    changes.some((c) => {
+      const text =
+        `${c.title} ${c.detail || ""} ${c.addendum || ""}`.toLowerCase();
+      if (new RegExp(`\\b${r.id.toLowerCase()}\\b`).test(text)) return true;
+      const words = [
+        ...new Set(r.text.toLowerCase().match(/\$?[a-z0-9]{4,}/g) || []),
+      ].filter((w) => !STOP.has(w));
+      const hits = words.filter((w) =>
+        new RegExp(`(^|[^a-z0-9])${w.replace("$", "\\$")}`).test(text),
+      ).length;
+      return hits >= Math.max(3, Math.ceil(words.length * 0.5));
+    }),
+  );
+  return touched
+    .map((r) => {
+      const goals = catalog.filter(
+        (g) => g.tests.kind === "rule" && g.tests.ref === r.id,
+      );
+      const scenarios = [...new Set(goals.flatMap((g) => g.usedBy))];
+      return { rule: r, subGoals: goals, scenarios };
+    })
+    .filter((x) => x.subGoals.length);
 };
 
 /** A stable id for a use case — grouping survives the contract being re-written.
     Hashes the whole text: use cases sharing their first words ("Refuse the
     request that would break: …") each get their own id. */
-export const useCaseId = (text) => `UC-${short(String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""))}`;
+export const useCaseId = (text) =>
+  `UC-${short(
+    String(text || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, ""),
+  )}`;
 /** The id older stored corrections used (first 40 characters only). */
 export const legacyUseCaseId = (text) => `UC-${short(slug(text))}`;
 
@@ -381,7 +667,12 @@ const catalogIdOf = (text) => {
 };
 
 /* Critical by default: anything that acts (a tool call), verifies, or holds a rule. */
-const defaultMark = (text) => (/^Call |verify|confirm|holds the line|refuse|recognise that the request is asking to break/i.test(text) ? "critical" : "supporting");
+const defaultMark = (text) =>
+  /^Call |verify|confirm|holds the line|refuse|recognise that the request is asking to break/i.test(
+    text,
+  )
+    ? "critical"
+    : "supporting";
 
 export const subGoalsOfScenario = (row, env, envState) => {
   if (!row) return [];
@@ -391,18 +682,39 @@ export const subGoalsOfScenario = (row, env, envState) => {
   /* PRD v7: a sub-goal someone adds is critical unless they mark it
      supporting, so "every critical sub-goal holds" is the normal pass. The
      ones derived for a scenario keep the mark they always had. */
-  const derived = stored ? new Set(subTasksFor(row, env).map((g) => (typeof g === "string" ? g : g?.text || g?.label || ""))) : null;
+  const derived = stored
+    ? new Set(
+        subTasksFor(row, env).map((g) =>
+          typeof g === "string" ? g : g?.text || g?.label || "",
+        ),
+      )
+    : null;
   const items = goals.map((g, i) => {
     const text = typeof g === "string" ? g : g?.text || g?.label || "";
     const id = catalogIdOf(text);
-    return { key: `${row.id}:${i}`, index: i, id, text, mark: row.subGoalMarks?.[id] || (derived && !derived.has(text) ? "critical" : defaultMark(text)) };
+    return {
+      key: `${row.id}:${i}`,
+      index: i,
+      id,
+      text,
+      mark:
+        row.subGoalMarks?.[id] ||
+        (derived && !derived.has(text) ? "critical" : defaultMark(text)),
+    };
   });
   const rule = ruleOfScenario(row, rules);
   if (rule && !items.some((x) => x.id === `SG-rule-${rule.id}`)) {
-    items.push({ key: `${row.id}:rule`, index: items.length, id: `SG-rule-${rule.id}`, text: `Holds the line: ${rule.text.replace(/\.$/, "")}`, mark: row.subGoalMarks?.[`SG-rule-${rule.id}`] || "critical" });
+    items.push({
+      key: `${row.id}:rule`,
+      index: items.length,
+      id: `SG-rule-${rule.id}`,
+      text: `Holds the line: ${rule.text.replace(/\.$/, "")}`,
+      mark: row.subGoalMarks?.[`SG-rule-${rule.id}`] || "critical",
+    });
   }
   /* At least one critical — a scenario with none can't fail. */
-  if (items.length && !items.some((x) => x.mark === "critical")) items[0] = { ...items[0], mark: "critical" };
+  if (items.length && !items.some((x) => x.mark === "critical"))
+    items[0] = { ...items[0], mark: "critical" };
   return items;
 };
 
@@ -417,9 +729,19 @@ export const rollupOf = (items = []) => {
   const criticalFailed = crit.filter((x) => x.status === "failed").length;
   const criticalUnsure = crit.filter((x) => x.status === "inconclusive").length;
   const supportingFailed = sup.filter((x) => x.status === "failed").length;
-  const verdict = criticalFailed ? "failed" : criticalUnsure ? "inconclusive" : "passed";
+  const verdict = criticalFailed
+    ? "failed"
+    : criticalUnsure
+      ? "inconclusive"
+      : "passed";
   const met = items.filter((x) => x.status === "met").length;
-  return { verdict, criticalFailed, criticalUnsure, supportingFailed, score: items.length ? Math.round((met / items.length) * 100) : 0 };
+  return {
+    verdict,
+    criticalFailed,
+    criticalUnsure,
+    supportingFailed,
+    score: items.length ? Math.round((met / items.length) * 100) : 0,
+  };
 };
 
 /* ── environment version: plain vN (PRD v7) ──────────────────────────────── */
@@ -433,4 +755,5 @@ export const envVersionDisplay = (versions = []) => {
 };
 
 /** One stored label as it reads now; unknown labels pass through. */
-export const displayEnvLabel = (label, versions) => (label ? envVersionDisplay(versions).get(label) || label : label);
+export const displayEnvLabel = (label, versions) =>
+  label ? envVersionDisplay(versions).get(label) || label : label;

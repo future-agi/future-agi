@@ -52,8 +52,8 @@ export default function NodeCard({
       <Stack direction="row" spacing={1.5} alignItems="flex-start">
         <Box
           sx={{
-            width: 36,
-            height: 36,
+            width: 28,
+            height: 28,
             borderRadius: "4px",
             border: "1px solid",
             borderColor: "border.default",
@@ -66,8 +66,8 @@ export default function NodeCard({
           <SvgColor
             src={node?.iconSrc}
             sx={{
-              width: 20,
-              height: 20,
+              width: 16,
+              height: 16,
               bgcolor: node?.color,
             }}
           />

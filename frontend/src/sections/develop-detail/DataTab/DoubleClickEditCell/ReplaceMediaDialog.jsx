@@ -174,7 +174,7 @@ export default function ReplaceMediaDialog({
             onChange={(e, value) => {
               setCurrentTab(value);
             }}
-            sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+            sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
           >
             {tabItems.map((tab) => (
               <Tab
@@ -310,7 +310,7 @@ export default function ReplaceMediaDialog({
         <LoadingButton
           color="primary"
           variant="contained"
-          startIcon={<SvgColor src="/icons/datasets/upload_file.svg" />}
+          startIcon={<SvgColor width={24} src="/icons/datasets/upload_file.svg" />}
           onClick={handleSubmit(onSubmit)}
           sx={{
             minWidth: "200px",

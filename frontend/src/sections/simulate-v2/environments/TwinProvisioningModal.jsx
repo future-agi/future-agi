@@ -1,8 +1,9 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { Dialog, Box, Stack, Typography, LinearProgress } from "@mui/material";
+import { Box, Stack, Typography, LinearProgress } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { twinById } from "../_mock/twins";
+import ClosableDialog from "../components/ClosableDialog";
 
 const TWIN_TINT = "status.discovery.fg";
 const SUCCESS = "status.success.fg";
@@ -100,7 +101,7 @@ export default function TwinProvisioningModal({ open, services, onDone }) {
   }, [open, phaseIdx, services, onDone]);
 
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       /* No onClose — closing mid-flight leaves the sandbox half-set. */
       disableEscapeKeyDown
@@ -175,7 +176,7 @@ export default function TwinProvisioningModal({ open, services, onDone }) {
           }}
         />
       </Box>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 TwinProvisioningModal.propTypes = {

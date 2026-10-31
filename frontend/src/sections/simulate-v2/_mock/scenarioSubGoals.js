@@ -10,7 +10,12 @@
  * critical unless they mark it supporting. Each points at a shared
  * definition in the catalogue (`subGoalsOfScenario` in envModel.js).
  */
-import { subGoalsOfScenario, rollupOf, subGoalCatalogOf, isConnectOnly } from "./envModel";
+import {
+  subGoalsOfScenario,
+  rollupOf,
+  subGoalCatalogOf,
+  isConnectOnly,
+} from "./envModel";
 import { hashSeed } from "./runStream";
 
 export const SUBGOAL_MIN = 2;
@@ -18,8 +23,10 @@ export const SUBGOAL_MAX = 7;
 
 /** The quiet warning outside 2–7, or null inside it. */
 export const subGoalCountNote = (n) => {
-  if (n < SUBGOAL_MIN) return `Add ${SUBGOAL_MIN - n} more — a scenario needs at least ${SUBGOAL_MIN} sub-goals to be graded.`;
-  if (n > SUBGOAL_MAX) return `${n - SUBGOAL_MAX} over — keep it to ${SUBGOAL_MAX}; split the rest into another scenario.`;
+  if (n < SUBGOAL_MIN)
+    return `Add ${SUBGOAL_MIN - n} more — a scenario needs at least ${SUBGOAL_MIN} sub-goals to be graded.`;
+  if (n > SUBGOAL_MAX)
+    return `${n - SUBGOAL_MAX} over — keep it to ${SUBGOAL_MAX}; split the rest into another scenario.`;
   return null;
 };
 
@@ -33,7 +40,9 @@ export const withSubGoalMark = (row, id, mark) => ({
 /** How many scenarios use each catalogue entry, and how many mark it critical. */
 export const subGoalUsageOf = (env, envState) => {
   const out = new Map();
-  subGoalCatalogOf(env, envState).forEach((g) => out.set(g.id, { usedBy: g.usedBy.length, critical: 0, supporting: 0 }));
+  subGoalCatalogOf(env, envState).forEach((g) =>
+    out.set(g.id, { usedBy: g.usedBy.length, critical: 0, supporting: 0 }),
+  );
   (envState?.scenarios || []).forEach((row) => {
     if (row.retired || row.archived) return;
     subGoalsOfScenario(row, env, envState).forEach((x) => {
@@ -55,17 +64,32 @@ export const generatedSubGoals = (seed, env, focus) => {
   const tools = (env?.tools || []).map((t) => t.name).filter(Boolean);
   const middle = [
     "Verify who is asking, before touching any account state",
-    ...tools.slice(0, 3).map((_, i) => `Call ${tools[(h + i) % tools.length]} with the arguments the task actually needs`),
-    focus ? `Handle the ${focus.trim().toLowerCase()} part explicitly, not by falling through` : "Check the request against the policy before acting",
+    ...tools
+      .slice(0, 3)
+      .map(
+        (_, i) =>
+          `Call ${tools[(h + i) % tools.length]} with the arguments the task actually needs`,
+      ),
+    focus
+      ? `Handle the ${focus.trim().toLowerCase()} part explicitly, not by falling through`
+      : "Check the request against the policy before acting",
     "Take the requested action",
     "Offer a specific next step, not a vague promise",
   ];
   const picked = [];
-  for (let i = 0; picked.length < Math.max(0, n - 2) && i < middle.length * 2; i += 1) {
+  for (
+    let i = 0;
+    picked.length < Math.max(0, n - 2) && i < middle.length * 2;
+    i += 1
+  ) {
     const g = middle[(h + i) % middle.length];
     if (!picked.includes(g)) picked.push(g);
   }
-  return ["Understand what the caller is asking for", ...picked, "Confirm the outcome with the caller"].slice(0, n);
+  return [
+    "Understand what the caller is asking for",
+    ...picked,
+    "Confirm the outcome with the caller",
+  ].slice(0, n);
 };
 
 /* ── run results ─────────────────────────────────────────────────────────── */
@@ -82,8 +106,11 @@ const cruxOf = (task, crit, h) => {
   if (!crit.length) return null;
   const rule = crit.find((g) => g.id.startsWith("SG-rule-"));
   if (rule) return rule;
-  const missed = JSON.stringify(task.steps || []).match(/never called ([a-z0-9_]+)/i)?.[1]
-    || String(task.reason || task.summary || task.failure || "").match(/never called ([a-z0-9_]+)/i)?.[1];
+  const missed =
+    JSON.stringify(task.steps || []).match(/never called ([a-z0-9_]+)/i)?.[1] ||
+    String(task.reason || task.summary || task.failure || "").match(
+      /never called ([a-z0-9_]+)/i,
+    )?.[1];
   const tool = missed && crit.find((g) => g.id === `SG-tool-${missed}`);
   if (tool) return tool;
   return crit[h % crit.length];
@@ -104,22 +131,53 @@ export const subGoalResultsOf = (task, env, envState) => {
   const h = hashSeed(String(task.id || ""));
   /* A required evaluation can fail a conversation whose critical sub-goals
      all held (sub-goal rule) — then no sub-goal is marked missed. */
-  const crux = task.status === "passed" || task.failedBy === "required-evaluation" ? null : cruxOf(task, crit, h);
+  const crux =
+    task.status === "passed" ||
+    task.failedBy === "required-evaluation" ||
+    task.duplicateWrite
+      ? null
+      : cruxOf(task, crit, h);
   const missedSupport = sup.length && h % 4 === 0 ? sup[h % sup.length] : null;
   const items = goals.map((g) => ({
     ...g,
-    status: crux && g.key === crux.key
-      ? (task.status === "flaky" ? "inconclusive" : "failed")
-      : missedSupport && g.key === missedSupport.key ? "failed" : "met",
+    status:
+      crux && g.key === crux.key
+        ? task.status === "flaky"
+          ? "inconclusive"
+          : "failed"
+        : missedSupport && g.key === missedSupport.key
+          ? "failed"
+          : "met",
   }));
   const rollup = rollupOf(items);
   /* What failed it when the sub-goals didn't (sub-goal rule): a required
      evaluation, or the turn limit. The line says so instead of reading as a pass. */
   if (task.failedBy === "required-evaluation" && task.status !== "passed") {
-    return { items, rollup: { ...rollup, verdict: "failed", requiredFail: task.requiredFail?.name || "a required evaluation" } };
+    return {
+      items,
+      rollup: {
+        ...rollup,
+        verdict: "failed",
+        requiredFail: task.requiredFail?.name || "a required evaluation",
+      },
+    };
+  }
+  /* world.md WO-1: a money write committed twice fails a trial whose sub-goals held. */
+  if (task.duplicateWrite && task.status !== "passed") {
+    return {
+      items,
+      rollup: {
+        ...rollup,
+        verdict: "failed",
+        duplicateWrite: task.duplicateWrite,
+      },
+    };
   }
   if (task.turnLimit && task.status !== "passed") {
-    return { items, rollup: { ...rollup, verdict: "failed", turnLimit: task.turnLimit.limit } };
+    return {
+      items,
+      rollup: { ...rollup, verdict: "failed", turnLimit: task.turnLimit.limit },
+    };
   }
   return { items, rollup };
 };
@@ -129,10 +187,16 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 /** "Failed — 1 critical sub-goal failed" and the like. */
 export const rollupLine = (r) => {
   if (!r) return "";
-  if (r.requiredFail) return `Failed — required evaluation ${r.requiredFail} failed; every critical sub-goal held`;
-  if (r.turnLimit) return `Failed — hit the turn limit (${r.turnLimit})${r.criticalFailed ? ` · ${plural(r.criticalFailed, "critical sub-goal")} not reached` : ""}`;
-  if (r.verdict === "failed") return `Failed — ${plural(r.criticalFailed, "critical sub-goal")} failed`;
-  if (r.verdict === "inconclusive") return `Inconclusive — ${plural(r.criticalUnsure, "critical sub-goal")} unsure`;
+  if (r.requiredFail)
+    return `Failed — required evaluation ${r.requiredFail} failed; every critical sub-goal held`;
+  if (r.duplicateWrite)
+    return `Failed — money written twice: ${r.duplicateWrite.summary} went through ${r.duplicateWrite.times} times; every critical sub-goal held`;
+  if (r.turnLimit)
+    return `Failed — hit the turn limit (${r.turnLimit})${r.criticalFailed ? ` · ${plural(r.criticalFailed, "critical sub-goal")} not reached` : ""}`;
+  if (r.verdict === "failed")
+    return `Failed — ${plural(r.criticalFailed, "critical sub-goal")} failed`;
+  if (r.verdict === "inconclusive")
+    return `Inconclusive — ${plural(r.criticalUnsure, "critical sub-goal")} unsure`;
   return r.supportingFailed
     ? `Passed — ${plural(r.supportingFailed, "supporting sub-goal")} missed (reported, doesn't fail) · score ${r.score}`
     : "Passed — every critical sub-goal held";
@@ -156,9 +220,18 @@ const CHECKABLE = /^Call [a-z0-9_]+|^Holds the line|verify|confirm|check/i;
 
 export const subGoalBasisOf = (goal, basis, env) => {
   if (!basis) return null;
-  const text = typeof goal === "string" ? goal : goal?.text || goal?.label || "";
+  const text =
+    typeof goal === "string" ? goal : goal?.text || goal?.label || "";
   const judged = basis.judged || isConnectOnly(env) || !CHECKABLE.test(text);
   return judged
-    ? { judged: true, icon: "solar:chat-round-line-linear", label: "Judged from the conversation" }
-    : { judged: false, icon: "solar:database-linear", label: "Checked against end state and tool calls" };
+    ? {
+        judged: true,
+        icon: "solar:chat-round-line-linear",
+        label: "Judged from the conversation",
+      }
+    : {
+        judged: false,
+        icon: "solar:database-linear",
+        label: "Checked against end state and tool calls",
+      };
 };

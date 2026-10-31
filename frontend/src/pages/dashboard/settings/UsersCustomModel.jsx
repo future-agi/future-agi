@@ -206,7 +206,7 @@ const UsersCustomModel = () => {
         variant="subtitle1"
         sx={{
           fontWeight: "600",
-          fontSize: "13px",
+          fontSize: "12px",
           textAlign: "left",
           marginBottom: "15px",
           color: "text.primary",

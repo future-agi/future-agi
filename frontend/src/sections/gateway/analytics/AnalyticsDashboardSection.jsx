@@ -104,7 +104,7 @@ const AnalyticsDashboardSection = ({ gatewayId: gatewayIdProp } = {}) => {
         value={activeTab}
         onChange={handleTabChange}
         variant="standard"
-        sx={{ mb: 1.5, borderBottom: 1, borderColor: "divider" }}
+        sx={{ boxShadow: "none", mb: 1.5, borderBottom: 1, borderColor: "divider" }}
       >
         {TAB_LABELS.map((label, index) => (
           <Tab key={label} label={label} value={index} />

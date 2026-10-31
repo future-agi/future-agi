@@ -23,7 +23,7 @@ export const BUILDER_MODES = [
   {
     id: "auto",
     label: "Auto",
-    hint: "Build without asking — I'll fill in reasonable defaults",
+    hint: "Carry out approved steps without asking. Never approves a design for you.",
     icon: "solar:magic-stick-3-linear",
   },
   {
@@ -40,8 +40,14 @@ export function getBuilderMode() {
 
 export function subscribeBuilderMode(fn) {
   listeners.add(fn);
-  try { fn(current); } catch { /* no-op */ }
-  return () => { listeners.delete(fn); };
+  try {
+    fn(current);
+  } catch {
+    /* no-op */
+  }
+  return () => {
+    listeners.delete(fn);
+  };
 }
 
 export function setBuilderMode(next) {
@@ -49,6 +55,10 @@ export function setBuilderMode(next) {
   if (next === current) return;
   current = next;
   listeners.forEach((fn) => {
-    try { fn(current); } catch { /* no-op */ }
+    try {
+      fn(current);
+    } catch {
+      /* no-op */
+    }
   });
 }

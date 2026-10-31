@@ -5,7 +5,6 @@ import {
   Box,
   Button,
   Chip,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
@@ -52,6 +51,7 @@ import BrandMark from "./BrandMark";
 import GithubInstallDialog from "./GithubInstallDialog";
 import { PrVerifyStatus } from "./PrVerifyCheck";
 import { clickable, focusRing } from "../components/clickable";
+import ClosableDialog from "../components/ClosableDialog";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -465,7 +465,7 @@ export default function GithubIntegrationPage() {
                 Uninstall
               </MenuItem>
             </Menu>
-            <Dialog
+            <ClosableDialog
               open={!!uninstalling}
               onClose={() => setUninstalling(null)}
               maxWidth={false}
@@ -498,7 +498,7 @@ export default function GithubIntegrationPage() {
                   Uninstall
                 </Button>
               </DialogActions>
-            </Dialog>
+            </ClosableDialog>
           </Section>
 
           <Section variant="panel">

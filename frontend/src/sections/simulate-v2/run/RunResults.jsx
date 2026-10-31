@@ -75,7 +75,6 @@ import RunGroupBar from "./RunGroupBar";
 import InsightsTab from "./InsightsTab";
 import CostTab from "./CostTab";
 import NextStepBanner from "../workspace/NextStepBanner";
-import { isReferenceRun, sampleCompareOf } from "../_mock/referenceRuns";
 import ImprovementSourcesList from "../improvements/ImprovementSourcesList";
 import CostStrip from "./CostStrip";
 import { TraceSheet } from "./TraceWaterfall";
@@ -103,7 +102,12 @@ import CopyIdButton from "../components/CopyIdButton";
 import CopyCommandButton from "../components/CopyCommandButton";
 import HandoffTimeline from "./HandoffTimeline";
 import { trialArtifactsOf } from "../_mock/trialEvidence";
-import { CheckSource, DisputeNotes, TrialArtifacts } from "./TrialEvidence";
+import {
+  CheckSource,
+  DisputeNotes,
+  DuplicateWriteNote,
+  TrialArtifacts,
+} from "./TrialEvidence";
 import ProviderEvents from "./ProviderEvents";
 import { isTextRehearsal } from "../_mock/compatibility";
 import ApprovalTimeline from "./ApprovalTimeline";
@@ -113,6 +117,8 @@ import ImprovementRunStrip from "./ImprovementRunStrip";
 import { SHOW_INSIGHTS } from "../_mock/featureFlags";
 import { nextSnapshotLabel } from "../_mock/envSnapshot";
 import logger from "src/utils/logger";
+import { ConfirmDialog } from "src/components/custom-dialog";
+import { proofKindOf } from "../_mock/rsiModel";
 
 /**
  * Run results.
@@ -258,7 +264,10 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
      navigate away to — the diagnosis is about the run still on screen. */
   /* `?improve=OPT-…` lands with the drawer open on that improvement run —
      how the Improvements page links into one. */
-  const [fixOpen, setFixOpen] = useState(() => !!params.get("improve"));
+  /* `?improveNew=1` (Improve agent on a confirmed regression) opens a new one. */
+  const [fixOpen, setFixOpen] = useState(
+    () => !!params.get("improve") || !!params.get("improveNew"),
+  );
   const [fixOptId, setFixOptId] = useState(() => params.get("improve"));
   /* "From Improvement run N" on this run's header links here with
      `?improve=` — the page is already mounted, so open it on the change too. */
@@ -601,6 +610,8 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           );
         });
   const [runRerunAnchor, setRunRerunAnchor] = useState(null);
+  /* Retry interrupted: confirmed first — it lists what restarts. */
+  const [retryConfirm, setRetryConfirm] = useState(false);
   /* The scenarios that didn't pass — what "Re-run N failing" replays. */
   /* A fix's first run debugs only what isn't the issue's — the fix already
      has the issue. */
@@ -1209,7 +1220,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 {/* An improvement's run says whose it is — the environment has
                     its own Run 1 too. */}
                 {trialMeta
-                  ? `${trialMeta.opt?.name || "Improvement"} · Trial ${trialMeta.trial.n}`
+                  ? `${trialMeta.opt?.name || "Improvement"} · Candidate ${trialMeta.trial.n}`
                   : identity
                     ? `Run ${identity.ordinal}`
                     : "Run complete"}
@@ -1398,7 +1409,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               (() => {
                 const ci = ciOf(sourceRun);
                 /* Re-run the same way: the same pinned configuration. */
-                const cmd = `agent-learn rerun ${sourceRun.id}`;
+                const cmd = `fi sim run --from-run ${sourceRun.id}`;
                 return (
                   <>
                     {" · "}
@@ -1475,20 +1486,26 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   arrow
                   describeChild
                   placement="bottom-start"
-                  title="Opens the run plan for just these scenarios, with a new limit. The ones that finished aren't run or charged again."
+                  title={
+                    sourceRun?.status === "interrupted"
+                      ? `Interrupted: ${sourceRun.interruption?.reason || "an infrastructure failure, not the agent."} Retry restarts only these; the ones that finished aren't run or charged again.`
+                      : "Opens the run plan for just these scenarios, with a new limit. The ones that finished aren't run or charged again."
+                  }
                 >
                   <Box
                     component="span"
                     {...clickable(
                       () =>
-                        navigate(
-                          runPlanHref(envId, {
-                            only: identity.budget.notStarted,
-                            trials: identity.repeats || 3,
-                            agent: identity.agentVersion,
-                            continues: identity.id,
-                          }),
-                        ),
+                        sourceRun?.status === "interrupted"
+                          ? setRetryConfirm(true)
+                          : navigate(
+                              runPlanHref(envId, {
+                                only: identity.budget.notStarted,
+                                trials: identity.repeats || 3,
+                                agent: identity.agentVersion,
+                                continues: identity.id,
+                              }),
+                            ),
                       { role: "link" },
                     )}
                     sx={{
@@ -1500,7 +1517,9 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                       },
                     }}
                   >
-                    {`${identity.budget.notStarted.length} didn't start · Run them`}
+                    {sourceRun?.status === "interrupted"
+                      ? `Interrupted · ${identity.budget.notStarted.length} didn't start · Retry`
+                      : `${identity.budget.notStarted.length} didn't start · Run them`}
                   </Box>
                 </Tooltip>
               </>
@@ -1589,7 +1608,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
         {/* Started from code (CLI, Python, CI, MCP): run it again the same way. */}
         {!trialMeta && sourceRun && runViaOf(sourceRun).label !== "Console" && (
           <CopyCommandButton
-            command={`agent-learn rerun ${sourceRun.id}`}
+            command={`fi sim run --from-run ${sourceRun.id}`}
             label="Copy command"
           />
         )}
@@ -1597,7 +1616,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           <CopyIdButton
             id={runId}
             what="run ID"
-            usedBy="agent-learn results / rerun / compare take it"
+            usedBy="fi sim runs results / rerun / compare take it"
           />
         )}
         {/* Share replaces the old Export: a read-only link, or the report as PDF. */}
@@ -1785,73 +1804,6 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           </Tooltip>
         )}
       </Stack>
-
-      {/* ── a ready world's sample agent: its runs are Reference; yours
-          compare with them only on the cases both ran ── */}
-      {(() => {
-        const raw = (envState?.runs || []).find((r) => r.id === runId);
-        if (!raw || !raw.finishedAt) return null;
-        if (isReferenceRun(raw, envState)) {
-          const stillSample = !!envState?.agent?.sample;
-          const firstFail =
-            tasks.find((t) => !t.pulled && statusBucket(t) === "failing") ||
-            null;
-          return (
-            <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
-              <NextStepBanner
-                tone="info"
-                title="Reference run — the sample agent."
-                line={
-                  stillSample
-                    ? "Graded the same as any agent; its failures stay visible. Connect your agent to run these cases with yours."
-                    : "Run by the sample agent before your agent took its place. Your runs compare with it on the cases both ran."
-                }
-                {...(stillSample && {
-                  actionLabel: "Connect my agent",
-                  onAction: () =>
-                    navigate(
-                      `${paths.dashboard.simulate.environmentDetail(env.id)}?connect=agent`,
-                    ),
-                })}
-                {...(firstFail && {
-                  secondaryLabel: "Open a failed conversation",
-                  onSecondary: () => {
-                    setTab("tasks");
-                    openTrace(firstFail);
-                  },
-                })}
-              />
-            </Box>
-          );
-        }
-        const cmp = sampleCompareOf(envState, runId);
-        if (!cmp || !cmp.shared.length) return null;
-        const left = cmp.onlyMine.length + cmp.onlyRef.length;
-        return (
-          <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
-            <NextStepBanner
-              tone="info"
-              title={`Compare with the sample on ${cmp.shared.length} shared case${cmp.shared.length === 1 ? "" : "s"}.`}
-              line={[
-                left
-                  ? `${left} case${left === 1 ? "" : "s"} only one of the two ran ${left === 1 ? "is" : "are"} left out.`
-                  : null,
-                cmp.changed
-                  ? `The world changed since the sample ran (${cmp.changed.from} → ${cmp.changed.to}), so its result isn't the same test.`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              actionLabel="Compare"
-              onAction={() =>
-                navigate(
-                  `${paths.dashboard.simulate.simulationCompare(env.id)}?runs=${cmp.ref.id},${runId}`,
-                )
-              }
-            />
-          </Box>
-        );
-      })()}
 
       {/* ── came to improve: the environment was built from New improvement,
           and nothing has been improved in it yet ── */}
@@ -2044,7 +1996,12 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               next.set("tab", v);
               setParams(next, { replace: true, state: location.state });
             }}
-            sx={{ borderBottom: "1px solid", borderColor: "divider", mb: 2 }}
+            sx={{
+              boxShadow: "none",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              mb: 2,
+            }}
           >
             {SHOW_INSIGHTS && <Tab value="insights" label="Insights" />}
             <Tab value="tasks" label={`Scenarios (${stats.total})`} />
@@ -2823,14 +2780,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           action={repeat.resume}
           onClick={() => {
             setRunRerunAnchor(null);
-            navigate(
-              runPlanHref(envId, {
-                only: repeat.resume.ids,
-                trials: sourceRun?.repeats || 3,
-                agent: sourceRun?.agentVersion,
-                continues: sourceRun?.id,
-              }),
-            );
+            setRetryConfirm(true);
           }}
         />
         <RepeatRow icon="solar:history-linear" action={repeat.checkpoint} />
@@ -2863,17 +2813,92 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             </Typography>
             {failingScenarioIds.length > 0 && (
               <CopyCommandButton
-                command={`agent-learn rerun ${runId} --failed-only`}
+                command={`fi sim run --from-run ${runId} --failed-only`}
                 label="Copy failing only"
               />
             )}
             <CopyCommandButton
-              command={`agent-learn rerun ${runId}`}
+              command={`fi sim run --from-run ${runId}`}
               label="Copy whole run"
             />
           </Stack>
         )}
       </Popover>
+
+      {/* ── retry interrupted: what restarts, and what could act twice ── */}
+      {retryConfirm &&
+        repeat.resume?.ids?.length > 0 &&
+        (() => {
+          const ids = repeat.resume.ids;
+          const titleOf = (id) =>
+            (envState?.scenarios || []).find((x) => x.id === id)?.title || id;
+          const real = proofKindOf(envState?.agent).kind === "live";
+          return (
+            <ConfirmDialog
+              open
+              onClose={() => setRetryConfirm(false)}
+              PaperProps={{ sx: { maxWidth: 520 } }}
+              title={`Retry ${ids.length} interrupted?`}
+              content={
+                <Stack spacing={1.25}>
+                  <Typography
+                    sx={{ typography: "s2", color: "text.secondary" }}
+                  >
+                    {`These restart from their seed under this run's saved setup. The ${(sourceRun?.scenarioIds || []).filter((id) => !ids.includes(id)).length} that finished aren't repeated or charged again.`}
+                  </Typography>
+                  <Box
+                    component="ul"
+                    sx={{
+                      m: 0,
+                      pl: 2.5,
+                      typography: "s2",
+                      color: "text.primary",
+                    }}
+                  >
+                    {ids.slice(0, 8).map((id) => (
+                      <li key={id}>{titleOf(id)}</li>
+                    ))}
+                    {ids.length > 8 && (
+                      <Box component="li" sx={{ color: "text.secondary" }}>
+                        {`and ${ids.length - 8} more`}
+                      </Box>
+                    )}
+                  </Box>
+                  {real && (
+                    <Typography
+                      sx={{ typography: "s2", color: "status.warning.fg" }}
+                    >
+                      This agent&apos;s tools reach your real systems. A trial
+                      that was partway may have already done something — an
+                      email sent, a record changed — and retrying can do it
+                      again.
+                    </Typography>
+                  )}
+                </Stack>
+              }
+              action={
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  onClick={() => {
+                    setRetryConfirm(false);
+                    navigate(
+                      runPlanHref(envId, {
+                        only: ids,
+                        trials: sourceRun?.repeats || 3,
+                        agent: sourceRun?.agentVersion,
+                        continues: sourceRun?.id,
+                      }),
+                    );
+                  }}
+                >
+                  {`Retry ${ids.length}`}
+                </Button>
+              }
+            />
+          );
+        })()}
 
       {/* ── trace drawer ── */}
       {/*
@@ -3038,6 +3063,10 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                         ) : null,
                         simEvidence: (
                           <Stack spacing={1.5} sx={{ pb: 2 }}>
+                            <DuplicateWriteNote
+                              task={openTask}
+                              sx={{ mx: 2, mt: 1.5 }}
+                            />
                             <TrialArtifacts
                               items={trialArtifactsOf({
                                 task: openTask,

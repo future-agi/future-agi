@@ -144,7 +144,7 @@ const KnowledgeBaseData = React.forwardRef(
           meta: { flex: 1 },
           enableSorting: false,
           cell: ({ getValue }) => (
-            <Typography variant="body2" sx={{ fontSize: 13 }}>
+            <Typography variant="body2" sx={{ fontSize: 12 }}>
               {formatNumberWithCommas(getValue())}
             </Typography>
           ),
@@ -170,7 +170,7 @@ const KnowledgeBaseData = React.forwardRef(
             if (!val) return null;
             try {
               return (
-                <Typography variant="body2" sx={{ fontSize: 13 }}>
+                <Typography variant="body2" sx={{ fontSize: 12 }}>
                   {format(new Date(val), "dd/MM/yyyy, h:mm aaa")}
                 </Typography>
               );
@@ -186,7 +186,7 @@ const KnowledgeBaseData = React.forwardRef(
           meta: { flex: 1 },
           enableSorting: false,
           cell: ({ getValue }) => (
-            <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+            <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
               {getValue() || "-"}
             </Typography>
           ),

@@ -165,7 +165,7 @@ const LLMSpan = ({
               aria-label="llm tabs"
               textColor="primary"
               indicatorColor="primary"
-              sx={{
+              sx={{ boxShadow: "none",
                 borderBottom: (theme) => theme.spacing(1),
                 borderColor: "divider",
                 "& .MuiTab-root:not(:last-of-type)": {

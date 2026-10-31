@@ -25,6 +25,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 import SimulationScenarioEmptyScreen from "./SimulationScenarioEmptyScreen";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 // ── Cell renderers ──
 
@@ -69,14 +70,14 @@ function CreatedAtCell({ value }) {
 
   if (!value) {
     return (
-      <Typography variant="body2" sx={{ fontSize: 13, color: "text.disabled" }}>
+      <Typography variant="body2" sx={{ fontSize: 12, color: "text.disabled" }}>
         -
       </Typography>
     );
   }
   try {
     return (
-      <Typography variant="body2" sx={{ fontSize: 13 }}>
+      <Typography variant="body2" sx={{ fontSize: 12 }}>
         {formatDistanceToNow(new Date(value), { addSuffix: true })}
       </Typography>
     );
@@ -196,7 +197,7 @@ function Scenarios() {
         size: 140,
         enableSorting: false,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" sx={{ fontSize: 12 }}>
             {getValue() ?? "-"}
           </Typography>
         ),
@@ -276,7 +277,7 @@ function Scenarios() {
           <>
             <PageHeader
               title="Scenarios"
-              description="Define the test cases, customer profiles, and conversation flows that your AI agent will encounter during simulations"
+              description="Write or generate the conversations your agent is tested on: who calls, what they want and how it can go."
               sx={{ mb: 0 }}
               actions={
                 <>
@@ -339,7 +340,7 @@ function Scenarios() {
               rowCount={total}
               onRowClick={handleRowClick}
               getRowId={(row) => row.id}
-              rowHeight={44}
+              rowHeight={ROW_HEIGHT.default}
               emptyMessage="No scenarios found"
             />
 

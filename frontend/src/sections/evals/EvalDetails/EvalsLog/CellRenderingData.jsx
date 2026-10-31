@@ -557,7 +557,7 @@ export const CustomDevelopDetailColumn = (props) => {
       return (
         <SvgColor
           src="/assets/icons/navbar/ic_new_text.svg"
-          sx={{ width: "20px", height: "20px" }}
+          sx={{ width: "16px", height: "16px" }}
         />
       );
     } else if (col.data_type === "array") {
@@ -578,7 +578,7 @@ export const CustomDevelopDetailColumn = (props) => {
       return (
         <SvgColor
           src="/assets/icons/navbar/ic_new_text.svg"
-          sx={{ width: "20px", height: "20px" }}
+          sx={{ width: "16px", height: "16px" }}
         />
       );
     }
@@ -615,7 +615,7 @@ export const CustomDevelopDetailColumn = (props) => {
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
         {renderIcon()}
-        <Typography fontWeight={600} fontSize="13px" color={"text.secondary"}>
+        <Typography fontWeight={500} fontSize="11px" color={"text.secondary"}>
           {displayName}
         </Typography>
         <CustomHeaderAgGridSort

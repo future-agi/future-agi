@@ -63,6 +63,7 @@ import { ProofKindChip } from "./RunSummaryChip";
 import { SHADOW_SUMMARY } from "../_mock/sandbox";
 import { postSlack, getIntegrations } from "../_mock/integrations";
 import { useSimStore, useEnvState } from "../store";
+import { connectedAgentsFrom } from "../_mock/agentRegistry";
 import {
   StatusDot,
   StatusChip,
@@ -217,8 +218,19 @@ function LiveRun() {
     recorded?.agentVersion ||
     pendingMember?.agentVersion ||
     snapshotSrc?.agentVersion;
-  const runAgent =
-    agentParam && agentVersions(envState).some((v) => v.label === agentParam)
+  /* `?with=` — another compatible agent picked in run setup: the run
+     records that agent and its version, not the environment's own. */
+  const withKey = params.get("with") || recorded?.agentKey || null;
+  const withAgent = withKey
+    ? connectedAgentsFrom(state).find((a) => a.key === withKey) || null
+    : null;
+  const runAgent = withAgent
+    ? params.get("agent") ||
+      recorded?.agentVersion ||
+      withAgent.production ||
+      withAgent.latest ||
+      "v1"
+    : agentParam && agentVersions(envState).some((v) => v.label === agentParam)
       ? agentParam
       : currentAgentVersion(envState)?.label;
   /* `?candidate=sha:<sha>` or `?candidate=upload:<archive>` — the candidate
@@ -829,6 +841,7 @@ function LiveRun() {
       unmeasured: 0,
       agentVersion: runAgent,
       envVersion: runEnv,
+      ...(withAgent && { agentKey: withAgent.key, agentName: withAgent.name }),
       ...(candidate && {
         candidateSource: {
           kind: candidate.kind,
@@ -1426,7 +1439,7 @@ function LiveRun() {
       id: runId,
       agentVersion: runAgent,
       envVersion: runEnv,
-      agentName: stored?.agentName,
+      agentName: stored?.agentName || withAgent?.name,
     },
     envState,
     env,
@@ -1544,7 +1557,7 @@ function LiveRun() {
                 }}
               >
                 {watchTrial
-                  ? `${watchTrial.opt.name || "Improvement"} · Trial ${ordinal}`
+                  ? `${watchTrial.opt.name || "Improvement"} · Candidate ${ordinal}`
                   : `Run ${ordinal}`}
               </Typography>
               {/* Waiting on an answer is the run's state, not another
@@ -1743,7 +1756,7 @@ function LiveRun() {
           {/* A candidate being watched: what it is, and the way back. */}
           {watchTrial && (
             <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              {`Watching Trial ${watchTrial.trial.n} of ${watchTrial.opt.name || "this improvement"} — the change it tried, replayed on the scenarios it was tested on. Nothing here is saved. · `}
+              {`Watching Candidate ${watchTrial.trial.n} of ${watchTrial.opt.name || "this improvement"} — the change it tried, replayed on the scenarios it was tested on. Nothing here is saved. · `}
               <Link
                 component="button"
                 type="button"
@@ -1968,9 +1981,9 @@ function LiveRun() {
         const share = stats.total ? stats.done / stats.total : 0;
         const line =
           cancelState === "cancelling"
-            ? `Cancelling — waiting for ${P} to confirm the calls in progress ended. No new calls start.`
+            ? `Stopping… waiting for ${P} to confirm the calls in progress ended. No new calls start.`
             : cancelState === "confirmed"
-              ? `Cancelled — ${P} confirmed every call ended. Finished calls are kept.`
+              ? `Stopped — ${P} confirmed every call ended. Finished calls are kept.`
               : phase === "running" &&
                   stats.total >= 20 &&
                   share >= 0.4 &&

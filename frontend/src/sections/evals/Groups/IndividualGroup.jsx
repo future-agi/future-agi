@@ -33,6 +33,7 @@ import { useEvaluationContext } from "../../common/EvaluationDrawer/context/Eval
 import { ShowComponent } from "../../../components/show/ShowComponent";
 import logger from "../../../utils/logger";
 import CustomTooltip from "src/components/tooltip";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const IndividualGroup = ({ groupId, onReset }) => {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
@@ -91,7 +92,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
           justifyContent="center"
         >
           <Typography
-            sx={{ fontSize: "13px", fontWeight: 500, color: "text.primary" }}
+            sx={{ fontSize: "12px", fontWeight: 500, color: "text.primary" }}
           >
             {data?.name}
           </Typography>
@@ -368,7 +369,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
           ) : (
             <Typography
               sx={{
-                fontSize: "13px",
+                fontSize: "12px",
                 fontWeight: 500,
                 display: "flex",
                 alignItems: "center",
@@ -477,7 +478,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
                 startIcon={
                   <SvgColor
                     src="/assets/icons/ic_edit_pencil.svg"
-                    width={20}
+                    width={16}
                     sx={{ color: "primary.main" }}
                   />
                 }
@@ -502,7 +503,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
                 <SvgColor
                   src="/assets/icons/ic_create-and-run.svg"
                   color="primary.main"
-                  width="20px"
+                  width="16px"
                 />
               }
               onClick={handleeRunEvaluations}
@@ -541,13 +542,13 @@ const IndividualGroup = ({ groupId, onReset }) => {
           ref={apiref}
           theme={agTheme}
           getRowHeight={(params) =>
-            params.node.rowPinned === "bottom" ? 30 : 70
+            params.node.rowPinned === "bottom" ? ROW_HEIGHT.default : ROW_HEIGHT.twoLine
           }
           defaultColDef={defaultColDef}
           columnDefs={columnDefs}
           cacheBlockSize={10}
           serverSideInitialRowCount={10}
-          rowHeight={44}
+          rowHeight={ROW_HEIGHT.twoLine}
           rowModelType="serverSide"
           suppressContextMenu
           getRowId={(params) => {

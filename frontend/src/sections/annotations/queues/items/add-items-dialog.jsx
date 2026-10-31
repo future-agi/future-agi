@@ -118,6 +118,7 @@ import {
   ExactSelectorContinuationNotice,
   useExactSelectorDataSource,
 } from "./exact-selector-pagination";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import {
   parseSessionSelectorPage,
   parseSpanSelectorPage,
@@ -134,6 +135,7 @@ import {
 } from "./telemetry-selector-contract";
 import { spanSourceIdsFromPhysicalRowIds } from "src/sections/projects/LLMTracing/spanPhysicalIdentity";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const CHIP_ROLE = {
   success: "success",
@@ -1425,7 +1427,7 @@ function SelectorEmptyState({
       }}
     >
       {loading ? (
-        <CircularProgress size={28} sx={{ mb: 2 }} />
+        <ContentSkeleton variant="panel" />
       ) : (
         <Box
           sx={{
@@ -2637,7 +2639,7 @@ function TraceSelector({
               ref={gridRef}
               className="clean-data-table"
               theme={agTheme}
-              rowHeight={36}
+              rowHeight={ROW_HEIGHT.default}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               rowSelection={{ mode: "multiRow" }}
@@ -3258,7 +3260,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
               ref={gridRef}
               className="clean-data-table"
               theme={agTheme}
-              rowHeight={36}
+              rowHeight={ROW_HEIGHT.default}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               rowSelection={{ mode: "multiRow" }}
@@ -3886,7 +3888,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
               ref={gridRef}
               className="clean-data-table"
               theme={agTheme}
-              rowHeight={44}
+              rowHeight={ROW_HEIGHT.default}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               rowSelection={{ mode: "multiRow" }}
@@ -4981,7 +4983,7 @@ function SimulationSelector({ onSetSelection }) {
               ref={gridRef}
               className="clean-data-table"
               theme={agTheme}
-              rowHeight={44}
+              rowHeight={ROW_HEIGHT.twoLine}
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               rowSelection={{ mode: "multiRow" }}

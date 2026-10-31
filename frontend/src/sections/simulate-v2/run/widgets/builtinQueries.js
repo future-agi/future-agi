@@ -25,7 +25,7 @@ const MEASURED = [
     id: "status",
     name: "Outcome",
     operator: "is_not",
-    value: ["Not measured"],
+    value: ["Couldn't measure"],
   },
 ];
 
@@ -105,7 +105,7 @@ const DEFS = {
         // eslint-disable-next-line no-restricted-syntax -- ds: data colour
         Failed: "#F87171",
         // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-        "Not measured": "#94A3B8",
+        "Couldn't measure": "#94A3B8",
       },
     },
   }),

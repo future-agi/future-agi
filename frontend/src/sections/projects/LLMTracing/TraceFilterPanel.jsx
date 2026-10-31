@@ -5072,7 +5072,7 @@ const TraceFilterPanel = ({
           <Tabs
             value={activeTab}
             onChange={(_, v) => setActiveTab(v)}
-            sx={{
+            sx={{ boxShadow: "none",
               borderBottom: "1px solid",
               borderColor: "divider",
               "& .MuiTab-root": {

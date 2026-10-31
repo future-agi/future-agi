@@ -11,13 +11,13 @@ import {
   TableRow,
   Tooltip,
   Typography,
-  CircularProgress,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useQueueItemsForSource } from "src/api/annotation-queues/annotation-queues";
 import { useScoresForSource, useSpanNotes } from "src/api/scores/scores";
 import { paths } from "src/routes/paths";
 import { fDateTime } from "src/utils/format-time";
+import ContentSkeleton from "src/components/content-skeleton";
 
 function formatScoreValue(labelType, value) {
   if (value == null) return "—";
@@ -183,7 +183,7 @@ export default function ScoresListSection({
   if (isLoading || secondaryLoading) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
-        <CircularProgress size={20} />
+        <ContentSkeleton variant="rows" />
       </Box>
     );
   }

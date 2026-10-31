@@ -5,7 +5,7 @@ import PropTypes from "prop-types";
 const OptimizeTabPanel = ({ openTab, setOpenTab }) => {
   return (
     <Box sx={{ borderBottom: 1, borderColor: "divider", paddingLeft: 2.5 }}>
-      <Tabs
+      <Tabs sx={{ boxShadow: "none" }}
         value={openTab}
         onChange={(_, v) => setOpenTab(v)}
         textColor="primary"

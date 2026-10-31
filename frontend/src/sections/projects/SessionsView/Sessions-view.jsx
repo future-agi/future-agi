@@ -53,6 +53,13 @@ const SESSION_BULK_ACTIONS = [
     label: "Add to annotation queue",
     icon: "solar:clipboard-list-linear",
   },
+  /* Clarified plan: picked sessions become reviewed tests in the agent's
+     environment, through the same import review as everywhere else. */
+  {
+    id: "environment-test",
+    label: "Create environment test",
+    icon: "solar:test-tube-linear",
+  },
 ];
 
 // Session-specific
@@ -66,6 +73,7 @@ import {
 } from "./ReplaySessions/store";
 import { REPLAY_TYPES } from "./ReplaySessions/constants";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
+import { envsForObserveProject } from "src/sections/simulate-v2/_mock/runningNow";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import ColumnConfigureDropDown from "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown";
@@ -824,6 +832,19 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
             enqueueSnackbar("Failed to start replay", { variant: "error" });
           },
         });
+      } else if (action === "environment-test") {
+        const [target] = envsForObserveProject(observeId);
+        if (!target) {
+          enqueueSnackbar(
+            "This project isn't linked to an agent's environment yet. Link it from the agent, then try again.",
+            { variant: "info" },
+          );
+          navigate("/dashboard/simulate/environments");
+          return;
+        }
+        navigate(
+          `/dashboard/simulate/environments/${target.envId}/scenarios?add=replay&from=observe&n=${selectAll ? "all" : (toggledNodes || []).length}`,
+        );
       } else if (action === "annotation-queue") {
         // Choosing the queue action is an explicit request to operate on the
         // header's inverted select-all set. Switch to the server-side filter
@@ -835,6 +856,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       }
     },
     [
+      navigate,
       observeId,
       toggledNodes,
       selectAll,

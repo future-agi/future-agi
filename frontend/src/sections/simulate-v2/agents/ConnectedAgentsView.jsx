@@ -6,7 +6,6 @@ import {
   Box,
   Button,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
@@ -41,6 +40,8 @@ import { MONO, ago, buildPresetFor } from "./agentViewUtils";
 import { MOVED_FROM_SIMULATE, identityOf } from "./agentProfile";
 import { agentTypeLabelOf } from "./agentRecord";
 import useMoveLegacyDefinitions from "./useMoveLegacyDefinitions";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import ClosableDialog from "../components/ClosableDialog";
 
 /**
  * Every agent connected in the workspace — from the Agents page or while
@@ -267,15 +268,6 @@ export default function ConnectedAgentsView({ onConnect }) {
                 </Typography>
                 <AgentStateTags agent={a} />
               </Stack>
-              {a.identity.description && (
-                <Typography
-                  noWrap
-                  title={a.identity.description}
-                  sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }}
-                >
-                  {a.identity.description}
-                </Typography>
-              )}
             </Box>
           </Stack>
         );
@@ -688,7 +680,7 @@ export default function ConnectedAgentsView({ onConnect }) {
         data={pageRows}
         rowCount={rows.length}
         getRowId={(r) => r.id}
-        rowHeight={rows.some((r) => r.identity.description) ? 52 : 44}
+        rowHeight={ROW_HEIGHT.default}
         onRowClick={(r) =>
           navigate(`${paths.dashboard.agents}/connected/${r.id}`)
         }
@@ -706,7 +698,7 @@ export default function ConnectedAgentsView({ onConnect }) {
           }}
         />
       )}
-      <Dialog
+      <ClosableDialog
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
         maxWidth={false}
@@ -739,7 +731,7 @@ export default function ConnectedAgentsView({ onConnect }) {
             Delete
           </Button>
         </DialogActions>
-      </Dialog>
+      </ClosableDialog>
       {buildFor && (
         <BuildEnvironmentDialog
           open

@@ -239,6 +239,8 @@ const SpanGrid = React.forwardRef(
       canonicalColumnsRef,
       enabled = true,
       compareType,
+      // Only the visible grid of a primary/compare pair renders the drawer.
+      hideDetailDrawer = false,
     },
     gridRef,
   ) => {
@@ -1002,7 +1004,9 @@ const SpanGrid = React.forwardRef(
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
-        <LLMTracingSpanDetailDrawer refreshGrid={refreshGrid} />
+        {!hideDetailDrawer && (
+          <LLMTracingSpanDetailDrawer refreshGrid={refreshGrid} />
+        )}
         <NumberQuickFilterPopover
           open={Boolean(openQuickFilter)}
           filterData={openQuickFilter}
@@ -1026,6 +1030,7 @@ SpanGrid.propTypes = {
   setLoading: PropTypes.func,
   setPageMap: PropTypes.func,
   compareType: PropTypes.string,
+  hideDetailDrawer: PropTypes.bool,
   hasEvalFilter: PropTypes.bool,
   cellHeight: PropTypes.string,
   metricFilters: PropTypes.array,

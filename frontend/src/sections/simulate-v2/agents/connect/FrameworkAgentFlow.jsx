@@ -1,6 +1,12 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { Box, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  CircularProgress,
+  Stack,
+  Typography,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { FRAMEWORK_META } from "../../_mock/agentRegistry";
 import { installedRepos, useIntegrations } from "../../_mock/integrations";
@@ -19,38 +25,19 @@ import {
 } from "../../environments/connectOptions";
 import { ChipCard, Field, Label } from "../../environments/StartEnvironment";
 import ConnectSteps from "./ConnectSteps";
-import {
-  CodeSnippet,
-  FrameworkTuning,
-  TextLink,
-  WhereOption,
-} from "./connectBits";
+import { CodeSnippet, FrameworkTuning, TextLink } from "./connectBits";
 import { HintLine } from "./replicationBits";
-import { useConnectSubmitLabel } from "./connectSubmit";
-import { hashSeed } from "../../_mock/runStream";
+import { CONNECT_LABEL, useConnectSubmitLabel } from "./connectSubmit";
 
-/* One screen: install, wrap, say where it runs — Connect asks the adapter to
-   describe the agent and saves it with what it said. Review it, the Observe
-   project and constraints on the agent's page, in Finish setting up. */
+/* One screen: install, wrap, run. serve() calls in with the API key, the
+   adapter describes the agent, and the person confirms what it found before
+   it's saved. A deployed agent can be called at its URL instead. Review it,
+   the Observe project and constraints on the agent's page, in Finish
+   setting up. */
 const STEPS = ["Connect"];
+/* Prototype: how long until a running serve() calls in. */
+const CALL_IN_MS = 6000;
 const validUrl = (u) => /^(https?|wss?):\/\/\S+$/i.test(String(u || "").trim());
-/* How long the prototype's local agent takes to check in — a real one checks in when it starts. */
-const CHECK_IN_MS = 2500;
-const shortSha = (s) => hashSeed(s).toString(16).padStart(7, "0").slice(0, 7);
-
-/* The adapter's own wrap, with serve() swapped for init(): the agent runs on
-   this machine and checks in, instead of being served at a URL. */
-const localInitOf = (adapter) =>
-  adapter.code
-    .replace(
-      /^app = fagi\.serve\((.*)\)\s+#.*$/m,
-      "fagi.init($1)  # checks in from this machine with its commit",
-    )
-    .replace(/import \{ serve \}/, "import { init }")
-    .replace(
-      /^serve\((.*), \{ port: 8000 \}\);.*$/m,
-      "init($1); // checks in from this machine with its commit",
-    );
 
 /**
  * A framework agent through our SDK adapter — LangGraph, OpenAI Agents SDK,
@@ -58,8 +45,8 @@ const localInitOf = (adapter) =>
  * Strands, Pydantic AI, Agno, Haystack, LlamaIndex, smolagents, DSPy or
  * Microsoft Agent Framework: install it and wrap the graph, pipeline, entry
  * agent or crew in serve(); Connect has the adapter describe what it wraps
- * and saves that. Or run it on your own machine: init() instead of serve(),
- * and it checks in with its commit and uncommitted changes. The framework is picked on the directory and can be
+ * and saves that. Runs happen in Future AGI's cloud, calling serve() where
+ * it's deployed. The framework is picked on the directory and can be
  * switched at the top, which says what improvements can change in it.
  */
 export default function FrameworkAgentFlow({
@@ -72,15 +59,19 @@ export default function FrameworkAgentFlow({
 }) {
   const submitLabel = useConnectSubmitLabel();
   const integrations = useIntegrations();
-  const [endpoint, setEndpoint] = useState(ADAPTER_ENDPOINT_PLACEHOLDER);
+  /* "listen": serve() calls in with the API key · "url": we call it there. */
+  const [mode, setMode] = useState("listen");
+  const [endpoint, setEndpoint] = useState("");
   const [reading, setReading] = useState(false);
   const [found, setFound] = useState(null);
   const [facts, setFacts] = useState({});
-  /* Where it runs: served at a URL we call, or on your machine through our
-     SDK — then it checks in with its commit and uncommitted changes. */
-  const [where, setWhere] = useState("url");
-  const [checkIn, setCheckIn] = useState(null);
-  const local = where === "local";
+  /* Waiting: the agent shows up once serve() is running. */
+  useEffect(() => {
+    if (mode !== "listen" || found || reading) return undefined;
+    const t = setTimeout(() => describe(""), CALL_IN_MS);
+    return () => clearTimeout(t);
+  }, [mode, found, reading, framework]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* Set later on the agent's page: a linked repository, so we can build it. */
   const linkedRepo = "";
 
@@ -91,30 +82,19 @@ export default function FrameworkAgentFlow({
     onFramework(id);
     setFound(null);
     setFacts({});
-    setCheckIn(null);
+  };
+  const waitAgain = (next = "listen") => {
+    setFound(null);
+    setFacts({});
+    setMode(next);
   };
 
-  /* The local agent checks in a moment after it starts. */
-  useEffect(() => {
-    if (!local || checkIn) return undefined;
-    const t = setTimeout(
-      () =>
-        setCheckIn({
-          commit: shortSha(`${framework}:local`),
-          fingerprint: shortSha(`${framework}:local:dirty`),
-          at: new Date().toISOString(),
-        }),
-      CHECK_IN_MS,
-    );
-    return () => clearTimeout(t);
-  }, [local, checkIn, framework]);
-
-  const describe = () => {
+  const describe = (at) => {
     setReading(true);
     setTimeout(() => {
       const r = describeAdapter({
         framework,
-        endpoint: local ? ADAPTER_ENDPOINT_PLACEHOLDER : endpoint,
+        endpoint: at,
       });
       setFound(r);
       setFacts(
@@ -175,11 +155,11 @@ export default function FrameworkAgentFlow({
       return { name, desc: known?.desc || "", args: known?.args || [] };
     }),
     model: facts.model,
-    /* serve() is how we reach it — we call it where it runs. On your machine
-       there's nothing to call: the SDK checks in and runs scenarios there. */
-    ...(local
-      ? { runLocation: "sdk", localSdk: true }
-      : { runtime: { endpoint: endpoint.trim(), tokenRef: "" } }),
+    /* serve() is how we reach it — we call it where it runs. */
+    runtime:
+      mode === "url"
+        ? { endpoint: endpoint.trim(), tokenRef: "" }
+        : { dialOut: true },
     ...(members.length && { members }),
     ...(repoName && {
       linkedRepo: repoName,
@@ -187,32 +167,30 @@ export default function FrameworkAgentFlow({
       gitHost: "github",
     }),
     versionNote:
-      local && checkIn
-        ? `Checked in from your machine through the ${meta.label} adapter · commit ${checkIn.commit} + uncommitted changes ${checkIn.fingerprint}.`
-        : `Described by the ${meta.label} adapter at ${endpoint.trim()}.`,
+      mode === "url"
+        ? `Described by the ${meta.label} adapter at ${endpoint.trim()}.`
+        : `Described by the ${meta.label} adapter when it called in.`,
   };
 
-  /* Connect: the adapter describes the agent, then it's saved as described. */
-  const [saveWanted, setSaveWanted] = useState(false);
-  useEffect(() => {
-    if (!saveWanted || !found) return;
-    setSaveWanted(false);
-    onSave(source);
-  }, [saveWanted, found]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* Confirm: saved as the adapter described it — only once it has. */
   const next = {
-    label: submitLabel,
-    icon: "solar:link-circle-linear",
-    disabled: local ? !checkIn : !validUrl(endpoint),
-    hint: local
-      ? "Waiting for your agent to check in"
-      : "Add where serve() runs",
-    busy: reading
-      ? `Asking the ${meta.label} adapter to describe ${adapter.wraps}…`
-      : null,
-    onClick: () => {
-      describe();
-      setSaveWanted(true);
-    },
+    label:
+      submitLabel === CONNECT_LABEL ? "Confirm and add agent" : submitLabel,
+    icon: "solar:check-circle-linear",
+    disabled: !found,
+    hint:
+      mode === "url"
+        ? "Check the URL first"
+        : "Turns on when your agent calls in",
+    busy: reading ? `Reading ${adapter.wraps}…` : null,
+    onClick: () => onSave(source),
+  };
+  const sizeOf = () => {
+    const st = found?.structure || {};
+    if (st.graph?.nodes) return `${st.graph.nodes.length} steps`;
+    if (st.agents) return `${st.agents.length} agents`;
+    if (st.crew) return `${st.crew.agents.length} agents`;
+    return null;
   };
 
   return (
@@ -246,172 +224,134 @@ export default function FrameworkAgentFlow({
         <FrameworkTuning tuning={tuning} structure={meta.structure} />
 
         <Box>
-          <Label>Where it runs</Label>
-          <Box
-            sx={{
-              display: "grid",
-              gap: 1,
-              mt: 0.75,
-              gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
-            }}
+          <RailStep
+            n={1}
+            title="Install the adapter"
+            body={
+              meta.lang === "typescript"
+                ? "One package — it pulls in nothing else."
+                : "One extra on futureagi — it pulls in nothing else."
+            }
           >
-            <WhereOption
-              icon="solar:plug-circle-linear"
-              label="Served at a URL"
-              on={!local}
-              onClick={() => setWhere("url")}
-              short="We call serve() where it runs · Deployed by you"
-              hint="We can't build it ourselves, so your own coding agent makes changes and we prove them where it's served."
-            />
-            <WhereOption
-              icon="solar:laptop-2-linear"
-              label="Run on your machine"
-              on={local}
-              onClick={() => setWhere("local")}
-              short="Local code through our SDK · identified by commit"
-              hint="It reports its commit and uncommitted changes, so we can prove each change."
-            />
-          </Box>
-        </Box>
-
-        {local ? (
-          <Box>
-            <RailStep
-              n={1}
-              title="Install our SDK"
-              body={
-                meta.lang === "typescript"
-                  ? "One package — it pulls in nothing else."
-                  : "One extra on futureagi — it pulls in nothing else."
-              }
-            >
-              <CodeSnippet code={adapter.install} />
-            </RailStep>
-            <RailStep
-              n={2}
-              title="Add one line where your agent starts"
-              body={
-                <HintLine
-                  hint={`It runs our scenarios through ${meta.label}'s own loop on this machine and reports the structure.`}
-                >
-                  init() leaves your code as it is.
-                </HintLine>
-              }
-            >
-              <CodeSnippet code={localInitOf(adapter)} />
-            </RailStep>
-            <RailStep
-              n={3}
-              title="Run your agent as usual"
-              body={
-                <HintLine hint="init() dials out with your API key — no port to open.">
-                  It checks in from your machine.
-                </HintLine>
-              }
-              last
-            >
-              <Stack
-                direction="row"
-                alignItems="center"
-                spacing={1}
-                sx={{
-                  maxWidth: 480,
-                  px: 1.5,
-                  py: 1,
-                  borderRadius: 1,
-                  border: "1px solid",
-                  borderColor: "divider",
-                }}
+            <CodeSnippet code={adapter.install} />
+          </RailStep>
+          <RailStep
+            n={2}
+            title={`Wrap ${adapter.wraps}`}
+            body={
+              <HintLine
+                hint={`It runs conversations through ${meta.label}'s own loop and reports the structure.`}
               >
-                <Iconify
-                  icon={
-                    checkIn
-                      ? "solar:check-circle-linear"
-                      : "eos-icons:three-dots-loading"
-                  }
-                  width={16}
-                  sx={{ color: "text.secondary", flexShrink: 0 }}
-                />
-                <Typography
-                  component="div"
-                  sx={{
-                    typography: "s2",
-                    color: checkIn ? "text.primary" : "text.secondary",
-                  }}
-                >
-                  {checkIn ? (
-                    <HintLine
-                      hint={`Fingerprint of uncommitted changes ${checkIn.fingerprint}. Every run says which commit and changes it ran.`}
-                    >
-                      {"Connected · commit "}
-                      <Box
-                        component="span"
-                        sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}
+                serve() leaves your code as it is.
+              </HintLine>
+            }
+          >
+            <CodeSnippet code={adapter.code} />
+          </RailStep>
+          <RailStep
+            n={3}
+            title="Run it"
+            body={
+              <HintLine hint="serve() dials out with your API key, so local works while it's running.">
+                Local works — no port to open.
+              </HintLine>
+            }
+            last
+          >
+            <Box sx={{ maxWidth: 560 }}>
+              <CodeSnippet code={adapter.run} />
+              <Box sx={{ mt: 1.25 }}>
+                {found ? (
+                  <StatusRow
+                    icon={
+                      <Iconify
+                        icon="solar:check-circle-bold"
+                        width={16}
+                        sx={{ color: "status.success.fg", flexShrink: 0 }}
+                      />
+                    }
+                    text={[
+                      `Found ${facts.name || adapter.entry}`,
+                      sizeOf(),
+                      `${(facts.tools || []).length} tools`,
+                      facts.model,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                    action={
+                      <Button
+                        size="small"
+                        onClick={() => waitAgain(mode)}
+                        sx={{ color: "text.secondary", minWidth: 0 }}
                       >
-                        {checkIn.commit}
-                      </Box>
-                      {" + uncommitted changes"}
-                    </HintLine>
+                        Not it? Try again
+                      </Button>
+                    }
+                  />
+                ) : mode === "listen" ? (
+                  <StatusRow
+                    icon={
+                      <CircularProgress
+                        size={14}
+                        thickness={5}
+                        sx={{ color: "text.secondary", flexShrink: 0 }}
+                      />
+                    }
+                    text={
+                      reading
+                        ? "Your agent called in — reading it…"
+                        : "Waiting for your agent… run the command above."
+                    }
+                  />
+                ) : (
+                  <Stack direction="row" spacing={1} alignItems="flex-end">
+                    <Box flex={1} minWidth={0}>
+                      <Field
+                        label="Where serve() runs"
+                        required
+                        mono
+                        placeholder={ADAPTER_ENDPOINT_PLACEHOLDER.replace(
+                          "localhost:8000",
+                          "agent.example.com",
+                        )}
+                        value={endpoint}
+                        onChange={setEndpoint}
+                        fullWidth
+                      />
+                    </Box>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      disabled={!validUrl(endpoint) || reading}
+                      onClick={() => describe(endpoint)}
+                      sx={{ color: "text.primary", borderColor: "divider" }}
+                    >
+                      {reading ? "Checking…" : "Check"}
+                    </Button>
+                  </Stack>
+                )}
+              </Box>
+              {!found && (
+                <Typography
+                  sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}
+                >
+                  {mode === "listen" ? (
+                    <>
+                      Deployed somewhere we should call instead?{" "}
+                      <TextLink onClick={() => waitAgain("url")}>
+                        Paste its URL
+                      </TextLink>
+                    </>
                   ) : (
-                    "Waiting for your agent to check in…"
+                    <TextLink onClick={() => waitAgain("listen")}>
+                      Wait for it to call in instead
+                    </TextLink>
                   )}
                 </Typography>
-              </Stack>
-            </RailStep>
-          </Box>
-        ) : (
-          <Box>
-            <RailStep
-              n={1}
-              title="Install the adapter"
-              body={
-                meta.lang === "typescript"
-                  ? "One package — it pulls in nothing else."
-                  : "One extra on futureagi — it pulls in nothing else."
-              }
-            >
-              <CodeSnippet code={adapter.install} />
-            </RailStep>
-            <RailStep
-              n={2}
-              title={`Wrap ${adapter.wraps}`}
-              body={
-                <HintLine
-                  hint={`It runs conversations through ${meta.label}'s own loop and reports the structure.`}
-                >
-                  serve() leaves your code as it is.
-                </HintLine>
-              }
-            >
-              <CodeSnippet code={adapter.code} />
-            </RailStep>
-            <RailStep
-              n={3}
-              title="Run it and tell us where"
-              body={
-                <HintLine hint="serve() dials out with your API key, so local works while it's running.">
-                  Local works — no port to open. Deployed? Use that URL.
-                </HintLine>
-              }
-              last
-            >
-              <Box sx={{ maxWidth: 480 }}>
-                <CodeSnippet code={adapter.run} />
-                <Box sx={{ mt: 1.25 }}>
-                  <Field
-                    label="Adapter endpoint"
-                    required
-                    mono
-                    placeholder={ADAPTER_ENDPOINT_PLACEHOLDER}
-                    value={endpoint}
-                    onChange={setEndpoint}
-                    fullWidth
-                  />
-                </Box>
-              </Box>
-            </RailStep>
-          </Box>
-        )}
+              )}
+            </Box>
+          </RailStep>
+        </Box>
 
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           Code already in GitHub, GitLab or Bitbucket?{" "}
@@ -459,7 +399,35 @@ FrameworkAgentFlow.propTypes = {
   prefill: PropTypes.object,
 };
 
-/* One way it can run — the same selectable card as the run-location choice. */
+/* The live state under Run it: waiting, reading, or what was found. */
+function StatusRow({ icon, text, action = null }) {
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1.25}
+      sx={{
+        px: 1.5,
+        py: 1,
+        minHeight: 40,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+      }}
+    >
+      {icon}
+      <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+        {text}
+      </Typography>
+      {action}
+    </Stack>
+  );
+}
+StatusRow.propTypes = {
+  icon: PropTypes.node,
+  text: PropTypes.string,
+  action: PropTypes.node,
+};
 
 /* One numbered step of the install, on a thin rail — like Develop locally. */
 function RailStep({ n, title, body, last, children }) {

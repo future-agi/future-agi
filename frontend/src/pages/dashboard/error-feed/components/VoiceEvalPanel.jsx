@@ -15,6 +15,7 @@ import {
   clickable,
   focusRing,
 } from "src/sections/simulate-v2/components/clickable";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Marker pin tokens (status roles index theme.palette.status).
 const FAIL_COLOR = "status.danger.solid";
@@ -600,7 +601,7 @@ export default function VoiceEvalPanel({ trace, evalScore, successTraceId }) {
   if (failCall.isLoading) {
     return (
       <Stack alignItems="center" justifyContent="center" sx={{ py: 6 }}>
-        <CircularProgress size={22} />
+        <ContentSkeleton variant="panel" />
       </Stack>
     );
   }

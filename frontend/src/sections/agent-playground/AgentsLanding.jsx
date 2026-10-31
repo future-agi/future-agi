@@ -46,7 +46,7 @@ export default function AgentsLanding() {
         <Box sx={{ px: 3, pt: 2, flexShrink: 0 }}>
           <PageHeader
             title="Agents"
-            info="Build agents in the Playground, or connect agents that already run somewhere else to test them in simulations."
+            description="Build agents in the Playground or connect the ones you already run, then test them in simulations."
             actions={<CreateAgentsButton canCreatePlayground={canCreate} />}
             sx={{ mb: 0 }}
           />
@@ -56,7 +56,11 @@ export default function AgentsLanding() {
           <Tabs
             value={tab}
             onChange={(_, v) => setParams({ tab: v }, { replace: true })}
-            sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+            sx={{
+              boxShadow: "none",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
           >
             <Tab value="connected" label="Connected agents" disableRipple />
             <Tab value="playground" label="Agent Playground" disableRipple />

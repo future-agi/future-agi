@@ -37,7 +37,7 @@ const PerformanceDetailSection = ({
           borderColor: "divider",
         }}
       >
-        <Tabs
+        <Tabs sx={{ boxShadow: "none" }}
           value={selectedDataset}
           onChange={(e, value) => setSelectedDataset(value)}
           textColor="primary"
@@ -56,7 +56,7 @@ const PerformanceDetailSection = ({
           alignItems: "center",
         }}
       >
-        <Tabs
+        <Tabs sx={{ boxShadow: "none" }}
           value={selectedDetailTab}
           onChange={(e, value) => setSelectedDetailTab(value)}
           textColor="primary"

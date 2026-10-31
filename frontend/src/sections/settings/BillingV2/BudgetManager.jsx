@@ -7,6 +7,7 @@
  * - pause: block further usage
  */
 
+import EmptyState from "src/components/empty-state";
 import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -175,16 +176,23 @@ export default function BudgetManager() {
       </Stack>
 
       {!budgets || budgets.length === 0 ? (
-        <Section variant="panel" sx={{ p: 3, textAlign: "center" }}>
-          <Iconify
+        <Section variant="panel" sx={{ p: 0 }}>
+          <EmptyState
             icon="solar:shield-check-linear"
-            width={36}
-            sx={{ color: "text.disabled", mb: 1 }}
+            title="No budgets yet"
+            description="Add a budget to get notified or pause usage when thresholds are reached."
+            action={
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() => setDialogOpen(true)}
+              >
+                Add budget
+              </Button>
+            }
+            sx={{ pt: 6, pb: 6 }}
           />
-          <Typography variant="body2" color="text.secondary">
-            No budgets set. Add a budget to get notified or pause usage when
-            thresholds are reached.
-          </Typography>
         </Section>
       ) : (
         <Stack spacing={1.5}>

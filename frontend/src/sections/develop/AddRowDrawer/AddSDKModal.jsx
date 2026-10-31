@@ -1,12 +1,4 @@
-import {
-  Box,
-  Button,
-  IconButton,
-  Modal,
-  Typography,
-  CircularProgress,
-  Tab,
-} from "@mui/material";
+import { Box, Button, IconButton, Modal, Typography, Tab } from "@mui/material";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
@@ -20,6 +12,7 @@ import { ShowComponent } from "src/components/show";
 import { FormCodeEditor } from "src/components/form-code-editor";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { enqueueSnackbar } from "notistack";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const defaultValues = {
   name: "",
@@ -182,7 +175,7 @@ const AddSDKModal = ({ open, onClose, datasetId, closeDrawer }) => {
             minHeight="200px"
             margin="25px 0"
           >
-            <CircularProgress size={40} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : (
           <Box

@@ -36,7 +36,7 @@ const PricingNavComponent = ({ tabs, currentTab, onTabChange }) => {
           width: "100%",
         }}
       >
-        <Tabs
+        <Tabs sx={{ boxShadow: "none" }}
           value={currentTab?.path || tabs[0]?.path}
           onChange={handleTabChange}
         >

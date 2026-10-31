@@ -644,52 +644,6 @@ export const estimatePackageValidation = ({
   return { total: parts.reduce((n, p) => n + p.credits, 0), parts };
 };
 
-export const estimateTrainingPlan = ({
-  env,
-  episodes = 1000,
-  heldOut = 100,
-  evals = [],
-  budget = null,
-}) => {
-  const voice = isVoice(env);
-  const R = RATE_PLAN.rates;
-  const perEpisode = voice
-    ? ((CALL_MINUTES[0] + CALL_MINUTES[1]) / 2) * R.voice_sim_minutes.credits
-    : (TOKENS_PER_TRIAL / R.text_sim_tokens.per) * R.text_sim_tokens.credits;
-  const judge = evals.reduce((a, e) => a + (evalRailOf(e).credits || 0), 0);
-  const rollouts = episodes * perEpisode;
-  const held = heldOut * (perEpisode + judge);
-  const total = rollouts + held;
-  return {
-    perEpisode,
-    total,
-    episodesInBudget:
-      budget && total > budget
-        ? Math.max(0, Math.floor((budget - held) / perEpisode))
-        : episodes,
-    parts: [
-      {
-        id: "rollouts",
-        label: "Rollouts",
-        detail: `${episodes.toLocaleString()} episodes × ~${perEpisode.toFixed(1)} credits`,
-        credits: rollouts,
-      },
-      {
-        id: "heldOut",
-        label: "Held-out evaluation",
-        detail: `${heldOut.toLocaleString()} held-back episodes, judged`,
-        credits: held,
-      },
-      {
-        id: "training",
-        label: "Training",
-        detail: "on your trainer — billed by whoever runs it",
-        credits: null,
-      },
-    ],
-  };
-};
-
 /** One test call's cost on the provider's account: { low, high, label, source } — or null when there's no public price. */
 export const testCallEstimateOf = (provider, minutes = [1, 2]) => {
   const rate = PLATFORM_USD_PER_MIN[provider];

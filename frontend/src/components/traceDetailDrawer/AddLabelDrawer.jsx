@@ -10,7 +10,6 @@ import {
   InputAdornment,
   TextField,
   Typography,
-  CircularProgress,
 } from "@mui/material";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "src/components/iconify";
@@ -29,6 +28,7 @@ import PropTypes from "prop-types";
 import CreateLabelDrawer from "src/sections/annotations/labels/create-label-drawer";
 import LabelTypeChip from "src/components/label-type-chip/LabelTypeChip";
 import { useDebounce } from "src/hooks/use-debounce";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const AddLabelDrawerContent = ({
   projectId,
@@ -260,7 +260,7 @@ const AddLabelDrawerContent = ({
         >
           {isInitialLoading ? (
             <Box sx={{ p: 2, display: "flex", justifyContent: "center" }}>
-              <CircularProgress size={20} />
+              <ContentSkeleton variant="panel" />
             </Box>
           ) : isLabelsError && labels.length === 0 ? (
             <Alert

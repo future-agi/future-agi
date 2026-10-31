@@ -1,19 +1,14 @@
 import ErrorState from "src/components/error-state";
 import React from "react";
 import PropTypes from "prop-types";
-import {
-  Box,
-  CircularProgress,
-  Stack,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Box, Stack, Typography, useTheme } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import axios, { endpoints } from "src/utils/axios";
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { getEvalNonScoreStatus } from "src/utils/evalStatus";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const ScoreChip = ({ value }) => {
   if (value == null) {
@@ -131,7 +126,7 @@ const SessionEvalsList = ({ sessionId }) => {
   if (isLoading) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-        <CircularProgress size={20} />
+        <ContentSkeleton variant="rows" />
       </Box>
     );
   }

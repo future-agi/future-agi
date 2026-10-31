@@ -39,6 +39,7 @@ import { unwrapCellValue } from "./datasetCellValue";
 import { buildTree } from "./columnTree";
 import RequiredMark from "src/components/RequiredMark";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const DATASET_PAGE_SIZE = 25;
 
@@ -1540,7 +1541,7 @@ const DatasetTestMode = React.forwardRef(
         {/* Loading */}
         {!isWorkbenchMode && loadingData && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
-            <CircularProgress size={20} />
+            <ContentSkeleton variant="panel" />
           </Box>
         )}
 

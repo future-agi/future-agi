@@ -28,6 +28,8 @@ export const CustomDevelopDetailColumn = (props) => {
     color: "text.secondary",
   };
 
+  // Dataset column-type icons keep their original set (design-system exception,
+  // agreed 2026-10-30); every other icon in this header is Solar.
   const renderIcon = () => {
     if (col.originType === "run_prompt") {
       return (
@@ -39,7 +41,7 @@ export const CustomDevelopDetailColumn = (props) => {
     } else if (col.originType === "evaluation") {
       return (
         <Iconify
-          icon="solar:check-circle-linear"
+          icon="material-symbols:check-circle-outline"
           sx={{ color: "info.success" }}
         />
       );
@@ -54,27 +56,27 @@ export const CustomDevelopDetailColumn = (props) => {
         />
       );
     } else if (col.originType === "annotation_label") {
-      return <Iconify icon="solar:pen-linear" sx={iconStyle} />;
+      return <Iconify icon="jam:write" sx={iconStyle} />;
     } else if (col.originType === "vector_db") {
       return <Iconify icon="solar:widget-broken" sx={iconStyle} />;
     } else if (col.originType === "extracted_entities") {
-      return <Iconify icon="solar:cpu-linear" sx={iconStyle} />;
+      return <Iconify icon="material-symbols:chip-extraction" sx={iconStyle} />;
     } else if (col.originType === "extracted_json") {
-      return <Iconify icon="solar:code-linear" sx={iconStyle} />;
+      return <Iconify icon="mdi:code-json" sx={iconStyle} />;
     } else if (col.originType === "python_code") {
-      return <Iconify icon="solar:code-linear" sx={iconStyle} />;
+      return <Iconify icon="mdi:code" sx={iconStyle} />;
     } else if (col.originType === "classification") {
-      return <Iconify icon="solar:tag-horizontal-linear" sx={iconStyle} />;
+      return <Iconify icon="mingcute:classify-2-line" sx={iconStyle} />;
     } else if (col.originType === "api_call") {
-      return <Iconify icon="solar:plug-circle-linear" sx={iconStyle} />;
+      return <Iconify icon="hugeicons:api" sx={iconStyle} />;
     } else if (col.originType === "conditional") {
-      return <Iconify icon="solar:widget-add-linear" sx={iconStyle} />;
+      return <Iconify icon="hugeicons:node-add" sx={iconStyle} />;
     } else if (col.dataType === "text") {
-      return <Iconify icon="solar:notes-linear" sx={iconStyle} />;
+      return <Iconify icon="material-symbols:notes" sx={iconStyle} />;
     } else if (col.dataType === "array") {
-      return <Iconify icon="solar:brackets-linear" sx={iconStyle} />;
+      return <Iconify icon="material-symbols:data-array" sx={iconStyle} />;
     } else if (col.dataType === "integer") {
-      return <Iconify icon="solar:hashtag-linear" sx={iconStyle} />;
+      return <Iconify icon="material-symbols:tag" sx={iconStyle} />;
     } else if (col.dataType === "float") {
       return <Iconify icon="tabler:decimal" sx={iconStyle} />;
     } else if (col.dataType === "boolean") {
@@ -82,9 +84,9 @@ export const CustomDevelopDetailColumn = (props) => {
         <Iconify icon="material-symbols:toggle-on-outline" sx={iconStyle} />
       );
     } else if (col.dataType === "datetime") {
-      return <Iconify icon="solar:calendar-linear" sx={iconStyle} />;
+      return <Iconify icon="tabler:calendar" sx={iconStyle} />;
     } else if (col.dataType === "json") {
-      return <Iconify icon="solar:braces-linear" sx={iconStyle} />;
+      return <Iconify icon="material-symbols:data-object" sx={iconStyle} />;
     } else if (col.dataType === "image") {
       return (
         <SvgColor
@@ -109,7 +111,7 @@ export const CustomDevelopDetailColumn = (props) => {
     } else if (col.dataType === "images") {
       return (
         <Iconify
-          icon="solar:gallery-linear"
+          icon="material-symbols:art-track-outline"
           sx={{ width: 20, height: 20, color: "text.secondary" }}
         />
       );

@@ -64,7 +64,7 @@ export default function ErrorFeedView() {
               {totalCount}
             </Typography>
           }
-          description="Track, triage, and resolve AI errors — hallucinations, eval failures, and pipeline issues"
+          description="Track, triage and resolve agent errors: hallucinations, eval failures and pipeline issues."
           actions={
             <Button
               variant="outlined"

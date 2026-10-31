@@ -58,7 +58,7 @@ const SimulatorAgentCellRenderer = (params) => {
         return (
           <Typography
             variant="body2"
-            sx={{ fontWeight: 500, fontSize: "13px", color: "text.primary" }}
+            sx={{ fontWeight: 500, fontSize: "12px", color: "text.primary" }}
           >
             {value}
           </Typography>
@@ -184,8 +184,8 @@ const SimulatorAgentCellRenderer = (params) => {
                   <SvgColor
                     src="/assets/icons/ic_delete.svg"
                     sx={{
-                      height: 20,
-                      width: 20,
+                      height: 16,
+                      width: 16,
                     }}
                   />
                 </ListItemIcon>

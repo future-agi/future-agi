@@ -13,7 +13,7 @@
  * comparison reach back to a run nobody kept the results of.
  */
 
-import { buildRun } from "./runStream";
+import { buildRun, hashSeed } from "./runStream";
 import { withAskSkipped } from "./clarify";
 import { withRegrade } from "./regrade";
 import { resolveEval } from "./evals";
@@ -26,6 +26,12 @@ import { ensureProvenance } from "./scenarioProvenance";
 import { pinnedScenarios } from "./decoupled";
 import { improvementRunName } from "./optimizer";
 import { scenarioTitle } from "./scenarios";
+import {
+  duplicateCallsOf,
+  duplicateWritesOf,
+  twinTimelineFor,
+  withRetriedWrite,
+} from "./twins";
 
 /**
  * Colours for run identity.
@@ -116,9 +122,48 @@ export const rebuildRun = (env, envState, run) => {
   return withRegrade(
     tasks /* Scenarios the run's spending limit kept from starting never ran. */
       .filter((t) => !notStartedOf(run).has(t.id))
-      .map((t) => ({ ...t, status: t.verdict })),
+      .map((t) =>
+        duplicateWriteVerdict({ ...t, status: t.verdict }, envState, run.id),
+      ),
     run,
   );
+};
+
+/*
+  world.md WO-1: a money-moving write committed twice on the same target (a
+  refund retried without checking the first) fails the trial — attempts and
+  committed writes are judged separately. A sandbox reads it from the
+  service's state; a tool world from the calls the world answered.
+*/
+const duplicateWriteVerdict = (t, envState, runId) => {
+  if (t.status !== "passed") return t;
+  let dup = [];
+  let task = t;
+  try {
+    if (envState?.twinBacking) {
+      dup = duplicateWritesOf(twinTimelineFor(envState, t)).map((list) => ({
+        summary: list[0].summary,
+        times: list.length,
+      }));
+    } else {
+      task = withRetriedWrite(t, hashSeed, runId);
+      dup = duplicateCallsOf(task.callLog).map((list) => ({
+        summary: list[0].args?.id
+          ? `${list[0].name} for ${list[0].args.id}`
+          : list[0].name,
+        times: list.length,
+      }));
+    }
+  } catch {
+    return t;
+  }
+  if (!dup.length) return t;
+  return {
+    ...task,
+    status: "failed",
+    verdict: "failed",
+    duplicateWrite: dup[0],
+  };
 };
 
 const notStartedOf = (run) => new Set(run?.budget?.notStarted || []);
@@ -388,7 +433,7 @@ export const trialSummaries = (env, envState) => {
         kind: "trial",
         /* A trial ran a candidate on top of the version it started from, so
            it's named as both — "agent v2" alone read as v2 itself. */
-        trialLabel: `Trial ${trial.n} · ${baseVersion ? `${baseVersion} + change` : "change"}`,
+        trialLabel: `Candidate ${trial.n} · ${baseVersion ? `${baseVersion} + change` : "change"}`,
         selfImprovementId: opt.id,
         /* The improvement's own name — a custom one when it was given, the same
            helper its page title reads. */

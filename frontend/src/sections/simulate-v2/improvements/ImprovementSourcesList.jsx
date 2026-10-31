@@ -7,7 +7,6 @@ import {
   Box,
   Button,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
@@ -28,12 +27,14 @@ import { useIntegrations } from "../_mock/integrations";
 import { improvementRowsOf } from "./improvementRows";
 import { formatCreatedAt, modalityOfSurface } from "./improvementSources";
 import StatusPill from "./ImprovementStatusPill";
+import { ROW_HEIGHT as DS_ROW_HEIGHT } from "src/theme/sizes";
+import ClosableDialog from "../components/ClosableDialog";
 
 const compactInputSx = {
   "& .MuiInputBase-root": { typography: "s2", height: 32 },
   "& .MuiOutlinedInput-input": { py: 0 },
 };
-const ROW_HEIGHT = 44;
+const ROW_HEIGHT = DS_ROW_HEIGHT.twoLine;
 const HEADER_HEIGHT = 40;
 
 /**
@@ -278,7 +279,10 @@ export default function ImprovementSourcesList({ agent, run }) {
             {r.name}
           </Typography>
           {/* Agent · source · sub-source · what it was, then where it ran. */}
-          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+          <Typography
+            noWrap
+            sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+          >
             {r.kind === "dataset" ? (
               `${r.envName} · ${r.sub}`
             ) : (
@@ -364,8 +368,9 @@ export default function ImprovementSourcesList({ agent, run }) {
                 noWrap
                 sx={{
                   typography: "s3",
-                  color: r.held.broke ? "status.danger.fg" : "text.subtitle",
+                  color: r.held.broke ? "status.danger.fg" : "text.secondary",
                   fontVariantNumeric: "tabular-nums",
+                  mt: 0.5,
                 }}
               >
                 {r.held.broke == null
@@ -628,7 +633,7 @@ export default function ImprovementSourcesList({ agent, run }) {
         />
       </Box>
 
-      <Dialog
+      <ClosableDialog
         open={confirmDelete}
         onClose={() => setConfirmDelete(false)}
         maxWidth={false}
@@ -648,7 +653,7 @@ export default function ImprovementSourcesList({ agent, run }) {
           {deletable.length > 0 && (
             <DialogContentText sx={{ typography: "s2" }}>
               {
-                "Their trials, results and unreleased drafts go with them. The environments and their own runs stay as they are."
+                "Their candidates, results and unreleased drafts go with them. The environments and their own runs stay as they are."
               }
             </DialogContentText>
           )}
@@ -673,7 +678,7 @@ export default function ImprovementSourcesList({ agent, run }) {
             </Button>
           )}
         </DialogActions>
-      </Dialog>
+      </ClosableDialog>
     </Box>
   );
 }

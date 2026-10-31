@@ -23,6 +23,7 @@ import MetricEmptyState from "../MetricEmptyState";
 import { getZeroBasedGridPage } from "src/utils/agGridPagination";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 import { readPromptMetricsGridPage } from "../prompt_metrics_grid_read";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -288,7 +289,7 @@ const LinkedTracesContent = () => {
           columnDefs={columnDefs}
           rowModelType="serverSide"
           serverSideDatasource={dataSource}
-          rowHeight={36}
+          rowHeight={ROW_HEIGHT.default}
           theme={agTheme}
           rowSelection="single"
           paginationPageSizeSelector={false}

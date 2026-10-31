@@ -32,7 +32,7 @@ const UseCasesAndFilters = ({
             setCurrentTab(value);
             setSelectedGroup(null);
           }}
-          sx={{ borderBottom: "1px solid", borderColor: "divider" }}
+          sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
         >
           {evalDrawerTabs
             .filter((t) => {

@@ -151,24 +151,17 @@ const CompareDatasetDrawer = ({
             alignItems: "center",
           }}
         >
-          <Box sx={{ display: "flex" }}>
-            <Typography
-              sx={{ fontWeight: 500, fontSize: "16px", color: "text.primary" }}
-            >
-              Current dataset selected:
+          {/* Design system: drawer title 15/600, the current dataset as one quiet line. */}
+          <Box sx={{ minWidth: 0 }}>
+            <Typography sx={{ typography: "m1", fontWeight: 600, color: "text.primary" }}>
+              Compare datasets
             </Typography>
             <Tooltip title={currentDataset?.label}>
               <Typography
-                sx={{
-                  fontWeight: 500,
-                  fontSize: "16px",
-                  color: "text.primary",
-                  ml: 0.6,
-                }}
+                noWrap
+                sx={{ typography: "s1", color: "text.secondary", mt: 0.25 }}
               >
-                {currentDataset?.label?.length > 35
-                  ? currentDataset?.label?.substring(0, 35) + "..."
-                  : currentDataset?.label}
+                Current: {currentDataset?.label}
               </Typography>
             </Tooltip>
           </Box>

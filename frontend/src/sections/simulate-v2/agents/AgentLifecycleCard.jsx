@@ -2,7 +2,6 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
-  Dialog,
   MenuItem,
   Select,
   Stack,
@@ -27,6 +26,7 @@ import { ago, plural } from "./agentViewUtils";
 import { deleteBlockOf } from "./agentDelete";
 import { ReinstallGithubButton } from "./AgentProfileStrip";
 import { useDemoMode } from "./demoMode";
+import ClosableDialog from "../components/ClosableDialog";
 
 /**
  * What can happen to the agent next — reconnect, archive or restore, delete.
@@ -320,7 +320,7 @@ export function ArchiveDialog({
   const archived = agentStatusOf(agent).status === "archived";
   const provider = PROVIDER_LABELS[agent.values?.provider];
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       PaperProps={{
@@ -404,7 +404,7 @@ export function ArchiveDialog({
           {archived ? "Restore" : "Archive"}
         </Button>
       </Stack>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 ArchiveDialog.propTypes = {

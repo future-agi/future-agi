@@ -1,10 +1,5 @@
 import EmptyContent from "src/components/empty-content";
-import {
-  Box,
-  Button,
-  Typography,
-  CircularProgress,
-} from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AgGridReact } from "ag-grid-react";
@@ -26,6 +21,8 @@ import StopOptimizationModal from "./StopOptimizationModal";
 import EmptyLayout from "../../../components/EmptyLayout/EmptyLayout";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { ROW_HEIGHT } from "src/theme/sizes";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const NoRowsOverlay = ({ title }) => <EmptyContent title={title} />;
 
@@ -227,7 +224,7 @@ const DatasetOptimizationRunList = ({
           flex: 1,
         }}
       >
-        <CircularProgress size={42} />
+        <ContentSkeleton variant="rows" />
       </Box>
     );
   }
@@ -323,7 +320,7 @@ const DatasetOptimizationRunList = ({
             onGridReady={(params) => {
               setOptimizationGridApi(params.api);
             }}
-            rowHeight={44}
+            rowHeight={ROW_HEIGHT.twoLine}
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             components={components}

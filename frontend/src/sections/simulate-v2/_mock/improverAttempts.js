@@ -15,7 +15,11 @@
 */
 import { hashSeed } from "./runStream";
 import { OPT_STATUS, PER_CONVERSATION, REPEATS } from "./optimizationRuns";
-import { codingAgentById, heldBackHiddenFrom, improverSessionFor } from "./integrations";
+import {
+  codingAgentById,
+  heldBackHiddenFrom,
+  improverSessionFor,
+} from "./integrations";
 
 /* How many candidates one improvement accepts from an outside agent. */
 export const ATTEMPT_BUDGET = 5;
@@ -27,9 +31,18 @@ const PACE = 8;
   tiers. Every proof names its tier.
 */
 export const TIERS = {
-  "future-agi": { label: "Run by Future AGI", note: "A pushed commit run in our sandbox — the full proof" },
-  local: { label: "Run on your machine", note: "Your local code through our SDK, identified by commit and a fingerprint of uncommitted changes — our scenarios and scoring, the code identity is reported by your agent" },
-  deployed: { label: "Deployed by you", note: "An endpoint or assistant we don't control — our scenarios and scoring, but we can't see what runs there" },
+  "future-agi": {
+    label: "Run by Future AGI",
+    note: "A pushed commit run in our sandbox — the full proof",
+  },
+  local: {
+    label: "Run on your machine",
+    note: "Your local code through our SDK, identified by commit and a fingerprint of uncommitted changes — our scenarios and scoring, the code identity is reported by your agent",
+  },
+  deployed: {
+    label: "Deployed by you",
+    note: "An endpoint or assistant we don't control — our scenarios and scoring, but we can't see what runs there",
+  },
 };
 
 const sha = (s) => hashSeed(s).toString(16).padStart(8, "0").slice(0, 7);
@@ -41,20 +54,21 @@ const wasPassing = (t) => t.before === "passed" || !t.fromIssue;
 const SCRIPT = [
   {
     title: "Rewrote the closing turn to read the tool result first",
-    where: "local",
+    where: "future-agi",
     dirty: true,
     reject: "mustPass",
     why: "A must-pass scenario regressed: the new closing turn skipped the identity check on a short call.",
   },
   {
     title: "Added a confirmation step and a second model call before closing",
-    where: "local",
+    where: "future-agi",
     dirty: false,
     reject: "cost",
     why: "Cost per conversation rose past the ceiling — the second model call runs on every turn.",
   },
   {
-    title: "Gated the closing statement on the tool result, without the extra call",
+    title:
+      "Gated the closing statement on the tool result, without the extra call",
     where: "future-agi",
     dirty: false,
     reject: null,
@@ -71,7 +85,7 @@ const SCRIPT_V2 = [
   SCRIPT[0],
   {
     title: "Loosened the Task success threshold and reworded the closing turn",
-    where: "local",
+    where: "future-agi",
     dirty: true,
     reject: "gate",
     files: ["evals/task_success.yaml", "prompts/system.md"],
@@ -95,30 +109,51 @@ const whereOf = (session, agent, step, tier) => {
 };
 
 /* The files an attempt's diff touches; the gate rejects any under scenarios/ or evals/. */
-const JUDGE_PATH = /(^|\/)(scenarios|evals)\//;
+/* Frozen test and world inputs (improve.md IM-1): scenarios, evaluators, the
+   world's own fixtures and seed data, and hidden tests are never editable. */
+const JUDGE_PATH = /(^|\/)(scenarios|evals|world|fixtures|seed|tests)\//;
 export const gateOf = (files = []) => {
   const hit = files.find((f) => JUDGE_PATH.test(f));
   if (!hit) return null;
-  return /(^|\/)evals\//.test(hit) ? `Diff edits an evaluation file (${hit}) — rejected, not run, not charged.` : `Diff edits a scenario file (${hit}) — rejected, not run, not charged.`;
+  return /(^|\/)evals\//.test(hit)
+    ? `Diff edits an evaluation file (${hit}) — rejected, not run, not charged.`
+    : /(^|\/)scenarios\//.test(hit)
+      ? `Diff edits a scenario file (${hit}) — rejected, not run, not charged.`
+      : `Diff edits a frozen world or test input (${hit}) — rejected, not run, not charged.`;
 };
 
 /**
  * The attempts a session has submitted so far — the ones whose time has come.
  * Stops at the first accepted one, or at the attempt budget.
  */
-export const attemptsOf = (record, session, { now = Date.now(), surface, budgetLeft = Infinity, tier } = {}) => {
+export const attemptsOf = (
+  record,
+  session,
+  { now = Date.now(), surface, budgetLeft = Infinity, tier } = {},
+) => {
   const r = record?.result;
   if (!session || !r) return [];
-  if (record.frozen?.staticCheck) return attemptsV2(record, session, { now, surface, budgetLeft, tier });
+  if (record.frozen?.staticCheck)
+    return attemptsV2(record, session, { now, surface, budgetLeft, tier });
   const started = Date.parse(session.startedAt);
-  const agent = codingAgentById(session.agentId) || { label: "Your coding agent" };
+  const agent = codingAgentById(session.agentId) || {
+    label: "Your coding agent",
+  };
   const visible = (r.trainMeasuredTasks || []).filter((t) => !t.critical);
-  const mustPass = [...(r.trainMeasuredTasks || []), ...(r.heldTasks || [])].filter((t) => t.critical);
+  const mustPass = [
+    ...(r.trainMeasuredTasks || []),
+    ...(r.heldTasks || []),
+  ].filter((t) => t.critical);
   const per = PER_CONVERSATION[surface === "voice" ? "voice" : "chat"];
   const ceiling = record.limits?.costCeiling ?? 0;
-  const costLabel = ceiling <= 0 ? "Cost per conversation · no increase" : `Cost per conversation within +${ceiling}%`;
+  const costLabel =
+    ceiling <= 0
+      ? "Cost per conversation · no increase"
+      : `Cost per conversation within +${ceiling}%`;
   /* Today's agent on the visible scenarios — what every attempt's change is measured from. */
-  const before = visible.length ? clampPct((100 * visible.filter(wasPassing).length) / visible.length) : 0;
+  const before = visible.length
+    ? clampPct((100 * visible.filter(wasPassing).length) / visible.length)
+    : 0;
 
   const out = [];
   let spent = 0;
@@ -130,29 +165,58 @@ export const attemptsOf = (record, session, { now = Date.now(), surface, budgetL
     /* Which visible scenarios this candidate moved. */
     /* An accepted attempt fixed what it was shown — at least the first
        failing scenario; a rejected one may have fixed some and broken more. */
-    const perScenario = Object.fromEntries(visible.map((t, i) => {
-      const was = wasPassing(t);
-      const h = hashSeed(`${key}:${t.id}`) % 100;
-      const fixed = !step.reject ? h < 70 || i === 0 : h < 40;
-      return [t.id, fixed && !was ? "fixed" : was && h > 96 ? "broke" : fixed ? "fixed" : "same"];
-    }));
+    const perScenario = Object.fromEntries(
+      visible.map((t, i) => {
+        const was = wasPassing(t);
+        const h = hashSeed(`${key}:${t.id}`) % 100;
+        const fixed = !step.reject ? h < 70 || i === 0 : h < 40;
+        return [
+          t.id,
+          fixed && !was
+            ? "fixed"
+            : was && h > 96
+              ? "broke"
+              : fixed
+                ? "fixed"
+                : "same",
+        ];
+      }),
+    );
     const mustFailed = step.reject === "mustPass" ? 1 : 0;
     /* Cost is checked only where it can be measured; elsewhere the second
        model call shows up as latency instead. */
     const costKnown = record.costMeasured !== false;
     const latencyCeiling = record.limits?.latencyCeiling ?? 10;
-    const cost = step.reject === "cost" ? ceiling + 6 : Math.max(0, ceiling - 3);
-    const latency = step.reject === "cost" && !costKnown ? latencyCeiling + 9 : 1;
+    const cost =
+      step.reject === "cost" ? ceiling + 6 : Math.max(0, ceiling - 3);
+    const latency =
+      step.reject === "cost" && !costKnown ? latencyCeiling + 9 : 1;
     const checks = [
       { id: "model", label: "Model unchanged", pass: true },
       costKnown
-        ? { id: "cost", label: costLabel, actual: `+${cost}%`, pass: cost <= ceiling }
-        : { id: "cost", label: costLabel, actual: "unverified — no cost data", pass: null },
-      { id: "latency", label: `Latency within +${latencyCeiling}%`, actual: `+${latency}%`, pass: latency <= latencyCeiling },
+        ? {
+            id: "cost",
+            label: costLabel,
+            actual: `+${cost}%`,
+            pass: cost <= ceiling,
+          }
+        : {
+            id: "cost",
+            label: costLabel,
+            actual: "unverified — no cost data",
+            pass: null,
+          },
+      {
+        id: "latency",
+        label: `Latency within +${latencyCeiling}%`,
+        actual: `+${latency}%`,
+        pass: latency <= latencyCeiling,
+      },
       { id: "protected", label: "Protected parts untouched", pass: true },
       { id: "judges", label: "No scenario or evaluation edited", pass: true },
     ];
-    const conversations = (visible.length + mustPass.length + (r.heldMeasured || 0)) * REPEATS;
+    const conversations =
+      (visible.length + mustPass.length + (r.heldMeasured || 0)) * REPEATS;
     const spend = Math.round(conversations * per);
     /* An attempt the budget can't pay for isn't run — the session stops there. */
     if (spent + spend > budgetLeft) {
@@ -163,8 +227,14 @@ export const attemptsOf = (record, session, { now = Date.now(), surface, budgetL
     /* Scored the same way as the newer sessions and our own trials: the pass
        rate on the visible scenarios, its change against today's agent, and
        the held-back figure Future AGI scored and never sent. */
-    const passingAfter = visible.filter((t) => perScenario[t.id] === "fixed" || (wasPassing(t) && perScenario[t.id] !== "broke")).length;
-    const score = visible.length ? clampPct((100 * passingAfter) / visible.length) : 0;
+    const passingAfter = visible.filter(
+      (t) =>
+        perScenario[t.id] === "fixed" ||
+        (wasPassing(t) && perScenario[t.id] !== "broke"),
+    ).length;
+    const score = visible.length
+      ? clampPct((100 * passingAfter) / visible.length)
+      : 0;
     const hh = hashSeed(`${key}:held`);
     out.push({
       n,
@@ -177,15 +247,23 @@ export const attemptsOf = (record, session, { now = Date.now(), surface, budgetL
          you"; otherwise local SDK runs first, then a pushed commit. */
       where: whereOf(session, agent, step, tier),
       commit: sha(key),
-      fingerprint: step.dirty && whereOf(session, agent, step, tier) === "local" ? sha(`${key}:dirty`) : null,
+      fingerprint:
+        step.dirty && whereOf(session, agent, step, tier) === "local"
+          ? sha(`${key}:dirty`)
+          : null,
       perScenario,
-      visible: visible.map((t) => ({ id: t.id, title: t.title, outcome: perScenario[t.id] })),
+      visible: visible.map((t) => ({
+        id: t.id,
+        title: t.title,
+        outcome: perScenario[t.id],
+      })),
       mustPass: { total: mustPass.length, failed: mustFailed },
       checks,
       accepted: !step.reject,
-      why: step.reject === "cost" && !costKnown
-        ? "Response time rose past the ceiling — the second model call adds a round trip on every turn."
-        : step.why,
+      why:
+        step.reject === "cost" && !costKnown
+          ? "Response time rose past the ceiling — the second model call adds a round trip on every turn."
+          : step.why,
       score,
       before,
       delta: score - before,
@@ -199,9 +277,12 @@ export const attemptsOf = (record, session, { now = Date.now(), surface, budgetL
 
 /* The held-back figure Future AGI scored: a rejected attempt barely moves
    it; an accepted one closes most of the gap. */
-const heldAfter = (heldBase = 0, hh = 0, rejected = false) => clampPct(rejected
-  ? heldBase + (hh % 7) - 3
-  : heldBase + (100 - heldBase) * (0.55 + (hh % 30) / 100));
+const heldAfter = (heldBase = 0, hh = 0, rejected = false) =>
+  clampPct(
+    rejected
+      ? heldBase + (hh % 7) - 3
+      : heldBase + (100 - heldBase) * (0.55 + (hh % 30) / 100),
+  );
 
 /*
   The newer session: must-pass is the engine's own three-part set (marked,
@@ -213,14 +294,27 @@ const heldAfter = (heldBase = 0, hh = 0, rejected = false) => clampPct(rejected
 const attemptsV2 = (record, session, { now, surface, budgetLeft, tier }) => {
   const r = record.result;
   const started = Date.parse(session.startedAt);
-  const agent = codingAgentById(session.agentId) || { label: "Your coding agent" };
+  const agent = codingAgentById(session.agentId) || {
+    label: "Your coding agent",
+  };
   const mustIds = new Set(r.mustPassIds || []);
   /* Newer records keep the must-pass set apart from the targets. */
-  const all = [...(r.trainMeasuredTasks || []), ...(r.heldTasks || []), ...(r.mustPassTasks || [])];
-  const mustPass = all.filter((t) => mustIds.has(t.id) || t.critical || t.remembered);
+  const all = [
+    ...(r.trainMeasuredTasks || []),
+    ...(r.heldTasks || []),
+    ...(r.mustPassTasks || []),
+  ];
+  const mustPass = all.filter(
+    (t) => mustIds.has(t.id) || t.critical || t.remembered,
+  );
   const isMust = new Set(mustPass.map((t) => t.id));
   const visible = (r.trainMeasuredTasks || []).filter((t) => !isMust.has(t.id));
-  const before = visible.length ? clampPct((100 * visible.filter((t) => t.flakyToday).length * 0.5) / visible.length) : 0;
+  const before = visible.length
+    ? clampPct(
+        (100 * visible.filter((t) => t.flakyToday).length * 0.5) /
+          visible.length,
+      )
+    : 0;
   const per = PER_CONVERSATION[surface === "voice" ? "voice" : "chat"];
   const ceiling = record.limits?.costCeiling ?? 0;
   const latencyCeiling = record.limits?.latencyCeiling ?? 10;
@@ -245,7 +339,10 @@ const attemptsV2 = (record, session, { now, surface, budgetLeft, tier }) => {
       title: step.title,
       where: whereOf(session, agent, step, tier),
       commit: sha(key),
-      fingerprint: step.dirty && whereOf(session, agent, step, tier) === "local" ? sha(`${key}:dirty`) : null,
+      fingerprint:
+        step.dirty && whereOf(session, agent, step, tier) === "local"
+          ? sha(`${key}:dirty`)
+          : null,
       files,
     };
     if (gate) {
@@ -254,9 +351,20 @@ const attemptsV2 = (record, session, { now, surface, budgetLeft, tier }) => {
         ...base,
         gate: true,
         perScenario: {},
-        visible: visible.map((t) => ({ id: t.id, title: t.title, outcome: "not-run" })),
+        visible: visible.map((t) => ({
+          id: t.id,
+          title: t.title,
+          outcome: "not-run",
+        })),
         mustPass: { total: mustPass.length, failed: 0, notRun: true },
-        checks: [{ id: "judges", label: "No scenario or evaluation edited", actual: files.filter((f) => JUDGE_PATH.test(f)).join(", "), pass: false }],
+        checks: [
+          {
+            id: "judges",
+            label: "No scenario or evaluation edited",
+            actual: files.filter((f) => JUDGE_PATH.test(f)).join(", "),
+            pass: false,
+          },
+        ],
         accepted: false,
         why: gate,
         score: null,
@@ -266,43 +374,80 @@ const attemptsV2 = (record, session, { now, surface, budgetLeft, tier }) => {
       });
       continue;
     }
-    const perScenario = Object.fromEntries(visible.map((t, i) => {
-      const h = hashSeed(`${key}:${t.id}`) % 100;
-      const fixed = !step.reject ? h < 70 || i === 0 : h < 40;
-      return [t.id, fixed ? "fixed" : t.flakyToday && h > 90 ? "flaky" : "still-failing"];
-    }));
+    const perScenario = Object.fromEntries(
+      visible.map((t, i) => {
+        const h = hashSeed(`${key}:${t.id}`) % 100;
+        const fixed = !step.reject ? h < 70 || i === 0 : h < 40;
+        return [
+          t.id,
+          fixed ? "fixed" : t.flakyToday && h > 90 ? "flaky" : "still-failing",
+        ];
+      }),
+    );
     const mustFailed = step.reject === "mustPass" ? 1 : 0;
     const cost = step.reject === "cost" ? Math.max(ceiling, 0) + 6 : 0;
-    const latency = step.reject === "cost" && !costKnown ? latencyCeiling + 9 : 1;
+    const latency =
+      step.reject === "cost" && !costKnown ? latencyCeiling + 9 : 1;
     const checks = [
       { id: "model", label: "Model unchanged", pass: true },
       costKnown
-        ? { id: "cost", label: ceiling <= 0 ? "Cost per conversation · no increase" : `Cost per conversation within +${ceiling}%`, actual: `+${cost}%`, pass: cost <= Math.max(ceiling, 0) }
-        : { id: "cost", label: ceiling <= 0 ? "Cost per conversation · no increase" : `Cost per conversation within +${ceiling}%`, actual: "unverified — no cost data", pass: null },
-      { id: "latency", label: `Latency within +${latencyCeiling}%`, actual: `+${latency}%`, pass: latency <= latencyCeiling },
+        ? {
+            id: "cost",
+            label:
+              ceiling <= 0
+                ? "Cost per conversation · no increase"
+                : `Cost per conversation within +${ceiling}%`,
+            actual: `+${cost}%`,
+            pass: cost <= Math.max(ceiling, 0),
+          }
+        : {
+            id: "cost",
+            label:
+              ceiling <= 0
+                ? "Cost per conversation · no increase"
+                : `Cost per conversation within +${ceiling}%`,
+            actual: "unverified — no cost data",
+            pass: null,
+          },
+      {
+        id: "latency",
+        label: `Latency within +${latencyCeiling}%`,
+        actual: `+${latency}%`,
+        pass: latency <= latencyCeiling,
+      },
       { id: "protected", label: "Protected parts untouched", pass: true },
       { id: "judges", label: "No scenario or evaluation edited", pass: true },
     ];
-    const conversations = (visible.length + mustPass.length + (r.heldMeasured || 0)) * reps;
+    const conversations =
+      (visible.length + mustPass.length + (r.heldMeasured || 0)) * reps;
     const spend = Math.round(conversations * per);
     if (spent + spend > budgetLeft) {
       out.overBudget = true;
       break;
     }
     spent += spend;
-    const fixedN = Object.values(perScenario).filter((v) => v === "fixed").length;
-    const score = visible.length ? clampPct((100 * fixedN) / visible.length) : 0;
+    const fixedN = Object.values(perScenario).filter(
+      (v) => v === "fixed",
+    ).length;
+    const score = visible.length
+      ? clampPct((100 * fixedN) / visible.length)
+      : 0;
     const hh = hashSeed(`${key}:held`);
     out.push({
       ...base,
       perScenario,
-      visible: visible.map((t) => ({ id: t.id, title: t.title, outcome: perScenario[t.id] })),
+      visible: visible.map((t) => ({
+        id: t.id,
+        title: t.title,
+        outcome: perScenario[t.id],
+      })),
       mustPass: { total: mustPass.length, failed: mustFailed },
       checks,
       accepted: !step.reject,
-      why: step.reject === "cost" && !costKnown
-        ? "Response time rose past the ceiling — the second model call adds a round trip on every turn."
-        : step.why,
+      why:
+        step.reject === "cost" && !costKnown
+          ? "Response time rose past the ceiling — the second model call adds a round trip on every turn."
+          : step.why,
       score,
       before,
       delta: score - before,
@@ -320,7 +465,8 @@ export const sessionState = (session, attempts) => {
   if (!session) return null;
   const accepted = attempts.find((a) => a.accepted);
   if (accepted) return { key: "accepted", attempt: accepted };
-  if (attempts.length >= ATTEMPT_BUDGET || attempts.overBudget) return { key: "budget", money: !!attempts.overBudget };
+  if (attempts.length >= ATTEMPT_BUDGET || attempts.overBudget)
+    return { key: "budget", money: !!attempts.overBudget };
   return { key: "waiting" };
 };
 
@@ -337,10 +483,16 @@ export const attemptProof = (record, attempt, name) => {
     "",
     /* A workspace key could read the held-back set: say what the proof can promise. */
     ...(attempt.agentId !== undefined && !heldBackHiddenFrom(attempt.agentId)
-      ? ["Held-back scenarios were readable by this agent — this proof promises integrity, not secrecy.", ""]
+      ? [
+          "Held-back scenarios were readable by this agent — this proof promises integrity, not secrecy.",
+          "",
+        ]
       : []),
     "### Constraints",
-    ...attempt.checks.map((c) => `- ${c.pass === null ? "◌" : c.pass ? "✓" : "✗"} ${c.label}${c.actual ? ` — ${c.actual}` : ""}`),
+    ...attempt.checks.map(
+      (c) =>
+        `- ${c.pass === null ? "◌" : c.pass ? "✓" : "✗"} ${c.label}${c.actual ? ` — ${c.actual}` : ""}`,
+    ),
     "",
     `_The starting version and the change ran on the same frozen scenarios and evaluations, each repeated ${REPEATS} times. The verdict was computed by Future AGI, not by ${attempt.improver}._`,
     `Full proof: https://app.futureagi.com/improvements/${record.id}/attempts/${attempt.n}`,
@@ -363,7 +515,16 @@ export const asCoderImprovement = (record, agent) => {
     status: OPT_STATUS.COMPLETED,
     completedAt: new Date().toISOString(),
     improver: { agentId: agent.id, label: agent.label },
-    result: result ? { ...result, trials: [], winner: null, finalists: [], pool: [], overruled: null } : result,
+    result: result
+      ? {
+          ...result,
+          trials: [],
+          winner: null,
+          finalists: [],
+          pool: [],
+          overruled: null,
+        }
+      : result,
   };
 };
 
@@ -372,25 +533,53 @@ export const asCoderImprovement = (record, agent) => {
  * waiting for (or judging) attempts, one accepted, or out of attempts.
  * { key: "running" | "ready" | "no-fix", label, headline, attempt?, attempts }
  */
-export const coderStatusOf = (record, envId, { now = Date.now(), surface, tier } = {}) => {
-  const label = codingAgentById(record?.improver?.agentId)?.label || record?.improver?.label || "Your coding agent";
+export const coderStatusOf = (
+  record,
+  envId,
+  { now = Date.now(), surface, tier } = {},
+) => {
+  const label =
+    codingAgentById(record?.improver?.agentId)?.label ||
+    record?.improver?.label ||
+    "Your coding agent";
   const session = improverSessionFor(envId, record?.id);
-  const attempts = session ? attemptsOf(record, session, { now, surface, budgetLeft: record.budget || Infinity, tier }) : [];
+  const attempts = session
+    ? attemptsOf(record, session, {
+        now,
+        surface,
+        budgetLeft: record.budget || Infinity,
+        tier,
+      })
+    : [];
   const st = session ? sessionState(session, attempts) : { key: "waiting" };
   if (st.key === "accepted") {
     return {
-      key: "ready", label: "Ready for review", attempt: st.attempt, attempts, improver: label,
+      key: "ready",
+      label: "Ready for review",
+      attempt: st.attempt,
+      attempts,
+      improver: label,
       headline: `${st.attempt.label} accepted — ${st.attempt.visible.filter((x) => x.outcome === "fixed").length} of ${st.attempt.visible.length} scenarios fixed, must-pass held, every constraint met.`,
     };
   }
   if (st.key === "budget") {
     return {
-      key: "no-fix", label: "No accepted attempt", attempts, improver: label,
-      headline: st.money ? `${label} reached the budget without an accepted attempt.` : `${label} used all ${ATTEMPT_BUDGET} attempts without an accepted one.`,
+      key: "no-fix",
+      label: "No accepted attempt",
+      attempts,
+      improver: label,
+      headline: st.money
+        ? `${label} reached the budget without an accepted attempt.`
+        : `${label} used all ${ATTEMPT_BUDGET} attempts without an accepted one.`,
     };
   }
   return {
-    key: "running", label: attempts.length ? `${label} · attempt ${attempts.length + 1}` : `${label} is fixing`, attempts, improver: label,
+    key: "running",
+    label: attempts.length
+      ? `${label} · attempt ${attempts.length + 1}`
+      : `${label} is fixing`,
+    attempts,
+    improver: label,
     headline: attempts.length
       ? `${label} has submitted ${attempts.length} ${attempts.length === 1 ? "attempt" : "attempts"} — none accepted yet.`
       : `Waiting for ${label}'s first attempt.`,

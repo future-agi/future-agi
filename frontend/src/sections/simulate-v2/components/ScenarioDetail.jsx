@@ -756,17 +756,21 @@ function DrawerSheet({
         />
       </Box>
 
-      {/* the scenario */}
-      <Part title="Scenario">
-        {s.expected && (
-          <Row label="Passes when">
-            <Typography
-              className="sd-val"
-              sx={{ color: "text.primary !important", fontWeight: 500 }}
-            >
-              {asSentence(s.expected)}
-            </Typography>
-          </Row>
+      {/* Three layers kept apart (scenarios.md): what the agent sees, the
+          simulated customer's hidden instruction, and the hidden marking. */}
+      <Part title="What the agent sees">
+        <Row label="First message">
+          <Typography className="sd-val">
+            {row.firstMessage ||
+              "The simulated customer opens in their own words, from the instruction below. Only that message reaches the agent — never the instruction itself."}
+          </Typography>
+        </Row>
+      </Part>
+      <Part title="Hidden · the simulated customer's instruction">
+        {!s.persona && !hasBrief(brief) && (
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            No instruction written yet.
+          </Typography>
         )}
         {s.persona && (
           <Row label="Caller">
@@ -814,6 +818,18 @@ function DrawerSheet({
         {hasBrief(brief) && (
           <Row label="Brief">
             <BriefBlock brief={brief} />
+          </Row>
+        )}
+      </Part>
+      <Part title="Hidden · how it's marked">
+        {s.expected && (
+          <Row label="Passes when">
+            <Typography
+              className="sd-val"
+              sx={{ color: "text.primary !important", fontWeight: 500 }}
+            >
+              {asSentence(s.expected)}
+            </Typography>
           </Row>
         )}
         {goals.length > 0 && (

@@ -467,7 +467,7 @@ const TaskListView = ({
         header: "Project",
         size: 150,
         cell: ({ getValue }) => (
-          <Typography variant="body2" noWrap sx={{ fontSize: "13px" }}>
+          <Typography variant="body2" noWrap sx={{ fontSize: "12px" }}>
             {getValue() || "—"}
           </Typography>
         ),
@@ -497,7 +497,7 @@ const TaskListView = ({
         header: "Sampling",
         size: 90,
         cell: ({ getValue }) => (
-          <Typography variant="body2" sx={{ fontSize: "13px" }}>
+          <Typography variant="body2" sx={{ fontSize: "12px" }}>
             {getValue()}%
           </Typography>
         ),

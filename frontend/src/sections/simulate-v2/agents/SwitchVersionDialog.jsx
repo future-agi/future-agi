@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Alert, Box, Button, Dialog, Stack, Typography } from "@mui/material";
+import { Alert, Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { toolFit } from "../_mock/toolFit";
 import { envVersionNameOf } from "../_mock/codeRefs";
@@ -9,6 +9,7 @@ import {
   productionAgentVersion,
   versionNumber,
 } from "../_mock/versions";
+import ClosableDialog from "../components/ClosableDialog";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -43,7 +44,7 @@ export default function SwitchVersionDialog({
   );
 
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       PaperProps={{
@@ -114,7 +115,7 @@ export default function SwitchVersionDialog({
               : `Make ${name} the default`}
         </Button>
       </Stack>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 

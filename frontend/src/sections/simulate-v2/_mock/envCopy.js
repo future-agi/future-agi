@@ -8,6 +8,7 @@
 */
 import { groupsOf } from "./scenarioOrg";
 import { envMustPassOf } from "./improvementStart";
+import { environmentVersions } from "./versions";
 
 /** The agent record an environment stores — a connected agent minus what the list derives. */
 export const agentRecordOf = (a) => {
@@ -45,7 +46,7 @@ export const copyScopesOf = (env, envState, selectedIds = []) => {
     { id: "all", label: "All scenarios", ids: live.map((s) => s.id) },
     ...groupsOf(envState).map((g) => ({
       id: `group:${g.id}`,
-      label: `Group · ${g.name}`,
+      label: `Suite · ${g.name}`,
       ids: g.ids.filter((id) => liveIds.has(id)),
     })),
     ...(must.length
@@ -83,8 +84,39 @@ export const copyPlanOf = ({ sameAgent, scope, total, runs }) => {
 
 /** The same copy from the CLI. */
 export const envCopyCli = ({ env, name, version, agentName, scopeId }) =>
-  `agent-learn env copy ${env.id} --name "${name}" --version ${version}${agentName ? ` --agent "${agentName}"` : ""}${scopeId && scopeId !== "all" ? ` --scope ${scopeId.replace(/^group:/, "group=")}` : ""}`;
+  `fi sim env copy ${env.id} --name "${name}" --version ${version}${agentName ? ` --agent "${agentName}"` : ""}${scopeId && scopeId !== "all" ? ` --scope ${scopeId.replace(/^group:/, "group=")}` : ""}`;
 
 /** Roll back from the CLI: the next version, made from an older one. */
 export const envRollbackCli = (env, label) =>
-  `agent-learn env rollback ${env.id} --to ${label}`;
+  `fi sim env rollback ${env.id} --to ${label}`;
+
+/*
+  Private environments (clarified plan): a copy made in this workspace reuses
+  another environment at a pinned version. When that source saves a newer
+  version, the copy is offered it to review — never applied on its own.
+  Returns { sourceId, sourceName, from, to, notes } or null.
+*/
+export const privateUpdateOf = (env, envState, state) => {
+  const src = env?.copyOf;
+  if (!src?.envId || !src.version) return null;
+  const source = (state?.myEnvironments || []).find((e) => e.id === src.envId);
+  if (!source) return null;
+  const versions = environmentVersions(source, state?.byEnv?.[source.id]);
+  const latest = versions[0]?.label;
+  if (!latest || latest === src.version) return null;
+  if (envState?.privateUpdateSkipped === `${source.id}@${latest}`) return null;
+  const at = versions.findIndex((v) => v.label === src.version);
+  const newer = (at === -1 ? versions.slice(0, 1) : versions.slice(0, at)).map(
+    (v) => ({
+      label: v.label,
+      note: v.note || "Saved",
+    }),
+  );
+  return {
+    sourceId: source.id,
+    sourceName: source.name,
+    from: src.version,
+    to: latest,
+    notes: newer,
+  };
+};

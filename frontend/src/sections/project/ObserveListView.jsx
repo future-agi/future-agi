@@ -22,6 +22,7 @@ import { buildProjectListApiFilters } from "./common";
 import { toValidDate } from "src/utils/format-time";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { readObserveProjectPage } from "src/api/project/observe-project-list";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 // ── Helpers ──
 
@@ -146,7 +147,7 @@ const ObserveListView = forwardRef(
             <Typography
               variant="body2"
               noWrap
-              sx={{ fontWeight: 500, fontSize: 13 }}
+              sx={{ fontWeight: 500, fontSize: 12 }}
             >
               {getValue()}
             </Typography>
@@ -166,7 +167,7 @@ const ObserveListView = forwardRef(
               return (
                 <Typography
                   variant="body2"
-                  sx={{ fontSize: 13, color: "text.disabled" }}
+                  sx={{ fontSize: 12, color: "text.disabled" }}
                 >
                   —
                 </Typography>
@@ -244,7 +245,7 @@ const ObserveListView = forwardRef(
                     flexShrink: 0,
                   }}
                 />
-                <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+                <Typography variant="body2" noWrap sx={{ fontSize: 12 }}>
                   {formatDistanceToNow(parsed, { addSuffix: true })}
                 </Typography>
               </Box>
@@ -315,7 +316,7 @@ const ObserveListView = forwardRef(
           }
           getRowId={(row) => row.id}
           enableSelection
-          rowHeight={44}
+          rowHeight={ROW_HEIGHT.default}
           emptyMessage={isError ? "" : EMPTY_MESSAGE}
         />
         <DataTablePagination

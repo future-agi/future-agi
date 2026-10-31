@@ -247,7 +247,7 @@ const improvementRowsRaw = ({
           ? null
           : improvementTotalSpend(record, env.surface, { attempts });
         /* Fix to proposal, from what the run had to simulate — reproducing,
-         every trial, the held-back check. */
+         every candidate, the held-back check. */
         const r = record.result;
         const first = (record.scenarioIds || []).length * REPEATS;
         const minutes =

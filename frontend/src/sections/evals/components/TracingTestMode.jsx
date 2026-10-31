@@ -83,6 +83,7 @@ import {
   parseVoiceCallDetailResponse,
   parseVoiceCallListResponse,
 } from "src/api/project/observe-contracts";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const ROW_TYPE_OPTIONS = [
   { value: "Span", label: "Spans", icon: "solar:layers-outline" },
@@ -1535,7 +1536,7 @@ const TracingTestMode = React.forwardRef(
         {/* Loading */}
         {(loading || isPendingNewFetch) && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
-            <CircularProgress size={20} />
+            <ContentSkeleton variant="panel" />
           </Box>
         )}
 

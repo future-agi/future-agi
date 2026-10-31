@@ -1,3 +1,4 @@
+import EmptyState from "src/components/empty-state";
 import React, { useState, useCallback, useMemo } from "react";
 import { useParams } from "react-router";
 import PropTypes from "prop-types";
@@ -6,7 +7,6 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
   Divider,
   Stack,
   Typography,
@@ -23,6 +23,7 @@ import {
 import Iconify from "src/components/iconify";
 import SharedVoiceView from "./SharedVoiceView";
 import { isVoiceCall } from "./sharedViewHelpers";
+import ContentSkeleton from "src/components/content-skeleton";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
@@ -260,7 +261,7 @@ export default function SharedView() {
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={32} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : isVoice ? (
           /* Voice call view — transcript + audio player, read-only */
@@ -587,26 +588,19 @@ function SharedDashboardView({ dashboard }) {
             ))}
           </Box>
         ) : (
-          <Box
+          <EmptyState
+            icon="solar:widget-4-linear"
+            title="No widgets yet"
+            description="This dashboard has no widgets."
             sx={{
-              py: 8,
-              px: 2,
-              textAlign: "center",
+              pt: 6,
+              pb: 6,
               bgcolor: "background.paper",
               border: "1px solid",
               borderColor: "divider",
               borderRadius: 1,
             }}
-          >
-            <Iconify
-              icon="solar:widget-4-linear"
-              width={40}
-              sx={{ color: "text.disabled", mb: 1 }}
-            />
-            <Typography sx={{ fontSize: 13, color: "text.secondary" }}>
-              No widgets in this dashboard
-            </Typography>
-          </Box>
+          />
         )}
       </Box>
     </Box>

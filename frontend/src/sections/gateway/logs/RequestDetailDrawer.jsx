@@ -637,7 +637,7 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
       {!isLoading && log && (
         <>
           <Box sx={{ px: 2, borderBottom: 1, borderColor: "divider" }}>
-            <Tabs
+            <Tabs sx={{ boxShadow: "none" }}
               value={activeTab}
               onChange={(_e, v) => setActiveTab(v)}
               variant="scrollable"

@@ -11,6 +11,7 @@ import { getOptimizationRunDetailColumDef } from "./common";
 import NoRowsOverlay from "./NoRowsOverlay";
 import { useTestDetail } from "../context/TestDetailContext";
 import OptimizationRerun from "./OptimizationRerun";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const rowStyle = { cursor: "pointer" };
 const getRowId = (params) => params.data.id;
@@ -197,7 +198,7 @@ const OptimizationRunDetail = () => {
             ref={gridRef}
             theme={gridTheme}
             onGridReady={onGridReady}
-            rowHeight={44}
+            rowHeight={ROW_HEIGHT.twoLine}
             columnDefs={columnDefs}
             defaultColDef={defaultColDef}
             suppressServerSideFullWidthLoadingRow={true}

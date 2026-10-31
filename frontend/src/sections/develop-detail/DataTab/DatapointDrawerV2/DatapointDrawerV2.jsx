@@ -122,9 +122,6 @@ const STATUS = {
 const DATAPOINT_DRAWER_THEME_PARAMS = {
   headerColumnBorder: { width: "0px" },
   headerBackgroundColor: "whiteSpace.50",
-  headerFontFamily: "IBM Plex Sans",
-  headerFontWeight: "fontWeightMedium",
-  headerFontSize: "14px",
 };
 
 const NavIconButton = ({ icon, tooltip, onClick, disabled, loading }) => (
@@ -389,7 +386,22 @@ const DatapointDrawerChild = () => {
       headerName: "Evaluation Metrics",
       field: "data.eval_name",
       flex: 1,
-      cellRenderer: (params) => (loading ? <SkeletonLoader /> : params.value),
+      cellRenderer: (params) =>
+        loading ? (
+          <SkeletonLoader />
+        ) : (
+          <Box
+            component="span"
+            title={params.value}
+            sx={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {params.value}
+          </Box>
+        ),
     },
     {
       headerName: "Score",
@@ -441,6 +453,8 @@ const DatapointDrawerChild = () => {
   }, [column]);
 
   const defaultColDef = {
+    // Centre every cell, so a badge or button lines up with plain text.
+    cellStyle: { display: "flex", alignItems: "center" },
     lockVisible: true,
     sortable: true,
     filter: false,

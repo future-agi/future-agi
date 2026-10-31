@@ -6,6 +6,7 @@ import { useAgThemeWith } from "src/hooks/use-ag-theme";
 
 import SummaryPercentileCellRenderer from "./Renderers/SummaryPercentileCellRenderer";
 import SummaryAverageCellRenderer from "./Renderers/SummaryAverageCellRenderer";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 const AVERAGE_GRID_THEME_PARAMS = {
   headerColumnBorder: { width: "0px" },
@@ -166,14 +167,14 @@ const ResultSummary = ({ data }) => {
         defaultColDef={averageDefaultColDef}
         domLayout="autoHeight"
         animateRows={true}
-        rowHeight={44}
+        rowHeight={ROW_HEIGHT.default}
       />
       <AgGridReact
         columnDefs={percentileColumns}
         rowData={percentileRows}
         alwaysShowHorizontalScroll
         theme={percentileGridTheme}
-        rowHeight={44}
+        rowHeight={ROW_HEIGHT.default}
         defaultColDef={percentileDefaultColDef}
         domLayout="autoHeight"
         animateRows={true}

@@ -3,9 +3,10 @@ import { ShowComponent } from "src/components/show";
 import DetailsEdit from "./DetailsEdit";
 import PropTypes from "prop-types";
 import { useGetTaskData } from "../common";
-import { Alert, Box, Button, CircularProgress, Drawer } from "@mui/material";
+import { Alert, Box, Button, Drawer } from "@mui/material";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const EditTaskDrawer = (props) => {
   const setVisibleSectionRef = useRef(null);
@@ -66,7 +67,7 @@ const EditTaskDrawerChild = ({
               height: "100%",
             }}
           >
-            <CircularProgress size={28} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : (
           <Alert

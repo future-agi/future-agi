@@ -363,8 +363,8 @@ const PromptActions = () => {
           <span style={{ display: "inline-block", marginTop: "6px" }}>
             <Iconify
               icon="solar:alt-arrow-right-linear"
-              width={24}
-              height={24}
+              width={16}
+              height={16}
             />
           </span>
 
@@ -569,7 +569,7 @@ const PromptActions = () => {
                       });
                     }}
                     startIcon={
-                      <SvgColor width={20} src="/assets/icons/ic_commit.svg" />
+                      <SvgColor width={16} src="/assets/icons/ic_commit.svg" />
                     }
                   >
                     <Typography variant="s1" fontWeight={"fontWeightMedium"}>
@@ -746,7 +746,6 @@ const PromptActions = () => {
 
       <Box sx={{ paddingX: "16px", marginBottom: "8px" }}>
         <Tabs
-          textColor="primary"
           value={currentTab}
           onChange={(e, value) => {
             // Prevent tab change if conditions aren't met
@@ -768,24 +767,17 @@ const PromptActions = () => {
               value: value,
             });
           }}
-          TabIndicatorProps={{
-            style: {
-              backgroundColor: theme.palette.primary.main,
-              height: "2px",
-              borderRadius: "12px",
-            },
-          }}
-          sx={{ ...tabSx, borderColor: "divider" }}
+          sx={tabSx}
         >
           <Tab
-            icon={<SvgColor src={"/assets/icons/navbar/ic_evaluate.svg"} />}
+            icon={<SvgColor width={16} src={"/assets/icons/navbar/ic_evaluate.svg"} />}
             iconPosition="start"
             label={"Playground"}
             value={"Playground"}
           />
 
           <Tab
-            icon={<SvgColor src={"/assets/icons/navbar/ic_eval.svg"} />}
+            icon={<SvgColor width={16} src={"/assets/icons/navbar/ic_eval.svg"} />}
             iconPosition="start"
             label={
               versions.length === 0 ||
@@ -812,7 +804,7 @@ const PromptActions = () => {
           />
 
           <Tab
-            icon={<SvgColor src={"/assets/icons/ic_metrics.svg"} />}
+            icon={<SvgColor width={16} src={"/assets/icons/ic_metrics.svg"} />}
             iconPosition="start"
             label={
               versions.length === 0 ||
@@ -842,8 +834,8 @@ const PromptActions = () => {
             icon={
               <Iconify
                 icon="solar:chat-round-line-linear"
-                width={20}
-                height={20}
+                width={16}
+                height={16}
               />
             }
             iconPosition="start"

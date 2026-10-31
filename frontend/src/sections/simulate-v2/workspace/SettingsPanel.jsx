@@ -12,7 +12,6 @@ import {
   Slider,
   Chip,
   Tooltip,
-  Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
@@ -84,6 +83,7 @@ import { simulatorOf, callerChangePatch } from "../_mock/envModel";
 import { envTurnLimitOf, TURN_LIMIT_RANGE } from "../_mock/runStream";
 import { useSimStore, useWorkspaceSettings } from "../store";
 import RollbackDialog from "./RollbackDialog";
+import ClosableDialog from "../components/ClosableDialog";
 
 /**
  * Environment settings.
@@ -1388,7 +1388,7 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
         </Stack>
       </Stack>
 
-      <Dialog
+      <ClosableDialog
         open={resetDialogOpen}
         onClose={() => setResetDialogOpen(false)}
         PaperProps={{
@@ -1430,7 +1430,7 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
             Reset sandbox
           </Button>
         </DialogActions>
-      </Dialog>
+      </ClosableDialog>
     </SectionCard>
   );
 }
