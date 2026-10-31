@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import QueryResults, { numericColumns } from "./QueryResults";
 
@@ -31,7 +31,10 @@ describe("SQL query results", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("0.5")).toBeInTheDocument();
     expect(screen.getByText("NULL")).toBeInTheDocument();
-    expect(screen.getByText("2 rows · 2 columns · 15 ms")).toBeVisible();
+    const details = screen.getByRole("group", { name: "Result details" });
+    expect(within(details).getByText("2 rows")).toBeVisible();
+    expect(within(details).getByText("2 columns")).toBeVisible();
+    expect(within(details).getByText("15 ms")).toBeVisible();
   });
   it("renders malicious labels as text, not markup", () => {
     renderResult({

@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import { Typography } from "@mui/material";
+import Iconify from "src/components/iconify";
 import { sqlApi } from "./api";
 import { ESTIMATE_DEBOUNCE_MS, describeEstimate } from "./estimateText";
+import { warningText } from "./queryUi";
 
 export default function QueryEstimate({
   projectId,
@@ -46,18 +48,31 @@ export default function QueryEstimate({
   const { tone, text } = describeEstimate(state);
   return (
     <Typography
-      variant="caption"
       aria-live="polite"
       data-testid="sql-estimate"
       data-tone={tone}
-      color={tone === "warning" ? "warning.main" : "text.secondary"}
       sx={{
         ml: "auto",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
         textAlign: "right",
+        gap: 0.5,
         minWidth: 0,
         overflowWrap: "anywhere",
+        typography: "s3",
+        color: tone === "warning" ? warningText : "text.secondary",
       }}
     >
+      <Iconify
+        icon={
+          tone === "warning"
+            ? "solar:danger-triangle-linear"
+            : "solar:database-linear"
+        }
+        width={12}
+        sx={{ flexShrink: 0 }}
+      />
       {text}
     </Typography>
   );

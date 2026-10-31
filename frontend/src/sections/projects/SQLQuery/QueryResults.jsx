@@ -18,6 +18,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import {
   Bar,
   BarChart,
@@ -27,6 +28,87 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import Iconify from "src/components/iconify";
+import { MetaChip } from "./queryUi";
+
+// Result table styling follows the shared DataTable (Environments, Evals,
+// Datasets): 13px Inter, muted medium-weight headers, solid row dividers and a
+// hover tint. Values stay on one line; the full value is in the cell title.
+const TABLE_CONTAINER_SX = {
+  maxHeight: 440,
+  border: 1,
+  borderColor: "divider",
+  borderRadius: 1,
+  "& .MuiTableCell-root": {
+    typography: "s2_1",
+    px: 1.5,
+    py: 1,
+    borderBottom: "1px solid",
+    borderColor: "divider",
+    whiteSpace: "nowrap",
+    maxWidth: 360,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    fontVariantNumeric: "tabular-nums",
+  },
+  "& .MuiTableCell-head": {
+    py: 1.25,
+    color: "text.secondary",
+    fontWeight: "fontWeightMedium",
+    bgcolor: "background.paper",
+    backgroundImage: "none",
+  },
+  "& .MuiTableRow-root:last-of-type .MuiTableCell-body": {
+    borderBottom: "none",
+  },
+};
+
+const TYPE_SX = {
+  ml: 0.75,
+  typography: "s3",
+  fontFamily: "monospace",
+  color: "text.secondary",
+  fontWeight: "fontWeightRegular",
+};
+
+const EMPTY_VALUE_SX = {
+  typography: "s2_1",
+  fontFamily: "monospace",
+  color: "text.secondary",
+};
+
+// Same segmented choice as the Environments scenario editor: separate
+// outlined buttons, the selected one tinted with the brand primary.
+const VIEW_TOGGLE_SX = {
+  gap: 0.5,
+  border: 0,
+  bgcolor: "transparent",
+  "& .MuiToggleButtonGroup-grouped": {
+    m: 0,
+    height: 32,
+    px: 1.25,
+    gap: 0.75,
+    border: "1px solid !important",
+    borderColor: (t) => `${t.palette.divider} !important`,
+    borderRadius: "4px !important",
+    typography: "s2",
+    fontWeight: "fontWeightSemiBold",
+    textTransform: "none",
+    color: "text.secondary",
+    bgcolor: "background.paper",
+    "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+  },
+  "& .MuiToggleButtonGroup-grouped.Mui-selected": {
+    color: "primary.main",
+    borderColor: (t) => `${t.palette.primary.main} !important`,
+    bgcolor: (t) =>
+      alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.16 : 0.09),
+    "&:hover": {
+      bgcolor: (t) =>
+        alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.22 : 0.14),
+    },
+  },
+};
 
 export const numericColumns = (columns, rows) =>
   columns.filter(
@@ -55,6 +137,9 @@ export default function QueryResults({
   const columns = result?.columns || [];
   const rows = result?.rows || [];
   const numeric = numericColumns(columns, rows);
+  const numericIndexes = new Set(
+    columns.flatMap((c, i) => (numeric.includes(c) ? [i] : [])),
+  );
   const xName = columns.some((c) => c.name === x) ? x : columns[0]?.name || "";
   const yName = numeric.some((c) => c.name === y) ? y : numeric[0]?.name || "";
   const xi = columns.findIndex((c) => c.name === xName);
@@ -78,10 +163,12 @@ export default function QueryResults({
   if (!result?.columns && (presentation || !showEditorGuidance))
     return (
       <Box sx={{ px: 1, py: 2 }}>
-        <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
+        <Typography
+          sx={{ typography: "s1", fontWeight: "fontWeightSemiBold", mb: 0.5 }}
+        >
           {presentation?.title || "Waiting for query results"}
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
           {presentation?.description ||
             "Results will appear here when available."}
         </Typography>
@@ -90,21 +177,24 @@ export default function QueryResults({
   if (!result?.columns)
     return (
       <Box sx={{ px: 1, py: 2 }}>
-        <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
+        <Typography
+          sx={{ typography: "s1", fontWeight: "fontWeightSemiBold", mb: 0.5 }}
+        >
           Your results appear here
         </Typography>
         <Typography
-          variant="body2"
-          color="text.secondary"
-          sx={{ maxWidth: 440 }}
+          sx={{ typography: "s2", color: "text.secondary", maxWidth: 440 }}
         >
           Run a query to inspect its results. Start with a count or a small time
           window.
         </Typography>
         <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ display: "block", mt: 1 }}
+          sx={{
+            display: "block",
+            mt: 1,
+            typography: "s3",
+            color: "text.secondary",
+          }}
         >
           Explore fields in Catalog or choose a vetted query in Examples.
         </Typography>
@@ -125,16 +215,35 @@ export default function QueryResults({
           value={mode}
           onChange={(_, value) => value && setMode(value)}
           aria-label="Result view"
+          sx={VIEW_TOGGLE_SX}
         >
-          <ToggleButton value="table">Table</ToggleButton>
+          <ToggleButton value="table">
+            <Iconify icon="solar:server-square-linear" width={16} />
+            Table
+          </ToggleButton>
           <ToggleButton value="bar" disabled={!numeric.length}>
+            <Iconify icon="solar:chart-2-linear" width={16} />
             Chart
           </ToggleButton>
         </ToggleButtonGroup>
-        <Typography variant="caption" color="text.secondary">
-          {rows.length.toLocaleString()} rows ·{" "}
-          {columns.length.toLocaleString()} columns · {result.elapsed_ms} ms
-        </Typography>
+        <Stack
+          direction="row"
+          gap={0.75}
+          flexWrap="wrap"
+          useFlexGap
+          role="group"
+          aria-label="Result details"
+        >
+          <MetaChip icon="solar:hamburger-menu-linear">
+            {rows.length.toLocaleString()} rows
+          </MetaChip>
+          <MetaChip icon="solar:align-vertical-spacing-linear">
+            {columns.length.toLocaleString()} columns
+          </MetaChip>
+          <MetaChip icon="solar:stopwatch-linear">
+            {result.elapsed_ms} ms
+          </MetaChip>
+        </Stack>
         {mode === "bar" && (
           <>
             <TextField
@@ -143,6 +252,7 @@ export default function QueryResults({
               label="Category"
               value={xName}
               onChange={(e) => setX(e.target.value)}
+              InputProps={{ sx: { typography: "s2" } }}
               sx={{ minWidth: 140 }}
             >
               {columns.map((c) => (
@@ -157,6 +267,7 @@ export default function QueryResults({
               label="Value"
               value={yName}
               onChange={(e) => setY(e.target.value)}
+              InputProps={{ sx: { typography: "s2" } }}
               sx={{ minWidth: 140 }}
             >
               {numeric.map((c) => (
@@ -180,11 +291,13 @@ export default function QueryResults({
         </Alert>
       ) : mode === "bar" ? (
         <>
-          <Typography variant="subtitle2">
+          <Typography
+            sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}
+          >
             {yName} by {xName}
           </Typography>
           {rows.length > 50 && (
-            <Typography variant="caption">
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
               Chart shows the first 50 result rows. The table and downloads
               contain all returned rows.
             </Typography>
@@ -255,54 +368,51 @@ export default function QueryResults({
         </>
       ) : (
         <>
-          <TableContainer
-            sx={{
-              maxHeight: 440,
-              border: 1,
-              borderColor: "divider",
-              borderRadius: 1,
-            }}
-          >
+          <TableContainer sx={TABLE_CONTAINER_SX}>
             <Table stickyHeader size="small" aria-label="SQL query results">
               <TableHead>
                 <TableRow>
-                  {columns.map((c) => (
+                  {columns.map((c, j) => (
                     <TableCell
                       key={c.name}
-                      sx={{ whiteSpace: "nowrap", fontFamily: "monospace" }}
+                      align={numericIndexes.has(j) ? "right" : "left"}
+                      title={`${c.name} · ${c.type}`}
                     >
                       {c.name}
-                      <Typography
-                        component="div"
-                        variant="caption"
-                        color="text.secondary"
-                      >
+                      <Box component="span" sx={TYPE_SX}>
                         {c.type}
-                      </Typography>
+                      </Box>
                     </TableCell>
                   ))}
                 </TableRow>
               </TableHead>
               <TableBody>
                 {rows.slice(page * 50, page * 50 + 50).map((row, i) => (
-                  <TableRow key={page * 50 + i}>
+                  <TableRow key={page * 50 + i} hover>
                     {row.map((value, j) => (
                       <TableCell
                         key={columns[j].name}
-                        sx={{
-                          maxWidth: 480,
-                          overflowWrap: "anywhere",
-                          fontVariantNumeric: "tabular-nums",
-                        }}
+                        align={numericIndexes.has(j) ? "right" : "left"}
+                        // Only long values can be cut off by the ellipsis.
+                        title={
+                          value != null && String(value).length > 40
+                            ? String(value)
+                            : undefined
+                        }
                       >
                         {value == null ? (
-                          <Typography
-                            component="span"
-                            variant="caption"
-                            color="text.secondary"
-                          >
+                          <Box component="span" sx={EMPTY_VALUE_SX}>
                             NULL
-                          </Typography>
+                          </Box>
+                        ) : value === "" ? (
+                          <Box
+                            component="span"
+                            title="Empty string"
+                            aria-label="Empty string"
+                            sx={EMPTY_VALUE_SX}
+                          >
+                            &apos;&apos;
+                          </Box>
                         ) : (
                           String(value)
                         )}
@@ -320,6 +430,14 @@ export default function QueryResults({
             rowsPerPageOptions={[50]}
             page={page}
             onPageChange={(_, value) => setPage(value)}
+            sx={{
+              mt: "0 !important",
+              "& .MuiTablePagination-toolbar": { minHeight: 40, height: 40 },
+              "& .MuiTablePagination-displayedRows": {
+                typography: "s2",
+                color: "text.secondary",
+              },
+            }}
           />
         </>
       )}

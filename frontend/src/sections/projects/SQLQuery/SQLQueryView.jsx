@@ -5,6 +5,7 @@ import {
   Alert,
   Box,
   Button,
+  ButtonGroup,
   CircularProgress,
   LinearProgress,
   Dialog,
@@ -32,6 +33,17 @@ import QueryEstimate from "./QueryEstimate";
 import QueryExamples from "./QueryExamples";
 import QueryCatalog from "./QueryCatalog";
 import { getSQLCompletions } from "./sqlCompletions";
+import Iconify from "src/components/iconify";
+import {
+  ACTION_BUTTON_PROPS,
+  ACTION_BUTTON_SX,
+  CONTROL_HEIGHT,
+  MetaChip,
+  PRIMARY_BUTTON_SX,
+  QUERY_TABS_SX,
+  StatePill,
+  warningText,
+} from "./queryUi";
 import {
   describeQueryWindow,
   getEditorHeight,
@@ -283,8 +295,12 @@ export default function SQLQueryView() {
       setSaving(false);
     }
   };
+  const addToDashboardDisabled =
+    !catalog?.can_save ||
+    selected?.visibility !== "project" ||
+    selected?.sql !== sql;
   return (
-    <Box sx={{ p: { xs: 2, md: 2.5 }, minWidth: 0, maxWidth: "100%" }}>
+    <Box sx={{ p: 2, minWidth: 0, maxWidth: "100%" }}>
       <Stack spacing={1.5}>
         <Stack
           direction="row"
@@ -294,38 +310,59 @@ export default function SQLQueryView() {
           useFlexGap
           gap={1}
         >
-          <Stack
-            direction="row"
-            alignItems="baseline"
-            gap={1.5}
-            flexWrap="wrap"
-            useFlexGap
-          >
-            <Typography variant="h6" component="h1">
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              component="h1"
+              sx={{ typography: "m3", fontWeight: "fontWeightSemiBold" }}
+            >
               Query
             </Typography>
-            <Typography variant="caption" color="text.secondary">
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
               Read-only ClickHouse SQL · Project scoped
             </Typography>
+          </Box>
+          <Stack
+            direction="row"
+            gap={0.75}
+            flexWrap="wrap"
+            useFlexGap
+            role="group"
+            aria-label="Query limits"
+          >
+            <MetaChip icon="solar:clock-circle-linear" title="Query timeout">
+              30 s timeout
+            </MetaChip>
+            <MetaChip icon="solar:layers-linear" title="Maximum rows returned">
+              10,000 rows max
+            </MetaChip>
+            <MetaChip icon="solar:database-linear" title="Maximum result size">
+              8 MB max
+            </MetaChip>
           </Stack>
-          <Typography variant="caption" color="text.secondary">
-            30 s · 10,000 rows · 8 MB
-          </Typography>
         </Stack>
         {catalog?.identity_semantics && (
-          <Box
+          <Stack
+            direction="row"
+            spacing={1}
+            alignItems="flex-start"
             sx={{
               px: 1.5,
-              py: 0.75,
-              borderLeft: 2,
+              py: 1,
+              border: 1,
               borderColor: "divider",
+              borderRadius: 1,
               bgcolor: "background.neutral",
             }}
           >
-            <Typography variant="caption" color="text.secondary">
+            <Iconify
+              icon="solar:info-circle-linear"
+              width={16}
+              sx={{ color: "text.secondary", mt: "1px", flexShrink: 0 }}
+            />
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
               {catalog.identity_semantics}
             </Typography>
-          </Box>
+          </Stack>
         )}
         {(error || queryError) && (
           <Alert severity="error" onClose={() => setError("")}>
@@ -355,7 +392,7 @@ export default function SQLQueryView() {
               borderRight: { md: 1 },
               borderBottom: { xs: 1, md: 0 },
               borderColor: "divider",
-              bgcolor: "background.neutral",
+              bgcolor: "background.paper",
             }}
           >
             <Tabs
@@ -365,31 +402,56 @@ export default function SQLQueryView() {
                 setLibrarySearch("");
                 setLibraryOpen(true);
               }}
+              // Full width: three tabs and their counts only fit the 300px
+              // library column when they share it evenly.
               variant="fullWidth"
               aria-label="Query library views"
               sx={{
+                ...QUERY_TABS_SX,
                 px: 1,
-                minHeight: 48,
                 borderBottom: 1,
                 borderColor: "divider",
-                "& .MuiTabs-flexContainer": { gap: 0 },
-                "& .MuiTab-root": { minWidth: 0, px: 1, fontSize: 13 },
-                "& .MuiTab-root:not(:last-of-type)": { mr: 0 },
-                "& .MuiTabs-indicator": {
-                  bgcolor: (t) =>
-                    t.palette.accent?.brand || t.palette.primary.main,
-                },
               }}
             >
               {[
-                ["catalog", "Catalog"],
-                ["examples", "Examples"],
-                ["saved", "Saved"],
-              ].map(([value, label]) => (
+                ["catalog", "Catalog", catalog?.datasets?.length],
+                ["examples", "Examples", catalog?.examples?.length],
+                ["saved", "Saved", saved.length],
+              ].map(([value, label, count]) => (
                 <Tab
                   key={value}
                   value={value}
-                  label={label}
+                  aria-label={label}
+                  label={
+                    <Stack direction="row" alignItems="center" spacing={0.75}>
+                      <span>{label}</span>
+                      {count > 0 && (
+                        <Box
+                          component="span"
+                          aria-hidden
+                          sx={{
+                            px: 0.625,
+                            minWidth: 18,
+                            borderRadius: 999,
+                            typography: "s3",
+                            fontWeight: "fontWeightSemiBold",
+                            lineHeight: "16px",
+                            textAlign: "center",
+                            color:
+                              libraryTab === value
+                                ? "background.paper"
+                                : "text.secondary",
+                            bgcolor:
+                              libraryTab === value
+                                ? "text.primary"
+                                : "background.neutral",
+                          }}
+                        >
+                          {value === "saved" && more ? `${count}+` : count}
+                        </Box>
+                      )}
+                    </Stack>
+                  }
                   id={`query-library-${value}`}
                   aria-controls={`query-panel-${value}`}
                   sx={{
@@ -405,11 +467,16 @@ export default function SQLQueryView() {
               ))}
             </Tabs>
             <Button
-              size="small"
+              {...ACTION_BUTTON_PROPS}
               onClick={() => setLibraryOpen((value) => !value)}
               aria-expanded={libraryOpen}
               aria-controls="query-library-content"
-              sx={{ display: { xs: "flex", md: "none" }, mx: 1, my: 0.5 }}
+              sx={{
+                ...ACTION_BUTTON_SX,
+                display: { xs: "flex", md: "none" },
+                mx: 1.5,
+                my: 1,
+              }}
             >
               {libraryOpen
                 ? "Hide library"
@@ -426,6 +493,16 @@ export default function SQLQueryView() {
                   fullWidth
                   size="small"
                   type="search"
+                  InputProps={{
+                    startAdornment: (
+                      <Iconify
+                        icon="solar:magnifer-linear"
+                        width={16}
+                        sx={{ color: "text.disabled", mr: 1, flexShrink: 0 }}
+                      />
+                    ),
+                    sx: { typography: "s2" },
+                  }}
                   label={
                     libraryTab === "catalog"
                       ? "Search catalog"
@@ -467,7 +544,7 @@ export default function SQLQueryView() {
                     />
                   )}
                   {!catalog && error && (
-                    <Typography variant="body2" sx={{ p: 2 }}>
+                    <Typography sx={{ p: 2, typography: "s2" }}>
                       Catalog unavailable. Reload this page to try again.
                     </Typography>
                   )}
@@ -480,9 +557,13 @@ export default function SQLQueryView() {
                   )}
                   {catalog && (
                     <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: "block", p: 2 }}
+                      sx={{
+                        display: "block",
+                        px: 2,
+                        py: 1.5,
+                        typography: "s3",
+                        color: "text.disabled",
+                      }}
                     >
                       Project catalog · v{catalog.version || 1}
                     </Typography>
@@ -506,9 +587,7 @@ export default function SQLQueryView() {
                   />
                   {!catalog?.examples?.length && (
                     <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      sx={{ p: 2 }}
+                      sx={{ p: 2, typography: "s2", color: "text.secondary" }}
                     >
                       No examples available for this catalog. Start with a
                       dataset in Catalog.
@@ -522,9 +601,13 @@ export default function SQLQueryView() {
                   hidden={libraryTab !== "saved"}
                 >
                   <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ display: "block", px: 2, pb: 1 }}
+                    sx={{
+                      display: "block",
+                      px: 2,
+                      pb: 1,
+                      typography: "s3",
+                      color: "text.secondary",
+                    }}
                   >
                     Saved queries · Search this page
                   </Typography>
@@ -557,25 +640,39 @@ export default function SQLQueryView() {
                           <ListItemText
                             primary={query.name}
                             secondary={
-                              query.visibility === "project"
-                                ? "Shared with project"
-                                : "Private"
+                              <MetaChip
+                                icon={
+                                  query.visibility === "project"
+                                    ? "solar:users-group-rounded-linear"
+                                    : "solar:lock-keyhole-minimalistic-linear"
+                                }
+                              >
+                                {query.visibility === "project"
+                                  ? "Shared with project"
+                                  : "Private"}
+                              </MetaChip>
                             }
                             primaryTypographyProps={{
-                              fontSize: 13,
-                              fontWeight: 600,
-                              sx: { overflowWrap: "anywhere" },
+                              sx: {
+                                typography: "s2",
+                                fontWeight: "fontWeightSemiBold",
+                                overflowWrap: "anywhere",
+                                mb: 0.5,
+                              },
                             }}
-                            secondaryTypographyProps={{ fontSize: 12 }}
+                            secondaryTypographyProps={{ component: "div" }}
                           />
                         </ListItemButton>
                       ))}
                   </List>
                   {!saved.length && (
                     <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      sx={{ display: "block", p: 2 }}
+                      sx={{
+                        display: "block",
+                        p: 2,
+                        typography: "s2",
+                        color: "text.secondary",
+                      }}
                     >
                       Save a query to revisit it or share it with project
                       members.
@@ -587,7 +684,7 @@ export default function SQLQueryView() {
                         .toLowerCase()
                         .includes(librarySearch.trim().toLowerCase()),
                     ) && (
-                      <Typography role="status" variant="body2" sx={{ p: 2 }}>
+                      <Typography role="status" sx={{ p: 2, typography: "s2" }}>
                         No matching saved queries on this page.
                       </Typography>
                     )}
@@ -595,10 +692,12 @@ export default function SQLQueryView() {
                     direction="row"
                     alignItems="center"
                     justifyContent="space-between"
-                    sx={{ p: 1 }}
+                    sx={{ px: 2, py: 1.5 }}
                   >
                     <Button
-                      size="small"
+                      {...ACTION_BUTTON_PROPS}
+                      sx={ACTION_BUTTON_SX}
+                      startIcon={<Iconify icon="solar:alt-arrow-left-linear" />}
                       disabled={!offset}
                       onClick={() =>
                         loadSaved(Math.max(0, offset - 20)).catch((e) =>
@@ -608,11 +707,15 @@ export default function SQLQueryView() {
                     >
                       Previous
                     </Button>
-                    <Typography variant="caption" color="text.secondary">
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
                       Page {offset / 20 + 1}
                     </Typography>
                     <Button
-                      size="small"
+                      {...ACTION_BUTTON_PROPS}
+                      sx={ACTION_BUTTON_SX}
+                      endIcon={<Iconify icon="solar:alt-arrow-right-linear" />}
                       disabled={!more}
                       onClick={() =>
                         loadSaved(offset + 20).catch((e) =>
@@ -635,26 +738,52 @@ export default function SQLQueryView() {
               gap={1}
               sx={{
                 px: 1.5,
-                py: 0.75,
-                bgcolor: "background.neutral",
+                py: 1,
                 borderBottom: 1,
                 borderColor: "divider",
               }}
             >
-              <Typography
-                variant="caption"
-                sx={{ fontWeight: 600, overflowWrap: "anywhere" }}
+              <Stack
+                direction="row"
+                alignItems="center"
+                gap={0.75}
+                flexWrap="wrap"
+                useFlexGap
+                sx={{ minWidth: 0 }}
               >
-                {selected?.name || "Unsaved query"}
-                {selected && selected.sql !== sql ? " · Edited" : ""}
-              </Typography>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ flexShrink: 0 }}
-              >
-                SQL
-              </Typography>
+                <Iconify
+                  icon="solar:code-linear"
+                  width={16}
+                  sx={{ color: "text.secondary", flexShrink: 0 }}
+                />
+                <Typography
+                  sx={{
+                    typography: "s1",
+                    fontWeight: "fontWeightSemiBold",
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {selected?.name || "Unsaved query"}
+                </Typography>
+                {selected && selected.sql !== sql && (
+                  <MetaChip tone="warning" icon="solar:pen-linear">
+                    Edited
+                  </MetaChip>
+                )}
+                {selected && (
+                  <MetaChip
+                    icon={
+                      selected.visibility === "project"
+                        ? "solar:users-group-rounded-linear"
+                        : "solar:lock-keyhole-minimalistic-linear"
+                    }
+                  >
+                    {selected.visibility === "project"
+                      ? "Shared with project"
+                      : "Private"}
+                  </MetaChip>
+                )}
+              </Stack>
             </Stack>
             <Stack
               direction="row"
@@ -662,15 +791,35 @@ export default function SQLQueryView() {
               flexWrap="wrap"
               useFlexGap
               alignItems="center"
-              sx={{ p: 1.5, borderBottom: 1, borderColor: "divider" }}
+              sx={{
+                px: 1.5,
+                py: 1.25,
+                borderBottom: 1,
+                borderColor: "divider",
+              }}
             >
               <TextField
                 select
                 size="small"
-                label="Time window"
                 value={hours}
                 onChange={(e) => setHours(Number(e.target.value))}
-                sx={{ width: { xs: "100%", sm: 150 }, flexShrink: 0 }}
+                SelectProps={{
+                  SelectDisplayProps: {
+                    "aria-label": "Time window",
+                    title: "Time window",
+                  },
+                }}
+                InputProps={{
+                  startAdornment: (
+                    <Iconify
+                      icon="solar:calendar-linear"
+                      width={16}
+                      sx={{ color: "text.secondary", mr: 1, flexShrink: 0 }}
+                    />
+                  ),
+                  sx: { typography: "s2", height: CONTROL_HEIGHT },
+                }}
+                sx={{ width: { xs: "100%", sm: 160 }, flexShrink: 0 }}
               >
                 {[1, 24, 168, 744].map((value) => (
                   <MenuItem key={value} value={value}>
@@ -682,6 +831,9 @@ export default function SQLQueryView() {
               </TextField>
               <Button
                 variant="contained"
+                size="small"
+                startIcon={<Iconify icon="solar:play-bold" />}
+                sx={{ ...PRIMARY_BUTTON_SX, px: 1.75 }}
                 onClick={execute}
                 title={`Run query (${shortcut}+Enter)`}
                 aria-keyshortcuts={
@@ -691,11 +843,20 @@ export default function SQLQueryView() {
               >
                 Run query
               </Button>
-              <Button onClick={cancel} disabled={!busy || !job}>
+              <Button
+                {...ACTION_BUTTON_PROPS}
+                sx={ACTION_BUTTON_SX}
+                startIcon={<Iconify icon="solar:stop-circle-linear" />}
+                onClick={cancel}
+                disabled={!busy || !job}
+              >
                 Cancel query
               </Button>
               <Box sx={{ flex: 1 }} />
               <Button
+                {...ACTION_BUTTON_PROPS}
+                sx={ACTION_BUTTON_SX}
+                startIcon={<Iconify icon="solar:diskette-linear" />}
                 disabled={!catalog?.can_save || !sql.trim()}
                 onClick={() => {
                   setName(selected?.name || "");
@@ -746,13 +907,24 @@ export default function SQLQueryView() {
               flexWrap="wrap"
               useFlexGap
               columnGap={1.5}
-              sx={{ px: 1.5, py: 0.25, borderTop: 1, borderColor: "divider" }}
+              sx={{ px: 1.5, py: 0.75, borderTop: 1, borderColor: "divider" }}
             >
-              <Stack direction="row" flexWrap="wrap" useFlexGap gap={1.5}>
-                <Typography variant="caption" color="text.secondary">
+              <Stack
+                direction="row"
+                flexWrap="wrap"
+                useFlexGap
+                gap={1.5}
+                alignItems="center"
+              >
+                <Iconify
+                  icon="solar:keyboard-linear"
+                  width={14}
+                  sx={{ color: "text.disabled" }}
+                />
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
                   {shortcut}+Enter to run
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
                   Ctrl+Space for suggestions
                 </Typography>
               </Stack>
@@ -772,7 +944,7 @@ export default function SQLQueryView() {
               alignItems="center"
               sx={{
                 px: 1.5,
-                py: 0.125,
+                py: 0.75,
                 borderTop: 1,
                 borderBottom: 1,
                 borderColor: "divider",
@@ -786,19 +958,21 @@ export default function SQLQueryView() {
                 // Reserve the 22px title + 18px provenance in both states.
                 sx={{ flex: 1, minHeight: 40 }}
               >
-                <Stack direction="row" gap={1} alignItems="baseline">
-                  <Typography variant="subtitle2" component="h2">
+                <Stack direction="row" gap={1} alignItems="center">
+                  <Typography
+                    component="h2"
+                    sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}
+                  >
                     Results
                   </Typography>
-                  <Typography
-                    variant="caption"
+                  <StatePill
+                    state={busy ? job?.state || "submitting" : job?.state}
                     role="status"
-                    color="text.secondary"
                   >
                     {busy
                       ? `Query ${job?.state || "submitting"}…`
                       : job?.state || "Ready"}
-                  </Typography>
+                  </StatePill>
                 </Stack>
                 {job &&
                   isPreviousQuery(
@@ -810,11 +984,14 @@ export default function SQLQueryView() {
                     { sql, projectId: observeId, hours },
                   ) && (
                     <Typography
-                      variant="caption"
-                      color="text.secondary"
                       aria-label={`Previous query results · ${describeQueryWindow(submitted.hours)} — Run to update`}
                       title={`Previous query results · ${describeQueryWindow(submitted.hours)} — Run to update`}
-                      sx={{ whiteSpace: "nowrap" }}
+                      sx={{
+                        whiteSpace: "nowrap",
+                        typography: "s3",
+                        color: warningText,
+                        mt: 0.25,
+                      }}
                     >
                       Previous · {describeQueryWindow(submitted.hours)} — Run to
                       update
@@ -832,33 +1009,40 @@ export default function SQLQueryView() {
                   "& .MuiButton-root": { whiteSpace: "nowrap" },
                 }}
               >
-                <Button
+                <ButtonGroup
+                  variant="outlined"
+                  color="inherit"
                   size="small"
+                  aria-label="Download results"
                   disabled={job?.state !== "succeeded" || job.expired}
-                  onClick={() => download("csv")}
+                  sx={{ "& .MuiButton-root": ACTION_BUTTON_SX }}
                 >
-                  CSV
-                </Button>
+                  <Button
+                    startIcon={
+                      <Iconify icon="solar:download-minimalistic-linear" />
+                    }
+                    onClick={() => download("csv")}
+                  >
+                    CSV
+                  </Button>
+                  <Button onClick={() => download("parquet")}>Parquet</Button>
+                </ButtonGroup>
                 <Button
+                  // Quiet while unavailable so the permanently disabled state
+                  // does not read as an outlined call to action.
+                  variant={addToDashboardDisabled ? "text" : "outlined"}
                   size="small"
-                  disabled={job?.state !== "succeeded" || job.expired}
-                  onClick={() => download("parquet")}
-                >
-                  Parquet
-                </Button>
-                <Button
-                  size="small"
-                  disabled={
-                    !catalog?.can_save ||
-                    selected?.visibility !== "project" ||
-                    selected?.sql !== sql
-                  }
+                  sx={ACTION_BUTTON_SX}
+                  startIcon={<Iconify icon="solar:widget-add-linear" />}
+                  disabled={addToDashboardDisabled}
                   onClick={() => setDialog("dashboard")}
                 >
                   Add to dashboard
                 </Button>
                 <Button
                   size="small"
+                  sx={{ ...ACTION_BUTTON_SX, color: "text.secondary" }}
+                  startIcon={<Iconify icon="solar:history-linear" />}
                   onClick={async () => {
                     try {
                       const value = await sqlApi.history(observeId);
@@ -898,29 +1082,32 @@ export default function SQLQueryView() {
                 />
               )}
             </Box>
-            {selected &&
-              selected.created_by_id === user?.id &&
-              catalog?.can_save && (
-                <Button
-                  color="error"
-                  size="small"
-                  onClick={() => setDialog("delete")}
-                  sx={{ alignSelf: "flex-start", ml: 2 }}
-                >
-                  Delete saved query
-                </Button>
-              )}
             {selected && (
-              <Stack direction="row" gap={1} sx={{ px: 2, pb: 2 }}>
-                <Typography variant="caption" color="text.secondary">
-                  {selected.name} ·{" "}
+              <Stack
+                direction="row"
+                alignItems="center"
+                flexWrap="wrap"
+                useFlexGap
+                gap={1}
+                sx={{ px: 2, py: 1.25, borderTop: 1, borderColor: "divider" }}
+              >
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    color: "text.secondary",
+                    flex: 1,
+                    minWidth: 200,
+                  }}
+                >
                   {selected.visibility === "project"
                     ? "Project members only. Each person runs with their current access."
                     : "Only you can open this saved query."}
                 </Typography>
                 {selected.visibility === "project" && (
                   <Button
-                    size="small"
+                    {...ACTION_BUTTON_PROPS}
+                    sx={ACTION_BUTTON_SX}
+                    startIcon={<Iconify icon="solar:link-linear" />}
                     onClick={() =>
                       navigator.clipboard
                         .writeText(
@@ -935,6 +1122,17 @@ export default function SQLQueryView() {
                     }
                   >
                     Copy query link
+                  </Button>
+                )}
+                {selected.created_by_id === user?.id && catalog?.can_save && (
+                  <Button
+                    {...ACTION_BUTTON_PROPS}
+                    color="error"
+                    sx={ACTION_BUTTON_SX}
+                    startIcon={<Iconify icon="solar:trash-bin-trash-linear" />}
+                    onClick={() => setDialog("delete")}
+                  >
+                    Delete saved query
                   </Button>
                 )}
               </Stack>
@@ -975,10 +1173,21 @@ export default function SQLQueryView() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button disabled={saving} onClick={() => setDialog("")}>
+          <Button
+            {...ACTION_BUTTON_PROPS}
+            sx={ACTION_BUTTON_SX}
+            disabled={saving}
+            onClick={() => setDialog("")}
+          >
             Back
           </Button>
-          <Button disabled={!name.trim() || saving} onClick={save}>
+          <Button
+            variant="contained"
+            size="small"
+            sx={PRIMARY_BUTTON_SX}
+            disabled={!name.trim() || saving}
+            onClick={save}
+          >
             Save
           </Button>
         </DialogActions>
@@ -1012,8 +1221,20 @@ export default function SQLQueryView() {
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDialog("")}>Back</Button>
-          <Button disabled={!dashboardId || saving} onClick={addWidget}>
+          <Button
+            {...ACTION_BUTTON_PROPS}
+            sx={ACTION_BUTTON_SX}
+            onClick={() => setDialog("")}
+          >
+            Back
+          </Button>
+          <Button
+            variant="contained"
+            size="small"
+            sx={PRIMARY_BUTTON_SX}
+            disabled={!dashboardId || saving}
+            onClick={addWidget}
+          >
             Add query
           </Button>
         </DialogActions>
@@ -1029,8 +1250,17 @@ export default function SQLQueryView() {
           personal results keep their normal expiry.
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDialog("")}>Keep query</Button>
           <Button
+            {...ACTION_BUTTON_PROPS}
+            sx={ACTION_BUTTON_SX}
+            onClick={() => setDialog("")}
+          >
+            Keep query
+          </Button>
+          <Button
+            variant="contained"
+            size="small"
+            sx={PRIMARY_BUTTON_SX}
             color="error"
             disabled={saving}
             onClick={async () => {
@@ -1071,14 +1301,28 @@ export default function SQLQueryView() {
                 <ListItemText
                   primary={item.sql.slice(0, 150)}
                   secondary={`${item.state} · ${new Date(item.created_at).toLocaleString()}`}
+                  primaryTypographyProps={{
+                    sx: { typography: "s2", fontFamily: "monospace" },
+                  }}
+                  secondaryTypographyProps={{ sx: { typography: "s3" } }}
                 />
               </ListItemButton>
             ))}
           </List>
-          {!history.length && <Typography>No queries yet.</Typography>}
+          {!history.length && (
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              No queries yet.
+            </Typography>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDialog("")}>Close</Button>
+          <Button
+            {...ACTION_BUTTON_PROPS}
+            sx={ACTION_BUTTON_SX}
+            onClick={() => setDialog("")}
+          >
+            Close
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

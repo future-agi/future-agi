@@ -7,6 +7,7 @@ import {
   ListItemText,
   Typography,
 } from "@mui/material";
+import { MetaChip } from "./queryUi";
 
 // Vetted example queries from the catalog API. Each is ordinary SQL that the
 // server compiles and scopes like any typed query; using one replaces the
@@ -30,18 +31,24 @@ export default function QueryExamples({
   );
   return (
     <Box sx={{ py: 1 }}>
-      <Typography variant="subtitle2" sx={{ px: 2 }}>
+      <Typography
+        sx={{ px: 2, typography: "s1", fontWeight: "fontWeightSemiBold" }}
+      >
         Example queries ({examples.length})
       </Typography>
       <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ display: "block", px: 2, pb: 1 }}
+        sx={{
+          display: "block",
+          px: 2,
+          pb: 1,
+          typography: "s3",
+          color: "text.secondary",
+        }}
       >
         Start with vetted SQL. Replaces the editor; Undo is available.
       </Typography>
       {!matches.length && (
-        <Typography role="status" variant="body2" sx={{ p: 2 }}>
+        <Typography role="status" sx={{ p: 2, typography: "s2" }}>
           No matching examples. Try a dataset name.
         </Typography>
       )}
@@ -78,15 +85,34 @@ export default function QueryExamples({
                     <Box component="span" sx={{ display: "block", my: 0.5 }}>
                       {example.description}
                     </Box>
-                    <Box component="span" sx={{ display: "block" }}>
-                      {missing.length
-                        ? `Needs ${missing.join(", ")} (unavailable)`
-                        : example.datasets?.join(" · ")}
-                    </Box>
+                    {missing.length ? (
+                      <MetaChip
+                        tone="warning"
+                        icon="solar:danger-triangle-linear"
+                      >
+                        {`Needs ${missing.join(", ")} (unavailable)`}
+                      </MetaChip>
+                    ) : (
+                      <Box
+                        component="span"
+                        sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}
+                      >
+                        {example.datasets?.map((name) => (
+                          <MetaChip key={name} mono>
+                            {name}
+                          </MetaChip>
+                        ))}
+                      </Box>
+                    )}
                   </>
                 }
-                primaryTypographyProps={{ fontSize: 13, fontWeight: 600 }}
-                secondaryTypographyProps={{ fontSize: 12, component: "div" }}
+                primaryTypographyProps={{
+                  sx: { typography: "s2", fontWeight: "fontWeightSemiBold" },
+                }}
+                secondaryTypographyProps={{
+                  component: "div",
+                  sx: { typography: "s2", color: "text.secondary" },
+                }}
               />
             </ListItemButton>
           );
