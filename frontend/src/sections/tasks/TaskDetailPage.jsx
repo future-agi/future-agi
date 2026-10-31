@@ -679,7 +679,7 @@ const TaskDetailPage = () => {
 
         {tab === "usage" && (
           <Box sx={{ height: "100%", overflow: "hidden" }}>
-            <TaskUsageTab taskId={taskId} />
+            <TaskUsageTab taskId={taskId} projectId={project} />
           </Box>
         )}
       </Box>
