@@ -118,6 +118,34 @@ func (u Usage) MarshalJSON() ([]byte, error) {
 	return mergeExtra(data, u.Extra)
 }
 
+// UnmarshalJSON accepts the input_tokens/output_tokens spelling used by
+// Anthropic-style upstreams in addition to the OpenAI prompt/completion
+// fields. Without it, an OpenAI-compatible stream whose usage tail reads
+// {"input_tokens":N,"output_tokens":M,"total_tokens":T} decodes to a usage
+// with only TotalTokens set, and the request log loses the split.
+func (u *Usage) UnmarshalJSON(data []byte) error {
+	type usageAlias Usage
+	var aux struct {
+		usageAlias
+		InputTokens  *int `json:"input_tokens"`
+		OutputTokens *int `json:"output_tokens"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*u = Usage(aux.usageAlias)
+	if u.PromptTokens == 0 && aux.InputTokens != nil {
+		u.PromptTokens = *aux.InputTokens
+	}
+	if u.CompletionTokens == 0 && aux.OutputTokens != nil {
+		u.CompletionTokens = *aux.OutputTokens
+	}
+	if u.TotalTokens == 0 {
+		u.TotalTokens = u.PromptTokens + u.CompletionTokens
+	}
+	return nil
+}
+
 // ServerToolUsage mirrors Anthropic's usage.server_tool_use block.
 type ServerToolUsage struct {
 	WebSearchRequests int `json:"web_search_requests,omitempty"`
