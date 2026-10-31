@@ -498,10 +498,19 @@ def _sync_export_integration(connection):
     if not connection.last_synced_at:
         # First sync: export logs from the last 24 hours (or backfill_from).
         sync_from = connection.backfill_from or (now - timedelta(hours=24))
+    elif connection.platform == "datadog":
+        # Datadog does not deduplicate log intake or overlapping count windows.
+        sync_from = connection.last_synced_at
     else:
-        # Incremental: overlap by 1 minute for safety (target deduplicates).
+        # Preserve the existing lookback for the other export platforms.
         sync_from = connection.last_synced_at - timedelta(minutes=1)
     sync_to = now
+    if connection.platform == "datadog":
+        pending = connection.sync_cursor.get("datadog_export")
+        if pending:
+            # A failed run resumes the same interval, including its metric timestamp.
+            sync_from = datetime.fromisoformat(pending["sync_from"])
+            sync_to = datetime.fromisoformat(pending["sync_to"])
 
     sync_log = SyncLog.objects.create(
         connection=connection,
@@ -538,6 +547,10 @@ def _sync_export_integration(connection):
 
         # Success: update connection state.
         update_fields = ["status", "last_synced_at", "status_message", "updated_at"]
+        if connection.platform == "datadog":
+            # Clear delivery progress atomically with the completed interval.
+            connection.sync_cursor.pop("datadog_export", None)
+            update_fields.append("sync_cursor")
         connection.status = ConnectionStatus.ACTIVE
         connection.last_synced_at = sync_to
         connection.status_message = ""
@@ -607,40 +620,58 @@ def _sync_export_integration(connection):
 
 
 def _export_datadog(connection, credentials, service, sync_from, sync_to):
-    """Export AgentccRequestLog entries to Datadog as logs + metrics."""
+    """Export non-overlapping arrival intervals with durable batch progress.
+
+    created_at (ingestion time) keeps late requests in the next interval even if
+    started_at predates the checkpoint; the log itself retains its event time.
+    Acknowledged log batches survive metric failures and activity retries. As
+    with any non-transactional HTTP sink, a crash between acceptance and saving
+    the cursor can still replay the last uncheckpointed batch.
+    """
     from django.db.models import Avg, Count, Sum
 
     from agentcc.models import AgentccRequestLog
 
     BATCH_SIZE = 500
 
-    # Query request logs for this org/workspace in the sync window.
-    qs = (
-        AgentccRequestLog.objects.filter(
-            organization=connection.organization,
-            deleted=False,
-        )
-        .filter(
-            Q(started_at__gte=sync_from, started_at__lt=sync_to)
-            | Q(
-                started_at__isnull=True,
-                created_at__gte=sync_from,
-                created_at__lt=sync_to,
-            )
-        )
-        .order_by("started_at", "created_at")
-    )
+    cursor = connection.sync_cursor.get("datadog_export")
+    if not cursor:
+        cursor = {
+            "sync_from": sync_from.isoformat(),
+            "sync_to": sync_to.isoformat(),
+            "logs_after": None,
+            "logs_complete": False,
+            "metrics_complete": False,
+        }
+        connection.sync_cursor["datadog_export"] = cursor
+        connection.save(update_fields=["sync_cursor", "updated_at"])
+
+    # Use the same arrival interval for logs and counts (including null starts).
+    qs = AgentccRequestLog.objects.filter(
+        organization=connection.organization,
+        deleted=False,
+        created_at__gte=sync_from,
+        created_at__lt=sync_to,
+    ).order_by("created_at", "id")
 
     # If workspace is set on the connection, scope to that workspace.
     if connection.workspace_id:
         qs = qs.filter(workspace=connection.workspace)
 
     total_logs_sent = 0
-    offset = 0
-
-    while True:
-        batch = list(qs[offset : offset + BATCH_SIZE])
+    while not cursor["logs_complete"]:
+        remaining = qs
+        if cursor["logs_after"]:
+            after = cursor["logs_after"]
+            after_time = datetime.fromisoformat(after["created_at"])
+            remaining = remaining.filter(
+                Q(created_at__gt=after_time)
+                | Q(created_at=after_time, id__gt=after["id"])
+            )
+        batch = list(remaining[:BATCH_SIZE])
         if not batch:
+            cursor["logs_complete"] = True
+            connection.save(update_fields=["sync_cursor", "updated_at"])
             break
 
         dd_logs = []
@@ -649,7 +680,6 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
                 f"model:{log.model}",
                 f"provider:{log.provider}",
                 f"status_code:{log.status_code}",
-                f"gateway:{log.gateway_id}",
             ]
             if log.is_error:
                 tags.append("error:true")
@@ -705,8 +735,14 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
             dd_logs.append(dd_log)
 
         result = service.export_logs(credentials, dd_logs)
-        total_logs_sent += result.get("sent", 0)
-        offset += BATCH_SIZE
+        if result.get("sent") != len(dd_logs):
+            raise RuntimeError("Datadog did not acknowledge the complete log batch")
+        total_logs_sent += len(dd_logs)
+        cursor["logs_after"] = {
+            "created_at": batch[-1].created_at.isoformat(),
+            "id": str(batch[-1].id),
+        }
+        connection.save(update_fields=["sync_cursor", "updated_at"])
 
         logger.debug(
             "datadog_batch_sent",
@@ -714,18 +750,11 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
             total_sent=total_logs_sent,
         )
 
-    # Export aggregated metrics for the window.
+    # Export aggregated metrics for the whole interval, not just remaining logs.
     metrics_sent = 0
-    agg = AgentccRequestLog.objects.filter(
-        organization=connection.organization,
-        deleted=False,
-        started_at__gte=sync_from,
-        started_at__lt=sync_to,
-    )
-    if connection.workspace_id:
-        agg = agg.filter(workspace=connection.workspace)
-
-    agg = agg.aggregate(
+    if cursor["metrics_complete"]:
+        return {"logs_sent": total_logs_sent, "metrics_sent": 0}
+    agg = qs.aggregate(
         total_requests=Count("id"),
         total_errors=Count("id", filter=Q(is_error=True)),
         avg_latency=Avg("latency_ms"),
@@ -795,7 +824,11 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
 
     if series:
         result = service.export_metrics(credentials, series)
-        metrics_sent = result.get("sent", 0)
+        if result.get("sent") != len(series):
+            raise RuntimeError("Datadog did not acknowledge the complete metric batch")
+        metrics_sent = len(series)
+    cursor["metrics_complete"] = True
+    connection.save(update_fields=["sync_cursor", "updated_at"])
 
     return {"logs_sent": total_logs_sent, "metrics_sent": metrics_sent}
 
