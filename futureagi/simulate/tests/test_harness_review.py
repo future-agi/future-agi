@@ -86,3 +86,84 @@ def test_suite_indexes_sealed_bundles_and_session_files_are_never_review_items()
         },
     )
     assert set(item_index(tree)) == set()
+
+
+from simulate.services.harness_versioning.review import ReviewRefused, compose_accepted, review_digest  # noqa: E402
+
+
+def _pair():
+    default = _tree(
+        {"tools": TOOLS, "persona": "calm"},
+        **{"actors.json": {"actors": [{"id": "manager"}]}, "scenarios/a/scenario.json": {"i": 1}, "world.sqlite": b"w1"},
+    )
+    draft = _tree(
+        {"tools": [{**TOOLS[0], "description": "Look up"}, {**TOOLS[1], "description": "Refund up to $50"}], "persona": "warm"},
+        **{
+            "actors.json": {"actors": [{"id": "manager"}, {"id": "auditor"}]},
+            "scenarios/a/scenario.json": {"i": 2},
+            "scenarios/a/setup.sql": b"insert",
+            "world.sqlite": b"w2",
+        },
+    )
+    return default, draft, compute_changes(default, draft)
+
+
+def _decide(changes, accepted):
+    return {one["id"]: "accepted" if one["id"] in accepted else "rejected" for one in changes}
+
+
+def test_save_applies_exactly_the_accepted_changes_and_nothing_rejected():
+    default, draft, changes = _pair()
+    accepted = {"tool:issue_refund", "actor:auditor", "scenario:a", "contract_field:persona"}
+    composed = compose_accepted(default, draft, changes, _decide(changes, accepted))
+
+    assert {one["id"] for one in compute_changes(default, composed)} == accepted
+    contract = json.loads(composed["contract.json"])
+    assert [tool["description"] for tool in contract["tools"]] == ["Find an order", "Refund up to $50"]
+    assert composed["scenarios/a/setup.sql"] == b"insert" and composed["world.sqlite"] == b"w1"
+
+
+def test_an_accepted_change_lands_on_its_item_even_after_the_list_was_reordered():
+    default, draft, changes = _pair()
+    reordered = {**default, "contract.json": json.dumps({"tools": TOOLS[::-1], "persona": "calm"}).encode()}
+    composed = compose_accepted(reordered, draft, changes, _decide(changes, {"tool:issue_refund"}))
+    by_name = {tool["name"]: tool for tool in json.loads(composed["contract.json"])["tools"]}
+    assert by_name["issue_refund"]["description"] == "Refund up to $50"
+    assert by_name["lookup_order"]["description"] == "Find an order"
+
+
+def test_save_refuses_an_undecided_change_and_an_accepted_one_whose_item_moved_after_review():
+    default, draft, changes = _pair()
+    decisions = _decide(changes, {"tool:issue_refund"})
+    del decisions["actor:auditor"]
+    with pytest.raises(ReviewRefused) as undecided:
+        compose_accepted(default, draft, changes, decisions)
+    assert (undecided.value.code, undecided.value.changes) == ("review_undecided", ["actor:auditor"])
+
+    moved = {**default, "contract.json": json.dumps(
+        {"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund"}], "persona": "calm"}).encode()}
+    with pytest.raises(ReviewRefused) as stale:
+        compose_accepted(moved, draft, changes, _decide(changes, {"tool:issue_refund"}))
+    assert (stale.value.code, stale.value.changes) == ("review_stale", ["tool:issue_refund"])
+    # A rejected change whose item moved does not stop the save.
+    assert compose_accepted(moved, draft, changes, _decide(changes, {"actor:auditor"}))
+
+
+def test_the_review_digest_moves_with_any_decision_draft_content_or_default():
+    _, _, changes = _pair()
+    decisions = _decide(changes, {"tool:issue_refund"})
+    digest = review_digest("v1", changes, decisions)
+    assert digest == review_digest("v1", list(reversed(changes)), decisions)
+    assert digest != review_digest("v2", changes, decisions)
+    assert digest != review_digest("v1", changes, {**decisions, "tool:issue_refund": "rejected"})
+    edited = [dict(one, draft_digest="sha256:other") if one["id"] == "actor:auditor" else one for one in changes]
+    assert digest != review_digest("v1", edited, decisions)
+
+
+def test_an_accepted_item_that_gained_a_field_after_review_is_stale_even_where_its_patch_still_applies():
+    default, draft, changes = _pair()
+    grown = {**default, "contract.json": json.dumps(
+        {"tools": [TOOLS[0], {**TOOLS[1], "limits": {"max": 100}}], "persona": "calm"}).encode()}
+    with pytest.raises(ReviewRefused) as stale:
+        compose_accepted(grown, draft, changes, _decide(changes, {"tool:issue_refund"}))
+    assert stale.value.code == "review_stale"

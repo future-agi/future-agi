@@ -189,3 +189,110 @@ def compute_changes(default: Mapping[str, bytes], draft: Mapping[str, bytes]) ->
         )
     changes.sort(key=lambda one: (KINDS.index(one["kind"]), one["key"]))
     return changes
+
+
+class ReviewRefused(Exception):
+    """A review that cannot be saved as decided: `code` says why, `changes` names the items."""
+
+    def __init__(self, code: str, message: str, changes: list[str]) -> None:
+        super().__init__(message)
+        self.code = code
+        self.changes = changes
+
+
+def review_digest(default_hash: str, changes: list[dict[str, Any]], decisions: Mapping[str, str]) -> str:
+    """What the person saw and decided: every change's id, draft content and decision, on this default."""
+    triples = sorted((one["id"], one["draft_digest"] or "", decisions.get(one["id"], "")) for one in changes)
+    return "sha256:" + hashlib.sha256(_canonical([default_hash, triples])).hexdigest()
+
+
+def _put(files: dict[str, bytes], document: str, body: Any) -> None:
+    files[document] = (json.dumps(body, indent=2, ensure_ascii=False) + "\n").encode()
+
+
+def _apply_listed(files: dict[str, bytes], change: dict[str, Any]) -> None:
+    """Apply one accepted change to its entry of a JSON document, found again by its key, never by position."""
+    document, kind, key = change["document"], change["kind"], change["key"]
+    body = _json(files.get(document, b"null"))
+    if document == "contract.json":
+        body = body if isinstance(body, dict) else {}
+        if kind == "contract_field":
+            if change["action"] == "removed":
+                body.pop(key, None)
+            elif change["action"] == "added":
+                body[key] = change["patch"][0]["value"]
+            else:
+                body[key] = jsonpatch.apply_patch(body.get(key), change["patch"])
+            return _put(files, document, body)
+        field = "tools" if kind == "tool" else "hard_constraints"
+        holder = body
+    else:
+        _, field, _ = _LISTS[document]
+        holder = body if isinstance(body, dict) else {field: body or []}
+    entries = list(holder.get(field) or [])
+    found = [index for index, entry in enumerate(entries) if _is_item(kind, key, entry)]
+    if change["action"] == "added":
+        if found:
+            raise jsonpatch.JsonPatchTestFailed(f"{change['id']} already exists")
+        entries.append(change["patch"][0]["value"])
+    else:
+        if not found:
+            raise jsonpatch.JsonPatchTestFailed(f"{change['id']} is no longer there")
+        index = found[0]
+        if change["action"] == "removed":
+            jsonpatch.apply_patch(entries[index], change["patch"])
+            entries.pop(index)
+        else:
+            entries[index] = jsonpatch.apply_patch(entries[index], change["patch"])
+    holder[field] = entries
+    _put(files, document, holder)
+
+
+def _is_item(kind: str, key: str, entry: Any) -> bool:
+    if kind == "rule":
+        return _rule_key(str(entry)) == key
+    name = "name" if kind in ("tool", "sub_goal") else "id"
+    return isinstance(entry, dict) and str(entry.get(name)) == key
+
+
+def compose_accepted(
+    default: Mapping[str, bytes],
+    draft: Mapping[str, bytes],
+    changes: list[dict[str, Any]],
+    decisions: Mapping[str, str],
+) -> dict[str, bytes]:
+    """The default with exactly the accepted changes applied, or a refusal naming the items.
+
+    Each accepted change is applied to its item as the default holds it now; a `test` that fails means the default
+    moved after the review, and nothing is applied (`review_stale`).
+    """
+    if undecided := [one["id"] for one in changes if decisions.get(one["id"]) not in ("accepted", "rejected")]:
+        raise ReviewRefused("review_undecided", "Every change needs a decision before Save.", undecided)
+    current = item_index(default)
+    moved = [
+        one["id"] for one in changes
+        if decisions[one["id"]] == "accepted"
+        and (current[one["id"]].digest if one["id"] in current else None) != one["base_digest"]
+    ]
+    if moved:
+        raise ReviewRefused("review_stale", "These changed after the review; review them again.", moved)
+    files = dict(default)
+    for change in changes:
+        if decisions[change["id"]] != "accepted":
+            continue
+        try:
+            if change["kind"] == "scenario":
+                prefix = change["document"].rsplit("/", 1)[0] + "/"
+                for path in [one for one in files if one.startswith(prefix)]:
+                    del files[path]
+                files.update({path: data for path, data in draft.items() if path.startswith(prefix)})
+            elif change["kind"] == "file":
+                if change["action"] == "removed":
+                    files.pop(change["key"], None)
+                else:
+                    files[change["key"]] = draft[change["key"]]
+            else:
+                _apply_listed(files, change)
+        except jsonpatch.JsonPatchException as exc:
+            raise ReviewRefused("review_stale", f"{change['id']} changed after the review: {exc}", [change["id"]]) from exc
+    return files
