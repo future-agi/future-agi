@@ -1,6 +1,7 @@
 import time
 import traceback as tb_module
-from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta, timezone
 
 import structlog
 from django.db.models import F, Q
@@ -13,6 +14,8 @@ logger = structlog.get_logger(__name__)
 # Platforms that export data FROM Agentcc (push-based).
 # Contrast with pull-based platforms that import data INTO Agentcc.
 EXPORT_PLATFORMS = {"datadog", "posthog", "mixpanel", "cloud_storage", "message_queue"}
+# One-hour Datadog intake window, minus a one-minute request-transit margin.
+_DATADOG_METRIC_MAX_AGE_SECONDS = 59 * 60
 
 
 @temporal_activity(time_limit=120, queue="tasks_s")
@@ -473,14 +476,117 @@ def sync_integration_connection(connection_id: str):
         sync_log.save()
 
 
+class _DatadogExportOwnershipLost(RuntimeError):
+    """A stale exporter must not write over a newer owner's delivery progress."""
+
+
+@contextmanager
+def _datadog_export_owner(connection):
+    """Serialize a destination without holding delivery checkpoints uncommitted.
+
+    A separate transaction pins the advisory lock even with transaction-pooling
+    PgBouncer. Normal ORM writes still commit each acknowledged batch. A durable
+    token fences those writes if the lock connection dies and another worker
+    takes over; the old worker can never clear the new worker's snapshot.
+    """
+    import uuid
+
+    from django.db import connections, transaction
+    from django.db.models.expressions import RawSQL
+
+    from integrations.models import IntegrationConnection
+
+    token = str(uuid.uuid4())
+    lock_db = connections["default"].copy()
+    try:
+        lock_db.set_autocommit(False)
+        with lock_db.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_try_advisory_xact_lock(hashtextextended(%s, 0))",
+                [f"datadog_export:{connection.pk}"],
+            )
+            acquired = cursor.fetchone()[0]
+        if not acquired:
+            logger.info(
+                "datadog_export_already_running", connection_id=str(connection.pk)
+            )
+            yield False
+            return
+
+        with transaction.atomic():
+            # Refresh only after acquiring ownership: callers may hold stale objects.
+            connection.refresh_from_db(
+                from_queryset=IntegrationConnection.no_workspace_objects.select_for_update()
+            )
+            if not connection.deleted:
+                connection.sync_cursor["datadog_export_owner"] = token
+                IntegrationConnection.no_workspace_objects.filter(
+                    pk=connection.pk
+                ).update(sync_cursor=connection.sync_cursor)
+        if connection.deleted:
+            yield False
+            return
+        connection._datadog_export_owner = token
+        try:
+            yield True
+        except _DatadogExportOwnershipLost:
+            # Fail closed. In particular, do not run the generic error handler's
+            # connection.save() after another owner has replaced our token.
+            logger.warning(
+                "datadog_export_ownership_lost",
+                connection_id=str(connection.pk),
+                exc_info=True,
+            )
+        finally:
+            IntegrationConnection.no_workspace_objects.filter(
+                pk=connection.pk, sync_cursor__datadog_export_owner=token
+            ).update(sync_cursor=RawSQL("sync_cursor - %s", ["datadog_export_owner"]))
+            del connection._datadog_export_owner
+    finally:
+        # Closing rolls back the otherwise read-only transaction and releases the
+        # lock on success, failure or cancellation. Never return a session lock to
+        # PgBouncer's pool.
+        lock_db.close()
+
+
+def _save_export_progress(connection, update_fields):
+    """Fence each Datadog state write, including snapshot creation and completion."""
+    from django.db import transaction
+
+    from integrations.models import IntegrationConnection
+
+    if connection.platform != "datadog":
+        connection.save(update_fields=update_fields)
+        return
+    with transaction.atomic():
+        owner = (
+            IntegrationConnection.no_workspace_objects.select_for_update()
+            .filter(
+                pk=connection.pk,
+                sync_cursor__datadog_export_owner=connection._datadog_export_owner,
+            )
+            .only("id")
+            .first()
+        )
+        if owner is None:
+            raise _DatadogExportOwnershipLost()
+        connection.save(update_fields=update_fields)
+
+
 def _sync_export_integration(connection):
     """Export Agentcc request logs to a push-based integration (Datadog, PostHog, etc.)."""
-    from integrations.models import (
-        ConnectionStatus,
-        IntegrationConnection,
-        SyncLog,
-        SyncStatus,
-    )
+    if connection.platform != "datadog":
+        return _run_export_integration(connection)
+    with _datadog_export_owner(connection) as acquired:
+        if acquired:
+            return _run_export_integration(connection)
+
+
+def _run_export_integration(connection):
+    """Run a destination export, with exclusive ownership for Datadog."""
+    from django.db import transaction
+
+    from integrations.models import ConnectionStatus, SyncLog, SyncStatus
     from integrations.services.base import get_integration_service
     from integrations.services.credentials import CredentialManager
     from integrations.services.registry import ensure_services_loaded
@@ -490,7 +596,7 @@ def _sync_export_integration(connection):
     connection_id = str(connection.id)
 
     connection.status = ConnectionStatus.SYNCING
-    connection.save(update_fields=["status", "updated_at"])
+    _save_export_progress(connection, ["status", "updated_at"])
 
     now = datetime.now(timezone.utc)
 
@@ -508,7 +614,7 @@ def _sync_export_integration(connection):
     if connection.platform == "datadog":
         pending = connection.sync_cursor.get("datadog_export")
         if pending:
-            # A failed run resumes the same interval, including its metric timestamp.
+            # A failed run resumes the same membership and accounting interval.
             sync_from = datetime.fromisoformat(pending["sync_from"])
             sync_to = datetime.fromisoformat(pending["sync_to"])
 
@@ -545,29 +651,38 @@ def _sync_export_integration(connection):
         logs_sent = exported.get("logs_sent", 0)
         metrics_sent = exported.get("metrics_sent", 0)
 
-        # Success: update connection state.
-        update_fields = ["status", "last_synced_at", "status_message", "updated_at"]
-        if connection.platform == "datadog":
-            # Clear delivery progress atomically with the completed interval.
-            connection.sync_cursor.pop("datadog_export", None)
-            update_fields.append("sync_cursor")
-        connection.status = ConnectionStatus.ACTIVE
-        connection.last_synced_at = sync_to
-        connection.status_message = ""
-        if not connection.backfill_completed:
-            connection.backfill_completed = True
-            update_fields.append("backfill_completed")
-        connection.save(update_fields=update_fields)
+        with transaction.atomic():
+            # Success: persist any explicit metric-drop audit with the checkpoint.
+            if exported.get("metrics_dropped"):
+                sync_log.error_details = {"metrics_dropped": exported["metrics_dropped"]}
+            update_fields = ["status", "last_synced_at", "status_message", "updated_at"]
+            if connection.platform == "datadog":
+                # Clear delivery progress atomically with the completed interval.
+                connection.sync_cursor.pop("datadog_export", None)
+                update_fields.append("sync_cursor")
+            connection.status = ConnectionStatus.ACTIVE
+            connection.last_synced_at = sync_to
+            connection.status_message = ""
+            if not connection.backfill_completed:
+                connection.backfill_completed = True
+                update_fields.append("backfill_completed")
+            _save_export_progress(connection, update_fields)
 
-        # Use traces_fetched to store total items exported.
-        sync_log.status = (
-            SyncStatus.SUCCESS if logs_sent > 0 else SyncStatus.NO_NEW_DATA
-        )
-        sync_log.completed_at = datetime.now(timezone.utc)
-        sync_log.traces_fetched = logs_sent
-        sync_log.traces_created = logs_sent
-        sync_log.spans_synced = metrics_sent
-        sync_log.save()
+            # Use traces_fetched to store total items exported.
+            if exported.get("metrics_dropped"):
+                sync_log.status = SyncStatus.PARTIAL
+                sync_log.error_message = (
+                    "Datadog metrics dropped: snapshot exceeded the intake age limit."
+                )
+            else:
+                sync_log.status = (
+                    SyncStatus.SUCCESS if logs_sent > 0 else SyncStatus.NO_NEW_DATA
+                )
+            sync_log.completed_at = datetime.now(timezone.utc)
+            sync_log.traces_fetched = logs_sent
+            sync_log.traces_created = logs_sent
+            sync_log.spans_synced = metrics_sent
+            sync_log.save()
 
         logger.info(
             "export_complete",
@@ -577,6 +692,8 @@ def _sync_export_integration(connection):
             metrics_sent=metrics_sent,
         )
 
+    except _DatadogExportOwnershipLost:
+        raise
     except Exception as e:
         logger.warning(
             "export_failed",
@@ -608,7 +725,7 @@ def _sync_export_integration(connection):
             connection.status_message = f"Export failed: {error_msg[:500]}"
             sync_log.status = SyncStatus.FAILED
 
-        connection.save(update_fields=["status", "status_message", "updated_at"])
+        _save_export_progress(connection, ["status", "status_message", "updated_at"])
         sync_log.error_message = error_msg[:1000]
         sync_log.error_details = {
             "error": error_msg,
@@ -687,7 +804,7 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
                 )
             connection.sync_cursor["datadog_export_from"] = floor
             connection.sync_cursor["datadog_export"] = cursor
-            connection.save(update_fields=["sync_cursor", "updated_at"])
+            _save_export_progress(connection, ["sync_cursor", "updated_at"])
 
     receipts = DatadogExportReceipt.objects.filter(
         connection=connection, export_id=cursor["export_id"]
@@ -710,7 +827,7 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
         batch = list(remaining[:BATCH_SIZE])
         if not batch:
             cursor["logs_complete"] = True
-            connection.save(update_fields=["sync_cursor", "updated_at"])
+            _save_export_progress(connection, ["sync_cursor", "updated_at"])
             break
 
         dd_logs = []
@@ -781,7 +898,7 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
             "created_at": batch[-1].created_at.isoformat(),
             "id": str(batch[-1].id),
         }
-        connection.save(update_fields=["sync_cursor", "updated_at"])
+        _save_export_progress(connection, ["sync_cursor", "updated_at"])
 
         logger.debug(
             "datadog_batch_sent",
@@ -792,7 +909,11 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
     # Count each snapshot member once, including logs acknowledged before retry.
     metrics_sent = 0
     if cursor["metrics_complete"]:
-        return {"logs_sent": total_logs_sent, "metrics_sent": 0}
+        return {
+            "logs_sent": total_logs_sent,
+            "metrics_sent": 0,
+            "metrics_dropped": cursor.get("metrics_dropped"),
+        }
     agg = qs.aggregate(
         total_requests=Count("id"),
         total_errors=Count("id", filter=Q(is_error=True)),
@@ -861,15 +982,40 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
             }
         )
 
-    if series:
+    # Datadog rejects points older than one hour. Do not keep retrying an
+    # expired snapshot or move its counts into a later interval. Drop only its
+    # metrics, with the exact values retained in the durable SyncLog audit. The
+    # one-minute margin covers request transit near the intake boundary.
+    if series and datetime.now(UTC).timestamp() - ts >= _DATADOG_METRIC_MAX_AGE_SECONDS:
+        cursor["metrics_dropped"] = {
+            "reason": "datadog_intake_age_exceeded",
+            "export_id": cursor["export_id"],
+            "dropped_at": datetime.now(UTC).isoformat(),
+            "sync_from": cursor["sync_from"],
+            "sync_to": cursor["sync_to"],
+            "series": series,
+        }
+        logger.warning(
+            "datadog_metrics_expired",
+            connection_id=str(connection.pk),
+            export_id=cursor["export_id"],
+            requests_dropped=agg["total_requests"],
+            series_dropped=len(series),
+            snapshot_timestamp=ts,
+        )
+    elif series:
         result = service.export_metrics(credentials, series)
         if result.get("sent") != len(series):
             raise RuntimeError("Datadog did not acknowledge the complete metric batch")
         metrics_sent = len(series)
     cursor["metrics_complete"] = True
-    connection.save(update_fields=["sync_cursor", "updated_at"])
+    _save_export_progress(connection, ["sync_cursor", "updated_at"])
 
-    return {"logs_sent": total_logs_sent, "metrics_sent": metrics_sent}
+    return {
+        "logs_sent": total_logs_sent,
+        "metrics_sent": metrics_sent,
+        "metrics_dropped": cursor.get("metrics_dropped"),
+    }
 
 
 def _get_export_queryset(connection, sync_from, sync_to):

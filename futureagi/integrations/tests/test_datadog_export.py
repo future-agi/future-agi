@@ -517,3 +517,253 @@ def test_snapshot_membership_and_cursor_are_saved_atomically_before_delivery(dat
     sync_at(connection, 240)
     assert len(logs_sent(service)) == 1
     assert metric_values(service, "requests") == [1]
+
+
+@pytest.mark.django_db
+def test_overlapping_datadog_sync_skips_the_owned_snapshot(datadog):
+    connection, service = datadog
+    create_log(connection, "original", arrived=90)
+    reentered = False
+
+    def accept(credentials, logs):
+        nonlocal reentered
+        if not reentered:
+            reentered = True
+            other_worker = IntegrationConnection.no_workspace_objects.get(
+                pk=connection.pk
+            )
+            sync_at(other_worker, 121)
+        return {"sent": len(logs)}
+
+    service.export_logs.side_effect = accept
+    sync_at(connection, 120)
+    assert len(logs_sent(service)) == 1
+    assert metric_values(service, "requests") == [1]
+    assert SyncLog.objects.filter(connection=connection).count() == 1
+    assert "datadog_export_owner" not in connection.sync_cursor
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("lose_lock", [False, True])
+def test_concurrent_exporter_cannot_orphan_a_newer_pending_snapshot(datadog, lose_lock):
+    """Use independent PG connections, including takeover after lock-session death."""
+    from threading import current_thread
+
+    from django.db import connections
+
+    from integrations.models import DatadogExportReceipt
+
+    connection, service = datadog
+    create_log(connection, "original", arrived=90)
+    blocked = Event()
+    release = Event()
+    errors = []
+    accepted = []
+    lock_pids = []
+    reject_new = True
+    wrapper_type = type(connections["default"])
+    copy_db = wrapper_type.copy
+
+    def capture_lock_db(wrapper, alias=None):
+        copied = copy_db(wrapper, alias)
+        if current_thread() is worker:
+            with copied.cursor() as cursor:
+                cursor.execute("SELECT pg_backend_pid()")
+                lock_pids.append(cursor.fetchone()[0])
+        return copied
+
+    def accept(credentials, logs):
+        ids = [log["attributes"]["request_id"] for log in logs]
+        if current_thread() is worker:
+            blocked.set()
+            assert release.wait(timeout=30)
+        if reject_new and "new-request" in ids:
+            raise RuntimeError("synthetic failure of the newer snapshot")
+        accepted.extend(ids)
+        return {"sent": len(logs)}
+
+    def export_in_thread():
+        close_old_connections()
+        try:
+            stale = IntegrationConnection.no_workspace_objects.get(pk=connection.pk)
+            sync_at(stale, 120)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            db_connection.close()
+
+    service.export_logs.side_effect = accept
+    worker = Thread(target=export_in_thread)
+    with patch.object(wrapper_type, "copy", autospec=True, side_effect=capture_lock_db):
+        worker.start()
+        try:
+            assert blocked.wait(timeout=30)
+            # Membership and the cursor must already be durable while HTTP is in
+            # flight; do not fix concurrency by putting delivery in one long tx.
+            assert (
+                DatadogExportReceipt.objects.filter(connection=connection).count() == 1
+            )
+            if lose_lock:
+                with db_connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_terminate_backend(%s)", [lock_pids[0]])
+                    assert cursor.fetchone()[0]
+            second = IntegrationConnection.no_workspace_objects.get(pk=connection.pk)
+            sync_at(second, 121)
+            create_log(connection, "new-request", arrived=122)
+            third = IntegrationConnection.no_workspace_objects.get(pk=connection.pk)
+            sync_at(third, 180)
+            if lose_lock:
+                # New owner resumes X, then persists Y before its failed send.
+                assert (
+                    third.sync_cursor["datadog_export"]["sync_to"]
+                    == (BASE + timedelta(seconds=180)).isoformat()
+                )
+                newer_cursor = third.sync_cursor.copy()
+        finally:
+            release.set()
+            worker.join(timeout=30)
+    assert not worker.is_alive()
+    assert not errors
+    if lose_lock:
+        third.refresh_from_db()
+        assert third.sync_cursor == newer_cursor
+        assert third.last_synced_at == BASE + timedelta(seconds=120)
+    else:
+        # Neither overlapping attempt is allowed to deliver the owned snapshot.
+        assert accepted == ["original"]
+        sync_at(third, 180)
+        assert (
+            third.sync_cursor["datadog_export"]["sync_to"]
+            == (BASE + timedelta(seconds=180)).isoformat()
+        )
+    reject_new = False
+    sync_at(connection, 240)  # Deliberately reuse an object predating the pending run.
+    sync_at(connection, 300)
+    assert accepted.count("new-request") == 1
+    assert DatadogExportReceipt.objects.filter(connection=connection).count() == 2
+    assert connection.last_synced_at == BASE + timedelta(seconds=300)
+    assert "datadog_export" not in connection.sync_cursor
+    assert "datadog_export_owner" not in connection.sync_cursor
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("failed_phase", ["logs", "metrics"])
+def test_expired_datadog_metrics_are_explicitly_dropped_not_submitted(
+    datadog, failed_phase
+):
+    from requests import HTTPError, Response
+
+    connection, service = datadog
+    create_log(connection, "before-outage", arrived=90)
+    response = Response()
+    response.status_code = 429
+    failed_service = getattr(service, f"export_{failed_phase}")
+    failed_service.side_effect = HTTPError("synthetic rate limit", response=response)
+    sync_at(connection, 120)
+    assert connection.status == ConnectionStatus.ACTIVE
+    pending = connection.sync_cursor["datadog_export"].copy()
+    failed_service.side_effect = lambda credentials, items: {"sent": len(items)}
+    service.export_metrics.reset_mock()
+    create_log(connection, "during-outage", arrived=150)
+
+    sync_at(connection, 7320)
+    service.export_metrics.assert_not_called()
+    assert connection.last_synced_at == BASE + timedelta(seconds=120)
+    audit = SyncLog.objects.filter(connection=connection).latest("started_at")
+    assert audit.status == SyncStatus.PARTIAL
+    assert "intake age limit" in audit.error_message
+    dropped = audit.error_details["metrics_dropped"]
+    assert dropped["reason"] == "datadog_intake_age_exceeded"
+    assert dropped["export_id"] == pending["export_id"]
+    assert dropped["sync_from"] == BASE.isoformat()
+    assert dropped["sync_to"] == (BASE + timedelta(seconds=120)).isoformat()
+    values = {
+        series["metric"].rsplit(".", 1)[-1]: series["points"][0]["value"]
+        for series in dropped["series"]
+    }
+    assert values == {
+        "requests": 1,
+        "latency_ms": 100.0,
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "cost": 0.2,
+    }
+    assert all(
+        point["timestamp"] == int(BASE.timestamp()) + 120
+        for series in dropped["series"]
+        for point in series["points"]
+    )
+
+    sync_at(connection, 7380)
+    sync_at(connection, 7440)
+    assert metric_values(service, "requests") == [1]  # Only the unseen later row.
+    assert len(service.export_logs.call_args_list[-1].args[1]) == 1
+    successful_ids = [log["attributes"]["request_id"] for log in logs_sent(service)]
+    assert successful_ids.count("during-outage") == 1
+    assert successful_ids.count("before-outage") == (2 if failed_phase == "logs" else 1)
+    assert (
+        SyncLog.objects.filter(connection=connection, status=SyncStatus.PARTIAL).count()
+        == 1
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("age,expired", [(3539, False), (3540, True)])
+def test_datadog_metric_intake_age_has_a_transit_margin(datadog, age, expired):
+    connection, service = datadog
+    create_log(connection, "original", arrived=90)
+    service.export_metrics.side_effect = RuntimeError("synthetic metric failure")
+    sync_at(connection, 120)
+    first_series = service.export_metrics.call_args.args[1]
+    service.export_metrics.reset_mock()
+    service.export_metrics.side_effect = lambda credentials, series: {
+        "sent": len(series)
+    }
+    sync_at(connection, 120 + age)
+    if expired:
+        service.export_metrics.assert_not_called()
+        assert (
+            SyncLog.objects.filter(connection=connection).latest("started_at").status
+            == SyncStatus.PARTIAL
+        )
+    else:
+        assert service.export_metrics.call_args.args[1] == first_series
+        assert (
+            SyncLog.objects.filter(connection=connection).latest("started_at").status
+            == SyncStatus.NO_NEW_DATA
+        )
+    assert len(logs_sent(service)) == 1
+
+
+@pytest.mark.django_db
+def test_expired_metric_audit_is_not_lost_if_completion_write_fails(datadog):
+    connection, service = datadog
+    create_log(connection, "original", arrived=90)
+    service.export_metrics.side_effect = RuntimeError("synthetic metric failure")
+    sync_at(connection, 120)
+    service.export_metrics.reset_mock()
+    save = SyncLog.save
+    failed = False
+
+    def fail_completion_once(sync_log, *args, **kwargs):
+        nonlocal failed
+        if sync_log.error_details.get("metrics_dropped") and not failed:
+            failed = True
+            raise RuntimeError("synthetic audit persistence failure")
+        return save(sync_log, *args, **kwargs)
+
+    with patch.object(SyncLog, "save", autospec=True, side_effect=fail_completion_once):
+        sync_at(connection, 7320)
+    assert connection.last_synced_at == BASE
+    assert connection.sync_cursor["datadog_export"]["metrics_complete"]
+    assert "metrics_dropped" in connection.sync_cursor["datadog_export"]
+    sync_at(connection, 7380)
+    service.export_metrics.assert_not_called()
+    assert len(logs_sent(service)) == 1
+    audit = SyncLog.objects.filter(connection=connection).latest("started_at")
+    assert audit.status == SyncStatus.PARTIAL
+    assert (
+        audit.error_details["metrics_dropped"]["reason"]
+        == "datadog_intake_age_exceeded"
+    )
+    assert "datadog_export" not in connection.sync_cursor
