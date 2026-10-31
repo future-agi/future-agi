@@ -171,3 +171,19 @@ def test_an_accepted_item_that_gained_a_field_after_review_is_stale_even_where_i
     with pytest.raises(ReviewRefused) as stale:
         compose_accepted(grown, draft, changes, _decide(changes, {"tool:issue_refund"}))
     assert stale.value.code == "review_stale"
+
+
+def test_a_write_adds_one_source_to_each_item_it_moved_and_a_retry_adds_none():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_versioning.review import record_sources
+
+    default = _tree({"tools": TOOLS})
+    edited = _tree({"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}]})
+    user = SimpleNamespace(id="u-1")
+    first = record_sources(None, default, edited, origin="manual", user=user, revision=1, at="t1")
+    assert first == {"tool:issue_refund": [{"origin": "manual", "agent": {"kind": "user", "user_id": "u-1"},
+                                             "at": "t1", "draft_revision": 1}]}
+    assert record_sources(first, default, edited, origin="manual", user=user, revision=1, at="t2") == first
+    harness = record_sources(first, edited, default, origin="chat", user=None, revision=2, at="t3")
+    assert [one["agent"]["kind"] for one in harness["tool:issue_refund"]] == ["user", "harness"]

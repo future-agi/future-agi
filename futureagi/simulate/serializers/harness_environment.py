@@ -728,6 +728,9 @@ class HarnessReviewChangeSerializer(serializers.Serializer):
     summary = serializers.CharField()
     decision = serializers.ChoiceField(choices=("accepted", "rejected"), allow_null=True)
     affects = serializers.JSONField(help_text="The scenario keys this change touches, or `all`.")
+    sources = serializers.ListField(
+        child=serializers.DictField(), help_text="Where the change came from, latest first: who, through what, when."
+    )
     depends_on = serializers.ListField(
         child=serializers.CharField(), help_text="Changes this one needs; accepting it means accepting them."
     )

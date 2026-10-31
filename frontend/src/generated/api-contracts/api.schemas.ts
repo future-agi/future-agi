@@ -18844,6 +18844,8 @@ export type HarnessReviewChangeApiPatchItem = { [key: string]: string };
  */
 export type HarnessReviewChangeApiAffects = { [key: string]: unknown };
 
+export type HarnessReviewChangeApiSourcesItem = { [key: string]: string };
+
 export interface HarnessReviewChangeApi {
   /** @minLength 1 */
   id: string;
@@ -18865,6 +18867,8 @@ export interface HarnessReviewChangeApi {
   decision: HarnessReviewChangeApiDecision;
   /** The scenario keys this change touches, or `all`. */
   affects: HarnessReviewChangeApiAffects;
+  /** Where the change came from, latest first: who, through what, when. */
+  sources: HarnessReviewChangeApiSourcesItem[];
   /** Changes this one needs; accepting it means accepting them. */
   depends_on: string[];
 }

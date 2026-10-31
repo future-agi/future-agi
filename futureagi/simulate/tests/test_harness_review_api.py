@@ -43,6 +43,10 @@ def test_an_added_actor_is_one_change_decided_once_and_undecided_again_when_it_c
     assert change["summary"] == "Add actor manager" and not review["can_save"]
     # No scenario includes the new actor yet, and it needs nothing else in the draft.
     assert (change["affects"], change["depends_on"]) == ([], [])
+    # Who made the change, through what, at which draft revision.
+    [source] = change["sources"]
+    assert (source["agent"], source["draft_revision"]) == ({"kind": "user", "user_id": str(user.id)}, 1)
+    assert source["origin"]
     revision = review["drafts"]["environment"]["revision"]
 
     decided = _decide(auth_client, environment, [{"id": "actor:manager", "decision": "accepted"}],
@@ -70,7 +74,10 @@ def test_an_added_actor_is_one_change_decided_once_and_undecided_again_when_it_c
     )
     assert edited.status_code == 200, edited.content
     again = _review(auth_client, environment)
-    assert next(one for one in again["changes"] if one["id"] == "actor:manager")["decision"] is None
+    manager = next(one for one in again["changes"] if one["id"] == "actor:manager")
+    assert manager["decision"] is None
+    # Each write that moved the item adds a source, latest first; the auditor write did not touch it.
+    assert [one["draft_revision"] for one in manager["sources"]] == [3, 1]
 
 
 def test_a_decision_on_a_draft_that_moved_or_on_an_unknown_change_is_refused(user, workspace, storage, auth_client):

@@ -129930,6 +129930,7 @@
                 "summary",
                 "decision",
                 "affects",
+                "sources",
                 "depends_on"
             ],
             "type": "object",
@@ -130027,6 +130028,17 @@
                     "title": "Affects",
                     "description": "The scenario keys this change touches, or `all`.",
                     "type": "object"
+                },
+                "sources": {
+                    "description": "Where the change came from, latest first: who, through what, when.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
                 },
                 "depends_on": {
                     "description": "Changes this one needs; accepting it means accepting them.",

@@ -344,7 +344,9 @@ def draft_review(environment: Any) -> dict[str, Any]:
         drafts[piece] = {"id": str(draft.id), "revision": draft.revision, "parent_id": str(draft.parent_id or "")}
         defaults.append(str(getattr(draft.parent, "hash", "") or ""))
         recorded = _decisions(draft)
+        sources = (draft.documents or {}).get("provenance") or {}
         for change in _piece_changes(environment, piece, draft):
+            change["sources"] = list(reversed(sources.get(change["id"]) or []))
             entry = recorded.get(change["id"]) or {}
             decision = entry.get("decision") if entry.get("draft_digest") == change["draft_digest"] else None
             change["decision"] = decision
@@ -560,3 +562,40 @@ def name_saved(activated: dict[str, Any], *, name: str) -> None:
                 carry_untouched_proofs(version.parent, version, version.job.suite_version, reviewed)
         if fields:
             version.save(update_fields=[*fields, "updated_at"])
+
+
+SOURCES_PER_CHANGE = 20
+
+
+def record_sources(
+    provenance: dict[str, list[dict[str, Any]]] | None,
+    before: Mapping[str, bytes],
+    after: Mapping[str, bytes],
+    *,
+    origin: str,
+    user: Any,
+    revision: int,
+    at: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Where each change came from: every item this write moved gets one source (who, through what, at which draft
+    revision), appended to the sources it already had. A retried write at the same revision adds nothing."""
+    out = {key: list(value) for key, value in (provenance or {}).items()}
+    old, new = item_index(before), item_index(after)
+    moved = sorted(
+        item_id
+        for item_id in set(old) | set(new)
+        if (old[item_id].digest if item_id in old else None) != (new[item_id].digest if item_id in new else None)
+    )
+    source = {
+        "origin": origin,
+        "agent": {"kind": "user", "user_id": str(getattr(user, "id", "") or "")} if user is not None else {"kind": "harness"},
+        "at": at,
+        "draft_revision": revision,
+    }
+    for item_id in moved:
+        listed = out.setdefault(item_id, [])
+        if any(one.get("draft_revision") == revision for one in listed):
+            continue
+        listed.append(source)
+        del listed[:-SOURCES_PER_CHANGE]
+    return out

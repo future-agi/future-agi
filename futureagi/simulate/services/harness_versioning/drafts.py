@@ -745,6 +745,17 @@ def record_draft(
                 values["documents"]["exempt_keys"] = sorted(exempt)
             if workspace_sealed is not None:
                 values["documents"]["workspace_sealed"] = workspace_sealed
+            from simulate.services.harness_versioning.review import record_sources
+
+            values["documents"]["provenance"] = record_sources(
+                (draft.documents or {}).get("provenance") if fresh else None,
+                _piece_files(locked, piece, draft if fresh else default),
+                _side(archives.compose(split.environment, split.suite), piece),
+                origin=origin,
+                user=user,
+                revision=draft.revision + 1 if fresh else 1,
+                at=timezone.now().isoformat(),
+            )
             replaced = draft if draft is not None and not fresh else None
             if replaced is not None:
                 # A newer edit replaces changes made on an older default (kept in history).

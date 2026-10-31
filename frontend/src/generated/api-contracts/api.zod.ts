@@ -37884,6 +37884,11 @@ export const SimulateApiHarnessEnvironmentsDraftsDraftsReviewResponse =
           .object({})
           .passthrough()
           .describe("The scenario keys this change touches, or `all`."),
+        sources: zod
+          .array(zod.record(zod.string(), zod.string()))
+          .describe(
+            "Where the change came from, latest first: who, through what, when.",
+          ),
         depends_on: zod
           .array(zod.string().min(1))
           .describe(
@@ -37982,6 +37987,11 @@ export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResp
           .object({})
           .passthrough()
           .describe("The scenario keys this change touches, or `all`."),
+        sources: zod
+          .array(zod.record(zod.string(), zod.string()))
+          .describe(
+            "Where the change came from, latest first: who, through what, when.",
+          ),
         depends_on: zod
           .array(zod.string().min(1))
           .describe(
