@@ -163,6 +163,7 @@
 * **telemetry:** isolate shared outboxes across instances ([ed5f1fb](https://github.com/future-agi/future-agi/commit/ed5f1fbecc6a741f6cfff022e8e8ddfe867b0f60))
 * **tests:** stop NLTK corpus test depending on preinstalled data, shrink body-limit test payload ([315c47b](https://github.com/future-agi/future-agi/commit/315c47b197b5434282faa7d438252cf293fd7986))
 
+
 ## [1.49.0](https://github.com/future-agi/future-agi/compare/v1.48.0...v1.49.0) (2026-10-12)
 
 

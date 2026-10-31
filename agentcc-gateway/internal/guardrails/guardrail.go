@@ -26,6 +26,8 @@ const (
 	ActionWarn
 	// ActionLog records the result without affecting the request.
 	ActionLog
+	// ActionMask allows the request but masks sensitive data in logs/metadata.
+	ActionMask
 )
 
 // CheckInput is the input to a guardrail check.
