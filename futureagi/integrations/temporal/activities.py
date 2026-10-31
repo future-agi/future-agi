@@ -527,6 +527,7 @@ def _datadog_export_owner(connection):
             yield False
             return
         connection._datadog_export_owner = token
+        connection._datadog_export_lock = lock_db
         try:
             yield True
         except _DatadogExportOwnershipLost:
@@ -542,11 +543,37 @@ def _datadog_export_owner(connection):
                 pk=connection.pk, sync_cursor__datadog_export_owner=token
             ).update(sync_cursor=RawSQL("sync_cursor - %s", ["datadog_export_owner"]))
             del connection._datadog_export_owner
+            del connection._datadog_export_lock
     finally:
         # Closing rolls back the otherwise read-only transaction and releases the
         # lock on success, failure or cancellation. Never return a session lock to
         # PgBouncer's pool.
         lock_db.close()
+
+
+def _check_datadog_delivery_owner(connection):
+    """Fail closed immediately before a sink call, not only after its response."""
+    from django.db import DatabaseError, InterfaceError
+
+    from integrations.models import IntegrationConnection
+
+    if not IntegrationConnection.no_workspace_objects.filter(
+        pk=connection.pk,
+        sync_cursor__datadog_export_owner=connection._datadog_export_owner,
+    ).exists():
+        raise _DatadogExportOwnershipLost()
+
+    lock_db = connection._datadog_export_lock
+    # Do not let cursor() reconnect a closed wrapper: the new session would not
+    # own the transaction-scoped advisory lock. A dead but still attached socket
+    # must also fail, even if no successor has replaced the durable token yet.
+    if lock_db.connection is None or lock_db.get_autocommit():
+        raise _DatadogExportOwnershipLost()
+    try:
+        with lock_db.cursor() as cursor:
+            cursor.execute("SELECT 1")
+    except (DatabaseError, InterfaceError) as exc:
+        raise _DatadogExportOwnershipLost() from exc
 
 
 def _save_export_progress(connection, update_fields):
@@ -890,6 +917,7 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
             }
             dd_logs.append(dd_log)
 
+        _check_datadog_delivery_owner(connection)
         result = service.export_logs(credentials, dd_logs)
         if result.get("sent") != len(dd_logs):
             raise RuntimeError("Datadog did not acknowledge the complete log batch")
@@ -1004,6 +1032,7 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
             snapshot_timestamp=ts,
         )
     elif series:
+        _check_datadog_delivery_owner(connection)
         result = service.export_metrics(credentials, series)
         if result.get("sent") != len(series):
             raise RuntimeError("Datadog did not acknowledge the complete metric batch")

@@ -1,12 +1,13 @@
 """Datadog exports deduplicate committed arrivals and freeze metric membership."""
 
 from datetime import UTC, datetime, timedelta
-from threading import Event, Thread
+from threading import Event, Thread, current_thread
 from unittest.mock import Mock, patch
 
 import pytest
-from django.db import close_old_connections, transaction
+from django.db import close_old_connections, connections, transaction
 from django.db import connection as db_connection
+from django.db.models.query import QuerySet
 
 from accounts.models.workspace import Workspace
 from agentcc.models import AgentccRequestLog
@@ -642,6 +643,133 @@ def test_concurrent_exporter_cannot_orphan_a_newer_pending_snapshot(datadog, los
     assert accepted.count("new-request") == 1
     assert DatadogExportReceipt.objects.filter(connection=connection).count() == 2
     assert connection.last_synced_at == BASE + timedelta(seconds=300)
+    assert "datadog_export" not in connection.sync_cursor
+    assert "datadog_export_owner" not in connection.sync_cursor
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("paused_phase", ["logs", "second_log_batch", "metrics"])
+@pytest.mark.parametrize("takeover", [False, True])
+def test_lost_lock_before_sink_call_stops_stale_delivery(
+    datadog, paused_phase, takeover
+):
+    """Lose ownership during preparation, with no HTTP request in flight."""
+    connection, service = datadog
+    row_count = 501 if paused_phase == "second_log_batch" else 1
+    rows = AgentccRequestLog.no_workspace_objects.bulk_create(
+        [
+            AgentccRequestLog(
+                organization=connection.organization,
+                workspace=connection.workspace,
+                request_id=f"request-{i}",
+                started_at=BASE + timedelta(seconds=90),
+                input_tokens=10,
+            )
+            for i in range(row_count)
+        ]
+    )
+    AgentccRequestLog.no_workspace_objects.filter(
+        pk__in=[row.pk for row in rows]
+    ).update(created_at=BASE + timedelta(seconds=90))
+    blocked, release = Event(), Event()
+    errors, lock_pids = [], []
+    wrapper_type = type(connections["default"])
+    copy_db, aggregate, fetch_all = (
+        wrapper_type.copy,
+        QuerySet.aggregate,
+        QuerySet._fetch_all,
+    )
+    batches_prepared = 0
+
+    def capture_lock_db(wrapper, alias=None):
+        copied = copy_db(wrapper, alias)
+        if current_thread() is worker:
+            with copied.cursor() as cursor:
+                cursor.execute("SELECT pg_backend_pid()")
+                lock_pids.append(cursor.fetchone()[0])
+        return copied
+
+    def pause_before_fetch(qs):
+        nonlocal batches_prepared
+        if (
+            current_thread() is worker
+            and qs.model is AgentccRequestLog
+            and qs._result_cache is None
+        ):
+            batches_prepared += 1
+            pause_at = 2 if paused_phase == "second_log_batch" else 1
+            if paused_phase != "metrics" and batches_prepared == pause_at:
+                blocked.set()
+                assert release.wait(timeout=30)
+        return fetch_all(qs)
+
+    def pause_before_aggregate(qs, *args, **kwargs):
+        if current_thread() is worker and qs.model is AgentccRequestLog:
+            if paused_phase == "metrics":
+                blocked.set()
+                assert release.wait(timeout=30)
+        return aggregate(qs, *args, **kwargs)
+
+    def export_in_thread():
+        close_old_connections()
+        try:
+            stale = IntegrationConnection.no_workspace_objects.get(pk=connection.pk)
+            sync_at(stale, 120)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            db_connection.close()
+
+    worker = Thread(target=export_in_thread)
+    with (
+        patch.object(wrapper_type, "copy", autospec=True, side_effect=capture_lock_db),
+        patch.object(
+            QuerySet, "_fetch_all", autospec=True, side_effect=pause_before_fetch
+        ),
+        patch.object(
+            QuerySet, "aggregate", autospec=True, side_effect=pause_before_aggregate
+        ),
+    ):
+        worker.start()
+        try:
+            assert blocked.wait(timeout=30)
+            expected_logs = {"logs": 0, "second_log_batch": 500, "metrics": 1}[
+                paused_phase
+            ]
+            assert len(logs_sent(service)) == expected_logs
+            service.export_metrics.assert_not_called()
+            assert len(lock_pids) == 1
+            with db_connection.cursor() as cursor:
+                cursor.execute("SELECT pg_terminate_backend(%s)", [lock_pids[0]])
+                assert cursor.fetchone()[0]
+            if takeover:
+                sync_at(
+                    IntegrationConnection.no_workspace_objects.get(pk=connection.pk),
+                    121,
+                )
+                assert len(logs_sent(service)) == row_count
+                assert metric_values(service, "requests") == [row_count]
+            connection.refresh_from_db()
+            durable_cursor = connection.sync_cursor.copy()
+            durable_checkpoint = connection.last_synced_at
+        finally:
+            release.set()
+            worker.join(timeout=30)
+    assert not worker.is_alive()
+    assert not errors
+    # The stale worker must neither send nor overwrite the durable checkpoint.
+    assert len(logs_sent(service)) == (row_count if takeover else expected_logs)
+    assert metric_values(service, "requests") == ([row_count] if takeover else [])
+    connection.refresh_from_db()
+    # Owner cleanup may remove only this worker's token when nobody took over.
+    durable_cursor.pop("datadog_export_owner", None)
+    assert connection.sync_cursor == durable_cursor
+    assert connection.last_synced_at == durable_checkpoint
+    sync_at(connection, 180)
+    sync_at(connection, 240)
+    ids = [log["attributes"]["request_id"] for log in logs_sent(service)]
+    assert len(ids) == len(set(ids)) == row_count
+    assert metric_values(service, "requests") == [row_count]
     assert "datadog_export" not in connection.sync_cursor
     assert "datadog_export_owner" not in connection.sync_cursor
 
