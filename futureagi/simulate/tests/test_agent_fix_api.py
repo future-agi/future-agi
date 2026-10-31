@@ -757,7 +757,7 @@ class TestUserApi:
         assert options["defaults"] == {
             "surfaces": ["prompt"],
             "budget_credits": 1500,
-            "max_minutes": 150,
+            "max_minutes": 180,
         }
         assert options["limits"] == {
             "budget_credits_max": 50000,
