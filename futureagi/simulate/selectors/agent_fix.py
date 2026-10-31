@@ -1,5 +1,6 @@
 """Reads for "Fix my agent": the engine's brief, a check run's results, the run list."""
 
+from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -24,6 +25,7 @@ from django.db.models import (
 from django.db.models.functions import Coalesce
 
 from simulate.models import (
+    AgentFixCandidate,
     AgentFixRun,
     AgentVersion,
     HarnessAgentVersionRuntime,
@@ -42,6 +44,7 @@ from simulate.pydantic_schemas.agent_fix import (
     CheckRecord,
     CheckRunStatus,
     EngineBrief,
+    EvalWarning,
     FailureOwner,
     FixRequest,
     InventoryScenario,
@@ -62,6 +65,12 @@ from simulate.services.harness_environment import environment_name
 from simulate.services.harness_github import short_ref
 from simulate.services.harness_usage import check_harness_action
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.run_compare import REGRESSED, verdict
+from simulate.services.run_results_v3_scoring import (
+    LiveEvals,
+    judge_stored_eval,
+    live_eval_specs,
+)
 
 TRANSCRIPT_CHARS = 8000
 FINISHED_RUN_STATES = {
@@ -503,6 +512,76 @@ def base_check_runs(fix_run: AgentFixRun) -> list[HostedHarnessJob]:
             labels.add(run.fix_label)
             runs.append(run)
     return runs
+
+
+def _eval_trials(
+    run_ids: Iterable[Any], evals: LiveEvals
+) -> dict[str, dict[str, list[int]]]:
+    """Each eval's trials on the given runs, by scenario: [passed, judged]. An eval that
+    errored says nothing about the agent, so it is not a trial."""
+    trials: dict[str, dict[str, list[int]]] = defaultdict(
+        lambda: defaultdict(lambda: [0, 0])
+    )
+    for scenario_key, outputs in HostedHarnessExecution.no_workspace_objects.filter(
+        job_id__in=run_ids
+    ).values_list("source_scenario__scenario_key", "call_execution__eval_outputs"):
+        for config_id, live in evals.items():
+            outcome = judge_stored_eval(
+                (outputs or {}).get(config_id), live.spec
+            ).outcome
+            if outcome in ("passed", "failed"):
+                trials[config_id][scenario_key][0] += outcome == "passed"
+                trials[config_id][scenario_key][1] += 1
+    return trials
+
+
+def _pooled(
+    trials: Mapping[str, list[int]], scenario_keys: Iterable[str]
+) -> tuple[int, int]:
+    rows = [trials[key] for key in scenario_keys]
+    return sum(one[0] for one in rows), sum(one[1] for one in rows)
+
+
+def eval_warnings(fix_run: AgentFixRun) -> list[EvalWarning]:
+    """The platform evals the winner does worse on than the base version, on the scenarios
+    both ran. They do not decide a fix's verdict, so the person who reviews it reads them
+    here. Evals land after their call ends, so this reads them rather than a snapshot."""
+    winner = next(
+        (
+            one
+            for one in fix_run.candidates.all()
+            if one.outcome == AgentFixCandidate.Outcome.WINNER
+        ),
+        None,
+    )
+    if winner is None:
+        return []
+    evals = live_eval_specs(fix_run.environment.run_test_id)
+    mine = _eval_trials(
+        [
+            run.id
+            for run in fix_run.check_run_list
+            if run.agent_version_id == winner.agent_version_id
+        ],
+        evals,
+    )
+    base = _eval_trials([run.id for run in base_check_runs(fix_run)], evals)
+    warnings = []
+    for config_id, live in evals.items():
+        shared = mine[config_id].keys() & base[config_id].keys()
+        passed, trials = _pooled(mine[config_id], shared)
+        base_passed, base_trials = _pooled(base[config_id], shared)
+        if verdict(passed, trials, base_passed, base_trials)[0] == REGRESSED:
+            warnings.append(
+                EvalWarning(
+                    name=live.config.name,
+                    pass_rate=passed / trials,
+                    base_pass_rate=base_passed / base_trials,
+                    trials=trials,
+                    base_trials=base_trials,
+                )
+            )
+    return warnings
 
 
 def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFixRun]:

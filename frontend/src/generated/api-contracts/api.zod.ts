@@ -35032,6 +35032,17 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
   started_at: zod.string().datetime({ offset: true }).optional(),
   finished_at: zod.string().datetime({ offset: true }).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
+  eval_warnings: zod
+    .array(
+      zod.object({
+        name: zod.string().min(1),
+        pass_rate: zod.number(),
+        base_pass_rate: zod.number(),
+        trials: zod.number(),
+        base_trials: zod.number(),
+      }),
+    )
+    .optional(),
 });
 
 /**

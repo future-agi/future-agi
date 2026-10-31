@@ -67,6 +67,8 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
     storage as storage,
 )
 from simulate.tests.test_harness_versioning_record import _authoring
+from simulate.utils.test_execution_utils import eval_source
+from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 
 pytestmark = pytest.mark.django_db
 
@@ -851,6 +853,14 @@ class TestCheckRuns:
             fix_run=fix_run
         ).exists()
         temporal.start_run.assert_not_called()
+
+
+def test_a_check_run_s_evals_have_a_source_of_their_own(source_run):
+    check = _check(_fix_run(source_run))
+
+    assert eval_source(check.test_execution_id) == FIX_CHECK_RUN_EVAL_SOURCE
+    assert eval_source(source_run.test_execution_id) == "simulate"
+    assert eval_source(source_run.test_execution_id, "other") == "other"
 
 
 class TestCheckRunSeeds:
