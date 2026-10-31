@@ -14,7 +14,10 @@ import structlog
 from retrying import retry
 
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
-from model_hub.models.openai_tools import openai_tool_envelope
+from model_hub.models.openai_tools import (
+    ensure_openai_tool_envelope,
+    openai_tool_envelope,
+)
 from model_hub.models.run_prompt import PromptVersion
 
 logger = structlog.get_logger(__name__)
@@ -93,11 +96,9 @@ class PromptBasedAgentAdapter:
 
         # Tool configuration (if any)
         self.tools = [
-            openai_tool_envelope(
-                tool.get("name"), tool.get("description"), tool.get("config")
-            )
+            ensure_openai_tool_envelope(tool)
             for tool in model_config.get("tools", [])
-            if tool.get("config")
+            if tool
         ]
         self.tool_choice = model_config.get("tool_choice")
 
