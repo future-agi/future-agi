@@ -56,10 +56,20 @@ namespace, against a real GitHub repository through the GitHub App:
   deadline (`fix_deadline`). The shared dev backend runs no embedded worker and did not crash.
 - Retry, 31 Oct 07:29 IST: `POST retry/` on that fix started fix `89ef609e`. Reproduce took 30 s
   instead of 100 min: the finished baseline was reused, and the new fix ran no baseline of its own.
+- It ended `ready` at 10:29 IST, 3 hours in: two attempts screened, attempt 1 verified and won.
+  Target pass rate 0% to 54%, held-back 0% to 72%, every tier passed, protected cases 4 of 4 held
+  (the fifth was dropped: it passes only 2 of 3 runs on the base version).
+- The first pull request failed: git refused the App token sent as Bearer (fixed in `da793e3fc`).
+  Then the App opened https://github.com/NVJKKartik/fix-my-agent-e2e/pull/1: one commit by
+  "Future AGI", `instructions.md` +18/-6, removing the planted "the day after" rule.
 
-Not yet verified: Verify, the winner, and the pull request against GitHub itself (the pull request
-path is tested against a local bare repository only). Locally the run never got past the baseline:
-the local sandbox TTL (`ALK_E2B_MAX_TTL_SECONDS=21600`) is shorter than a 72-conversation baseline.
+Not yet verified: merging the pull request, and a fix on a private repository. Locally the run
+never got past the baseline: the local sandbox TTL (`ALK_E2B_MAX_TTL_SECONDS=21600`) is shorter
+than a 72-conversation baseline.
+
+Seen on the way, not fixed: the read of a retried fix lists no baseline check run (it belongs to the
+failed fix); the read says 4.26 credits for about 130 conversations, not checked against dev
+billing; the launch form's 150-minute default cannot fit a fix on a 24-scenario suite.
 
 Tests: 197 pass on the base branch and 200 on the stacked branch
 (`simulate/tests/test_agent_fix_{services,api,sandbox,workflow}.py`). Engine: 42 on base, 47 on
