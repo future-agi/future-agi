@@ -95,10 +95,11 @@ def _engine(client, method, fix_run, path, *, token=TOKEN, **kwargs):
 
 
 def _billed(usd):
-    """A model call's cost as the organization is billed for it: at the AI markup."""
+    """A model call's cost as the organization is billed for it: at the AI markup, to the
+    spend column's four places."""
     from ee.usage.services.config import BillingConfig
 
-    return usd * BillingConfig.get().get_ai_cost_markup()
+    return (usd * BillingConfig.get().get_ai_cost_markup()).quantize(Decimal("0.0001"))
 
 
 def _out_of_credits():

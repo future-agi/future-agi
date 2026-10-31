@@ -68,9 +68,8 @@ def _error_response(exc):
     if isinstance(exc, HostedHarnessError):
         return Response(exc.as_dict(), status=exc.status_code)
     if isinstance(exc, PydanticValidationError):
-        return Response(
-            {"error": "validation_error", "message": str(exc), "retryable": False},
-            status=status.HTTP_400_BAD_REQUEST,
+        return _error_response(
+            HostedHarnessError("validation_error", str(exc), status_code=400)
         )
     return _usage_limit_response(exc)
 
@@ -81,9 +80,8 @@ def _engine_error_response(exc):
 
 
 def _not_found():
-    return Response(
-        {"error": "not_found", "message": "Not found", "retryable": False},
-        status=status.HTTP_404_NOT_FOUND,
+    return _error_response(
+        HostedHarnessError("not_found", "Not found", status_code=404)
     )
 
 
