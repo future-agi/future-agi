@@ -27,22 +27,29 @@ const showTranscript = (calls = [call]) => {
   return render(<TranscriptView transcript={transcript} />);
 };
 
+const preWithText = (text) =>
+  screen.getByText(
+    (_, element) => element?.tagName === "PRE" && element.textContent === text,
+  );
+
 describe("function calls in voice transcripts", () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
-  it("renders a separate header, arguments and result with recorded timing", () => {
+  it("renders each call and its result as themed cards with recorded timing", async () => {
+    const user = userEvent.setup();
     showTranscript();
-    expect(screen.getByText("Function call")).toBeInTheDocument();
-    expect(screen.getByText("geocode_address")).toBeInTheDocument();
-    expect(screen.getByText("geocode_address").parentElement).toHaveTextContent(
-      "Function call · geocode_address · 309ms",
-    );
-    const args = screen.getByText(`→ args: ${JSON.stringify(call.arguments)}`);
-    const result = screen.getByText(`← result: ${JSON.stringify(call.result)}`);
-    expect(args).not.toBe(result);
-    expect(args.parentElement).toBe(result.parentElement);
+    expect(screen.getByText("geocode_address · 309ms")).toBeInTheDocument();
+    expect(screen.getByText("Tool result")).toBeInTheDocument();
+    expect(screen.queryByText(/Function call/)).not.toBeInTheDocument();
+    await user.click(screen.getByText("geocode_address · 309ms"));
+    expect(
+      preWithText(JSON.stringify(call.arguments, null, 2)),
+    ).toBeInTheDocument();
+    expect(
+      preWithText(JSON.stringify(call.result, null, 2)),
+    ).toBeInTheDocument();
     expect(screen.getByText("0:07")).toBeInTheDocument();
     expect(screen.getByText("Hello there")).toBeInTheDocument();
   });
@@ -52,8 +59,7 @@ describe("function calls in voice transcripts", () => {
     showTranscript();
     await user.type(screen.getByPlaceholderText("Search transcript"), "SFO");
     expect(screen.queryByText("Hello there")).not.toBeInTheDocument();
-    expect(screen.getByText("Function call")).toBeInTheDocument();
-    expect(screen.getByText("SFO").tagName).toBe("MARK");
+    expect(screen.getByText("geocode_address · 309ms")).toBeInTheDocument();
     const copy = vi.spyOn(navigator.clipboard, "writeText");
     await user.click(
       screen.getByRole("button", { name: "Copy function call" }),
@@ -68,17 +74,23 @@ describe("function calls in voice transcripts", () => {
       { id: "a", name: "check", arguments: {}, result: false },
       { id: "b", function: { name: "count", arguments: "{}" }, output: 0 },
     ]);
-    expect(screen.getByText("← result: false")).toBeInTheDocument();
-    expect(screen.getByText("← result: 0")).toBeInTheDocument();
-    expect(screen.getByText("check").parentElement).toHaveTextContent(
-      /^Function call · check$/,
-    );
+    expect(screen.getAllByText("Tool result")).toHaveLength(2);
+    expect(screen.getByText("false")).toBeInTheDocument();
+    expect(screen.getByText("0")).toBeInTheDocument();
+    expect(screen.getByText("check")).toBeInTheDocument();
+    expect(screen.getByText("count")).toBeInTheDocument();
+  });
+
+  it("shows a call without a result as a single card", () => {
+    showTranscript([{ id: "c", name: "pending_lookup", arguments: {} }]);
+    expect(screen.getByText("pending_lookup")).toBeInTheDocument();
+    expect(screen.queryByText("Tool result")).not.toBeInTheDocument();
   });
 
   it("shows tool strings literally instead of interpreting them as markdown", () => {
     showTranscript([{ name: "read", result: "**raw** <script>text</script>" }]);
     expect(
-      screen.getByText("← result: **raw** <script>text</script>"),
+      screen.getByText("**raw** <script>text</script>"),
     ).toBeInTheDocument();
     expect(document.querySelector("script")).toBeNull();
   });

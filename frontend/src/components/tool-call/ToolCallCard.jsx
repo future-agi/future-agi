@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Collapse, Typography } from "@mui/material";
+import { Box, Collapse, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 const cardSx = {
@@ -82,7 +82,11 @@ const asText = (value) =>
 export const ToolCallCard = ({ toolCall }) => (
   <CollapsibleToolCard
     icon="mdi:wrench-outline"
-    label={toolCall.name}
+    label={
+      toolCall.durationMs != null
+        ? `${toolCall.name} · ${toolCall.durationMs}ms`
+        : toolCall.name
+    }
     body={asText(toolCall.arguments)}
   />
 );
@@ -91,6 +95,7 @@ ToolCallCard.propTypes = {
   toolCall: PropTypes.shape({
     name: PropTypes.string.isRequired,
     arguments: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
+    durationMs: PropTypes.number,
   }).isRequired,
 };
 
@@ -103,7 +108,34 @@ export const ToolResultCard = ({ content }) => (
 );
 
 ToolResultCard.propTypes = {
-  content: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
+  content: PropTypes.any,
+};
+
+export const ToolCallList = ({ calls }) => (
+  <Stack spacing={0.5}>
+    {calls.flatMap((call, index) => {
+      const name = call.name || call.function?.name || "tool";
+      const key = call.id || `${name}-${index}`;
+      const result = call.result ?? call.output;
+      return [
+        <ToolCallCard
+          key={`${key}-call`}
+          toolCall={{
+            name,
+            arguments: call.arguments ?? call.function?.arguments,
+            durationMs: call.duration_ms ?? call.durationMs,
+          }}
+        />,
+        ...(result != null
+          ? [<ToolResultCard key={`${key}-result`} content={result} />]
+          : []),
+      ];
+    })}
+  </Stack>
+);
+
+ToolCallList.propTypes = {
+  calls: PropTypes.arrayOf(PropTypes.object).isRequired,
 };
 
 export default ToolCallCard;

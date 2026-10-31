@@ -7,6 +7,7 @@ import { getLoadingStateWithRespectiveStatus } from "src/sections/test-detail/co
 import { SKELETON_BUBBLE_WIDTHS, SYSTEM_SPEAKER_ROLE } from "./constants";
 import {
   countWords,
+  getChatToolCalls,
   getChatTurnContent,
   getChatTurnTimestampMs,
 } from "./chatTranscriptUtils";
@@ -126,23 +127,34 @@ const ChatTranscriptView = ({ data }) => {
     if (!Array.isArray(transcript)) return [];
     return transcript
       .filter((item) => item.speaker_role !== SYSTEM_SPEAKER_ROLE)
-      .map((item) => {
+      .flatMap((item, index) => {
         const ts = getChatTurnTimestampMs(item);
         const content = getChatTurnContent(item);
         const existingDuration =
           typeof item.duration === "number" && Number.isFinite(item.duration)
             ? item.duration
             : null;
-        return {
-          ...item,
-          // Flatten `messages[0].content` into a plain `content` field so
-          // TranscriptView's enrichTurns/getContent picks it up.
-          content,
+        const toolRows = getChatToolCalls(item).map((call, callIndex) => ({
+          id: `${item.id ?? index}-tool-${callIndex}`,
+          speaker_role: "tool",
+          content: "",
+          tool_calls: [call],
           ...(ts != null ? { startTimeSeconds: ts } : {}),
-          ...(existingDuration == null
-            ? { duration: countWords(content) }
-            : {}),
-        };
+        }));
+        return [
+          {
+            ...item,
+            // Flatten `messages[0].content` into a plain `content` field so
+            // TranscriptView's enrichTurns/getContent picks it up.
+            content,
+            tool_calls: [],
+            ...(ts != null ? { startTimeSeconds: ts } : {}),
+            ...(existingDuration == null
+              ? { duration: countWords(content) }
+              : {}),
+          },
+          ...toolRows,
+        ];
       });
   }, [data?.transcript]);
 
