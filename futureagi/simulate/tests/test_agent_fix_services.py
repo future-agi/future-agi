@@ -250,6 +250,19 @@ def _check(
         )
 
 
+def _degraded(run, *, to):
+    """Finish a check run that really ran at parallelism ``to``."""
+    HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(state="completed")
+    HostedHarnessAttempt.no_workspace_objects.create(
+        job=run,
+        attempt_number=1,
+        token_hash=hash_secret("a"),
+        fence_hash=hash_secret("b"),
+        expires_at=timezone.now(),
+        effective_parallelism=to,
+    )
+
+
 def _refusal(call, *args, **kwargs):
     with pytest.raises(HostedHarnessError) as caught:
         call(*args, **kwargs)
@@ -497,7 +510,7 @@ class TestRetry:
         # Another trial count is another check: it runs.
         assert _check(retried, label="baseline", trials=2).id != baseline.id
 
-    def test_a_retry_runs_again_a_check_finished_at_another_parallelism(
+    def test_a_retry_keeps_the_baseline_it_paid_for_when_the_setting_changes(
         self, source_run, user, temporal, django_capture_on_commit_callbacks, settings
     ):
         failed = _fix_run(source_run, token_hash=hash_secret("t"))
@@ -516,7 +529,7 @@ class TestRetry:
         retried.refresh_from_db()
         settings.AGENT_FIX_CHECK_RUN_PARALLELISM += 1
 
-        assert _check(retried, label="baseline").id != baseline.id
+        assert _check(retried, label="baseline").id == baseline.id
 
     def test_a_retry_keeps_the_seeds_of_the_fix_it_retries(
         self, source_run, user, temporal, django_capture_on_commit_callbacks
@@ -865,6 +878,39 @@ class TestCheckRunSeeds:
         run = _check(_fix_run(source_run, token_hash=hash_secret("t")))
 
         assert run.payload["runtime"]["parallelism"] == 3
+
+    def test_a_candidate_follows_a_baseline_that_ran_below_the_setting(
+        self, source_run, settings
+    ):
+        settings.AGENT_FIX_CHECK_RUN_PARALLELISM = 4
+        fix_run = _fix_run(source_run, token_hash=hash_secret("t"))
+        baseline = _check(fix_run, label="baseline")
+        _degraded(baseline, to=1)
+        candidate = _candidate(fix_run)
+
+        run = _check(fix_run, label="c1", version_id=candidate.agent_version_id)
+
+        assert baseline.payload["runtime"]["parallelism"] == 4
+        assert run.payload["runtime"]["parallelism"] == 1
+
+    def test_a_retry_reuses_a_baseline_that_ran_below_the_setting(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks, settings
+    ):
+        settings.AGENT_FIX_CHECK_RUN_PARALLELISM = 4
+        failed = _fix_run(source_run, token_hash=hash_secret("t"))
+        baseline = _check(failed, label="baseline")
+        _degraded(baseline, to=1)
+        close_fix_run(failed.id, State.FAILED, failure={"code": "x", "message": "m"})
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(
+                AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
+            )
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.RUNNING
+        )
+        retried.refresh_from_db()
+
+        assert _check(retried, label="baseline").id == baseline.id
 
 
 class TestCheckRunStatus:
