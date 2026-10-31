@@ -365,6 +365,7 @@ func spanToRow(
 	// when that slug has no exact key.
 	cost := hot.Cost
 	nonAdditive := normalization.NonAdditive(span.Attributes())
+	trackCost := nonAdditive || attrsStr["fi.normalization.profile"] != ""
 	if nonAdditive {
 		cost = 0
 	}
@@ -378,13 +379,17 @@ func spanToRow(
 		}
 		if ok {
 			cost = c
-			attrsStr["fi.cost.kind"] = "estimated"
+			if trackCost {
+				attrsStr["fi.cost.kind"] = "estimated"
+			}
 		}
 	}
-	if nonAdditive || (!hot.CostUserSet && attrsStr["fi.cost.kind"] != "estimated") {
-		attrsStr["fi.cost.kind"] = "unknown"
-	} else if hot.CostUserSet && attrsStr["fi.cost.kind"] == "" {
-		attrsStr["fi.cost.kind"] = "provider_reported"
+	if trackCost {
+		if nonAdditive || (!hot.CostUserSet && attrsStr["fi.cost.kind"] != "estimated") {
+			attrsStr["fi.cost.kind"] = "unknown"
+		} else if hot.CostUserSet && attrsStr["fi.cost.kind"] == "" {
+			attrsStr["fi.cost.kind"] = "provider_reported"
+		}
 	}
 
 	startNanos := span.StartTimestamp().AsTime()

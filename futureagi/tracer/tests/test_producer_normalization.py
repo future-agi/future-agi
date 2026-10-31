@@ -290,3 +290,10 @@ def test_whole_genai_messages_fill_content_without_overwriting_explicit_input():
             span, {("test", "org", "observe"): project}, {}, "org"
         )["observation_span"]
         assert result["input"] == "explicit"
+
+
+@pytest.mark.parametrize("kind", ["chain", "llm"])
+def test_legacy_cost_does_not_inject_provenance(kind):
+    attributes = {"fi.span.kind": kind, "gen_ai.cost.total": 0}
+    assert calculate_cost(attributes, None, None, None) == 0
+    assert attributes == {"fi.span.kind": kind, "gen_ai.cost.total": 0}

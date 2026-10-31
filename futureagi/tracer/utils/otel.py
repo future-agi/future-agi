@@ -1743,6 +1743,8 @@ def calculate_cost(
         attributes["fi.cost.kind"] = "unknown"
         return 0
 
+    track_cost = bool(attributes.get("fi.normalization.profile"))
+
     # Check user-provided cost attributes (uses AttributeRegistry aliasing
     # to support gen_ai.cost.* and llm.cost.* conventions automatically)
     user_cost_total = get_attribute(attributes, "cost_total")
@@ -1752,7 +1754,8 @@ def calculate_cost(
     if user_cost_total is not None:
         try:
             value = float(user_cost_total)
-            attributes.setdefault("fi.cost.kind", "provider_reported")
+            if track_cost:
+                attributes.setdefault("fi.cost.kind", "provider_reported")
             return value
         except (ValueError, TypeError):
             return 0
@@ -1760,7 +1763,8 @@ def calculate_cost(
     if user_cost_input is not None or user_cost_output is not None:
         try:
             value = float(user_cost_input or 0) + float(user_cost_output or 0)
-            attributes.setdefault("fi.cost.kind", "provider_reported")
+            if track_cost:
+                attributes.setdefault("fi.cost.kind", "provider_reported")
             return value
         except (ValueError, TypeError):
             return 0
@@ -1777,7 +1781,8 @@ def calculate_cost(
         model=model,
         organization_id=organization_id,
     )
-    attributes.setdefault("fi.cost.kind", "estimated" if value else "unknown")
+    if track_cost:
+        attributes.setdefault("fi.cost.kind", "estimated" if value else "unknown")
     return value
 
 

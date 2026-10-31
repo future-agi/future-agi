@@ -162,3 +162,24 @@ func TestEventsAndLinksReachStoredRow(t *testing.T) {
 		t.Fatal("links not stored")
 	}
 }
+
+// DASH-E2E-010/011/012 pin exact legacy attribute maps. Provenance is a
+// qualified-profile feature, not a new implicit field on every customer's span.
+func TestLegacyCostDoesNotInjectProvenance(t *testing.T) {
+	for _, kind := range []string{"chain", "llm"} {
+		t.Run(kind, func(t *testing.T) {
+			td := ptrace.NewTraces()
+			sp := td.ResourceSpans().AppendEmpty().ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+			sp.Attributes().PutStr("fi.span.kind", kind)
+			sp.Attributes().PutDouble("gen_ai.cost.total", 0)
+			rows, err := Convert(td)
+			if err != nil {
+				t.Fatal(err)
+			}
+			attrs := rows[0]["attrs_string"].(map[string]string)
+			if len(attrs) != 1 || attrs["fi.span.kind"] != kind {
+				t.Fatalf("legacy attributes changed: %#v", attrs)
+			}
+		})
+	}
+}
