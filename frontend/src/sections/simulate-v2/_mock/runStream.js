@@ -937,10 +937,22 @@ export function buildRun({
     */
     /* Injected tool faults — drawn by hash, never from the run's stream, so a
        run with no faults draws exactly the numbers it always did. */
-    const injected =
+    const profiled =
       !unmeasured && hasFaults(toolFaults)
         ? injectToolFaults({ seed, sc, callLog, toolFaults, stage })
         : null;
+    /* The scenario's own test condition (world.md): its tool misbehaves on
+       every run of this scenario, recorded as injected. */
+    const condition =
+      !unmeasured && sc.testCondition?.tool
+        ? applyTestCondition({ seed, sc, callLog, stage })
+        : null;
+    const injected = condition
+      ? {
+          hits: [condition.hit, ...(profiled?.hits || [])],
+          failed: condition.failed || profiled?.failed || null,
+        }
+      : profiled;
     if (injected?.failed && !gradedFail) {
       faultFailEvals(evalResults, injected.failed);
     }
@@ -960,9 +972,11 @@ export function buildRun({
     for (let k = 1; k < Math.max(1, repeats); k += 1) {
       const flipped = r() < flipChance ? !gradedFail : gradedFail;
       /* A later sample meets the same fault profile, drawn afresh. */
-      const faultFailed = injected
-        ? sampleFaultFails({ seed, sc, k, callLog, toolFaults })
-        : false;
+      const faultFailed = condition?.failed
+        ? true
+        : profiled
+          ? sampleFaultFails({ seed, sc, k, callLog, toolFaults })
+          : false;
       samples.push(
         forced
           ? forced[k] || forced[forced.length - 1]
@@ -1318,9 +1332,7 @@ const hasFaults = (toolFaults) =>
   Object.values(toolFaults).some(
     (f) =>
       f &&
-      Object.entries(f).some(
-        ([k, v]) => /Pct$|latencyMs/.test(k) && Number(v),
-      ),
+      Object.entries(f).some(([k, v]) => /Pct$|latencyMs/.test(k) && Number(v)),
   );
 
 /*
@@ -1443,10 +1455,8 @@ const faultNote = (name, kind, outcome, stage, wrote) => {
     return `${what}; the agent recognised the repeat and applied it once.`;
   if (kind === "after_commit")
     return `${what}; the agent retried and made a second one — two now exist.`;
-  if (kind === "duplicate")
-    return `${what}; the agent applied it twice.`;
-  if (kind === "stale")
-    return `${what}; the agent acted on the old value.`;
+  if (kind === "duplicate") return `${what}; the agent applied it twice.`;
+  if (kind === "stale") return `${what}; the agent acted on the old value.`;
   if (kind === "malformed")
     return `${what}; the agent read it as valid and acted on bad data.`;
   if (kind === "slow") return `${what}; ${party} gave up before it came back.`;
@@ -1497,6 +1507,42 @@ function injectToolFaults({ seed, sc, callLog, toolFaults, stage }) {
     if (outcome === "failed" && !failed) failed = note;
   });
   return { hits, failed };
+}
+
+/**
+ * A scenario's test condition: the first call to its tool misbehaves (a call
+ * is added when the agent never reached for it), and how the agent handled
+ * it is drawn the same way as a fault profile. Mutates the call log.
+ */
+function applyTestCondition({ seed, sc, callLog, stage }) {
+  const { tool, kind } = sc.testCondition;
+  if (!RECOVERY[kind]) return null;
+  let c = callLog.calls.find((x) => x.name === tool);
+  if (!c) {
+    c = {
+      id: `${sc.id}-condition`,
+      name: tool,
+      args: {},
+      status: "ok",
+      rows: 0,
+      ms: 180,
+      wrote: false,
+    };
+    callLog.calls.push(c);
+  }
+  const v = unit(`${seed}:${sc.id}:condition`);
+  let cum = 0;
+  const outcome = (RECOVERY[kind].find(([, p]) => {
+    cum += p;
+    return v < cum;
+  }) || RECOVERY[kind][RECOVERY[kind].length - 1])[0];
+  const note = `Test condition: ${faultNote(c.name, kind, outcome, stage, c.wrote)}`;
+  c.status = kind;
+  c.fault = { kind, outcome, note, condition: true };
+  return {
+    hit: { callId: c.id, tool: c.name, kind, outcome, note, condition: true },
+    failed: outcome === "failed" ? note : null,
+  };
 }
 
 /** Whether a later sample loses the scenario to a fault — one draw per sample. */

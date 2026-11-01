@@ -33,10 +33,7 @@ import { showsSetup, testedInLine } from "./agentViewUtils";
 import AgentFoundReview from "./AgentFoundReview";
 import SendTracesSetup, { FirstTraceWait } from "./connect/SendTracesSetup";
 import { isCodeAgent, needsFoundCheck } from "./foundFacts";
-import {
-  checksConnection,
-  connectionStateOf,
-} from "../_mock/connectionCheck";
+import { checksConnection, connectionStateOf } from "../_mock/connectionCheck";
 
 /**
  * Next steps — what a newly connected agent is for, as two equal ways
@@ -200,6 +197,8 @@ export default function AgentSetupCard({
           ? `Opened PR #${pr.number} on ${pr.repo} — ${chosen.id} links when its first trace arrives.`
           : `${chosen.id} is linked — it settles when its first trace arrives.`,
       );
+      /* Saved by hand: start waiting for the first trace straight away. */
+      if (pendingVia === "manual") setTraceWait("listening");
       return;
     }
     const at = new Date().toISOString();
@@ -303,7 +302,9 @@ export default function AgentSetupCard({
       title: "Test the connection",
       body:
         connectionStateOf(agent).state === "ready"
-          ? `Every check passed — ${connectionStateOf(agent).line.replace(/^Tested /, "tested ").replace(/\.$/, "")}.`
+          ? `Every check passed — ${connectionStateOf(agent)
+              .line.replace(/^Tested /, "tested ")
+              .replace(/\.$/, "")}.`
           : "Confirm how we start it and talk to it, then check it starts, replies, keeps the conversation, reaches the test world's tools and cancels.",
       action: {
         label: connectionStateOf(agent).state === "ready" ? "Review" : "Test",
@@ -407,7 +408,8 @@ export default function AgentSetupCard({
   const paths = [
     {
       id: "traces",
-      eyebrow: "In production",
+      /* Not "In production" — beside "v1 · in production" that is a version tag. */
+      eyebrow: "From real calls",
       /* Done: the project is the answer — "Traces" only names the step. */
       title: tracesDone
         ? project.name
@@ -558,7 +560,9 @@ export default function AgentSetupCard({
         </Typography>
         {!(tracesDone && envDone) && (
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            Do either first — the other is here when you need it.
+            {gatesOpen
+              ? "Finish these first — then either way below, in any order."
+              : "Do either first — the other is here when you need it."}
           </Typography>
         )}
         <Box flex={1} />
@@ -579,9 +583,36 @@ export default function AgentSetupCard({
         )}
       </Stack>
 
+      {/* ── only what blocks a run — first, above the optional ways forward ── */}
+      {gates.length > 0 && (
+        <>
+          <Typography
+            sx={{
+              px: 2,
+              pt: 1.25,
+              pb: 0.5,
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.subtitle",
+            }}
+          >
+            {gatesOpen
+              ? `Needed before its next run or fix · ${gatesOpen} left`
+              : "Needed before its next run or fix · done"}
+          </Typography>
+          {gates.map((g) => (
+            <Row key={g.id} {...g} />
+          ))}
+        </>
+      )}
+
       {/* ── the two ways forward, side by side and equal ── */}
       <Box
         sx={{
+          ...(gates.length > 0 && {
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }),
           display: "grid",
           gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
           "& > *": {
@@ -630,6 +661,9 @@ export default function AgentSetupCard({
             borderColor: "divider",
           }}
         >
+          <Typography sx={{ typography: "s2", fontWeight: 600, mb: 1 }}>
+            Get its traces
+          </Typography>
           <ObserveProjectStep
             agentName={agent.name}
             agentKey={agent.key}
@@ -704,15 +738,6 @@ export default function AgentSetupCard({
                     : null
                 }
               />
-              <Box sx={{ mt: 2 }}>
-                <FirstTraceWait
-                  project={chosen.id}
-                  status={traceWait}
-                  spans={6}
-                  onListen={() => setTraceWait("listening")}
-                  onStop={() => setTraceWait("idle")}
-                />
-              </Box>
             </Box>
           )}
           <Stack
@@ -775,7 +800,7 @@ export default function AgentSetupCard({
                   saveObserve(observeChoice, { pendingVia: "manual" })
                 }
               >
-                Save — settle on its first trace
+                Save project
               </Button>
             ) : (
               <Button
@@ -796,31 +821,6 @@ export default function AgentSetupCard({
             )}
           </Stack>
         </Box>
-      )}
-
-      {/* ── only what blocks a run ── */}
-      {gates.length > 0 && (
-        <>
-          <Typography
-            sx={{
-              px: 2,
-              pt: 1.25,
-              pb: 0.5,
-              typography: "s3",
-              fontWeight: 600,
-              color: "text.subtitle",
-              borderTop: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            {gatesOpen
-              ? `Needed before its next run or fix · ${gatesOpen} left`
-              : "Needed before its next run or fix · done"}
-          </Typography>
-          {gates.map((g) => (
-            <Row key={g.id} {...g} />
-          ))}
-        </>
       )}
 
       {prDialog && (

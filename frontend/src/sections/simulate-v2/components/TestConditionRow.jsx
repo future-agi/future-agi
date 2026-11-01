@@ -1,0 +1,128 @@
+import PropTypes from "prop-types";
+import { useState } from "react";
+import { Button, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import {
+  CONDITIONS,
+  conditionLabelOf,
+  conditionSupportOf,
+} from "../_mock/testConditions";
+
+/*
+  One scenario's tool behaviour: none, or one tool it uses misbehaving on
+  purpose. Hidden from the agent, like the rest of how it's marked.
+*/
+export default function TestConditionRow({
+  row,
+  env,
+  envState,
+  tools,
+  locked,
+  onChange,
+}) {
+  const current = row.testCondition || null;
+  const [editing, setEditing] = useState(false);
+  const [tool, setTool] = useState(current?.tool || tools[0] || "");
+  const [kind, setKind] = useState(current?.kind || CONDITIONS[0].kind);
+  const support = conditionSupportOf(env, envState);
+
+  if (!editing)
+    return (
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <Typography className="sd-val" sx={{ flex: 1, minWidth: 0 }}>
+          {current
+            ? `${conditionLabelOf(current)} — injected on every run of this scenario`
+            : "Tools behave normally"}
+        </Typography>
+        {!locked && onChange && (
+          <Button
+            size="small"
+            disabled={!support.ok || !tools.length}
+            title={
+              support.reason ||
+              (!tools.length ? "This scenario uses no tools" : "")
+            }
+            onClick={() => setEditing(true)}
+            sx={{ color: "text.secondary", minWidth: 0 }}
+          >
+            {current ? "Change" : "Add a condition"}
+          </Button>
+        )}
+        {!support.ok && (
+          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            {support.reason}
+          </Typography>
+        )}
+      </Stack>
+    );
+
+  return (
+    <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
+      <TextField
+        select
+        size="small"
+        value={tool}
+        onChange={(e) => setTool(e.target.value)}
+        sx={{ minWidth: 180 }}
+      >
+        {tools.map((t) => (
+          <MenuItem key={t} value={t}>
+            {t}
+          </MenuItem>
+        ))}
+      </TextField>
+      <TextField
+        select
+        size="small"
+        value={kind}
+        onChange={(e) => setKind(e.target.value)}
+        sx={{ minWidth: 180 }}
+      >
+        {CONDITIONS.map((c) => (
+          <MenuItem key={c.kind} value={c.kind}>
+            {c.label}
+          </MenuItem>
+        ))}
+      </TextField>
+      <Button
+        size="small"
+        variant="contained"
+        color="primary"
+        disabled={!tool}
+        onClick={() => {
+          onChange({ ...row, testCondition: { tool, kind } });
+          setEditing(false);
+        }}
+      >
+        Save
+      </Button>
+      {current && (
+        <Button
+          size="small"
+          onClick={() => {
+            const { testCondition, ...rest } = row; // eslint-disable-line no-unused-vars
+            onChange(rest);
+            setEditing(false);
+          }}
+          sx={{ color: "text.secondary" }}
+        >
+          Remove
+        </Button>
+      )}
+      <Button
+        size="small"
+        onClick={() => setEditing(false)}
+        sx={{ color: "text.secondary" }}
+      >
+        Cancel
+      </Button>
+    </Stack>
+  );
+}
+TestConditionRow.propTypes = {
+  row: PropTypes.object.isRequired,
+  env: PropTypes.object,
+  envState: PropTypes.object,
+  tools: PropTypes.array.isRequired,
+  locked: PropTypes.bool,
+  onChange: PropTypes.func,
+};

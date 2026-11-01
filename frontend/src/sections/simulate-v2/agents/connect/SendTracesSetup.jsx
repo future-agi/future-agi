@@ -98,7 +98,7 @@ export default function SendTracesSetup({
         fallbackFor && ins.id === matchedId
           ? `traceAI has no instrumentor for ${fallbackFor} yet — ${ins.name} traces its model calls, with the prompt, model and tools.`
           : ins.id === matchedId
-            ? `${ins.name} is what this ${agentLabel} is built with — it traces every call. Using something else? Pick it.`
+            ? `${ins.name} is what this ${agentLabel} is built with — it traces every call${ins.id === "lang_graph" ? " (traceAI traces LangGraph through its LangChain instrumentor)" : ""}. Using something else? Pick it.`
             : "Pick what the agent is built with — each has its own instrumentor.",
       extra: (
         <Box sx={{ mb: 1 }}>
@@ -237,7 +237,7 @@ function PullRequestRow({ repo, draft, onOpen }) {
             Add it with a pull request
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {`We open a draft PR on ${repo} with the four steps below — ${draft.files.length} files. You review and merge it; we never merge. `}
+            {`We open a draft PR on ${repo} with steps 1, 3 and 4 below — ${draft.files.length} files. You add the keys (step 2) where it's deployed, and review and merge it; we never merge. `}
             <TextLink
               onClick={() => setPreview((v) => !v)}
               sx={{ display: "inline", typography: "s3" }}

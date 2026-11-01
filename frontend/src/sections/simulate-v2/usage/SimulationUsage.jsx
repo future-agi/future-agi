@@ -284,7 +284,7 @@ export default function SimulationUsage() {
         <TableHead>
           <TableRow>
             <TableCell>{groupLabel}</TableCell>
-            <TableCell sx={right}>Jobs</TableCell>
+            <TableCell sx={right}>Runs</TableCell>
             <TableCell sx={right}>Calls</TableCell>
             <TableCell sx={right}>Credits</TableCell>
             <TableCell sx={right}>Per call</TableCell>

@@ -809,27 +809,36 @@ export default function AgentViewPage() {
                     : source.where) || "—"}
                 </Box>
               )}
-              {replication.runLocation === "hosted" ? " · hosted sandbox" : ""}
+              {/* The Sandbox build pill already says where it runs. */}
+              {replication.runLocation === "hosted" &&
+              replication.label !== "Sandbox build"
+                ? " · hosted sandbox"
+                : ""}
               {` · ${agent.lastSyncedAt ? `Synced ${ago(agent.lastSyncedAt)}` : `Connected ${ago(agent.connectedAt)}`} · `}
-              <Box
-                component="span"
-                {...clickable(() => setQuery({ tab: "environments" }))}
-                sx={{
-                  cursor: "pointer",
-                  "&:hover": {
-                    color: "text.primary",
-                    textDecoration: "underline",
-                  },
-                  ...focusRing,
-                }}
-              >
-                {agent.usedIn.length
-                  ? `${agent.usedIn.length} environment${agent.usedIn.length === 1 ? "" : "s"}`
-                  : agent.formerlyIn?.length || agent.deletedIn?.length
-                    ? "No environment now"
-                    : "No environment yet"}
-              </Box>
-              {" · "}
+              {/* None yet is said by the Environments tab and Next steps. */}
+              {(agent.usedIn.length > 0 ||
+                agent.formerlyIn?.length > 0 ||
+                agent.deletedIn?.length > 0) && (
+                <>
+                  <Box
+                    component="span"
+                    {...clickable(() => setQuery({ tab: "environments" }))}
+                    sx={{
+                      cursor: "pointer",
+                      "&:hover": {
+                        color: "text.primary",
+                        textDecoration: "underline",
+                      },
+                      ...focusRing,
+                    }}
+                  >
+                    {agent.usedIn.length
+                      ? `${agent.usedIn.length} environment${agent.usedIn.length === 1 ? "" : "s"}`
+                      : "No environment now"}
+                  </Box>
+                  {" · "}
+                </>
+              )}
               <Box
                 component="span"
                 {...clickable(() => setQuery({ tab: "connections" }))}

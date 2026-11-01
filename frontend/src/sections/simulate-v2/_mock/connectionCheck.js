@@ -284,7 +284,8 @@ export const connectionStateOf = (agent) => {
     };
   return {
     state: "draft",
-    label: "Draft",
+    /* Not "Draft" — beside "v1 · in production" that reads as a draft agent. */
+    label: t ? "Test failed" : "Not tested",
     line: t
       ? "The last test failed — fix what it found and test again. Settings are kept."
       : "Saved as a draft — test the connection before a run.",

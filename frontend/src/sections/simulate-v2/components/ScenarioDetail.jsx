@@ -38,6 +38,7 @@ import {
 } from "../workspace/scenarios/ScenarioStateBits";
 import { protectionOf } from "../_mock/mustPassProtection";
 import { personalDataDetail, REPLAY_NOTE } from "../_mock/scenarioSources";
+import TestConditionRow from "./TestConditionRow";
 import { ScenarioRowContext } from "../workspace/scenarios/scenarioRowContext";
 import { clickable, focusRing } from "./clickable";
 import { scenarioTitle } from "../_mock/scenarios";
@@ -820,6 +821,23 @@ function DrawerSheet({
             <BriefBlock brief={brief} />
           </Row>
         )}
+      </Part>
+      {/* world.md: one tool this scenario uses misbehaves on purpose. */}
+      <Part title="Hidden · test conditions">
+        <Row label="Tool behaviour">
+          <TestConditionRow
+            row={row}
+            env={env}
+            envState={envState}
+            tools={
+              tools.length
+                ? tools
+                : (env?.tools || []).map((t) => t.name).filter(Boolean)
+            }
+            locked={locked}
+            onChange={onAction ? (next) => onAction("update", next) : null}
+          />
+        </Row>
       </Part>
       <Part title="Hidden · how it's marked">
         {s.expected && (

@@ -156,16 +156,6 @@ export function ObserveProjectStep({
         aria-label="Which project"
       >
         <WhereOption
-          icon="solar:graph-new-linear"
-          label="Use an existing project"
-          on={!creating}
-          short={`${projects.length} project${projects.length === 1 ? "" : "s"} in Observe — pick the one its traces land in`}
-          hint="For an agent that already sends traces. Error Feed and Fix use the project from now on."
-          onClick={() =>
-            creating && onChange({ mode: "existing", id: lastPicked })
-          }
-        />
-        <WhereOption
           icon="solar:add-circle-linear"
           label="Create a new project"
           on={creating}
@@ -173,6 +163,16 @@ export function ObserveProjectStep({
           hint="Name it here. It appears in Observe with its first trace."
           onClick={() =>
             !creating && onChange({ mode: "create", id: createId })
+          }
+        />
+        <WhereOption
+          icon="solar:graph-new-linear"
+          label="Use an existing project"
+          on={!creating}
+          short={`${projects.length} project${projects.length === 1 ? "" : "s"} in Observe — pick the one its traces land in`}
+          hint="For an agent that already sends traces. Error Feed and Fix use the project from now on."
+          onClick={() =>
+            creating && onChange({ mode: "existing", id: lastPicked })
           }
         />
       </Box>
