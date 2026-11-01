@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from django.conf import settings as django_settings
 from django.test import TestCase
 from django.utils import timezone
 
@@ -853,6 +854,12 @@ class TestCheckRuns:
             fix_run=fix_run
         ).exists()
         temporal.start_run.assert_not_called()
+
+
+def test_the_engine_may_call_its_backup_model():
+    """The engine's profile moves to this model when DeepSeek loses a call. The proxy refuses
+    any model that is not listed, so a fix would die on the very call that needs the backup."""
+    assert "openai/gpt-6-luna" in django_settings.AGENT_FIX_ENGINE_MODELS
 
 
 def test_a_check_run_s_evals_have_a_source_of_their_own(source_run):
