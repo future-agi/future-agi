@@ -14,6 +14,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
 from typing import Any
 
 AGENT_KIND = "agent"
@@ -48,11 +49,17 @@ def _summary(value: Any, *, argument: bool = False) -> str | None:
 
 
 def worker_timeline(
-    spans: Iterable[Mapping[str, Any]], declared: Iterable[Mapping[str, Any]], *, run_key: str
+    spans: Iterable[Mapping[str, Any]],
+    declared: Iterable[Mapping[str, Any]],
+    *,
+    run_key: str,
+    traced_calls: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Each worker (declared, observed or both) and the run's worker events in order: `delegated`, the worker's
     `tool_call`s, `returned`. `spans` are dicts with `span_id`, `parent_span_id`, `name`, `observation_type`,
-    `start_time`, `end_time`, `status`, `input`, `output` and `attributes`."""
+    `start_time`, `end_time`, `status`, `input`, `output` and `attributes`. `traced_calls` are the call's sealed
+    tool-trace rows; one a runtime attributed to a worker (`by`, with its `task` and `runtime_ids`) is that worker's
+    tool call, kept as reported, unless a span already showed the same call."""
     by_id = {str(span["span_id"]): span for span in spans}
     declared_by_key = {}
     for one in declared:
@@ -172,6 +179,52 @@ def worker_timeline(
                 "attribution": "reported" if owner is not None else "unattributed",
             }
         )
+    shown = Counter((one["worker_id"], one["tool"]) for one in events if one["type"] == "tool_call")
+    for call in traced_calls:
+        by = str(call.get("by") or "").strip()
+        if not by:
+            continue
+        match = declared_by_key.get(_slug(by))
+        local = str(match["id"]) if match is not None else _slug(by)
+        worker_id = f"{run_key}/{local}"
+        entry = workers.setdefault(
+            worker_id,
+            {
+                "worker_id": worker_id,
+                "id": local,
+                "name": str(match.get("name") or by) if match is not None else by,
+                "observed": True,
+                "undeclared": match is None,
+                "instance_ids": [],
+            },
+        )
+        if by not in entry["instance_ids"]:
+            entry["instance_ids"].append(by)
+        tool = str(call.get("name") or "")
+        if shown[(worker_id, tool)]:
+            shown[(worker_id, tool)] -= 1
+            continue
+        at = call.get("at")
+        runtime_ids = call.get("runtime_ids") or {}
+        events.append(
+            {
+                "type": "tool_call",
+                "worker_id": worker_id,
+                "tool": tool,
+                "status": "error" if call.get("ok") is False or call.get("refused") else "ok",
+                "at": datetime.fromtimestamp(at, tz=UTC).replace(tzinfo=None).isoformat()
+                if isinstance(at, (int, float)) and at > 0
+                else None,
+                "attribution": "reported",
+                **({"task": str(call["task"])} if call.get("task") else {}),
+                **({"runtime_event_id": str(runtime_ids["event_id"])} if runtime_ids.get("event_id") else {}),
+                **(
+                    {"runtime_parent_event_id": str(runtime_ids["parent_event_id"])}
+                    if runtime_ids.get("parent_event_id")
+                    else {}
+                ),
+            }
+        )
     # A return sorts after the work it closes even when timestamps tie.
     order = {"delegated": 0, "tool_call": 1, "returned": 2}
     events.sort(key=lambda one: (str(one["at"] or ""), order[one["type"]]))
@@ -225,7 +278,8 @@ def declared_workers(job: Any) -> list[dict[str, Any]]:
 
 
 def record_call_workers(call_execution_id: str) -> dict[str, Any] | None:
-    """Read one call's spans and keep its worker timeline on the call; None when the agent exports no spans to us.
+    """Read one call's spans and its runtime-attributed tool calls, and keep its worker timeline on the call; None
+    when the agent reports neither to us.
     Returns the stored timeline, so the caller can decide on a second read."""
     from django.utils import timezone
 
@@ -236,19 +290,27 @@ def record_call_workers(call_execution_id: str) -> dict[str, Any] | None:
 
     call = CallExecution.objects.select_related("test_execution").get(id=call_execution_id)
     traces = list_run_traces(call.test_execution, call_execution_id=call.id)
-    if traces.project_id is None:
+    traced_calls = [
+        one
+        for one in ((call.provider_call_data or {}).get("livekit") or {}).get("tool_calls") or []
+        if isinstance(one, dict) and one.get("by")
+    ]
+    if traces.project_id is None and not traced_calls:
         return None
     job = HostedHarnessJob.no_workspace_objects.filter(test_execution=call.test_execution).first()
-    reader = get_reader()
-    try:
-        spans = reader.list_by_trace_ids([one.trace_id for one in traces.traces], project_id=traces.project_id)
-    finally:
-        reader.close()
+    spans = []
+    if traces.project_id is not None:
+        reader = get_reader()
+        try:
+            spans = reader.list_by_trace_ids([one.trace_id for one in traces.traces], project_id=traces.project_id)
+        finally:
+            reader.close()
     timeline = {
         **worker_timeline(
             [_span_dict(one) for one in spans],
             declared_workers(job) if job is not None else [],
             run_key=str(job.run_id) if job is not None else str(call.test_execution_id),
+            traced_calls=traced_calls,
         ),
         "collected_at": timezone.now().isoformat(),
     }

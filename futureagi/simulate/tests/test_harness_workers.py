@@ -192,6 +192,15 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(user, worksp
     with patch("simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)):
         assert harness_workers.record_call_workers(str(call.id)) is None
 
+    # No spans reach us, but the runtime named the worker of a sealed tool call: that alone is a timeline.
+    call.provider_call_data = {"livekit": {"tool_calls": [{"name": "get_order", "ok": True, "at": 1.0, "by": "order_lookup"}]}}
+    call.save(update_fields=["provider_call_data"])
+    with patch("simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)), patch(
+        "tracer.services.clickhouse.v2.get_reader", side_effect=AssertionError("no spans to read")
+    ):
+        reported = harness_workers.record_call_workers(str(call.id))
+    assert [(one["worker_id"], one["tool"]) for one in reported["events"]] == [(f"{run.run_id}/order_lookup", "get_order")]
+
 
 @pytest.mark.django_db
 def test_a_declared_worker_not_seen_yet_gets_one_more_read_later():
@@ -290,3 +299,34 @@ def test_a_parent_running_several_agents_is_their_coordinator_even_without_work_
     ]
     workers = worker_timeline(spans, [], run_key=RUN)["workers"]
     assert [one["id"] for one in workers] == ["researcher", "writer"]
+
+
+def test_tool_calls_a_runtime_attributes_to_a_worker_join_the_timeline_without_repeating_a_span():
+    # CrewAI's event bus names the agent and task of an in-process tool call; no span covers it.
+    declared = [{"id": "shakespearean_bard", "name": "Shakespearean bard"}, {"id": "x_post_verifier"}]
+    traced = [
+        {"name": "write_post", "ok": True, "at": 1730454600.5, "by": "shakespearean_bard", "task": "Write a post",
+         "runtime_ids": {"event_id": "e2", "parent_event_id": "e1"}},
+        {"name": "verify_post", "ok": False, "at": 1730454601.0, "by": "x_post_verifier"},
+        {"name": "lookup", "ok": True, "at": 1730454602.0, "by": "Researcher"},
+        {"name": "send_reply", "ok": True, "at": 1730454603.0},
+    ]
+    timeline = worker_timeline([], declared, run_key=RUN, traced_calls=traced)
+
+    workers = {one["id"]: one for one in timeline["workers"]}
+    assert workers["shakespearean_bard"]["observed"] and not workers["shakespearean_bard"]["undeclared"]
+    assert workers["shakespearean_bard"]["instance_ids"] == ["shakespearean_bard"]
+    assert workers["researcher"]["undeclared"]
+    events = [(one["worker_id"], one["tool"], one["status"]) for one in timeline["events"]]
+    assert events == [
+        ("run-1/shakespearean_bard", "write_post", "ok"),
+        ("run-1/x_post_verifier", "verify_post", "error"),
+        ("run-1/researcher", "lookup", "ok"),
+    ]
+    first = timeline["events"][0]
+    assert (first["task"], first["runtime_event_id"], first["runtime_parent_event_id"]) == ("Write a post", "e2", "e1")
+    assert first["at"] == "2024-11-01T09:50:00.500000" and first["attribution"] == "reported"
+
+    # The same call seen in the worker's spans is shown once.
+    both = worker_timeline(SPANS, DECLARED, run_key=RUN, traced_calls=[{"name": "get_order", "by": "Order-lookup worker"}])
+    assert [one.get("tool") for one in both["events"]].count("get_order") == 1
