@@ -42,7 +42,11 @@ const byId = (id) => ({
 
 const wrap = (ui) =>
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
       <SnackbarProvider>
         <MemoryRouter>{ui}</MemoryRouter>
       </SnackbarProvider>
@@ -64,7 +68,9 @@ beforeEach(() => {
 describe("a trial whose target rate has not arrived", () => {
   it("leaves it out of best-so-far", () => {
     const rows = stepRows(withPendingRate());
-    expect(rows[1].lines[0]).toBe("2 of up to 4 trials · best so far 0% on 6 target scenarios");
+    expect(rows[1].lines[0]).toBe(
+      "2 of up to 4 trials · best so far 0% on 6 target scenarios",
+    );
   });
 
   it("leaves it off the chart", () => {
@@ -78,6 +84,15 @@ describe("a trial whose target rate has not arrived", () => {
     fix.candidates[0].verdict.target_pass_rate = null;
     const { container } = wrap(<TrialChart candidates={fix.candidates} />);
     expect(container.querySelector("svg")).toBeNull();
+  });
+
+  it("TrialsTable shows a trial still being screened, which has no verdict yet, as pending", () => {
+    const fix = byId("fix-search");
+    fix.candidates[1].verdict = null;
+
+    wrap(<TrialsTable fix={fix} />);
+
+    expect(screen.getByText("Pending")).toBeInTheDocument();
   });
 
   it("shows Pending in its Pass cell", () => {
@@ -95,7 +110,9 @@ describe("a verdict without tiers", () => {
 
   it("renders the verdict without a Checks row", () => {
     wrap(<FixVerdict fix={noTiers()} />);
-    expect(screen.getByText(/failing scenarios on the held-back set/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/failing scenarios on the held-back set/),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/^Checks ·/)).toBeNull();
   });
 
@@ -107,10 +124,16 @@ describe("a verdict without tiers", () => {
 
 describe("a failed poll", () => {
   it("keeps showing the fix it already has", () => {
-    hooks.fixRun = { fix: byId("fix-search"), isLoading: false, error: new Error("network") };
+    hooks.fixRun = {
+      fix: byId("fix-search"),
+      isLoading: false,
+      error: new Error("network"),
+    };
     wrap(<FixRunPage envId="env-1" fixId="fix-search" />);
     expect(screen.getByText("Improvement 13")).toBeInTheDocument();
-    expect(screen.queryByText("This improvement could not be found")).toBeNull();
+    expect(
+      screen.queryByText("This improvement could not be found"),
+    ).toBeNull();
   });
 });
 
@@ -120,12 +143,27 @@ describe("launch options that fail to load", () => {
     hooks.options = {
       options: undefined,
       isLoading: false,
-      error: { statusCode: 402, upgrade_required: true, error: { message: "Fix my agent is not on your plan" } },
+      error: {
+        statusCode: 402,
+        upgrade_required: true,
+        error: { message: "Fix my agent is not on your plan" },
+      },
     };
-    wrap(<LaunchFixDialog open envId="env-1" sourceRunId="te-run-6" onClose={onClose} />);
-    expect(screen.getByText("Fix my agent is not on your plan")).toBeInTheDocument();
+    wrap(
+      <LaunchFixDialog
+        open
+        envId="env-1"
+        sourceRunId="te-run-6"
+        onClose={onClose}
+      />,
+    );
+    expect(
+      screen.getByText("Fix my agent is not on your plan"),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Loading the run…")).toBeNull();
-    await userEvent.setup().click(screen.getByRole("button", { name: "Close" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalled();
   });
 });
@@ -135,7 +173,11 @@ describe("a Stop the server refuses", () => {
     hooks.stop = {
       isPending: false,
       mutate: (_v, { onError } = {}) =>
-        onError?.({ statusCode: 409, error: "fix_run_active", message: "The fix is already stopping" }),
+        onError?.({
+          statusCode: 409,
+          error: "fix_run_active",
+          message: "The fix is already stopping",
+        }),
     };
     hooks.fixRun = { fix: byId("fix-search"), isLoading: false, error: null };
     const user = userEvent.setup();
@@ -143,7 +185,9 @@ describe("a Stop the server refuses", () => {
     await user.click(screen.getByRole("button", { name: "Stop" }));
     const stops = screen.getAllByRole("button", { name: "Stop" });
     await user.click(stops[stops.length - 1]);
-    expect(await screen.findByText("The fix is already stopping")).toBeInTheDocument();
+    expect(
+      await screen.findByText("The fix is already stopping"),
+    ).toBeInTheDocument();
   });
 });
 
@@ -151,20 +195,33 @@ describe("Per scenario data", () => {
   it("treats every run on the fix as the baseline, whatever its label", () => {
     const fix = byId("fix-ready-archive");
     fix.check_runs = [
-      { run_id: "rt", test_execution_id: "te-b1", label: "baseline-r1", state: "completed" },
-      { run_id: "rt", test_execution_id: "te-b2", label: "base-2", state: "completed" },
+      {
+        run_id: "rt",
+        test_execution_id: "te-b1",
+        label: "baseline-r1",
+        state: "completed",
+      },
+      {
+        run_id: "rt",
+        test_execution_id: "te-b2",
+        label: "base-2",
+        state: "completed",
+      },
     ];
-    expect(fixRuns.checkRunsForScenarios(fix, "fix-ready-archive-c3").before.map((r) => r.test_execution_id)).toEqual([
-      "te-b1",
-      "te-b2",
-    ]);
+    expect(
+      fixRuns
+        .checkRunsForScenarios(fix, "fix-ready-archive-c3")
+        .before.map((r) => r.test_execution_id),
+    ).toEqual(["te-b1", "te-b2"]);
   });
 
   it("reads every page of a check run's calls", async () => {
     const pages = { 1: 200, 2: 200, 3: 37 };
     const fetchPage = vi.fn(async (page) => ({
       count: 437,
-      results: Array.from({ length: pages[page] || 0 }, (_, i) => ({ id: `${page}-${i}` })),
+      results: Array.from({ length: pages[page] || 0 }, (_, i) => ({
+        id: `${page}-${i}`,
+      })),
     }));
     const rows = await fixRuns.collectAllCalls(fetchPage, 200);
     expect(rows).toHaveLength(437);

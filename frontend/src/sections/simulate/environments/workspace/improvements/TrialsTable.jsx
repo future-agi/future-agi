@@ -144,7 +144,7 @@ export default function TrialsTable({ fix }) {
                 {OUTCOME_LABEL[c.outcome] || c.outcome}
               </Typography>
             )}
-            <PassCell rate={c.verdict.target_pass_rate} />
+            <PassCell rate={c.verdict?.target_pass_rate} />
           </Box>
         );
       })}
