@@ -263,6 +263,26 @@ class EnrollmentTests(unittest.TestCase):
     def setup(self, **changes):
         return en.setup_automation(self.store, SimpleNamespace(**dict(vars(self.options), **changes)), host=self.host)
 
+    def test_reporting_init_after_setup_publishes_the_configured_policy(self):
+        # Native evidence: an enrolled install's first public report projected the
+        # legacy .env policy (mode manual, no window) until the next tick.
+        import contextlib
+        from deploy.update import __main__ as cli
+        from deploy.update.settings import load_settings
+        self.assertEqual(self.setup().state, 'active')
+        policy = en.load_setup_configuration(self.store).policy
+        self.assertNotEqual(policy.mode, load_settings(self.root, environ={}, verify=False).automation_policy.mode)
+        parent = self.base / 'public-status'
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(['--root', str(self.root), 'reporting', 'init', '--directory', str(parent)])
+        self.assertEqual(code, 0, err.getvalue())
+        report = json.loads((parent / self.store.read_registration().binding.slot_id / 'status.json').read_bytes())
+        self.assertEqual(report['automation']['mode'], policy.mode)
+        self.assertEqual(report['automation']['maintenance_window'], {'kind': 'always', 'timezone': policy.timezone})
+        self.assertEqual(report['policy'], {'channel': policy.channel, 'version_policy': policy.version_policy,
+                                            'check_interval_seconds': policy.check_interval_seconds})
+
     def test_setup_apply_selects_mandatory_restore_and_pins_a6_policy(self):
         config, _, _ = en.configuration(self.store, self.options, 'dedicated-context')
         self.assertEqual(config.policy.qualification_policy, 'standalone-cold-restore-v1')

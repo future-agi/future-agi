@@ -135,13 +135,14 @@ from deploy.tests.update_e2e.real_automatic import ProductHarness
 
 # Interim reference workload for the app-data volume role (not a model change).
 # Admission scales the qualified transfer time by each role's host/reference
-# growth. A fresh snapshot holds about 6.6 MB of app-data, while native CI saw
-# the product grow it to 165 MB within about an hour of uptime (about
-# 150 MB/hour), so every scheduled run was refused. Qualifying with a real,
-# fully written payload makes the signed reference honestly include that
-# transfer work: hosts up to about 270 MB of app-data stay at scale 1, and the
-# acceptance's 3x ceiling admits up to about 800 MB. Larger hosts scale or
-# refuse as before; this is a finite envelope, not unbounded uptime.
+# growth. A fresh snapshot holds about 7.5 MB of app-data, while native CI
+# measured the product's Temporal store (/data/temporal) growing it by about
+# 85 MB/hour, linearly over an hour, so every scheduled run was refused.
+# Qualifying with a real, fully written payload makes the signed reference
+# honestly include that transfer work: hosts up to about 276 MB of app-data
+# stay at scale 1, and the acceptance's 3x ceiling admits up to about 828 MB
+# (roughly 9 hours of growth). Larger hosts scale or refuse before backup as
+# before; this is a finite envelope, not unbounded uptime.
 APP_DATA_REFERENCE_NAME = '.fagi-qualification-reference-payload'
 APP_DATA_REFERENCE_BYTES = 256 * 1024 * 1024
 APP_DATA_REFERENCE_OPERATION = r"""

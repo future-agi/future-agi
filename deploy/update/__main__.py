@@ -949,7 +949,12 @@ def _automation(args, root, env_file):
         return 0
     if args.command == 'reporting':
         try:
-            _reporting_init(store, args.directory, settings)
+            from .enrollment import read_setup_configuration
+            # Publish the policy the scheduled tick uses, as controls do: an
+            # enrolled installation's setup configuration, never legacy .env.
+            # A damaged configuration refuses rather than project the wrong policy.
+            configured = read_setup_configuration(store)
+            _reporting_init(store, args.directory, settings if configured is None else configured.as_settings())
         except (Exception, Interrupted, KeyboardInterrupt):
             sys.stderr.write('bin/update: reporting init incomplete; retry with the same directory after resolving '
                              'the refusal; do not remove foreign content or rebind\n')
