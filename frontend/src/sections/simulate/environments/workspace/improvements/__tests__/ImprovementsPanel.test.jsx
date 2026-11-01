@@ -87,7 +87,7 @@ describe("ImprovementsPanel", () => {
   it("shows the held-back result the way the design does", () => {
     render(<ImprovementsPanel env={env} />);
     const row = within(screen.getByTestId("row-fix-ready-archive"));
-    expect(row.getByText("Fixed 2 of 2 held back")).toBeInTheDocument();
+    expect(row.getByText("Held back 17% → 83%")).toBeInTheDocument();
     expect(row.getByText("broke 1 held back")).toBeInTheDocument();
   });
 

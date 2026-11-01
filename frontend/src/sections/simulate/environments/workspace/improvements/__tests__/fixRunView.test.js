@@ -3,20 +3,21 @@ import { describe, it, expect } from "vitest";
 import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
 
 import {
-  STATE_LABEL,
   OUTCOME_LABEL,
-  fixName,
-  identityLine,
-  winnerOf,
-  isShipped,
-  pts,
-  headline,
-  verdictCards,
+  STATE_LABEL,
   checksLine,
-  stepRows,
-  heldToRows,
-  formatMinutes,
+  fixName,
   formatCredits,
+  formatMinutes,
+  headline,
+  heldToRows,
+  identityLine,
+  isShipped,
+  outcomeLabel,
+  pts,
+  stepRows,
+  verdictCards,
+  winnerOf,
 } from "../fixRunView";
 
 const byId = (id) => FIX_RUN_FIXTURES.find((f) => f.id === id);
@@ -34,6 +35,12 @@ describe("labels", () => {
       stopped: "Stopped",
       failed: "Failed",
     });
+  });
+
+  it("calls a passing trial a finalist until the fix has finished", () => {
+    expect(outcomeLabel("finalist", true)).toBe("Finalist");
+    expect(outcomeLabel("finalist", false)).toBe("Passed, not picked");
+    expect(outcomeLabel("winner", true)).toBe("Winner");
   });
 
   it("names every candidate outcome", () => {
@@ -85,13 +92,13 @@ describe("winner and shipped", () => {
 describe("headline", () => {
   it("leads with the held-back set when there is one", () => {
     expect(headline(byId("fix-ready-archive"))).toBe(
-      "Fixed 2 of 2 failing scenarios on the held-back set, broke 1.",
+      "Held-back pass rate 17% → 83%, broke 1.",
     );
   });
 
   it("falls back to the targets when nothing was held back", () => {
     expect(headline(byId("fix-ready-no-held"))).toBe(
-      "Fixed 3 of 3 target scenarios, broke none.",
+      "Target pass rate 33% → 100%, broke none.",
     );
   });
 

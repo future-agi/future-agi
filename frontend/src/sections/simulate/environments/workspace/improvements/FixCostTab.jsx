@@ -59,7 +59,7 @@ export default function FixCostTab({ fix }) {
       <Typography
         sx={{ typography: "s3", color: "text.subtitle", px: 0.5, pt: 1 }}
       >
-        {`Spent is the engine's model calls and finished check runs, as billed. Committed adds a worst-case hold for each check run not yet billed.`}
+        {`Spent is the engine's model calls. Evals on its check runs are billed to your usage separately and are not counted here. Committed adds a worst-case hold for each check run still running.`}
       </Typography>
     </Box>
   );

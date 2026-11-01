@@ -110,9 +110,7 @@ describe("a verdict without tiers", () => {
 
   it("renders the verdict without a Checks row", () => {
     wrap(<FixVerdict fix={noTiers()} />);
-    expect(
-      screen.getByText(/failing scenarios on the held-back set/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Held-back pass rate/)).toBeInTheDocument();
     expect(screen.queryByText(/^Checks ·/)).toBeNull();
   });
 

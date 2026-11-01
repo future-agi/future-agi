@@ -31,7 +31,6 @@ import { formatCredits, formatMinutes } from "./fixRunView";
 import {
   budgetSteps,
   countsLine,
-  heldBackLine,
   launchError,
   minuteSteps,
   reviewSentence,
@@ -285,11 +284,6 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
               {countsLine(targets.length, protectedKeys.length)}
             </Typography>
             <Typography
-              sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
-            >
-              {heldBackLine(targets.length)}
-            </Typography>
-            <Typography
               component="button"
               type="button"
               onClick={() => setPicking((v) => !v)}
@@ -400,7 +394,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
         >
           {blockedReason ||
             error ||
-            "A winner comes back as a new version. You decide whether to make it the default."}
+            "A winner comes back for you to review. Nothing changes until you ship it."}
         </Typography>
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel

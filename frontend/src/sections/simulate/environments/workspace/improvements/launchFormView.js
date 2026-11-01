@@ -5,23 +5,15 @@ import { formatCredits, formatMinutes } from "./fixRunView";
 
 export const HELD_BACK_MINIMUM = 12;
 
-const TOO_FEW =
-  "Too few failing cases to hold some back. The fix will be proven on the picked cases only.";
-
 export const heldBackCount = (picked) =>
   picked >= HELD_BACK_MINIMUM ? Math.floor(picked / 3) : 0;
 
-export const heldBackLine = (picked) =>
-  picked >= HELD_BACK_MINIMUM
-    ? `About ${heldBackCount(picked)} held back to prove the fix`
-    : TOO_FEW;
-
 export function countsLine(picked, protectedCount) {
   const held = heldBackCount(picked);
-  const parts = [`${picked - held} failing to fix`];
-  if (held) parts.push(`${held} held back to prove it`);
-  parts.push(`${protectedCount} must keep passing`);
-  return parts.join(" · ");
+  const failing = held
+    ? `${picked} failing: ${picked - held} to fix, ${held} held back to prove it`
+    : `${picked} failing to fix`;
+  return `${failing} · ${protectedCount} must keep passing`;
 }
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;

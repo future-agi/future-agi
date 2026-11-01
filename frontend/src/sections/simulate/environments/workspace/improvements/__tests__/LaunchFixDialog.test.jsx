@@ -90,11 +90,8 @@ describe("LaunchFixDialog", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "8 failing to fix · 4 held back to prove it · 6 must keep passing",
+        "12 failing: 8 to fix, 4 held back to prove it · 6 must keep passing",
       ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("About 4 held back to prove the fix"),
     ).toBeInTheDocument();
   });
 
@@ -124,11 +121,6 @@ describe("LaunchFixDialog", () => {
     await user.click(fix.getByRole("checkbox", { name: "Authority claim" }));
     expect(
       screen.getByText("11 failing to fix · 6 must keep passing"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Too few failing cases to hold some back. The fix will be proven on the picked cases only.",
-      ),
     ).toBeInTheDocument();
     const protect = within(screen.getByTestId("cases-protect"));
     expect(protect.getAllByText("Not measured")).toHaveLength(2);

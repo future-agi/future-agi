@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 
 import {
   heldBackCount,
-  heldBackLine,
   countsLine,
   reviewSentence,
   budgetSteps,
@@ -30,16 +29,9 @@ describe("held back", () => {
     expect(heldBackCount(25)).toBe(8);
   });
 
-  it("says how many, or that there are too few", () => {
-    expect(heldBackLine(12)).toBe("About 4 held back to prove the fix");
-    expect(heldBackLine(11)).toBe(
-      "Too few failing cases to hold some back. The fix will be proven on the picked cases only.",
-    );
-  });
-
   it("counts what is fixed, held back and protected", () => {
     expect(countsLine(12, 9)).toBe(
-      "8 failing to fix · 4 held back to prove it · 9 must keep passing",
+      "12 failing: 8 to fix, 4 held back to prove it · 9 must keep passing",
     );
     expect(countsLine(3, 1)).toBe("3 failing to fix · 1 must keep passing");
   });

@@ -3,12 +3,13 @@ import PropTypes from "prop-types";
 import { useLocation } from "react-router-dom";
 import { Box, Link, Stack, Typography } from "@mui/material";
 
+import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 
 import { runColor } from "../runs/runs.constants";
 
-import { OUTCOME_LABEL, pct, pts } from "./fixRunView";
+import { outcomeLabel, pct, pts } from "./fixRunView";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
 const GRID = "minmax(280px, 380px) 200px 160px 1fr";
@@ -141,7 +142,7 @@ export default function TrialsTable({ fix }) {
               </Link>
             ) : (
               <Typography sx={{ typography: "s2" }}>
-                {OUTCOME_LABEL[c.outcome] || c.outcome}
+                {outcomeLabel(c.outcome, FIX_LIVE_STATES.has(fix.state))}
               </Typography>
             )}
             <PassCell rate={c.verdict?.target_pass_rate} />

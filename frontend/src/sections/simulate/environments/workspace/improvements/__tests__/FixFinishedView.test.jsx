@@ -54,9 +54,7 @@ describe("finished fix", () => {
   it("leads with the held-back headline and the three cards", async () => {
     renderPage("fix-ready-archive");
     expect(
-      await screen.findByText(
-        "Fixed 2 of 2 failing scenarios on the held-back set, broke 1.",
-      ),
+      await screen.findByText("Held-back pass rate 17% → 83%, broke 1."),
     ).toBeInTheDocument();
     const cards = within(screen.getByTestId("verdict-cards"));
     expect(cards.getByText("Held back")).toBeInTheDocument();

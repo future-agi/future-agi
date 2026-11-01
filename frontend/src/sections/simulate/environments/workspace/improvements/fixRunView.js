@@ -21,6 +21,12 @@ export const OUTCOME_LABEL = {
   pending: "Running",
 };
 
+// A trial that passed its screens has only lost once the fix has finished.
+export const outcomeLabel = (outcome, fixLive) =>
+  outcome === "finalist" && fixLive
+    ? "Finalist"
+    : OUTCOME_LABEL[outcome] || outcome;
+
 const SURFACE_LABEL = {
   prompt: "Instructions",
   tools: "Tools",
@@ -40,6 +46,8 @@ const STEPS = [
 
 export const pct = (x) => Math.round(x * 100);
 export const pts = (rate) => Math.round((rate[1] - rate[0]) * 100);
+// A rate pools every repeat, so it is not a count of scenarios: Per scenario has those.
+const rateChange = ([before, after]) => `${pct(before)}% → ${pct(after)}%`;
 
 export const formatCredits = (n) =>
   `${Number(n ?? 0).toLocaleString("en-US")} credits`;
@@ -80,13 +88,9 @@ export function headline(fix) {
   const { verdict } = winner;
   const broke = brokeText(verdict.must_pass_regressions.length);
   if (verdict.held_back_pass_rate) {
-    const n = fix.plan.held_back;
-    const k = Math.round(verdict.held_back_pass_rate[1] * n);
-    return `Fixed ${k} of ${n} failing scenarios on the held-back set, broke ${broke}.`;
+    return `Held-back pass rate ${rateChange(verdict.held_back_pass_rate)}, broke ${broke}.`;
   }
-  const n = fix.plan.target;
-  const k = Math.round(verdict.target_pass_rate[1] * n);
-  return `Fixed ${k} of ${n} target scenarios, broke ${broke}.`;
+  return `Target pass rate ${rateChange(verdict.target_pass_rate)}, broke ${broke}.`;
 }
 
 const rateCard = (id, label, rate, note) => ({
@@ -214,18 +218,14 @@ export function listResult(fix) {
   const { verdict } = winner;
   const broke = verdict.must_pass_regressions.length;
   if (verdict.held_back_pass_rate) {
-    const n = fix.plan.held_back;
-    const k = Math.round(verdict.held_back_pass_rate[1] * n);
     return {
-      text: `Fixed ${k} of ${n} held back`,
+      text: `Held back ${rateChange(verdict.held_back_pass_rate)}`,
       note: broke ? `broke ${broke} held back` : "broke none held back",
       broke,
     };
   }
-  const n = fix.plan.target;
-  const k = Math.round(verdict.target_pass_rate[1] * n);
   return {
-    text: `Fixed ${k} of ${n} targets`,
+    text: `Target ${rateChange(verdict.target_pass_rate)}`,
     note: broke ? `broke ${broke}` : "broke none",
     broke,
   };
