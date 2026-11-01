@@ -1189,9 +1189,10 @@ class TestUserApi:
         AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
             verdict={
                 "reason": "passed every tier",
-                "target_pass_rate": [0, 0.5833],
+                "target_pass_rate": [0, 0.625],
                 "held_back_pass_rate": [0, 0.6111],
-            }
+            },
+            summary=f"{'Keep the date the caller asked for ' * 6}\nWhy it works.",
         )
 
         response, [(_, _, sent)] = self._ship(
@@ -1203,9 +1204,11 @@ class TestUserApi:
         assert "limited validation" not in sent["json"]["title"].lower()
         assert "limited validation" not in sent["json"]["body"].lower()
         assert (
-            "Proven by Fix my agent: held-back cases 0% → 61%, target cases 0% → 58%; "
+            "Proven by Fix my agent: held-back cases 0% → 61%, target cases 0% → 63%; "
             "passed every tier" in sent["json"]["body"]
         )
+        title = sent["json"]["title"]
+        assert len(title) <= 120 and title.endswith("r asked for…")
 
     def test_a_repository_without_drafts_gets_a_pull_request_that_still_says_so(
         self, auth_client, source_run, github
