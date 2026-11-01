@@ -1010,3 +1010,63 @@ class HarnessNudgeListQuerySerializer(serializers.Serializer):
 
 class HarnessNudgeAnswerSerializer(serializers.Serializer):
     answer = serializers.ChoiceField(choices=("yes", "no"))
+
+
+class HarnessActorSerializer(serializers.Serializer):
+    """One actor of an environment: who it is, what it knows and may do in the world, and when it comes in."""
+
+    id = serializers.RegexField(r"^[a-z0-9_]{1,64}$")
+    name = serializers.CharField(max_length=200)
+    kind = serializers.CharField(required=False, max_length=64)
+    side = serializers.ChoiceField(choices=("caller", "world"), required=False)
+    role = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    parent = serializers.CharField(required=False, allow_null=True, max_length=64)
+    persona = serializers.DictField(required=False)
+    goal = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+    constraints = serializers.DictField(child=serializers.ListField(child=serializers.CharField()), required=False)
+    behaviour = serializers.DictField(required=False)
+    knowledge = serializers.ListField(child=serializers.DictField(), required=False)
+    prompt = serializers.CharField(required=False, allow_blank=True, max_length=20000)
+    surface = serializers.CharField(required=False, max_length=64)
+    play = serializers.CharField(required=False, max_length=32)
+    permitted_actions = serializers.ListField(child=serializers.CharField(max_length=128), required=False)
+    identities = serializers.DictField(child=serializers.CharField(), required=False)
+    on_behalf_of = serializers.CharField(required=False, allow_null=True, max_length=64)
+    activation = serializers.DictField(required=False, allow_null=True)
+    loudness_ratio = serializers.FloatField(required=False, allow_null=True, min_value=0.01, max_value=1)
+    # Set by the server on every edit; ignored when sent.
+    provenance = serializers.DictField(required=False, read_only=True)
+
+
+class HarnessActorWriteSerializer(serializers.Serializer):
+    actor = HarnessActorSerializer()
+    # The draft revision the actors were read at; an edit made elsewhere since is refused.
+    expected_revision = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+
+
+class HarnessActorDeleteQuerySerializer(serializers.Serializer):
+    # The draft revision the actors were read at; an edit made elsewhere since is refused.
+    expected_revision = serializers.IntegerField(required=False, min_value=0)
+
+
+class HarnessActorListSerializer(serializers.Serializer):
+    actors = HarnessActorSerializer(many=True)
+    source = serializers.ChoiceField(choices=("draft", "saved"))
+    revision = serializers.IntegerField()
+
+
+class HarnessActorViewQuerySerializer(serializers.Serializer):
+    scenario_key = serializers.CharField(required=False, max_length=255)
+
+
+class HarnessActorSeenSerializer(serializers.Serializer):
+    input = serializers.CharField()
+    value = serializers.JSONField()
+    source = serializers.ChoiceField(choices=("actor", "scenario", "caller"))
+
+
+class HarnessActorViewSerializer(serializers.Serializer):
+    actor_id = serializers.CharField()
+    permitted_actions = serializers.ListField(child=serializers.CharField())
+    sees = HarnessActorSeenSerializer(many=True)
+    never_sees = serializers.ListField(child=serializers.CharField())
