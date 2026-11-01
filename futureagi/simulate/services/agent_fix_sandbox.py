@@ -38,6 +38,7 @@ from simulate.temporal.types.agent_fix import AgentFixLaunch, Observation
 logger = structlog.get_logger(__name__)
 
 CAPABILITY_PATH = "/run/futureagi/agent-fix.json"
+_EXIT_OUTPUT_CHARS = 4000
 ENGINE_SESSION = "agent-fix-engine"
 # Every watch renews the sandbox for this long, so a sandbox the platform lost
 # track of deletes itself soon after.
@@ -183,10 +184,15 @@ def _look(fix_run_id: str, command_id: str) -> Observation:
         ENGINE_SESSION, command_id, request_timeout=_PROVIDER_TIMEOUT_SECONDS
     )
     if command.exit_code is not None:
+        logs = sandbox.process.get_session_command_logs(
+            ENGINE_SESSION, command_id, request_timeout=_PROVIDER_TIMEOUT_SECONDS
+        )
         logger.warning(
             "agent_fix_engine_exited",
             fix_run=str(fix_run.id),
             exit_code=command.exit_code,
+            # The sandbox is released next, and this is the only record of why it ended.
+            output=logs.output[-_EXIT_OUTPUT_CHARS:],
         )
         return Observation.ENGINE_GONE
     provider.renew_ttl(sandbox, LEASE_SECONDS)
