@@ -273,7 +273,7 @@ func TestSpanContentPrecedence(t *testing.T) {
 			wantOutput: `[{"role":"assistant","parts":[{"type":"text","content":"hello"}]}]`,
 		},
 		{
-			name: "empty values don't block a later key",
+			name: "explicit empty values block raw fallback",
 			fill: func(m pcommon.Map) {
 				m.PutStr("input.value", "")
 				m.PutStr("span.input", "")
@@ -281,7 +281,7 @@ func TestSpanContentPrecedence(t *testing.T) {
 				m.PutEmpty("output.value")
 				m.PutStr("span.output", "so")
 			},
-			wantInput: "gp", wantOutput: "so",
+			wantInput: "", wantOutput: "",
 		},
 		{
 			name: "map and array values are JSON-encoded",

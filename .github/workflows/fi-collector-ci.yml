@@ -129,6 +129,7 @@ jobs:
               "TestBackfillCLIThroughKafkaWithResume",
               "TestObservedCatalogHTTPToLocalStack",
               "TestClickHouseDirectObservedCatalogFromOTLPHTTP",
+              "TestClickHouseNativeAnthropicOTLP",
               "TestValidateKeyReadsTheAgentOfAnIngestKey",
               "TestValidateKeyFallsBackWhenTheColumnDisappears",
               "TestRoutingColumnCheckSeesBothColumns",

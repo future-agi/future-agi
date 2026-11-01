@@ -144,7 +144,7 @@ func (s *otlpShape) checkAttributes() error {
 }
 
 // Attribute keys the scan prices specially. hotInput/hotOutput are copied to
-// a column of their own (converter.go overflowAsString); the curated keys
+// a column of their own (clickhouse25exporter/content.go); the curated keys
 // are copied into the curated dimension rows.
 type keyClass uint8
 
@@ -152,16 +152,22 @@ const (
 	keyPlain keyClass = iota
 	keyHotInput
 	keyHotOutput
+	keyNativeInput
+	keySystemInstructions
 	keyCurated
 )
 
 func classifyKey(k []byte) keyClass {
 	switch string(k) {
-	case "input.value":
+	case "input.value", "fi.llm.input", "raw.input", "span.input", "gen_ai.prompt", "gen_ai.tool.call.arguments":
 		return keyHotInput
-	case "output.value":
+	case "output.value", "fi.llm.output", "raw.output", "span.output", "gen_ai.completion", "gen_ai.output.messages", "gen_ai.tool.call.result", "anthropic.tool_result.content":
 		return keyHotOutput
-	case "user.id", "user.id.type", "user.id.hash", "user.metadata", "session.id":
+	case "gen_ai.input.messages":
+		return keyNativeInput
+	case "gen_ai.system_instructions":
+		return keySystemInstructions
+	case "user.id", "user.id.type", "user.id.hash", "user.metadata", "session.id", "gen_ai.conversation.id":
 		return keyCurated
 	}
 	return keyPlain
@@ -398,6 +404,17 @@ func (s *otlpShape) addKV(ctx kvContext, kv kvInfo, rs *rsAccum, sp *spanAccum) 
 			if !kv.val.isString {
 				s.hotCopyBytes += kv.val.hotCopy()
 			}
+		case keyNativeInput, keySystemInstructions:
+			// Native system instructions are prepended to input messages.
+			// Budget the joined string even for string attributes (not shared
+			// backing), plus the JSON-escaped system message envelope. Count
+			// every alias conservatively; the converter may choose fewer.
+			n := kv.val.hotCopy()
+			if kv.class == keySystemInstructions {
+				n += 64
+			}
+			sp.hotInput += n
+			s.hotCopyBytes += n
 		case keyCurated:
 			sp.curated += kv.val.hotCopy()
 		}
