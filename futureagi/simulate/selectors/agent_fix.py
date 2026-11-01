@@ -195,20 +195,24 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
             else None
         ),
         records=records,
-        parallelism=ran_at(run) if finished else None,
+        parallelism=ran_at(run, len(executions)) if finished else None,
     )
 
 
-def ran_at(run: HostedHarnessJob) -> int:
+def ran_at(run: HostedHarnessJob, trials: int | None = None) -> int:
     """The parallelism a run really had: what it was admitted at, less any degrade its last
-    attempt recorded. Two arms are only comparable when these match."""
+    attempt recorded. Two arms are only comparable when these match. A run with fewer trials
+    than its parallelism uses a world for each: that is no lower a parallelism, so it reads
+    as what it asked for."""
     payload = run.payload or {}
+    requested = (payload.get("runtime") or {}).get("parallelism") or 1
     clamped = (payload.get("metadata") or {}).get("parallelism_clamped") or {}
-    admitted = clamped.get("admitted") or (payload.get("runtime") or {}).get(
-        "parallelism"
-    )
+    admitted = clamped.get("admitted") or requested
     attempt = run.attempts.order_by("-attempt_number").first()
-    return (attempt.effective_parallelism if attempt else None) or admitted or 1
+    ran = (attempt.effective_parallelism if attempt else None) or admitted
+    if trials is None:
+        trials = HostedHarnessExecution.no_workspace_objects.filter(job=run).count()
+    return requested if ran >= min(requested, trials) else ran
 
 
 # A plan's limit, met mid-run, is the user's to lift even though the platform reports it.
