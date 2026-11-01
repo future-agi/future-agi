@@ -218,12 +218,12 @@ def preflight_findings(report: dict[str, Any] | None, status: str) -> dict[str, 
     }
 
 
-def environment_capability_report(
+def _environment_rows(
     job: HostedHarnessJob, agent_version_id: Any = None, environment_version: Any = None
-) -> dict[str, Any]:
-    """The capability report for an environment, an agent version and an environment version (the environment's own
-    when none is named): its latest build evidence, Stale once the environment version is another one or the agent is
-    not the one it was checked with."""
+) -> tuple[HarnessCapabilityEvidence | None, list[dict[str, Any]], dict[str, str]]:
+    """An environment's latest build evidence and one status row per capability, for an agent version and an
+    environment version (the environment's own when none is named): Stale once the environment version is another
+    one or the agent is not the one it was checked with."""
     version = environment_version or job.environment_version
     evidence = (
         HarnessCapabilityEvidence.no_workspace_objects.filter(
@@ -265,6 +265,14 @@ def environment_capability_report(
     if runtime is not None:
         structural.update(preflight_findings(runtime.preflight_report, runtime.preflight_status))
     rows = capability_statuses(evidence.catalogue if evidence is not None else [], document, current, structural)
+    return evidence, rows, current
+
+
+def environment_capability_report(
+    job: HostedHarnessJob, agent_version_id: Any = None, environment_version: Any = None
+) -> dict[str, Any]:
+    """The capability report for an environment, an agent version and an environment version (see `_environment_rows`)."""
+    evidence, rows, current = _environment_rows(job, agent_version_id, environment_version)
     selection = affected_scenarios(rows, evidence.scenario_requirements if evidence is not None else {})
     return {
         "environment_version_id": current["environment_version_id"] or None,
@@ -276,3 +284,24 @@ def environment_capability_report(
         "rules_version": RULES_VERSION,
         "computed_at": timezone.now().isoformat(),
     }
+
+
+def scenario_capabilities(job: HostedHarnessJob) -> dict[str, dict[str, Any]]:
+    """Per scenario key the build recorded needs for: the capabilities that block it (with each one's label and fix
+    type) and those not yet measured. A scenario absent here has no recorded needs."""
+    evidence, rows, _ = _environment_rows(job)
+    by_id = {row["id"]: row for row in rows}
+    out: dict[str, dict[str, Any]] = {}
+    for key, value in ((evidence.scenario_requirements if evidence is not None else None) or {}).items():
+        tools = set(((value or {}).get("tools") or {}).get("required") or [])
+        blocked: list[dict[str, Any]] = []
+        untested: list[str] = []
+        for capability in (value or {}).get("capabilities") or []:
+            row = by_id.get(capability)
+            state = _scenario_state(row, tools) if row is not None else "untested"
+            if state in _BLOCKING:
+                blocked.append({"capability": capability, "label": row["label"], "fix_type": row.get("fix_type")})
+            elif state in _UNKNOWN:
+                untested.append(capability)
+        out[key] = {"blocked_by": blocked, "untested": untested}
+    return out
