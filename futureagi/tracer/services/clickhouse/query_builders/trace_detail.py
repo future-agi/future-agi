@@ -92,6 +92,7 @@ def compute_trace_summary_and_graph(
     total_prompt = 0
     total_completion = 0
     total_cost = 0.0
+    cost_unknown = False
     error_count = 0
     type_counts = {}
     root_latencies = []
@@ -102,6 +103,14 @@ def compute_trace_summary_and_graph(
             total_tokens += sp.get("total_tokens") or 0
             total_prompt += sp.get("prompt_tokens") or 0
             total_completion += sp.get("completion_tokens") or 0
+            attrs = sp.get("span_attributes") or {}
+            if (
+                attrs.get("fi.usage.contribution") != "none"
+                and attrs.get("fi.cost.kind") == "unknown"
+            ):
+                # A partial sum is not a verified charge. Legacy rows without
+                # this marker retain their existing zero-cost behavior.
+                cost_unknown = True
             total_cost += sp.get("cost") or 0.0
         if sp.get("status") == "ERROR":
             error_count += 1
@@ -116,7 +125,7 @@ def compute_trace_summary_and_graph(
         "total_tokens": total_tokens,
         "total_prompt_tokens": total_prompt,
         "total_completion_tokens": total_completion,
-        "total_cost": total_cost,
+        "total_cost": None if cost_unknown else total_cost,
         "error_count": error_count,
         "span_type_counts": type_counts,
     }

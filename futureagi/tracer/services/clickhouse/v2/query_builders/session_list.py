@@ -37,6 +37,17 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
     """Drop-in v2 SessionList builder."""
 
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
+    _COST_ATTRIBUTE_MAP = "attrs_string"
+    _COST_AGGREGATE = SessionListQueryBuilder._COST_AGGREGATE.replace(
+        "span_attr_str", "attrs_string"
+    )
+    _AGGREGATE_SELECT = SessionListQueryBuilder._AGGREGATE_SELECT.replace(
+        SessionListQueryBuilder._COST_AGGREGATE, _COST_AGGREGATE
+    )
+    _SESSION_SCAN_COLS = tuple(
+        "attrs_string" if col == "span_attr_str" else col
+        for col in SessionListQueryBuilder._SESSION_SCAN_COLS
+    )
 
     # CH25 keeps booleans in their own typed map, so the page hydration carries
     # one array the legacy schema has no source for.

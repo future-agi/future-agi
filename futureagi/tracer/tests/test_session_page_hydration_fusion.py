@@ -57,9 +57,11 @@ def test_page_hydration_carries_the_union_of_the_three_payloads(cls):
     for projection in (
         "min(start_time) AS session_start",
         "max(end_time) AS session_end",
-        "sum(cost) AS root_total_cost",
+        "fi.cost.kind",
+        "AS root_total_cost",
         "sum(total_tokens) AS root_total_tokens",
-        "sum(trace_cost) AS member_total_cost",
+        "countIf(isNull(trace_cost)) > 0",
+        "AS member_total_cost",
         "sum(trace_tokens) AS member_total_tokens",
         "uniqExact(trace_id) AS traces_count",
         ") AS total_cost",

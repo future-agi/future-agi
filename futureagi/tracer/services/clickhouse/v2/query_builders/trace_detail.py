@@ -271,7 +271,12 @@ def retrieve_trace_detail_ch(
             "total_tokens": row.get("total_tokens"),
             "response_time": None,
             "eval_id": None,
-            "cost": row.get("cost"),
+            "cost": (
+                None
+                if span_attrs.get("fi.cost.kind") == "unknown"
+                and span_attrs.get("fi.usage.contribution") != "none"
+                else row.get("cost")
+            ),
             "status": row.get("status"),
             "status_message": row.get("status_message"),
             "tags": _parse_json(row.get("tags"), default=[]),

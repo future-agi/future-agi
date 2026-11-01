@@ -97,6 +97,14 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     # compile candidate-scoped residual predicates without leaking v1 column
     # names into a v2-only deployment.
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilder
+    _COST_ATTRIBUTE_MAP = "span_attr_str"
+    # A numeric zero from an unpriced native request is a storage placeholder,
+    # not a verified zero charge. Ignore non-additive parent summaries.
+    _COST_AGGREGATE = (
+        "if(countIf(span_attr_str['fi.cost.kind'] = 'unknown' AND "
+        "span_attr_str['fi.usage.contribution'] != 'none') > 0, "
+        "CAST(NULL, 'Nullable(Float64)'), sum(cost))"
+    )
 
     def _physical_identity_fields(self) -> tuple[tuple[str, str], ...]:
         """Legacy replacement key; v2 overrides expressions and key aliases."""
@@ -219,7 +227,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         "min(start_time) AS session_start, "
         "max(end_time) AS session_end, "
         "dateDiff('second', min(start_time), max(end_time)) AS duration, "
-        "sum(cost) AS total_cost, "
+        f"{_COST_AGGREGATE} AS total_cost, "
         "sum(total_tokens) AS total_tokens, "
         "uniqExact(trace_id) AS traces_count"
     )
@@ -1750,8 +1758,16 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             latest_metric_columns.append(
                 "argMax(tuple(cost), _peerdb_version).1 AS latest_cost"
             )
-            resolved_metric_columns.append("latest_cost AS cost")
-            session_metric_columns.append("sum(cost) AS total_cost")
+            resolved_metric_columns.extend(
+                [
+                    "latest_cost AS cost",
+                    f"latest_span_attr_str AS {self._COST_ATTRIBUTE_MAP}",
+                ]
+            )
+            latest_metric_columns.append(
+                f"argMax({self._COST_ATTRIBUTE_MAP}, _peerdb_version) AS latest_span_attr_str"
+            )
+            session_metric_columns.append(f"{self._COST_AGGREGATE} AS total_cost")
         if needs_tokens:
             latest_metric_columns.append(
                 "argMax(tuple(total_tokens), _peerdb_version).1 AS latest_total_tokens"
@@ -3187,6 +3203,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 argMax(tuple(trace_session_id), _peerdb_version).1 AS latest_trace_session_id,
                 argMax(tuple(end_time), _peerdb_version).1 AS latest_end_time,
                 argMax(tuple(cost), _peerdb_version).1 AS latest_cost,
+                argMax({self._COST_ATTRIBUTE_MAP}, _peerdb_version) AS latest_cost_attrs,
                 argMax(tuple(total_tokens), _peerdb_version).1 AS latest_total_tokens,
                 argMax(tuple(input), _peerdb_version).1 AS latest_input,
                 {attributes["latest"]}
@@ -3206,6 +3223,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 latest_start_time AS start_time,
                 latest_end_time AS end_time,
                 latest_cost AS cost,
+                latest_cost_attrs AS {self._COST_ATTRIBUTE_MAP},
                 latest_total_tokens AS total_tokens,
                 latest_input AS input,
                 {attributes["projection"]}
@@ -3223,7 +3241,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 min(start_time) AS session_start,
                 max(end_time) AS session_end,
                 dateDiff('second', min(start_time), max(end_time)) AS duration,
-                sum(cost) AS root_total_cost,
+                {self._COST_AGGREGATE} AS root_total_cost,
                 sum(total_tokens) AS root_total_tokens,
                 uniqExact(trace_id) AS traces_count,
                 argMin(input, start_time) AS root_first_message,
@@ -3258,6 +3276,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 latest_start_time,
                 latest_cost,
                 latest_total_tokens,
+                (latest_cost_attrs['fi.cost.kind'] = 'unknown' AND
+                 latest_cost_attrs['fi.usage.contribution'] != 'none') AS latest_cost_unknown,
                 (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
                     AS latest_is_root,
                 multiIf(
@@ -3277,6 +3297,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     argMax(tuple(prompt_tokens), _peerdb_version).1 AS latest_prompt_tokens,
                     argMax(tuple(completion_tokens), _peerdb_version).1 AS latest_completion_tokens,
                     argMax(tuple(cost), _peerdb_version).1 AS latest_cost,
+                    argMax({self._COST_ATTRIBUTE_MAP}, _peerdb_version) AS latest_cost_attrs,
                     argMax(tuple(total_tokens), _peerdb_version).1 AS latest_total_tokens,
                     argMax(tuple(input_length), _peerdb_version).1 AS latest_input_length,
                     argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
@@ -3301,7 +3322,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             FROM (
                 SELECT
                     member_session_id,
-                    sum(trace_cost) AS member_total_cost,
+                    if(countIf(isNull(trace_cost)) > 0,
+                       CAST(NULL, 'Nullable(Float64)'), sum(trace_cost)) AS member_total_cost,
                     sum(trace_tokens) AS member_total_tokens,
                     argMinIf(trace_message_key, tuple(trace_root_start, trace_id),
                         trace_has_root) AS first_message_key,
@@ -3312,7 +3334,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                         member_session_id,
                         trace_id,
                         {usage_aggregate_sql(prefix="latest_")},
-                        usage_cost AS trace_cost,
+                        if(countIf(latest_cost_unknown) > 0,
+                           CAST(NULL, 'Nullable(Float64)'), usage_cost) AS trace_cost,
                         usage_total_tokens AS trace_tokens,
                         minIf(latest_start_time, latest_is_root) AS trace_root_start,
                         countIf(latest_is_root) > 0 AS trace_has_root,
@@ -3665,7 +3688,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             SELECT
                 trace_session_id,
                 dateDiff('second', min(start_time), max(end_time)) AS duration,
-                sum(cost) AS total_cost,
+                {self._COST_AGGREGATE} AS total_cost,
                 sum(total_tokens) AS total_tokens,
                 uniqExact(trace_id) AS traces_count
                 {message_select}
@@ -3729,7 +3752,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                         else session_end
                     ),
                     "duration": float(duration_val) if duration_val else 0,
-                    "total_cost": float(_get(row, "total_cost", 4, 0) or 0),
+                    "total_cost": (
+                        float(cost)
+                        if (cost := _get(row, "total_cost", 4)) is not None
+                        else None
+                    ),
                     "total_tokens": int(_get(row, "total_tokens", 5, 0) or 0),
                     "total_traces_count": int(_get(row, "traces_count", 6, 0) or 0),
                     "first_message": _get(row, "first_message", 7, "") or "",
@@ -3950,6 +3977,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         "end_time",
         "cost",
         "total_tokens",
+        "span_attr_str",
     )
 
     def _session_from_where(
