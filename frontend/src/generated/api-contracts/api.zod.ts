@@ -35073,6 +35073,9 @@ export const SimulateApiAgentFixRunsCandidatesCandidatePatchParams = zod.object(
   },
 );
 
+export const SimulateApiAgentFixRunsCandidatesCandidatePatchResponse =
+  zod.string();
+
 /**
  * A GitHub agent's winner, opened once as a pull request on its repository.
  */

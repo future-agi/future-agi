@@ -10,6 +10,7 @@ import pytest
 from django.db import OperationalError
 from django.test import RequestFactory
 from django.utils import timezone
+from structlog.testing import capture_logs
 
 from accounts.models.organization import Organization
 from simulate.authentication import AgentFixEngineAuthentication
@@ -75,6 +76,10 @@ class _Process:
     def get_session_command(self, _session_id, command_id, request_timeout=None):
         assert command_id == "4242:engine"
         return SimpleNamespace(exit_code=self.exit_code)
+
+    def get_session_command_logs(self, _session_id, command_id, request_timeout=None):
+        assert command_id == "4242:engine"
+        return SimpleNamespace(output="improve.mjs exited (13) before the fix ended")
 
 
 class _Sandbox:
@@ -501,8 +506,12 @@ def test_an_exited_engine_is_gone(fix_run, provider):
     launched = launch(str(fix_run.id))
     provider.live["sandbox-1"].process.exit_code = 1
 
-    assert observe(str(fix_run.id), launched.command_id) == Observation.ENGINE_GONE
+    with capture_logs() as logs:
+        assert observe(str(fix_run.id), launched.command_id) == Observation.ENGINE_GONE
+
     assert provider.renewed == []
+    [exited] = [log for log in logs if log["event"] == "agent_fix_engine_exited"]
+    assert exited["output"] == "improve.mjs exited (13) before the fix ended"
 
 
 def test_a_deleted_sandbox_means_the_engine_is_gone(fix_run, provider):

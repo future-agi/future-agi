@@ -50224,7 +50224,10 @@
                 "parameters": [],
                 "responses": {
                     "200": {
-                        "description": ""
+                        "description": "The candidate's change as a git patch.",
+                        "schema": {
+                            "type": "string"
+                        }
                     },
                     "default": {
                         "description": "Default error response",
@@ -124946,7 +124949,8 @@
                 "run_id": {
                     "title": "Run id",
                     "type": "string",
-                    "format": "uuid"
+                    "format": "uuid",
+                    "x-nullable": true
                 },
                 "test_execution_id": {
                     "title": "Test execution id",

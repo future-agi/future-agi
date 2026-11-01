@@ -423,6 +423,7 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         "fix_run_id",
         "fix_label",
         "state",
+        "run_test_id",
         "test_execution_id",
         "agent_version_id",
         "created_at",
