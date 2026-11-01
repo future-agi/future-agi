@@ -58165,7 +58165,7 @@ export const simulateApiAgentFixRunsCandidatesMakeDefault = async (
 };
 
 export type simulateApiAgentFixRunsCandidatesCandidatePatchResponse200 = {
-  data: void;
+  data: string;
   status: 200;
 };
 

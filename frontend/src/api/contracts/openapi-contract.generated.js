@@ -27878,6 +27878,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          200: {
+            type: "string",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -88073,6 +88076,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Run id",
           type: "string",
           format: "uuid",
+          "x-nullable": true,
         },
         test_execution_id: {
           title: "Test execution id",

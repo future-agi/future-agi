@@ -279,6 +279,14 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             return _not_found()
         return Response({"pull_request_url": open_pull_request(candidate)})
 
+    @swagger_auto_schema(
+        responses={
+            200: openapi.Response(
+                description="The candidate's change as a git patch.",
+                schema=openapi.Schema(type=openapi.TYPE_STRING),
+            )
+        }
+    )
     @action(
         detail=True,
         methods=["get"],

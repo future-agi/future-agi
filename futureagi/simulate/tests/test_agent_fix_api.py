@@ -972,9 +972,11 @@ class TestUserApi:
 
         body = auth_client.get(f"{BASE}/{fix_run.id}/").json()
 
+        # The results page takes the environment's run, not the job.
+        assert baseline.run_test_id
         assert body["check_runs"] == [
             {
-                "run_id": str(baseline.id),
+                "run_id": str(baseline.run_test_id),
                 "test_execution_id": str(baseline.test_execution_id),
                 "label": "baseline",
                 "state": baseline.state,
@@ -982,7 +984,7 @@ class TestUserApi:
         ]
         [shown] = body["candidates"]
         assert [(run["run_id"], run["label"]) for run in shown["check_runs"]] == [
-            (str(screen.id), "c1-target")
+            (str(screen.run_test_id), "c1-target")
         ]
 
     def test_a_retry_shows_the_check_runs_it_reused(self, auth_client, source_run):
@@ -1000,7 +1002,7 @@ class TestUserApi:
         body = auth_client.get(f"{BASE}/{retried.id}/").json()
 
         assert [(run["run_id"], run["label"]) for run in body["check_runs"]] == [
-            (str(baseline.id), "baseline")
+            (str(baseline.run_test_id), "baseline")
         ]
 
     def test_http_patch_is_not_an_action_of_a_fix(self, auth_client, source_run):
@@ -1184,6 +1186,13 @@ class TestUserApi:
                 "held_back_scenario_keys": [f"held-{n}" for n in range(4)],
             }
         )
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            verdict={
+                "reason": "passed every tier",
+                "target_pass_rate": [0, 0.5833],
+                "held_back_pass_rate": [0, 0.6111],
+            }
+        )
 
         response, [(_, _, sent)] = self._ship(
             auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
@@ -1193,6 +1202,10 @@ class TestUserApi:
         assert sent["json"]["draft"] is False
         assert "limited validation" not in sent["json"]["title"].lower()
         assert "limited validation" not in sent["json"]["body"].lower()
+        assert (
+            "Proven by Fix my agent: held-back cases 0% → 61%, target cases 0% → 58%; "
+            "passed every tier" in sent["json"]["body"]
+        )
 
     def test_a_repository_without_drafts_gets_a_pull_request_that_still_says_so(
         self, auth_client, source_run, github

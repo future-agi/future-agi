@@ -133,9 +133,10 @@ class AgentFixFailureSerializer(serializers.Serializer):
 
 class AgentFixCheckRunSerializer(serializers.Serializer):
     """A Run the fix started to check a candidate or the base version. It stays out of
-    the environment's run list; its results open by ``test_execution_id``."""
+    the environment's run list; its results open by ``run_id`` and ``test_execution_id``,
+    the environment's run and this execution of it."""
 
-    run_id = serializers.UUIDField(source="id")
+    run_id = serializers.UUIDField(source="run_test_id", allow_null=True)
     test_execution_id = serializers.UUIDField(allow_null=True)
     # The engine's name for the run ("baseline", "c2-target"), for display.
     label = serializers.CharField(source="fix_label")

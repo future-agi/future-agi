@@ -96,11 +96,26 @@ def open_pull_request(candidate: AgentFixCandidate) -> str:
     return url
 
 
+def _evidence(verdict: dict) -> str:
+    """The pass rates a reviewer weighs, as the fix page shows them."""
+    return ", ".join(
+        f"{name} cases {before:.0%} → {after:.0%}"
+        for name, (before, after) in (
+            ("held-back", verdict.get("held_back_pass_rate") or (None, None)),
+            ("target", verdict.get("target_pass_rate") or (None, None)),
+        )
+        if after is not None
+    )
+
+
 def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
     """The title and body, which say so when too few cases were held back to verify it."""
     summary = candidate.summary.strip()
     first = summary.splitlines()[0] if summary else f"attempt {candidate.attempt}"
-    reason = (candidate.verdict or {}).get("reason") or ""
+    verdict = candidate.verdict or {}
+    reason = "; ".join(
+        part for part in (_evidence(verdict), verdict.get("reason")) if part
+    )
     limited = limited_validation(candidate.fix_run)
     proof = "Checked" if limited else "Proven"
     body = "\n\n".join(
