@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('accounts', '0028_merge_authtoken_scope_and_simulation_agent_key'),
-        ('simulate', '0099_harness_versioning'),
+        ('simulate', '0100_merge_0099_harness_versioning_0099_sub_actors'),
     ]
 
     operations = [
