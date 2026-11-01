@@ -467,7 +467,7 @@ def test_public_default_session_dispatch_uses_real_exact_builder_and_signed_cano
                     for sid, when in records
                 ]
             )
-        if "sum(cost) AS root_total_cost" in sql:
+        if "AS root_total_cost" in sql:
             return SimpleNamespace(
                 data=[
                     {

@@ -206,7 +206,8 @@ def test_latest_physical_replay_remaps_and_all_root_metrics_are_preserved():
     assert "latest_is_deleted = 0" in live
     assert "LEFT JOIN ts_survivor_map AS scalar_ts_remap" in live
     sessions = _cte(sql, "sessions")
-    assert "sum(cost) AS total_cost" in sessions
+    assert "fi.cost.kind" in sessions
+    assert "AS total_cost" in sessions
     assert "FROM resolved_root_sessions" in sessions
     assert "latest_attr_value" not in sessions
     assert "matching_scalar_sessions" in sessions

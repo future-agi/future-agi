@@ -531,7 +531,7 @@ def test_real_list_entrypoint_walks_typed_leaves_without_the_primary_witness(
 
     def execute(sql, params, **kwargs):
         calls.append((sql, params))
-        if "sum(cost) AS root_total_cost" in sql:
+        if "AS root_total_cost" in sql:
             return SimpleNamespace(
                 data=[
                     {
