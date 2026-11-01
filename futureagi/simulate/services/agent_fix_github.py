@@ -3,7 +3,9 @@ applied to the commit the fix started from, on a branch of its own."""
 
 import re
 import tempfile
+from math import floor
 from pathlib import Path
+from textwrap import shorten
 
 import requests
 import structlog
@@ -26,6 +28,7 @@ logger = structlog.get_logger(__name__)
 _COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
 _AUTHOR = ("Future AGI", "fix-my-agent@futureagi.com")
 _NO_DRAFTS = "draft pull requests are not supported"
+_TITLE_CHARS = 120
 _LIMITED_NOTE = (
     "**Limited validation.** Too few failing cases were held back to verify this fix."
     " Review it closely before you merge."
@@ -96,10 +99,15 @@ def open_pull_request(candidate: AgentFixCandidate) -> str:
     return url
 
 
+def _percent(rate: float) -> str:
+    # Half up, as the fix page rounds: 62.5% reads 63% in both places.
+    return f"{floor(rate * 100 + 0.5)}%"
+
+
 def _evidence(verdict: dict) -> str:
     """The pass rates a reviewer weighs, as the fix page shows them."""
     return ", ".join(
-        f"{name} cases {before:.0%} → {after:.0%}"
+        f"{name} cases {_percent(before)} → {_percent(after)}"
         for name, (before, after) in (
             ("held-back", verdict.get("held_back_pass_rate") or (None, None)),
             ("target", verdict.get("target_pass_rate") or (None, None)),
@@ -129,7 +137,7 @@ def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
         if part
     )
     name = "Fix my agent (limited validation)" if limited else "Fix my agent"
-    return f"{name}: {first}"[:120], body
+    return shorten(f"{name}: {first}", width=_TITLE_CHARS, placeholder="…"), body
 
 
 def _push(
