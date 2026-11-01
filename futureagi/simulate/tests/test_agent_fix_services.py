@@ -42,6 +42,7 @@ from simulate.selectors.agent_fix import (
     committed_usd,
     engine_brief,
     is_retryable,
+    ran_at,
 )
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_runs import (
@@ -856,6 +857,43 @@ class TestCheckRuns:
         temporal.start_run.assert_not_called()
 
 
+class TestRanAt:
+    """Arms compare only at one parallelism, so a false mismatch rejects a working fix."""
+
+    def _asked_for(self, run, *, parallelism=4, admitted=None):
+        payload = dict(run.payload)
+        payload["runtime"] = {**payload.get("runtime", {}), "parallelism": parallelism}
+        if admitted is not None:
+            payload["metadata"] = {
+                **payload.get("metadata", {}),
+                "parallelism_clamped": {
+                    "requested": parallelism,
+                    "admitted": admitted,
+                },
+            }
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(payload=payload)
+        run.refresh_from_db()
+        return run
+
+    def test_a_run_with_fewer_trials_than_worlds_is_not_a_lower_parallelism(
+        self, source_run
+    ):
+        run = self._asked_for(_check(_fix_run(source_run)), admitted=1)
+
+        assert ran_at(run) == 4
+
+    def test_a_clamp_that_cost_the_run_worlds_still_shows(self, source_run):
+        check = _check(_fix_run(source_run), keys=KEYS, trials=3)
+
+        assert ran_at(self._asked_for(check, admitted=2)) == 2
+
+    def test_a_degrade_still_shows(self, source_run):
+        run = self._asked_for(_check(_fix_run(source_run), keys=KEYS, trials=3))
+        _degraded(run, to=2)
+
+        assert ran_at(run) == 2
+
+
 def test_the_engine_may_call_its_backup_model():
     """The engine's profile moves to this model when DeepSeek loses a call. The proxy refuses
     any model that is not listed, so a fix would die on the very call that needs the backup."""
@@ -901,7 +939,7 @@ class TestCheckRunSeeds:
     ):
         settings.AGENT_FIX_CHECK_RUN_PARALLELISM = 4
         fix_run = _fix_run(source_run, token_hash=hash_secret("t"))
-        baseline = _check(fix_run, label="baseline")
+        baseline = _check(fix_run, label="baseline", keys=KEYS, trials=3)
         _degraded(baseline, to=1)
         candidate = _candidate(fix_run)
 
@@ -959,7 +997,9 @@ class TestCheckRunStatus:
         self, source_run, settings, attempt, clamped, expected
     ):
         settings.AGENT_FIX_CHECK_RUN_PARALLELISM = 3
-        run = _check(_fix_run(source_run, token_hash=hash_secret("t")))
+        run = _check(
+            _fix_run(source_run, token_hash=hash_secret("t")), keys=KEYS, trials=3
+        )
         assert check_run_status(run).parallelism is None  # Still going.
         run.payload["metadata"]["parallelism_clamped"] = clamped
         HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
