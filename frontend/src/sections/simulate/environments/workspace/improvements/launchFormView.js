@@ -66,6 +66,9 @@ export const minuteSteps = (value, limits) =>
 
 export function launchError({ targets, protectedKeys, surfaces, limits }) {
   if (!targets.length) return "Pick at least one failing case to fix.";
+  if (targets.length < limits.scenarios_min) {
+    return `Needs at least ${limits.scenarios_min} failing cases to prove a fix.`;
+  }
   if (targets.length > limits.scenarios_max) {
     return `Pick at most ${limits.scenarios_max} cases to fix.`;
   }

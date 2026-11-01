@@ -14,6 +14,7 @@ import {
 const LIMITS = {
   budget_credits_max: 50000,
   max_minutes_max: 1440,
+  scenarios_min: 1,
   scenarios_max: 200,
 };
 const SURFACES = [
@@ -99,6 +100,10 @@ describe("launch checks", () => {
   });
   it.each([
     [{ ...ok, targets: [] }, "Pick at least one failing case to fix."],
+    [
+      { ...ok, limits: { ...LIMITS, scenarios_min: 12 } },
+      "Needs at least 12 failing cases to prove a fix.",
+    ],
     [
       { ...ok, targets: Array.from({ length: 201 }, (_, i) => `t${i}`) },
       "Pick at most 200 cases to fix.",
