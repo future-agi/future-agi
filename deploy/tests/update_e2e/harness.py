@@ -116,6 +116,10 @@ try:  # the updater's own pinned cosign image, so tests sign with what it verifi
 except Exception:  # pragma: no cover - only when imported outside the checkout
     COSIGN_IMAGE = ("ghcr.io/sigstore/cosign/cosign:v3.1.3"
                     "@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8")
+try:  # frozen wire schemas the updater reads at runtime from outside deploy/update
+    from deploy.update.host_facts import HOST_RUNTIME_CONTRACTS
+except Exception:  # pragma: no cover - only when imported outside the checkout
+    HOST_RUNTIME_CONTRACTS = ()
 REGISTRY_IMAGE = "registry:2"
 # Every manifest media type the fake images may be stored as (the HEAD/GET Accept header).
 MANIFEST_ACCEPT = ", ".join(("application/vnd.oci.image.index.v1+json",
@@ -1437,6 +1441,10 @@ class Harness:
         shutil.copy2(source / "bin/update", root / "bin/update")
         shutil.copytree(source / "deploy/update", root / "deploy/update",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        for name in HOST_RUNTIME_CONTRACTS:  # read at runtime by deploy/update/contracts.py
+            if (source / name).is_file():  # an older updater source may predate them
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source / name, root / name)
         write_deployment_files(root, registry=registry or self.registry, prefix=self.prefix, variant=variant)
         backend, frontend = free_port(self.ports), free_port(self.ports)
         secret = f"e2e-secret-{secrets.token_hex(12)}"

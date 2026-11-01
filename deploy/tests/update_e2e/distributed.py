@@ -883,6 +883,10 @@ class DistributedHarness(e2e.Harness):
         shutil.copy2(source / "bin/update", root / "bin/update")
         shutil.copytree(source / "deploy/update", root / "deploy/update",
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        for name in e2e.HOST_RUNTIME_CONTRACTS:  # read at runtime by deploy/update/contracts.py
+            if (source / name).is_file():  # an older updater source may predate them
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source / name, root / name)
         write_distributed_files(root, registry=self.registry, prefix=self.prefix)
         shutil.copyfile(e2e.WORKTREE / "deploy/update/upgrade-floor", root / "deploy/update/upgrade-floor")
         backend, frontend = e2e.free_port(self.ports), e2e.free_port(self.ports)

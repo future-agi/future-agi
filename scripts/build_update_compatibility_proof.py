@@ -74,6 +74,12 @@ MEASURED_FIELDS = ('migration_evidence', 'migration_measurements', 'backup_measu
                    'evidence_inventory_sha256')
 
 
+# Frozen wire schemas the host updater reads at runtime from outside deploy/update
+# (deploy/update/contracts.py _schema). Same list as deploy/update/host_facts.py.
+HOST_RUNTIME_CONTRACTS = ('api_contracts/host-update/public-status.v1.schema.json',
+                          'api_contracts/host-update/api-response.v1.schema.json')
+
+
 def implementation_inventory(root: Path = ROOT) -> dict:
     """Complete shipped Python/data closure plus producer/packager entrypoints.
 
@@ -87,7 +93,7 @@ def implementation_inventory(root: Path = ROOT) -> dict:
         'generate_update_manifest.py', 'update_rehearsal_shipping.py', 'update_rehearsal_milestone.py',
         'update_rehearsal_qualification.py', 'update_rehearsal_resources.py', 'update_rehearsal_spool.py')]
     paths.extend(root / name for name in ('bin/update', 'deploy/standalone/bin/start',
-        'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf'))
+        'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf', *HOST_RUNTIME_CONTRACTS))
     base = root / 'deploy/update'
     require(base.is_dir() and not base.is_symlink())
     def unreadable(error):

@@ -170,6 +170,8 @@ class SelectionTests(pub.PublisherCase):
             'scripts/update_rehearsal_resources.py', 'scripts/update_rehearsal_spool.py', 'bin/update',
             'deploy/standalone/bin/start',
             'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf',
+            'api_contracts/host-update/public-status.v1.schema.json',
+            'api_contracts/host-update/api-response.v1.schema.json',
             'deploy/update/fixed.py', 'deploy/update/probes/fixed.py', 'deploy/update/mapping.json']
         for name in names:
             path = self.root / name

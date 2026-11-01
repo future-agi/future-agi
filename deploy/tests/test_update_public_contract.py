@@ -365,5 +365,53 @@ class PrivateValueContractTests(unittest.TestCase):
         self.assertNotIn("operation_token", SCHEMAS["status"]["properties"]["operation"]["properties"])
 
 
+
+class InstalledClosureContractTests(unittest.TestCase):
+    """The installed host updater is exactly the hashed implementation closure.
+
+    Native acceptance installed that closure into older retained releases, which
+    predate api_contracts/host-update; every status report then failed closed
+    (status_reporting_unavailable) because contracts._schema reads the frozen
+    schemas from outside deploy/update.
+    """
+    CHECK = (
+        "import json, sys\n"
+        "from datetime import datetime, timezone\n"
+        "from deploy.update import contracts as c\n"
+        "case = json.loads(sys.stdin.read())\n"
+        "now = datetime.strptime(case['now'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)\n"
+        "c.validate_public_status(case['snapshot'], expected_installation=case['expected_installation'], now=now)\n"
+        "c.validate_api_response(case['api'], now=now, expected_installation=case['expected_installation'])\n"
+        "print('validated')\n")
+
+    def run_closure(self, root, case):
+        import subprocess, sys
+        return subprocess.run([sys.executable, "-I", "-B", "-c", "import sys; sys.path.insert(0, %r)\n" % str(root)
+                               + self.CHECK], input=json.dumps(case).encode(), capture_output=True, timeout=60)
+
+    def test_installed_closure_alone_validates_public_status(self):
+        import shutil, tempfile
+        from deploy.update.host_facts import HOST_RUNTIME_CONTRACTS
+        from scripts.build_update_compatibility_proof import HOST_RUNTIME_CONTRACTS as PRODUCED, implementation_inventory
+        self.assertEqual(HOST_RUNTIME_CONTRACTS, PRODUCED)
+        inventory = implementation_inventory(ROOT)
+        for name in ("public-status.v1.schema.json", "api-response.v1.schema.json"):
+            self.assertIn("api_contracts/host-update/" + name, inventory)
+        valid = FIXTURES["valid_status"][0]
+        case = dict(snapshot=valid["snapshot"], now=valid.get("now", FIXTURES["now"]),
+                    expected_installation=valid.get("expected_installation", FIXTURES["expected_installation"]),
+                    api=FIXTURES["valid_api"][0]["response"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in inventory:
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / name, root / name)
+            result = self.run_closure(root, case)
+            self.assertEqual(result.returncode, 0, result.stderr.decode()[-2000:])
+            self.assertEqual(result.stdout.decode().strip(), "validated")
+            # The pre-fix closure: no frozen schema beside deploy/update.
+            shutil.rmtree(root / "api_contracts")
+            self.assertNotEqual(self.run_closure(root, case).returncode, 0)
+
 if __name__ == "__main__":
     unittest.main()

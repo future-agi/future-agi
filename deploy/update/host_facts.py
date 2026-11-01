@@ -222,6 +222,13 @@ def daemon_space_available(installation, binding):
         return None
 
 
+# The host reads these frozen wire schemas at runtime (contracts._schema), from
+# outside deploy/update; the closure must carry them. Same list as the producer's
+# scripts/build_update_compatibility_proof.py HOST_RUNTIME_CONTRACTS.
+HOST_RUNTIME_CONTRACTS = ('api_contracts/host-update/public-status.v1.schema.json',
+                          'api_contracts/host-update/api-response.v1.schema.json')
+
+
 def executor_implementation_sha256(root):
     """Independently hash the producer's fixed complete implementation closure.
 
@@ -235,7 +242,7 @@ def executor_implementation_sha256(root):
         'update_rehearsal_milestone.py', 'update_rehearsal_qualification.py',
         'update_rehearsal_resources.py', 'update_rehearsal_spool.py')]
     paths.extend(root / name for name in ('bin/update', 'deploy/standalone/bin/start',
-        'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf'))
+        'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf', *HOST_RUNTIME_CONTRACTS))
     base = safe_path(root / 'deploy/update', directory=True)
     def unreadable(error):
         raise error

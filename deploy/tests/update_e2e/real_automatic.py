@@ -1121,12 +1121,16 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
         # This is the fixed trusted host implementation closure, not B's
         # runtime deployment. Preserve every retained A deployment hash. Host
         # observation and the producer independently hash this same closure.
+        from deploy.update.host_facts import HOST_RUNTIME_CONTRACTS
         fixed = ('bin/update', 'scripts/rehearse_update_compatibility.py',
                  'scripts/update_rehearsal_shipping.py', 'scripts/build_update_compatibility_proof.py',
                  'scripts/update_rehearsal_milestone.py', 'scripts/update_rehearsal_qualification.py',
                  'scripts/update_rehearsal_resources.py', 'scripts/update_rehearsal_spool.py',
                  'scripts/generate_update_manifest.py', 'deploy/standalone/bin/start',
-                 'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf')
+                 'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf',
+                 # Read at runtime by deploy/update/contracts.py; older retained
+                 # releases predate them, so status reporting failed without them.
+                 *HOST_RUNTIME_CONTRACTS)
         deployment = self.source_manifest['deployment']['files'] if self.source_manifest else {}
         for name in fixed:
             for retained in deployment:
