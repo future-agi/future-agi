@@ -87880,7 +87880,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     AgentFixLaunchLimits: {
-      required: ["budget_credits_max", "max_minutes_max", "scenarios_max"],
+      required: [
+        "budget_credits_max",
+        "max_minutes_max",
+        "scenarios_min",
+        "scenarios_max",
+      ],
       type: "object",
       properties: {
         budget_credits_max: {
@@ -87889,6 +87894,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         max_minutes_max: {
           title: "Max minutes max",
+          type: "integer",
+        },
+        scenarios_min: {
+          title: "Scenarios min",
           type: "integer",
         },
         scenarios_max: {

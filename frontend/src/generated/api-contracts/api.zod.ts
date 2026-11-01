@@ -34787,6 +34787,7 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
   limits: zod.object({
     budget_credits_max: zod.number(),
     max_minutes_max: zod.number(),
+    scenarios_min: zod.number(),
     scenarios_max: zod.number(),
   }),
   blocked: zod.object({

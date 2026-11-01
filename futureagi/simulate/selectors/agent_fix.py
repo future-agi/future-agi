@@ -721,6 +721,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         limits=LaunchLimits(
             budget_credits_max=BUDGET_CREDITS_MAX,
             max_minutes_max=MAX_MINUTES_MAX,
+            scenarios_min=settings.AGENT_FIX_MIN_FAILING_CASES,
             scenarios_max=SCENARIOS_MAX,
         ),
         blocked=LaunchBlocked(code=blocked.code, message=blocked.message)

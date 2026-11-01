@@ -10,8 +10,8 @@ from pydantic import BaseModel, Field
 SCENARIOS_MAX = 200
 BUDGET_CREDITS_MAX = 50_000
 MAX_MINUTES_MAX = 24 * 60
-# Held-back cases a fix needs to count as verified: 4 pass a large real fix 87% of the time,
-# 2 only 56%.
+# Held-back cases a fix needs to count as verified. On a failure that fails every baseline
+# run, 4 pass a large real fix 87% of the time and 2 only 56%.
 HELD_BACK_VERIFIED_MIN = 4
 
 
@@ -285,6 +285,7 @@ class LaunchDefaults(BaseModel):
 class LaunchLimits(BaseModel):
     budget_credits_max: int
     max_minutes_max: int
+    scenarios_min: int
     scenarios_max: int
 
 

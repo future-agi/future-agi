@@ -49,6 +49,9 @@ from simulate.tests.test_agent_fix_services import (
     _run,
     _tree,
 )
+from simulate.tests.test_agent_fix_services import (
+    any_suite_may_launch as any_suite_may_launch,
+)
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixtures
     environment as environment,
 )
@@ -727,6 +730,7 @@ class TestUserApi:
         assert options["limits"] == {
             "budget_credits_max": 50000,
             "max_minutes_max": 1440,
+            "scenarios_min": 1,
             "scenarios_max": 200,
         }
         assert options["blocked"] is None

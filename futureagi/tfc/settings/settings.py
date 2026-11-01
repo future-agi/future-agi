@@ -1111,6 +1111,9 @@ AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
 AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = os.getenv(
     "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"
 )
+# Failing cases a fix needs at launch. A third are held back, and a fix proven only on the
+# cases it was made on can pass by chance, so this leaves the 4 that verifying it takes.
+AGENT_FIX_MIN_FAILING_CASES = int(os.getenv("AGENT_FIX_MIN_FAILING_CASES", "12"))
 # Models the engine may call through its fix's API; Future AGI pays for them. The second is
 # the backup its profile moves to when the first loses a call.
 AGENT_FIX_ENGINE_MODELS = os.getenv(
