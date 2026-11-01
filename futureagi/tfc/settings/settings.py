@@ -1111,9 +1111,10 @@ AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
 AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = os.getenv(
     "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"
 )
-# Models the engine may call through its fix's API; Future AGI pays for them.
+# Models the engine may call through its fix's API; Future AGI pays for them. The second is
+# the backup its profile moves to when the first loses a call.
 AGENT_FIX_ENGINE_MODELS = os.getenv(
-    "AGENT_FIX_ENGINE_MODELS", "deepseek/deepseek-v4.1-flash"
+    "AGENT_FIX_ENGINE_MODELS", "deepseek/deepseek-v4.1-flash,openai/gpt-6-luna"
 ).split(",")
 # How long past the fix's deadline its token still works, for the final report.
 AGENT_FIX_TOKEN_GRACE_SECONDS = int(os.getenv("AGENT_FIX_TOKEN_GRACE_SECONDS", "600"))
