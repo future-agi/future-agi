@@ -3769,7 +3769,7 @@ class TestSessionListQueryBuilder:
         assert "argMin(input, start_time) AS first_message" in query
         assert "argMax(input, start_time) AS last_message" in query
         assert (
-            "SELECT trace_session_id, trace_id, start_time, end_time, cost, total_tokens, input"
+            "SELECT trace_session_id, trace_id, start_time, end_time, cost, total_tokens, span_attr_str, input"
             in query
         )
         assert "ORDER BY first_message ASC" in query
