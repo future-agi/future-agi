@@ -442,6 +442,7 @@ class AgentFixLaunchDefaultsSerializer(serializers.Serializer):
 class AgentFixLaunchLimitsSerializer(serializers.Serializer):
     budget_credits_max = serializers.IntegerField()
     max_minutes_max = serializers.IntegerField()
+    scenarios_min = serializers.IntegerField()
     scenarios_max = serializers.IntegerField()
 
 

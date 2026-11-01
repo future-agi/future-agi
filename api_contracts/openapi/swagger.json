@@ -125494,6 +125494,7 @@
             "required": [
                 "budget_credits_max",
                 "max_minutes_max",
+                "scenarios_min",
                 "scenarios_max"
             ],
             "type": "object",
@@ -125504,6 +125505,10 @@
                 },
                 "max_minutes_max": {
                     "title": "Max minutes max",
+                    "type": "integer"
+                },
+                "scenarios_min": {
+                    "title": "Scenarios min",
                     "type": "integer"
                 },
                 "scenarios_max": {

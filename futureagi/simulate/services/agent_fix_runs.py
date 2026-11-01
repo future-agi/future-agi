@@ -6,6 +6,7 @@ from hashlib import sha256
 from typing import Any
 
 import structlog
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -120,6 +121,14 @@ def launch_fix_run(
         raise HostedHarnessError(
             "fix_targets_passed",
             "nothing failed on the chosen scenarios in this run",
+            status_code=422,
+        )
+    failing_cases = sum(1 for names in by_scenario.values() if names)
+    if failing_cases < settings.AGENT_FIX_MIN_FAILING_CASES:
+        raise HostedHarnessError(
+            "fix_targets_too_few",
+            f"a fix needs at least {settings.AGENT_FIX_MIN_FAILING_CASES} failing cases "
+            f"to be proven; these have {failing_cases}",
             status_code=422,
         )
     request = FixRequest(

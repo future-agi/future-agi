@@ -46,6 +46,7 @@ from simulate.selectors.agent_fix import (
 )
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_runs import (
+    HELD_BACK_MIN_CASES,
     close_fix_run,
     launch_fix_run,
     make_candidate_default,
@@ -71,6 +72,7 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
 from simulate.tests.test_harness_versioning_record import _authoring
 from simulate.utils.test_execution_utils import eval_source
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
+from tfc.settings import settings as default_settings
 
 pytestmark = pytest.mark.django_db
 
@@ -82,6 +84,12 @@ PATCH = (
 )
 State = AgentFixRun.State
 Outcome = AgentFixCandidate.Outcome
+
+
+@pytest.fixture(autouse=True)
+def any_suite_may_launch(settings):
+    """These tests run on a two-scenario suite; the floor has its own."""
+    settings.AGENT_FIX_MIN_FAILING_CASES = 1
 
 
 @pytest.fixture(autouse=True)
@@ -287,6 +295,10 @@ def _move_default_suite(environment, user):
     environment.refresh_from_db()
 
 
+def test_the_floor_leaves_enough_held_back_to_verify_a_fix():
+    assert default_settings.AGENT_FIX_MIN_FAILING_CASES == HELD_BACK_MIN_CASES
+
+
 class TestHeldBackSplit:
     def test_too_few_failing_cases_hold_none_back(self):
         failing = {f"s{i}": ["refunded"] for i in range(11)}
@@ -318,6 +330,18 @@ class TestHeldBackSplit:
 
 
 class TestLaunch:
+    def test_too_few_failing_cases_are_refused_and_passing_ones_do_not_count(
+        self, source_run, user, settings
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 2
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _launch(source_run, user, targets=KEYS)
+
+        assert refused.value.code == "fix_targets_too_few"
+        assert refused.value.status_code == 422
+        assert not AgentFixRun.no_workspace_objects.exists()
+
     def test_the_split_reaches_the_request_and_the_engine(self, source_run, user):
         with patch(
             "simulate.services.agent_fix_runs.split_held_back", return_value=[KEYS[0]]

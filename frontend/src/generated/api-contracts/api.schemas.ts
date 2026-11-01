@@ -17265,6 +17265,7 @@ export interface AgentFixLaunchDefaultsApi {
 export interface AgentFixLaunchLimitsApi {
   budget_credits_max: number;
   max_minutes_max: number;
+  scenarios_min: number;
   scenarios_max: number;
 }
 
