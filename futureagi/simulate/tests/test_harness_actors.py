@@ -202,6 +202,8 @@ def test_an_actor_edit_shows_in_review_as_that_actor_added_changed_or_removed(us
 
     assert added.diff["actors"] == {"added": ["manager"], "removed": [], "changed": []}
     assert "1 actor added" in added.summary
+    # One actor edit is one change: `actors.json` is not counted again as a world file.
+    assert "world file" not in added.summary and "actors.json" not in (added.diff["files"] or {}).get("changed", [])
     assert changed.diff["actors"]["added"] == ["manager"] and changed.diff["actors"]["changed"] == []
     # Against the saved version the actor is still new; only a saved actor can read as changed.
     from simulate.services.harness_versioning import hashing
