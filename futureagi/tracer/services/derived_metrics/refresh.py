@@ -45,6 +45,8 @@ from tracer.services.derived_metrics.publication import (
 from tracer.services.derived_metrics.storage import (
     BUCKET_TOTALS,
     FIELD_VALUES,
+    LIST_CURRENT_MEMBERS,
+    LIST_CURRENT_ROOTS,
     RETIRED_PARTS,
     SOURCE_DEPENDENCIES,
     UNIT_STATE,
@@ -59,6 +61,8 @@ TABLE_KINDS = {
     "unit_state": UNIT_STATE,
     "source_dependencies": SOURCE_DEPENDENCIES,
     "bucket_retired_parts": RETIRED_PARTS,
+    "list_current_root_facts": LIST_CURRENT_ROOTS,
+    "list_current_members": LIST_CURRENT_MEMBERS,
 }
 TABLE_KIND = {table.name: kind for kind, table in TABLE_KINDS.items()}
 
@@ -498,6 +502,7 @@ class RefreshWriter:
         from django.apps import apps
 
         from tracer.services.derived_metrics.retention import (
+            _current_tables,
             _proposal_rows,
             retention_cutoff,
         )
@@ -533,6 +538,25 @@ class RefreshWriter:
                 self, attempt, attempt.parent_manifest, FIELD_VALUES, "policy_fields"
             )
         private_relations = [(fields, params)]
+        for table in _current_tables(self, attempt.parent_manifest, attempt):
+            if attempt.purpose == "compaction":
+                facts, bound = payload_select(
+                    table,
+                    [
+                        FrozenRows(tuple(p["rows"]))
+                        for p in self.plans(attempt, kind=TABLE_KIND[table.name])
+                    ],
+                    prefix="policy_" + table.name,
+                )
+            else:
+                facts, bound = _proposal_rows(
+                    self,
+                    attempt,
+                    attempt.parent_manifest,
+                    table,
+                    "policy_" + table.name,
+                )
+            private_relations.append((facts, bound))
         if any(v.get("level") == "span" for v in attempt.metric_versions):
             if attempt.purpose == "compaction":
                 dependencies, bound = payload_select(
@@ -1205,6 +1229,9 @@ class RefreshWriter:
             # Dependencies/lifecycle are part of the SAME generation. B04 carries
             # tombstones as well as old memberships; neither is an independent write.
             self.freeze_dependencies(attempt, dependencies.values(), cutoff=cutoff)
+            # BL01-Q must qualify and byte-bound current-fact maintenance before
+            # it joins production refreshes. Copying full message inputs here can
+            # exceed the batch cap even when the scalar metric payload is small.
             field_payloads = [
                 FrozenRows(tuple(p["rows"]))
                 for p in self.plans(attempt, kind="field_values")

@@ -127,6 +127,9 @@ def _commit(
 @pytest.mark.django_db(transaction=True)
 def test_migration_0126_roundtrip_preserves_existing_intent_runs_manifests_and_pins():
     executor = MigrationExecutor(connection)
+    # Historical assertions below deliberately stop at 0127. Cleanup must restore
+    # every current leaf, including later CHECK constraints used by other tests.
+    restore_targets = executor.loader.graph.leaf_nodes()
     previous = [("tracer", "0125_merge_metrics_and_dev_tracer_leaf")]
     base = [("tracer", "0126_derived_metric_refresh")]
     target = [("tracer", "0127_metric_lifecycle_safety")]
@@ -294,7 +297,7 @@ def test_migration_0126_roundtrip_preserves_existing_intent_runs_manifests_and_p
         assert NewErasure.objects.get(scope_kind="project").project_key == project.id
     finally:
         executor.loader.build_graph()
-        executor.migrate(target)
+        executor.migrate(restore_targets)
 
 
 @pytest.mark.django_db(transaction=True)

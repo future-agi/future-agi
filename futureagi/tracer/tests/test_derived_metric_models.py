@@ -267,6 +267,9 @@ def test_ledger_key_is_unique_and_write_once(observe_project):
 @pytest.mark.django_db(transaction=True)
 def test_migration_rolls_back_to_0125_and_forward():
     executor = MigrationExecutor(connection)
+    # Restore the graph's current leaves, not the last migration known when
+    # this test was written. Otherwise later tests run against stale CHECKs.
+    restore_targets = executor.loader.graph.leaf_nodes()
     previous = [("tracer", "0125_merge_metrics_and_dev_tracer_leaf")]
     current = [("tracer", "0126_derived_metric_refresh")]
     new_tables = {
@@ -304,7 +307,7 @@ def test_migration_rolls_back_to_0125_and_forward():
         )
     finally:
         executor.loader.build_graph()
-        executor.migrate([("tracer", "0127_metric_lifecycle_safety")])
+        executor.migrate(restore_targets)
 
 
 # --- generation, epoch and sequence allocation --------------------------------

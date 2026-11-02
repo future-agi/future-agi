@@ -118,6 +118,7 @@ def test_only_owned_additive_tables_and_numbers():
         "033_metric_unit_state.sql",
         "034_metric_source_dependencies.sql",
         "035_metric_bucket_retired_parts.sql",
+        "036_list_current_root_facts.sql",
     )
     for filename in storage.SCHEMA_FILES:
         assert len(list(SCHEMA_DIR.glob(filename[:3] + "_*.sql"))) == 1
@@ -307,7 +308,7 @@ def live_store():
             name: scoped.command(f"SHOW CREATE TABLE {name}") for name in storage.TABLES
         }
         assert before == after
-        assert scoped.query("SELECT count() FROM schema_versions").first_row == (5,)
+        assert scoped.query("SELECT count() FROM schema_versions").first_row == (6,)
         yield scoped
     finally:
         if scoped is not None:

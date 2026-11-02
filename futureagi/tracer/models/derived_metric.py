@@ -1513,6 +1513,8 @@ class MetricAttemptBatch(models.Model):
         UNIT_STATE = "unit_state"
         SOURCE_DEPENDENCIES = "source_dependencies"
         BUCKET_RETIRED_PARTS = "bucket_retired_parts"
+        LIST_CURRENT_ROOTS = "list_current_root_facts"
+        LIST_CURRENT_MEMBERS = "list_current_members"
 
     id = models.BigAutoField(primary_key=True)
     attempt = models.ForeignKey(
@@ -1544,6 +1546,8 @@ class MetricAttemptBatch(models.Model):
                         "unit_state",
                         "source_dependencies",
                         "bucket_retired_parts",
+                        "list_current_root_facts",
+                        "list_current_members",
                     ]
                 ),
                 name="metric_batch_table",

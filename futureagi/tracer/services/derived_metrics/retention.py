@@ -43,6 +43,7 @@ from tracer.services.derived_metrics.publication import (
 from tracer.services.derived_metrics.storage import (
     BUCKET_TOTALS,
     FIELD_VALUES,
+    LIST_CURRENT_TABLES,
     RETIRED_PARTS,
     SOURCE_DEPENDENCIES,
     TABLES,
@@ -278,6 +279,64 @@ def _classify_recovery(
     return result, blocked
 
 
+def _current_retained(fields, cutoff_parameter):
+    # Facts do not confer new anchor authority. Retain private payload only for
+    # a proven retained conversation, and never keep an expired member itself.
+    return (
+        f"unit_start >= toDateTime64(%({cutoff_parameter})s, 6, 'UTC') "
+        "AND canonical_session_id IN ("
+        f"SELECT unit_id FROM ({fields}) WHERE level = 'conversation' "
+        "GROUP BY unit_id HAVING min(unit_start) >= "
+        f"toDateTime64(%({cutoff_parameter})s, 6, 'UTC'))"
+    )
+
+
+def _current_tables(writer, head, draft=None):
+    """Skip absent indices, not coverage checks, using verified batch metadata.
+
+    Empty source stores must not cause an otherwise unrelated metric refresh to
+    execute their full field-membership subqueries. An omitted table in a normal
+    delta inherits its parent's receipts; compaction has its own complete list.
+    """
+    published = (
+        {receipt["table"] for receipt in head.visibility_receipts.get("batches", [])}
+        if head is not None
+        else set()
+    )
+    return tuple(
+        table
+        for table in LIST_CURRENT_TABLES
+        if table.name in published
+        or (
+            draft is not None
+            and draft.ledger_chunks.filter(
+                part="cleanup_intent",
+                payload__0__kind="frozen_batch",
+                payload__0__table=table.name,
+            ).exists()
+        )
+    )
+
+
+def _current_expiry_required(
+    writer, head, fields, params, *, draft=None, cutoff_parameter
+):
+    for table in _current_tables(writer, head, draft):
+        sql, bound = (
+            _proposal_rows(writer, draft, head, table, "expiry_" + table.name)
+            if draft is not None
+            else committed_rows_select(
+                table, head, org_id=writer.org_id, project_id=writer.lease.project_id
+            )
+        )
+        if writer.store.execute(
+            f"SELECT count() FROM (SELECT 1 FROM ({sql}) WHERE NOT ({_current_retained(fields, cutoff_parameter)}) LIMIT 1)",
+            {**params, **bound},
+        )[0][0]:
+            return True
+    return False
+
+
 def retirement_plan(writer, draft, head, definitions, cutoff):
     """Convert proposed anchor changes to one complete privacy checkpoint.
 
@@ -303,15 +362,21 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
     )
     scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
     as_of = datetime.fromisoformat(str(draft.source_ceilings["as_of"]))
+    current_cleanup = _current_expiry_required(
+        writer, head, fields, params, draft=draft, cutoff_parameter="retire_cutoff"
+    )
     logical_expiry = bool(
         span_dirty
+        or _current_expiry_required(
+            writer, head, fields, params, cutoff_parameter="retire_cutoff"
+        )
         or writer.store.execute(f"SELECT count() FROM ({expired})", params)[0][0]
         or (
             span_definitions
             and _span_owner_cleanup_required(writer, head, fields, params, cutoff)
         )
     )
-    if not logical_expiry and not span_definitions:
+    if not logical_expiry and not span_definitions and not current_cleanup:
         for definition in definitions:
             if definition.level != "user":
                 writer._freeze_buckets(
@@ -438,6 +503,17 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
         if table == SOURCE_DEPENDENCIES and any(d.level == "span" for d in definitions):
             selected = _span_dependencies(sql, predicate, "retire_cutoff")
         writer.freeze(attempt, table, selected, {**params, **bound})
+    # Pruning a PREPARED auxiliary proposal does not revoke unrelated retained
+    # captures: only previously published private evidence sets logical_expiry.
+    for table in _current_tables(writer, head, draft):
+        sql, bound = _proposal_rows(writer, draft, head, table, "retire_" + table.name)
+        writer.freeze(
+            attempt,
+            table,
+            f"SELECT * FROM ({sql}) WHERE {_current_retained(fields, 'retire_cutoff')}",
+            {**params, **bound},
+            collect_payloads=False,
+        )
     # Carry anonymous history plus this pass's direct span replacements.
     buckets, bp = _proposal_rows(writer, draft, head, BUCKET_TOTALS, "retire_buckets")
     recomputed = tuple(
@@ -634,6 +710,10 @@ def finish_pending_expiry(writer, *, now=None):
                 SOURCE_DEPENDENCIES,
                 UNIT_STATE,
             )
+            # Preserve the existing core receipt shape; current-list stores get
+            # their own verification count under the same quiescence barrier.
+            core_table_count = len(tables)
+            tables = (*tables, *LIST_CURRENT_TABLES)
             # Prompt scrub, even while an old submission may still land.
             for table in tables:
                 _delete(writer.store, table, predicate, params)
@@ -661,9 +741,13 @@ def finish_pending_expiry(writer, *, now=None):
                 receipts={
                     "write_barrier": {"drained": submissions.count()},
                     "final_scrub": {
-                        "verified_tables": len(tables),
+                        "verified_tables": core_table_count,
                         "remaining": 0,
                         "private_payloads_remaining": 0,
+                    },
+                    "current_facts_scrub": {
+                        "verified_tables": len(LIST_CURRENT_TABLES),
+                        "remaining": 0,
                     },
                 },
             )
@@ -830,6 +914,7 @@ def _expired_physical_payload(writer, head, cutoff):
         FIELD_VALUES,
         TABLES["metric_field_values_checkpoint"],
         SOURCE_DEPENDENCIES,
+        *LIST_CURRENT_TABLES,
     ):
         if writer.store.execute(
             f"SELECT count() FROM (SELECT 1 FROM {table.name} PREWHERE org_id = toUUID(%(expiry_org)s) "
@@ -921,6 +1006,9 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             and not writer.store.execute(
                 f"SELECT count() FROM ({expired_units})", params
             )[0][0]
+            and not _current_expiry_required(
+                writer, head, fields, params, cutoff_parameter="expiry_cutoff"
+            )
             and not _expired_physical_payload(writer, head, cutoff)
         ):
             pending = (
@@ -1069,6 +1157,14 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
                 )
             else:
                 writer.freeze_current(attempt, table, head, where=where, params=params)
+        for table in _current_tables(writer, head):
+            writer.freeze_current(
+                attempt,
+                table,
+                head,
+                where=_current_retained(fields, "expiry_cutoff"),
+                params=params,
+            )
         if span_definitions:
             from tracer.services.derived_metrics.publication import FrozenRows
             from tracer.services.derived_metrics.queries import Scope
@@ -1186,6 +1282,19 @@ def purge_by_scope(store, request, *, writer=None):
                 f"SELECT DISTINCT unit_id FROM ({fields}) WHERE {field_predicate} UNION DISTINCT SELECT canonical_session_id FROM ({deps}) WHERE {dep_predicate}",
                 params,
             )
+            for table in LIST_CURRENT_TABLES:
+                facts, bound = committed_rows_select(
+                    table,
+                    head,
+                    org_id=request.organization_key,
+                    project_id=request.project_key,
+                )
+                victims.extend(
+                    store.execute(
+                        f"SELECT DISTINCT canonical_session_id FROM ({facts}) WHERE {dep_predicate}",
+                        {**params, **bound},
+                    )
+                )
             params["erase_units"] = tuple(row[0] for row in victims) or ("",)
             attempt = writer.begin(
                 purpose="compaction", ceilings={"erasure": str(request.id)}
@@ -1214,6 +1323,14 @@ def purge_by_scope(store, request, *, writer=None):
                     f"SELECT * FROM ({sql}) WHERE NOT ({predicate})",
                     {**p, **params},
                 )
+            for table in LIST_CURRENT_TABLES:
+                writer.freeze_current(
+                    attempt,
+                    table,
+                    head,
+                    where=f"NOT ({dep_predicate}) AND canonical_session_id NOT IN %(erase_units)s",
+                    params=params,
+                )
             writer.seal(attempt)
         manifest = writer.stage_and_publish(attempt)
         with serialized_project(request.project_key):
@@ -1229,6 +1346,7 @@ def purge_by_scope(store, request, *, writer=None):
                 if table.name.startswith("metric_field_values") or table in (
                     SOURCE_DEPENDENCIES,
                     UNIT_STATE,
+                    *LIST_CURRENT_TABLES,
                 ):
                     # Every old generation was revoked, and the new complete
                     # checkpoint contains ALL unrelated live rows. Collect ALL

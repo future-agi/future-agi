@@ -3103,6 +3103,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 expanded.append(entry)
         return expanded
 
+    def _page_hydration_source_ctes(self, params, *, roots, members, messages):
+        """Source seam; usage, message fallback and zipped attributes stay shared."""
+        return roots, members, messages
+
     def build_page_hydration_query(
         self, session_ids: list[str]
     ) -> tuple[str, dict[str, Any]]:
@@ -3160,8 +3164,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             f"root_page.{array_column} AS {array_column}"
             for array_column, _key in self.PAGE_ATTRIBUTE_ARRAY_COLUMNS
         )
-        query = f"""
-        WITH
+        roots, members, messages = self._page_hydration_source_ctes(
+            params,
+            roots=f"""
         {ts_map_ctes},
         candidate_root_identities AS (
             SELECT DISTINCT {identity_select}
@@ -3216,22 +3221,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             WHERE latest_is_deleted = 0{latest_time_scope}
               AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
               AND {resolved_session} IN %(candidate_session_ids)s
-        ),
-        root_page AS (
-            SELECT
-                session_id,
-                min(start_time) AS session_start,
-                max(end_time) AS session_end,
-                dateDiff('second', min(start_time), max(end_time)) AS duration,
-                sum(cost) AS root_total_cost,
-                sum(total_tokens) AS root_total_tokens,
-                uniqExact(trace_id) AS traces_count,
-                argMin(input, start_time) AS root_first_message,
-                argMax(input, start_time) AS root_last_message,
-                {attributes["arrays"]}
-            FROM resolved_roots
-            GROUP BY session_id
-        ),
+        )""",
+            members=f"""
         candidate_member_identities AS (
             SELECT DISTINCT {identity_select}
             FROM {self.TABLE}
@@ -3292,7 +3283,45 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 ON latest_trace_session_id = member_remap.any_id
             WHERE latest_is_deleted = 0{member_latest_time_scope}
               AND {resolved_member_session} IN %(candidate_session_ids)s
+        )""",
+            messages=f"""
+        message_inputs AS (
+            SELECT
+                groupArray(message_key) AS message_keys,
+                groupArray(message_input) AS message_input_values
+            FROM (
+                SELECT
+                    tuple({group_by}) AS message_key,
+                    argMax(tuple(input), _peerdb_version).1 AS message_input
+                FROM {self.TABLE}
+                PREWHERE {self.project_filter_sql()}{physical_time_scope}
+                  AND ({group_by}) IN (
+                      SELECT arrayJoin([first_message_key, last_message_key])
+                      FROM member_rollup
+                  )
+                GROUP BY {group_by}
+            )
+        )""",
+        )
+        query = f"""
+        WITH
+        {roots},
+        root_page AS (
+            SELECT
+                session_id,
+                min(start_time) AS session_start,
+                max(end_time) AS session_end,
+                dateDiff('second', min(start_time), max(end_time)) AS duration,
+                sum(cost) AS root_total_cost,
+                sum(total_tokens) AS root_total_tokens,
+                uniqExact(trace_id) AS traces_count,
+                argMin(input, start_time) AS root_first_message,
+                argMax(input, start_time) AS root_last_message,
+                {attributes["arrays"]}
+            FROM resolved_roots
+            GROUP BY session_id
         ),
+        {members},
         (
             SELECT groupArray(tuple(
                 member_session_id, member_total_cost, member_total_tokens,
@@ -3334,23 +3363,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 tupleElement(member_row, 5) AS last_message_key
             FROM (SELECT arrayJoin(member_rollup_rows) AS member_row)
         ),
-        message_inputs AS (
-            SELECT
-                groupArray(message_key) AS message_keys,
-                groupArray(message_input) AS message_input_values
-            FROM (
-                SELECT
-                    tuple({group_by}) AS message_key,
-                    argMax(tuple(input), _peerdb_version).1 AS message_input
-                FROM {self.TABLE}
-                PREWHERE {self.project_filter_sql()}{physical_time_scope}
-                  AND ({group_by}) IN (
-                      SELECT arrayJoin([first_message_key, last_message_key])
-                      FROM member_rollup
-                  )
-                GROUP BY {group_by}
-            )
-        )
+        {messages}
         SELECT
             root_page.session_id AS session_id,
             root_page.session_start AS session_start,

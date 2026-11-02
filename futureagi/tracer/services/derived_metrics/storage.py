@@ -291,6 +291,69 @@ RETIRED_PARTS = MetricTable(
     BUCKET_PARTITION,
     RETIRED_PART_KEY,
 )
+# Current facts are keyed by the native PHYSICAL replacement identity, not a
+# mutable session/user/time predicate. Root retractions remain ordinary rows.
+# A checkpoint occupies its own immutable attempt namespace, like unit state.
+LIST_CURRENT_SCHEMA = (
+    ("org_id", "UUID"),
+    ("project_id", "UUID"),
+    ("observation_type", "LowCardinality(String)"),
+    ("service_name", "LowCardinality(String)"),
+    ("start_hour", "DateTime('UTC')"),
+    ("trace_id", "String"),
+    ("span_id", "String"),
+    ("unit_start", "DateTime64(6, 'UTC')"),
+    ("end_time", "Nullable(DateTime64(6, 'UTC'))"),
+    ("parent_span_id", "Nullable(String)"),
+    ("raw_session_id", "String"),
+    ("canonical_session_id", "String"),
+    ("raw_user_id", "String"),
+    ("canonical_user_id", "String"),
+    ("name", "String"),
+    ("input", "String"),
+    ("cost", "Float64"),
+    ("total_tokens", "Int32"),
+    ("prompt_tokens", "Int32"),
+    ("completion_tokens", "Int32"),
+    ("attributes_extra", "String"),
+    ("attrs_string", "Map(String, String)"),
+    ("attrs_number", "Map(String, Float64)"),
+    ("attrs_bool", "Map(String, UInt8)"),
+    ("source_version", "UInt64"),
+    ("is_deleted", "UInt8"),
+    ("generation", "UInt64"),
+    ("attempt_id", "UUID"),
+    ("_version", "UInt64"),
+)
+LIST_CURRENT_KEY = (
+    "org_id",
+    "project_id",
+    "observation_type",
+    "service_name",
+    "start_hour",
+    "trace_id",
+    "span_id",
+    "generation",
+    "attempt_id",
+)
+LIST_CURRENT_ROOTS = MetricTable(
+    "list_current_root_facts",
+    "036_list_current_root_facts.sql",
+    LIST_CURRENT_SCHEMA,
+    "_version",
+    PROJECT_PARTITION,
+    LIST_CURRENT_KEY,
+)
+LIST_CURRENT_MEMBERS = MetricTable(
+    "list_current_members",
+    "036_list_current_root_facts.sql",
+    LIST_CURRENT_SCHEMA,
+    "_version",
+    PROJECT_PARTITION,
+    LIST_CURRENT_KEY,
+)
+LIST_CURRENT_TABLES = (LIST_CURRENT_ROOTS, LIST_CURRENT_MEMBERS)
+
 TABLES = MappingProxyType(
     {
         table.name: table
@@ -302,6 +365,7 @@ TABLES = MappingProxyType(
             UNIT_STATE,
             SOURCE_DEPENDENCIES,
             RETIRED_PARTS,
+            *LIST_CURRENT_TABLES,
         )
     }
 )
