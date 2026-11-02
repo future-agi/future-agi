@@ -6,7 +6,13 @@ import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useFixScenarioRows } from "src/api/simulate-environments/fixRuns";
 
-import { checksLine, headline, verdictCards, winnerOf } from "./fixRunView";
+import {
+  checksLine,
+  headline,
+  pct,
+  verdictCards,
+  winnerOf,
+} from "./fixRunView";
 import { scenarioOutcomes } from "./scenarioOutcomes";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
@@ -192,6 +198,53 @@ MustPassBreaks.propTypes = { verdict: PropTypes.object.isRequired };
 
 // The design's verdict block: the headline, the cards side by side, the checks
 // on one line, then any must-pass breaks.
+// Platform evals the winner scores worse on than the base version. They are
+// shown, never counted: the verdict stands on the scenarios' own checks.
+function EvalWarnings({ warnings }) {
+  const evals = warnings.length === 1 ? "eval" : "evals";
+  return (
+    <Box sx={{ borderTop: "1px solid", borderColor: "divider", px: 2, py: 1 }}>
+      <Stack direction="row" spacing={1} alignItems="center">
+        <Iconify
+          icon="solar:danger-triangle-linear"
+          width={14}
+          sx={{ color: BUILD_TONES.amber, flexShrink: 0 }}
+        />
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {`Does worse on ${warnings.length} platform ${evals} than the current version. The verdict does not count them.`}
+        </Typography>
+      </Stack>
+      <Box
+        sx={{
+          pl: 2.75,
+          pt: 0.5,
+          display: "grid",
+          gridTemplateColumns: "minmax(0, max-content) 1fr",
+          columnGap: 2,
+          rowGap: 0.25,
+        }}
+      >
+        {warnings.map((w) => [
+          <Typography key={`${w.name}-name`} noWrap sx={{ typography: "s2" }}>
+            {w.name}
+          </Typography>,
+          <Typography
+            key={`${w.name}-rate`}
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {`${pct(w.pass_rate)}% vs ${pct(w.base_pass_rate)}% · ${w.trials} trials vs ${w.base_trials}`}
+          </Typography>,
+        ])}
+      </Box>
+    </Box>
+  );
+}
+EvalWarnings.propTypes = { warnings: PropTypes.array.isRequired };
+
 // How many held-back scenarios the winner fixed, scenario by scenario as on
 // the Per scenario tab, for a fix held back on too few cases to call it proven.
 function HeldBackTally({ fix, winner }) {
@@ -299,6 +352,9 @@ export default function FixVerdict({ fix }) {
         <Checks tiers={winner.verdict.tiers} />
       )}
       <MustPassBreaks verdict={winner.verdict} />
+      {fix.eval_warnings?.length > 0 && (
+        <EvalWarnings warnings={fix.eval_warnings} />
+      )}
     </Box>
   );
 }
