@@ -4,7 +4,7 @@ import { Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { sqlApi } from "./api";
 import { ESTIMATE_DEBOUNCE_MS, describeEstimate } from "./estimateText";
-import { warningText } from "./queryUi";
+import { warningText } from "./queryUiConfig";
 
 export default function QueryEstimate({
   projectId,

@@ -7,7 +7,7 @@ import {
   ListItemText,
   Typography,
 } from "@mui/material";
-import { META_TEXT_SX, warningText } from "./queryUi";
+import { META_TEXT_SX, warningText } from "./queryUiConfig";
 
 // Vetted example queries from the catalog API. Each is ordinary SQL that the
 // server compiles and scopes like any typed query; using one replaces the

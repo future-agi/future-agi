@@ -62,6 +62,17 @@ const TABLE_CONTAINER_SX = {
   },
 };
 
+const RESULT_TAB_SX = {
+  gap: 0.75,
+  "& .MuiTab-iconWrapper": { m: 0 },
+  // Production disables ripples; keep focus distinct from the selected view.
+  "&.Mui-focusVisible": {
+    outline: "2px solid",
+    outlineColor: "text.primary",
+    outlineOffset: "-3px",
+  },
+};
+
 const TYPE_SX = {
   ml: 0.75,
   typography: "s3",
@@ -187,7 +198,7 @@ export default function QueryResults({
             label="Table"
             icon={<Iconify icon="solar:server-square-linear" width={16} />}
             iconPosition="start"
-            sx={{ gap: 0.75, "& .MuiTab-iconWrapper": { m: 0 } }}
+            sx={RESULT_TAB_SX}
           />
           <Tab
             value="bar"
@@ -195,7 +206,7 @@ export default function QueryResults({
             disabled={!numeric.length}
             icon={<Iconify icon="solar:chart-2-linear" width={16} />}
             iconPosition="start"
-            sx={{ gap: 0.75, "& .MuiTab-iconWrapper": { m: 0 } }}
+            sx={RESULT_TAB_SX}
           />
         </SegmentedTabs>
         <MetaLine
@@ -356,9 +367,8 @@ export default function QueryResults({
                       <TableCell
                         key={columns[j].name}
                         align={numericIndexes.has(j) ? "right" : "left"}
-                        // Only long values can be cut off by the ellipsis.
                         title={
-                          value != null && String(value).length > 40
+                          value != null && value !== ""
                             ? String(value)
                             : undefined
                         }

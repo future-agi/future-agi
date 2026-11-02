@@ -10,7 +10,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { searchCatalog } from "./catalogSearch";
-import { ACTION_BUTTON_SX, META_TEXT_SX, warningText } from "./queryUi";
+import { ACTION_BUTTON_SX, META_TEXT_SX, warningText } from "./queryUiConfig";
 import { quoteIdentifier } from "./sqlCompletions";
 
 export default function QueryCatalog({ datasets = [], search = "", onInsert }) {

@@ -800,6 +800,32 @@ describe("SQL workbench page", () => {
       }
     },
   );
+  it.each([true, false])(
+    "shows the numeric Saved count when has_more=%s",
+    async (hasMore) => {
+      sqlApi.saved.mockResolvedValue({
+        items: Array.from({ length: 20 }, (_, index) => ({
+          ...savedQuery,
+          id: `saved-${index}`,
+        })),
+        has_more: hasMore,
+      });
+      renderPage();
+      await screen.findByText(schema.identity_semantics);
+      const saved = screen.getByRole("tab", { name: "Saved", exact: true });
+      expect(
+        within(saved).getByText(hasMore ? "20+" : "20", { exact: true }),
+      ).toBeVisible();
+      expect(saved).toHaveAccessibleName("Saved");
+    },
+  );
+  it("omits the Saved count when there are no saved queries", async () => {
+    renderPage();
+    await screen.findByText(schema.identity_semantics);
+    expect(
+      screen.getByRole("tab", { name: "Saved", exact: true }),
+    ).toHaveTextContent(/^Saved$/);
+  });
   it("navigates Catalog / Examples / Saved with an associated searchable panel", async () => {
     sqlApi.saved.mockResolvedValue({
       items: [

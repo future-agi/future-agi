@@ -3,62 +3,12 @@ import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { META_TEXT_SX } from "./queryUiConfig";
 
 // Visual primitives shared by the workbench panels. They follow the platform:
 // read-only metadata is plain secondary text joined with " · " (never chips,
 // which read as clickable), tab counts are a bare number after the label, and
 // the run state is a tinted dot pill like the Environments StatusPill.
-
-export const QUERY_TABS_SX = {
-  minHeight: 40,
-  "& .MuiTab-root": {
-    minHeight: 40,
-    minWidth: 0,
-    px: 1.25,
-    typography: "s2",
-    fontWeight: "fontWeightSemiBold",
-    textTransform: "none",
-    "&:not(:last-of-type)": { mr: 0 },
-  },
-  "& .MuiTab-root:not(.Mui-selected)": { color: "text.subtitle" },
-  "& .MuiTab-root.Mui-selected": { color: "text.primary" },
-  "& .MuiTabs-indicator": { height: 2, bgcolor: "text.primary" },
-};
-
-export const CONTROL_HEIGHT = 32;
-// Primary action: contained brand primary, as on Environments and most pages.
-export const PRIMARY_BUTTON_PROPS = {
-  variant: "contained",
-  color: "primary",
-  size: "small",
-};
-export const PRIMARY_BUTTON_SX = {
-  height: CONTROL_HEIGHT,
-  typography: "s2",
-  fontWeight: "fontWeightBold",
-  whiteSpace: "nowrap",
-};
-// Secondary actions: the theme's neutral outlined button.
-export const ACTION_BUTTON_PROPS = { variant: "outlined", size: "small" };
-export const ACTION_BUTTON_SX = {
-  height: CONTROL_HEIGHT,
-  typography: "s2",
-  fontWeight: "fontWeightSemiBold",
-  whiteSpace: "nowrap",
-};
-
-// warning.dark is too light for small text on white; read warnings from the
-// darker step in light mode and the light step in dark mode.
-export const warningText = (t) =>
-  t.palette.mode === "dark"
-    ? t.palette.warning.light
-    : t.palette.warning.darker;
-
-export const META_TEXT_SX = {
-  typography: "s3",
-  color: "text.subtitle",
-  fontVariantNumeric: "tabular-nums",
-};
 
 // "4 rows · 3 columns · 37 ms" — falsy parts are dropped.
 export function MetaLine({ parts, icon, sx, ...other }) {
@@ -92,7 +42,7 @@ MetaLine.propTypes = {
 };
 
 // Label plus a bare count, shown only when greater than 0 (WorkspaceTabLabel).
-export function TabLabel({ label, count }) {
+export function TabLabel({ label, count, hasMore = false }) {
   return (
     <Stack direction="row" alignItems="baseline" spacing={0.625}>
       <span>{label}</span>
@@ -103,19 +53,17 @@ export function TabLabel({ label, count }) {
           sx={{ ...META_TEXT_SX, fontWeight: 500 }}
         >
           {count}
+          {hasMore ? "+" : ""}
         </Box>
       )}
     </Stack>
   );
 }
-TabLabel.propTypes = { label: PropTypes.string, count: PropTypes.node };
-
-export const visibilityLabel = (visibility) =>
-  visibility === "project" ? "Shared with project" : "Private";
-export const visibilityIcon = (visibility) =>
-  visibility === "project"
-    ? "solar:users-group-rounded-linear"
-    : "solar:lock-keyhole-minimalistic-linear";
+TabLabel.propTypes = {
+  label: PropTypes.string,
+  count: PropTypes.number,
+  hasMore: PropTypes.bool,
+};
 
 const STATE_COLOR = {
   succeeded: (t) => t.palette.success.main,

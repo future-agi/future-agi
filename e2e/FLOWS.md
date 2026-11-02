@@ -1845,7 +1845,7 @@
 
 1. send a trace with two independently named spans to a new project
 2. open Observe Query and run a grouped span query using the SQL editor
-3. inspect the exact result table and save a project-shared query
+3. inspect exact rows, switch Table/Chart tabs, download CSV/Parquet, and save a project-shared query
 4. add the saved query to a dashboard using the Query page
 5. open the dashboard and verify it reruns the saved query
 

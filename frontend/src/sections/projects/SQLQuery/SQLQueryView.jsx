@@ -1,21 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import Editor from "@monaco-editor/react";
-import { alpha } from "@mui/material/styles";
 import {
   Alert,
   Box,
   Button,
   CircularProgress,
   LinearProgress,
-  Dialog,
-  DialogContent,
-  FormControl,
-  FormControlLabel,
-  FormLabel,
-  IconButton,
-  Radio,
-  RadioGroup,
   Tab,
   Tabs,
   List,
@@ -31,10 +22,11 @@ import {
 import { useDashboardList } from "src/hooks/useDashboards";
 import { useAuthContext } from "src/auth/hooks";
 import { closeSnackbar, enqueueSnackbar } from "notistack";
-import { relativeTime } from "src/utils/format-time";
 import { errorMessage, sqlApi } from "./api";
 import useSQLExecution from "./useSQLExecution";
 import QueryResults from "./QueryResults";
+import SaveQueryDialog from "./SaveQueryDialog";
+import QueryHistoryDialog from "./QueryHistoryDialog";
 import QueryEstimate from "./QueryEstimate";
 import QueryExamples from "./QueryExamples";
 import QueryCatalog from "./QueryCatalog";
@@ -46,16 +38,14 @@ import {
   ACTION_BUTTON_PROPS,
   ACTION_BUTTON_SX,
   CONTROL_HEIGHT,
-  MetaLine,
   PRIMARY_BUTTON_PROPS,
   PRIMARY_BUTTON_SX,
   QUERY_TABS_SX,
-  StatePill,
-  TabLabel,
   visibilityIcon,
   visibilityLabel,
   warningText,
-} from "./queryUi";
+} from "./queryUiConfig";
+import { MetaLine, StatePill, TabLabel } from "./queryUi";
 import {
   describeQueryWindow,
   getEditorHeight,
@@ -433,7 +423,8 @@ export default function SQLQueryView() {
                   label={
                     <TabLabel
                       label={label}
-                      count={value === "saved" && more ? `${count}+` : count}
+                      count={count}
+                      hasMore={value === "saved" && more}
                     />
                   }
                   id={`query-library-${value}`}
@@ -1175,134 +1166,29 @@ export default function SQLQueryView() {
           </Stack>
         </Box>
       </Stack>
-      <ModalWrapper
+      <SaveQueryDialog
         open={dialog === "save"}
         onClose={() => setDialog("")}
-        title={updatingSaved ? "Update saved query" : "Save query"}
-        subTitle={
-          updatingSaved
-            ? `Saving replaces “${selected.name}” for everyone who can open it.`
-            : "Reopen it later from Saved, or share it with your project."
-        }
-        actionBtnTitle={updatingSaved ? "Save changes" : "Save"}
-        onSubmit={save}
-        isValid={Boolean(name.trim())}
-        isLoading={saving}
-        modalWidth="480px"
-      >
-        <Stack spacing={2}>
-          {error && <Alert severity="error">{error}</Alert>}
-          <TextField
-            autoFocus
-            fullWidth
-            size="small"
-            label="Query name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            inputProps={{ maxLength: 160 }}
-          />
-          <FormControl>
-            <FormLabel
-              id="query-visibility-label"
-              sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", mb: 1 }}
-            >
-              Visibility
-            </FormLabel>
-            <RadioGroup
-              aria-labelledby="query-visibility-label"
-              value={visibility}
-              onChange={(e) => setVisibility(e.target.value)}
-              sx={{ gap: 1 }}
-            >
-              {[
-                ["private", "Private", "Only you can open it."],
-                [
-                  "project",
-                  "Project members",
-                  "Anyone in this project can open it. Each person runs it with their own access; results are never shared.",
-                ],
-              ].map(([value, label, hint]) => (
-                <FormControlLabel
-                  key={value}
-                  value={value}
-                  control={<Radio size="small" sx={{ mt: -0.25 }} />}
-                  label={
-                    <Box>
-                      <Typography
-                        sx={{
-                          typography: "s2",
-                          fontWeight: "fontWeightSemiBold",
-                        }}
-                      >
-                        {label}
-                      </Typography>
-                      <Typography
-                        sx={{ typography: "s3", color: "text.secondary" }}
-                      >
-                        {hint}
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{
-                    m: 0,
-                    px: 1,
-                    py: 1,
-                    alignItems: "flex-start",
-                    border: 1,
-                    borderRadius: 1,
-                    borderColor:
-                      visibility === value ? "primary.main" : "divider",
-                    bgcolor: (t) =>
-                      visibility === value
-                        ? alpha(t.palette.primary.main, 0.06)
-                        : "transparent",
-                  }}
-                />
-              ))}
-            </RadioGroup>
-          </FormControl>
-          <Box
-            sx={{
-              p: 1.5,
-              border: 1,
-              borderColor: "divider",
-              borderRadius: 1,
-              bgcolor: "background.neutral",
-            }}
-          >
-            <MetaLine
-              icon="solar:diskette-linear"
-              parts={[
-                "Saves this SQL",
-                describeQueryWindow(hours),
-                chart?.type === "bar" ? "chart view" : "table view",
-              ]}
-              sx={{ mb: 0.75 }}
-            />
-            <Typography
-              sx={{
-                typography: "s3",
-                fontFamily: "monospace",
-                color: "text.secondary",
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
-                display: "-webkit-box",
-                WebkitLineClamp: 4,
-                WebkitBoxOrient: "vertical",
-                overflow: "hidden",
-              }}
-            >
-              {sql}
-            </Typography>
-          </Box>
-        </Stack>
-      </ModalWrapper>
+        onSave={save}
+        updatingSaved={updatingSaved}
+        selectedName={selected?.name}
+        name={name}
+        onNameChange={setName}
+        visibility={visibility}
+        onVisibilityChange={setVisibility}
+        saving={saving}
+        error={error}
+        sql={sql}
+        hours={hours}
+        chart={chart}
+      />
       <ModalWrapper
         open={dialog === "dashboard"}
         onClose={() => setDialog("")}
         title="Add to dashboard"
         subTitle="The widget reruns this saved query with each viewer’s project permissions."
         actionBtnTitle="Add query"
+        actionBtnProps={{ color: "inherit" }}
         onSubmit={addWidget}
         isValid={Boolean(dashboardId)}
         isLoading={saving}
@@ -1359,125 +1245,15 @@ export default function SQLQueryView() {
       >
         {error ? <Alert severity="error">{error}</Alert> : null}
       </ModalWrapper>
-      <Dialog
+      <QueryHistoryDialog
         open={dialog === "history"}
         onClose={() => setDialog("")}
-        fullWidth
-        maxWidth="sm"
-        PaperProps={{ sx: { borderRadius: 1, p: 2, gap: 1.5 } }}
-      >
-        <Stack direction="row" alignItems="flex-start" gap={1}>
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography
-              component="h2"
-              sx={{ typography: "m3", fontWeight: "fontWeightSemiBold" }}
-            >
-              Recent queries
-            </Typography>
-            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-              Your last 20 runs in this project. Select one to open it in the
-              editor.
-            </Typography>
-          </Box>
-          <IconButton
-            aria-label="Close"
-            onClick={() => setDialog("")}
-            sx={{ color: "text.primary", mt: -0.5, mr: -0.5 }}
-          >
-            <Iconify icon="akar-icons:cross" />
-          </IconButton>
-        </Stack>
-        <DialogContent sx={{ p: 0 }}>
-          {history.length ? (
-            <List
-              disablePadding
-              aria-label="Recent queries"
-              sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}
-            >
-              {history.map((item, index) => (
-                <ListItemButton
-                  key={item.id}
-                  onClick={() => {
-                    setSQL(item.sql);
-                    setDialog("");
-                  }}
-                  sx={{
-                    display: "block",
-                    px: 1.5,
-                    py: 1.25,
-                    borderTop: index ? 1 : 0,
-                    borderColor: "divider",
-                    "&:hover .history-open": { opacity: 1 },
-                  }}
-                >
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    gap={1}
-                    sx={{ mb: 0.75 }}
-                  >
-                    <StatePill state={item.state}>{item.state}</StatePill>
-                    <MetaLine
-                      parts={[
-                        relativeTime(item.created_at),
-                        item.expired && "results expired",
-                      ]}
-                      title={new Date(item.created_at).toLocaleString()}
-                      sx={{ flex: 1 }}
-                    />
-                    <Typography
-                      className="history-open"
-                      sx={{
-                        typography: "s3",
-                        fontWeight: "fontWeightSemiBold",
-                        color: "text.secondary",
-                        opacity: 0,
-                        transition: "opacity 120ms",
-                      }}
-                    >
-                      Open in editor
-                    </Typography>
-                  </Stack>
-                  <Typography
-                    title={item.sql}
-                    sx={{
-                      typography: "s2",
-                      fontFamily: "monospace",
-                      color: "text.primary",
-                      whiteSpace: "pre-wrap",
-                      overflowWrap: "anywhere",
-                      display: "-webkit-box",
-                      WebkitLineClamp: 3,
-                      WebkitBoxOrient: "vertical",
-                      overflow: "hidden",
-                    }}
-                  >
-                    {item.sql}
-                  </Typography>
-                  {item.error && (
-                    <Typography
-                      sx={{ typography: "s3", color: "error.main", mt: 0.5 }}
-                    >
-                      {item.error}
-                    </Typography>
-                  )}
-                </ListItemButton>
-              ))}
-            </List>
-          ) : (
-            <Box sx={{ py: 4, textAlign: "center" }}>
-              <Typography
-                sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}
-              >
-                No queries yet
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                Queries you run in this project appear here.
-              </Typography>
-            </Box>
-          )}
-        </DialogContent>
-      </Dialog>
+        history={history}
+        onSelect={(historySQL) => {
+          setSQL(historySQL);
+          setDialog("");
+        }}
+      />
     </Box>
   );
 }
