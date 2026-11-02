@@ -8,7 +8,10 @@ is running: ``close_fix_run`` takes the same lock, so nothing starts after a fix
 import fnmatch
 import hashlib
 import io
+import os
+import subprocess
 import tarfile
+import tempfile
 from decimal import Decimal
 from typing import Any
 
@@ -95,7 +98,7 @@ def source_archive(fix_run: AgentFixRun) -> bytes:
 
 
 def add_candidate(
-    fix_run: AgentFixRun, *, attempt: int, summary: str, tree: bytes, patch: bytes
+    fix_run: AgentFixRun, *, attempt: int, summary: str, tree: bytes
 ) -> tuple[AgentFixCandidate, str]:
     """Store one candidate as a new agent version that is never made the default, check it,
     and return it with its check status. The same attempt again returns the candidate made
@@ -103,14 +106,18 @@ def add_candidate(
     kind = agent_kind(fix_run.environment)
     candidate = fix_run.candidates.filter(attempt=attempt).first()
     if candidate is None:
+        files = archive_files(tree)
+        base = archive_files(source_archive(fix_run))
+        _refuse_locked_changes(fix_run, base, files)
+        # Made from the tree, not taken from the engine: the patch a user downloads or a
+        # pull request ships is the version that was checked.
+        patch = _patch(base, files)
         if len(patch) > MAX_PATCH_BYTES:
             raise HostedHarnessError(
                 "fix_patch_too_large",
                 "the candidate's patch is too large",
                 status_code=413,
             )
-        files = archive_files(tree)
-        _refuse_locked_changes(fix_run, files)
         # Storage first, outside the fix's lock: an object no candidate points at is
         # harmless, a candidate without its files is not.
         prepared = kind.prepare_candidate(fix_run, files, attempt)
@@ -141,13 +148,11 @@ def add_candidate(
     return candidate, kind.check(candidate.agent_version)
 
 
-def _refuse_locked_changes(fix_run: AgentFixRun, files: dict[str, bytes]) -> None:
-    """Refuse a candidate whose files differ from the base on any locked path. The tree is
-    what becomes the version, so it is what is compared, not the patch."""
+def _refuse_locked_changes(
+    fix_run: AgentFixRun, base: dict[str, bytes], files: dict[str, bytes]
+) -> None:
+    """Refuse a candidate whose files differ from the base on any locked path."""
     locked = fix_run.request.get("locked_paths") or []
-    if not locked:
-        return
-    base = archive_files(source_archive(fix_run))
     hits = sorted(
         path
         for path in set(base) | set(files)
@@ -160,6 +165,47 @@ def _refuse_locked_changes(fix_run: AgentFixRun, files: dict[str, bytes]) -> Non
             f"the candidate changes locked files: {', '.join(hits)}",
             status_code=422,
         )
+
+
+def _patch(base: dict[str, bytes], files: dict[str, bytes]) -> bytes:
+    """The files' change on the base as a git patch. The changed files go in as blobs of a
+    scratch repository: no path of the tree is written to disk, and none of the agent's
+    attribute or ignore files changes what is compared."""
+    changed = sorted(
+        path for path in base.keys() | files.keys() if base.get(path) != files.get(path)
+    )
+    with tempfile.TemporaryDirectory(prefix="agent-fix-patch-") as repo:
+        _git(repo, "init", "-q", "--bare")
+        trees = [
+            _git_tree(
+                repo, name, {path: side[path] for path in changed if path in side}
+            )
+            for name, side in (("base", base), ("candidate", files))
+        ]
+        return _git(repo, "diff-tree", "-p", "--binary", *trees)
+
+
+def _git_tree(repo: str, name: str, files: dict[str, bytes]) -> str:
+    index = {"GIT_INDEX_FILE": f"{repo}/{name}.index"}
+    entries = b""
+    for path, data in files.items():
+        blob = _git(repo, "hash-object", "-w", "--no-filters", "--stdin", stdin=data)
+        entries += b"100644 %s\t%s\0" % (blob.strip(), path.encode())
+    _git(repo, "update-index", "-z", "--add", "--index-info", stdin=entries, env=index)
+    return _git(repo, "write-tree", env=index).decode().strip()
+
+
+def _git(
+    repo: str, *args: str, stdin: bytes = b"", env: dict[str, str] | None = None
+) -> bytes:
+    return subprocess.run(
+        ["git", f"--git-dir={repo}", *args],
+        input=stdin,
+        env={**os.environ, **(env or {})},
+        capture_output=True,
+        check=True,
+        timeout=60,
+    ).stdout
 
 
 def archive_files(body: bytes) -> dict[str, bytes]:

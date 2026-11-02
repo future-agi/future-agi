@@ -36704,14 +36704,12 @@ export type SimulateApiAgentFixEngineCandidatesBodyOne = {
   attempt: number;
   summary?: string;
   tree: Blob;
-  patch: Blob;
 };
 
 export type SimulateApiAgentFixEngineCandidatesBodyTwo = {
   attempt: number;
   summary?: string;
   tree: Blob;
-  patch: Blob;
 };
 
 export type SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = {

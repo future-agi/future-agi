@@ -49782,12 +49782,6 @@
                         "in": "formData",
                         "required": true,
                         "type": "file"
-                    },
-                    {
-                        "name": "patch",
-                        "in": "formData",
-                        "required": true,
-                        "type": "file"
                     }
                 ],
                 "responses": {

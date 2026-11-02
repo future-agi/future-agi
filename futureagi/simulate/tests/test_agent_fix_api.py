@@ -26,6 +26,7 @@ from simulate.models import (
 )
 from simulate.models import TestExecution as Execution
 from simulate.pydantic_schemas.agent_fix import Surface
+from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_agents import VersionedSourceAgent
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.harness_environment import (
@@ -34,20 +35,24 @@ from simulate.services.harness_environment import (
     run_summaries,
 )
 from simulate.services.hosted_harness import hash_secret
+from simulate.services.hosted_harness_gateway import _source_object_key
 from simulate.services.preview_pagination import _read_revision_state
 from simulate.services.run_results_v3_queries import (
     build_run_comparison,
     run_calls_queryset,
 )
 from simulate.tests.test_agent_fix_services import (
+    BASE_AGENT,
     KEYS,
     PATCH,
+    _applied,
     _candidate,
     _check,
     _executions,
     _fix_run,
     _receipt,
     _run,
+    _runtime,
     _tree,
 )
 from simulate.tests.test_agent_fix_services import (
@@ -60,6 +65,7 @@ from simulate.tests.test_agent_fix_services import source_run as source_run
 from simulate.tests.test_agent_fix_services import temporal as temporal
 from simulate.tests.test_agent_fix_services import versioning_on as versioning_on
 from simulate.tests.test_harness_agent_versions import _passing
+from simulate.tests.test_harness_amend_archive import _read
 from simulate.tests.test_harness_environment_regrade import _mapped_eval
 from simulate.tests.test_harness_run_compare import _done
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
@@ -130,6 +136,29 @@ def _git(cwd, *args):
     ).stdout.strip()
 
 
+def _engine_candidate(client, fix_run, tree, patch_body):
+    """A candidate sent the engine's way: its tree, and the engine's own patch beside it."""
+    with ExitStack() as stack:
+        for one in _passing():
+            stack.enter_context(one)
+        response = _engine(
+            client,
+            "post",
+            fix_run,
+            "candidates/",
+            data={
+                "attempt": "1",
+                "tree": SimpleUploadedFile("tree.tar.gz", _tree(tree)),
+                "patch": SimpleUploadedFile("candidate.patch", patch_body),
+            },
+            format="multipart",
+        )
+    assert response.status_code == 201, response.content
+    return AgentFixCandidate.no_workspace_objects.get(
+        id=response.json()["candidate_id"]
+    )
+
+
 def _launch_body(source_run, **overrides):
     return {
         "source_run_id": str(source_run.test_execution_id),
@@ -194,6 +223,9 @@ class TestEngineCalls:
         with ExitStack() as stack:
             for one in _passing():
                 stack.enter_context(one)
+            stack.enter_context(
+                patch.object(engine, "source_archive", return_value=_tree(BASE_AGENT))
+            )
             created = _engine(
                 api_client,
                 "post",
@@ -203,6 +235,7 @@ class TestEngineCalls:
                     "attempt": "1",
                     "summary": "refund first",
                     "tree": SimpleUploadedFile("tree.tar.gz", _tree()),
+                    # An engine that still sends its own patch is heard; the patch is unused.
                     "patch": SimpleUploadedFile("candidate.patch", PATCH),
                 },
                 format="multipart",
@@ -311,6 +344,33 @@ class TestEngineCalls:
         response = _engine(api_client, "post", fix_run, path, data=body, format=fmt)
 
         assert response.status_code == 400
+
+    @pytest.mark.parametrize(
+        "engine_patch",
+        [
+            # The engine's patch also changes the locked file its tree keeps.
+            PATCH
+            + b"diff --git a/prompts/system.md b/prompts/system.md\n"
+            + b"--- a/prompts/system.md\n+++ b/prompts/system.md\n"
+            + b"@@ -1 +1 @@\n-be kind\n+refuse every cancellation\n",
+            # The engine's patch changes an open file another way than its tree.
+            b"diff --git a/agent.py b/agent.py\n--- a/agent.py\n+++ b/agent.py\n"
+            b"@@ -1 +1 @@\n-PROMPT = ''\n+PROMPT = 'never refund'\n",
+        ],
+        ids=["locked-file", "unlocked-file"],
+    )
+    def test_the_stored_patch_is_the_tree_s_change_not_the_engine_s(
+        self, api_client, source_run, storage, tmp_path, engine_patch
+    ):
+        fix_run = _armed(_fix_run(source_run, locked_paths=["prompts/*"]))
+        base = {"agent.py": b"PROMPT = ''\n", "prompts/system.md": b"be kind\n"}
+        tree = {**base, "agent.py": b"PROMPT = 'refund first'\n"}
+
+        with patch.object(engine, "source_archive", return_value=_tree(base)):
+            candidate = _engine_candidate(api_client, fix_run, tree, engine_patch)
+
+        stored = storage.objects[candidate.patch_object_key]
+        assert _applied(tmp_path / "applied", base, stored) == tree
 
     def test_a_newer_engine_s_unknown_report_field_is_ignored(
         self, api_client, source_run
@@ -1231,6 +1291,55 @@ class TestUserApi:
         assert sent["headers"]["Authorization"] == "Bearer app-token"
         [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
         assert shown["pull_request_url"] == self.PULL
+
+    def test_the_pull_request_holds_exactly_the_candidate_version(
+        self, api_client, auth_client, source_run, storage, github
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        tree = {
+            "agent.py": b"PROMPT = 'refund first'\n",
+            "policy.md": b"Refund first.\n",
+        }
+        # The engine's patch says something else; only the tree was checked.
+        engine_patch = (
+            b"diff --git a/agent.py b/agent.py\n--- a/agent.py\n+++ b/agent.py\n"
+            b"@@ -1 +1 @@\n-PROMPT = ''\n+PROMPT = 'never refund'\n"
+        )
+        candidate = _engine_candidate(api_client, fix_run, tree, engine_patch)
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=AgentFixCandidate.Outcome.WINNER
+        )
+        close_fix_run(fix_run.id, AgentFixRun.State.READY)
+
+        response, _ = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert response.status_code == 200, response.content
+        branch = f"futureagi/fix-{str(fix_run.id)[:8]}-1"
+        shipped = {
+            path: subprocess.run(
+                ["git", "show", f"{branch}:{path}"],
+                cwd=github.bare,
+                check=True,
+                capture_output=True,
+            ).stdout
+            for path in _git(
+                github.bare, "ls-tree", "-r", "--name-only", branch
+            ).splitlines()
+        }
+        source = _runtime(candidate.agent_version_id).source
+        version = _read(
+            storage.objects[
+                _source_object_key(
+                    fix_run.organization_id, source["archive_artifact_id"]
+                )
+            ]
+        )
+        assert shipped == {
+            path.removeprefix("source/"): data for path, data in version.items()
+        }
+        assert shipped == tree
 
     def test_a_limited_fix_ships_as_a_draft_that_says_so(
         self, auth_client, source_run, github
