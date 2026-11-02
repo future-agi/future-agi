@@ -156,7 +156,8 @@ class RehearsalDriverTests(unittest.TestCase):
         self.assertEqual(shipping.wire(value),{'values':{'rows':[1,2]},'at':'2026-10-28T00:00:00+00:00','path':'/not/executed.py'})
 
     def test_every_container_operation_payload_compiles_without_executing_on_host(self):
-        for name in ('S3_OPERATION','TEMPORAL_OPERATION','SPOOL_OPERATION','REFERENCE_SEED','REDIS_OPERATION'):
+        for name in ('S3_OPERATION','TEMPORAL_OPERATION','SPOOL_OPERATION','REFERENCE_SEED','REDIS_OPERATION',
+                     'ERROR_FEED_REFERENCE_PREPARE','ERROR_FEED_REFERENCE_CHUNK','ERROR_FEED_REFERENCE_VERIFY'):
             with self.subTest(name=name): compile(getattr(shipping,name),'<fixed-product-operation>','exec')
 
     def test_missing_reference_workload_cannot_seed_arbitrary_defaults(self):

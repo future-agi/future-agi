@@ -208,10 +208,10 @@ for root in (Path('/data/collector'),Path('/data/telemetry')):
 print(json.dumps(rows))
 """
 
-# Reference workloads are separate from A4 witnesses. This deliberately does
-# not fabricate model records, guess required FK values, disable constraints,
-# copy another database, or claim an empty/unavailable table reached the scale.
-# Existing real records are cloned only for reviewed append-only ORM log models.
+# Reference workloads are separate from A4 witnesses. The append-only branch
+# below never guesses required FKs, disables constraints, copies another DB, or
+# claims an empty/unavailable table reached scale. It clones existing real rows
+# only for reviewed append-only logs; relational fixtures have their own path.
 APPEND_ONLY_MODELS = frozenset({('prism', 'AgentccRequestLog'), ('prism', 'AgentccShadowResult'),
     ('prism', 'AgentccWebhookEvent'), ('usage', 'APICallLog')})
 REFERENCE_SEED = DJANGO_PREFIX + """
@@ -253,6 +253,353 @@ while count<a['rows']:
     with transaction.atomic(): m.objects.bulk_create(batch,batch_size=500)
     count+=len(batch)
 print(json.dumps({'seeded_rows':count}))
+"""
+
+
+# Reviewed relational fixtures, NOT append-only clones or product API witnesses.
+# All three tables must be final before the first per-table measurement.
+ERROR_FEED_REFERENCE_MODELS = {
+    ('tracer', 'EvalLogger'): 'tracer_eval_logger',
+    ('tracer', 'ErrorClusterTraces'): 'tracer_error_cluster_traces',
+    ('tracer', 'TraceErrorGroup'): 'tracer_trace_error_group',
+}
+ERROR_FEED_REFERENCE_CHUNK_GROUPS = 5000
+# Per 100k-group block: groups, memberships, logs, 0119-stale, deleted logs.
+ERROR_FEED_REFERENCE_COHORTS = {
+    'A': (70000, 70000, 70000, 30000, 30000),
+    'B': (2000, 20000, 20000, 10000, 10000),
+    'C': (100, 5000, 5000, 1000, 1500),
+    'D': (3000, 4000, 4000, 0, 1000),
+    'E': (500, 500, 0, 0, 0),
+    'F': (500, 500, 500, 0, 500),
+    'G': (23400, 0, 0, 0, 0),
+    'H': (500, 0, 0, 0, 0),
+    'passing': (0, 0, 500, 0, 0),
+}
+
+
+def error_feed_reference_plan(scale):
+    """Counts of ADDED fixture rows, independently of preexisting product rows."""
+    assert type(scale) is int and scale > 0
+    totals = tuple(sum(row[i] for row in ERROR_FEED_REFERENCE_COHORTS.values()) for i in range(5))
+    assert totals == (100000, 100000, 100000, 41000, 43000)
+    groups, members, logs, stale, deleted = (n * scale for n in totals)
+    return dict(counts=dict(tracer_trace_error_group=groups,
+        tracer_error_cluster_traces=members, tracer_eval_logger=logs), cohorts={
+            'live_eval_groups': 98500 * scale, 'stale_memberships': stale,
+            'session_anchors': 3000 * scale, 'provenance_only_memberships': 1000 * scale,
+            'deleted_eval_logs': deleted, 'owned_empty_groups': 2400 * scale,
+            'unowned_empty_groups': 21000 * scale, 'deleted_memberships': 500 * scale,
+            'live_scanner_groups': 1000 * scale, 'deleted_groups': 500 * scale,
+            'unclustered_passing_logs': 500 * scale})
+
+
+_ERROR_FEED_REFERENCE_COMMON = DJANGO_PREFIX + """
+import uuid, hashlib
+from datetime import datetime, timedelta
+from django.apps import apps
+from django.db import connection, transaction, models
+from django.db.models import Q, Exists, OuterRef
+Group=apps.get_model('tracer','TraceErrorGroup')
+Member=apps.get_model('tracer','ErrorClusterTraces')
+Log=apps.get_model('tracer','EvalLogger')
+Project=apps.get_model('tracer','Project')
+Config=apps.get_model('tracer','CustomEvalConfig')
+Task=apps.get_model('tracer','EvalTask')
+Template=apps.get_model('model_hub','EvalTemplate')
+NAMESPACE=uuid.uuid5(uuid.NAMESPACE_URL,'futureagi-qualification-reference:'+a['namespace'])
+def identity(kind,ordinal,index=0):
+    return uuid.uuid5(NAMESPACE,f'{kind}:{ordinal}:{index}')
+def project():
+    found=list(Project.all_objects.filter(name=a['namespace'],
+        organization_id=a['organization_id'],workspace_id=a['workspace_id'],
+        trace_type='observe',deleted=False)[:2])
+    assert len(found)==1, 'error_feed_reference: exactly one source witness project required'
+    return found[0]
+def physical_counts():
+    counts={}
+    with connection.cursor() as cursor:
+        for model in (Group,Member,Log):
+            cursor.execute('SELECT count(*) FROM '+connection.ops.quote_name(model._meta.db_table))
+            counts[model._meta.db_table]=cursor.fetchone()[0]
+    return counts
+def subsets(context):
+    groups=Group.all_objects.filter(project_id=context['project_id'],cluster_id__startswith='QR')
+    members=Member.all_objects.filter(cluster_id__in=groups.values('id'))
+    logs=Log.all_objects.filter(custom_eval_config_id__in=list(context['configs'].values()),
+        custom_eval_config__project_id=context['project_id'])
+    return groups,members,logs
+def seeded_counts(context):
+    return {query.model._meta.db_table:query.count() for query in subsets(context)}
+"""
+
+ERROR_FEED_REFERENCE_PREPARE = _ERROR_FEED_REFERENCE_COMMON + """
+# Fail closed on source-model drift before inserting any supporting context.
+assert connection.vendor=='postgresql', 'error_feed_reference: PostgreSQL required'
+expected_fields={
+    Group: 'id created_at updated_at deleted deleted_at redirect_to project source eval_target_type '
+        'target_type test_execution issue_group issue_category fix_layer title status eval_config '
+        'success_trace cluster_id error_type total_events unique_traces unique_users first_seen last_seen '
+        'error_ids combined_impact combined_description error_count assignee priority '
+        'severity_assessment_status severity_source severity_reason external_issue_url external_issue_id '
+        'rca_synthesis rca_fix rca_confidence rca_evidence_trace_ids rca_at rca_failures_at_run rca_trace trace_impact',
+    Member: 'id created_at updated_at deleted deleted_at trace span trace_session cluster scan_issue finding eval_logger',
+    Log: 'id created_at updated_at deleted deleted_at trace observation_span trace_session target_type '
+        'eval_type_id output_metadata results_tags results_explanation eval_tags eval_explanation output_bool '
+        'output_float output_str output_str_list eval_id eval_task_id custom_eval_config error error_message '
+        'skipped_reason status config_hash attempts',
+}
+expected_tables={Group:'tracer_trace_error_group',Member:'tracer_error_cluster_traces',Log:'tracer_eval_logger'}
+for model,names in expected_fields.items():
+    assert model._meta.managed and model._meta.db_table==expected_tables[model], 'error_feed_reference: table/managed drift'
+    assert {f.name for f in model._meta.concrete_fields}==set(names.split()), 'error_feed_reference: field inventory drift '+model.__name__
+    assert model._meta.pk.get_internal_type()=='UUIDField', 'error_feed_reference: UUID pk required'
+    assert not any(f.unique and not f.primary_key for f in model._meta.concrete_fields), 'error_feed_reference: unexpected unique field'
+    for name,kind in [('deleted','BooleanField'),('deleted_at','DateTimeField'),('created_at','DateTimeField'),('updated_at','DateTimeField')]:
+        assert model._meta.get_field(name).get_internal_type()==kind, 'error_feed_reference: history field drift'
+for model,names in [(Log,('trace','observation_span','trace_session')),(Member,('trace','span','trace_session'))]:
+    for name in names:
+        field=model._meta.get_field(name)
+        assert field.many_to_one and field.null and field.db_constraint is False, 'error_feed_reference: logical telemetry FK drift'
+        target='ObservationSpan' if name in ('span','observation_span') else ('TraceSession' if name=='trace_session' else 'Trace')
+        assert field.remote_field.model==apps.get_model('tracer',target), 'error_feed_reference: telemetry target drift'
+        if target=='ObservationSpan':
+            assert field.target_field.get_internal_type()=='CharField' and field.target_field.max_length>=32, 'error_feed_reference: span identity drift'
+        else:
+            assert field.target_field.get_internal_type()=='UUIDField', 'error_feed_reference: telemetry identity drift'
+for model,name,target in [(Group,'project',Project),(Group,'eval_config',Config),
+        (Member,'cluster',Group),(Member,'eval_logger',Log),(Log,'custom_eval_config',Config)]:
+    field=model._meta.get_field(name)
+    assert field.many_to_one and field.db_constraint and field.remote_field.model==target, 'error_feed_reference: provenance FK drift'
+# Check the payload and supporting factory fields, not merely their names.
+def fields(model,specifications):
+    known={f.name:f for f in model._meta.get_fields()}
+    for kind,names in specifications.items():
+        for name in names.split():
+            assert name in known and known[name].get_internal_type()==kind, 'error_feed_reference: field type drift '+model.__name__+'.'+name
+fields(Log,dict(BooleanField='output_bool error',FloatField='output_float',
+    CharField='target_type eval_task_id config_hash status',TextField='eval_explanation',
+    JSONField='output_metadata results_tags results_explanation eval_tags output_str_list',IntegerField='attempts'))
+fields(Group,dict(CharField='cluster_id source eval_target_type target_type issue_group error_type status combined_impact',
+    TextField='title combined_description',IntegerField='error_count total_events unique_traces',DateTimeField='first_seen last_seen'))
+fields(Template,dict(UUIDField='id',CharField='name description owner output_type_normalized',
+    ForeignKey='organization workspace',JSONField='config',FloatField='pass_threshold'))
+fields(Config,dict(UUIDField='id',CharField='name',ForeignKey='project eval_template',JSONField='config mapping filters'))
+fields(Task,dict(UUIDField='id',CharField='name row_type run_type status',ForeignKey='project',
+    JSONField='filters',FloatField='sampling_rate',IntegerField='spans_limit',ManyToManyField='evals'))
+assert Task._meta.get_field('evals').remote_field.model==Config, 'error_feed_reference: task eval relation drift'
+assert Config._meta.constraints==[models.UniqueConstraint(fields=['name','project'],
+    condition=Q(deleted=False),name='unique_name_project_idx')], 'error_feed_reference: config uniqueness drift'
+for model,name,choices in [(Log,'target_type',{'span','trace','session'}),(Log,'status',{'completed'}),
+        (Group,'source',{'eval','scanner'}),(Group,'status',{'escalating','acknowledged','resolved'}),
+        (Group,'target_type',{'error_feed'}),(Group,'eval_target_type',{'span','trace','session'}),
+        (Task,'row_type',{'spans','traces','sessions'}),(Task,'run_type',{'historical'}),(Task,'status',{'completed'})]:
+    assert choices <= {value for value,label in model._meta.get_field(name).flatchoices}, 'error_feed_reference: choice drift '+name
+for model,names in [(Log,'output_bool output_float'),(Group,'eval_target_type eval_config test_execution'),
+        (Group,'deleted_at'),(Member,'deleted_at'),(Log,'deleted_at')]:
+    assert all(model._meta.get_field(name).null for name in names.split()), 'error_feed_reference: nullable field drift'
+assert Group._meta.get_field('cluster_id').max_length==20, 'error_feed_reference: cluster code drift'
+assert Log._meta.get_field('config_hash').max_length>=64, 'error_feed_reference: config hash drift'
+expected_constraints={
+    Log:[models.CheckConstraint(name='eval_logger_target_type_fks',condition=(
+        (Q(target_type__in=['span','trace']) & Q(observation_span__isnull=False) & Q(trace__isnull=False) & Q(trace_session__isnull=True)) |
+        (Q(target_type='session') & Q(observation_span__isnull=True) & Q(trace__isnull=True) & Q(trace_session__isnull=False))))],
+    Group:[models.UniqueConstraint(fields=['project','cluster_id'],condition=Q(deleted=False),name='unique_project_cluster_if_not_deleted'),
+        models.CheckConstraint(name='valid_error_group_target_scope',condition=(
+            Q(target_type='error_feed',test_execution__isnull=True) | Q(target_type='simulation',test_execution__isnull=False)))],
+    Member:[],
+}
+for target,field in [('span','observation_span'),('trace','trace'),('session','trace_session')]:
+    expected_constraints[Log].append(models.UniqueConstraint(fields=['eval_task_id',field,'custom_eval_config'],
+        condition=Q(target_type=target,deleted=False,eval_task_id__isnull=False),name='eval_logger_live_'+target+'_uniq'))
+for model,constraints in expected_constraints.items():
+    assert {c.name:c.deconstruct() for c in model._meta.constraints}=={c.name:c.deconstruct() for c in constraints}, 'error_feed_reference: constraint drift '+model.__name__
+    expected_unique={('cluster','trace','span'),('cluster','trace_session')} if model==Member else set()
+    assert {tuple(fields) for fields in model._meta.unique_together}==expected_unique, 'error_feed_reference: unique_together drift'
+    with connection.cursor() as cursor:
+        columns={column.name for column in connection.introspection.get_table_description(cursor,model._meta.db_table)}
+        assert {f.column for f in model._meta.concrete_fields}<=columns, 'error_feed_reference: missing physical column'
+        actual=connection.introspection.get_constraints(cursor,model._meta.db_table)
+    for constraint in constraints:
+        found=actual.get(constraint.name,{})
+        if isinstance(constraint,models.CheckConstraint):
+            assert found.get('check'), 'error_feed_reference: missing physical check '+constraint.name
+        else:
+            assert found.get('unique') and found['columns']==[model._meta.get_field(f).column for f in constraint.fields], 'error_feed_reference: missing physical unique '+constraint.name
+    for fields in expected_unique:
+        columns=[model._meta.get_field(f).column for f in fields]
+        assert any(c.get('unique') and c['columns']==columns for c in actual.values()), 'error_feed_reference: missing physical membership unique'
+
+p=project()
+# Private templates follow v1.56.1 eval_task_factories, avoiding dependence on
+# whichever system templates happen to be installed. No evaluator is executed.
+prefix='qualification-reference-'+NAMESPACE.hex[:12]+'-'
+def reuse(model,kind,ordinal,defaults):
+    obj,created=model.all_objects.get_or_create(id=identity(kind,ordinal),defaults=defaults)
+    assert not obj.deleted and all(getattr(obj,key)==value for key,value in defaults.items()), 'error_feed_reference: incompatible existing context '+kind
+    return obj,created
+with transaction.atomic():
+    templates={}
+    for output,label in [('pass_fail','Pass/Fail'),('percentage','score')]:
+        template,_=reuse(Template,'template',output,dict(name=prefix+output.replace('_','-'),
+            description='Synthetic qualification reference; no provider execution.',
+            organization_id=p.organization_id,workspace_id=p.workspace_id,owner='user',
+            output_type_normalized=output,config={'output':label},pass_threshold=1.0))
+        templates[output]=template
+    configs={}
+    hashes={}
+    tasks={}
+    for target,row_type,output in [('span','spans','pass_fail'),('trace','traces','percentage'),('session','sessions','pass_fail')]:
+        cfg,_=reuse(Config,'config',target,dict(name=prefix+target,project_id=p.id,
+            eval_template_id=templates[output].id,config={},mapping={},filters={}))
+        configs[target]=str(cfg.id)
+        hashes[target]=hashlib.sha256(json.dumps(dict(template=str(cfg.eval_template_id),
+            config=cfg.config,mapping=cfg.mapping,filters=cfg.filters,target=target),sort_keys=True).encode()).hexdigest()
+        for key in ([target,'session-repeat'] if target=='session' else [target]):
+            task,created=reuse(Task,'task',key,dict(name=prefix+key,project_id=p.id,
+                filters={},sampling_rate=100.0,spans_limit=100000,row_type=row_type,
+                run_type='historical',status='completed'))
+            if created: task.evals.add(cfg)
+            assert list(task.evals.values_list('id',flat=True))==[cfg.id], 'error_feed_reference: task/config mismatch'
+            tasks[key]=str(task.id)
+context=dict(project_id=str(p.id),configs=configs,tasks=tasks,config_hashes=hashes,
+    historical_at=(p.created_at-timedelta(days=7)).isoformat())
+print(json.dumps(dict(context=context,counts=physical_counts(),seeded_counts=seeded_counts(context))))
+"""
+
+ERROR_FEED_REFERENCE_CHUNK = _ERROR_FEED_REFERENCE_COMMON + (
+    '\nCOHORTS = ' + repr(ERROR_FEED_REFERENCE_COHORTS) + '\n') + """
+context=a['context']
+start,stop,scale=a['start'],a['stop'],a['scale']
+assert type(scale) is int and scale>0 and 0<=start<stop<=100000*scale, 'error_feed_reference: invalid slice'
+assert stop-start<=5000, 'error_feed_reference: unbounded slice'
+when=datetime.fromisoformat(context['historical_at'])
+def code(ordinal):
+    digits='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    value=''
+    while ordinal:
+        ordinal,remainder=divmod(ordinal,36)
+        value=digits[remainder]+value
+    result='QR'+(value or '0').zfill(12)
+    assert len(result)<=20
+    return result
+def cohort(ordinal):
+    local=ordinal%100000
+    for name,counts in COHORTS.items():
+        if local<counts[0]: return name,local
+        local-=counts[0]
+    raise AssertionError('error_feed_reference: ordinal outside cohort plan')
+def make_log(ordinal,index,target,deleted=False,passing=False,hot=False):
+    # Explicit reviewed qualification choice: synthetic telemetry UUIDs, not
+    # product telemetry. These FKs have db_constraint=False and 0119 never joins
+    # telemetry tables. Config/task/project provenance is real PostgreSQL data.
+    trace=identity('trace',ordinal,index%7 if hot else index)
+    span=identity('span',ordinal,index).hex
+    session=identity('session',ordinal)
+    task='session-repeat' if target=='session' and index else target
+    score=1.0 if passing else ((ordinal*17+index*13)%100)/100.0
+    return Log(id=identity('log',ordinal,index),target_type=target,
+        trace_id=None if target=='session' else trace,
+        observation_span_id=None if target=='session' else span,
+        trace_session_id=session if target=='session' else None,
+        custom_eval_config_id=context['configs'][target],eval_task_id=context['tasks'][task],
+        config_hash=context['config_hashes'][target],status='completed',error=False,attempts=1,
+        output_bool=(passing if target!='trace' else None),output_float=(score if target=='trace' else None),
+        eval_explanation=('Reference answer satisfies the expected evidence.' if passing else
+            'Reference answer omits required evidence and cannot support the requested conclusion.'),
+        output_metadata={'qualification_reference':True,'target':target},
+        results_tags=['passing' if passing else 'missing-evidence'],
+        results_explanation={'evidence':'synthetic qualification history'},
+        eval_tags=['qualification-reference'],output_str_list=[],
+        deleted=deleted,deleted_at=when if deleted else None)
+
+group_ids=[identity('group',ordinal) for ordinal in range(start,stop)]
+with transaction.atomic():
+    existing=Group.all_objects.filter(id__in=group_ids).count()
+    assert existing in (0,len(group_ids)), 'error_feed_reference: partial atomic chunk'
+    if Group.all_objects.filter(id=group_ids[-1]).exists():
+        assert existing==len(group_ids), 'error_feed_reference: partial chunk sentinel'
+        result={'skipped':True}
+    else:
+        assert existing==0, 'error_feed_reference: missing chunk sentinel'
+        groups,logs,members=[],[],[]
+        for ordinal in range(start,stop):
+            name,local=cohort(ordinal)
+            scanner=name in ('E','H')
+            target='session' if name=='D' else ('span' if name=='C' or ordinal%2==0 else 'trace')
+            count={'A':1,'B':10,'C':50,'D':1 if local<2000 else 2,'E':1,'F':1,'G':0,'H':0}[name]
+            owned=(name=='A' and 27000<=local<30000) or (name=='G' and local>=21000)
+            correct=name=='A' and 30000<=local<31000
+            group_id=identity('group',ordinal)
+            eval_name='qualification-reference-'+NAMESPACE.hex[:12]+'-'+('legacy-scanner' if scanner else target)
+            score=((ordinal*17)%100)/100.0 if target=='trace' else None
+            impact='MEDIUM' if score is None else ('HIGH' if score<0.3 else ('MEDIUM' if score<0.6 else 'LOW'))
+            groups.append(Group(id=group_id,project_id=context['project_id'],cluster_id=code(ordinal),
+                source='scanner' if scanner else 'eval',target_type='error_feed',test_execution_id=None,
+                eval_target_type=None if scanner else target,eval_config_id=None if scanner else context['configs'][target],
+                issue_group=eval_name,error_type=eval_name,
+                title='Historical reference issue '+code(ordinal),
+                combined_description='Synthetic qualification history: '+name+' cohort, missing supporting evidence.',
+                status=('acknowledged' if ordinal%2==0 else 'resolved') if owned else 'escalating',
+                error_count=1 if correct else count+7,total_events=1 if correct else count+11,
+                unique_traces=1 if correct else count+3,combined_impact=impact if correct else 'HIGH',
+                first_seen=when if correct else when-timedelta(days=1),
+                last_seen=when if correct else when+timedelta(hours=1),
+                deleted=name=='F',deleted_at=when if name=='F' else None))
+            for index in range(count):
+                deleted_log=(name=='A' and local<30000) or (name=='B' and index<5) or (
+                    name=='C' and (index<10 or index>=45)) or name=='F' or (
+                    name=='D' and ((2000<=local<2500 and index==0) or (2500<=local<3000 and index==1)))
+                deleted_member=name=='C' and index>=45
+                log=None if scanner else make_log(ordinal,index,target,deleted=deleted_log,hot=name=='C')
+                if log is not None: logs.append(log)
+                # Mirror create_cluster/assign_to_cluster: span NULL even for
+                # span evals; repeat sessions retain only result provenance.
+                # Scanner controls are explicitly legacy provenance-free rows.
+                members.append(Member(id=identity('member',ordinal,index),cluster_id=group_id,
+                    trace_id=(identity('trace',ordinal,index) if scanner else log.trace_id),span_id=None,
+                    trace_session_id=log.trace_session_id if target=='session' and index==0 else None,
+                    eval_logger_id=log.id if log is not None else None,
+                    deleted=deleted_member,deleted_at=when if deleted_member else None))
+            # One unclustered passing log per empty scanner group, in the SAME
+            # atomic chunk, so its group sentinel also covers these 500 logs.
+            if name=='H': logs.append(make_log(ordinal,0,target,passing=True))
+        for model,batch in [(Group,groups),(Log,logs),(Member,members)]:
+            if not batch: continue
+            model.all_objects.bulk_create(batch,batch_size=1000)
+            # auto_now_add ignores constructor dates. Backdate explicitly, with
+            # constraints enabled, to give correct singletons matching dates.
+            model.all_objects.filter(id__in=[obj.id for obj in batch]).update(created_at=when,updated_at=when)
+        result={'skipped':False}
+print(json.dumps(result))
+"""
+
+ERROR_FEED_REFERENCE_VERIFY = _ERROR_FEED_REFERENCE_COMMON + """
+context=a['context']
+assert str(project().id)==context['project_id'], 'error_feed_reference: witness project changed'
+assert context['configs']=={target:str(identity('config',target)) for target in ('span','trace','session')}, 'error_feed_reference: config namespace changed'
+groups,members,logs=subsets(context)
+live_eval=groups.filter(source='eval',deleted=False)
+# This is EXACTLY 0119's stale predicate, plus the explicit fixture scope.
+stale=members.filter(deleted=False,trace_id__isnull=False,eval_logger__deleted=True,
+    cluster__source='eval',cluster__deleted=False)
+sessions=members.filter(deleted=False,cluster__source='eval',cluster__deleted=False,
+    cluster__eval_target_type='session',eval_logger__isnull=False,trace_id__isnull=True,span_id__isnull=True)
+# Empty means no membership at all BEFORE 0119 (G), not all-stale A singletons.
+empty=live_eval.annotate(has_member=Exists(Member.all_objects.filter(cluster_id=OuterRef('pk')))).filter(has_member=False)
+unowned=Q(assignee_id__isnull=True) & (Q(external_issue_url__isnull=True)|Q(external_issue_url='')) & (
+    Q(external_issue_id__isnull=True)|Q(external_issue_id='')) & Q(status__in=['escalating','for_review'])
+passing=logs.filter(deleted=False).filter(Q(output_bool=True)|Q(output_float=1.0)).annotate(
+    has_member=Exists(Member.all_objects.filter(eval_logger_id=OuterRef('pk')))).filter(has_member=False)
+cohorts=dict(live_eval_groups=live_eval.count(),stale_memberships=stale.count(),
+    session_anchors=sessions.filter(trace_session_id__isnull=False).count(),
+    provenance_only_memberships=sessions.filter(trace_session_id__isnull=True).count(),
+    deleted_eval_logs=logs.filter(deleted=True).count(),
+    owned_empty_groups=empty.exclude(unowned).count(),unowned_empty_groups=empty.filter(unowned).count(),
+    deleted_memberships=members.filter(deleted=True).count(),
+    live_scanner_groups=groups.filter(deleted=False,source='scanner').count(),deleted_groups=groups.filter(deleted=True).count(),
+    unclustered_passing_logs=passing.count())
+print(json.dumps(dict(counts=physical_counts(),seeded_counts=seeded_counts(context),cohorts=cohorts)))
 """
 
 
@@ -775,11 +1122,94 @@ class ShippingRehearsal:
     def seed_reference_table(self,entry,rows):
         p=producer()
         key=(entry.get('app_label'),entry.get('model'))
+        if key in ERROR_FEED_REFERENCE_MODELS or entry.get('table') in ERROR_FEED_REFERENCE_MODELS.values():
+            if (entry.get('database')=='postgres' and key in ERROR_FEED_REFERENCE_MODELS
+                    and entry.get('table')==ERROR_FEED_REFERENCE_MODELS[key]):
+                return self.seed_error_feed_reference_family(rows)
+            raise p.ManualRelease('high_volume_reference_unavailable')
         if entry['database']!='postgres' or key not in APPEND_ONLY_MODELS:
             # A6 needs product-specific distributions for each registered table.
             # Never create a generic all-default row or silently skip a table.
             raise p.ManualRelease('high_volume_reference_unavailable')
         self.app_python(REFERENCE_SEED,dict(entry,rows=rows))
+
+    def seed_error_feed_reference_family(self, rows):
+        """Build the whole graph once; later callbacks can only re-verify it.
+
+        Pending preparation survives a failed chunk on this instance. A fresh
+        instance can also resume: PREPARE reports both physical and fixture
+        counts, so already committed fixture rows are not mistaken for baseline
+        product data. No retry here can turn a failed invocation into a pass.
+        """
+        p = producer()
+        def require(ok):
+            if not ok:
+                raise p.ManualRelease('high_volume_reference_unavailable')
+        require(type(rows) is int and 100000 <= rows <= 100000000)
+        scale = (rows + 99999) // 100000
+        plan = error_feed_reference_plan(scale)
+        namespaces = getattr(getattr(self, 'witnesses', None), 'namespaces', None)
+        require(isinstance(namespaces, dict))
+        source = namespaces.get('source')
+        require(isinstance(source, dict))
+        headers = source.get('headers')
+        require(isinstance(headers, dict))
+        # Deliberately do NOT forward bearer tokens, API keys, or other headers.
+        arguments = dict(namespace=source.get('namespace'),
+            organization_id=headers.get('X-Organization-Id'), workspace_id=headers.get('X-Workspace-Id'))
+        require(all(isinstance(value, str) and bool(value) for value in arguments.values()))
+        complete = getattr(self, '_error_feed_reference', None)
+        pending = getattr(self, '_error_feed_reference_pending', None)
+        state = complete or pending
+        if state is not None:
+            require(state['rows'] == rows and state['arguments'] == arguments)
+        else:
+            prepared = self.app_python(ERROR_FEED_REFERENCE_PREPARE, arguments)
+            require(isinstance(prepared, dict) and isinstance(prepared.get('context'), dict))
+            before = prepared.get('counts')
+            seeded = prepared.get('seeded_counts')
+            require(isinstance(before, dict) and isinstance(seeded, dict))
+            require(set(before) == set(plan['counts']) and set(seeded) == set(plan['counts']))
+            for table, expected in plan['counts'].items():
+                require(type(before[table]) is int and type(seeded[table]) is int
+                    and 0 <= seeded[table] <= expected and before[table] >= seeded[table])
+            state = dict(rows=rows, arguments=arguments, context=prepared['context'],
+                baseline={table: before[table] - seeded[table] for table in plan['counts']})
+            self._error_feed_reference_pending = state
+        if complete is None:
+            chunk_seconds = []
+            for start in range(0, plan['counts']['tracer_trace_error_group'], ERROR_FEED_REFERENCE_CHUNK_GROUPS):
+                stop = min(start + ERROR_FEED_REFERENCE_CHUNK_GROUPS, plan['counts']['tracer_trace_error_group'])
+                began = time.monotonic()
+                result = self.app_python(ERROR_FEED_REFERENCE_CHUNK, dict(arguments,
+                    context=state['context'], start=start, stop=stop, scale=scale))
+                chunk_seconds.append(time.monotonic() - began)
+                require(isinstance(result, dict) and type(result.get('skipped')) is bool)
+        verified = self.app_python(ERROR_FEED_REFERENCE_VERIFY, dict(arguments, context=state['context']))
+        require(isinstance(verified, dict))
+        counts, seeded, cohorts = (verified.get(key) for key in ('counts', 'seeded_counts', 'cohorts'))
+        for actual, expected in ((seeded, plan['counts']), (cohorts, plan['cohorts'])):
+            require(isinstance(actual, dict) and set(actual) == set(expected))
+            require(all(type(actual[key]) is int and actual[key] == value for key, value in expected.items()))
+        require(isinstance(counts, dict) and set(counts) == set(plan['counts']))
+        # The fixture-scoped counts above are exact. Physical totals only need to
+        # include the baseline plus the whole fixture: the running product may
+        # legitimately add rows (e.g. onboarding demo results), and each table's
+        # reference is its independent measurement, not this self-report.
+        for table, added in plan['counts'].items():
+            require(type(counts[table]) is int and counts[table] >= rows
+                and counts[table] >= state['baseline'][table] + added)
+        if complete is not None:
+            require(cohorts == complete['cohorts'])
+            return
+        corpus = getattr(self, 'corpus', None)
+        if corpus is not None:
+            corpus.setdefault('reference_seed_operations', []).append(dict(
+                table='tracer_error_feed_family', operation='error_feed_reference_fixture', version=1,
+                requested_rows=rows, scale=scale, chunks=len(chunk_seconds), chunk_seconds=chunk_seconds,
+                counts=dict(counts), cohorts=dict(cohorts)))
+        self._error_feed_reference = dict(state, counts=dict(counts), cohorts=dict(cohorts))
+        del self._error_feed_reference_pending
 
     def measure_reference_table(self,entry):
         p=producer()
