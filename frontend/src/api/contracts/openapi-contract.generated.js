@@ -119302,6 +119302,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         avg_score: {
           title: "Avg score",
           type: "number",
+          "x-nullable": true,
         },
         p50_latency: {
           title: "P50 latency",
@@ -119314,6 +119315,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         avg_turns: {
           title: "Avg turns",
           type: "number",
+          "x-nullable": true,
         },
       },
     },
