@@ -127,6 +127,10 @@ const fix = (id, order, overrides = {}) => ({
   },
   report: null,
   failure: null,
+  retried_from_id: null,
+  retryable: false,
+  limited_validation: false,
+  eval_warnings: [],
   check_runs: [
     {
       run_id: `rt-${id}`,
@@ -307,6 +311,7 @@ export const FIX_RUN_FIXTURES = [
       code: "engine_error",
       message: "The engine could not start the agent's sandbox.",
     },
+    retryable: true,
   }),
   fix("fix-unknown-identity", 1, {
     ...running,
@@ -584,4 +589,23 @@ export function fixtureRunCalls(testExecutionId, { page = 1, page_size = 200 } =
     count: rows.length,
     results: rows.slice((page - 1) * page_size, page * page_size),
   };
+}
+
+// POST {id}/retry/: a new queued fix with the failed one's request; the failed
+// one can no longer be retried.
+export function fixtureRetry(fixId) {
+  const failed = store.find((f) => f.id === fixId);
+  const number = Math.max(...store.map((f) => f.number || 0)) + 1;
+  const created = {
+    ...clone(FIX_RUN_FIXTURES[0]),
+    id: `fix-new-${number}`,
+    number,
+    environment_id: failed.environment_id,
+    request: clone(failed.request),
+    retried_from_id: fixId,
+    created_at: new Date().toISOString(),
+    started_at: null,
+  };
+  store = [created, ...store.map((f) => (f.id === fixId ? { ...f, retryable: false } : f))];
+  return clone(created);
 }

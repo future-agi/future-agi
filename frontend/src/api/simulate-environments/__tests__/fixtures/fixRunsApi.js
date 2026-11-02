@@ -7,6 +7,7 @@ import {
   fixtureLaunch,
   fixtureLaunchOptions,
   fixturePatch,
+  fixtureRetry,
   fixtureRunCalls,
   updateFixtureFixRun,
 } from "./fixRuns";
@@ -21,6 +22,7 @@ export const FIX_RUN_ENDPOINTS = {
   launchOptions: () => `${BASE}launch-options/`,
   detail: (id) => `${BASE}${id}/`,
   stop: (id) => `${BASE}${id}/stop/`,
+  retry: (id) => `${BASE}${id}/retry/`,
   makeDefault: (id, cid) => `${BASE}${id}/candidates/${cid}/make-default/`,
   pullRequest: (id, cid) => `${BASE}${id}/candidates/${cid}/pull-request/`,
   patch: (id, cid) => `${BASE}${id}/candidates/${cid}/patch/`,
@@ -34,6 +36,7 @@ const CANDIDATE = new RegExp(
   `^${BASE}([^/]+)/candidates/([^/]+)/(make-default|pull-request|patch)/$`,
 );
 const FIX = new RegExp(`^${BASE}([^/]+)/(stop/)?$`);
+const RETRY = new RegExp(`^${BASE}([^/]+)/retry/$`);
 
 function readFix(fixId) {
   const fix = fixtureFixRun(fixId);
@@ -111,6 +114,8 @@ export function createFixRunsAxios(actual) {
     if (url === FIX_RUN_ENDPOINTS.list()) {
       return ok(fixtureLaunch(null, body));
     }
+    const retry = RETRY.exec(url);
+    if (retry) return ok(fixtureRetry(retry[1]));
     const cand = CANDIDATE.exec(url);
     if (cand && cand[3] === "make-default") return makeDefault(cand[1], cand[2]);
     if (cand && cand[3] === "pull-request") {

@@ -1779,6 +1779,7 @@ export const endpoints = {
       apiPath("/simulate/api/agent-fix-runs/launch-options/"),
     detail: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/", { id }),
     stop: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/stop/", { id }),
+    retry: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/retry/", { id }),
     makeDefault: (id, candidateId) =>
       apiPath(
         "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/",

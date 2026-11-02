@@ -7,6 +7,7 @@ import { CustomTabs } from "src/components/tabs/tabs";
 
 import FixVerdict from "./FixVerdict";
 import FixDecisionDrawer from "./FixDecisionDrawer";
+import RetryButton from "./RetryButton";
 import ShipButton from "./ShipButton";
 import TrialChart from "./TrialChart";
 import TrialsTable from "./TrialsTable";
@@ -41,6 +42,7 @@ export function FinishedActions({ fix, onReview }) {
         </Button>
       )}
       <ShipButton fix={fix} />
+      <RetryButton fix={fix} />
       <FixDecisionDrawer
         fix={fix}
         open={deciding}

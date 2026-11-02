@@ -20,7 +20,9 @@ const {
   fixErrorOf,
   fetchCandidatePatch,
   patchFileName,
+  useRetryFixRun,
 } = await import("../fixRuns");
+const axios = (await import("src/utils/axios")).default;
 
 const makeWrapper = () => {
   const queryClient = new QueryClient({
@@ -101,6 +103,25 @@ describe("stop, ship and patch", () => {
     );
     expect(diff).toMatch(/^diff --git /);
     expect(diff).toMatch(/^\+/m);
+  });
+
+  it("retries a failed fix as a new queued fix with the same request", async () => {
+    const failed = fixtureFixRun("fix-failed");
+    const { result } = renderHook(() => useRetryFixRun(failed), {
+      wrapper: makeWrapper(),
+    });
+    let next;
+    await act(async () => {
+      next = await result.current.mutateAsync();
+    });
+    expect(axios.post).toHaveBeenCalledWith(
+      "/simulate/api/agent-fix-runs/fix-failed/retry/",
+      {},
+    );
+    expect(next.state).toBe("queued");
+    expect(next.retried_from_id).toBe("fix-failed");
+    expect(next.request).toEqual(failed.request);
+    expect(fixtureFixRun("fix-failed").retryable).toBe(false);
   });
 
   it("names the patch file", () => {

@@ -148,6 +148,22 @@ export function useStopFixRun(fixId) {
   });
 }
 
+// A failed fix started again: a new fix with the same request, which reuses the
+// check runs the failed one finished.
+export async function retryFixRun(fixId) {
+  const res = await axios.post(endpoints.agentFixRuns.retry(fixId), {});
+  return res.data;
+}
+
+export function useRetryFixRun(fix) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: () => retryFixRun(fix.id),
+    onSuccess: () => refreshFix(queryClient, fix),
+  });
+}
+
 export function useShipCandidate(fix) {
   const queryClient = useQueryClient();
   return useMutation({
