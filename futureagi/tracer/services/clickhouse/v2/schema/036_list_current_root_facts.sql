@@ -73,4 +73,3 @@ CREATE TABLE IF NOT EXISTS list_current_members
 ENGINE = ReplacingMergeTree(_version)
 PARTITION BY cityHash64(project_id) % 32
 ORDER BY (org_id, project_id, observation_type, service_name, start_hour, trace_id, span_id, generation, attempt_id);
-
