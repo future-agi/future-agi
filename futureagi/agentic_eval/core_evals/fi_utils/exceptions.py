@@ -41,3 +41,9 @@ class CodeEvalSetupError(ValueError):
     executor, or no Node.js for a JavaScript eval. Its message is always one of
     the backend's own texts (sandbox.SETUP_ERROR_MESSAGES), never one an eval
     script returned, so callers may show it to users."""
+
+
+class CodeEvalResultError(ValueError):
+    """Raised when the user's code eval returned no usable result (None, the
+    wrong type, or a dict without result/score). Its message is always one of
+    the backend's own fixed texts, so callers may show it to users."""
