@@ -55,9 +55,9 @@ function StopControl({ fix }) {
               {stopSummary(fix)}
             </Typography>
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              None of them has been checked on the held-back scenarios, so
-              nothing can be chosen. Today&apos;s version stays. The trials that
-              ran stay on this page; nothing more is spent.
+              Stopping ends the search without choosing a trial. Today&apos;s
+              version stays. The trials that ran stay on this page; nothing
+              more is spent.
             </Typography>
           </Stack>
         }

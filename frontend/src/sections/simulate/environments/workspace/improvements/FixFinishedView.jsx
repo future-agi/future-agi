@@ -77,7 +77,7 @@ const TABS = [
 export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
   const ready = fix.state === "ready" && !!winnerOf(fix);
   const trials = fix.candidates || [];
-  const ending = fix.report?.summary || fix.failure?.message;
+  const ending = fix.failure?.message || fix.report?.summary;
   const tabs = ready
     ? TABS
     : TABS.filter((t) => t.id === "trials" || t.id === "cost");

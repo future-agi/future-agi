@@ -5,7 +5,7 @@ import { scenarioOutcomes } from "../scenarioOutcomes";
 const task = (key, status, name = key) => ({
   sourceScenarioKey: key,
   sourceScenario: name,
-  status,
+  harnessOutcomeStatus: status,
 });
 
 describe("scenarioOutcomes", () => {

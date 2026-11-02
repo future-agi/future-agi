@@ -21,11 +21,13 @@ export const OUTCOME_LABEL = {
   pending: "Running",
 };
 
-// A trial that passed its screens has only lost once the fix has finished.
-export const outcomeLabel = (outcome, fixLive) =>
-  outcome === "finalist" && fixLive
-    ? "Finalist"
-    : OUTCOME_LABEL[outcome] || outcome;
+// A trial that passed its screens has only lost once the fix has finished,
+// and one still pending when the fix ended had its check runs cancelled.
+export const outcomeLabel = (outcome, fixLive) => {
+  if (outcome === "finalist" && fixLive) return "Finalist";
+  if (outcome === "pending" && !fixLive) return "Did not run";
+  return OUTCOME_LABEL[outcome] || outcome;
+};
 
 const SURFACE_LABEL = {
   prompt: "Instructions",
@@ -83,7 +85,7 @@ const brokeText = (n) => (n ? String(n) : "none");
 export function headline(fix) {
   const winner = winnerOf(fix);
   if (fix.state !== "ready" || !winner || !fix.plan) {
-    return fix.report?.summary || fix.failure?.message || null;
+    return fix.failure?.message || fix.report?.summary || null;
   }
   const { verdict } = winner;
   const broke = brokeText(verdict.must_pass_regressions.length);

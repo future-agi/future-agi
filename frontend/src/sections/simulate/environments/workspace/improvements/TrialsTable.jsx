@@ -77,7 +77,9 @@ export default function TrialsTable({ fix }) {
         <Typography sx={head}>Pass</Typography>
       </Box>
       {trials.map((c) => {
-        const live = c.outcome === "pending" ? c.check_runs?.[0] : null;
+        const fixLive = FIX_LIVE_STATES.has(fix.state);
+        const live =
+          c.outcome === "pending" && fixLive ? c.check_runs?.[0] : null;
         return (
           <Box
             key={c.id}
@@ -142,7 +144,7 @@ export default function TrialsTable({ fix }) {
               </Link>
             ) : (
               <Typography sx={{ typography: "s2" }}>
-                {outcomeLabel(c.outcome, FIX_LIVE_STATES.has(fix.state))}
+                {outcomeLabel(c.outcome, fixLive)}
               </Typography>
             )}
             <PassCell rate={c.verdict?.target_pass_rate} />

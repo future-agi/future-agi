@@ -1,14 +1,17 @@
 // What one trial did to each scenario: the baseline check run against the
 // trial's, compared per scenario. A scenario passes when every measured trial
-// of it passed; unmeasured results are left out.
+// of it passed; unmeasured results are left out. It reads the judge's result,
+// the one the verdict uses: a failed platform eval makes a call's outcome
+// inconclusive without changing whether the judge passed it.
 const ORDER = ["fixed", "broke", "still-failing", "same"];
 
 function verdicts(tasks) {
   const byKey = new Map();
   tasks.forEach((t) => {
-    if (t.status !== "passed" && t.status !== "failed") return;
+    const status = t.harnessOutcomeStatus;
+    if (status !== "passed" && status !== "failed") return;
     const prev = byKey.get(t.sourceScenarioKey);
-    const passed = t.status === "passed" && (prev ? prev.passed : true);
+    const passed = status === "passed" && (prev ? prev.passed : true);
     byKey.set(t.sourceScenarioKey, { name: t.sourceScenario, passed });
   });
   return byKey;
