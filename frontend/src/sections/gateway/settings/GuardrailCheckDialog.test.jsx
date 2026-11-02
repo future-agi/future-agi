@@ -9,6 +9,16 @@ vi.mock("src/utils/logger", () => ({
   logger: { warn: vi.fn() },
 }));
 
+// The Future AGI Eval dialog loads its Protect templates on open.
+vi.mock("src/utils/axios", () => ({
+  default: {
+    get: vi.fn().mockResolvedValue({
+      data: { result: [{ id: "1", name: "Toxicity" }] },
+    }),
+  },
+  endpoints: { gateway: { protectTemplates: "/protect-templates/" } },
+}));
+
 const noop = () => {};
 
 const renderDialog = (props = {}) =>
@@ -74,4 +84,117 @@ describe("GuardrailConfigTab -> dialog (TH-3989 repro)", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Configure: Presidio Pii")).toBeNull();
   });
+});
+
+describe("GuardrailConfigTab -> dialog Base URL", () => {
+  const openCard = async (label, guardrails) => {
+    const onChange = vi.fn();
+    render(<GuardrailConfigTab guardrails={guardrails} onChange={onChange} />);
+    const card = screen.getByText(label).closest(".MuiCard-root");
+    fireEvent.click(within(card).getAllByRole("button")[0]);
+    await screen.findByText(`Configure: ${label}`);
+    return onChange;
+  };
+
+  // An empty Base URL means "this platform": the backend fills its own
+  // BASE_URL and injects the org's keys. A stored api.futureagi.com on a
+  // self-hosted install is cross-environment, so no keys are injected and
+  // the check fails on every request.
+  it.each([
+    ["a saved check", { enabled: true, config: { eval_ids: ["1"] } }],
+    [
+      "a saved check with an empty URL",
+      { enabled: true, config: { eval_ids: ["1"], base_url: "" } },
+    ],
+    ["a new check", undefined],
+  ])("leaves Future AGI Eval Base URL empty for %s", async (_, existing) => {
+    const onChange = await openCard("Future AGI Eval", {
+      checks: existing ? { "futureagi-eval": existing } : {},
+    });
+
+    expect(screen.getByRole("textbox", { name: "Base URL" })).toHaveValue("");
+    expect(
+      screen.getByPlaceholderText("https://api.futureagi.com"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const saved = onChange.mock.calls[0][0].checks["futureagi-eval"];
+    expect(saved.config?.base_url).toBeUndefined();
+    if (existing) expect(saved.config.eval_ids).toEqual(["1"]);
+  });
+
+  it("keeps a Base URL the user typed for Future AGI Eval", async () => {
+    const onChange = await openCard("Future AGI Eval", { checks: {} });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Base URL" }), {
+      target: { value: "https://dev.api.futureagi.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const saved = onChange.mock.calls[0][0].checks["futureagi-eval"];
+    expect(saved.config.base_url).toBe("https://dev.api.futureagi.com");
+  });
+
+  it.each(["https://api.futureagi.com", "https://dev.api.futureagi.com"])(
+    "preserves an explicitly saved Future AGI Eval URL: %s",
+    async (baseUrl) => {
+      const onChange = await openCard("Future AGI Eval", {
+        checks: {
+          "futureagi-eval": {
+            enabled: true,
+            config: { eval_ids: ["1"], base_url: baseUrl },
+          },
+        },
+      });
+
+      expect(screen.getByRole("textbox", { name: "Base URL" })).toHaveValue(
+        baseUrl,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      const saved = onChange.mock.calls[0][0].checks["futureagi-eval"];
+      expect(saved.config).toEqual({ eval_ids: ["1"], base_url: baseUrl });
+    },
+  );
+
+  it("lets a user clear a saved URL to use this platform", async () => {
+    const onChange = await openCard("Future AGI Eval", {
+      checks: {
+        "futureagi-eval": {
+          enabled: true,
+          config: { eval_ids: ["1"], base_url: "https://api.futureagi.com" },
+        },
+      },
+    });
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Base URL" }), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const saved = onChange.mock.calls[0][0].checks["futureagi-eval"];
+    expect(saved.config).toEqual({ eval_ids: ["1"] });
+  });
+
+  it.each([
+    ["a new check", undefined],
+    ["a saved check", { enabled: true, config: { base_url: "" } }],
+  ])(
+    "still fills and saves other providers' default URL for %s",
+    async (_, existing) => {
+      const onChange = await openCard("CrowdStrike AIDR", {
+        checks: existing ? { "crowdstrike-aidr": existing } : {},
+      });
+
+      expect(screen.getByRole("textbox", { name: "Base URL" })).toHaveValue(
+        "https://api.crowdstrike.com",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      const saved = onChange.mock.calls[0][0].checks["crowdstrike-aidr"];
+      expect(saved.config.base_url).toBe("https://api.crowdstrike.com");
+    },
+  );
 });

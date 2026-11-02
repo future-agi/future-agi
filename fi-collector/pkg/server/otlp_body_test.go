@@ -46,7 +46,7 @@ func (g *emptyBlockGzip) Read(p []byte) (int, error) {
 }
 
 func TestOTLPHTTPGzipOverCapAsSentIs413(t *testing.T) {
-	const limit = maxOTLPHTTPBodyBytes
+	const limit = defaultMaxBodyBytes
 
 	t.Run("endless empty deflate blocks", func(t *testing.T) {
 		wire := &emptyBlockGzip{n: 64 << 20}
@@ -92,8 +92,8 @@ func TestOTLPHTTPGzipOverCapAsSentIs413(t *testing.T) {
 		if rec := postBody(s, "application/x-protobuf", true, nil, wire.Bytes()); rec.Code != http.StatusRequestEntityTooLarge {
 			t.Fatalf("status %d, want 413 (%s)", rec.Code, rec.Body.String())
 		}
-		if p := s.inflate.peak.Load(); p != 0 {
-			t.Errorf("leased %d budget bytes for a body refused as sent, want none", p)
+		if p := s.wire.peak.Load(); p != 0 {
+			t.Errorf("leased %d wire bytes for a body refused by its Content-Length, want none", p)
 		}
 	})
 }

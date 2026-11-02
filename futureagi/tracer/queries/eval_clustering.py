@@ -502,24 +502,44 @@ def retire_eval_memberships(results: QuerySet[EvalLogger]) -> None:
             )
 
 
-def _lock_issue(cluster_id: str, project_id: str) -> TraceErrorGroup:
-    """Lock the live issue, or the one retired when its last eval was deleted.
+def _find_issue(
+    cluster_id: str, project_id: str, *, lock: bool = False
+) -> TraceErrorGroup | None:
+    """The live issue, or the one retired when its last eval was deleted.
 
     A retired issue keeps its centroid, so the same failure recurring matches
-    it again; reviving it keeps its ID, history and triage.
+    it again; reviving it keeps its ID, history and triage. A merged issue
+    (``redirect_to`` set) is never revived.
     """
-    issues = TraceErrorGroup.all_objects.select_for_update().filter(
+    issues = TraceErrorGroup.all_objects.filter(
         cluster_id=cluster_id, project_id=project_id
     )
-    issue = (
+    if lock:
+        issues = issues.select_for_update()
+    return (
         issues.filter(deleted=False).first()
         or issues.filter(deleted=True, redirect_to__isnull=True)
         .order_by("-deleted_at")
         .first()
     )
+
+
+def _lock_issue(cluster_id: str, project_id: str) -> TraceErrorGroup:
+    issue = _find_issue(cluster_id, project_id, lock=True)
     if issue is None:
         raise TraceErrorGroup.DoesNotExist(f"no eval issue {cluster_id}")
     return issue
+
+
+def lock_live_eval(eval_logger_id: str) -> bool:
+    """Lock the eval result's row and say whether it is still live.
+
+    Clustering fetches a result, distills and embeds it, and only then assigns
+    it, so the eval can be deleted in between. Taking the row lock before the
+    issue lock matches ``soft_delete_eval_results``, so a delete either lands
+    first (this returns False) or waits and retires the membership added here.
+    """
+    return EvalLogger.objects.select_for_update().filter(pk=eval_logger_id).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -572,11 +592,11 @@ def create_cluster(
     project_id: str,
     result: ClusterableEvalResult,
     embedding: List[float],
-) -> str:
+) -> str | None:
     """
     Create a new TraceErrorGroup cluster for an eval result + ClickHouse centroid.
 
-    Returns the new cluster_id.
+    Returns the new cluster_id, or None when the eval was deleted meanwhile.
     """
     base = (
         f"{project_id}|eval|{result.target_type}|{result.eval_name}"
@@ -593,9 +613,9 @@ def create_cluster(
     # identical title; join the existing one instead. Compare on the stored
     # explanation rather than meta.title — title comes from _eval_cluster_meta,
     # which we have not computed yet at this point.
-    existing = TraceErrorGroup.objects.filter(
-        project_id=project_id, cluster_id=cluster_id
-    ).first()
+    # A retired issue counts: the same failure recurring revives it, keeping
+    # its ID and history, instead of minting a second row under the same ID.
+    existing = _find_issue(cluster_id, project_id)
     if existing is not None:
         same_failure = (
             existing.eval_target_type == result.target_type
@@ -626,6 +646,12 @@ def create_cluster(
         # Savepoint so a unique-constraint violation here doesn't poison the
         # surrounding transaction/connection.
         with transaction.atomic():
+            if not lock_live_eval(result.eval_logger_id):
+                logger.info(
+                    "eval_cluster_skip_deleted_eval",
+                    eval_logger_id=result.eval_logger_id,
+                )
+                return None
             cluster = TraceErrorGroup.objects.create(
                 project_id=project_id,
                 cluster_id=cluster_id,
@@ -647,6 +673,22 @@ def create_cluster(
                 first_seen=timezone.now(),
                 last_seen=timezone.now(),
             )
+            # Create junction entry. Session evals anchor to the session (trace
+            # NULL); span/trace evals anchor to the trace. In the same
+            # transaction as the eval lock above.
+            ErrorClusterTraces.objects.create(
+                cluster=cluster,
+                trace_id=result.trace_id,
+                trace_session_id=result.session_id,
+                eval_logger_id=result.eval_logger_id,
+            )
+            from tracer.services.feed_alerts.events import record_issue_event
+
+            record_issue_event(
+                cluster=cluster,
+                before=None,
+                source_key=f"eval-create:{result.eval_logger_id}",
+            )
     except IntegrityError:
         # Another concurrent run created this cluster between our .exists()
         # check and the insert (unique_project_cluster_if_not_deleted). Treat
@@ -659,22 +701,6 @@ def create_cluster(
         )
         assign_to_cluster(cluster_id, project_id, result, embedding)
         return cluster_id
-
-    # Create junction entry. Session evals anchor to the session (trace NULL);
-    # span/trace evals anchor to the trace.
-    ErrorClusterTraces.objects.create(
-        cluster=cluster,
-        trace_id=result.trace_id,
-        trace_session_id=result.session_id,
-        eval_logger_id=result.eval_logger_id,
-    )
-    from tracer.services.feed_alerts.events import record_issue_event
-
-    record_issue_event(
-        cluster=cluster,
-        before=None,
-        source_key=f"eval-create:{result.eval_logger_id}",
-    )
 
     # Store centroid in ClickHouse
     family = _eval_family(result.eval_name, result.target_type)
@@ -733,6 +759,14 @@ def assign_to_cluster(
     # pass. Counter + membership are written in one transaction so a mid-row
     # activity kill can't leave the +1 without its row and reopen that loop.
     with transaction.atomic():
+        # The eval row first, then the issue: the order the delete takes them.
+        if not lock_live_eval(result.eval_logger_id):
+            logger.info(
+                "eval_cluster_skip_deleted_eval",
+                eval_logger_id=result.eval_logger_id,
+                cluster_id=cluster_id,
+            )
+            return
         # Locked so a concurrent retire cannot interleave with the recount.
         cluster = _lock_issue(cluster_id, project_id)
         alert_before = issue_snapshot(cluster)

@@ -8,6 +8,7 @@ soft-deleted unless a person owns it, and the same failure recurring revives it.
 """
 
 import ast
+import hashlib
 import importlib
 import pathlib
 import uuid
@@ -26,7 +27,7 @@ from tracer.models.trace_error_analysis import (
     FeedIssueStatus,
     TraceErrorGroup,
 )
-from tracer.queries.eval_clustering import assign_to_cluster
+from tracer.queries.eval_clustering import assign_to_cluster, create_cluster
 from tracer.services.eval_tasks.entries import (
     soft_delete_eval_results,
     soft_delete_live,
@@ -250,37 +251,68 @@ def test_assign_derives_occurrences_from_live_rows(
     assert (issue.error_count, issue.total_events) == (4, 4)
 
 
-def _raw_eval_deletes(source: str) -> list[int]:
-    """Lines of ``EvalLogger.<manager>....update(deleted=True)`` calls."""
+def _chain_root(node) -> str | None:
+    while isinstance(node, (ast.Call, ast.Attribute)):
+        node = node.func if isinstance(node, ast.Call) else node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _raw_eval_deletes(source: str) -> list[tuple[int, str | None]]:
+    """(line, receiver) of deletes of eval results without the service.
+
+    Three shapes: ``EvalLogger.<manager>....update(deleted=True)``,
+    ``EvalLogger.<manager>....delete()`` (a soft delete on ``BaseModel``), and,
+    in a module that imports ``EvalLogger``, any ``<x>.deleted = True``.
+    """
+    tree = ast.parse(source)
+    imports_eval_logger = any(
+        isinstance(n, ast.ImportFrom) and any(a.name == "EvalLogger" for a in n.names)
+        for n in ast.walk(tree)
+    )
     hits = []
-    for node in ast.walk(ast.parse(source)):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "update"
-            and any(
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            sets_deleted = node.func.attr == "update" and any(
                 kw.arg == "deleted"
                 and isinstance(kw.value, ast.Constant)
                 and kw.value.value is True
                 for kw in node.keywords
             )
-        ):
-            continue
-        receiver = node.func.value
-        while isinstance(receiver, (ast.Call, ast.Attribute)):
-            receiver = (
-                receiver.func if isinstance(receiver, ast.Call) else receiver.value
+            if (
+                sets_deleted or node.func.attr == "delete"
+            ) and _chain_root(node.func.value) == "EvalLogger":
+                hits.append((node.lineno, "EvalLogger"))
+        elif (
+            imports_eval_logger
+            and isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and node.value.value is True
+            and any(
+                isinstance(target, ast.Attribute) and target.attr == "deleted"
+                for target in node.targets
             )
-        if isinstance(receiver, ast.Name) and receiver.id == "EvalLogger":
-            hits.append(node.lineno)
+        ):
+            hits.append((node.lineno, _chain_root(node.targets[0].value)))
     return hits
 
 
-def test_every_eval_delete_goes_through_the_service():
-    """A raw ``update(deleted=True)`` on EvalLogger leaves Feed ghosts again.
+# ``<variable>.deleted = True`` sites in modules that import EvalLogger but
+# delete another model. A new variable name here must be reviewed by hand.
+_NOT_EVAL_RESULTS = {
+    "model_hub/views/separate_evals.py": {"gt", "eval_template"},
+    "model_hub/views/annotation_queues.py": {"comment"},
+    "tracer/views/project_version.py": {"project_version"},
+}
 
-    It reads the call chain, so it misses an aliased import, ``apps.get_model``
-    and reverse-manager updates; those still need review.
+
+def test_every_eval_delete_goes_through_the_service():
+    """A raw delete of an eval result leaves Feed ghosts again.
+
+    It catches the three shapes ``_raw_eval_deletes`` lists. It cannot catch an
+    aliased import, ``apps.get_model``, a reverse-manager update, a queryset held
+    in a variable (``qs = EvalLogger...; qs.update(...)``) or a ``.deleted = True``
+    on an instance in a module that does not import ``EvalLogger``; those need
+    review.
     """
     root = pathlib.Path(__file__).resolve().parents[2]
     service = root / "tracer" / "services" / "eval_tasks" / "entries.py"
@@ -291,7 +323,9 @@ def test_every_eval_delete_goes_through_the_service():
         and "migrations" not in path.parts
         and not any(part.startswith(".") for part in path.relative_to(root).parts)
         and path != service
-        for line in _raw_eval_deletes(path.read_text(encoding="utf-8"))
+        for line, receiver in _raw_eval_deletes(path.read_text(encoding="utf-8"))
+        if receiver
+        not in _NOT_EVAL_RESULTS.get(path.relative_to(root).as_posix(), set())
     ]
     assert offenders == []
 
@@ -324,7 +358,7 @@ def test_backfill_retires_old_ghosts_and_repairs_counts(
     ev = _failing_eval(custom_eval_config, _span(project, project_version), "et-drift")
     ErrorClusterTraces.objects.create(cluster=drifted, trace=ev.trace, eval_logger=ev)
     migration = importlib.import_module(
-        "tracer.migrations.0118_retire_deleted_eval_memberships"
+        "tracer.migrations.0119_retire_deleted_eval_memberships"
     )
 
     migration.retire_deleted_eval_memberships(django_apps, None)
@@ -352,3 +386,155 @@ def test_backfill_retires_old_ghosts_and_repairs_counts(
     assert snapshot == list(
         TraceErrorGroup.all_objects.order_by("pk").values_list(*repaired)
     )
+
+
+def _result_for(ev, project):
+    return ClusterableEvalResult(
+        eval_logger_id=str(ev.id),
+        project_id=str(project.id),
+        eval_name=ev.custom_eval_config.name,
+        eval_config_id=str(ev.custom_eval_config_id),
+        explanation=ev.eval_explanation,
+        target_type=EvalTargetType.TRACE,
+        trace_id=str(ev.trace_id),
+        session_id=None,
+        score=0.2,
+    )
+
+
+def test_assign_skips_an_eval_deleted_while_it_was_being_clustered(
+    issue_with_three, project, project_version, no_clickhouse
+):
+    issue, evals = issue_with_three
+    cfg = evals[0].custom_eval_config
+    fourth = _failing_eval(cfg, _span(project, project_version), "et-late")
+    result = _result_for(fourth, project)
+    # Delete & rerun lands after the fetch and before the assign.
+    soft_delete_eval_results(EvalLogger.objects.filter(id=fourth.id))
+
+    assign_to_cluster(issue.cluster_id, str(project.id), result, [0.1, 0.2])
+
+    assert not ErrorClusterTraces.all_objects.filter(eval_logger_id=fourth.id).exists()
+    issue.refresh_from_db()
+    assert issue.error_count == 3
+
+
+def test_create_cluster_skips_an_eval_deleted_while_it_was_being_clustered(
+    project, project_version, custom_eval_config, eval_task, no_clickhouse
+):
+    ev = _failing_eval(
+        custom_eval_config, _span(project, project_version), str(eval_task.id)
+    )
+    result = _result_for(ev, project)
+    soft_delete_eval_results(EvalLogger.objects.filter(id=ev.id))
+
+    assert create_cluster(str(project.id), result, [0.1, 0.2]) is None
+
+    assert not TraceErrorGroup.all_objects.filter(project=project).exists()
+
+
+def _cluster_id_for(project, result):
+    base = (
+        f"{project.id}|eval|{result.target_type}|{result.eval_name}"
+        f"|{result.explanation[:100]}"
+    )
+    digest = hashlib.md5(base.encode(), usedforsecurity=False).hexdigest()[:8]
+    return f"E-{digest.upper()}"
+
+
+def test_create_cluster_revives_the_retired_issue_instead_of_minting_a_twin(
+    project, project_version, custom_eval_config, eval_task, no_clickhouse
+):
+    first = _failing_eval(
+        custom_eval_config, _span(project, project_version), str(eval_task.id)
+    )
+    result = _result_for(first, project)
+    retired = _issue(
+        project,
+        custom_eval_config,
+        cluster_id=_cluster_id_for(project, result),
+        error_count=1,
+        total_events=1,
+        unique_traces=1,
+        combined_description=result.explanation,
+    )
+    ErrorClusterTraces.objects.create(
+        cluster=retired, trace=first.trace, eval_logger=first
+    )
+    soft_delete_eval_results(EvalLogger.objects.filter(id=first.id))
+    assert not TraceErrorGroup.objects.filter(pk=retired.pk).exists()
+    again = _failing_eval(custom_eval_config, _span(project, project_version), "et-2")
+
+    # The centroid lookup missed, so clustering creates instead of assigning.
+    create_cluster(str(project.id), _result_for(again, project), [0.1, 0.2])
+
+    issues = TraceErrorGroup.all_objects.filter(project=project)
+    assert [i.pk for i in issues] == [retired.pk]
+    retired.refresh_from_db()
+    assert (retired.deleted, retired.error_count) == (False, 1)
+
+
+def test_a_merged_issue_is_never_revived(
+    issue_with_three, project, project_version, no_clickhouse
+):
+    issue, evals = issue_with_three
+    winner = _issue(project, evals[0].custom_eval_config, cluster_id="E-WINNER-1")
+    TraceErrorGroup.objects.filter(pk=issue.pk).update(
+        deleted=True, deleted_at=timezone.now(), redirect_to=winner
+    )
+    fourth = _failing_eval(
+        evals[0].custom_eval_config, _span(project, project_version), "et-merged"
+    )
+
+    with pytest.raises(TraceErrorGroup.DoesNotExist):
+        assign_to_cluster(
+            issue.cluster_id,
+            str(project.id),
+            _result_for(fourth, project),
+            [0.1, 0.2],
+        )
+
+    assert TraceErrorGroup.all_objects.get(pk=issue.pk).deleted is True
+
+
+def test_retire_and_revive_each_record_an_alert_event(
+    issue_with_three, project, project_version, no_clickhouse
+):
+    issue, evals = issue_with_three
+    cfg = evals[0].custom_eval_config
+    with patch(
+        "tracer.services.feed_alerts.events.record_issue_event"
+    ) as record:
+        soft_delete_eval_results(EvalLogger.objects.filter(id__in=[e.id for e in evals]))
+        retire = record.call_args.kwargs
+        assert retire["source_key"].startswith(f"eval-retire:{issue.pk}:")
+        assert retire["before"]["occurrences"] == 3
+        assert retire["before"]["visible"] is True
+        assert retire["cluster"].deleted is True
+
+        again = _failing_eval(cfg, _span(project, project_version), "et-again")
+        assign_to_cluster(
+            issue.cluster_id, str(project.id), _result_for(again, project), [0.1, 0.2]
+        )
+        revive = record.call_args.kwargs
+        assert revive["source_key"] == f"eval-assign:{again.id}:{issue.pk}"
+        assert revive["before"]["visible"] is False
+        assert revive["cluster"].deleted is False
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("EvalLogger.objects.filter(id=1).delete()", True),
+        ("EvalLogger.objects.filter(id=1).update(deleted=True)", True),
+        (
+            "from tracer.models.observation_span import EvalLogger\n"
+            "row.deleted = True\nrow.save()",
+            True,
+        ),
+        ("row.deleted = True", False),
+        ("EvalLogger.objects.filter(id=1).update(output_float=0)", False),
+    ],
+)
+def test_the_gate_flags_the_delete_shapes_it_documents(source, expected):
+    assert bool(_raw_eval_deletes(source)) is expected

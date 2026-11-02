@@ -209,6 +209,7 @@ class TraceListQuerySerializer(StrictInputSerializer):
 
 
 class TraceObserveListQuerySerializer(StrictInputSerializer):
+    sort_params = SortParamListQueryParamField(required=False, default=list)
     project_id = serializers.UUIDField(required=False)
     project_version_id = serializers.UUIDField(required=False)
     session_id = serializers.UUIDField(required=False)
@@ -265,6 +266,37 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
                 }
             )
         attrs["attribute_keys"] = list(attribute_keys)
+        if attrs.get("sort_params"):
+            from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+            from tracer.services.clickhouse.query_builders.trace_usage import (
+                USAGE_COLUMNS,
+            )
+            from tracer.services.clickhouse.v2.query_builders.observe_usage import (
+                usage_column,
+            )
+
+            if (
+                not attrs.get("project_id")
+                or attrs.get("project_version_id")
+                or attrs.get("session_id")
+                or attrs.get("cursor")
+                or attrs.get("cursor_mode")
+                or len(attrs["sort_params"]) > len(USAGE_COLUMNS)
+                or any(
+                    item["column_id"] not in USAGE_COLUMNS
+                    for item in attrs["sort_params"]
+                )
+                or any(
+                    not BaseQueryBuilder.is_datetime_filter(item)
+                    and not usage_column(item)
+                    for item in attrs["filters"]
+                )
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "sort_params": "Usage sorting requires a project, numbered pages, and only date or usage filters. Clear the sort to use other filters."
+                    }
+                )
         return validate_cursor_exclusivity(self, attrs, page_field="page_number")
 
 

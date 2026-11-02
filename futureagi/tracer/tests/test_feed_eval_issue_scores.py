@@ -159,3 +159,45 @@ def test_sidebar_eval_score_uses_the_issue_eval(trace_eval_issue, no_clickhouse)
     meta = feed._fetch_sidebar_ai_metadata(trace_eval_issue, trace_ids)
 
     assert meta.eval_score == pytest.approx(0.4)
+
+
+def test_overview_scores_the_issue_by_its_own_eval(trace_eval_issue, no_clickhouse):
+    with (
+        patch.object(feed, "_fetch_events_over_time", return_value=[]),
+        patch.object(feed, "_fetch_pattern_summary", return_value=feed.PatternSummary()),
+        patch.object(feed, "_fetch_success_trace_pass_reel", return_value=[]),
+        patch.object(feed, "_cluster_highlight_terms", return_value=[]),
+    ):
+        overview = feed.get_overview(
+            trace_eval_issue.cluster_id, [str(trace_eval_issue.project_id)]
+        )
+
+    assert [t.summary.eval_score for t in overview.representative_traces] == [
+        pytest.approx(0.4)
+    ]
+
+
+def test_score_chart_reads_the_same_evals_as_the_score_card(
+    trace_eval_issue, no_clickhouse
+):
+    trends = feed._fetch_score_trends(
+        trace_eval_issue, 14, project_id=str(trace_eval_issue.project_id)
+    )
+
+    # The 1.0 span eval on the same trace is not this issue's eval.
+    assert [t.current for t in trends] == [pytest.approx(0.4)]
+
+
+def test_score_chart_keeps_a_member_that_joined_in_the_window_with_an_old_eval(
+    trace_eval_issue, no_clickhouse
+):
+    EvalLogger.objects.filter(
+        target_type=EvalTargetType.TRACE,
+        custom_eval_config=trace_eval_issue.eval_config,
+    ).update(created_at=timezone.now() - timedelta(days=60))
+
+    trends = feed._fetch_score_trends(
+        trace_eval_issue, 14, project_id=str(trace_eval_issue.project_id)
+    )
+
+    assert [t.current for t in trends] == [pytest.approx(0.4)]

@@ -18,8 +18,9 @@ import AgentPath from "src/sections/projects/LLMTracing/GraphSection/AgentPath";
 import GraphSkeleton from "src/sections/projects/LLMTracing/GraphSection/GraphSkeleton";
 import { buildTraceGraph } from "src/components/traceDetail/buildTraceGraph";
 import { error as errorPalette, success } from "src/theme/palette";
-import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useErrorFeedOverview } from "src/api/errorFeed/error-feed";
+import { useIssueTraceDetail } from "../useIssueTraceDetail";
+import { useSharedIssue } from "../sharedIssueContext";
 import EvalIOPanel from "./EvalIOPanel";
 import VoiceEvalPanel from "./VoiceEvalPanel";
 import { buildGraphDiff, comparisonGraphForMode } from "./buildGraphDiff";
@@ -806,7 +807,7 @@ PatternSummary.propTypes = {
 
 // ── Agent flow from real span tree ────────────────────────────────────────────
 export function TraceGraphView({ traceId, mode, projectId }) {
-  const { data, isLoading, isError } = useGetTraceDetail(traceId, {
+  const { data, isLoading, isError } = useIssueTraceDetail(traceId, {
     projectId,
   });
   const spanTree = data?.observation_spans || data?.observationSpans;
@@ -1052,8 +1053,8 @@ function TraceGraphCompare({
   mode,
   projectId,
 }) {
-  const failQ = useGetTraceDetail(failingTraceId, { projectId });
-  const passQ = useGetTraceDetail(workingTraceId, { projectId });
+  const failQ = useIssueTraceDetail(failingTraceId, { projectId });
+  const passQ = useIssueTraceDetail(workingTraceId, { projectId });
 
   const failGraph = useMemo(() => {
     const tree = failQ.data?.observation_spans || failQ.data?.observationSpans;
@@ -2553,8 +2554,11 @@ export default function OverviewTab({ _error: currentError }) {
   // A cluster's modality (text vs voice) decides the per-trace surface —
   // the BE derives it from the project's voice agent definition.
   const isVoice = currentError?.modality === "voice";
-  const { data: overview, isLoading: isOverviewLoading } =
-    useErrorFeedOverview(clusterId);
+  const shared = useSharedIssue();
+  const { data: fetchedOverview, isLoading: isFetchingOverview } =
+    useErrorFeedOverview(shared ? null : clusterId);
+  const overview = shared ? shared.overview : fetchedOverview;
+  const isOverviewLoading = shared ? false : isFetchingOverview;
   const traces = useMemo(
     () => overview?.representative_traces ?? [],
     [overview],
@@ -2827,7 +2831,7 @@ export default function OverviewTab({ _error: currentError }) {
                   icon={isVoice ? "mdi:phone-outline" : "mdi:code-tags"}
                   collapsible
                 >
-                  {isVoice ? (
+                  {isVoice && !shared ? (
                     <VoiceEvalPanel
                       trace={trace}
                       evalScore={trace?.eval_score}

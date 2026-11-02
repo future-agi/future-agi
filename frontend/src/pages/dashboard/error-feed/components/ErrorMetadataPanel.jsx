@@ -7,6 +7,7 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  Link,
   Menu,
   MenuItem,
   Skeleton,
@@ -29,8 +30,12 @@ import {
 } from "src/api/errorFeed/error-feed";
 import { useOrgMembers } from "src/api/annotation-queues/annotation-queues";
 import { useOrganization } from "src/contexts/OrganizationContext";
-import openExternal from "../openExternal";
+import { useSharedIssueSidebar } from "src/api/shared-links";
+import openExternal, { safeExternalUrl } from "../openExternal";
 import { useErrorFeedStore } from "../store";
+import { useSharedIssue } from "../sharedIssueContext";
+import ErrorStatusChip from "./ErrorStatusChip";
+import ErrorSeverityBadge from "./ErrorSeverityBadge";
 import PropTypes from "prop-types";
 
 const humanizeTime = (iso) => {
@@ -792,7 +797,7 @@ const SEV_COLOR = {
   low: "#71717a",
 };
 
-function CoOccurringList({ issues }) {
+function CoOccurringList({ issues, readOnly = false }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const navigate = useNavigate();
@@ -806,7 +811,11 @@ function CoOccurringList({ issues }) {
             direction="row"
             alignItems="center"
             gap={0.75}
-            onClick={() => navigate(paths.dashboard.errorFeed.detail(issue.id))}
+            onClick={
+              readOnly
+                ? undefined
+                : () => navigate(paths.dashboard.errorFeed.detail(issue.id))
+            }
             sx={{
               px: 1,
               py: 0.7,
@@ -840,7 +849,10 @@ function CoOccurringList({ issues }) {
     </Stack>
   );
 }
-CoOccurringList.propTypes = { issues: PropTypes.array.isRequired };
+CoOccurringList.propTypes = {
+  issues: PropTypes.array.isRequired,
+  readOnly: PropTypes.bool,
+};
 
 // ── Integrations ──────────────────────────────────────────────────────────────
 
@@ -1098,6 +1110,42 @@ ConnectorRow.propTypes = {
   onAction: PropTypes.func,
 };
 
+function SharedLinearLink({ url, issueId }) {
+  const href = safeExternalUrl(url);
+  if (url && !href) {
+    return (
+      <Typography fontSize="12px" color="text.secondary">
+        {issueId || "Linear issue"}
+      </Typography>
+    );
+  }
+  if (!url) {
+    return (
+      <Typography fontSize="12px" color="text.disabled">
+        No linked issue
+      </Typography>
+    );
+  }
+  return (
+    <Stack direction="row" alignItems="center" gap={0.75}>
+      <Iconify icon="simple-icons:linear" width={12} />
+      <Link
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        underline="hover"
+        fontSize="12px"
+      >
+        {issueId || "Linear issue"}
+      </Link>
+    </Stack>
+  );
+}
+SharedLinearLink.propTypes = {
+  url: PropTypes.string,
+  issueId: PropTypes.string,
+};
+
 function Integrations({
   clusterId,
   traceId,
@@ -1193,8 +1241,13 @@ export default function ErrorMetadataPanel({ error }) {
   // Use the live active org (matches the X-Organization-Id header) instead of
   // the cached user.organization.id, which can drift and 404 the members
   // request (TH-6156).
+  // A shared issue is read-only and its viewer may be signed out: nothing
+  // here fetches, and triage shows as text.
+  const shared = useSharedIssue();
   const { currentOrganizationId } = useOrganization();
-  const { data: orgMembers = [] } = useOrgMembers(currentOrganizationId);
+  const { data: orgMembers = [] } = useOrgMembers(
+    shared ? null : currentOrganizationId,
+  );
   const updateIssue = useUpdateErrorFeedIssue();
 
   const setSeverity = (val) => {
@@ -1209,10 +1262,25 @@ export default function ErrorMetadataPanel({ error }) {
   const selectedTraceId = useErrorFeedStore(
     (s) => s.selectedTraceIdByCluster[error?.cluster_id] ?? null,
   );
-  const { data: sidebar, isLoading: isSidebarLoading } = useErrorFeedSidebar(
-    error?.cluster_id,
+  const fetchedSidebar = useErrorFeedSidebar(
+    shared ? null : error?.cluster_id,
     selectedTraceId,
   );
+  // Like the issue page, AI metadata and evaluations follow the picked trace.
+  const sharedTraceSidebar = useSharedIssueSidebar(
+    shared?.token,
+    shared ? selectedTraceId : null,
+  );
+  // The share's own sidebar is the default trace's; once a trace is picked,
+  // show only that trace's sidebar, never the default's in its place.
+  const sidebar = shared
+    ? selectedTraceId
+      ? sharedTraceSidebar.data
+      : shared.sidebar
+    : fetchedSidebar.data;
+  const isSidebarLoading = shared
+    ? !!selectedTraceId && sharedTraceSidebar.isLoading
+    : fetchedSidebar.isLoading;
   const sidebarPending = isSidebarLoading && !sidebar;
   // Must match OverviewTab's trace source or the two read different cache entries.
   const effectiveTraceId =
@@ -1268,20 +1336,39 @@ export default function ErrorMetadataPanel({ error }) {
         <Section title="Triage">
           <Stack gap={0.9}>
             <FieldRow label="Status">
-              <StatusDropdown
-                clusterId={error.cluster_id}
-                current={error.status}
-              />
+              {shared ? (
+                <ErrorStatusChip status={error.status} />
+              ) : (
+                <StatusDropdown
+                  clusterId={error.cluster_id}
+                  current={error.status}
+                />
+              )}
             </FieldRow>
             <FieldRow label="Severity">
-              <SeverityDropdown current={severity} onChange={setSeverity} />
+              {shared ? (
+                <ErrorSeverityBadge
+                  severity={error.severity}
+                  assessmentStatus={error.severity_assessment_status}
+                  source={error.severity_source}
+                  reason={error.severity_reason}
+                />
+              ) : (
+                <SeverityDropdown current={severity} onChange={setSeverity} />
+              )}
             </FieldRow>
             <FieldRow label="Assignee">
-              <AssigneeDropdown
-                current={assignee}
-                onChange={setAssignee}
-                members={orgMembers}
-              />
+              {shared ? (
+                <Typography fontSize="12px" color="text.primary" noWrap>
+                  {assignee || "Unassigned"}
+                </Typography>
+              ) : (
+                <AssigneeDropdown
+                  current={assignee}
+                  onChange={setAssignee}
+                  members={orgMembers}
+                />
+              )}
             </FieldRow>
           </Stack>
         </Section>
@@ -1485,7 +1572,7 @@ export default function ErrorMetadataPanel({ error }) {
         ) : (
           coOccurringIssues.length > 0 && (
             <Section title="Co-occurring Issues">
-              <CoOccurringList issues={coOccurringIssues} />
+              <CoOccurringList issues={coOccurringIssues} readOnly={!!shared} />
             </Section>
           )
         )}
@@ -1519,12 +1606,19 @@ export default function ErrorMetadataPanel({ error }) {
           >
             Integrations
           </Typography>
-          <Integrations
-            clusterId={error?.cluster_id}
-            traceId={effectiveTraceId}
-            externalIssueUrl={error?.external_issue_url}
-            externalIssueId={error?.external_issue_id}
-          />
+          {shared ? (
+            <SharedLinearLink
+              url={error?.external_issue_url}
+              issueId={error?.external_issue_id}
+            />
+          ) : (
+            <Integrations
+              clusterId={error?.cluster_id}
+              traceId={effectiveTraceId}
+              externalIssueUrl={error?.external_issue_url}
+              externalIssueId={error?.external_issue_id}
+            />
+          )}
         </Stack>
       </Stack>
     </Box>

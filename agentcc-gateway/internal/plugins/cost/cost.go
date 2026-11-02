@@ -36,6 +36,9 @@ const (
 	tokenPriceHint     = "set model_database.overrides.<model>.pricing (input_per_token / output_per_token, USD per token)"
 	audioPriceHint     = "set model_database.overrides.<model>.pricing.input_per_second (USD per second of audio)"
 	characterPriceHint = "set model_database.overrides.<model>.pricing.input_per_character (USD per character of text)"
+	imagePriceHint     = "set model_database.overrides.<model>.pricing.output_per_image (USD per image)"
+	queryPriceHint     = "set model_database.overrides.<model>.pricing.input_per_query (USD per query)"
+	pagePriceHint      = "set model_database.overrides.<model>.pricing.per_page (USD per page)"
 	budgetPriceHint    = "; budgets price chat tokens separately, from cost_tracking.custom_pricing.<model> (input_per_mtok / output_per_mtok, USD per million tokens)"
 )
 
@@ -45,6 +48,7 @@ type Plugin struct {
 	enabled          bool
 	tenantStore      *tenant.Store
 	aliasCostFactors map[string]float64 // alias prefix → cost multiplier
+	priceTables      func(orgID, providerID string) string
 
 	unpricedWarned      sync.Map     // model → struct{}: models already warned about
 	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
@@ -60,8 +64,14 @@ func New(enabled bool, modelDBGetter func() *modeldb.ModelDB, tenantStore *tenan
 	}
 }
 
-func (p *Plugin) Name() string           { return "cost" }
-func (p *Plugin) Priority() int          { return 500 }
+// SetPriceTables gives the plugin the name the price table keys a provider's
+// models under, as the provider that served the request states it.
+func (p *Plugin) SetPriceTables(f func(orgID, providerID string) string) {
+	p.priceTables = f
+}
+
+func (p *Plugin) Name() string               { return "cost" }
+func (p *Plugin) Priority() int              { return 500 }
 func (p *Plugin) ShouldSkipOnCacheHit() bool { return true } // No cost to calculate on cache hits.
 
 // ProcessRequest is a no-op for the cost plugin.
@@ -103,6 +113,10 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		}
 	}
 
+	// After org pricing, which is keyed by the name the org configured.
+	table := p.tableName(rc)
+	model = priceKey(db, model, rc.Provider, table)
+
 	opts := modeldb.CostOptions{
 		Cached: rc.Metadata["cache_status"] == "hit",
 	}
@@ -122,7 +136,8 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			cost, ok = db.CalculateCost(model, rc.EmbeddingResponse.Usage.PromptTokens, 0, opts)
 		}
 	case "image":
-		// Image cost varies by provider; skip for now.
+		priceHint = imagePriceHint
+		cost, ok, billed = imageCost(db, model, rc)
 	case "transcription", "translation", "transcription_relay":
 		priceHint = audioPriceHint
 		if seconds, err := strconv.ParseFloat(rc.Metadata["audio_seconds"], 64); err == nil {
@@ -136,7 +151,26 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			cost, ok = db.CharacterCost(model, characters)
 		}
 	case "rerank":
-		// Rerank billing varies by provider; skip for now.
+		priceHint = queryPriceHint
+		if rc.RerankResponse != nil {
+			units := searchUnits(rc.RerankResponse)
+			billed = float64(units)
+			cost, ok = db.QueryCost(model, units)
+		}
+	case "ocr":
+		priceHint = pagePriceHint
+		if pages := ocrPages(rc.OCRResponse); pages > 0 {
+			billed = float64(pages)
+			cost, ok = db.PageCost(model, pages)
+		}
+	case "genai_embed":
+		// The response carries no usage, so a model priced per token cannot
+		// be priced here; it is recorded as unpriced rather than as free.
+		priceHint = characterPriceHint
+		if characters, err := strconv.Atoi(rc.Metadata["input_characters"]); err == nil {
+			billed = float64(characters)
+			cost, ok = db.CharacterCost(model, characters)
+		}
 	default: // "chat" or empty
 		if rc.Response == nil || rc.Response.Usage == nil {
 			return pipeline.ResultContinue()
@@ -144,8 +178,8 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		usage := rc.Response.Usage
 		billed = float64(usage.PromptTokens + usage.CompletionTokens)
 		cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
-		if !ok && model == rc.ResolvedModel && rc.Model != "" {
-			cost, ok = db.CalculateCost(rc.Model, usage.PromptTokens, usage.CompletionTokens, opts)
+		if !ok && rc.ResolvedModel != "" && rc.Model != "" {
+			cost, ok = db.CalculateCost(priceKey(db, rc.Model, rc.Provider, table), usage.PromptTokens, usage.CompletionTokens, opts)
 		}
 	}
 
@@ -170,6 +204,111 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// priceKey is the key the price table lists a model under.
+//
+// The table keys many models by provider, as "mistral/mistral-ocr-latest" or
+// "perplexity/sonar", while a request names the bare model, and a lookup
+// strips a provider prefix but never adds one.
+//
+// A provider that resells other vendors' models names them with the vendor's
+// prefix, as Perplexity's "google/gemini-3.6-flash". The lookup would strip
+// that to the vendor's own price, so the provider's entry
+// ("perplexity/google/gemini-3.6-flash") is tried first.
+//
+// table is the name the provider states for itself, which its ID need not
+// match: the table lists new Gemini models only under "gemini/" and
+// "vertex_ai/", and a Gemini provider may be named "vertex_ai_global".
+func priceKey(db *modeldb.ModelDB, model, provider, table string) string {
+	if provider == "" || model == "" {
+		return model
+	}
+	if _, ok := db.Get(model); ok && !strings.Contains(model, "/") {
+		return model
+	}
+	for _, name := range []string{provider, table, tableProviderNames[provider]} {
+		if name == "" {
+			continue
+		}
+		if prefixed := name + "/" + model; listsExactly(db, prefixed) {
+			return prefixed
+		}
+	}
+	return model
+}
+
+// tableProviderNames spells a provider the way the price table keys it, where
+// that differs from the gateway's name: "fireworks_ai/accounts/fireworks/models/glm-5p3".
+var tableProviderNames = map[string]string{
+	"fireworks": "fireworks_ai",
+	"together":  "together_ai",
+}
+
+// tableName is the name the price table keys rc's provider's models under, or
+// "" when the provider states none.
+func (p *Plugin) tableName(rc *models.RequestContext) string {
+	if p.priceTables == nil || rc.Provider == "" {
+		return ""
+	}
+	return p.priceTables(rc.Metadata[tenant.MetadataKeyOrgID], rc.Provider)
+}
+
+// listsExactly says whether the table has an entry under id itself, not
+// under id with its prefix stripped.
+func listsExactly(db *modeldb.ModelDB, id string) bool {
+	m, ok := db.Get(id)
+	return ok && m.ID == id
+}
+
+// imageCost prices an image call: by tokens when the upstream reported them,
+// as the gpt-image models do, otherwise per image at the size and quality the
+// request asked for. billed is what was used, priced or not.
+func imageCost(db *modeldb.ModelDB, model string, rc *models.RequestContext) (cost float64, ok bool, billed float64) {
+	resp := rc.ImageResponse
+	if resp == nil {
+		return 0, false, 0
+	}
+	if u := resp.Usage; u != nil && u.TotalTokens > 0 {
+		textIn, imageIn := u.InputTokens, 0
+		if d := u.InputTokensDetails; d != nil {
+			textIn, imageIn = d.TextTokens, d.ImageTokens
+		}
+		cost, ok = db.ImageTokenCost(model, textIn, imageIn, u.OutputTokens)
+		return cost, ok, float64(u.TotalTokens)
+	}
+	n := len(resp.Data)
+	if n == 0 {
+		return 0, false, 0
+	}
+	var size, quality string
+	if req := rc.ImageRequest; req != nil {
+		size, quality = req.Size, req.Quality
+	}
+	cost, ok = db.ImageCost(model, size, quality, n)
+	return cost, ok, float64(n)
+}
+
+// searchUnits is how many search units a rerank call is billed for: the
+// count the upstream reports, or one call when it reports none.
+func searchUnits(resp *models.RerankResponse) int {
+	if resp.Meta != nil {
+		if units := resp.Meta.BilledUnits["search_units"]; units > 0 {
+			return units
+		}
+	}
+	return 1
+}
+
+// ocrPages is how many pages an OCR call read.
+func ocrPages(resp *models.OCRResponse) int {
+	if resp == nil {
+		return 0
+	}
+	if resp.UsageInfo != nil && resp.UsageInfo.PagesProcessed > 0 {
+		return resp.UsageInfo.PagesProcessed
+	}
+	return len(resp.Pages)
 }
 
 // warnUnpriced logs, once per model, that traffic is being recorded without a

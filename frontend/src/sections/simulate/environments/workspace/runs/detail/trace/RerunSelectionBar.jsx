@@ -30,14 +30,64 @@ const rerunButtonSx = {
 const plural = (n, one, many = `${one}s`) =>
   `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
+// One choice in the Re-run menu: a title, what it does, and a disabled look
+// that keeps the row readable (a disabled item can't take focus otherwise).
+function RerunOption({ icon, title, description, blocked, onSelect }) {
+  return (
+    <Box
+      role="menuitem"
+      tabIndex={0}
+      aria-disabled={blocked}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      sx={{
+        display: "flex",
+        gap: 1,
+        px: 1.5,
+        py: 0.75,
+        cursor: blocked ? "not-allowed" : "pointer",
+        opacity: blocked ? 0.6 : 1,
+        "&:hover": blocked ? undefined : { bgcolor: "action.hover" },
+        "&:focus-visible": {
+          outline: "2px solid",
+          outlineColor: "primary.main",
+        },
+      }}
+    >
+      <Iconify icon={icon} width={16} sx={{ mt: "2px", flexShrink: 0 }} />
+      <Box sx={{ minWidth: 0 }}>
+        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+          {title}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {description}
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
+RerunOption.propTypes = {
+  icon: PropTypes.string.isRequired,
+  title: PropTypes.string.isRequired,
+  description: PropTypes.string.isRequired,
+  blocked: PropTypes.bool.isRequired,
+  onSelect: PropTypes.func.isRequired,
+};
+
 /**
  * What the run table shows once calls are ticked: how many, Clear, and the
- * Re-run menu. A re-run works per scenario and repeats each one `trials`
- * times, so the menu counts scenarios and shows the calls that will make.
+ * Re-run menu. The calls can be made again inside this run, or their
+ * scenarios run as a new simulation, each repeated `trials` times.
  *
- * `resolveScenarioKeys` returns the scenarios behind the selection. It is read
- * when the menu opens: for "all matching calls" that means reading the calls
- * the table never loaded, so the menu waits for it before offering the run.
+ * `resolveSelection` returns `{ keys, callIds }`: the scenarios and calls
+ * behind the selection. It is read when the menu opens: for "all matching
+ * calls" that means reading the calls the table never loaded, so the menu
+ * waits for it before offering either re-run.
  */
 export default function RerunSelectionBar({
   selectedCalls,
@@ -45,15 +95,16 @@ export default function RerunSelectionBar({
   allMatching = false,
   runTrials = 1,
   disabledReason = null,
-  resolveScenarioKeys,
+  resolveSelection,
   onRerun,
+  onRerunInRun = null,
   onClear,
 }) {
   const [anchor, setAnchor] = useState(null);
-  const [keys, setKeys] = useState(null);
+  const [resolved, setResolved] = useState(null);
   const [failed, setFailed] = useState(false);
   const [trials, setTrials] = useState(runTrials);
-  // Each open reads the scenarios afresh; only the latest read may land, so a
+  // Each open reads the selection afresh; only the latest read may land, so a
   // slow earlier one can't replace a newer count.
   const readRef = useRef(0);
 
@@ -64,14 +115,14 @@ export default function RerunSelectionBar({
         ? `${selectedCalls.toLocaleString()} selected`
         : `${plural(selectedCalls, "call")} selected · ${plural(scenarioCount, "scenario")}`;
 
-  const readKeys = async () => {
-    setKeys(null);
+  const readSelection = async () => {
+    setResolved(null);
     setFailed(false);
     readRef.current += 1;
     const read = readRef.current;
     try {
-      const resolved = await resolveScenarioKeys();
-      if (read === readRef.current) setKeys(resolved);
+      const selection = await resolveSelection();
+      if (read === readRef.current) setResolved(selection);
     } catch {
       if (read === readRef.current) setFailed(true);
     }
@@ -79,10 +130,12 @@ export default function RerunSelectionBar({
   const openMenu = (event) => {
     setAnchor(event.currentTarget);
     setTrials(runTrials);
-    readKeys();
+    readSelection();
   };
   const closeMenu = () => setAnchor(null);
 
+  const keys = resolved?.keys ?? null;
+  const callIds = resolved?.callIds ?? [];
   const scenarios = keys?.length ?? 0;
   const calls = scenarios * trials;
   const overLimit = calls > MAX_CALLS_PER_RUN;
@@ -93,6 +146,11 @@ export default function RerunSelectionBar({
     if (blocked) return;
     closeMenu();
     onRerun(keys, trials);
+  };
+  const startInRun = () => {
+    if (!ready) return;
+    closeMenu();
+    onRerunInRun(callIds);
   };
 
   return (
@@ -179,7 +237,7 @@ export default function RerunSelectionBar({
             {failed && (
               <Button
                 size="small"
-                onClick={readKeys}
+                onClick={readSelection}
                 sx={{
                   typography: "s3",
                   fontWeight: 600,
@@ -193,8 +251,21 @@ export default function RerunSelectionBar({
             )}
           </Stack>
 
-          {/* Set first, then act: Repeats sits above the option, outside it,
-              so changing it never starts the run. */}
+          {onRerunInRun && (
+            <>
+              <RerunOption
+                icon="solar:restart-bold"
+                title="Re-run in this run"
+                description={`Makes ${ready ? `these ${plural(callIds.length, "call")}` : "the calls"} again inside this run. Their new results replace the old ones.`}
+                blocked={!ready}
+                onSelect={startInRun}
+              />
+              <Divider />
+            </>
+          )}
+
+          {/* Set first, then act: Repeats sits above the new-simulation
+              option, outside it, so changing it never starts the run. */}
           <Stack spacing={0.5} sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
             <Stack direction="row" alignItems="center" spacing={1} useFlexGap>
               {/* The same Repeats picker as the environment header. */}
@@ -230,46 +301,13 @@ export default function RerunSelectionBar({
             )}
           </Stack>
           <Divider />
-          <Box
-            role="menuitem"
-            tabIndex={0}
-            aria-disabled={blocked}
-            onClick={start}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                start();
-              }
-            }}
-            sx={{
-              display: "flex",
-              gap: 1,
-              px: 1.5,
-              py: 0.75,
-              cursor: blocked ? "not-allowed" : "pointer",
-              opacity: blocked ? 0.6 : 1,
-              "&:hover": blocked ? undefined : { bgcolor: "action.hover" },
-              "&:focus-visible": {
-                outline: "2px solid",
-                outlineColor: "primary.main",
-              },
-            }}
-          >
-            <Iconify
-              icon="solar:refresh-bold"
-              width={16}
-              sx={{ mt: "2px", flexShrink: 0 }}
-            />
-            <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-                Run as a new simulation
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                Makes the calls again with the current agent and env, and
-                records a new run.
-              </Typography>
-            </Box>
-          </Box>
+          <RerunOption
+            icon="solar:refresh-bold"
+            title="Run as a new simulation"
+            description="Makes the calls again with the current agent and env, and records a new run."
+            blocked={blocked}
+            onSelect={start}
+          />
         </Box>
       </Popover>
     </Stack>
@@ -281,7 +319,8 @@ RerunSelectionBar.propTypes = {
   allMatching: PropTypes.bool,
   runTrials: PropTypes.number,
   disabledReason: PropTypes.string,
-  resolveScenarioKeys: PropTypes.func.isRequired,
+  resolveSelection: PropTypes.func.isRequired,
   onRerun: PropTypes.func.isRequired,
+  onRerunInRun: PropTypes.func,
   onClear: PropTypes.func.isRequired,
 };

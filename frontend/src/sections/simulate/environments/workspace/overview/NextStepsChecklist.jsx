@@ -2,17 +2,16 @@ import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button } from "@mui/material";
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import SectionCard from "../../components/SectionCard";
-import { ENV_SHAPE, ENV_STATE_SHAPE, CHECKLIST_COPY, OVERVIEW_COPY } from "./overview.constants";
+import { ENV_SHAPE, ENV_STATE_SHAPE, CHECKLIST_COPY } from "./overview.constants";
 
 // What is left before this environment can run its first simulation. Shown only
 // for envs that have not been seeded yet (no agent, no derived world) — a
 // scratch env arrives with everything derived, so every step would read as
 // pre-complete and the checklist would mislead.
-export default function NextStepsChecklist({ env, envState, onGo }) {
-  const scenarioCount = envState?.scenarios?.length || 0;
+export default function NextStepsChecklist({ env, envState, onGo, scenarioCount: serverScenarioCount }) {
+  const scenarioCount = serverScenarioCount ?? (envState?.scenarios?.length || 0);
   const evalCount = envState?.evals?.length || 0;
   const runCount = envState?.runs?.length || 0;
 
@@ -30,10 +29,9 @@ export default function NextStepsChecklist({ env, envState, onGo }) {
       done: false,
       cta: CHECKLIST_COPY.agent.cta,
       // Connecting an agent is deferred (no standalone Agents tab), so this
-      // stays a disabled coming-soon control rather than a button that no-ops.
+      // stays a disabled control rather than a button that no-ops.
       onClick: () => {},
       disabled: true,
-      tooltip: OVERVIEW_COPY.agentVersionsSoon,
       icon: "solar:link-circle-linear",
     },
     {
@@ -112,26 +110,24 @@ export default function NextStepsChecklist({ env, envState, onGo }) {
                 </Typography>
               </Box>
               {!s.done && s.cta && (
-                <CustomTooltip show={!!s.tooltip} size="small" title={s.tooltip || ""} arrow>
-                  <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
-                    <Button
-                      variant={isCurrent ? "contained" : "outlined"}
-                      color="primary"
-                      size="small"
-                      disabled={s.disabled}
-                      onClick={s.onClick}
-                      sx={{
-                        typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0,
-                        ...(isCurrent ? {} : {
-                          color: "text.primary", borderColor: "divider",
-                          "&:hover": { borderColor: "text.disabled" },
-                        }),
-                      }}
-                    >
-                      {s.cta}
-                    </Button>
-                  </Box>
-                </CustomTooltip>
+                <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
+                  <Button
+                    variant={isCurrent ? "contained" : "outlined"}
+                    color="primary"
+                    size="small"
+                    disabled={s.disabled}
+                    onClick={s.onClick}
+                    sx={{
+                      typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0,
+                      ...(isCurrent ? {} : {
+                        color: "text.primary", borderColor: "divider",
+                        "&:hover": { borderColor: "text.disabled" },
+                      }),
+                    }}
+                  >
+                    {s.cta}
+                  </Button>
+                </Box>
               )}
             </Stack>
           );
@@ -144,4 +140,5 @@ NextStepsChecklist.propTypes = {
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE,
   onGo: PropTypes.func,
+  scenarioCount: PropTypes.number,
 };

@@ -183,6 +183,7 @@ function RunTraceTableStub({
   initialFilters,
   evalActions,
   rerunDisabledReason,
+  onRerunScenarios,
 }) {
   useEffect(() => {
     onQueryChange?.(TABLE_QUERY);
@@ -206,6 +207,14 @@ function RunTraceTableStub({
         </button>
       )}
       <span>{`rerun-off:${rerunDisabledReason ?? "-"}`}</span>
+      {onRerunScenarios && (
+        <button
+          type="button"
+          onClick={() => onRerunScenarios(["scenario-a"], 2)}
+        >
+          rerun ticked
+        </button>
+      )}
       <button
         type="button"
         onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
@@ -224,6 +233,7 @@ RunTraceTableStub.propTypes = {
   activePage: PropTypes.number,
   evalActions: PropTypes.object,
   rerunDisabledReason: PropTypes.string,
+  onRerunScenarios: PropTypes.func,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
 vi.mock("../CallDrawer", () => ({
@@ -241,7 +251,9 @@ function RunAnalyticsStub({ onOpenCall }) {
     </button>
   );
 }
-RunAnalyticsStub.propTypes = { onOpenCall: PropTypes.func };
+RunAnalyticsStub.propTypes = {
+  onOpenCall: PropTypes.func,
+};
 vi.mock("../RunAnalytics", () => ({ default: RunAnalyticsStub }));
 
 function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
@@ -794,6 +806,9 @@ describe("RunDetail", () => {
       queryKey: ["simulation-run-analytics-v3", "ex1"],
     });
     expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["harness-run-compare"],
+    });
+    expect(invalidate).toHaveBeenCalledWith({
       queryKey: ["simulation-call-detail-v3"],
     });
   });
@@ -883,8 +898,109 @@ describe("RunDetail", () => {
     renderDetail({ onStartRun });
 
     await user.click(screen.getByRole("button", { name: /Run again/ }));
-    expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3);
+    expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3, {
+      initialPicks: {
+        agent: undefined,
+        environment: undefined,
+        suite: undefined,
+      },
+    });
     stubTickable = true;
+  });
+
+  it("re-runs with the versions the run was pinned to pre-selected", async () => {
+    stubTickable = false;
+    const user = userEvent.setup();
+    const onStartRun = vi.fn();
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        pinnedAgentVersion: { id: "a4", label: "v4" },
+        environmentVersion: { id: "e1", label: "v1" },
+        suiteVersion: { id: "s2", label: "v2" },
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun });
+
+    await user.click(screen.getByRole("button", { name: /Run again/ }));
+    expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3, {
+      initialPicks: { agent: "a4", environment: "e1", suite: "s2" },
+    });
+    stubTickable = true;
+  });
+
+  it("re-runs ticked calls with the run's versions pre-selected", async () => {
+    const user = userEvent.setup();
+    const onStartRun = vi.fn();
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        pinnedAgentVersion: { id: "a4", label: "v4" },
+        environmentVersion: { id: "e1", label: "v1" },
+        suiteVersion: { id: "s2", label: "v2" },
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun });
+
+    await user.click(screen.getByRole("button", { name: "rerun ticked" }));
+    expect(onStartRun).toHaveBeenCalledWith(["scenario-a"], 2, {
+      initialPicks: { agent: "a4", environment: "e1", suite: "s2" },
+    });
+  });
+
+  it("names the run's pinned versions and tags an agent that differs", () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        pinnedAgentVersion: { id: "a4", label: "v4" },
+        environmentVersion: { id: "e2", label: "v2" },
+        suiteVersion: { id: "s3", label: "v3" },
+        agentDiffers: true,
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(
+      screen.getByText("Run 3 · agent v4 · env v2 · scenarios v3"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("A4 differs from E2")).toBeInTheDocument();
+  });
+
+  it("falls back to the recorded agent version when the run has no agent pin", () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        pinnedAgentVersion: null,
+        environmentVersion: { id: "e2", label: "v2" },
+        agentDiffers: true,
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText("Run 3 · agent v2 · env v2")).toBeInTheDocument();
+    expect(
+      screen.getByText("Agent differs from its environment version"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no differs tag for a run whose agent matches", () => {
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText("Run 3 · agent v2")).toBeInTheDocument();
+    expect(screen.queryByText(/differs from/)).toBeNull();
   });
 
   it("keeps the header Run again off while a run is starting", () => {

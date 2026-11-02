@@ -109,7 +109,9 @@ func TestOpenRouterBroadcastFillsGenerationInputOutput(t *testing.T) {
 		}
 	}
 	// OpenRouter sends no `project_type` resource attribute, so the
-	// observe-only end-user gate leaves end_user_id NULL.
+	// observe-only end-user gate leaves end_user_id NULL here. On a real
+	// request auth.StampResourceAttrs adds project_type "observe" when the
+	// stamped project is an Observe one (TestOpenRouterR2UserAndSession).
 	if gen["end_user_id"] != nil {
 		t.Errorf("generation end_user_id = %v, want nil without project_type", gen["end_user_id"])
 	}
@@ -150,6 +152,12 @@ func TestOpenRouterBroadcastFillsGenerationInputOutput(t *testing.T) {
 	}
 	if root["parent_span_id"] != "" || root["name"] != "Chat Handler" {
 		t.Errorf("root parent/name = %q/%q", root["parent_span_id"], root["name"])
+	}
+	// OpenRouter names no kind on the root or the attempts: they are chains.
+	for _, id := range []string{orRootID, orAttemptFail, orAttemptOK} {
+		if got := byID[id]["observation_type"]; got != "chain" {
+			t.Errorf("span %s observation_type = %v, want chain", id, got)
+		}
 	}
 	if root["trace_session_id"] != wantSession {
 		t.Errorf("root trace_session_id = %v, want %s", root["trace_session_id"], wantSession)

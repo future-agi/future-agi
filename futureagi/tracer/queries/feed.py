@@ -3307,30 +3307,36 @@ def _fetch_events_over_time_with_passing(
 
 
 def _fetch_score_trends(
-    cluster_id: str, days: int, max_labels: int = 4, project_id: str | None = None
+    cluster: TraceErrorGroup,
+    days: int,
+    max_labels: int = 4,
+    project_id: str | None = None,
 ) -> list[ScoreTrend]:
     """Per-CustomEvalConfig.name score sparkline over the last ``days``.
 
-    Splits the window in half: first half = prev, second half = current.
-    Daily sparkline is average ``output_float`` per day over the full window.
+    Reads the members and eval rows the score cards read: members that fall in
+    the window, scored by ``_cluster_eval_score_q``. Splits the window in half:
+    first half = prev, second half = current. Daily sparkline is average
+    ``output_float`` per day over the full window.
     """
-    member_trace_ids, member_session_ids = _cluster_member_ids(cluster_id, project_id)
-    if not member_trace_ids and not member_session_ids:
-        return []
-
     now = timezone.now()
     since = now - timedelta(days=days)
     midpoint = now - timedelta(days=days / 2)
+    member_trace_ids, member_session_ids = _member_ids_in_window(
+        cluster.cluster_id, since, project_id=project_id
+    )
+    if not member_trace_ids and not member_session_ids:
+        return []
 
-    # Session members' eval rows anchor to trace_session, not trace.
-    member_q = Q(trace_id__in=member_trace_ids)
+    # Trace and span members score by the issue's own eval; session members'
+    # eval rows anchor to trace_session, not trace.
+    member_q = Q(trace_id__in=member_trace_ids) & _cluster_eval_score_q(cluster)
     if member_session_ids:
         member_q |= Q(trace_session_id__in=member_session_ids)
 
     rows = list(
         EvalLogger.objects.filter(
             member_q,
-            created_at__gte=since,
             custom_eval_config__isnull=False,
         )
         .annotate(day=TruncDate("created_at"), score=EVAL_SCORE_EXPR)
@@ -3428,7 +3434,7 @@ def get_trends_tab(
         events_over_time=_fetch_events_over_time_with_passing(
             cluster_id, project_id, days
         ),
-        score_trends=_fetch_score_trends(cluster_id, days, project_id=project_id),
+        score_trends=_fetch_score_trends(cluster, days, project_id=project_id),
         activity_heatmap=_fetch_activity_heatmap(
             cluster_id, days=max(days, 30), project_id=project_id
         ),

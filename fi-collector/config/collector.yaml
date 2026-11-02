@@ -30,8 +30,8 @@ server:
   grpc_addr: ":4317"
   # OTLP/HTTP receiver (browser SDKs + lightweight clients).
   # Accepts POST /v1/traces with application/x-protobuf or application/json,
-  # uncompressed or Content-Encoding: gzip (16 MiB cap as sent and, for gzip,
-  # after decompression), per
+  # uncompressed or Content-Encoding: gzip (capped as sent and, for gzip,
+  # after decompression: otlp_max_body_mib), per
   # https://opentelemetry.io/docs/specs/otlp/#otlphttp. X-Project-Name
   # (alias FI-Project-Name; the same keys as gRPC metadata) names the project
   # for ResourceSpans that carry no project_name resource attribute.
@@ -39,19 +39,32 @@ server:
   http_addr: ":4318"
   batch_max_rows: 5000
   batch_max_age: 5s
-  # Max gRPC receive message size in MiB (FI_GRPC_MAX_RECV_MIB); 16 matches
-  # the OTLP/HTTP body cap. gRPC accepts uncompressed calls only.
-  grpc_max_recv_mib: 16
-  # Decompressed body bytes that all gzip OTLP/HTTP requests may hold at
-  # once, in MiB (FI_GZIP_INFLIGHT_MIB). Once a gzip request has been read in
-  # full, it reserves 16 MiB while its decompressed size is counted, then
-  # holds exactly that size (at most 16 MiB) while it is inflated and
-  # processed. So a 32 MiB budget counts at most two gzip bodies at a time.
-  # Compressed bytes and uncompressed requests are not counted. Unset: 128,
-  # or GOMEMLIMIT/8 when that is lower; never below 16, so one full-size
-  # body always fits. A request waits up to 2 s for a lease in arrival order,
-  # then gets 503 + Retry-After and the exporter retries.
-  # gzip_inflight_mib: 128
+  # Ingest limits (README.md, "Ingest limits and backpressure"). Memory, in
+  # MiB, that all OTLP requests may hold at once, from reading a body until
+  # ClickHouse has stored its rows (FI_INGEST_BUDGET_MIB). Unset: about half
+  # of the Go memory limit (GOMEMLIMIT, else 90% of the container's limit),
+  # less a fixed allowance; 256 with no limit at all. Past it, requests wait
+  # their turn while the budget frees up (ingest_max_wait), then get 503 +
+  # Retry-After / UNAVAILABLE, which exporters retry.
+  # ingest_budget_mib: 0
+  # Largest OTLP/HTTP body in MiB, as sent and after gzip decompression
+  # (FI_OTLP_MAX_BODY_MIB; 413 above it). Unset: 16, lowered when the budget
+  # cannot hold a body that size.
+  # otlp_max_body_mib: 16
+  # Largest gRPC message in MiB (FI_GRPC_MAX_RECV_MIB). Unset: the body cap.
+  # gRPC accepts uncompressed calls only.
+  # grpc_max_recv_mib: 16
+  # Open connections per listener (FI_OTLP_MAX_CONNECTIONS). Unset or 0: no
+  # cap.
+  # otlp_max_connections: 0
+  # Longest a request waits for the ingest budget, both leases together,
+  # before 503 + Retry-After: 1 / UNAVAILABLE (FI_INGEST_MAX_WAIT). Keep it
+  # well under exporters' export timeout (10 s in the OpenTelemetry SDKs).
+  # ingest_max_wait: 2s
+  # ClickHouse inserts of pending rows that run at once
+  # (FI_INSERT_CONCURRENCY). Unset: 3 from a 512 MiB Go memory limit up (and
+  # with none), 2 from 384 MiB, else 1.
+  # insert_concurrency: 3
 
 auth:
   # Auth is active when pg_write is set. Without it, spans land with

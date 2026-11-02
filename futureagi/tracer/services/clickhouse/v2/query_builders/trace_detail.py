@@ -271,11 +271,7 @@ def retrieve_trace_detail_ch(
             "total_tokens": row.get("total_tokens"),
             "response_time": None,
             "eval_id": None,
-            "cost": (
-                round(row["cost"], 6)
-                if row.get("cost") and row["cost"] > 0
-                else row.get("cost")
-            ),
+            "cost": row.get("cost"),
             "status": row.get("status"),
             "status_message": row.get("status_message"),
             "tags": _parse_json(row.get("tags"), default=[]),

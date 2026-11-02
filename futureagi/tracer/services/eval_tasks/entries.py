@@ -334,6 +334,9 @@ def soft_delete_eval_results(results: QuerySet[EvalLogger]) -> int:
     issue never keeps a trace whose eval no longer exists. Returns the count.
     """
     with transaction.atomic():
+        # Eval rows first, then the issues (as clustering does): a clustering
+        # run that holds a row finishes its membership before this retires it.
+        list(results.select_for_update(of=("self",)).values_list("id", flat=True))
         retire_eval_memberships(results)
         return results.update(deleted=True, deleted_at=timezone.now())
 

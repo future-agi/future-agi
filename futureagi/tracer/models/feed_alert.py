@@ -132,6 +132,9 @@ class ErrorFeedAlertIssueState(BaseModel):
         ErrorFeedIssueEvent, null=True, blank=True, on_delete=models.SET_NULL
     )
     last_queued_at = models.DateTimeField(null=True, blank=True)
+    # Highest occurrence count an occurrences rule has alerted at. Counts can
+    # fall (a deleted eval retires its member), so a threshold fires once.
+    occurrences_high_water = models.PositiveIntegerField(default=0)
 
     class Meta:
         db_table = "tracer_error_feed_alert_issue_state"

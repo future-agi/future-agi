@@ -43,6 +43,7 @@ const maxSessionIDLen = 255
 type Handlers struct {
 	registry       *providers.Registry
 	engine         *pipeline.Engine
+	runCharges     runChargeStore // assistants runs awaiting their charge
 	healthMonitor  *routing.HealthMonitor
 	maxBodySize    int64
 	defaultTimeout time.Duration
@@ -102,23 +103,6 @@ type Handlers struct {
 	conditionalRouter atomic.Pointer[routing.ConditionalRouter]
 	modelTimeouts     atomic.Pointer[map[string]time.Duration]
 	mirror            atomic.Pointer[routing.Mirror]
-}
-
-// orgModelMatches checks if an org provider's registered model matches the
-// requested model. It first tries exact match, then prefix-stripping:
-// "anthropic/claude-haiku-4-5" matches provider "anthropic" with model "claude-haiku-4-5".
-func orgModelMatches(registeredModel, requestedModel, providerID string) bool {
-	if registeredModel == requestedModel {
-		return true
-	}
-	if idx := strings.IndexByte(requestedModel, '/'); idx > 0 {
-		prefix := requestedModel[:idx]
-		bareModel := requestedModel[idx+1:]
-		if strings.EqualFold(prefix, providerID) && registeredModel == bareModel {
-			return true
-		}
-	}
-	return false
 }
 
 func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
@@ -195,11 +179,11 @@ func (h *Handlers) resolveProviderWithOrgFallback(ctx context.Context, rc *model
 // it reports that failure without trying them again.
 func (h *Handlers) resolveProviderOrgFirst(ctx context.Context, rc *models.RequestContext, orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, error) {
 	if orgID != "" {
-		p, providerID, err := h.orgProviderFor(orgID, orgCfg, model)
+		p, providerID, upstreamModel, err := h.orgProviderFor(orgID, orgCfg, model)
 		if p != nil {
 			rc.Provider = providerID
 			rc.Metadata["org_provider_model_match"] = model
-			return p, model, nil
+			return p, upstreamModel, nil
 		}
 		if err != nil && h.orgProvidersOnly(ctx, rc) {
 			return nil, "", orgProviderError(model, providerID, err)
@@ -405,41 +389,70 @@ func (h *Handlers) applyOrgProviderOverride(orgID string, orgCfg *tenant.OrgConf
 // provider config. It checks each enabled provider's model list and creates a
 // cached provider instance with the org's API key.
 func (h *Handlers) resolveOrgProvider(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string) {
-	if p, providerID, _ := h.orgProviderFor(orgID, orgCfg, model); p != nil {
+	if p, providerID, _, _ := h.orgProviderFor(orgID, orgCfg, model); p != nil {
 		return p, providerID
 	}
 	return nil, ""
 }
 
-// orgProviderFor returns the first of the org's enabled providers that lists
-// model and can be built. When every one that lists it fails to build, it
-// returns the first failure and that provider's ID instead.
-func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, error) {
+// orgProviderFor returns the org's enabled provider for model that can be
+// built, its ID, and the model name to send it.
+//
+// "<provider>/<model>" names the provider, and the provider is sent the name
+// without its prefix. It wins over a provider that lists the whole name, so
+// adding a provider whose model names carry a vendor prefix (Perplexity's
+// "anthropic/claude-sonnet-5-5") does not take traffic from the org's own
+// "anthropic" provider. Callers reach that provider as
+// "perplexity/anthropic/claude-sonnet-5-5". Otherwise the provider that lists
+// model exactly is used. Providers are tried in ID order, so a tie always
+// resolves the same way.
+//
+// When every match fails to build, it returns the first failure and that
+// provider's ID instead.
+func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, string, error) {
 	if orgCfg == nil || h.orgProviderCache == nil {
-		return nil, "", nil
+		return nil, "", "", nil
 	}
-	var failedID string
-	var firstErr error
+	ids := make([]string, 0, len(orgCfg.Providers))
 	for providerID, pcfg := range orgCfg.Providers {
-		if pcfg == nil || !pcfg.Enabled || !pcfg.HasCredentials() {
-			continue
+		if pcfg != nil && pcfg.Enabled && pcfg.HasCredentials() {
+			ids = append(ids, providerID)
 		}
-		for _, m := range pcfg.Models {
-			if orgModelMatches(m, model, providerID) {
-				p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, pcfg.APIKey, pcfg)
-				if err != nil {
-					slog.Warn("failed to create org provider for model",
-						"org_id", orgID, "provider", providerID, "model", model, "error", err)
-					if firstErr == nil {
-						failedID, firstErr = providerID, err
-					}
-					continue
-				}
-				return p, providerID, nil
+	}
+	slices.Sort(ids)
+
+	type match struct{ providerID, upstreamModel string }
+	var matches []match
+	if prefix, bare, ok := strings.Cut(model, "/"); ok {
+		for _, providerID := range ids {
+			if strings.EqualFold(prefix, providerID) && slices.Contains(orgCfg.Providers[providerID].Models, bare) {
+				matches = append(matches, match{providerID, bare})
 			}
 		}
 	}
-	return nil, failedID, firstErr
+	for _, providerID := range ids {
+		named := slices.ContainsFunc(matches, func(m match) bool { return m.providerID == providerID })
+		if !named && slices.Contains(orgCfg.Providers[providerID].Models, model) {
+			matches = append(matches, match{providerID, model})
+		}
+	}
+
+	var failedID string
+	var firstErr error
+	for _, m := range matches {
+		pcfg := orgCfg.Providers[m.providerID]
+		p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, m.providerID, pcfg.APIKey, pcfg)
+		if err != nil {
+			slog.Warn("failed to create org provider for model",
+				"org_id", orgID, "provider", m.providerID, "model", model, "error", err)
+			if firstErr == nil {
+				failedID, firstErr = m.providerID, err
+			}
+			continue
+		}
+		return p, m.providerID, m.upstreamModel, nil
+	}
+	return nil, failedID, "", firstErr
 }
 
 func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover {
@@ -984,16 +997,6 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
 
-	// Ensure streaming requests always include usage in the final chunk
-	// so post-plugins (cost, logging) have accurate token counts.
-	if req.Stream {
-		if req.StreamOptions == nil {
-			req.StreamOptions = &models.StreamOptions{IncludeUsage: true}
-		} else {
-			req.StreamOptions.IncludeUsage = true
-		}
-	}
-
 	// Extract client IP for IP ACL and audit.
 	rc.Metadata["client_ip"] = extractClientIP(r)
 
@@ -1246,7 +1249,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 // answer would send the caller looking at their API key instead.
 func (h *Handlers) unavailableModelError(rc *models.RequestContext, model string) error {
 	if orgID, orgCfg := h.resolveOrgConfig(rc); orgID != "" {
-		if _, providerID, err := h.orgProviderFor(orgID, orgCfg, model); err != nil {
+		if _, providerID, _, err := h.orgProviderFor(orgID, orgCfg, model); err != nil {
 			return orgProviderError(model, providerID, err)
 		}
 	}
@@ -1714,6 +1717,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// Track the last usage from stream chunks so we can populate rc.Response
 	// after the stream completes (providers send usage in the final chunk).
 	var lastUsage *models.Usage
+	var streamed streamedChars
 	var streamID string
 	var streamCreated int64
 	capture := newStreamCapture(h.captureStreamContent)
@@ -1723,12 +1727,16 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// before every return from the streaming loop. When detach is true, uses
 	// a background context so post-plugins run even after client disconnect.
 	finalizeStream := func(detach bool) *models.StreamChunk {
+		usage := lastUsage
+		if usage == nil && streamed > 0 {
+			usage = estimatedStreamUsage(rc, chatPromptTokens(rc.Request), streamed)
+		}
 		rc.Response = &models.ChatCompletionResponse{
 			ID:      streamID,
 			Object:  "chat.completion",
 			Created: streamCreated,
 			Model:   rc.ResolvedModel,
-			Usage:   lastUsage, // nil is OK — means provider didn't send usage
+			Usage:   usage, // nil only when nothing was relayed
 		}
 		capture.applyTo(rc.Response)
 		pluginCtx := ctx
@@ -1778,6 +1786,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				lastUsage = chunk.Usage
 			}
 			capture.observe(chunk)
+			streamed.addChunk(chunk)
 
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
@@ -1802,6 +1811,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
+					if apiErr != nil {
+						rc.AddError(apiErr)
+						sseWriter.WriteError(apiErr)
+					}
+					finalizeStream(ctx.Err() != nil)
+					return
+				}
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
@@ -1841,6 +1858,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				lastUsage = chunk.Usage
 			}
 			capture.observe(chunk)
+			streamed.addChunk(chunk)
 
 			// Run streaming guardrail check.
 			if streamChecker != nil {
@@ -1863,18 +1881,25 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
-				if apiErr, isAPI := err.(*models.APIError); isAPI {
-					sseWriter.WriteError(apiErr)
-				} else {
-					sseWriter.WriteError(models.ErrInternal(err.Error()))
+				apiErr, isAPI := err.(*models.APIError)
+				if !isAPI {
+					apiErr = models.ErrInternal(err.Error())
 				}
+				rc.AddError(apiErr)
+				sseWriter.WriteError(apiErr)
 				finalizeStream(false)
 				return
 			}
 
 		case <-ctx.Done():
-			// Client disconnected — streamCancel() in defer will stop guardrail goroutines.
-			// Drain remaining chunks to unblock the provider goroutine.
+			// The client left, or the request reached its deadline; only the
+			// second has anyone to tell. streamCancel() in defer stops the
+			// guardrail goroutines. Drain remaining chunks to unblock the
+			// provider goroutine.
+			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
+				rc.AddError(apiErr)
+				sseWriter.WriteError(apiErr)
+			}
 			go func() {
 				for range chunks {
 				}
@@ -1899,28 +1924,15 @@ func (h *Handlers) buildStreamingMetadataChunk(rc *models.RequestContext, stream
 		streamCreated = time.Now().Unix()
 	}
 
-	var cost float64
-	if rawCost, ok := rc.Metadata["cost"]; ok {
-		if parsed, err := strconv.ParseFloat(rawCost, 64); err == nil {
-			cost = parsed
-		}
+	return &models.StreamChunk{
+		ID:              streamID,
+		Object:          "chat.completion.chunk",
+		Created:         streamCreated,
+		Model:           model,
+		Choices:         []models.StreamChoice{},
+		Usage:           usage,
+		AgentccMetadata: streamMetadata(rc),
 	}
-
-	chunk := &models.StreamChunk{
-		ID:      streamID,
-		Object:  "chat.completion.chunk",
-		Created: streamCreated,
-		Model:   model,
-		Choices: []models.StreamChoice{},
-		Usage:   usage,
-	}
-	if include := rc.RequestHeaders.Get("x-agentcc-include-metadata"); include == "1" || strings.EqualFold(include, "true") {
-		chunk.AgentccMetadata = &models.AgentccStreamMetadata{
-			Cost:      cost,
-			LatencyMs: rc.Elapsed().Milliseconds(),
-		}
-	}
-	return chunk
 }
 
 func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChunk, errCh <-chan error) (*models.StreamChunk, error) {
@@ -1928,6 +1940,14 @@ func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChu
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				// A provider sends its error before it closes chunks, and
+				// sends none once ctx is done; see closedStreamError.
+				if apiErr := pendingStreamError(errCh); apiErr != nil {
+					return nil, apiErr
+				}
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				return nil, models.ErrUpstreamProvider(http.StatusBadGateway, "upstream stream closed before sending any chunks")
 			}
 			return &chunk, nil
@@ -1969,6 +1989,10 @@ func (h *Handlers) setAgentccHeadersForProvider(w http.ResponseWriter, rc *model
 	w.Header().Set("x-agentcc-provider", rc.Provider)
 	if rc.ResolvedModel != "" {
 		w.Header().Set("x-agentcc-model-used", rc.ResolvedModel)
+	}
+
+	if reason := rc.Metadata[metadataErrorKey]; reason != "" {
+		w.Header().Set("x-agentcc-metadata-error", reason)
 	}
 
 	latency := rc.Elapsed()
@@ -2056,14 +2080,27 @@ func applyCallerMetadata(rc *models.RequestContext, r *http.Request, body json.R
 		mergeCallerMetadata(rc, body)
 	}
 	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		mergeCallerMetadata(rc, json.RawMessage(meta))
+		parseMetadataHeader(meta, rc)
 	}
 }
 
+// metadataErrorKey flags a request whose x-agentcc-metadata header carried no
+// dimensions because it is not a JSON object. The request still goes through:
+// refusing it would break callers that send a bad header today. The flag
+// reaches the request log row and the x-agentcc-metadata-error response
+// header, so the unattributed cost can be traced back to its caller.
+const metadataErrorKey = "metadata_error"
+
 // parseMetadataHeader records the dimensions carried by the x-agentcc-metadata
-// header alone, for endpoints that read the header before their body exists.
+// header, and flags a header that is not a JSON object.
 func parseMetadataHeader(meta string, rc *models.RequestContext) {
-	mergeCallerMetadata(rc, json.RawMessage(meta))
+	if !mergeCallerMetadata(rc, json.RawMessage(meta)) {
+		rc.Metadata[metadataErrorKey] = "x-agentcc-metadata is not a JSON object"
+		// Requests on config-file keys write no log row, so this line is what
+		// an operator can find. The header's value is not logged.
+		slog.Warn("x-agentcc-metadata is not a JSON object",
+			"request_id", rc.RequestID, "header_bytes", len(meta))
+	}
 }
 
 // applyCallerExtras snapshots the request body's unknown top-level fields onto
@@ -2186,10 +2223,10 @@ func isCredentialShapedKey(key string) bool {
 // its JSON text. Strict string-only decoding threw away the whole object over
 // one numeric value, which is a silent and very confusing way to lose every
 // dimension a caller sent.
-func mergeCallerMetadata(rc *models.RequestContext, raw json.RawMessage) {
+func mergeCallerMetadata(rc *models.RequestContext, raw json.RawMessage) bool {
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return false
 	}
 	for k, rv := range m {
 		if isBlockedMetadataKey(k) {
@@ -2207,6 +2244,7 @@ func mergeCallerMetadata(rc *models.RequestContext, raw json.RawMessage) {
 		}
 		rc.Metadata[k] = v
 	}
+	return true
 }
 
 // isBlockedMetadataKey returns true for metadata keys that must not be
@@ -2229,7 +2267,7 @@ func isBlockedMetadataKey(key string) bool {
 	// to cover them also swallows cost_center and cost_code — ordinary business
 	// dimensions. A new internal cost_* key must be added here by hand.
 	switch lower {
-	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source":
+	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source", usageEstimatedKey, metadataErrorKey:
 		return true
 	}
 	return false

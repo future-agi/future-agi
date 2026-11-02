@@ -314,6 +314,10 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		reqCopy := *req
 		reqCopy.Model = actualModel
 		reqCopy.Stream = true
+		// An OpenAI-format stream reports usage only when asked. Asked here,
+		// every route that streams through this provider can be priced, not
+		// only the one that remembered to set it.
+		reqCopy.StreamOptions = &models.StreamOptions{IncludeUsage: true}
 		p.normalizeMaxTokens(&reqCopy)
 
 		body, err := json.Marshal(&reqCopy)
@@ -384,6 +388,12 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 					"provider", p.id,
 				)
 				continue
+			}
+			if streamErrorChunk(chunk) {
+				// The upstream failed mid-stream. Relayed as a chunk, the
+				// error reached the client but the stream ended as a success.
+				errs <- parseProviderError(http.StatusBadGateway, []byte(data))
+				return
 			}
 
 			select {
@@ -1039,6 +1049,14 @@ func parseProviderError(status int, body []byte) *models.APIError {
 		msg = msg[:500] + "..."
 	}
 	return models.ErrUpstreamProvider(status, fmt.Sprintf("provider error (HTTP %d): %s", status, msg))
+}
+
+// streamErrorChunk reports whether a stream chunk is an upstream's error
+// object, which an OpenAI-compatible server sends in place of a chunk when it
+// fails mid-stream.
+func streamErrorChunk(chunk models.StreamChunk) bool {
+	raw, ok := chunk.Extra["error"]
+	return ok && string(raw) != "null"
 }
 
 // resolveModelName returns the model ID as-is. Historically this stripped
