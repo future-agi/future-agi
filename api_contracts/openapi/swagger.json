@@ -106547,7 +106547,8 @@
                     "x-json-value": true,
                     "description": "Any valid JSON value."
                 }
-            }
+            },
+            "additionalProperties": false
         },
         "DatasetRowRequest": {
             "type": "object",
@@ -106557,6 +106558,11 @@
                     "type": "string",
                     "format": "uuid"
                 },
+                "order": {
+                    "title": "Order",
+                    "description": "Legacy input accepted for compatibility; rows are appended in request order.",
+                    "type": "integer"
+                },
                 "cells": {
                     "type": "array",
                     "items": {
@@ -106564,7 +106570,8 @@
                     },
                     "default": []
                 }
-            }
+            },
+            "additionalProperties": false
         },
         "DatasetAddRowsRequest": {
             "required": [
@@ -106578,7 +106585,8 @@
                         "$ref": "#/definitions/DatasetRowRequest"
                     }
                 }
-            }
+            },
+            "additionalProperties": false
         },
         "DatasetAddRowsFromExistingRequest": {
             "required": [
@@ -148973,7 +148981,8 @@
                 },
                 "avg_score": {
                     "title": "Avg score",
-                    "type": "number"
+                    "type": "number",
+                    "x-nullable": true
                 },
                 "p50_latency": {
                     "title": "P50 latency",
@@ -148985,7 +148994,8 @@
                 },
                 "avg_turns": {
                     "title": "Avg turns",
-                    "type": "number"
+                    "type": "number",
+                    "x-nullable": true
                 }
             }
         },

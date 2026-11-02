@@ -22,11 +22,15 @@ import { ROW_HEIGHT } from "src/theme/sizes";
 
 const EMPTY_AGG = {
   total_traces: 0,
-  avg_score: 0,
-  avg_turns: 0,
+  avg_score: null,
+  avg_turns: null,
   p50_latency: 0,
   p95_latency: 0,
 };
+
+// The API sends null when nothing was measured; a zero there would read as data.
+const formatOrDash = (value, digits) =>
+  value == null ? "—" : value.toFixed(digits);
 
 const TRACES_GRID_THEME_PARAMS = {
   wrapperBorder: { width: 0 },
@@ -34,11 +38,14 @@ const TRACES_GRID_THEME_PARAMS = {
 };
 
 // ── Aggregate bar (no Failing / Passing) ────────────────────────────────────
-function AggregateBar({ agg }) {
+function AggregateBar({ agg, showTurns }) {
   const items = [
     { label: "Total traces", value: agg.total_traces.toLocaleString() },
-    { label: "Avg score", value: agg.avg_score.toFixed(2) },
-    { label: "Avg turns", value: agg.avg_turns.toFixed(1) },
+    { label: "Avg score", value: formatOrDash(agg.avg_score, 2) },
+    // Turns only mean something for a call or conversation.
+    ...(showTurns
+      ? [{ label: "Avg turns", value: formatOrDash(agg.avg_turns, 1) }]
+      : []),
     { label: "P50 latency", value: `${(agg.p50_latency / 1000).toFixed(1)}s` },
     { label: "P95 latency", value: `${(agg.p95_latency / 1000).toFixed(1)}s` },
   ];
@@ -47,7 +54,7 @@ function AggregateBar({ agg }) {
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: "repeat(5, 1fr)",
+        gridTemplateColumns: `repeat(${items.length}, 1fr)`,
         gap: 1,
         mb: 1.5,
       }}
@@ -74,7 +81,10 @@ function AggregateBar({ agg }) {
     </Box>
   );
 }
-AggregateBar.propTypes = { agg: PropTypes.object.isRequired };
+AggregateBar.propTypes = {
+  agg: PropTypes.object.isRequired,
+  showTurns: PropTypes.bool,
+};
 
 // ── Score cell renderer — full-cell fill, green ≥ 70%, red < 70% ─────────────
 function scoreColors(pct, theme) {
@@ -315,7 +325,10 @@ export default function TracesTab({ error }) {
 
   return (
     <Stack gap={2}>
-      <AggregateBar agg={agg} />
+      <AggregateBar
+        agg={agg}
+        showTurns={isVoiceProject && agg.avg_turns != null}
+      />
 
       <Box>
         <TracesGrid rows={rows} onRowClick={setDrawerTraceId} />

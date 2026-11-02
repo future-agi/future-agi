@@ -20772,6 +20772,12 @@ export const ModelHubDevelopsAddRowsCreateBody = zod.object({
   rows: zod.array(
     zod.object({
       id: zod.string().uuid().optional(),
+      order: zod
+        .number()
+        .optional()
+        .describe(
+          "Legacy input accepted for compatibility; rows are appended in request order.",
+        ),
       cells: zod
         .array(
           zod.object({
@@ -58711,10 +58717,10 @@ export const TracerFeedIssuesTracesListResponse = zod.object({
       total_traces: zod.number(),
       failing_traces: zod.number(),
       passing_traces: zod.number(),
-      avg_score: zod.number(),
+      avg_score: zod.number().nullable(),
       p50_latency: zod.number(),
       p95_latency: zod.number(),
-      avg_turns: zod.number(),
+      avg_turns: zod.number().nullable(),
     }),
     traces: zod.array(
       zod.object({
@@ -66595,10 +66601,10 @@ export const TracerSharedReadResponse = zod.object({
           total_traces: zod.number(),
           failing_traces: zod.number(),
           passing_traces: zod.number(),
-          avg_score: zod.number(),
+          avg_score: zod.number().nullable(),
           p50_latency: zod.number(),
           p95_latency: zod.number(),
-          avg_turns: zod.number(),
+          avg_turns: zod.number().nullable(),
         }),
         traces: zod.array(
           zod.object({

@@ -322,6 +322,9 @@ async function runGeneration(schemaPath) {
       "ai_interruptions",
     ],
   };
+  // The Error Feed Traces tab sends null when nothing was measured, so the UI
+  // shows "no data" instead of a fake zero.
+  const tracesAggregatesNullableFields = ["avg_score", "avg_turns"];
   const voiceCallDetailNullableFields = [
     "provider_call_id",
     "phone_number",
@@ -531,6 +534,16 @@ export type ${jsonAlias} = JsonValueApi;`,
       "passed: boolean | null;",
       "SubGoalResultApi.passed nullable",
     );
+
+    for (const field of tracesAggregatesNullableFields) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface TracesAggregatesApi {",
+        `${field}: number;`,
+        `${field}: number | null;`,
+        `TracesAggregatesApi.${field} nullable`,
+      );
+    }
 
     const columnConfigNullableFields = [
       ["group_by?: string;", "group_by?: string | null;"],
@@ -818,7 +831,10 @@ export type ${jsonAlias} = JsonValueApi;`,
         );
       }
     }
-    for (const typeName of ["TestExecutionItemResponseApi", "RunExecutionApi"]) {
+    for (const typeName of [
+      "TestExecutionItemResponseApi",
+      "RunExecutionApi",
+    ]) {
       for (const field of [
         "environment_version",
         "suite_version",
@@ -1286,6 +1302,21 @@ export type ${jsonAlias} = JsonValueApi;`,
         "$1.nullish()",
         `${body} version picks nullable`,
       );
+    }
+    // The shared read of an issue's Traces tab sends the same two fields.
+    for (const response of [
+      "TracerFeedIssuesTracesListResponse",
+      "TracerSharedReadResponse",
+    ]) {
+      for (const field of tracesAggregatesNullableFields) {
+        zod = assertReplaceInNamedBlock(
+          zod,
+          `export const ${response} =`,
+          `"${field}": zod.number()`,
+          `"${field}": zod.number().nullable()`,
+          `${response}.${field} nullable`,
+        );
+      }
     }
 
     zod = assertReplace(
