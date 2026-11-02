@@ -46,6 +46,7 @@ from simulate.tests.test_agent_fix_services import (
     _check,
     _executions,
     _fix_run,
+    _receipt,
     _run,
     _tree,
 )
@@ -705,6 +706,40 @@ class TestUserApi:
 
         assert (response.status_code, response.json()["error"]) == (400, code)
         assert not AgentFixRun.no_workspace_objects.exists()
+
+    @pytest.mark.parametrize(
+        ("held", "passed", "launched"),
+        [
+            ({"refunded": True}, True, (201, None)),
+            ({"refunded": False}, False, (400, "fix_protected_not_passed")),
+            ({"refunded": None}, None, (400, "fix_protected_not_passed")),
+            ({}, None, (400, "fix_protected_not_passed")),
+        ],
+        ids=["passing", "failed", "judge-decided-nothing", "no-verdict"],
+    )
+    def test_only_a_case_that_passed_can_be_protected_and_the_form_says_which(
+        self, auth_client, source_run, held, passed, launched
+    ):
+        execution = _executions(source_run).get(source_scenario__scenario_key=KEYS[1])
+        _receipt(execution.call_execution, KEYS[1], held)
+
+        options = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(source_run, protected_scenario_keys=[KEYS[1]]),
+            format="json",
+        )
+
+        offered = {one["key"]: one["passed"] for one in options["scenarios"]}
+        assert offered[KEYS[1]] is passed
+        assert options["suggested"]["protected_scenario_keys"] == (
+            [KEYS[1]] if passed else []
+        )
+        assert (response.status_code, response.json().get("error")) == launched
+        assert AgentFixRun.no_workspace_objects.exists() is bool(passed)
 
     @pytest.mark.parametrize(
         "overrides",
