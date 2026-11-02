@@ -5,10 +5,10 @@ import json
 import pytest
 
 from simulate.services.harness_versioning import archives
+from simulate.tests.test_harness_versioning_api import _versioned
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
-from simulate.tests.test_harness_versioning_api import _versioned
 from simulate.tests.test_harness_versioning_rollback import _built
 
 pytestmark = pytest.mark.django_db
