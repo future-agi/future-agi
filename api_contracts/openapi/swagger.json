@@ -106579,7 +106579,8 @@
                     "x-json-value": true,
                     "description": "Any valid JSON value."
                 }
-            }
+            },
+            "additionalProperties": false
         },
         "DatasetRowRequest": {
             "type": "object",
@@ -106589,6 +106590,11 @@
                     "type": "string",
                     "format": "uuid"
                 },
+                "order": {
+                    "title": "Order",
+                    "description": "Legacy input accepted for compatibility; rows are appended in request order.",
+                    "type": "integer"
+                },
                 "cells": {
                     "type": "array",
                     "items": {
@@ -106596,7 +106602,8 @@
                     },
                     "default": []
                 }
-            }
+            },
+            "additionalProperties": false
         },
         "DatasetAddRowsRequest": {
             "required": [
@@ -106610,7 +106617,8 @@
                         "$ref": "#/definitions/DatasetRowRequest"
                     }
                 }
-            }
+            },
+            "additionalProperties": false
         },
         "DatasetAddRowsFromExistingRequest": {
             "required": [

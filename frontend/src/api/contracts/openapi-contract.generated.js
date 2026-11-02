@@ -57278,6 +57278,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+      additionalProperties: false,
     },
     DatasetBehaviorRequest: {
       type: "object",
@@ -90898,6 +90899,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
         },
+        order: {
+          title: "Order",
+          description:
+            "Legacy input accepted for compatibility; rows are appended in request order.",
+          type: "integer",
+        },
         cells: {
           type: "array",
           items: {
@@ -90906,6 +90913,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           default: [],
         },
       },
+      additionalProperties: false,
     },
     DatasetCellValue: {
       type: "object",
@@ -110443,6 +110451,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "Any valid JSON value.",
         },
       },
+      additionalProperties: false,
     },
     DatasetCellMetadata: {
       type: "object",
