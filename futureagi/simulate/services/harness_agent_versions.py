@@ -2714,7 +2714,7 @@ def _bind_connected_agent(
         agent_definition_id=str(definition.id),
         build_agent_version_id=str(version.id),
     )
-    metadata.setdefault(POLICY_KEY, POLICY_FOLLOW)
+    metadata.setdefault(POLICY_KEY, POLICY_PINNED)
     job.agent_version = version
     job.payload = {
         **payload,

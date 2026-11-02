@@ -35,6 +35,5 @@ export const buildFromAgentPayload = ({
     authoring_key: name,
     agent_definition_id: agent.id,
     agent_version_id: version.id,
-    agent_policy: "follow",
   },
 });

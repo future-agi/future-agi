@@ -72,12 +72,21 @@ def test_an_environment_binds_to_the_agents_production_version(
     assert metadata["agent_definition_owner"] == "connected"
     assert metadata["agent_definition_id"] == str(agent.id)
     assert metadata["build_agent_version_id"] == str(production.id)
-    assert metadata[POLICY_KEY] == "follow"
+    assert metadata[POLICY_KEY] == "pinned"
     assert job.payload["source"]["commit_sha"] == "a" * 40
     assert job.payload["source"]["repository"] == "acme/agent"
     assert AgentDefinition.objects.filter(organization=user.organization).count() == 1
     assert AgentVersion.objects.filter(agent_definition=agent).count() == 1
     assert job.payload["agent"]["secret_refs"] == {}
+
+
+def test_an_environment_follows_production_only_when_asked(
+    client, workspace, gates, agent, production  # noqa: F811
+):
+    job = _job(_post(client, workspace, _creation(agent, agent_policy="follow")))
+
+    assert job.agent_version_id == production.id
+    assert job.payload["metadata"][POLICY_KEY] == "follow"
 
 
 def test_a_creation_can_pin_a_specific_ready_version(

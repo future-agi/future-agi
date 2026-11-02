@@ -4510,15 +4510,6 @@ class HostedHarnessGateway:
             retry_pending = refusal["retryable"] and self._should_retry(
                 attempt, str(refusal["domain"])
             )
-            if exit_code == 78:
-                from simulate.services.harness_versioning.assembly import mark_failed
-
-                try:
-                    mark_failed(attempt.job, attempt.terminal_failure["message"])
-                except Exception:  # noqa: BLE001 - the cache never changes the outcome
-                    logger.exception(
-                        "could not mark the bundle cache failed attempt=%s", attempt.id
-                    )
         elif exit_code == 3:
             attempt.state = HostedHarnessAttempt.State.SUPERSEDED
             attempt.save(update_fields=["state", "updated_at"])

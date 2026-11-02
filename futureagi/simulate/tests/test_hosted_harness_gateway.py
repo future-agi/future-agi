@@ -2905,6 +2905,56 @@ def test_reconcile_reads_the_refusal_file_before_the_exit_code(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("refusal_file", "marks_cache_failed"),
+    [
+        (_refusal(), False),
+        (_refusal(code="subfolder_not_found", stage="acquiring_source"), False),
+        (None, True),
+    ],
+)
+def test_only_a_runtime_validation_failure_marks_the_bundle_cache_failed(
+    organization, monkeypatch, refusal_file, marks_cache_failed
+):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="exit78-cache")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    monkeypatch.setattr(gateway, "_delete_and_record", lambda *_, **__: None)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 78, "logs": "", "refusal_file": refusal_file},
+    )
+
+    with patch(
+        "simulate.services.harness_versioning.assembly.mark_failed"
+    ) as mark_failed:
+        gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.state == HostedHarnessAttempt.State.FAILED
+    assert mark_failed.called is marks_cache_failed
+    if refusal_file is None:
+        assert attempt.terminal_failure["code"] == "authoring_runtime_validation_failed"
+    else:
+        assert attempt.terminal_failure["code"] == refusal_file["code"]
+
+
+@pytest.mark.django_db
 def test_reconcile_keeps_a_failure_the_platform_set_over_a_crash_exit(
     organization, monkeypatch
 ):
