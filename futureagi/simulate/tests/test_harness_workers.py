@@ -362,6 +362,20 @@ def test_hand_offs_in_the_sealed_trace_give_each_worker_a_delegation_and_a_retur
     assert first["by"] is None and first["delegation_id"] == back["delegation_id"] == "t1"
 
 
+def test_a_long_answer_is_cut_with_a_mark_that_it_goes_on_and_a_short_one_is_kept_whole():
+    long_answer = "word " * 200
+    traced = [
+        {"name": "ask", "ok": True, "at": 1730454600.0, "ended_at": 1730454602.0, "worker_label": "Coordinator",
+         "delegated_to": "Writer", "arguments": {"input": "draft"}, "result": long_answer},
+        {"name": "ask", "ok": True, "at": 1730454603.0, "ended_at": 1730454604.0, "worker_label": "Coordinator",
+         "delegated_to": "Writer", "arguments": {"input": "draft"}, "result": "short"},
+    ]
+    returned = [one["result"] for one in worker_timeline([], [], run_key=RUN, traced_calls=traced)["events"]
+                if one["type"] == "returned"]
+    assert returned[0].endswith("word…") and len(returned[0]) <= 501 and long_answer.startswith(returned[0][:-1])
+    assert returned[1] == "short"
+
+
 def test_the_one_agent_of_an_app_that_hands_nothing_out_is_not_a_worker():
     traced = [{"name": "lookup", "ok": True, "at": 1730454600.0, "worker_label": "Support agent"}]
     timeline = worker_timeline([], [], run_key=RUN, traced_calls=traced)

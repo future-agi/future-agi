@@ -45,7 +45,10 @@ def _summary(value: Any, *, argument: bool = False) -> str | None:
         return None
     if argument and isinstance(parsed, dict) and len(parsed) == 1:
         text = str(next(iter(parsed.values()))).strip()
-    return text[:_SUMMARY_CHARS] or None
+    if len(text) > _SUMMARY_CHARS:
+        # Say the text goes on, so a cut-off answer is not read as the whole of it.
+        text = text[:_SUMMARY_CHARS].rstrip() + "…"
+    return text or None
 
 
 def worker_timeline(
