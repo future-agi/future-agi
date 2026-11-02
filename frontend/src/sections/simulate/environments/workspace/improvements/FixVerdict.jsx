@@ -1,10 +1,13 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { alpha } from "@mui/material/styles";
 import { Box, Button, Stack, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import { useFixScenarioRows } from "src/api/simulate-environments/fixRuns";
 
 import { checksLine, headline, verdictCards, winnerOf } from "./fixRunView";
+import { scenarioOutcomes } from "./scenarioOutcomes";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
 const num = { fontVariantNumeric: "tabular-nums" };
@@ -189,12 +192,40 @@ MustPassBreaks.propTypes = { verdict: PropTypes.object.isRequired };
 
 // The design's verdict block: the headline, the cards side by side, the checks
 // on one line, then any must-pass breaks.
+// How many held-back scenarios the winner fixed, scenario by scenario as on
+// the Per scenario tab, for a fix held back on too few cases to call it proven.
+function HeldBackTally({ fix, winner }) {
+  const { before, after, isLoading } = useFixScenarioRows(fix, winner.id);
+  if (isLoading) return null;
+  const held = new Set(fix.request?.held_back_scenario_keys || []);
+  const failing = scenarioOutcomes(before, after).filter(
+    (r) => held.has(r.key) && r.before === "failed",
+  );
+  if (!failing.length) return null;
+  const fixed = failing.filter((r) => r.outcome === "fixed").length;
+  const scenarios = failing.length === 1 ? "scenario" : "scenarios";
+  return (
+    <Typography
+      sx={{ px: 2, mt: -0.75, pb: 1, typography: "s2", color: "text.secondary" }}
+    >
+      {`Too few to tell · Fixed ${fixed} of ${failing.length} failing ${scenarios} it never saw`}
+    </Typography>
+  );
+}
+HeldBackTally.propTypes = {
+  fix: PropTypes.object.isRequired,
+  winner: PropTypes.object.isRequired,
+};
+
 export default function FixVerdict({ fix }) {
   const winner = winnerOf(fix);
   const text = headline(fix);
   if (!winner || !text) return null;
   const cards = verdictCards(fix);
-  const provenOnTargets = !winner.verdict.held_back_pass_rate;
+  // Too few held back to call it verified, whatever the verdict says.
+  const limited = !!fix.limited_validation;
+  const provenOnTargets = !limited && !winner.verdict.held_back_pass_rate;
+  const heldBack = (fix.request?.held_back_scenario_keys || []).length > 0;
   return (
     <Box
       sx={{
@@ -206,17 +237,29 @@ export default function FixVerdict({ fix }) {
         overflow: "hidden",
       }}
     >
-      <Typography
-        sx={{
-          px: 2,
-          py: 1,
-          typography: "s1",
-          fontWeight: 600,
-          lineHeight: 1.45,
-        }}
-      >
-        {text}
-      </Typography>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1 }}>
+        {limited && (
+          <Box
+            component="span"
+            sx={{
+              flexShrink: 0,
+              px: 0.75,
+              py: 0.25,
+              borderRadius: 0.5,
+              typography: "s3",
+              fontWeight: 600,
+              color: BUILD_TONES.amber,
+              bgcolor: alpha(BUILD_TONES.amber, 0.12),
+            }}
+          >
+            Limited validation
+          </Box>
+        )}
+        <Typography sx={{ typography: "s1", fontWeight: 600, lineHeight: 1.45 }}>
+          {text}
+        </Typography>
+      </Stack>
+      {limited && heldBack && <HeldBackTally fix={fix} winner={winner} />}
       {provenOnTargets && (
         <Typography
           sx={{

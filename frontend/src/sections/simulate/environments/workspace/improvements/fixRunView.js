@@ -215,6 +215,12 @@ export function heldToRows(fix) {
 
 // The list's Result cell: the held-back result first, as the design shows it.
 export function listResult(fix) {
+  const result = verdictResult(fix);
+  if (!result || !fix.limited_validation) return result;
+  return { ...result, note: `Limited validation · ${result.note}` };
+}
+
+function verdictResult(fix) {
   const winner = winnerOf(fix);
   if (fix.state !== "ready" || !winner || !fix.plan) return null;
   const { verdict } = winner;
