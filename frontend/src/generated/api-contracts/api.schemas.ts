@@ -9717,6 +9717,8 @@ export interface DatasetRowCellRequestApi {
 
 export interface DatasetRowRequestApi {
   id?: string;
+  /** Legacy input accepted for compatibility; rows are appended in request order. */
+  order?: number;
   cells?: DatasetRowCellRequestApi[];
 }
 
