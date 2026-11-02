@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "00a5c67154e5da92d7762507b7ed7ab1538130c01735b6c4a7746dc3349b84d7",
+  "source_contract_sha256": "eca780e2fb76b1bf4906d64942d0afd38564c49ed497c0d62f76ca17726f6445",
   "tool_count": 107,
   "tools": [
     {
@@ -327,7 +327,7 @@
     },
     {
       "name": "add_dataset_rows",
-      "description": "Add rows to an existing dataset using cells with column_name and value. Column names must already exist in the dataset.",
+      "description": "Add rows to an existing dataset using rows: [{cells: [{column_name: \"input\", value: \"hello\"}]}]. Flat column-to-value row dictionaries are invalid. Column names must already exist and be writable; unknown or duplicate columns reject the batch. Read back the dataset to verify values and counts after writing.",
       "group": "datasets",
       "inputSchema": {
         "type": "object",
@@ -363,7 +363,8 @@
                 "title": "Value",
                 "description": "Any valid JSON value."
               }
-            }
+            },
+            "additionalProperties": false
           },
           "DatasetRowRequest": {
             "type": "object",
@@ -373,6 +374,11 @@
                 "type": "string",
                 "format": "uuid"
               },
+              "order": {
+                "title": "Order",
+                "description": "Legacy input accepted for compatibility; rows are appended in request order.",
+                "type": "integer"
+              },
               "cells": {
                 "type": "array",
                 "items": {
@@ -380,7 +386,8 @@
                 },
                 "default": []
               }
-            }
+            },
+            "additionalProperties": false
           }
         }
       },
