@@ -21,7 +21,7 @@ notify-only. Legacy/manual CLI behavior is unchanged.
 | Change | Required action |
 | --- | --- |
 | Models changed without migrations | `makemigrations --check --dry-run` fails. Add a migration. |
-| Existing migration edited/deleted | Deployed histories are immutable. Add a new migration. |
+| Existing migration edited/deleted | Deployed histories are immutable; add a new migration. The sole exemption is a modified (`M`) path whose merge-base version has no module-level `UPDATE_SAFETY` assignment and whose working-tree version adds exactly one: removing that statement must leave an identical `ast.dump()` of the module, without line/column attributes (comments/formatting are not compared). The declaration still receives the same static metadata and Django operation/table-risk validation as a new migration. Deletions, renames, changes/removals of an existing declaration, and any other AST edit remain forbidden. |
 | New non-noop `RunPython` or `RunSQL` | Add a reviewed module-level `UPDATE_SAFETY` declaration, including small tables, read-only payloads and imported helpers. Only exact Django forward/reverse noop pairs are exempt. |
 | Risky schema operation on a registered existing high-volume table | Declare its resolved physical tables and risks. Real Django loader/model state and backend field parameters resolve these, not filename or class-name guesses. |
 | Changed production source containing a schema/mutation statement in either blob | Add an exact before/after hash-bound human review to `clickhouse-change-reviews.json`. |

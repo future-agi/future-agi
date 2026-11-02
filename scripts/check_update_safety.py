@@ -465,14 +465,37 @@ def check_migration_layout(apps, loader, settings, mapping):
         require(not migration.replaces, f"{label}.{name}: squashed/replaces migrations are unsupported", "that migration; retain the unsquashed migration chain")
 
 
+def declaration_assignment(node):
+    """Use the same assignment forms for declarations and history comparisons."""
+    return isinstance(node, (ast.Assign, ast.AnnAssign)) and any(
+        isinstance(target, ast.Name) and target.id == "UPDATE_SAFETY" for target in
+        (node.targets if isinstance(node, ast.Assign) else [node.target]))
+
+
+def declaration_only_addition(root, baseline, path):
+    """Allow one new declaration statement, never a changed migration AST."""
+    before = base_bytes(root, baseline, path)
+    if before is None:
+        return False
+    try:
+        old = ast.parse(before)
+        new = ast.parse((root / path).read_text())
+    except (OSError, SyntaxError, ValueError, UnicodeError):
+        return False
+    if any(declaration_assignment(node) for node in old.body):
+        return False
+    added = [node for node in new.body if declaration_assignment(node)]
+    if len(added) != 1:
+        return False
+    new.body.remove(added[0])
+    # Literal/schema/risk validation still runs through the normal gate below.
+    return ast.dump(new, include_attributes=False) == ast.dump(old, include_attributes=False)
+
+
 def declaration(source, path):
     tree = ast.parse(source)
-    values = [n.value for n in tree.body if isinstance(n, (ast.Assign, ast.AnnAssign)) and
-              any(isinstance(t, ast.Name) and t.id == "UPDATE_SAFETY" for t in
-                  (n.targets if isinstance(n, ast.Assign) else [n.target]))]
-    assignments = [n for n in ast.walk(tree) if isinstance(n, (ast.Assign, ast.AnnAssign)) and
-                   any(isinstance(t, ast.Name) and t.id == "UPDATE_SAFETY" for t in
-                       (n.targets if isinstance(n, ast.Assign) else [n.target]))]
+    values = [n.value for n in tree.body if declaration_assignment(n)]
+    assignments = [n for n in ast.walk(tree) if declaration_assignment(n)]
     require(len(values) == len(assignments), f"{path}: UPDATE_SAFETY must be module-level", path)
     require(len(values) <= 1, f"{path}: duplicate UPDATE_SAFETY declaration", str(path))
     if values:
@@ -1069,17 +1092,26 @@ def main(argv=None):
         require(args.base, "PR comparison needs an explicit --base commit/ref", ".github/workflows/backend-ci.yml or your CLI invocation")
         registry = document(root / DATA / "high-volume-tables.json")
         changes = changed_paths(root, args.base)
-        migrations = [p for status, p in changes if migration_path(p) and status == "A"]
-        require(not any(migration_path(p) and s != "A" for s, p in changes),
-                "existing migration changed/deleted: deployed histories are immutable", "add a new migration instead of editing the existing migration")
+        baseline = base_commit(root, args.base)
+        migrations = []
+        for status, path in changes:
+            if not migration_path(path):
+                continue
+            require(status == "A" or status == "M" and declaration_only_addition(root, baseline, path),
+                    "existing migration changed/deleted: deployed histories are immutable", "add a new migration instead of editing the existing migration")
+            migrations.append(path)
         rehearsals = []
         if args.static or not args.django:
+            # Validate declared metadata for both new and declaration-only files.
+            # Actual operation/table risks require the real --django loader.
+            for path in migrations:
+                validate_declaration(declaration((root / path).read_text(), path), [], registry, path)
             check_layout(document(args.compose_model) if args.compose_model else compose_model(root), document(root / DATA / "automatic-layout.json"))
             generators = check_generators(root, document(root / DATA / "env-generators.json"))
             check_env((root / "docker-compose.yml").read_text(), (root / "deploy/env-reference.toml").read_text(), generators)
             sources = document(root / DATA / "clickhouse-sources.json")
             check_source_coverage(root, sources)
-            rehearsals += check_clickhouse_changes(root, changes, base_commit(root, args.base), sources,
+            rehearsals += check_clickhouse_changes(root, changes, baseline, sources,
                                                   document(root / DATA / "clickhouse-change-reviews.json"), registry)
         if args.django:
             # AppConfig.ready() diagnostics must not corrupt the JSON API.

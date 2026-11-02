@@ -548,10 +548,11 @@ class StaticEntryPointTests(unittest.TestCase):
         import shutil
         self.directory = tempfile.TemporaryDirectory(prefix='gate-entrypoint-')
         self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name).resolve()
         for relative in ('deploy/update/high-volume-tables.json', 'deploy/update/automatic-layout.json',
                          'deploy/update/clickhouse-sources.json', 'deploy/update/clickhouse-change-reviews.json',
-                         'deploy/update/env-generators.json', 'deploy/env-reference.toml', 'docker-compose.yml', 'bin/lib/secrets.sh'):
+                         'deploy/update/env-generators.json', 'deploy/update/migration-apps.json',
+                         'deploy/env-reference.toml', 'docker-compose.yml', 'bin/lib/secrets.sh'):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, target)
@@ -561,19 +562,133 @@ class StaticEntryPointTests(unittest.TestCase):
             name: {'profiles': row['profiles'], 'restart': row['restart'], 'volumes': row['mounts']}
             for name, row in contract['services'].items()}}))
 
-    def run_changed_source(self, path, source, status='M'):
+    def run_changed_source(self, path, source, status='M', before=None, flags=('--static',)):
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source is not None:
+            target.write_text(source)
+        elif target.exists():
+            target.unlink()
+        return self.run_changes([(status, path)], {path: before}, flags)
+
+    def run_changes(self, changes, before, flags=('--static',)):
         import contextlib
         import io
         from unittest.mock import patch
-        target = self.root / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(source)
         out, err = io.StringIO(), io.StringIO()
-        with patch.object(gate, 'changed_paths', return_value=[(status, path)]), patch.object(gate, 'base_commit', return_value='base'), \
-                patch.object(gate, 'base_bytes', return_value=None), patch.object(gate, 'repository_paths', return_value=[path]), \
+        def blob(root, baseline, path):
+            self.assertEqual(root, self.root)
+            self.assertEqual(baseline, 'merge-base')
+            return before.get(path)
+        with patch.object(gate, 'changed_paths', return_value=changes), patch.object(gate, 'base_commit', return_value='merge-base'), \
+                patch.object(gate, 'base_bytes', side_effect=blob), \
+                patch.object(gate, 'repository_paths', return_value=[p for _, p in changes]), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = gate.main(['--root', str(self.root), '--static', '--base', 'fixture', '--compose-model', str(self.model), '--json'])
+            code = gate.main(['--root', str(self.root), *flags, '--base', 'fixture', '--compose-model', str(self.model), '--json'])
         return code, out.getvalue(), err.getvalue()
+
+    migration = 'futureagi/tracer/migrations/existing.py'
+    migration_source = ('from django.db import migrations\n\n'
+                        'def forwards(apps, schema_editor):\n    pass\n\n'
+                        'class Migration(migrations.Migration):\n'
+                        '    dependencies = []\n'
+                        '    operations = [migrations.RunPython(forwards, migrations.RunPython.noop)]\n')
+
+    def migration_declaration(self):
+        return 'UPDATE_SAFETY = ' + repr(reviewed([{'table': 'postgres:tracer_trace', 'risk_class': 'data_migration'}])) + '\n'
+
+    def test_declaration_only_addition_passes_static_gate(self):
+        for declaration in (self.migration_declaration(), self.migration_declaration().replace('UPDATE_SAFETY =', 'UPDATE_SAFETY: dict =')):
+            with self.subTest(declaration=declaration):
+                code, stdout, err = self.run_changed_source(self.migration, declaration + self.migration_source,
+                                                          before=self.migration_source.encode())
+                self.assertEqual(code, 0, err)
+                self.assertEqual(json.loads(stdout)['new_migrations'], 1)
+
+    def test_declaration_only_addition_is_validated_like_a_new_migration(self):
+        invalid = (('UPDATE_SAFETY = {}\n', 'expected exactly'),
+                   ('UPDATE_SAFETY = dict()\n', 'literal dict'),
+                   ('UPDATE_SAFETY = {"schema_version": 1, "schema_version": 1}\n', 'literal keys'),
+                   (self.migration_declaration().replace("'data_migration'", "'unknown_risk'"), 'invalid risk_classes'),
+                   (self.migration_declaration().replace("'large_volume_rehearsal': True", "'large_volume_rehearsal': False"), 'mandatory'))
+        for declaration, message in invalid:
+            for status in ('A', 'M'):
+                with self.subTest(declaration=declaration, status=status):
+                    code, _, err = self.run_changed_source(self.migration, declaration + self.migration_source,
+                                                          status, self.migration_source.encode() if status == 'M' else None)
+                    self.assertEqual(code, 1, err)
+                    self.assertNotIn('histories are immutable', err)
+                    self.assertIn(message, err)
+
+    def test_declaration_plus_other_ast_edit_is_immutable(self):
+        edited = (self.migration_source.replace('operations = [migrations.RunPython(forwards, migrations.RunPython.noop)]', 'operations = []'),
+                  self.migration_source.replace('    pass', '    return None'),
+                  '"New module docstring"\n' + self.migration_source)
+        for source in edited:
+            with self.subTest(source=source):
+                code, _, err = self.run_changed_source(self.migration, self.migration_declaration() + source,
+                                                      before=self.migration_source.encode())
+                self.assertEqual(code, 1, err)
+                self.assertIn('existing migration changed/deleted: deployed histories are immutable', err)
+
+    def test_changing_an_existing_declaration_is_immutable(self):
+        before = self.migration_declaration() + self.migration_source
+        after = before.replace("'fixture-reviewer'", "'another-reviewer'")
+        code, _, err = self.run_changed_source(self.migration, after, before=before.encode())
+        self.assertEqual(code, 1, err)
+        self.assertIn('histories are immutable', err)
+
+    def test_removing_an_existing_declaration_is_immutable(self):
+        before = self.migration_declaration() + self.migration_source
+        code, _, err = self.run_changed_source(self.migration, self.migration_source, before=before.encode())
+        self.assertEqual(code, 1, err)
+        self.assertIn('histories are immutable', err)
+
+    def test_deleting_an_existing_migration_is_immutable(self):
+        for before in (self.migration_source, self.migration_declaration() + self.migration_source):
+            with self.subTest(before=before):
+                code, _, err = self.run_changed_source(self.migration, None, 'D', before.encode())
+                self.assertEqual(code, 1, err)
+                self.assertIn('histories are immutable', err)
+
+    def test_renaming_an_existing_migration_is_immutable(self):
+        renamed = self.migration.replace('existing.py', 'renamed.py')
+        target = self.root / renamed
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(self.migration_declaration() + self.migration_source)
+        # changed_paths uses --no-renames, so a rename is a deletion plus addition.
+        for changes in ([('A', renamed), ('D', self.migration)], [('R100', self.migration)]):
+            with self.subTest(changes=changes):
+                code, _, err = self.run_changes(changes, {self.migration: self.migration_source.encode()})
+                self.assertEqual(code, 1, err)
+                self.assertIn('histories are immutable', err)
+
+    def test_modified_migration_needs_exactly_one_new_module_declaration(self):
+        declarations = ('', self.migration_declaration() * 2, 'if True:\n    ' + self.migration_declaration(),
+                        'UPDATE_SAFETY = {\n')
+        for declaration in declarations:
+            with self.subTest(declaration=declaration):
+                code, _, err = self.run_changed_source(self.migration, declaration + self.migration_source,
+                                                      before=self.migration_source.encode())
+                self.assertEqual(code, 1, err)
+                self.assertIn('histories are immutable', err)
+
+    def test_declaration_addition_reaches_the_same_django_risk_gate(self):
+        from unittest.mock import patch
+        source = self.migration_declaration() + self.migration_source
+        for flags in (('--django',), ('--static', '--django')):
+            for status in ('A', 'M'):
+                for failure in (None, gate.GateError('declaration does not cover detected tables/classes')):
+                    with self.subTest(flags=flags, status=status, failure=failure), \
+                            patch.object(gate, 'django_gate', return_value=[], side_effect=failure) as check:
+                        code, _, err = self.run_changed_source(self.migration, source, status,
+                                                              self.migration_source.encode() if status == 'M' else None, flags)
+                        self.assertEqual(code, int(failure is not None), err)
+                        check.assert_called_once_with(self.root, [self.migration],
+                                                      gate.document(self.root / 'deploy/update/migration-apps.json'),
+                                                      gate.document(self.root / 'deploy/update/high-volume-tables.json'))
+                        if failure:
+                            self.assertIn(str(failure), err)
 
     def test_registered_source_without_statements_does_not_need_a_declaration(self):
         code, stdout, err = self.run_changed_source('deploy/standalone/bin/bootstrap.py', '# documentation only')
