@@ -193,6 +193,19 @@ def revoke_generations(
                 manifests = manifests.filter(id__in=manifest_ids)
                 writers = writers.filter(parent_manifest_id__in=manifest_ids)
             manifests.update(revoked_at=now, revocation_reason=reason)
+        if (
+            reason == "erased"
+            or definition_version_ids is not None
+            or manifest_ids is None
+        ):
+            from tracer.services.derived_metrics.backfill import scrub_private_progress
+
+            scrub_private_progress(
+                project_id,
+                now=now,
+                versions=definition_version_ids,
+                using=using,
+            )
         writers.update(
             state=MetricRefreshAttempt.State.ABORTED,
             aborted_at=now,
@@ -217,6 +230,19 @@ def commit_logical_expiry(attempt, manifest, *, now):
     revoke_generations(
         attempt.project_id, reason="retention_expired", manifest_ids=old, now=now
     )
+    from tracer.services.derived_metrics.backfill import (
+        expiry_floor,
+        scrub_expired_progress,
+        scrub_private_progress,
+    )
+
+    # Selective: drop only private keysets this horizon expired. Progress stays,
+    # or steady traffic (every pass an expiry) would block backfill forever.
+    floor = expiry_floor(attempt)
+    if floor is None:
+        scrub_private_progress(attempt.project_id, now=now)
+    else:
+        scrub_expired_progress(attempt.project_id, cutoff=floor, now=now)
     # Include writers allocated AFTER this checkpoint was prepared as well as
     # writers with no parent manifest. Allocation order is not publication order.
     MetricRefreshAttempt.objects.filter(

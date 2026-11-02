@@ -300,11 +300,17 @@ class RefreshWriter:
                 ):
                     yield entry
 
-    def seal(self, attempt, *, cursors=None):
+    def seal(self, attempt, *, cursors=None, publication=None):
         self.append(
             attempt,
             "cleanup_intent",
-            [{"kind": "publication", "cursors": _json(cursors or {})}],
+            [
+                {
+                    "kind": "publication",
+                    "cursors": _json(cursors or {}),
+                    **_json(publication or {}),
+                }
+            ],
         )
         chunks = MetricAttemptLedgerChunk.objects.filter(attempt=attempt)
         MetricRefreshAttempt.seal_ledger(
@@ -422,15 +428,41 @@ class RefreshWriter:
             if attempt.purpose != "compaction" and parent_receipts:
                 self.store.assert_visible(attempt.parent_manifest)
                 receipts = parent_receipts["batches"] + receipts
+            from tracer.services.derived_metrics.backfill import (
+                apply_publication,
+                check_backfill_publication,
+                check_repair_publication,
+                publication_horizon,
+                retire_omitted_versions,
+                strip_private_positions,
+            )
+
+            check_backfill_publication(self, controls[0])
+            check_repair_publication(self, controls[0])
+            retire_omitted_versions(self, attempt, controls[0])
+            cursors = controls[0]["cursors"]
+            strip, horizon = publication_horizon(self, attempt)
+            if strip and cursors.get("reconciliation_cursor") is not None:
+                # A frozen repair proposal must not publish a keyset that aged
+                # out after planning; its non-identifying progress still lands.
+                cursors = {
+                    **cursors,
+                    "reconciliation_cursor": strip_private_positions(
+                        cursors["reconciliation_cursor"], cutoff=horizon
+                    )[0],
+                }
+            # Manifest, coverage/progress and active semantics share this outer
+            # transaction/project lock. Failure rolls the WHOLE switch back.
             manifest = MetricReadManifest.publish(
                 attempt.id,
-                cursors=controls[0]["cursors"],
+                cursors=cursors,
                 visibility_receipts={
                     "shard": self.store.identity(),
                     "batches": receipts,
                 },
                 **self.lease.check(),
             )
+            apply_publication(self, attempt, controls[0])
             if self.retention_days is not None and (
                 attempt.source_ceilings.get("logical_expiry")
                 or "as_of" in attempt.source_ceilings
@@ -628,9 +660,24 @@ class RefreshWriter:
                 ceilings={"manifest": str(head.id), "recovery_pending": pending},
                 ledger=handoff,
             )
+            from tracer.services.derived_metrics.backfill import obsolete_versions
+
+            obsolete = obsolete_versions(self.lease.project_id, now=self.lease.clock())
             for table in TABLE_KINDS.values():
-                self.freeze_current(attempt, table, head)
-            self.seal(attempt)
+                prefix = "field" if table == FIELD_VALUES else "metric"
+                versioned = table in {FIELD_VALUES, BUCKET_TOTALS, RETIRED_PARTS}
+                self.freeze_current(
+                    attempt,
+                    table,
+                    head,
+                    where=f"({prefix}_id, {prefix}_version) NOT IN %(obsolete_versions)s"
+                    if obsolete and versioned
+                    else "1",
+                    params={"obsolete_versions": obsolete}
+                    if obsolete and versioned
+                    else None,
+                )
+            self.seal(attempt, publication={"retire_versions": obsolete})
         manifest = self.stage_and_publish(attempt)
         # Never delete CH history from a transaction that might roll PG back.
         transaction.on_commit(self.collect_garbage)
@@ -643,6 +690,7 @@ class RefreshWriter:
         not mark the multi-store request done or claim snapshot cleanup here.
         Tombstones in the current checkpoint are never selected for deletion.
         """
+        from tracer.services.derived_metrics.backfill import discharge_omission_debts
         from tracer.services.derived_metrics.retention import (
             finish_pending_expiry,
             purge_by_scope,
@@ -652,6 +700,8 @@ class RefreshWriter:
         if intent is not None:
             purge_by_scope(self.store, intent)
         self.scrub_orphans()
+        # Unregistered attempts' rows are gone now, under ANY retention policy.
+        discharge_omission_debts(self.lease.project_id, now=self.lease.clock())
         finish_pending_expiry(self)
         return intent
 
@@ -685,7 +735,17 @@ class RefreshWriter:
                 )
 
     def refresh(
-        self, change, definitions, scope, *, start, end, as_of, settle_minutes=30
+        self,
+        change,
+        definitions,
+        scope,
+        *,
+        start,
+        end,
+        as_of,
+        settle_minutes=30,
+        purpose="incremental",
+        publication=None,
     ):
         """Never consume ambiguous discovery; retain only a nonidentifying flag."""
         try:
@@ -697,6 +757,8 @@ class RefreshWriter:
                 end=end,
                 as_of=as_of,
                 settle_minutes=settle_minutes,
+                purpose=purpose,
+                publication=publication,
             )
         except MetricAdmissionUnproven:
             MetricProjectRefresh.objects.filter(
@@ -780,7 +842,17 @@ class RefreshWriter:
         return True
 
     def _refresh(
-        self, change, definitions, scope, *, start, end, as_of, settle_minutes=30
+        self,
+        change,
+        definitions,
+        scope,
+        *,
+        start,
+        end,
+        as_of,
+        settle_minutes=30,
+        purpose="incremental",
+        publication=None,
     ):
         """Compile B03/B04 proposals into one complete, durable refresh plan."""
         if (
@@ -794,11 +866,18 @@ class RefreshWriter:
             raise ValueError("metric refresh pass exceeds candidate cap")
         if any(unit.level not in {"conversation", "span"} for unit in change.units):
             raise ValueError("trace metric refresh is disabled")
+        if purpose not in {"incremental", "backfill", "repair"}:
+            raise ValueError("invalid refresh purpose")
+        from tracer.services.derived_metrics.backfill import working_definitions
+
         definitions = list(definitions)
         from tracer.services.derived_metrics.spec import require_computable
 
-        # Native jobs bypass HTTP admission. Reject legacy recipes before any
-        # expiry, compaction, source read or attempt preparation can have effects.
+        # Native jobs bypass HTTP admission. Reject explicit legacy recipes
+        # before loading stored versions or making any lifecycle changes.
+        for definition in definitions:
+            require_computable(definition)
+        definitions = working_definitions(self.lease.project_id, definitions)
         for definition in definitions:
             require_computable(definition)
         if any(d.level not in {"conversation", "user", "span"} for d in definitions):
@@ -814,6 +893,21 @@ class RefreshWriter:
             )
         refresh_now = self.lease.clock()
         cutoff = retention_cutoff(self.retention_days(), now=refresh_now)
+        from tracer.services.derived_metrics.backfill import pending_omissions
+
+        head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
+        if (
+            head
+            and head.revoked_at is None
+            and not head.published_by.source_ceilings.get("recovery_blocked")
+            and pending_omissions(self.lease.project_id, now=refresh_now)
+        ):
+            # Retention checkpoints reset the delta chain but copy every version
+            # forward, so obsolete/abandoned payload needs its own trigger. Omit
+            # BEFORE this pass's expiry: that checkpoint then needs fewer stored
+            # recipes, and a version whose pin this expiry invalidates keeps the
+            # anonymous history the expiry produces until a later pass omits it.
+            self.compact()
         if (
             cutoff is not None
             and not (change.units or change.source_keys)
@@ -831,9 +925,17 @@ class RefreshWriter:
             # particular a fresh arrival can reopen an already-old field: its
             # former settled value must be dropped, not prematurely retired.
             # Empty takeover passes first persist their retained recovery work.
+            from tracer.services.derived_metrics.backfill import retirement_definitions
+
             expire_project(
                 self,
-                definitions,
+                retirement_definitions(
+                    self,
+                    MetricProjectRefresh.for_project(
+                        self.lease.project_id
+                    ).head_manifest,
+                    definitions,
+                ),
                 retention_days=self.retention_days,
                 now=refresh_now,
                 as_of=as_of,
@@ -881,9 +983,16 @@ class RefreshWriter:
             if len(ids) > MAX_PASS_UNITS:
                 raise ValueError("replacement dirty set exceeds pass cap")
             attempt = self.begin(
+                purpose=purpose,
                 ceilings={
                     "as_of": as_of,
-                    "cursor_updates": change.cursor_updates,
+                    # Private keysets belong only to the purgeable publication
+                    # ledger, never the immutable attempt/audit metadata.
+                    "cursor_updates": {
+                        key: value
+                        for key, value in change.cursor_updates.items()
+                        if key != "reconciliation_cursor"
+                    },
                     "consumes_recovery": str(head.id)
                     if head
                     and head.published_by.source_ceilings.get("recovery_pending")
@@ -1033,11 +1142,16 @@ class RefreshWriter:
                         inherited_floor
                         and self.store.execute(
                             f"SELECT count() FROM ({query}) WHERE is_deleted = 0 AND unit_id NOT IN "
-                            f"(SELECT unit_id FROM ({old_sql}) WHERE {where} AND is_deleted = 0)",
-                            params,
+                            f"(SELECT unit_id FROM ({old_sql}) WHERE {where} AND is_deleted = 0) "
+                            f"AND (unit_id, unit_start) NOT IN (SELECT unit_id, unit_start FROM ({old_sql}) "
+                            "WHERE is_deleted = 0 AND level = 'conversation' "
+                            "AND unit_start >= toDateTime64(%(admission_floor)s, 6, 'UTC'))",
+                            {**params, "admission_floor": cutoff or inherited_floor},
                         )[0][0]
                     ):
-                        # The raw recent row cannot prove it was never retired.
+                        # A new version may reuse a still-retained, identical
+                        # committed anchor. Unknown or corrected anchors cannot
+                        # be proven by a recent raw row (TH-8975 remains held).
                         # No identity/hash tombstone is created to guess here.
                         raise MetricAdmissionUnproven("metric_admission_unproven")
                     extra = {
@@ -1133,10 +1247,21 @@ class RefreshWriter:
                         attempt, head, definition, overlay, overlay_params
                     )
             if cutoff is not None:
+                from tracer.services.derived_metrics.backfill import (
+                    retirement_definitions,
+                )
                 from tracer.services.derived_metrics.retention import retirement_plan
 
-                attempt = retirement_plan(self, attempt, head, definitions, cutoff)
-            self.seal(attempt, cursors=dict(change.cursor_updates))
+                attempt = retirement_plan(
+                    self,
+                    attempt,
+                    head,
+                    retirement_definitions(self, head, definitions),
+                    cutoff,
+                )
+            self.seal(
+                attempt, cursors=dict(change.cursor_updates), publication=publication
+            )
         manifest = self.stage_and_publish(attempt)
         if cutoff is not None:
             from tracer.services.derived_metrics.retention import purge_checkpoint

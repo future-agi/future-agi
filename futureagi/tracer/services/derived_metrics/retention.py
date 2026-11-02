@@ -168,6 +168,9 @@ def _terminal_payloads(project_id, *, recovery_attempt=None, through_generation=
 def _purge_terminal_payloads(
     project_id, *, recovery_attempt=None, through_generation=None
 ):
+    # Legacy writers duplicated private repair keysets outside the purgeable
+    # ledger. Privacy cleanup cannot wait for those audit rows' history TTL.
+    MetricRefreshAttempt.scrub_private_cursor_metadata(project_id)
     return _terminal_payloads(
         project_id,
         recovery_attempt=recovery_attempt,
@@ -664,6 +667,17 @@ def finish_pending_expiry(writer, *, now=None):
                     },
                 },
             )
+            # Omission debts are discharged only by this verified all-revisions
+            # scrub, never just by losing their last row in the current head.
+            MetricErasureRequest.objects.filter(
+                project_key=project_id,
+                store_payload__protocol="metric_omission",
+                store_payload__through_generation__lte=through,
+            ).exclude(status="done").update(
+                status="done",
+                completed_at=now or writer.lease.clock(),
+                receipts={"expiry_scrub": {"through_generation": through}},
+            )
             # Namespace receipts have served their proof; no private rows or
             # unbounded per-write history is required after completion.
             submissions.delete()
@@ -791,6 +805,48 @@ def _expiring_span_fields(writer, head, definition, cutoff, now):
     return fields, params
 
 
+def _expired_physical_payload(writer, head, cutoff):
+    """Head omission/compaction must not hide an all-revisions privacy deadline.
+
+    Detect only; deletion still goes through the normal safe replacement,
+    revocation, retained-recovery handoff and write-quiescence protocol below.
+    Never use an audit attempt TTL as a grace period for private evidence.
+    Only namespaces the head does NOT reach are probed: head rows are judged by
+    the logical-unit rule above, and rows it deliberately keeps (for example a
+    deleted earliest member of a retained conversation) must not re-trigger
+    expiry on every call. Unregistered late writes are reaped by scrub_orphans.
+    """
+    reachable = {a for _, a in head.allowed_attempts()}
+    others = tuple(
+        MetricRefreshAttempt.objects.filter(project_id=writer.lease.project_id)
+        .exclude(id__in=reachable)
+        .values_list("id", flat=True)
+    )
+    if not others:
+        return False
+    # Lifecycle rows have no unit_start; their owners are nominated by field
+    # and dependency anchors, then scrubbed in the same expiry checkpoint.
+    for table in (
+        FIELD_VALUES,
+        TABLES["metric_field_values_checkpoint"],
+        SOURCE_DEPENDENCIES,
+    ):
+        if writer.store.execute(
+            f"SELECT count() FROM (SELECT 1 FROM {table.name} PREWHERE org_id = toUUID(%(expiry_org)s) "
+            "AND project_id = toUUID(%(expiry_project)s) "
+            "WHERE attempt_id IN %(expiry_unreachable)s "
+            "AND unit_start < toDateTime64(%(expiry_physical_cutoff)s, 6, 'UTC') LIMIT 1)",
+            {
+                "expiry_org": str(writer.org_id),
+                "expiry_project": str(writer.lease.project_id),
+                "expiry_unreachable": others,
+                "expiry_physical_cutoff": cutoff,
+            },
+        )[0][0]:
+            return True
+    return False
+
+
 def expire_project(writer, definitions, *, retention_days, now=None, as_of=None):
     """Freeze retirement, publish a complete replacement, revoke, then purge.
 
@@ -808,6 +864,9 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
     project_id = writer.lease.project_id
     with serialized_project(project_id):
         writer.lease.check()
+        from tracer.services.derived_metrics.backfill import scrub_expired_progress
+
+        scrub_expired_progress(project_id, cutoff=cutoff, now=now)
         head = MetricProjectRefresh.for_project(project_id).head_manifest
         if head is None:
             return {"unlimited": False, "purged": False}
@@ -862,6 +921,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             and not writer.store.execute(
                 f"SELECT count() FROM ({expired_units})", params
             )[0][0]
+            and not _expired_physical_payload(writer, head, cutoff)
         ):
             pending = (
                 MetricErasureRequest.objects.filter(
@@ -1069,6 +1129,7 @@ def purge_by_scope(store, request, *, writer=None):
             "metric_expiry",
             "metric_submission",
             "metric_policy_replan",
+            "metric_omission",
         }:
             raise MetricStateConflict(
                 "writer quiescence receipt requires the expiry protocol"

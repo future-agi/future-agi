@@ -169,6 +169,24 @@ class DerivedMetric(BaseModel):
             )
         ]
 
+    def save(self, *args, **kwargs):
+        # A new draft abandons the previous draft's private paging position.
+        # Serialize this with publication, just like save_definition does; model
+        # callers must not leave an indefinitely unscheduled private keyset.
+        fields = kwargs.get("update_fields")
+        if self._state.adding or (
+            fields is not None and "current_version" not in fields
+        ):
+            return super().save(*args, **kwargs)
+        from tracer.services.derived_metrics.backfill import scrub_superseded_progress
+        from tracer.services.derived_metrics.deletion_protocol import serialized_project
+
+        using = kwargs.get("using") or self._state.db or "default"
+        with serialized_project(self.project_id, using=using):
+            result = super().save(*args, **kwargs)
+            scrub_superseded_progress(self.project_id, using=using)
+            return result
+
     def active_semantics(self) -> dict | None:
         """Read metadata for this metric, taken from the active version only."""
 
@@ -203,6 +221,7 @@ class DerivedMetric(BaseModel):
                 id=version_id,
                 metric_id=metric_id,
                 backfill_status=DerivedMetricVersion.BackfillStatus.COMPLETE,
+                pins_revoked_at__isnull=True,
             ).first()
             if ready is None:
                 raise MetricStateConflict(
@@ -1064,6 +1083,30 @@ class MetricRefreshAttempt(models.Model):
         super().save(*args, **kwargs)
 
     @classmethod
+    def scrub_private_cursor_metadata(cls, project_id, *, using="default"):
+        """Privacy-only redaction of legacy cursor copies, not audit rewriting.
+
+        New writers keep keysets in purgeable ledger chunks. Older attempts may
+        have duplicated one in source_ceilings. Remove that copy without changing
+        frozen audit hashes, scalar ceilings or the publication/recovery ledger.
+        Callers hold project serialization; this metadata is never replay truth.
+        """
+        attempts = cls.objects.using(using).filter(
+            project_id=project_id,
+            source_ceilings__cursor_updates__has_key="reconciliation_cursor",
+        )
+        for attempt in attempts.only("id", "source_ceilings").iterator():
+            ceilings = dict(attempt.source_ceilings)
+            ceilings["cursor_updates"] = {
+                key: value
+                for key, value in ceilings["cursor_updates"].items()
+                if key != "reconciliation_cursor"
+            }
+            cls.objects.using(using).filter(id=attempt.id).update(
+                source_ceilings=ceilings
+            )
+
+    @classmethod
     def prepare(
         cls,
         project_id,
@@ -1853,7 +1896,41 @@ class MetricReadManifest(models.Model):
                 # Head switch, permanent pin revocation, writer exclusion and
                 # durable nonidentifying cleanup intent commit or roll back once.
                 commit_logical_expiry(attempt, manifest, now=now)
+                if cursors.get("reconciliation_cursor") is not None:
+                    from tracer.services.derived_metrics.backfill import (
+                        expiry_floor,
+                        strip_private_positions,
+                    )
+
+                    # The horizon wins over a coverage proposal frozen before
+                    # this switch: publish its progress, never a keyset it aged.
+                    cursors = {
+                        **cursors,
+                        "reconciliation_cursor": strip_private_positions(
+                            cursors["reconciliation_cursor"],
+                            cutoff=expiry_floor(attempt),
+                        )[0],
+                    }
             for field, value in cursors.items():
+                if (
+                    field == "reconciliation_started_at"
+                    and refresh.reconciliation_started_at
+                ):
+                    # Also a privacy invalidation token. A frozen-clock repair
+                    # may start before a reset's logical microsecond; publication
+                    # must not rewind it and let a later None-cursor reset reuse
+                    # the CAS of a pre-erasure sealed intent. The checkpoint
+                    # itself retains the actual source-coverage start time.
+                    proposed = (
+                        datetime.fromisoformat(value)
+                        if isinstance(value, str)
+                        else value
+                    )
+                    value = (
+                        max(refresh.reconciliation_started_at, proposed)
+                        if proposed
+                        else refresh.reconciliation_started_at
+                    )
                 setattr(refresh, field, value)
             if attempt.source_ceilings.get("logical_expiry"):
                 refresh.pending_expiry = True
@@ -2304,6 +2381,7 @@ class MetricErasureRequest(models.Model):
                     "metric_submission",
                     "metric_expiry",
                     "metric_policy_replan",
+                    "metric_omission",
                 ]
             ),
             id=request_id,

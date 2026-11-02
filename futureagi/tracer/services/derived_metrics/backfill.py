@@ -1,0 +1,1205 @@
+"""Bounded version history and full-history repair inside the project writer.
+
+Progress is a frozen publication intent, not a successful-SELECT acknowledgement.
+B10 may give a project at most three pages per admission; pending_backfill remains
+runnable on the next dispatch, without moving incremental_last_success_at merely
+because a history chunk completed. No queue or second writer is introduced.
+The version cursor stores coverage and the current private keyset, not a dirty
+set or source payload. Completed phases clear their keyset. Expiry drops only
+keysets older than the horizon and erasure drops every keyset; both keep the
+non-identifying progress (phase, day bounds, counts) and move the CAS token.
+"""
+
+from copy import deepcopy
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
+
+from django.db.models import F, Q
+from django.utils import timezone
+
+from tracer.models.derived_metric import (
+    DerivedMetric,
+    DerivedMetricVersion,
+    MetricGenerationPin,
+    MetricProjectRefresh,
+    MetricRefreshAttempt,
+    MetricStateConflict,
+)
+from tracer.services.derived_metrics import changes
+from tracer.services.derived_metrics.deletion_protocol import serialized_project
+from tracer.services.derived_metrics.publication import committed_rows_select
+from tracer.services.derived_metrics.storage import (
+    BUCKET_TOTALS,
+    FIELD_VALUES,
+    SOURCE_DEPENDENCIES,
+)
+
+MAX_HISTORY_DAYS = 90
+MAX_CHUNKS_PER_PASS = 3
+PAGE_SIZE = 1000
+
+
+def pending_versions(project_id):
+    """Only the newest draft can activate; superseded drafts are not work."""
+    return (
+        DerivedMetricVersion.objects.filter(
+            metric__project_id=project_id,
+            metric__deleted=False,
+            metric__current_version=F("version"),
+            pins_revoked_at__isnull=True,
+            backfill_status__in=["pending", "running"],
+        )
+        .exclude(
+            Q(metric__active_version_id__isnull=False)
+            & Q(id=F("metric__active_version_id"))
+        )
+        .select_related("metric")
+        .order_by(F("backfill_updated_at").asc(nulls_first=True), "created_at", "id")
+    )
+
+
+def working_definitions(project_id, definitions=()):
+    """Each touched owner uses EACH version's own immutable recipe/metadata."""
+    versions = {str(d.id): d for d in definitions}
+    active = DerivedMetricVersion.objects.filter(
+        metric__project_id=project_id,
+        metric__deleted=False,
+        id=F("metric__active_version_id"),
+        pins_revoked_at__isnull=True,
+    )
+    pending = (
+        pending_versions(project_id)
+        if MetricProjectRefresh.for_project(project_id).pending_backfill
+        else ()
+    )
+    for definition in (*active, *pending):
+        versions[str(definition.id)] = definition
+    return list(versions.values())
+
+
+def retirement_definitions(writer, head, definitions):
+    """Pinned old recipes may still own rows that privacy expiry must retire.
+
+    They are NOT added to normal touched-unit computation, which would otherwise
+    resurrect old versions after cleanup. Only the expiry planner uses them.
+    """
+    versions = {(str(d.metric_id), d.version): d for d in definitions}
+    needed = set()
+    for table, prefix in ((FIELD_VALUES, "field"), (BUCKET_TOTALS, "metric")):
+        relation, params = committed_rows_select(
+            table, head, org_id=writer.org_id, project_id=writer.lease.project_id
+        )
+        needed.update(
+            (str(metric), version)
+            for metric, version in writer.store.execute(
+                f"SELECT DISTINCT {prefix}_id, {prefix}_version FROM ({relation})",
+                params,
+            )
+        )
+    if not needed - versions.keys():
+        return list(versions.values())
+    for definition in DerivedMetricVersion.objects.filter(
+        metric__project_id=writer.lease.project_id,
+        metric_id__in={metric for metric, _ in needed},
+        pins_revoked_at__isnull=True,
+    ):
+        key = str(definition.metric_id), definition.version
+        if key in needed:
+            versions[key] = definition
+    if needed - versions.keys():
+        raise MetricStateConflict("retirement definition is unavailable")
+    return list(versions.values())
+
+
+def has_private_keyset(cursor):
+    """Both daily and nested coverage positions can contain private identities."""
+    return isinstance(cursor, dict) and (
+        cursor.get("after") is not None or has_private_keyset(cursor.get("coverage"))
+    )
+
+
+def _progress_time(previous, now):
+    # The existing progress timestamp is also an invalidation token. Never reuse
+    # it, including with a frozen clock or a None -> cursor -> None reset (ABA).
+    return max(now, previous + timedelta(microseconds=1)) if previous else now
+
+
+def _moment(value):
+    return changes.utc(
+        value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    )
+
+
+def retained_cutoff(writer, now):
+    from tracer.services.derived_metrics.retention import retention_cutoff
+
+    return retention_cutoff(writer.retention_days(), now=now)
+
+
+def expiry_floor(attempt):
+    """The horizon a logical-expiry checkpoint enforced; None means strip all."""
+    floor = attempt.source_ceilings.get("retention_floor")
+    return _moment(floor) if floor else None
+
+
+def publication_horizon(writer, attempt):
+    """(strip?, cutoff) that a published private position must still satisfy.
+
+    A sealed intent may have been planned before its keyset aged out, so every
+    publication re-checks the CURRENT horizon (and an expiry checkpoint's own
+    floor). An expiry checkpoint without a recorded floor strips everything.
+    """
+    floors = []
+    if attempt.source_ceilings.get("logical_expiry"):
+        floor = expiry_floor(attempt)
+        if floor is None:
+            return True, None
+        floors.append(floor)
+    if writer.retention_days is not None:
+        current = retained_cutoff(writer, writer.lease.clock())
+        if current is not None:
+            floors.append(current)
+    return (True, max(floors)) if floors else (False, None)
+
+
+def _position_expired(position, cutoff, *, fallback=None):
+    """Whether ONE level's private keyset must go under the given horizon.
+
+    cutoff=None is erasure or abandonment: every private position goes. Else an
+    exact keyset date decides; a source key falls back to its sorting hour (a
+    lower bound); a nested coverage key falls back to its own pass start. Any
+    other key that cannot be dated is conservatively treated as expired.
+    """
+    if not isinstance(position, dict) or position.get("after") is None:
+        return False
+    if cutoff is None:
+        return True
+    if position.get("keyset_start"):
+        return _moment(position["keyset_start"]) < cutoff
+    after = position["after"]
+    if position.get("phase") == "sources" and len(after) == len(changes.SOURCE_ORDER):
+        return _moment(after[2]) < cutoff
+    return fallback is None or _moment(fallback) <= cutoff
+
+
+def strip_private_positions(cursor, *, cutoff=None):
+    """Return (copy without private positions, whether any position went).
+
+    Only paging keysets (after/keyset_start, also nested in coverage) identify
+    sources. Phase, day bounds, counts, schema and pass start are progress and
+    survive, so the next page re-reads just that one day or phase from its start.
+    """
+    if not isinstance(cursor, dict):
+        return cursor, False
+    result, removed = dict(cursor), False
+    if _position_expired(result, cutoff):
+        result.update(after=None, keyset_start=None)
+        removed = True
+    coverage = result.get("coverage")
+    if isinstance(coverage, dict) and _position_expired(
+        coverage,
+        cutoff,
+        fallback=coverage.get("started_at") or result.get("end"),
+    ):
+        result["coverage"] = {**coverage, "after": None, "keyset_start": None}
+        removed = True
+    return result, removed
+
+
+def _scrub_versions(selected, *, now, cutoff, clear, always, using):
+    for definition in selected:
+        cursor, removed = strip_private_positions(
+            definition.backfill_cursor, cutoff=cutoff
+        )
+        if clear and removed:
+            cursor = None  # abandoned: no progress worth keeping, only counters
+        if removed or always:
+            DerivedMetricVersion.objects.using(using).filter(id=definition.id).update(
+                backfill_cursor=cursor,
+                backfill_updated_at=_progress_time(definition.backfill_updated_at, now),
+            )
+
+
+def _scrub_repair(project_id, *, now, cutoff, always, using):
+    state = (
+        MetricProjectRefresh.objects.using(using).filter(project_id=project_id).first()
+    )
+    if state is None:
+        return
+    cursor, removed = strip_private_positions(
+        state.reconciliation_cursor, cutoff=cutoff
+    )
+    if removed or always:
+        # The phase/day survive, so pending_repair and the completion time stay
+        # truthful; only the token moves, which makes sealed intents stale.
+        MetricProjectRefresh.objects.using(using).filter(project_id=project_id).update(
+            reconciliation_cursor=cursor,
+            reconciliation_started_at=_progress_time(
+                state.reconciliation_started_at, now
+            ),
+        )
+
+
+def scrub_private_progress(
+    project_id,
+    *,
+    now,
+    versions=None,
+    reset_repair=True,
+    invalidate_empty=True,
+    clear=False,
+    using="default",
+):
+    """Serialized erasure scrub of private paging positions, never of progress.
+
+    Erasure cannot know whose identity a keyset holds, so every selected private
+    position goes while non-identifying progress stays. The token makes even
+    sealed initial (expected=None) intents stale. clear=True is only for
+    abandoned versions: a cursor holding a keyset is dropped whole (row-level
+    counters remain). Ordinary history GC must NOT call this: safe pins remain
+    GC roots.
+    """
+    with serialized_project(project_id, using=using):
+        MetricRefreshAttempt.scrub_private_cursor_metadata(project_id, using=using)
+        selected = DerivedMetricVersion.objects.using(using).filter(
+            metric__project_id=project_id,
+        )
+        if versions is not None:
+            selected = selected.filter(id__in=versions)
+        _scrub_versions(
+            selected,
+            now=now,
+            cutoff=None,
+            clear=clear,
+            always=invalidate_empty,
+            using=using,
+        )
+        if reset_repair:
+            _scrub_repair(
+                project_id, now=now, cutoff=None, always=invalidate_empty, using=using
+            )
+
+
+def scrub_superseded_progress(project_id, *, using="default"):
+    abandoned = (
+        DerivedMetricVersion.objects.using(using)
+        .filter(
+            metric__project_id=project_id,
+            version__lt=F("metric__current_version"),
+        )
+        .exclude(
+            Q(metric__active_version_id__isnull=False)
+            & Q(id=F("metric__active_version_id"))
+        )
+    )
+    scrub_private_progress(
+        project_id,
+        now=timezone.now(),
+        versions=abandoned.values("id"),
+        reset_repair=False,
+        invalidate_empty=False,
+        clear=True,
+        using=using,
+    )
+
+
+def _private_keyset_start(batch, phase, after, *, fallback=None):
+    """Date the actual retained key, not its coarse physical sorting hour."""
+    if after is None:
+        return None
+    if phase in {"sources", "dependencies"}:
+        key = changes.SourceKey(*after[-2:])
+        positions = {d.key: d for d in (*batch.prior_dependencies, *batch.dependencies)}
+        if key in positions:
+            fallback = positions[key].unit_start
+    return fallback.isoformat() if isinstance(fallback, datetime) else fallback
+
+
+def scrub_expired_progress(project_id, *, cutoff, now, using="default"):
+    """Selective, serialized expiry of private positions, never of progress.
+
+    Also covers stranded cursors with no remaining field rows, superseded drafts
+    and a shrunk policy: each keyset is judged by its own date against the
+    current horizon. Retained keysets and their tokens are left untouched, so an
+    in-flight chunk is not invalidated merely because time moved. Whole expired
+    days are skipped by the readers, not by resetting progress here.
+    """
+    with serialized_project(project_id, using=using):
+        MetricRefreshAttempt.scrub_private_cursor_metadata(project_id, using=using)
+        _scrub_versions(
+            DerivedMetricVersion.objects.using(using)
+            .filter(metric__project_id=project_id)
+            .exclude(backfill_cursor=None),
+            now=now,
+            cutoff=cutoff,
+            clear=False,
+            always=False,
+            using=using,
+        )
+        _scrub_repair(project_id, now=now, cutoff=cutoff, always=False, using=using)
+
+
+def obsolete_versions(project_id, *, now, exclude_attempt_id=None):
+    """Checkpoint omission only; old pinned manifests remain GC roots.
+
+    A definition-less request pin is deliberately conservative. Cleanup waits
+    for it too, rather than guessing which semantic version the request used.
+    """
+    pins = MetricGenerationPin.objects.filter(
+        project_id=project_id, expires_at__gt=now, invalidated_at__isnull=True
+    )
+    if pins.filter(definition_version_id=None).exists():
+        return ()
+    versions = (
+        DerivedMetricVersion.objects.filter(metric__project_id=project_id)
+        .filter(
+            Q(activated_at__isnull=False) | Q(version__lt=F("metric__current_version"))
+        )
+        .exclude(
+            Q(metric__active_version_id__isnull=False)
+            & Q(id=F("metric__active_version_id"))
+        )
+        .exclude(version=F("metric__current_version"))
+        .exclude(id__in=pins.values("definition_version_id"))
+        .order_by("metric_id", "version")
+    )
+    attempts = MetricRefreshAttempt.objects.filter(
+        project_id=project_id, state__in=MetricRefreshAttempt.OPEN_STATES
+    ).exclude(id=exclude_attempt_id)
+    open_ids = {str(v["id"]) for attempt in attempts for v in attempt.metric_versions}
+    return tuple(
+        (definition.metric_id, definition.version)
+        for definition in versions
+        if str(definition.id) not in open_ids
+    )
+
+
+def pending_omissions(project_id, *, now):
+    """Eligible obsolete versions that no checkpoint has retired yet.
+
+    Retention checkpoints copy every version forward and reset the delta chain,
+    so the writer must not wait for a long delta chain to omit them. Retired
+    versions stay in obsolete_versions (a harmless NOT IN) but are not new work.
+    """
+    obsolete = obsolete_versions(project_id, now=now)
+    if not obsolete:
+        return ()
+    retired = set(
+        DerivedMetricVersion.objects.filter(
+            metric__project_id=project_id, pins_revoked_at__isnull=False
+        ).values_list("metric_id", "version")
+    )
+    return tuple(item for item in obsolete if item not in retired)
+
+
+def check_retirement_publication(writer, attempt, control):
+    """Final eligibility + permanent capture/activation fence with head switch.
+
+    Planning holds the project lock, but staging does not. Recompute eligibility
+    for EXACTLY the frozen omissions; a reactivation, new live pin, current draft
+    or recoverable attempt makes the whole publication fail, not the pin expire.
+    """
+    intended = {tuple(item) for item in control.get("retire_versions", ())}
+    if not intended:
+        return
+    if attempt.purpose != "compaction":
+        raise MetricStateConflict("only a checkpoint may retire version payload")
+    eligible = {
+        (str(metric), version)
+        for metric, version in obsolete_versions(
+            writer.lease.project_id,
+            now=writer.lease.clock(),
+            exclude_attempt_id=attempt.id,
+        )
+    }
+    if not intended <= eligible:
+        raise MetricStateConflict("version retirement eligibility changed")
+    return intended
+
+
+def retire_omitted_versions(writer, attempt, control):
+    """Retire only inside the transaction that publishes the frozen omission."""
+    intended = check_retirement_publication(writer, attempt, control)
+    now = writer.lease.clock()
+    newly_retired = False
+    for metric, version in intended or ():
+        definition = DerivedMetricVersion.objects.get(
+            metric_id=metric,
+            version=version,
+            metric__project_id=writer.lease.project_id,
+        )
+        newly_retired |= definition.pins_revoked_at is None
+        DerivedMetricVersion.objects.filter(id=definition.id).update(
+            pins_revoked_at=definition.pins_revoked_at or now,
+            backfill_cursor=None,
+            backfill_updated_at=_progress_time(definition.backfill_updated_at, now),
+        )
+    if newly_retired:
+        from tracer.services.derived_metrics.deletion_protocol import _intent
+
+        # Omission removes the head's nomination, not its privacy obligation.
+        # Persist only namespace bounds; policy expiry must still visit all old
+        # physical revisions even while their ordinary history TTL is live.
+        _intent(
+            organization_id=writer.org_id,
+            project_id=writer.lease.project_id,
+            scope="history",
+            deletion_key=f"omission:{attempt.id}",
+            store_payload={
+                "protocol": "metric_omission",
+                "through_generation": attempt.generation,
+            },
+        )
+
+
+def discharge_omission_debts(project_id, *, now):
+    """Close omission receipts once ordinary history GC removed their namespaces.
+
+    Call only after the external store dropped unregistered attempts' rows
+    (collect_garbage after scrub_orphans). Omitted payload lives only in attempts
+    older than the omitting checkpoint, which itself froze NOT IN those versions.
+    This is retention-independent: unlimited policies never run the expiry
+    scrub, which remains a second, earlier discharge path for finite policies.
+    """
+    from tracer.models.derived_metric import MetricErasureRequest
+
+    with serialized_project(project_id):
+        debts = MetricErasureRequest.objects.filter(
+            project_key=project_id, store_payload__protocol="metric_omission"
+        ).exclude(status="done")
+        if not debts.exists():
+            return 0
+        head = MetricProjectRefresh.for_project(project_id).head_manifest
+        reachable = {a for _, a in head.allowed_attempts()} if head else set()
+        registered = MetricRefreshAttempt.objects.filter(project_id=project_id).exclude(
+            id__in=reachable
+        )
+        done = 0
+        for debt in debts:
+            through = debt.store_payload["through_generation"]
+            if registered.filter(generation__lt=through).exists():
+                continue
+            done += MetricErasureRequest.objects.filter(id=debt.id).update(
+                status="done",
+                completed_at=now,
+                receipts={"history_collected": {"through_generation": through}},
+            )
+        return done
+
+
+def _initial_cursor(definition, *, now, retention_days):
+    days = (
+        min(MAX_HISTORY_DAYS, retention_days)
+        if retention_days > 0
+        else MAX_HISTORY_DAYS
+    )
+    return {
+        "schema": 1,
+        "start": (now - timedelta(days=days)).isoformat(),
+        "end": now.isoformat(),
+        "day_end": now.isoformat(),
+        "phase": "sources",
+        "after": None,
+        "done": 0,
+        "total": days,
+        "expected_active": str(definition.metric.active_version_id)
+        if definition.metric.active_version_id
+        else None,
+        "coverage": None,
+    }
+
+
+def _bound_after(columns, after, prefix):
+    if after is None:
+        return "1", {}
+    return changes.keyset_after(columns, tuple(after), prefix)
+
+
+def day_page(analytics, writer, head, cursor, *, page_size, cutoff=None):
+    """Nominate one day's bounded source/dependency/field keys, newest first.
+
+    Date predicates here nominate a superset only. Recompute has NO cached
+    unit-start lower bound: a nominated conversation is always read in full.
+    Committed preimages and fields also visit vanished/moved physical sources.
+    Reads never go below the CURRENT retained horizon, so a fresh keyset is
+    retained when proposed; days wholly beyond it are complete, not restarted.
+    """
+    proposed = deepcopy(cursor)
+    end = datetime.fromisoformat(cursor["day_end"])
+    floor = datetime.fromisoformat(cursor["start"])
+    if cutoff is not None:
+        floor = max(floor, cutoff)
+    if proposed["phase"] != "coverage" and end <= floor:
+        # Every remaining day is older than the retained horizon: nothing in it
+        # may be nominated, so it is done. Counts stay honest about the window.
+        proposed.update(
+            phase="coverage",
+            after=None,
+            done=proposed["total"],
+            day_end=cursor["start"],
+        )
+    start = max(end - timedelta(days=1), floor)
+    attempts = [str(a) for _, a in head.allowed_attempts()] if head else []
+    params = changes._scope(writer.org_id, writer.lease.project_id, attempts)
+    params.update(day_start=start, day_end=end)
+    budget = changes.MetricReadBudget()
+    keys, units, scanned = set(), set(), 0
+    keyset_start = None
+    while proposed["phase"] != "coverage" and scanned < page_size:
+        phase, after = proposed["phase"], proposed["after"]
+        remaining = page_size - scanned
+        if phase == "sources":
+            predicate, bound = _bound_after(
+                changes.SOURCE_ORDER, after, "history_after"
+            )
+            predicate = predicate.replace(
+                "%(history_after_2)s", "toDateTime(%(history_after_2)s, 'UTC')"
+            )
+            query = f"""SELECT observation_type, service_name,
+                toStartOfHour(start_time) AS hour, trace_id, id AS span_id
+                FROM spans PREWHERE project_id = toUUID(%(project_id)s)
+                AND start_time >= toDateTime64(%(day_start)s, 6, 'UTC')
+                AND start_time < toDateTime64(%(day_end)s, 6, 'UTC')
+                WHERE {predicate} ORDER BY {", ".join(changes.SOURCE_ORDER)}
+                LIMIT %(history_limit)s"""
+            columns = changes.SOURCE_ORDER
+        else:
+            table = SOURCE_DEPENDENCIES if phase == "dependencies" else FIELD_VALUES
+            relation, rp = committed_rows_select(
+                table, head, org_id=writer.org_id, project_id=writer.lease.project_id
+            )
+            params.update(rp)
+            columns = (
+                ("trace_id", "span_id") if phase == "dependencies" else ("unit_id",)
+            )
+            predicate, bound = _bound_after(columns, after, "history_after")
+            query = (
+                f"SELECT {', '.join(columns)}, min(unit_start) AS keyset_start FROM ({relation}) "
+                "WHERE unit_start >= toDateTime64(%(day_start)s, 6, 'UTC') "
+                "AND unit_start < toDateTime64(%(day_end)s, 6, 'UTC') "
+                f"AND {predicate} GROUP BY {', '.join(columns)} "
+                f"ORDER BY {', '.join(columns)} LIMIT %(history_limit)s"
+            )
+        rows = changes.read(
+            analytics, query, {**params, **bound, "history_limit": remaining}, budget
+        )
+        scanned += len(rows)
+        if phase in {"sources", "dependencies"}:
+            keys.update(
+                changes.SourceKey(str(r["trace_id"]), str(r["span_id"])) for r in rows
+            )
+        else:
+            units.update(
+                changes.UnitKey("conversation", str(r["unit_id"])) for r in rows
+            )
+        if len(rows) == remaining:
+            last = (
+                changes._source_key_values(rows[-1])
+                if phase == "sources"
+                else tuple(str(rows[-1][c]) for c in columns)
+            )
+            if after is not None and last <= tuple(after):
+                raise changes.MetricChangeReadError("backfill keyset did not advance")
+            proposed["after"] = list(last)
+            keyset_start = rows[-1].get("keyset_start")
+            break
+        proposed["after"] = None
+        if phase != "fields":
+            proposed["phase"] = "dependencies" if phase == "sources" else "fields"
+        else:
+            proposed["done"] += 1
+            proposed["day_end"] = start.isoformat()
+            if start <= floor:
+                # The retained horizon, not the original window start, bounded
+                # this day: every older day is already beyond retention.
+                proposed["done"] = proposed["total"]
+            proposed["phase"] = (
+                "coverage" if proposed["done"] == proposed["total"] else "sources"
+            )
+            break  # At most one daily chunk per publication, even on empty days.
+    batch = changes._batch(
+        analytics, tuple(sorted(keys)), params, budget, {}, extra_units=units
+    )
+    proposed["keyset_start"] = _private_keyset_start(
+        batch, proposed["phase"], proposed["after"], fallback=keyset_start
+    )
+    return batch, proposed
+
+
+@dataclass(frozen=True)
+class VersionCoveragePage:
+    changes: changes.ChangeBatch
+    checkpoint: changes.ReconciliationCheckpoint
+    keyset_start: str | None
+
+
+def version_coverage_page(
+    analytics, writer, head, cursor, *, now, page_size, cutoff=None
+):
+    """Catch up only the version's approved nomination window.
+
+    Project repair is a separate full-retained-history sweep. These predicates
+    nominate owners, never bound their recomputation: a conversation spanning
+    the boundary still contributes its complete membership (T6). Nominations
+    stay inside the current retained horizon, like the daily pages.
+    """
+    cp = (
+        changes.ReconciliationCheckpoint.from_dict(cursor["coverage"])
+        if cursor.get("coverage")
+        else changes.ReconciliationCheckpoint(now)
+    )
+    start, end = datetime.fromisoformat(cursor["start"]), now
+    if cutoff is not None:
+        start = max(start, cutoff)
+    phase, after, day, last_day = cp.phase, cp.after, cp.day, cp.last_day
+    if phase == "sources" and day is not None and day < start.date():
+        # Whole coverage days already beyond retention are done, not repeated.
+        day, after = start.date(), None
+    params = changes._scope(
+        writer.org_id,
+        writer.lease.project_id,
+        [str(a) for _, a in head.allowed_attempts()] if head else [],
+    )
+    params.update(coverage_start=start, coverage_end=end)
+    budget = changes.MetricReadBudget()
+    keys, units, scanned = set(), set(), 0
+    keyset_start = None
+    if phase == "sources":
+        day = day or start.date()
+        last_day = last_day or end.date()
+        for _ in range(changes.MAX_DAYS_PER_PAGE):
+            lower = max(datetime.combine(day, datetime.min.time(), UTC), start)
+            upper = min(
+                datetime.combine(day + timedelta(days=1), datetime.min.time(), UTC),
+                end,
+            )
+            predicate, bound = _bound_after(
+                changes.SOURCE_ORDER, after, "catchup_after"
+            )
+            predicate = predicate.replace(
+                "%(catchup_after_2)s", "toDateTime(%(catchup_after_2)s, 'UTC')"
+            )
+            remaining = page_size - scanned
+            rows = changes.read(
+                analytics,
+                f"""SELECT observation_type, service_name,
+                    toStartOfHour(start_time) AS hour, trace_id, id AS span_id
+                    FROM spans PREWHERE project_id = toUUID(%(project_id)s)
+                    AND start_time >= toDateTime64(%(coverage_day_start)s, 6, 'UTC')
+                    AND start_time < toDateTime64(%(coverage_day_end)s, 6, 'UTC')
+                    WHERE {predicate} ORDER BY {", ".join(changes.SOURCE_ORDER)}
+                    LIMIT %(coverage_limit)s""",
+                {
+                    **params,
+                    **bound,
+                    "coverage_day_start": lower,
+                    "coverage_day_end": upper,
+                    "coverage_limit": remaining,
+                },
+                budget,
+                settings=changes._block_settings(remaining),
+            )
+            keys.update(
+                changes.SourceKey(str(r["trace_id"]), str(r["span_id"])) for r in rows
+            )
+            scanned += len(rows)
+            if len(rows) == remaining:
+                next_after = changes._source_key_values(rows[-1])
+                if after is not None and next_after <= tuple(after):
+                    raise changes.MetricChangeReadError(
+                        "version coverage did not advance"
+                    )
+                after = next_after
+                break
+            after = None
+            if day >= last_day:
+                phase, day, last_day = "dependencies", None, None
+                break
+            day += timedelta(days=1)
+    elif phase in {"dependencies", "units"}:
+        table, columns = (
+            (SOURCE_DEPENDENCIES, ("trace_id", "span_id"))
+            if phase == "dependencies"
+            # Lifecycle first_seen is discovery time, not the unit anchor.
+            # Bound orphan/vanished-owner nomination by committed fields; source
+            # dependencies above independently nominate moved/deleted members.
+            else (FIELD_VALUES, ("level", "unit_id"))
+        )
+        relation, bound = committed_rows_select(
+            table, head, org_id=writer.org_id, project_id=writer.lease.project_id
+        )
+        predicate, keyset = _bound_after(columns, after, "catchup_after")
+        rows = changes.read(
+            analytics,
+            f"SELECT {', '.join(columns)}, min(unit_start) AS keyset_start FROM ({relation}) "
+            "WHERE unit_start >= toDateTime64(%(coverage_start)s, 6, 'UTC') "
+            "AND unit_start < toDateTime64(%(coverage_end)s, 6, 'UTC') "
+            f"AND {predicate} GROUP BY {', '.join(columns)} "
+            f"ORDER BY {', '.join(columns)} LIMIT %(coverage_limit)s",
+            {**params, **bound, **keyset, "coverage_limit": page_size},
+            budget,
+            settings=changes._block_settings(page_size),
+        )
+        scanned = len(rows)
+        values = [tuple(str(r[c]) for c in columns) for r in rows]
+        if phase == "dependencies":
+            keys.update(changes.SourceKey(*v) for v in values)
+        else:
+            units.update(changes.UnitKey(*v) for v in values)
+        if scanned == page_size:
+            next_after = values[-1]
+            if after is not None and next_after <= tuple(after):
+                raise changes.MetricChangeReadError("version coverage did not advance")
+            after = next_after
+            keyset_start = rows[-1]["keyset_start"]
+        else:
+            phase, after = ("units" if phase == "dependencies" else "complete"), None
+    complete = phase == "complete"
+    proposed = changes.ReconciliationCheckpoint(
+        started_at=cp.started_at,
+        completed_at=now if complete else None,
+        phase=phase,
+        after=after,
+        scanned=cp.scanned + scanned,
+        completed_passes=int(complete),
+        day=day,
+        last_day=last_day,
+        covered_through=cp.started_at if complete else None,
+    )
+    batch = changes._batch(
+        analytics, tuple(sorted(keys)), params, budget, {}, extra_units=units
+    )
+    return VersionCoveragePage(
+        batch,
+        proposed,
+        _private_keyset_start(batch, phase, after, fallback=keyset_start),
+    )
+
+
+def merge_changes(*batches):
+    """Discovery is conservative; include old AND new memberships from each path."""
+    return changes.ChangeBatch(
+        tuple(sorted({v for b in batches for v in b.source_keys})),
+        tuple(sorted({v for b in batches for v in b.units})),
+        tuple(sorted({v for b in batches for v in b.user_ids})),
+        tuple({d.key: d for b in batches for d in b.dependencies}.values()),
+        tuple({d.key: d for b in batches for d in b.prior_dependencies}.values()),
+        {k: v for b in batches for k, v in b.cursor_updates.items()},
+    )
+
+
+def incremental_changes(analytics, writer, head, definitions, *, now):
+    state = MetricProjectRefresh.for_project(writer.lease.project_id)
+    return changes.discover_changes(
+        analytics,
+        org_id=writer.org_id,
+        project_id=writer.lease.project_id,
+        committed_attempts=[str(a) for _, a in head.allowed_attempts()] if head else [],
+        watermark_ns=state.watermark_ns,
+        eval_watermark_ns=state.eval_watermark_ns,
+        remap_cursor_ns=state.remap_cursor_ns,
+        ceiling=now,
+        eval_config_ids=sorted(
+            {
+                str(item["config_id"])
+                for d in definitions
+                for item in d.inputs
+                if item.get("source") == "eval" and item.get("config_id")
+            }
+        ),
+    )
+
+
+def check_backfill_publication(writer, control):
+    intent = control.get("backfill")
+    if not intent:
+        return
+    definition = DerivedMetricVersion.objects.select_related("metric").get(
+        id=intent["version_id"], metric__project_id=writer.lease.project_id
+    )
+    updated = definition.backfill_updated_at
+    if (
+        definition.backfill_cursor != intent["expected"]
+        or (updated.isoformat() if updated else None)
+        != intent.get("expected_updated_at")
+        or definition.pins_revoked_at
+        or (
+            definition.metric.current_version != definition.version
+            and has_private_keyset(intent["next"])
+        )
+    ):
+        raise MetricStateConflict("backfill progress changed or expired")
+
+
+def apply_publication(writer, attempt, control):
+    """Called ONLY after validation inside the fenced head-switch transaction."""
+    intent = control.get("backfill")
+    if intent:
+        definition = DerivedMetricVersion.objects.select_related("metric").get(
+            id=intent["version_id"], metric__project_id=writer.lease.project_id
+        )
+        cursor = intent["next"]
+        complete = cursor["phase"] == "complete"
+        now = writer.lease.clock()
+        stored = cursor
+        strip, cutoff = publication_horizon(writer, attempt)
+        if definition.metric.current_version != definition.version:
+            stored = None  # superseded progress is unscheduled; keep no keyset
+        elif strip:
+            # The horizon may have moved after this page was planned (or this
+            # is an expiry checkpoint): keep progress, drop only an aged keyset.
+            stored, _ = strip_private_positions(cursor, cutoff=cutoff)
+        DerivedMetricVersion.objects.filter(id=definition.id).update(
+            backfill_cursor=stored,
+            backfill_status="complete" if complete else "running",
+            backfill_days_done=cursor["done"],
+            backfill_days_total=cursor["total"],
+            backfill_updated_at=_progress_time(definition.backfill_updated_at, now),
+        )
+        # A new edit can supersede a staging draft. Commit its data, but never
+        # expose it or clear the newer draft's pending flag.
+        if complete and definition.metric.current_version == definition.version:
+            DerivedMetric.activate_version(
+                definition.metric_id,
+                definition.id,
+                expected_active_id=cursor["expected_active"],
+                now=now,
+            )
+        MetricProjectRefresh.objects.filter(project_id=writer.lease.project_id).update(
+            pending_backfill=pending_versions(writer.lease.project_id).exists(),
+            backfill_last_progress_at=now,
+        )
+
+
+def queue_bulk_change(project_id, *, now):
+    """Reroute large invalidations to a persisted FULL coverage sweep.
+
+    Resetting its cursor is explicit, serialized invalidation, never an implicit
+    yesterday-only repair. A publication planned before this reset fails its CAS.
+    """
+    with serialized_project(project_id):
+        state = MetricProjectRefresh.for_project(project_id)
+        MetricProjectRefresh.objects.filter(project_id=project_id).update(
+            pending_repair=True,
+            reconciliation_cursor=None,
+            reconciliation_started_at=_progress_time(
+                state.reconciliation_started_at, now
+            ),
+            reconciliation_completed_at=None,
+        )
+
+
+def check_repair_publication(writer, control):
+    intent = control.get("repair")
+    if intent:
+        state = MetricProjectRefresh.for_project(writer.lease.project_id)
+        started = state.reconciliation_started_at
+        if (state.reconciliation_cursor, started.isoformat() if started else None) != (
+            intent["cursor"],
+            intent["started_at"],
+        ):
+            raise MetricStateConflict("repair coverage was invalidated")
+
+
+def _retained_repair_checkpoint(cp, *, cutoff):
+    """Continue the repair's source days from the retained horizon's day.
+
+    Spans older than the cutoff belong only to expired conversations, so whole
+    earlier days are skipped instead of being re-read after every expiry. The
+    cutoff day itself is still read in full (reconcile_page has no time bound).
+    """
+    first = cutoff.date() if cutoff is not None else None
+    if first is None or cp is None or cp.phase != "sources" or cp.day is None:
+        return cp
+    if cp.day >= first:
+        return cp
+    if cp.last_day < first:
+        return replace(cp, phase="dependencies", after=None, day=None, last_day=None)
+    return replace(cp, day=first, after=None)
+
+
+def _committed_keyset_start(writer, committed, phase, after):
+    """Date a committed-table repair keyset through sorting-key point lookups.
+
+    The divergent-only dependency filter and the lifecycle table cannot date
+    the boundary key from the page itself. None leaves it conservatively
+    undated (expired at the next horizon check).
+    """
+    if after is None or not committed or phase not in {"dependencies", "units"}:
+        return None
+    params = {
+        "keyset_org": str(writer.org_id),
+        "keyset_project": str(writer.lease.project_id),
+        "keyset_attempts": tuple(committed),
+        "keyset_a": after[0],
+        "keyset_b": after[1],
+    }
+    scope = (
+        "org_id = toUUID(%(keyset_org)s) AND project_id = toUUID(%(keyset_project)s)"
+    )
+    if phase == "dependencies":
+        tables = (SOURCE_DEPENDENCIES.name,)
+        key = "trace_id = %(keyset_a)s AND span_id = %(keyset_b)s"
+    else:
+        versions = tuple(
+            (d.metric_id, d.version)
+            for d in working_definitions(writer.lease.project_id)
+        )
+        if not versions:
+            return None
+        params["keyset_versions"] = versions
+        tables = (FIELD_VALUES.name, FIELD_VALUES.name + "_checkpoint")
+        key = (
+            "(field_id, field_version) IN %(keyset_versions)s "
+            "AND level = %(keyset_a)s AND unit_id = %(keyset_b)s"
+        )
+    starts = []
+    for table in tables:
+        rows = writer.store.execute(
+            f"SELECT min(unit_start), count() FROM {table} PREWHERE {scope} AND {key} "
+            "WHERE attempt_id IN %(keyset_attempts)s",
+            params,
+        )
+        if rows and rows[0][1]:
+            starts.append(changes.utc(rows[0][0]))
+    return min(starts).isoformat() if starts else None
+
+
+class BackfillRunner:
+    """One bounded admission. Fleet admission/fairness remains B10's concern."""
+
+    def __init__(self, writer, analytics, scope, *, page_size=PAGE_SIZE):
+        if not 1 <= page_size <= PAGE_SIZE:
+            raise ValueError("invalid backfill page size")
+        if (
+            str(scope.project) != str(writer.lease.project_id)
+            or str(scope.organization) != str(writer.org_id)
+            or str(scope.workspace) != str(writer.workspace_id)
+        ):
+            raise MetricStateConflict("backfill scope mismatch")
+        if writer.retention_days is None:
+            raise MetricStateConflict("backfill requires current retention policy")
+        self.writer, self.analytics, self.scope = writer, analytics, scope
+        self.page_size = page_size
+
+    def run_pass(self, *, max_chunks=MAX_CHUNKS_PER_PASS):
+        if not 1 <= max_chunks <= MAX_CHUNKS_PER_PASS:
+            raise ValueError("backfill pass must contain one to three chunks")
+        manifests = []
+        for _ in range(max_chunks):
+            self.writer.lease.keepalive()
+            definition = pending_versions(self.writer.lease.project_id).first()
+            if definition is None:
+                break
+            manifests.append(self.run_chunk(definition))
+        return manifests
+
+    def run_chunk(self, definition):
+        writer = self.writer
+        now = writer.lease.clock()
+        cutoff = retained_cutoff(writer, now)
+        if cutoff is not None:
+            # Plan from already-scrubbed progress: a keyset that aged out since
+            # its publication goes now, rather than failing this chunk's CAS.
+            scrub_expired_progress(writer.lease.project_id, cutoff=cutoff, now=now)
+        # Same-epoch sealed plans resume exact bytes, including progress intent.
+        # A takeover is replanned by RefreshWriter from unchanged durable cursors.
+        open_attempt = MetricRefreshAttempt.objects.filter(
+            project_id=writer.lease.project_id,
+            state__in=MetricRefreshAttempt.OPEN_STATES,
+            fencing_epoch=writer.lease.grant.fencing_epoch,
+            lease_token=writer.lease.grant.lease_token,
+            ledger_sealed_at__isnull=False,
+            expires_at__gt=now,
+        ).first()
+        if open_attempt:
+            if open_attempt.purpose == "repair":
+                # Bulk invalidation may have reset coverage after staging. Repair
+                # can safely replan from its persisted cursor/preimages; replaying
+                # an invalidated coverage CAS forever cannot make progress.
+                return self.run_repair_page(skip_incremental=True)
+            controls = [
+                entry
+                for chunk in open_attempt.ledger_chunks.filter(
+                    part="cleanup_intent", payload__0__kind="publication"
+                )
+                for entry in chunk.payload
+                if entry.get("kind") == "publication"
+            ]
+            resumable = False
+            with serialized_project(writer.lease.project_id):
+                try:
+                    if len(controls) != 1:
+                        raise MetricStateConflict("missing backfill publication intent")
+                    check_backfill_publication(writer, controls[0])
+                    check_retirement_publication(writer, open_attempt, controls[0])
+                except MetricStateConflict:
+                    # The normal preparation path transfers the original recovery
+                    # ledger before aborting, rather than losing dirty preimages.
+                    pass
+                else:
+                    resumable = True
+            if resumable:
+                return writer.stage_and_publish(open_attempt)
+        definition.refresh_from_db()
+        cursor = deepcopy(definition.backfill_cursor) or _initial_cursor(
+            definition, now=now, retention_days=writer.retention_days()
+        )
+        head = MetricProjectRefresh.for_project(writer.lease.project_id).head_manifest
+        definitions = working_definitions(
+            writer.lease.project_id, pending_versions(writer.lease.project_id)
+        )
+        if str(definition.id) not in {str(d.id) for d in definitions}:
+            raise MetricStateConflict("backfill definition is no longer pending")
+        if cursor["phase"] == "coverage":
+            coverage = version_coverage_page(
+                self.analytics,
+                writer,
+                head,
+                cursor,
+                now=now,
+                page_size=self.page_size,
+                cutoff=cutoff,
+            )
+            batch = replace(coverage.changes, cursor_updates={})
+            proposed = {
+                **cursor,
+                "coverage": {
+                    **coverage.checkpoint.to_dict(),
+                    "keyset_start": getattr(coverage, "keyset_start", None),
+                },
+            }
+            if coverage.checkpoint.phase == "complete":
+                changes.require_initial_dependencies(coverage.checkpoint)
+                proposed["phase"] = "complete"
+        else:
+            batch, proposed = day_page(
+                self.analytics,
+                writer,
+                head,
+                cursor,
+                page_size=self.page_size,
+                cutoff=cutoff,
+            )
+        # History publication also serves incremental work. This prevents a bulk
+        # backfill from starving arrivals, and closes the final catch-up window.
+        try:
+            incremental = incremental_changes(
+                self.analytics, writer, head, definitions, now=now
+            )
+        except changes.arrivals.ContinuousCandidateOverflow:
+            # A large re-evaluation must make bounded progress, not retry the
+            # same overflowing arrival interval forever. Do not consume ANY
+            # cursor until the full retained-history coverage has published.
+            if not MetricProjectRefresh.for_project(
+                writer.lease.project_id
+            ).pending_repair:
+                queue_bulk_change(writer.lease.project_id, now=now)
+            return self.run_repair_page(skip_incremental=True)
+        batch = merge_changes(batch, incremental)
+        return writer.refresh(
+            batch,
+            definitions,
+            self.scope,
+            start=datetime.fromisoformat(cursor["start"]),
+            end=now,
+            as_of=now,
+            purpose="backfill",
+            publication={
+                "backfill": {
+                    "version_id": str(definition.id),
+                    "expected": definition.backfill_cursor,
+                    "expected_updated_at": definition.backfill_updated_at.isoformat()
+                    if definition.backfill_updated_at
+                    else None,
+                    "next": proposed,
+                }
+            },
+        )
+
+    def run_repair_page(self, *, skip_incremental=False):
+        writer = self.writer
+        now = writer.lease.clock()
+        cutoff = retained_cutoff(writer, now)
+        if cutoff is not None:
+            scrub_expired_progress(writer.lease.project_id, cutoff=cutoff, now=now)
+        state = MetricProjectRefresh.for_project(writer.lease.project_id)
+        head = state.head_manifest
+        committed = [str(a) for _, a in head.allowed_attempts()] if head else []
+        page = changes.reconcile_page(
+            self.analytics,
+            org_id=writer.org_id,
+            project_id=writer.lease.project_id,
+            committed_attempts=committed,
+            now=now,
+            checkpoint=_retained_repair_checkpoint(
+                changes.ReconciliationCheckpoint.from_dict(state.reconciliation_cursor)
+                if state.reconciliation_cursor
+                else None,
+                cutoff=cutoff,
+            ),
+            page_size=self.page_size,
+        )
+        definitions = working_definitions(writer.lease.project_id)
+        incremental = changes.ChangeBatch((), (), (), (), (), {})
+        if not skip_incremental:
+            try:
+                incremental = incremental_changes(
+                    self.analytics, writer, head, definitions, now=now
+                )
+            except changes.arrivals.ContinuousCandidateOverflow:
+                skip_incremental = True
+        batch = merge_changes(page.changes, incremental)
+        if batch.cursor_updates.get("reconciliation_cursor") is not None:
+            # Date the private keyset, so expiry drops it only once its own
+            # source ages out. Policy metadata is nonidentifying audit context.
+            batch = replace(
+                batch,
+                cursor_updates={
+                    **batch.cursor_updates,
+                    "reconciliation_cursor": {
+                        **batch.cursor_updates["reconciliation_cursor"],
+                        "retention_days": writer.retention_days(),
+                        "keyset_start": _private_keyset_start(
+                            batch, page.checkpoint.phase, page.checkpoint.after
+                        )
+                        or _committed_keyset_start(
+                            writer,
+                            committed,
+                            page.checkpoint.phase,
+                            page.checkpoint.after,
+                        ),
+                    },
+                },
+            )
+        if skip_incremental and page.checkpoint.phase == "complete":
+            # Every retained key/owner/eval was recomputed. Consume only the
+            # sweep START ceiling, never arrivals made while coverage ran.
+            ceiling = changes.ns(page.checkpoint.started_at)
+            batch = replace(
+                batch,
+                cursor_updates={
+                    **batch.cursor_updates,
+                    **{
+                        field: max(getattr(state, field), ceiling)
+                        for field in MetricProjectRefresh.MONOTONE_FIELDS
+                    },
+                },
+            )
+        return writer.refresh(
+            batch,
+            definitions,
+            self.scope,
+            start=changes.EPOCH,
+            end=now,
+            as_of=now,
+            purpose="repair",
+            publication={
+                "repair": {
+                    "cursor": state.reconciliation_cursor,
+                    "started_at": state.reconciliation_started_at.isoformat()
+                    if state.reconciliation_started_at
+                    else None,
+                }
+            },
+        )
