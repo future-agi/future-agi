@@ -50913,6 +50913,186 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/actors/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_actors",
+                "description": "The environment's cast as the next run would use it: the draft's when there is one.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "simulate_api_harness-environments_create_actor",
+                "description": "Add one actor to the environment's draft; the saved version is unchanged until the draft is saved.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorWrite"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/actors/{actor_id}/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_actor_view",
+                "description": "What one actor sees and may do, optionally in one scenario, and what it never sees.",
+                "parameters": [
+                    {
+                        "name": "scenario_key",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorView"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "put": {
+                "operationId": "simulate_api_harness-environments_replace_actor",
+                "description": "Replace one actor in the draft; its id never changes.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorWrite"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "simulate_api_harness-environments_delete_actor",
+                "description": "Take one actor out of the draft; refused while a scenario includes it.",
+                "parameters": [
+                    {
+                        "name": "expected_revision",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 0
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessActorList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "actor_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/compare/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_compare",
@@ -126788,6 +126968,365 @@
                     "type": "string",
                     "maxLength": 255,
                     "minLength": 1
+                }
+            }
+        },
+        "HarnessActorConstraints": {
+            "type": "object",
+            "properties": {
+                "may_agree": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "private": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "escalate_when": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "stop_when": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessActorResponseTiming": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "immediate",
+                        "delayed"
+                    ]
+                },
+                "seconds": {
+                    "title": "Seconds",
+                    "type": "number",
+                    "minimum": 0
+                }
+            }
+        },
+        "HarnessActorBehaviour": {
+            "type": "object",
+            "properties": {
+                "style": {
+                    "title": "Style",
+                    "type": "string"
+                },
+                "response_timing": {
+                    "$ref": "#/definitions/HarnessActorResponseTiming"
+                }
+            }
+        },
+        "HarnessActorTrigger": {
+            "required": [
+                "kind"
+            ],
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "maxLength": 32,
+                    "minLength": 1
+                },
+                "seconds": {
+                    "title": "Seconds",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "tool": {
+                    "title": "Tool",
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "on_call": {
+                    "title": "On call",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "p": {
+                    "title": "P",
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                }
+            }
+        },
+        "HarnessActorActivation": {
+            "type": "object",
+            "properties": {
+                "trigger": {
+                    "$ref": "#/definitions/HarnessActorTrigger"
+                },
+                "timeout_seconds": {
+                    "title": "Timeout seconds",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "fallback": {
+                    "title": "Fallback",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessActor": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "pattern": "^[a-z0-9_]{1,64}$",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "side": {
+                    "title": "Side",
+                    "type": "string",
+                    "enum": [
+                        "caller",
+                        "world"
+                    ]
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "parent": {
+                    "title": "Parent",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "persona": {
+                    "title": "Persona",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object"
+                    }
+                },
+                "goal": {
+                    "title": "Goal",
+                    "type": "string",
+                    "maxLength": 2000
+                },
+                "constraints": {
+                    "$ref": "#/definitions/HarnessActorConstraints"
+                },
+                "behaviour": {
+                    "$ref": "#/definitions/HarnessActorBehaviour"
+                },
+                "knowledge": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object"
+                        }
+                    }
+                },
+                "prompt": {
+                    "title": "Prompt",
+                    "type": "string",
+                    "maxLength": 20000
+                },
+                "surface": {
+                    "title": "Surface",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "play": {
+                    "title": "Play",
+                    "type": "string",
+                    "maxLength": 32,
+                    "minLength": 1
+                },
+                "permitted_actions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "minLength": 1
+                    }
+                },
+                "identities": {
+                    "title": "Identities",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "on_behalf_of": {
+                    "title": "On behalf of",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "activation": {
+                    "$ref": "#/definitions/HarnessActorActivation"
+                },
+                "loudness_ratio": {
+                    "title": "Loudness ratio",
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0.01,
+                    "x-nullable": true
+                },
+                "provenance": {
+                    "title": "Provenance",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object"
+                    },
+                    "readOnly": true
+                }
+            }
+        },
+        "HarnessActorList": {
+            "required": [
+                "actors",
+                "source",
+                "revision"
+            ],
+            "type": "object",
+            "properties": {
+                "actors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessActor"
+                    }
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "draft",
+                        "saved"
+                    ]
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer"
+                }
+            }
+        },
+        "HarnessActorWrite": {
+            "required": [
+                "actor"
+            ],
+            "type": "object",
+            "properties": {
+                "actor": {
+                    "$ref": "#/definitions/HarnessActor"
+                },
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "integer",
+                    "minimum": 0,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessActorSeen": {
+            "required": [
+                "input",
+                "value",
+                "source"
+            ],
+            "type": "object",
+            "properties": {
+                "input": {
+                    "title": "Input",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "object"
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "actor",
+                        "scenario",
+                        "caller"
+                    ]
+                }
+            }
+        },
+        "HarnessActorView": {
+            "required": [
+                "actor_id",
+                "permitted_actions",
+                "sees",
+                "never_sees"
+            ],
+            "type": "object",
+            "properties": {
+                "actor_id": {
+                    "title": "Actor id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "permitted_actions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "sees": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessActorSeen"
+                    }
+                },
+                "never_sees": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 }
             }
         },

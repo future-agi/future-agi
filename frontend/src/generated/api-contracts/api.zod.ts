@@ -36017,6 +36017,1296 @@ export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
 });
 
 /**
+ * The environment's cast as the next run would use it: the draft's when there is one.
+ */
+export const SimulateApiHarnessEnvironmentsActorsParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemIdRegExp =
+  new RegExp("^[a-z0-9_]{1,64}$");
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemNameMax = 200;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemKindMax = 64;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemRoleMax = 500;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemParentMax = 64;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemGoalMax = 2000;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemBehaviourResponseTimingSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemPromptMax = 20000;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemSurfaceMax = 64;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemPlayMax = 32;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemPermittedActionsItemMax = 128;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemOnBehalfOfMax = 64;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationTriggerKindMax = 32;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationTriggerSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationTriggerToolMax = 128;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationTriggerPMin = 0;
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationTriggerPMax = 1;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationTimeoutSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationFallbackMax = 64;
+
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemLoudnessRatioMin = 0.01;
+export const simulateApiHarnessEnvironmentsActorsResponseActorsItemLoudnessRatioMax = 1;
+
+export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
+  actors: zod.array(
+    zod.object({
+      id: zod
+        .string()
+        .min(1)
+        .regex(simulateApiHarnessEnvironmentsActorsResponseActorsItemIdRegExp),
+      name: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsActorsResponseActorsItemNameMax),
+      kind: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsActorsResponseActorsItemKindMax)
+        .optional(),
+      side: zod.enum(["caller", "world"]).optional(),
+      role: zod
+        .string()
+        .max(simulateApiHarnessEnvironmentsActorsResponseActorsItemRoleMax)
+        .optional(),
+      parent: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsActorsResponseActorsItemParentMax)
+        .optional(),
+      persona: zod
+        .record(zod.string(), zod.object({}).passthrough())
+        .optional(),
+      goal: zod
+        .string()
+        .max(simulateApiHarnessEnvironmentsActorsResponseActorsItemGoalMax)
+        .optional(),
+      constraints: zod
+        .object({
+          may_agree: zod.array(zod.string().min(1)).optional(),
+          private: zod.array(zod.string().min(1)).optional(),
+          escalate_when: zod.array(zod.string().min(1)).optional(),
+          stop_when: zod.array(zod.string().min(1)).optional(),
+        })
+        .optional(),
+      behaviour: zod
+        .object({
+          style: zod.string().optional(),
+          response_timing: zod
+            .object({
+              kind: zod.enum(["immediate", "delayed"]).optional(),
+              seconds: zod
+                .number()
+                .min(
+                  simulateApiHarnessEnvironmentsActorsResponseActorsItemBehaviourResponseTimingSecondsMin,
+                )
+                .optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+      knowledge: zod
+        .array(zod.record(zod.string(), zod.object({}).passthrough()))
+        .optional(),
+      prompt: zod
+        .string()
+        .max(simulateApiHarnessEnvironmentsActorsResponseActorsItemPromptMax)
+        .optional(),
+      surface: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsActorsResponseActorsItemSurfaceMax)
+        .optional(),
+      play: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsActorsResponseActorsItemPlayMax)
+        .optional(),
+      permitted_actions: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiHarnessEnvironmentsActorsResponseActorsItemPermittedActionsItemMax,
+            ),
+        )
+        .optional(),
+      identities: zod.record(zod.string(), zod.string().min(1)).optional(),
+      on_behalf_of: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsActorsResponseActorsItemOnBehalfOfMax,
+        )
+        .optional(),
+      activation: zod
+        .object({
+          trigger: zod
+            .object({
+              kind: zod
+                .string()
+                .min(1)
+                .max(
+                  simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationTriggerKindMax,
+                ),
+              seconds: zod
+                .number()
+                .min(
+                  simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationTriggerSecondsMin,
+                )
+                .optional(),
+              tool: zod
+                .string()
+                .max(
+                  simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationTriggerToolMax,
+                )
+                .optional(),
+              on_call: zod.number().min(1).optional(),
+              p: zod
+                .number()
+                .min(
+                  simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationTriggerPMin,
+                )
+                .max(
+                  simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationTriggerPMax,
+                )
+                .optional(),
+            })
+            .optional(),
+          timeout_seconds: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationTimeoutSecondsMin,
+            )
+            .optional(),
+          fallback: zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiHarnessEnvironmentsActorsResponseActorsItemActivationFallbackMax,
+            )
+            .optional(),
+        })
+        .optional(),
+      loudness_ratio: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsActorsResponseActorsItemLoudnessRatioMin,
+        )
+        .max(
+          simulateApiHarnessEnvironmentsActorsResponseActorsItemLoudnessRatioMax,
+        )
+        .optional(),
+      provenance: zod
+        .record(zod.string(), zod.object({}).passthrough())
+        .optional(),
+    }),
+  ),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+});
+
+/**
+ * Add one actor to the environment's draft; the saved version is unchanged until the draft is saved.
+ */
+export const SimulateApiHarnessEnvironmentsCreateActorParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorIdRegExp =
+  new RegExp("^[a-z0-9_]{1,64}$");
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorNameMax = 200;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorKindMax = 64;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorRoleMax = 500;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorParentMax = 64;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorGoalMax = 2000;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorBehaviourResponseTimingSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorPromptMax = 20000;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorSurfaceMax = 64;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorPlayMax = 32;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorPermittedActionsItemMax = 128;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorOnBehalfOfMax = 64;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorActivationTriggerKindMax = 32;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorActivationTriggerSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorActivationTriggerToolMax = 128;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorActivationTriggerPMin = 0;
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorActivationTriggerPMax = 1;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorActivationTimeoutSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorActivationFallbackMax = 64;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorLoudnessRatioMin = 0.01;
+export const simulateApiHarnessEnvironmentsCreateActorBodyActorLoudnessRatioMax = 1;
+
+export const simulateApiHarnessEnvironmentsCreateActorBodyExpectedRevisionMin = 0;
+
+export const SimulateApiHarnessEnvironmentsCreateActorBody = zod.object({
+  actor: zod.object({
+    id: zod
+      .string()
+      .min(1)
+      .regex(simulateApiHarnessEnvironmentsCreateActorBodyActorIdRegExp),
+    name: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsCreateActorBodyActorNameMax),
+    kind: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsCreateActorBodyActorKindMax)
+      .optional(),
+    side: zod.enum(["caller", "world"]).optional(),
+    role: zod
+      .string()
+      .max(simulateApiHarnessEnvironmentsCreateActorBodyActorRoleMax)
+      .optional(),
+    parent: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsCreateActorBodyActorParentMax)
+      .optional(),
+    persona: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
+    goal: zod
+      .string()
+      .max(simulateApiHarnessEnvironmentsCreateActorBodyActorGoalMax)
+      .optional(),
+    constraints: zod
+      .object({
+        may_agree: zod.array(zod.string().min(1)).optional(),
+        private: zod.array(zod.string().min(1)).optional(),
+        escalate_when: zod.array(zod.string().min(1)).optional(),
+        stop_when: zod.array(zod.string().min(1)).optional(),
+      })
+      .optional(),
+    behaviour: zod
+      .object({
+        style: zod.string().optional(),
+        response_timing: zod
+          .object({
+            kind: zod.enum(["immediate", "delayed"]).optional(),
+            seconds: zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsCreateActorBodyActorBehaviourResponseTimingSecondsMin,
+              )
+              .optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    knowledge: zod
+      .array(zod.record(zod.string(), zod.object({}).passthrough()))
+      .optional(),
+    prompt: zod
+      .string()
+      .max(simulateApiHarnessEnvironmentsCreateActorBodyActorPromptMax)
+      .optional(),
+    surface: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsCreateActorBodyActorSurfaceMax)
+      .optional(),
+    play: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsCreateActorBodyActorPlayMax)
+      .optional(),
+    permitted_actions: zod
+      .array(
+        zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsCreateActorBodyActorPermittedActionsItemMax,
+          ),
+      )
+      .optional(),
+    identities: zod.record(zod.string(), zod.string().min(1)).optional(),
+    on_behalf_of: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsCreateActorBodyActorOnBehalfOfMax)
+      .optional(),
+    activation: zod
+      .object({
+        trigger: zod
+          .object({
+            kind: zod
+              .string()
+              .min(1)
+              .max(
+                simulateApiHarnessEnvironmentsCreateActorBodyActorActivationTriggerKindMax,
+              ),
+            seconds: zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsCreateActorBodyActorActivationTriggerSecondsMin,
+              )
+              .optional(),
+            tool: zod
+              .string()
+              .max(
+                simulateApiHarnessEnvironmentsCreateActorBodyActorActivationTriggerToolMax,
+              )
+              .optional(),
+            on_call: zod.number().min(1).optional(),
+            p: zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsCreateActorBodyActorActivationTriggerPMin,
+              )
+              .max(
+                simulateApiHarnessEnvironmentsCreateActorBodyActorActivationTriggerPMax,
+              )
+              .optional(),
+          })
+          .optional(),
+        timeout_seconds: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsCreateActorBodyActorActivationTimeoutSecondsMin,
+          )
+          .optional(),
+        fallback: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsCreateActorBodyActorActivationFallbackMax,
+          )
+          .optional(),
+      })
+      .optional(),
+    loudness_ratio: zod
+      .number()
+      .min(simulateApiHarnessEnvironmentsCreateActorBodyActorLoudnessRatioMin)
+      .max(simulateApiHarnessEnvironmentsCreateActorBodyActorLoudnessRatioMax)
+      .optional(),
+    provenance: zod
+      .record(zod.string(), zod.object({}).passthrough())
+      .optional(),
+  }),
+  expected_revision: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsCreateActorBodyExpectedRevisionMin)
+    .optional(),
+});
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemIdRegExp =
+  new RegExp("^[a-z0-9_]{1,64}$");
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemNameMax = 200;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemKindMax = 64;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemRoleMax = 500;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemParentMax = 64;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemGoalMax = 2000;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemBehaviourResponseTimingSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemPromptMax = 20000;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemSurfaceMax = 64;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemPlayMax = 32;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemPermittedActionsItemMax = 128;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemOnBehalfOfMax = 64;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationTriggerKindMax = 32;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationTriggerSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationTriggerToolMax = 128;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationTriggerPMin = 0;
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationTriggerPMax = 1;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationTimeoutSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationFallbackMax = 64;
+
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemLoudnessRatioMin = 0.01;
+export const simulateApiHarnessEnvironmentsCreateActorResponseActorsItemLoudnessRatioMax = 1;
+
+export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
+  actors: zod.array(
+    zod.object({
+      id: zod
+        .string()
+        .min(1)
+        .regex(
+          simulateApiHarnessEnvironmentsCreateActorResponseActorsItemIdRegExp,
+        ),
+      name: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsCreateActorResponseActorsItemNameMax,
+        ),
+      kind: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsCreateActorResponseActorsItemKindMax)
+        .optional(),
+      side: zod.enum(["caller", "world"]).optional(),
+      role: zod
+        .string()
+        .max(simulateApiHarnessEnvironmentsCreateActorResponseActorsItemRoleMax)
+        .optional(),
+      parent: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsCreateActorResponseActorsItemParentMax,
+        )
+        .optional(),
+      persona: zod
+        .record(zod.string(), zod.object({}).passthrough())
+        .optional(),
+      goal: zod
+        .string()
+        .max(simulateApiHarnessEnvironmentsCreateActorResponseActorsItemGoalMax)
+        .optional(),
+      constraints: zod
+        .object({
+          may_agree: zod.array(zod.string().min(1)).optional(),
+          private: zod.array(zod.string().min(1)).optional(),
+          escalate_when: zod.array(zod.string().min(1)).optional(),
+          stop_when: zod.array(zod.string().min(1)).optional(),
+        })
+        .optional(),
+      behaviour: zod
+        .object({
+          style: zod.string().optional(),
+          response_timing: zod
+            .object({
+              kind: zod.enum(["immediate", "delayed"]).optional(),
+              seconds: zod
+                .number()
+                .min(
+                  simulateApiHarnessEnvironmentsCreateActorResponseActorsItemBehaviourResponseTimingSecondsMin,
+                )
+                .optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+      knowledge: zod
+        .array(zod.record(zod.string(), zod.object({}).passthrough()))
+        .optional(),
+      prompt: zod
+        .string()
+        .max(
+          simulateApiHarnessEnvironmentsCreateActorResponseActorsItemPromptMax,
+        )
+        .optional(),
+      surface: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsCreateActorResponseActorsItemSurfaceMax,
+        )
+        .optional(),
+      play: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsCreateActorResponseActorsItemPlayMax)
+        .optional(),
+      permitted_actions: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiHarnessEnvironmentsCreateActorResponseActorsItemPermittedActionsItemMax,
+            ),
+        )
+        .optional(),
+      identities: zod.record(zod.string(), zod.string().min(1)).optional(),
+      on_behalf_of: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsCreateActorResponseActorsItemOnBehalfOfMax,
+        )
+        .optional(),
+      activation: zod
+        .object({
+          trigger: zod
+            .object({
+              kind: zod
+                .string()
+                .min(1)
+                .max(
+                  simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationTriggerKindMax,
+                ),
+              seconds: zod
+                .number()
+                .min(
+                  simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationTriggerSecondsMin,
+                )
+                .optional(),
+              tool: zod
+                .string()
+                .max(
+                  simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationTriggerToolMax,
+                )
+                .optional(),
+              on_call: zod.number().min(1).optional(),
+              p: zod
+                .number()
+                .min(
+                  simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationTriggerPMin,
+                )
+                .max(
+                  simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationTriggerPMax,
+                )
+                .optional(),
+            })
+            .optional(),
+          timeout_seconds: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationTimeoutSecondsMin,
+            )
+            .optional(),
+          fallback: zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiHarnessEnvironmentsCreateActorResponseActorsItemActivationFallbackMax,
+            )
+            .optional(),
+        })
+        .optional(),
+      loudness_ratio: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsCreateActorResponseActorsItemLoudnessRatioMin,
+        )
+        .max(
+          simulateApiHarnessEnvironmentsCreateActorResponseActorsItemLoudnessRatioMax,
+        )
+        .optional(),
+      provenance: zod
+        .record(zod.string(), zod.object({}).passthrough())
+        .optional(),
+    }),
+  ),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+});
+
+/**
+ * What one actor sees and may do, optionally in one scenario, and what it never sees.
+ */
+export const SimulateApiHarnessEnvironmentsActorViewParams = zod.object({
+  id: zod.string(),
+  actor_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsActorViewQueryScenarioKeyMax = 255;
+
+export const SimulateApiHarnessEnvironmentsActorViewQueryParams = zod.object({
+  scenario_key: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsActorViewQueryScenarioKeyMax)
+    .optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsActorViewResponse = zod.object({
+  actor_id: zod.string().min(1),
+  permitted_actions: zod.array(zod.string().min(1)),
+  sees: zod.array(
+    zod.object({
+      input: zod.string().min(1),
+      value: zod.object({}).passthrough(),
+      source: zod.enum(["actor", "scenario", "caller"]),
+    }),
+  ),
+  never_sees: zod.array(zod.string().min(1)),
+});
+
+/**
+ * Replace one actor in the draft; its id never changes.
+ */
+export const SimulateApiHarnessEnvironmentsReplaceActorParams = zod.object({
+  id: zod.string(),
+  actor_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorIdRegExp =
+  new RegExp("^[a-z0-9_]{1,64}$");
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorNameMax = 200;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorKindMax = 64;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorRoleMax = 500;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorParentMax = 64;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorGoalMax = 2000;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorBehaviourResponseTimingSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorPromptMax = 20000;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorSurfaceMax = 64;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorPlayMax = 32;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorPermittedActionsItemMax = 128;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorOnBehalfOfMax = 64;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationTriggerKindMax = 32;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationTriggerSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationTriggerToolMax = 128;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationTriggerPMin = 0;
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationTriggerPMax = 1;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationTimeoutSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationFallbackMax = 64;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorLoudnessRatioMin = 0.01;
+export const simulateApiHarnessEnvironmentsReplaceActorBodyActorLoudnessRatioMax = 1;
+
+export const simulateApiHarnessEnvironmentsReplaceActorBodyExpectedRevisionMin = 0;
+
+export const SimulateApiHarnessEnvironmentsReplaceActorBody = zod.object({
+  actor: zod.object({
+    id: zod
+      .string()
+      .min(1)
+      .regex(simulateApiHarnessEnvironmentsReplaceActorBodyActorIdRegExp),
+    name: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsReplaceActorBodyActorNameMax),
+    kind: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsReplaceActorBodyActorKindMax)
+      .optional(),
+    side: zod.enum(["caller", "world"]).optional(),
+    role: zod
+      .string()
+      .max(simulateApiHarnessEnvironmentsReplaceActorBodyActorRoleMax)
+      .optional(),
+    parent: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsReplaceActorBodyActorParentMax)
+      .optional(),
+    persona: zod.record(zod.string(), zod.object({}).passthrough()).optional(),
+    goal: zod
+      .string()
+      .max(simulateApiHarnessEnvironmentsReplaceActorBodyActorGoalMax)
+      .optional(),
+    constraints: zod
+      .object({
+        may_agree: zod.array(zod.string().min(1)).optional(),
+        private: zod.array(zod.string().min(1)).optional(),
+        escalate_when: zod.array(zod.string().min(1)).optional(),
+        stop_when: zod.array(zod.string().min(1)).optional(),
+      })
+      .optional(),
+    behaviour: zod
+      .object({
+        style: zod.string().optional(),
+        response_timing: zod
+          .object({
+            kind: zod.enum(["immediate", "delayed"]).optional(),
+            seconds: zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsReplaceActorBodyActorBehaviourResponseTimingSecondsMin,
+              )
+              .optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    knowledge: zod
+      .array(zod.record(zod.string(), zod.object({}).passthrough()))
+      .optional(),
+    prompt: zod
+      .string()
+      .max(simulateApiHarnessEnvironmentsReplaceActorBodyActorPromptMax)
+      .optional(),
+    surface: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsReplaceActorBodyActorSurfaceMax)
+      .optional(),
+    play: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsReplaceActorBodyActorPlayMax)
+      .optional(),
+    permitted_actions: zod
+      .array(
+        zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsReplaceActorBodyActorPermittedActionsItemMax,
+          ),
+      )
+      .optional(),
+    identities: zod.record(zod.string(), zod.string().min(1)).optional(),
+    on_behalf_of: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsReplaceActorBodyActorOnBehalfOfMax)
+      .optional(),
+    activation: zod
+      .object({
+        trigger: zod
+          .object({
+            kind: zod
+              .string()
+              .min(1)
+              .max(
+                simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationTriggerKindMax,
+              ),
+            seconds: zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationTriggerSecondsMin,
+              )
+              .optional(),
+            tool: zod
+              .string()
+              .max(
+                simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationTriggerToolMax,
+              )
+              .optional(),
+            on_call: zod.number().min(1).optional(),
+            p: zod
+              .number()
+              .min(
+                simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationTriggerPMin,
+              )
+              .max(
+                simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationTriggerPMax,
+              )
+              .optional(),
+          })
+          .optional(),
+        timeout_seconds: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationTimeoutSecondsMin,
+          )
+          .optional(),
+        fallback: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsReplaceActorBodyActorActivationFallbackMax,
+          )
+          .optional(),
+      })
+      .optional(),
+    loudness_ratio: zod
+      .number()
+      .min(simulateApiHarnessEnvironmentsReplaceActorBodyActorLoudnessRatioMin)
+      .max(simulateApiHarnessEnvironmentsReplaceActorBodyActorLoudnessRatioMax)
+      .optional(),
+    provenance: zod
+      .record(zod.string(), zod.object({}).passthrough())
+      .optional(),
+  }),
+  expected_revision: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsReplaceActorBodyExpectedRevisionMin)
+    .optional(),
+});
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemIdRegExp =
+  new RegExp("^[a-z0-9_]{1,64}$");
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemNameMax = 200;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemKindMax = 64;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemRoleMax = 500;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemParentMax = 64;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemGoalMax = 2000;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemBehaviourResponseTimingSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemPromptMax = 20000;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemSurfaceMax = 64;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemPlayMax = 32;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemPermittedActionsItemMax = 128;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemOnBehalfOfMax = 64;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationTriggerKindMax = 32;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationTriggerSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationTriggerToolMax = 128;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationTriggerPMin = 0;
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationTriggerPMax = 1;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationTimeoutSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationFallbackMax = 64;
+
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemLoudnessRatioMin = 0.01;
+export const simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemLoudnessRatioMax = 1;
+
+export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
+  actors: zod.array(
+    zod.object({
+      id: zod
+        .string()
+        .min(1)
+        .regex(
+          simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemIdRegExp,
+        ),
+      name: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemNameMax,
+        ),
+      kind: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemKindMax,
+        )
+        .optional(),
+      side: zod.enum(["caller", "world"]).optional(),
+      role: zod
+        .string()
+        .max(
+          simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemRoleMax,
+        )
+        .optional(),
+      parent: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemParentMax,
+        )
+        .optional(),
+      persona: zod
+        .record(zod.string(), zod.object({}).passthrough())
+        .optional(),
+      goal: zod
+        .string()
+        .max(
+          simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemGoalMax,
+        )
+        .optional(),
+      constraints: zod
+        .object({
+          may_agree: zod.array(zod.string().min(1)).optional(),
+          private: zod.array(zod.string().min(1)).optional(),
+          escalate_when: zod.array(zod.string().min(1)).optional(),
+          stop_when: zod.array(zod.string().min(1)).optional(),
+        })
+        .optional(),
+      behaviour: zod
+        .object({
+          style: zod.string().optional(),
+          response_timing: zod
+            .object({
+              kind: zod.enum(["immediate", "delayed"]).optional(),
+              seconds: zod
+                .number()
+                .min(
+                  simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemBehaviourResponseTimingSecondsMin,
+                )
+                .optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+      knowledge: zod
+        .array(zod.record(zod.string(), zod.object({}).passthrough()))
+        .optional(),
+      prompt: zod
+        .string()
+        .max(
+          simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemPromptMax,
+        )
+        .optional(),
+      surface: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemSurfaceMax,
+        )
+        .optional(),
+      play: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemPlayMax,
+        )
+        .optional(),
+      permitted_actions: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemPermittedActionsItemMax,
+            ),
+        )
+        .optional(),
+      identities: zod.record(zod.string(), zod.string().min(1)).optional(),
+      on_behalf_of: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemOnBehalfOfMax,
+        )
+        .optional(),
+      activation: zod
+        .object({
+          trigger: zod
+            .object({
+              kind: zod
+                .string()
+                .min(1)
+                .max(
+                  simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationTriggerKindMax,
+                ),
+              seconds: zod
+                .number()
+                .min(
+                  simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationTriggerSecondsMin,
+                )
+                .optional(),
+              tool: zod
+                .string()
+                .max(
+                  simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationTriggerToolMax,
+                )
+                .optional(),
+              on_call: zod.number().min(1).optional(),
+              p: zod
+                .number()
+                .min(
+                  simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationTriggerPMin,
+                )
+                .max(
+                  simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationTriggerPMax,
+                )
+                .optional(),
+            })
+            .optional(),
+          timeout_seconds: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationTimeoutSecondsMin,
+            )
+            .optional(),
+          fallback: zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemActivationFallbackMax,
+            )
+            .optional(),
+        })
+        .optional(),
+      loudness_ratio: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemLoudnessRatioMin,
+        )
+        .max(
+          simulateApiHarnessEnvironmentsReplaceActorResponseActorsItemLoudnessRatioMax,
+        )
+        .optional(),
+      provenance: zod
+        .record(zod.string(), zod.object({}).passthrough())
+        .optional(),
+    }),
+  ),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+});
+
+/**
+ * Take one actor out of the draft; refused while a scenario includes it.
+ */
+export const SimulateApiHarnessEnvironmentsDeleteActorParams = zod.object({
+  id: zod.string(),
+  actor_id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsDeleteActorQueryExpectedRevisionMin = 0;
+
+export const SimulateApiHarnessEnvironmentsDeleteActorQueryParams = zod.object({
+  expected_revision: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsDeleteActorQueryExpectedRevisionMin)
+    .optional(),
+});
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemIdRegExp =
+  new RegExp("^[a-z0-9_]{1,64}$");
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemNameMax = 200;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemKindMax = 64;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemRoleMax = 500;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemParentMax = 64;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemGoalMax = 2000;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemBehaviourResponseTimingSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemPromptMax = 20000;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemSurfaceMax = 64;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemPlayMax = 32;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemPermittedActionsItemMax = 128;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemOnBehalfOfMax = 64;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationTriggerKindMax = 32;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationTriggerSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationTriggerToolMax = 128;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationTriggerPMin = 0;
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationTriggerPMax = 1;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationTimeoutSecondsMin = 0;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationFallbackMax = 64;
+
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemLoudnessRatioMin = 0.01;
+export const simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemLoudnessRatioMax = 1;
+
+export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
+  actors: zod.array(
+    zod.object({
+      id: zod
+        .string()
+        .min(1)
+        .regex(
+          simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemIdRegExp,
+        ),
+      name: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemNameMax,
+        ),
+      kind: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemKindMax)
+        .optional(),
+      side: zod.enum(["caller", "world"]).optional(),
+      role: zod
+        .string()
+        .max(simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemRoleMax)
+        .optional(),
+      parent: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemParentMax,
+        )
+        .optional(),
+      persona: zod
+        .record(zod.string(), zod.object({}).passthrough())
+        .optional(),
+      goal: zod
+        .string()
+        .max(simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemGoalMax)
+        .optional(),
+      constraints: zod
+        .object({
+          may_agree: zod.array(zod.string().min(1)).optional(),
+          private: zod.array(zod.string().min(1)).optional(),
+          escalate_when: zod.array(zod.string().min(1)).optional(),
+          stop_when: zod.array(zod.string().min(1)).optional(),
+        })
+        .optional(),
+      behaviour: zod
+        .object({
+          style: zod.string().optional(),
+          response_timing: zod
+            .object({
+              kind: zod.enum(["immediate", "delayed"]).optional(),
+              seconds: zod
+                .number()
+                .min(
+                  simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemBehaviourResponseTimingSecondsMin,
+                )
+                .optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+      knowledge: zod
+        .array(zod.record(zod.string(), zod.object({}).passthrough()))
+        .optional(),
+      prompt: zod
+        .string()
+        .max(
+          simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemPromptMax,
+        )
+        .optional(),
+      surface: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemSurfaceMax,
+        )
+        .optional(),
+      play: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemPlayMax)
+        .optional(),
+      permitted_actions: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemPermittedActionsItemMax,
+            ),
+        )
+        .optional(),
+      identities: zod.record(zod.string(), zod.string().min(1)).optional(),
+      on_behalf_of: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemOnBehalfOfMax,
+        )
+        .optional(),
+      activation: zod
+        .object({
+          trigger: zod
+            .object({
+              kind: zod
+                .string()
+                .min(1)
+                .max(
+                  simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationTriggerKindMax,
+                ),
+              seconds: zod
+                .number()
+                .min(
+                  simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationTriggerSecondsMin,
+                )
+                .optional(),
+              tool: zod
+                .string()
+                .max(
+                  simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationTriggerToolMax,
+                )
+                .optional(),
+              on_call: zod.number().min(1).optional(),
+              p: zod
+                .number()
+                .min(
+                  simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationTriggerPMin,
+                )
+                .max(
+                  simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationTriggerPMax,
+                )
+                .optional(),
+            })
+            .optional(),
+          timeout_seconds: zod
+            .number()
+            .min(
+              simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationTimeoutSecondsMin,
+            )
+            .optional(),
+          fallback: zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemActivationFallbackMax,
+            )
+            .optional(),
+        })
+        .optional(),
+      loudness_ratio: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemLoudnessRatioMin,
+        )
+        .max(
+          simulateApiHarnessEnvironmentsDeleteActorResponseActorsItemLoudnessRatioMax,
+        )
+        .optional(),
+      provenance: zod
+        .record(zod.string(), zod.object({}).passthrough())
+        .optional(),
+    }),
+  ),
+  source: zod.enum(["draft", "saved"]),
+  revision: zod.number(),
+});
+
+/**
  * Two runs of this environment, scenario by scenario; against defaults to
 the previous completed run. Not gated on versioning: a run from before
 versioning compares too, with null versions.

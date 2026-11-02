@@ -17997,6 +17997,188 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
+export type HarnessActorListApiSource =
+  (typeof HarnessActorListApiSource)[keyof typeof HarnessActorListApiSource];
+
+export const HarnessActorListApiSource = {
+  draft: "draft",
+  saved: "saved",
+} as const;
+
+export type HarnessActorApiSide =
+  (typeof HarnessActorApiSide)[keyof typeof HarnessActorApiSide];
+
+export const HarnessActorApiSide = {
+  caller: "caller",
+  world: "world",
+} as const;
+
+export interface HarnessActorConstraintsApi {
+  may_agree?: string[];
+  private?: string[];
+  escalate_when?: string[];
+  stop_when?: string[];
+}
+
+export type HarnessActorResponseTimingApiKind =
+  (typeof HarnessActorResponseTimingApiKind)[keyof typeof HarnessActorResponseTimingApiKind];
+
+export const HarnessActorResponseTimingApiKind = {
+  immediate: "immediate",
+  delayed: "delayed",
+} as const;
+
+export interface HarnessActorResponseTimingApi {
+  kind?: HarnessActorResponseTimingApiKind;
+  /** @minimum 0 */
+  seconds?: number;
+}
+
+export interface HarnessActorBehaviourApi {
+  style?: string;
+  response_timing?: HarnessActorResponseTimingApi;
+}
+
+export interface HarnessActorTriggerApi {
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  kind: string;
+  /** @minimum 0 */
+  seconds?: number;
+  /** @maxLength 128 */
+  tool?: string;
+  /** @minimum 1 */
+  on_call?: number;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  p?: number;
+}
+
+export interface HarnessActorActivationApi {
+  trigger?: HarnessActorTriggerApi;
+  /** @minimum 0 */
+  timeout_seconds?: number;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  fallback?: string;
+}
+
+export type HarnessActorApiPersona = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export type HarnessActorApiKnowledgeItem = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export type HarnessActorApiIdentities = { [key: string]: string };
+
+export type HarnessActorApiProvenance = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface HarnessActorApi {
+  /**
+   * @minLength 1
+   * @pattern ^[a-z0-9_]{1,64}$
+   */
+  id: string;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  kind?: string;
+  side?: HarnessActorApiSide;
+  /** @maxLength 500 */
+  role?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  parent?: string;
+  persona?: HarnessActorApiPersona;
+  /** @maxLength 2000 */
+  goal?: string;
+  constraints?: HarnessActorConstraintsApi;
+  behaviour?: HarnessActorBehaviourApi;
+  knowledge?: HarnessActorApiKnowledgeItem[];
+  /** @maxLength 20000 */
+  prompt?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  surface?: string;
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  play?: string;
+  permitted_actions?: string[];
+  identities?: HarnessActorApiIdentities;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  on_behalf_of?: string;
+  activation?: HarnessActorActivationApi;
+  /**
+   * @minimum 0.01
+   * @maximum 1
+   */
+  loudness_ratio?: number;
+  readonly provenance?: HarnessActorApiProvenance;
+}
+
+export interface HarnessActorListApi {
+  actors: HarnessActorApi[];
+  source: HarnessActorListApiSource;
+  revision: number;
+}
+
+export interface HarnessActorWriteApi {
+  actor: HarnessActorApi;
+  /** @minimum 0 */
+  expected_revision?: number;
+}
+
+export type HarnessActorSeenApiSource =
+  (typeof HarnessActorSeenApiSource)[keyof typeof HarnessActorSeenApiSource];
+
+export const HarnessActorSeenApiSource = {
+  actor: "actor",
+  scenario: "scenario",
+  caller: "caller",
+} as const;
+
+export type HarnessActorSeenApiValue = { [key: string]: unknown };
+
+export interface HarnessActorSeenApi {
+  /** @minLength 1 */
+  input: string;
+  value: HarnessActorSeenApiValue;
+  source: HarnessActorSeenApiSource;
+}
+
+export interface HarnessActorViewApi {
+  /** @minLength 1 */
+  actor_id: string;
+  permitted_actions: string[];
+  sees: HarnessActorSeenApi[];
+  never_sees: string[];
+}
+
 export type HarnessComparePairApiBand =
   (typeof HarnessComparePairApiBand)[keyof typeof HarnessComparePairApiBand];
 
@@ -36315,6 +36497,21 @@ export type SimulateApiHarnessEnvironmentsListParams = {
    */
   limit?: number;
   agent_definition_id?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsActorViewParams = {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  scenario_key?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsDeleteActorParams = {
+  /**
+   * @minimum 0
+   */
+  expected_revision?: number;
 };
 
 export type SimulateApiHarnessEnvironmentsCompareParams = {
