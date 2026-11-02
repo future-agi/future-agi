@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { voiceFixOf } from "../../_mock/voiceFix";
 import { useEffect, useMemo, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { useRoleGates } from "../../_mock/previewRole";
@@ -429,17 +430,23 @@ export default function ImprovementSetup({
   const fixRunning = (es?.optimizations || []).some(
     (r) => improvementOutcome(r)?.ending?.key === "running",
   );
-  const blocked = fixRunning
-    ? `A fix is already running for ${agent?.name || "this agent"} — wait for it to finish or stop it first.`
-    : fromRun && base?.status === "running"
-      ? "This run hasn't finished — start a fix once its results are in."
-      : swapped
-        ? `This run tested ${agent?.name || "an agent"}, which is no longer ${main?.name || "this environment"}'s agent — improve it from Improvements instead.`
-        : preset?.agentKey && !agent
-          ? "This agent can't be found — it may have been deleted."
-          : status && status.status !== "connected"
-            ? status.reason
-            : null;
+  /* A voice agent built outside Future AGI can't be changed by a search
+     (Nikhil, 2 Nov): Debug failures diagnoses it, and suggests a change when
+     its prompt can be read. */
+  const voiceFix = voiceFixOf(agent);
+  const blocked = voiceFix
+    ? `${agent?.name || "This agent"} is built in ${voiceFix.where}, so an improvement can't change it. Use Debug failures on a run: it ${voiceFix.mode === "suggest" ? "shows what went wrong and suggests changes to copy in" : "shows what went wrong (diagnosis only — its prompt can't be read)"}.`
+    : fixRunning
+      ? `A fix is already running for ${agent?.name || "this agent"} — wait for it to finish or stop it first.`
+      : fromRun && base?.status === "running"
+        ? "This run hasn't finished — start a fix once its results are in."
+        : swapped
+          ? `This run tested ${agent?.name || "an agent"}, which is no longer ${main?.name || "this environment"}'s agent — improve it from Improvements instead.`
+          : preset?.agentKey && !agent
+            ? "This agent can't be found — it may have been deleted."
+            : status && status.status !== "connected"
+              ? status.reason
+              : null;
   const identity =
     main && es
       ? runIdentityOf(

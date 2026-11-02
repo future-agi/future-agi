@@ -28,7 +28,12 @@ import OmegaHandoff from "../OmegaHandoff";
 import ImaginePane from "./ImaginePane";
 import CopyBriefButton from "../../components/CopyBriefButton";
 import { useSimStore, useConnectedAgents } from "../../store";
-import { envAgentKey, agentDefinitionOf } from "../../_mock/agentRegistry";
+import {
+  envAgentKey,
+  agentDefinitionOf,
+  agentIdOf,
+} from "../../_mock/agentRegistry";
+import { changesTextOf, voiceFixOf } from "../../_mock/voiceFix";
 import { limitsOf, surfaceAvailability } from "../../agents/agentLimits";
 import { fixScope, codingAgentBrief } from "../../_mock/codingAgentBrief";
 import { decidingMoment } from "../../_mock/comparison";
@@ -306,6 +311,10 @@ export default function DiagnosisPane({
     [agents, agentKey],
   );
   const limits = useMemo(() => limitsOf(state, agentKey), [state, agentKey]);
+  /* A voice agent built outside Future AGI: suggest or diagnose only. */
+  const voiceFix = useMemo(() => voiceFixOf(agent), [agent]);
+  /* Its prompt can't be read: say what went wrong, never the edit. */
+  const diagnoseOnly = voiceFix?.mode === "diagnose";
   const available = useMemo(
     () => (agent ? surfaceAvailability(agent) : {}),
     [agent],
@@ -1157,7 +1166,8 @@ export default function DiagnosisPane({
                 </Box>
                 {/* For teams whose coding agent makes the edit — it gets the
                     evidence and the constraints, and submits back here. */}
-                {!running && !!sorted.length && (
+                {/* Not for a voice agent built outside Future AGI — no code to edit. */}
+                {!running && !voiceFix && !!sorted.length && (
                   <CopyBriefButton
                     size="small"
                     getBrief={brief}
@@ -1369,6 +1379,7 @@ export default function DiagnosisPane({
                             )}
                             {/* Your wording, tried by the search as written. */}
                             {!running &&
+                              !diagnoseOnly &&
                               onEditChange &&
                               p.diff.some((d) => d.type === "add") && (
                                 <Button
@@ -1398,7 +1409,7 @@ export default function DiagnosisPane({
                                 </Button>
                               )}
                             {/* This proposal alone, for a coding agent. */}
-                            {!running && (
+                            {!running && !voiceFix && (
                               <CopyBriefButton
                                 size="small"
                                 getBrief={briefFor(p)}
@@ -1485,7 +1496,7 @@ export default function DiagnosisPane({
                                 </Button>
                               </Stack>
                             </Box>
-                          ) : (
+                          ) : diagnoseOnly ? null : (
                             <Stack spacing={0.375} sx={{ mt: 1.125 }}>
                               {p.diff.map((d) => (
                                 <Stack
@@ -1536,11 +1547,13 @@ export default function DiagnosisPane({
                               ))}
                             </Stack>
                           )}
-                          <ScopeLine
-                            scope={scope}
-                            available={available[scope.surface]}
-                            onChangeConstraints={changeConstraints}
-                          />
+                          {!diagnoseOnly && (
+                            <ScopeLine
+                              scope={scope}
+                              available={available[scope.surface]}
+                              onChangeConstraints={changeConstraints}
+                            />
+                          )}
                         </Box>
                       </Stack>
                     </Box>
@@ -1585,55 +1598,107 @@ export default function DiagnosisPane({
                 )}
               </>
             )}
-            <Tooltip
-              arrow
-              title={
-                running
-                  ? "Available once every call is read — the improvement searches over the full diagnosis."
-                  : included.length
-                    ? ""
-                    : "The diagnosis found no change to try."
-              }
-              placement="top"
-            >
-              <Box>
-                <Button
-                  size="small"
-                  fullWidth
-                  variant={checksFirst && !running ? "outlined" : "contained"}
-                  color={checksFirst && !running ? "inherit" : "primary"}
-                  disabled={running || !included.length}
-                  onClick={onOptimize}
-                  startIcon={
-                    <Iconify icon="solar:magic-stick-3-bold" width={16} />
+            {voiceFix ? (
+              /* Voice agent built outside Future AGI: no search, no PR. */
+              <>
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  {voiceFix.mode === "suggest"
+                    ? `This agent is built in ${voiceFix.where}, so Future AGI can't change it. Copy the suggested changes into it, then run again to check.`
+                    : `We can't read this agent's prompt, so this is diagnosis only — what went wrong and where. Paste its prompt on the agent page to get suggested changes too.`}
+                </Typography>
+                {voiceFix.mode === "suggest" ? (
+                  <Button
+                    size="small"
+                    fullWidth
+                    variant="contained"
+                    color="primary"
+                    disabled={running || !included.length}
+                    onClick={() => {
+                      navigator.clipboard
+                        ?.writeText(changesTextOf(included))
+                        .catch(() => {});
+                      enqueueSnackbar(
+                        `Copied ${included.length} suggested change${included.length === 1 ? "" : "s"} — paste ${included.length === 1 ? "it" : "them"} into ${voiceFix.where}.`,
+                        { variant: "success" },
+                      );
+                    }}
+                    startIcon={<Iconify icon="solar:copy-linear" width={16} />}
+                  >
+                    Copy suggested changes
+                  </Button>
+                ) : (
+                  <Button
+                    size="small"
+                    fullWidth
+                    variant="outlined"
+                    onClick={() =>
+                      navigate(
+                        `/dashboard/agents/connected/${agentIdOf(agentKey)}?tab=connections`,
+                      )
+                    }
+                  >
+                    Open the agent to paste its prompt
+                  </Button>
+                )}
+              </>
+            ) : (
+              <>
+                <Tooltip
+                  arrow
+                  title={
+                    running
+                      ? "Available once every call is read — the improvement searches over the full diagnosis."
+                      : included.length
+                        ? ""
+                        : "The diagnosis found no change to try."
                   }
+                  placement="top"
                 >
-                  {checksFirst && !running ? "Improve anyway" : "Improve"}
-                </Button>
-              </Box>
-            </Tooltip>
-            {/*
-              Fallback link, not a co-equal button. Optimize is the
-              default; hand-off is for teams that would rather see the
-              diff in a review tool before it becomes a version. The
-              earlier full-width outlined button read as an equal
-              alternative, which it isn't.
-            */}
-            <Box sx={{ textAlign: "center", pt: 0.25 }}>
-              <Button
-                size="small"
-                disabled={running || !included.length}
-                onClick={() => setHandoff((v) => !v)}
-                sx={{
-                  color: "text.tertiary",
-                  "&:hover": { bgcolor: "transparent", color: "text.primary" },
-                }}
-              >
-                {handoff
-                  ? "Hide hand-off"
-                  : "or hand these changes over without a search"}
-              </Button>
-            </Box>
+                  <Box>
+                    <Button
+                      size="small"
+                      fullWidth
+                      variant={
+                        checksFirst && !running ? "outlined" : "contained"
+                      }
+                      color={checksFirst && !running ? "inherit" : "primary"}
+                      disabled={running || !included.length}
+                      onClick={onOptimize}
+                      startIcon={
+                        <Iconify icon="solar:magic-stick-3-bold" width={16} />
+                      }
+                    >
+                      {checksFirst && !running ? "Improve anyway" : "Improve"}
+                    </Button>
+                  </Box>
+                </Tooltip>
+                {/*
+                Fallback link, not a co-equal button. Optimize is the
+                default; hand-off is for teams that would rather see the
+                diff in a review tool before it becomes a version. The
+                earlier full-width outlined button read as an equal
+                alternative, which it isn't.
+              */}
+                <Box sx={{ textAlign: "center", pt: 0.25 }}>
+                  <Button
+                    size="small"
+                    disabled={running || !included.length}
+                    onClick={() => setHandoff((v) => !v)}
+                    sx={{
+                      color: "text.tertiary",
+                      "&:hover": {
+                        bgcolor: "transparent",
+                        color: "text.primary",
+                      },
+                    }}
+                  >
+                    {handoff
+                      ? "Hide hand-off"
+                      : "or hand these changes over without a search"}
+                  </Button>
+                </Box>
+              </>
+            )}
           </Stack>
         </>
       )}
