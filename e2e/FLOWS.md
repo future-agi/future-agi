@@ -1051,8 +1051,10 @@
 
 ### EVAL-E2E-006 — a task run opens its trace in a drawer from the Usage tab
 
-**Goal:** Open the trace behind an eval task result without leaving the task Usage tab  
-**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:25`  
+**Goal:** Open the trace behind an eval task result without leaving the task Usage tab
+
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:25`
+
 **Tags:** —
 
 **User steps:**
