@@ -98116,6 +98116,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "infrastructure",
             "grading",
             "platform_sync",
+            "artifact",
           ],
         },
         stage: {

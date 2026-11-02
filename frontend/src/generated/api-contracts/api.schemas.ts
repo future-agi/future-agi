@@ -20104,6 +20104,7 @@ export const HarnessFailureApiDomain = {
   infrastructure: "infrastructure",
   grading: "grading",
   platform_sync: "platform_sync",
+  artifact: "artifact",
 } as const;
 
 export interface HarnessFailureApi {

@@ -167,7 +167,7 @@ def test_a_path_outside_the_archive_is_refused(
     response = auth_client.get(_url(agent, version, "file"), {"path": path})
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert response.json()["error"] == "path_outside_archive"
+    assert response.json()["code"] == "path_outside_archive"
 
 
 def test_a_missing_file_and_a_version_without_code_answer_404(
@@ -184,7 +184,7 @@ def test_a_missing_file_and_a_version_without_code_answer_404(
     response = auth_client.get(_url(agent, bare, "tree"))
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
-    assert response.json()["error"] == "no_code"
+    assert response.json()["code"] == "no_code"
 
 
 def test_a_stored_archive_that_cannot_be_read_is_unavailable(
@@ -197,7 +197,7 @@ def test_a_stored_archive_that_cannot_be_read_is_unavailable(
     response = auth_client.get(_url(agent, version, "tree"))
 
     assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-    assert response.json()["error"] == "archive_unavailable"
+    assert response.json()["code"] == "archive_unavailable"
 
 
 def test_changes_compare_with_the_previous_version_within_the_folder(

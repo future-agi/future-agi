@@ -132438,7 +132438,8 @@
                         "connectivity",
                         "infrastructure",
                         "grading",
-                        "platform_sync"
+                        "platform_sync",
+                        "artifact"
                     ]
                 },
                 "stage": {

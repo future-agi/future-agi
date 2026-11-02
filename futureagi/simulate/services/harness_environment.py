@@ -101,6 +101,7 @@ def annotate_for_list(
             ),
         )
         .select_related("agent_version")
+        .defer("agent_version__configuration_snapshot")
         .prefetch_related(
             Prefetch(
                 "normalized_stage_outputs",

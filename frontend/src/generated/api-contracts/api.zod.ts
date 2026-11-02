@@ -41501,6 +41501,7 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       "infrastructure",
       "grading",
       "platform_sync",
+      "artifact",
     ]),
     stage: zod
       .string()

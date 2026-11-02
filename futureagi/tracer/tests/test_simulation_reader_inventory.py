@@ -3000,6 +3000,7 @@ ROW_TYPES = {
     "model_hub.AnnotationQueue.project": USER_MADE,
     "model_hub.AnnotationsLabels.project": USER_MADE,
     "prism.AgentccProject.tracer_project": USER_MADE,
+    "simulate.AgentDefinition.production_project": USER_MADE,
     "tracer.CustomEvalConfig.project": USER_MADE,
     "tracer.EndUser.project": TRACE_STORE_ROW,
     "tracer.ErrorFeedAlertRule.project": USER_MADE,
