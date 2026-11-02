@@ -126,9 +126,21 @@ def freeze_changes(writer, attempt, head, *, keys, as_of, cutoff=None):
     keys = sorted(set(keys))
     if not keys or not source_columns_ready(writer.store):
         return False
+    from tracer.services.derived_metrics.bounded_reads import (
+        iter_key_membership_batches,
+    )
+
     pages = []
-    for offset in range(0, len(keys), MAX_BATCH_ROWS):
-        page = keys[offset : offset + MAX_BATCH_ROWS]
+    # Split the source capture and its prior read together. Splitting only the
+    # prior relation would later recombine oversized bindings at freeze time.
+    for membership in iter_key_membership_batches(
+        LIST_CURRENT_MEMBERS,
+        fixed={},
+        columns=("trace_id", "span_id"),
+        values=keys,
+        max_items=MAX_BATCH_ROWS,
+    ):
+        page = membership[("trace_id", "span_id")]
         sql, params, ties = source_select(
             org_id=writer.org_id,
             project_id=writer.lease.project_id,
@@ -151,7 +163,12 @@ def freeze_changes(writer, attempt, head, *, keys, as_of, cutoff=None):
         member_payloads = []
         for table in (LIST_CURRENT_MEMBERS, LIST_CURRENT_ROOTS):
             previous, bound = committed_rows_select(
-                table, head, org_id=writer.org_id, project_id=writer.lease.project_id
+                table,
+                head,
+                org_id=writer.org_id,
+                project_id=writer.lease.project_id,
+                key_in={("trace_id", "span_id"): params["current_keys"]},
+                param_prefix="current_previous",
             )
             columns = [
                 c

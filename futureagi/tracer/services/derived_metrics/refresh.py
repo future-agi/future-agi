@@ -27,6 +27,10 @@ from tracer.models.derived_metric import (
     MetricRefreshAttempt,
     MetricStateConflict,
 )
+from tracer.services.derived_metrics.bounded_reads import (
+    iter_key_membership_batches,
+    merge_bindings,
+)
 from tracer.services.derived_metrics.buckets import (
     KEYS,
     rebuilt_parts_select,
@@ -826,9 +830,6 @@ class RefreshWriter:
         )
         if not ids:
             return True
-        fields, fp = committed_rows_select(
-            FIELD_VALUES, head, org_id=self.org_id, project_id=self.lease.project_id
-        )
         keys = [
             (e["trace_id"], e["span_id"])
             for e in entries
@@ -836,12 +837,30 @@ class RefreshWriter:
         ]
         for offset in range(0, len(ids), MAX_BATCH_ROWS):
             page = tuple(ids[offset : offset + MAX_BATCH_ROWS])
-            anchors = dict(
-                self.store.execute(
-                    f"SELECT unit_id, min(unit_start) FROM ({fields}) WHERE unit_id IN %(takeover_ids)s GROUP BY unit_id",
-                    {**fp, "takeover_ids": page},
+            anchors = {}
+            # Split only the pinned lookup. Keep the original source-capture
+            # page and its subsequent admission checks unchanged.
+            for membership in iter_key_membership_batches(
+                FIELD_VALUES,
+                fixed={},
+                columns="unit_id",
+                values=page,
+                max_items=MAX_BATCH_ROWS,
+            ):
+                fields, fp = committed_rows_select(
+                    FIELD_VALUES,
+                    head,
+                    org_id=self.org_id,
+                    project_id=self.lease.project_id,
+                    key_in=membership,
+                    param_prefix="takeover_fields",
                 )
-            )
+                anchors.update(
+                    self.store.execute(
+                        f"SELECT unit_id, min(unit_start) FROM ({fields}) WHERE unit_id IN %(takeover_ids)s GROUP BY unit_id",
+                        {**fp, "takeover_ids": membership["unit_id"]},
+                    )
+                )
             if any(unit not in anchors or anchors[unit] < cutoff for unit in page):
                 return False
             for definition in definitions:
@@ -1388,31 +1407,37 @@ class RefreshWriter:
         starts = {
             d.unit_start for d in (*change.prior_dependencies, *change.dependencies)
         }
-        deps, dp = committed_rows_select(
-            SOURCE_DEPENDENCIES,
-            head,
-            org_id=self.org_id,
-            project_id=self.lease.project_id,
-        )
         for offset in range(0, len(source_ids), MAX_BATCH_ROWS):
-            bound = {
-                **dp,
-                "span_sources": tuple(source_ids[offset : offset + MAX_BATCH_ROWS]),
-            }
-            starts.update(
-                row[0]
-                for row in self.store.execute(
-                    f"SELECT DISTINCT unit_start FROM ({deps}) WHERE (trace_id, span_id) IN %(span_sources)s",
-                    bound,
+            page = tuple(source_ids[offset : offset + MAX_BATCH_ROWS])
+            for membership in iter_key_membership_batches(
+                SOURCE_DEPENDENCIES,
+                fixed={},
+                columns=("trace_id", "span_id"),
+                values=page,
+                max_items=MAX_BATCH_ROWS,
+            ):
+                deps, dp = committed_rows_select(
+                    SOURCE_DEPENDENCIES,
+                    head,
+                    org_id=self.org_id,
+                    project_id=self.lease.project_id,
+                    key_in=membership,
+                    param_prefix="span_dirty_dependencies",
                 )
-            )
+                starts.update(
+                    row[0]
+                    for row in self.store.execute(
+                        f"SELECT DISTINCT unit_start FROM ({deps}) WHERE (trace_id, span_id) IN %(span_sources)s",
+                        {**dp, "span_sources": membership[("trace_id", "span_id")]},
+                    )
+                )
             starts.update(
                 row[0]
                 for row in self.store.execute(
                     "SELECT DISTINCT start_time FROM spans PREWHERE project_id = toUUID(%(span_project)s) "
                     "AND (trace_id, id) IN %(span_sources)s WHERE org_id = toUUID(%(span_org)s) OR isNull(org_id)",
                     {
-                        **bound,
+                        "span_sources": page,
                         "span_project": str(self.lease.project_id),
                         "span_org": str(self.org_id),
                     },
@@ -1446,14 +1471,33 @@ class RefreshWriter:
             for entry in chunk.payload
             if "bucket_start" in entry
         }
-        old, op = committed_rows_select(
-            BUCKET_TOTALS, head, org_id=self.org_id, project_id=self.lease.project_id
-        )
-        retired, rp = retired_override or committed_rows_select(
-            RETIRED_PARTS, head, org_id=self.org_id, project_id=self.lease.project_id
-        )
         for value in sorted(dirty):
             at = datetime.fromisoformat(str(value))
+            membership = {
+                "metric_id": (definition.metric_id,),
+                "metric_version": (definition.version,),
+                "bucket_start": (at.replace(tzinfo=UTC) if at.tzinfo is None else at,),
+            }
+            old, op = committed_rows_select(
+                BUCKET_TOTALS,
+                head,
+                org_id=self.org_id,
+                project_id=self.lease.project_id,
+                key_in=membership,
+                param_prefix="span_bucket_previous",
+            )
+            retired, rp = (
+                retired_override
+                if retired_override is not None
+                else committed_rows_select(
+                    RETIRED_PARTS,
+                    head,
+                    org_id=self.org_id,
+                    project_id=self.lease.project_id,
+                    key_in=membership,
+                    param_prefix="span_bucket_retired",
+                )
+            )
             until = at + timedelta(minutes=15)
             # A wholly expired bucket still needs a replacement when this
             # publication freezes its final anonymous parts. Its live interval
@@ -1465,8 +1509,7 @@ class RefreshWriter:
                 end=until,
                 as_of=as_of,
             )
-            params.update(op)
-            params.update(rp)
+            params = merge_bindings(params, op, rp)
             if head and head.published_by.source_ceilings.get("retention_floor"):
                 dependencies, dp = committed_rows_select(
                     SOURCE_DEPENDENCIES,
@@ -1562,7 +1605,15 @@ class RefreshWriter:
         retired_override=None,
     ):
         field, params = committed_rows_select(
-            FIELD_VALUES, head, org_id=self.org_id, project_id=self.lease.project_id
+            FIELD_VALUES,
+            head,
+            org_id=self.org_id,
+            project_id=self.lease.project_id,
+            key_in={
+                "field_id": (definition.metric_id,),
+                "field_version": (definition.version,),
+            },
+            param_prefix="bucket_fields",
         )
         combined = (
             overlay
@@ -1570,7 +1621,7 @@ class RefreshWriter:
             else f"SELECT * FROM (({field}) UNION ALL ({overlay})) ORDER BY generation DESC, _version DESC LIMIT 1 BY {', '.join(FIELD_VALUES.logical_key)}"
         )
         filter_sql = "field_id = toUUID(%(bucket_metric)s) AND field_version = %(bucket_metric_version)s"
-        params.update(overlay_params)
+        params = merge_bindings(params, overlay_params)
         params.update(
             bucket_metric=str(definition.metric_id),
             bucket_metric_version=definition.version,
@@ -1589,17 +1640,27 @@ class RefreshWriter:
             p = {**params, "dirty_start": start}
             predicate = "bucket_start = parseDateTimeBestEffort(%(dirty_start)s, 'UTC')"
             fields = f"SELECT * FROM ({combined}) WHERE {filter_sql} AND {predicate}"
+            at = datetime.fromisoformat(str(start))
+            membership = {
+                "metric_id": (definition.metric_id,),
+                "metric_version": (definition.version,),
+                "bucket_start": (at.replace(tzinfo=UTC) if at.tzinfo is None else at,),
+            }
             retired, rp = committed_rows_select(
                 RETIRED_PARTS,
                 head,
                 org_id=self.org_id,
                 project_id=self.lease.project_id,
+                key_in=membership,
+                param_prefix="bucket_retired",
             )
             old, op = committed_rows_select(
                 BUCKET_TOTALS,
                 head,
                 org_id=self.org_id,
                 project_id=self.lease.project_id,
+                key_in=membership,
+                param_prefix="bucket_previous",
             )
             metric_where = "metric_id = toUUID(%(bucket_metric)s) AND metric_version = %(bucket_metric_version)s"
             retired = f"SELECT * FROM ({retired}) WHERE {metric_where} AND {predicate}"
@@ -1609,8 +1670,7 @@ class RefreshWriter:
                 retired = (
                     f"SELECT * FROM ({retired}) WHERE {metric_where} AND {predicate}"
                 )
-            p.update(rp)
-            p.update(op)
+            p = merge_bindings(p, rp, op)
             parts = self._anonymous_bucket_parts(
                 attempt, definition, fields, retired, p
             )

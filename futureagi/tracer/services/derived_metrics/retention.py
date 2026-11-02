@@ -853,6 +853,11 @@ def _expiring_span_fields(writer, head, definition, cutoff, now):
             head,
             org_id=writer.org_id,
             project_id=writer.lease.project_id,
+            key_in={
+                "metric_id": (definition.metric_id,),
+                "metric_version": (definition.version,),
+            },
+            param_prefix="retiring_buckets",
         )
         rows = writer.store.execute(
             f"SELECT minOrNull(bucket_start) FROM ({buckets}) WHERE metric_id = toUUID(%(retiring_metric)s) "

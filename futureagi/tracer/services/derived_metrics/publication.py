@@ -11,7 +11,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from hashlib import sha256
-from uuid import UUID
 
 from tracer.models.derived_metric import MetricGenerationPin, MetricStateConflict
 from tracer.services.derived_metrics.deletion_protocol import (
@@ -80,62 +79,40 @@ def physical_table(table, *, checkpoint=False):
 
 
 def committed_rows_select(
-    table, manifest, *, org_id, project_id, overlay=None, key_after=None
+    table,
+    manifest,
+    *,
+    org_id,
+    project_id,
+    overlay=None,
+    key_after=None,
+    key_in=None,
+    param_prefix="pub",
 ):
     """Collapse an exact allowlist BEFORE any mutable/time/deletion predicate.
 
     An optional writer-owned overlay is an already frozen attempt, never a raw
     latest-row read. All columns include tombstones, including for compaction.
     Identifiers come exclusively from storage.py. Callers may wrap this SQL with
-    post-collapse filters, or immutable-key restrictions only.
+    post-collapse filters. key_in accepts bounded scalar or correlated-tuple
+    memberships in immutable logical keys ONLY; an empty membership is false.
+    Give composed readers distinct param_prefix values so their bindings cannot
+    overwrite each other. No mutable/time/deletion pushdown is exposed.
     """
-    table = TABLES[table.name if hasattr(table, "name") else table]
-    params = {
-        "pub_org": str(UUID(str(org_id))),
-        "pub_project": str(UUID(str(project_id))),
-    }
-    columns = ", ".join(table.columns)
-    scope = "org_id = toUUID(%(pub_org)s) AND project_id = toUUID(%(pub_project)s)"
-    if key_after:
-        from tracer.services.derived_metrics.changes import keyset_after
+    from tracer.services.derived_metrics.bounded_reads import committed_branches
 
-        if set(key_after) - set(table.logical_key):
-            raise ValueError(
-                "only immutable logical keys can be pushed before collapse"
-            )
-        keys = tuple(c for c in table.logical_key if c in key_after)
-        predicate, key_params = keyset_after(
-            keys, tuple(key_after[c] for c in keys), "pub_after"
-        )
-        scope += f" AND ({predicate})"
-        params.update(key_params)
-    branches = []
-    if manifest is not None:
-        if str(manifest.project_id) != str(project_id):
-            raise MetricStateConflict("manifest project mismatch")
-        pairs = manifest.allowed_attempts()
-        checkpoint = manifest.checkpoint_attempt_id
-        for is_checkpoint in (True, False):
-            selected = [
-                (g, str(a)) for g, a in pairs if (a == checkpoint) == is_checkpoint
-            ]
-            if not selected:
-                continue
-            name = "pub_base" if is_checkpoint else "pub_deltas"
-            params[name] = tuple((g, UUID(a)) for g, a in selected)
-            physical = physical_table(table, checkpoint=is_checkpoint)
-            branches.append(
-                f"SELECT {columns} FROM {physical.name} PREWHERE {scope} "
-                f"WHERE (generation, attempt_id) IN %({name})s"
-            )
-    if overlay is not None:
-        params["pub_overlay"] = UUID(str(overlay.id))
-        params["pub_overlay_generation"] = overlay.generation
-        physical = physical_table(table, checkpoint=overlay.purpose == "compaction")
-        branches.append(
-            f"SELECT {columns} FROM {physical.name} PREWHERE {scope} "
-            "WHERE attempt_id = %(pub_overlay)s AND generation = %(pub_overlay_generation)s"
-        )
+    table = TABLES[table.name if hasattr(table, "name") else table]
+    columns = ", ".join(table.columns)
+    branches, params = committed_branches(
+        table,
+        manifest,
+        org_id=org_id,
+        project_id=project_id,
+        overlay=overlay,
+        key_after=key_after,
+        key_in=key_in,
+        param_prefix=param_prefix,
+    )
     if not branches:
         branches.append(f"SELECT {columns} FROM {table.name} WHERE 0")
     return (
