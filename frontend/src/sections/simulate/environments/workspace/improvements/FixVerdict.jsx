@@ -13,7 +13,7 @@ import {
   verdictCards,
   winnerOf,
 } from "./fixRunView";
-import { scenarioOutcomes } from "./scenarioOutcomes";
+import { heldBackTally } from "./scenarioOutcomes";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
 const num = { fontVariantNumeric: "tabular-nums" };
@@ -196,8 +196,6 @@ function MustPassBreaks({ verdict }) {
 }
 MustPassBreaks.propTypes = { verdict: PropTypes.object.isRequired };
 
-// The design's verdict block: the headline, the cards side by side, the checks
-// on one line, then any must-pass breaks.
 // Platform evals the winner scores worse on than the base version. They are
 // shown, never counted: the verdict stands on the scenarios' own checks.
 function EvalWarnings({ warnings }) {
@@ -224,12 +222,12 @@ function EvalWarnings({ warnings }) {
           rowGap: 0.25,
         }}
       >
-        {warnings.map((w) => [
-          <Typography key={`${w.name}-name`} noWrap sx={{ typography: "s2" }}>
+        {warnings.map((w, i) => [
+          <Typography key={`${i}-name`} noWrap sx={{ typography: "s2" }}>
             {w.name}
           </Typography>,
           <Typography
-            key={`${w.name}-rate`}
+            key={`${i}-rate`}
             sx={{
               typography: "s2",
               color: "text.secondary",
@@ -248,20 +246,24 @@ EvalWarnings.propTypes = { warnings: PropTypes.array.isRequired };
 // How many held-back scenarios the winner fixed, scenario by scenario as on
 // the Per scenario tab, for a fix held back on too few cases to call it proven.
 function HeldBackTally({ fix, winner }) {
-  const { before, after, isLoading } = useFixScenarioRows(fix, winner.id);
-  if (isLoading) return null;
-  const held = new Set(fix.request?.held_back_scenario_keys || []);
-  const failing = scenarioOutcomes(before, after).filter(
-    (r) => held.has(r.key) && r.before === "failed",
+  const { before, after, isLoading, isError } = useFixScenarioRows(
+    fix,
+    winner.id,
   );
-  if (!failing.length) return null;
-  const fixed = failing.filter((r) => r.outcome === "fixed").length;
-  const scenarios = failing.length === 1 ? "scenario" : "scenarios";
+  // A run whose calls did not load would skew the count, so say nothing.
+  if (isLoading || isError) return null;
+  const { fixed, failing } = heldBackTally(
+    before,
+    after,
+    fix.request?.held_back_scenario_keys || [],
+  );
+  if (!failing) return null;
+  const scenarios = failing === 1 ? "scenario" : "scenarios";
   return (
     <Typography
       sx={{ px: 2, mt: -0.75, pb: 1, typography: "s2", color: "text.secondary" }}
     >
-      {`Too few to tell · Fixed ${fixed} of ${failing.length} failing ${scenarios} it never saw`}
+      {`Too few to tell · Fixed ${fixed} of ${failing} failing ${scenarios} it never saw`}
     </Typography>
   );
 }
@@ -270,6 +272,8 @@ HeldBackTally.propTypes = {
   winner: PropTypes.object.isRequired,
 };
 
+// The design's verdict block: the headline, the cards side by side, the checks
+// on one line, then any must-pass breaks.
 export default function FixVerdict({ fix }) {
   const winner = winnerOf(fix);
   const text = headline(fix);

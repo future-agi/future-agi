@@ -45,3 +45,14 @@ export function scenarioOutcomes(beforeTasks, afterTasks) {
 }
 
 export const OUTCOME_ORDER = ORDER;
+
+// Held-back scenarios that failed before the change, and how many of them the
+// winner fixed. A failing one the winner never measured counts as not fixed,
+// so it stays in the total.
+export function heldBackTally(beforeTasks, afterTasks, heldKeys) {
+  const before = verdicts(beforeTasks);
+  const after = verdicts(afterTasks);
+  const failing = heldKeys.filter((key) => before.get(key)?.passed === false);
+  const fixed = failing.filter((key) => after.get(key)?.passed === true).length;
+  return { fixed, failing: failing.length };
+}

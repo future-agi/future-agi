@@ -230,6 +230,7 @@ export function useFixScenarioRows(fix, candidateId) {
     after: rowsOf(results.slice(baseline.length)),
     run: candidateRuns[0],
     isLoading: results.some((r) => r.isLoading),
+    isError: results.some((r) => r.isError),
   };
 }
 

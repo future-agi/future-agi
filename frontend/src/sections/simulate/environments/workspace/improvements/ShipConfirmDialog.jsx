@@ -25,10 +25,13 @@ function Row({ label, children }) {
 Row.propTypes = { label: PropTypes.string.isRequired, children: PropTypes.node };
 
 function ChangeSummary({ fix, winner }) {
-  // Same key as the Changes tab, so a patch read there is not read twice.
+  // Same key and staleness as the Changes tab, so a patch is read once. A
+  // failure shows inline below, not as a second, global error.
   const { data, isLoading, error } = useQuery({
     queryKey: ["agent-fix-run-patch", fix.id, winner.id],
     queryFn: () => fetchCandidatePatch(fix.id, winner.id),
+    staleTime: Infinity,
+    meta: { errorHandled: true },
   });
   if (isLoading) {
     return (
@@ -86,6 +89,7 @@ export default function ShipConfirmDialog({
     <ConfirmDialog
       open={open}
       onClose={onClose}
+      closeDisabled={busy}
       title={
         github
           ? `Open a pull request for Trial ${winner.attempt}?`
