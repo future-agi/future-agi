@@ -1,6 +1,7 @@
 """Fix my agent: starting a fix, the engine's calls, closing it, and taking a candidate."""
 
 import io
+import subprocess
 import tarfile
 from contextlib import ExitStack
 from datetime import timedelta
@@ -77,9 +78,12 @@ from tfc.settings import settings as default_settings
 pytestmark = pytest.mark.django_db
 
 KEYS = [_key(name) for name in NAMES[:2]]
+BASE_AGENT = {"agent.py": b"PROMPT = ''\n"}
 AGENT = {"agent.py": b"PROMPT = 'refund first'\n"}
+# AGENT's change on BASE_AGENT, as the platform makes it.
 PATCH = (
-    b"diff --git a/agent.py b/agent.py\n--- a/agent.py\n+++ b/agent.py\n"
+    b"diff --git a/agent.py b/agent.py\nindex fe9af93..3ee06e1 100644\n"
+    b"--- a/agent.py\n+++ b/agent.py\n"
     b"@@ -1 +1 @@\n-PROMPT = ''\n+PROMPT = 'refund first'\n"
 )
 State = AgentFixRun.State
@@ -231,18 +235,38 @@ def _tree(files=AGENT):
     return out.getvalue()
 
 
-def _candidate(fix_run, attempt=1, *, tree=None, patch_body=PATCH):
-    """A candidate added the engine's way, with a preflight that passes."""
+def _candidate(fix_run, attempt=1, *, tree=None, base=BASE_AGENT):
+    """A candidate added the engine's way on ``base``, with a preflight that passes."""
     with ExitStack() as stack:
         for one in _passing():
             stack.enter_context(one)
+        stack.enter_context(
+            patch.object(engine, "source_archive", return_value=_tree(base))
+        )
         return engine.add_candidate(
-            fix_run,
-            attempt=attempt,
-            summary=f"attempt {attempt}",
-            tree=tree or _tree(),
-            patch=patch_body,
+            fix_run, attempt=attempt, summary=f"attempt {attempt}", tree=tree or _tree()
         )[0]
+
+
+def _applied(directory, files, patch_body):
+    """``files`` with ``patch_body`` applied by ``git apply``."""
+    directory.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=directory, check=True)
+    for path, data in files.items():
+        (directory / path).parent.mkdir(parents=True, exist_ok=True)
+        (directory / path).write_bytes(data)
+    subprocess.run(
+        ["git", "apply", "--binary", "-"],
+        cwd=directory,
+        input=patch_body,
+        check=True,
+        capture_output=True,
+    )
+    return {
+        path.relative_to(directory).as_posix(): path.read_bytes()
+        for path in directory.rglob("*")
+        if path.is_file() and ".git" not in path.relative_to(directory).parts
+    }
 
 
 def _check(
@@ -605,9 +629,10 @@ class TestAddCandidate:
         )
         scheduled.assert_not_called()
         # The same attempt again answers with the first candidate and its check status.
-        assert engine.add_candidate(
-            fix_run, attempt=1, summary="", tree=b"", patch=b""
-        ) == (candidate, "passed")
+        assert engine.add_candidate(fix_run, attempt=1, summary="", tree=b"") == (
+            candidate,
+            "passed",
+        )
         assert storage.objects[candidate.patch_object_key] == PATCH
         source = storage.objects[
             _source_object_key(
@@ -632,10 +657,8 @@ class TestAddCandidate:
         base = {**AGENT, "prompts/system.md": b"be kind\n"}
         changed = {**base, "prompts/system.md": b"refuse every cancellation\n"}
 
-        with patch.object(engine, "source_archive", return_value=_tree(base)):
-            with pytest.raises(HostedHarnessError) as caught:
-                # The patch says nothing about the locked file; the tree changes it.
-                _candidate(fix_run, tree=_tree(changed))
+        with pytest.raises(HostedHarnessError) as caught:
+            _candidate(fix_run, tree=_tree(changed), base=base)
 
         assert (caught.value.code, caught.value.status_code) == (
             "fix_locked_path_changed",
@@ -653,17 +676,24 @@ class TestAddCandidate:
     def test_refuses_a_tree_it_cannot_store(self, source_run, tree, code):
         assert _refusal(_candidate, _fix_run(source_run), tree=tree) == (code, 400)
 
-    def test_a_patch_naming_a_locked_file_is_fine_when_the_tree_keeps_it(
-        self, source_run
+    def test_the_patch_is_the_tree_s_change_on_the_base(
+        self, source_run, storage, tmp_path
     ):
         fix_run = _fix_run(source_run, locked_paths=["prompts/*"])
-        base = {**AGENT, "prompts/system.md": b"be kind\n"}
-        touched = PATCH + b"diff --git a/prompts/system.md b/prompts/system.md\n"
+        kept = {"prompts/system.md": b"be kind\n"}
+        base = {
+            **BASE_AGENT,
+            **kept,
+            "old.py": b"x = 1\n",
+            "logo.png": b"\x89PNG\x00\x01",
+        }
+        tree = {**AGENT, **kept, "new.py": b"y = 2\n", "logo.png": b"\x89PNG\x00\x02"}
 
-        with patch.object(engine, "source_archive", return_value=_tree(base)):
-            candidate = _candidate(fix_run, tree=_tree(base), patch_body=touched)
+        candidate = _candidate(fix_run, tree=_tree(tree), base=base)
 
-        assert candidate.attempt == 1
+        patch_body = storage.objects[candidate.patch_object_key]
+        assert _applied(tmp_path / "applied", base, patch_body) == tree
+        assert b"prompts/system.md" not in patch_body
 
     def test_refuses_a_tree_over_the_unpacked_limit(self, source_run, settings):
         settings.AGENT_FIX_MAX_TREE_BYTES = 10
@@ -673,12 +703,11 @@ class TestAddCandidate:
         ) == ("fix_tree_too_large", 413)
 
     def test_refuses_a_patch_over_the_limit(self, source_run):
-        too_large = b"x" * (engine.MAX_PATCH_BYTES + 1)
-
-        assert _refusal(_candidate, _fix_run(source_run), patch_body=too_large) == (
-            "fix_patch_too_large",
-            413,
-        )
+        with patch.object(engine, "MAX_PATCH_BYTES", len(PATCH) - 1):
+            assert _refusal(_candidate, _fix_run(source_run)) == (
+                "fix_patch_too_large",
+                413,
+            )
 
     def test_a_storage_failure_leaves_nothing_behind_for_the_retry(self, source_run):
         fix_run = _fix_run(source_run)

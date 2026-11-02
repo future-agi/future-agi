@@ -329,7 +329,6 @@ class AgentFixCandidateUploadSerializer(serializers.Serializer):
         required=False, allow_blank=True, default="", max_length=4000
     )
     tree = serializers.FileField()
-    patch = serializers.FileField()
 
 
 class AgentFixCandidateCreatedSerializer(serializers.Serializer):

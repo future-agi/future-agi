@@ -34223,7 +34223,6 @@ export const SimulateApiAgentFixEngineCandidatesBody = zod.object({
   attempt: zod.number(),
   summary: zod.string().optional(),
   tree: zod.instanceof(File),
-  patch: zod.instanceof(File),
 });
 
 /**

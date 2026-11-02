@@ -343,7 +343,6 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
             attempt=data["attempt"],
             summary=data["summary"],
             tree=data["tree"].read(),
-            patch=data["patch"].read(),
         )
         created = CandidateCreated(
             candidate_id=str(candidate.id),
