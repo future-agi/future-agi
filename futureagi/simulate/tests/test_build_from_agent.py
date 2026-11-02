@@ -1,6 +1,6 @@
 """Building an environment from a connected agent: the environment binds to the
 agent's chosen version, takes its source and credential names, writes nothing to
-the agent, and follows production unless pinned."""
+the agent, and stays pinned unless it asks to follow production."""
 
 from unittest.mock import patch
 
@@ -8,6 +8,7 @@ import pytest
 from rest_framework import status
 
 from simulate.models import AgentDefinition, AgentVersion, HostedHarnessJob
+from simulate.models.run_test import RunTest
 from simulate.services.harness_agent_versions import POLICY_KEY
 from simulate.tests.test_harness_agent_creation import (
     _body,
@@ -20,6 +21,7 @@ from simulate.tests.test_harness_agent_creation import (
 from simulate.tests.test_harness_agent_creation import (
     gates as gates,  # noqa: F401 - fixture
 )
+from simulate.tests.test_harness_agent_provision import _agent_state, _provision
 from simulate.tests.test_harness_agent_versions import _preflight
 from simulate.tests.test_harness_connected_versions import _connect
 from simulate.tests.test_harness_versioning_backfill import (
@@ -167,3 +169,24 @@ def test_build_preflight_on_an_agent_with_no_version(auth_client, agent):
             }
         ],
     }
+
+
+def test_a_guest_named_agent_never_replaces_the_connected_agent(
+    client, workspace, gates, agent, production  # noqa: F811
+):
+    environment = _job(_post(client, workspace, _creation(agent)))
+    other = AgentDefinition.objects.create(
+        agent_name="other",
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        organization=agent.organization,
+        workspace=workspace,
+    )
+    before = _agent_state(agent.id)
+
+    _provision(environment, modality="text", agent_definition_id=str(other.id))
+
+    environment.refresh_from_db()
+    run_test = RunTest.no_workspace_objects.get(id=environment.run_test_id)
+    assert run_test.agent_definition_id == agent.id
+    assert _agent_state(agent.id) == before

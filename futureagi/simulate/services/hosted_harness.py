@@ -2119,20 +2119,27 @@ def provision_scenarios(
         # Misclassifying a LiveKit run here makes completed voice calls render
         # through the chat schema and effectively disappear from call-details.
         modality = _resolve_scenario_modality(job, payload)
-        from simulate.services.harness_agent_versions import agent_definition_owner
+        from simulate.services.harness_agent_versions import (
+            CONNECTED_OWNER,
+            agent_definition_owner,
+        )
 
         bound_id = payload.get("agent_definition_id")
-        if agent_definition_owner(job) == "environment":
+        owner = agent_definition_owner(job)
+        if owner in ("environment", CONNECTED_OWNER):
             # Passed on, never put in the guest's request: it stays unbound there.
             guest_id = bound_id
-            bound_id, modality = _environment_definition_for(job, modality)
+            if owner == "environment":
+                bound_id, modality = _environment_definition_for(job, modality)
+            else:
+                definition = _bound_definition(job)
+                bound_id = str(definition.id) if definition is not None else None
             if guest_id and str(guest_id) != str(bound_id):
                 logger.info(
                     "harness_agent_not_bound",
                     job_id=str(job.id),
                     reason="guest_id_ignored",
                 )
-        # TODO: refuse a guest's id for a connected agent too (connected branch).
         # Defense: when the guest sends a bare UUID as the run name
         # (older guests use job.run_id), derive something readable.
         run_name = payload["name"]
@@ -2262,11 +2269,8 @@ def provision_scenarios(
     return _provision_response(locked, registrations)
 
 
-def _environment_definition_for(
-    job: HostedHarnessJob, modality: str
-) -> tuple[str | None, str]:
-    """The agent made with the environment, and the modality its connector runs: an
-    ``auto`` agent takes the authored modality, a known connector keeps its own."""
+def _bound_definition(job: HostedHarnessJob):
+    """The live agent of the environment's pinned version, in its own workspace."""
     from simulate.models import AgentDefinition, AgentVersion
 
     definition_id = (
@@ -2276,16 +2280,24 @@ def _environment_definition_for(
         if job.agent_version_id
         else None
     )
-    definition = (
-        AgentDefinition.no_workspace_objects.filter(
-            id=definition_id,
-            organization_id=job.organization_id,
-            workspace_id=job.workspace_id,
-            deleted=False,
-        ).first()
-        if definition_id
-        else None
-    )
+    if not definition_id:
+        return None
+    return AgentDefinition.no_workspace_objects.filter(
+        id=definition_id,
+        organization_id=job.organization_id,
+        workspace_id=job.workspace_id,
+        deleted=False,
+    ).first()
+
+
+def _environment_definition_for(
+    job: HostedHarnessJob, modality: str
+) -> tuple[str | None, str]:
+    """The agent made with the environment, and the modality its connector runs: an
+    ``auto`` agent takes the authored modality, a known connector keeps its own."""
+    from simulate.models import AgentDefinition
+
+    definition = _bound_definition(job)
     if definition is None:
         logger.info(
             "harness_agent_not_bound",
@@ -2377,8 +2389,6 @@ def _record_target_agent_facts(
 
     owner = agent_definition_owner(job)
     if owner == "connected":
-        # TODO: write nothing to a connected agent (connected branch, once P26/P26a
-        # merge).
         return
     if owner == "environment":
         _copy_target_facts(
