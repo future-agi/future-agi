@@ -253,6 +253,45 @@ class AcceptancePlanTests(unittest.TestCase):
             self.assertEqual(inputs['versions'],[old['version'],target['version']])
             self.assertEqual(inputs['deployment_dirs'][target['version']],str(ROOT))
 
+    def test_dispatch_upgrade_source_selects_that_published_stable_release(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            old={'version':'v1.56.1'}
+            target={'version':'v1.56.2'}
+            fetched=[]
+            def release(url):
+                fetched.append(url)
+                return {'tag_name':'v1.56.1'}
+            with patch.object(acceptance,'get_json',side_effect=release), \
+                 patch.object(driver,'published',return_value=(old,Path(temp))), \
+                 patch.object(driver,'build_pr',return_value=target), \
+                 patch.object(acceptance.subprocess,'run',return_value=subprocess.CompletedProcess([],1)), \
+                 patch.dict(os.environ,{'GITHUB_RUN_ID':'123',acceptance.UPGRADE_SOURCE_ENV:'v1.56.1'}):
+                self.assertEqual(driver.run_tests('upgrade',object()),1)
+            self.assertEqual(fetched,[acceptance.RELEASE_API+'tags/v1.56.1'])
+            inputs=json.loads((Path(temp)/'inputs.json').read_bytes())
+            self.assertEqual(inputs['versions'],['v1.56.1','v1.56.2'])
+
+    def test_dispatch_upgrade_source_must_be_a_published_stable_tag(self):
+        cases=(('v1.56',{}),('latest',{}),('v1.56.1-rc1',{}),('v1.56.1',{'tag_name':'v1.56.1','draft':True}),
+               ('v1.56.1',{'tag_name':'v1.56.1','prerelease':True}),('v1.56.1',{'tag_name':'v1.57.0'}))
+        for source,metadata in cases:
+            with tempfile.TemporaryDirectory(dir=Path.home()) as temp, self.subTest(source=source,metadata=metadata):
+                driver=acceptance.NativeAcceptance(Path(temp))
+                with patch.object(acceptance,'get_json',return_value=metadata), \
+                     patch.object(driver,'published') as published, patch.object(driver,'build_pr') as build, \
+                     patch.dict(os.environ,{'GITHUB_RUN_ID':'123',acceptance.UPGRADE_SOURCE_ENV:source}):
+                    with self.assertRaisesRegex(ValueError,'upgrade source'):
+                        driver.run_tests('upgrade',object())
+                published.assert_not_called(); build.assert_not_called()
+
+    def test_upgrade_source_input_is_dispatch_only(self):
+        workflow=(ROOT/'.github/workflows/update-ci.yml').read_text()
+        job=workflow.split('\n  automatic-upgrade:\n',1)[1].split('\n  automatic-a-b-c:\n',1)[0]
+        self.assertIn("FAGI_UPDATE_E2E_UPGRADE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.upgrade_source || '' }}",job)
+        self.assertNotIn('UPGRADE_SOURCE',workflow.split('\n  automatic-a-b-c:\n',1)[1])
+        self.assertIn('      upgrade_source:\n',workflow.split('\non:\n',1)[1].split('\nconcurrency:',1)[0])
+
     def test_producer_refusal_is_clear_and_nonzero_without_echoing_private_diagnostics(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
             driver=acceptance.NativeAcceptance(Path(temp))

@@ -57,6 +57,10 @@ BUILDS = (
 
 RELEASE_API = 'https://api.github.com/repos/future-agi/future-agi/releases/'
 RELEASE_TOKEN_ENV = 'FAGI_UPDATE_RELEASE_TOKEN'
+# Manual Update CI dispatch only: upgrade from this published stable tag instead
+# of the latest release, to rehearse a transition whose migrations the latest
+# release already contains. Unset for pull requests and the nightly run.
+UPGRADE_SOURCE_ENV = 'FAGI_UPDATE_E2E_UPGRADE_SOURCE'
 
 
 class _NoReleaseRedirects(HTTPRedirectHandler):
@@ -490,10 +494,18 @@ class NativeAcceptance:
     def run_tests(self,mode,registry):
         versions=['v1.53.0','v1.54.0','v1.55.0']
         if mode == 'upgrade':
-            latest=get_json(RELEASE_API+'latest')
-            if latest.get('draft') or latest.get('prerelease'):
-                raise ValueError('latest source is not stable')
-            versions=[latest['tag_name']]
+            source=os.environ.get(UPGRADE_SOURCE_ENV,'')
+            if source:
+                if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',source):
+                    raise ValueError('upgrade source must be a stable vX.Y.Z tag')
+                release=get_json(RELEASE_API+'tags/'+source)
+                if release.get('tag_name') != source or release.get('draft') or release.get('prerelease'):
+                    raise ValueError('upgrade source is not a published stable release')
+            else:
+                release=get_json(RELEASE_API+'latest')
+                if release.get('draft') or release.get('prerelease'):
+                    raise ValueError('latest source is not stable')
+            versions=[release['tag_name']]
         candidates,deployments={},{}
         for version in versions:
             candidates[version],directory=self.published(version,registry)

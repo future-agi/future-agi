@@ -129,6 +129,12 @@ on:
       - ".gitattributes"
   merge_group:
   workflow_dispatch:
+    inputs:
+      upgrade_source:
+        description: "Optional published stable tag (vX.Y.Z) to upgrade from instead of the latest release; empty = latest"
+        required: false
+        type: string
+        default: ""
   schedule:
     - cron: "23 3 * * *"
 
@@ -422,6 +428,8 @@ jobs:
           FAGI_UPDATE_E2E_BUILDER: ${{ steps.buildx.outputs.name }}
           # Only api.github.com release metadata; acceptance strips it from children.
           FAGI_UPDATE_RELEASE_TOKEN: ${{ github.token }}
+          # Manual dispatch only; pull requests and the nightly run use the latest release.
+          FAGI_UPDATE_E2E_UPGRADE_SOURCE: ${{ github.event_name == 'workflow_dispatch' && inputs.upgrade_source || '' }}
         run: |
           set -euo pipefail
           umask 077
