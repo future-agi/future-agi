@@ -5,6 +5,7 @@ import logging
 import re
 
 from django.conf import settings
+from django.core.cache import cache
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny
@@ -75,6 +76,10 @@ class HarnessGitHubWebhookView(APIView):
         if not change.is_valid():
             return _rejected("bad_json", delivery)
         installation_id = str(change.validated_data["installation"]["id"])
+        if _DELIVERY.fullmatch(delivery) and not cache.add(
+            f"github-installation-delivery:{delivery}", True, timeout=86_400
+        ):
+            return Response(status=status.HTTP_204_NO_CONTENT)
         if event == "installation_repositories":
             forget_repositories(installation_id)
         else:

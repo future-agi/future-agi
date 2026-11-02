@@ -181,9 +181,16 @@ export default function IntegrationsList() {
       !autoStartedInstall.current
     ) {
       autoStartedInstall.current = true;
+      if (!RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role]) {
+        setInstallMessage({
+          severity: "info",
+          text: `You don't have permission to connect ${INSTALL_FLOWS[platformId].label}.`,
+        });
+        return;
+      }
       startInstall(platformId);
     }
-  }, [startInstall, isLoading, location.search]);
+  }, [startInstall, isLoading, location.search, role]);
 
   const selectPlatform = (platformId) => {
     if (INSTALL_FLOWS[platformId]) startInstall(platformId);

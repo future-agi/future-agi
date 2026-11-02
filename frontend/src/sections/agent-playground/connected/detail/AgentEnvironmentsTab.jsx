@@ -1,15 +1,8 @@
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React from "react";
 import { useNavigate } from "react-router-dom";
 import { useSnackbar } from "notistack";
-import {
-  Box,
-  Button,
-  Skeleton,
-  Stack,
-  Tooltip,
-  Typography,
-} from "@mui/material";
+import { Box, Button, Skeleton, Stack, Typography } from "@mui/material";
 import {
   useAgentEnvironments,
   useSetEnvironmentPolicy,
@@ -20,7 +13,7 @@ import { paths } from "src/routes/paths";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import EmptyState from "src/sections/simulate/environments/components/EmptyState";
 import StatusPill from "src/sections/simulate/environments/components/StatusPill";
-import BuildEnvironmentDialog from "./BuildEnvironmentDialog";
+import BuildEnvironmentButton from "./BuildEnvironmentButton";
 import { isBehind, policyLabel } from "./environmentPolicy";
 import { Card, LineSkeleton, Row } from "./bits";
 import { MONO, ago, rateTone } from "./format";
@@ -62,53 +55,6 @@ function LastResult({ env }) {
 }
 
 LastResult.propTypes = { env: PropTypes.object.isRequired };
-
-function BuildEnvironmentButton({ agent, canEdit, primary = false }) {
-  const [open, setOpen] = useState(false);
-  const isCode = agent?.agentKind === "source";
-  const reason = !agent
-    ? ""
-    : !isCode
-      ? "Only a code agent can be built into an environment here"
-      : !canEdit
-        ? "You need the Member role to build an environment"
-        : "";
-  const button = (
-    <Button
-      size="small"
-      variant={primary ? "contained" : "outlined"}
-      color={primary ? "primary" : "inherit"}
-      disabled={!agent || !!reason}
-      onClick={() => setOpen(true)}
-    >
-      Build environment
-    </Button>
-  );
-  return (
-    <>
-      {reason ? (
-        <Tooltip arrow title={reason}>
-          <span>{button}</span>
-        </Tooltip>
-      ) : (
-        button
-      )}
-      {open && agent && (
-        <BuildEnvironmentDialog
-          agent={agent}
-          open
-          onClose={() => setOpen(false)}
-        />
-      )}
-    </>
-  );
-}
-
-BuildEnvironmentButton.propTypes = {
-  agent: PropTypes.object,
-  canEdit: PropTypes.bool,
-  primary: PropTypes.bool,
-};
 
 /** Environments: every environment testing this agent and how it last did. */
 export default function AgentEnvironmentsTab() {

@@ -9,6 +9,7 @@ import {
   useStoredAgent,
 } from "src/api/agents/agentDetail";
 import { useAuthContext } from "src/auth/hooks";
+import CustomTooltip from "src/components/tooltip";
 import { paths } from "src/routes/paths";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { sourceLabel } from "../connectedAgentLabels";
@@ -296,15 +297,24 @@ export default function AgentDefinitionTab() {
             : "Not linked · turn observability on to pull its calls in"}
         </Typography>
         {isCode && (
-          <Button
+          <CustomTooltip
+            show={!canEdit}
+            title="You don't have permission to link a project."
             size="small"
-            variant="outlined"
-            color="inherit"
-            disabled={!canEdit}
-            onClick={() => setConnecting(true)}
+            arrow
           >
-            Link a project
-          </Button>
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                disabled={!canEdit}
+                onClick={() => setConnecting(true)}
+              >
+                Link a project
+              </Button>
+            </span>
+          </CustomTooltip>
         )}
       </Stack>
     ),

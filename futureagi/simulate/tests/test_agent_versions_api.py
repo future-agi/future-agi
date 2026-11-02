@@ -96,7 +96,7 @@ def test_sync_refuses_an_unreachable_branch(auth_client, agent, production):
         response = _change(auth_client, agent, kind="sync")
 
     assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-    assert response.json()["error"] == "source_unreachable"
+    assert response.json()["code"] == "source_unreachable"
 
 
 def test_a_change_needs_the_fields_of_its_kind(auth_client, agent, production):
@@ -118,7 +118,7 @@ def test_a_prompt_edit_is_refused_for_a_code_agent(auth_client, agent, productio
     response = _change(auth_client, agent, kind="manual", prompt="Be brief.")
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-    assert response.json()["error"] == "prompt_in_source"
+    assert response.json()["code"] == "prompt_in_source"
 
 
 def test_a_credentials_change_makes_a_version_that_reuses_the_source(
@@ -196,7 +196,7 @@ def test_production_needs_a_passed_check_then_moves_following_environments(
 
     refused = auth_client.post(f"{AGENTS}{agent.id}/versions/{second.id}/production/")
     assert refused.status_code == status.HTTP_409_CONFLICT
-    assert refused.json()["error"] == "version_not_ready"
+    assert refused.json()["code"] == "version_not_ready"
 
     assert store_agent(
         agent_version_id=second.id, agent=source_agent(), sdk_version="0.2.3"
@@ -223,7 +223,7 @@ def test_discard_refuses_production_and_retry_requeues_a_check(
 ):
     refused = auth_client.post(f"{AGENTS}{agent.id}/versions/{production.id}/discard/")
     assert refused.status_code == status.HTTP_409_CONFLICT
-    assert refused.json()["error"] == "version_in_production"
+    assert refused.json()["code"] == "version_in_production"
 
     with patch(
         "simulate.services.harness_agent_changes.github_head",
@@ -314,7 +314,7 @@ def test_sync_is_refused_for_an_agent_without_a_github_source(auth_client, agent
     response = _change(auth_client, agent, kind="sync")
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-    assert response.json()["error"] == "sync_unsupported"
+    assert response.json()["code"] == "sync_unsupported"
 
 
 def test_retry_needs_a_checked_version(auth_client, agent):
@@ -323,7 +323,7 @@ def test_retry_needs_a_checked_version(auth_client, agent):
     response = auth_client.post(f"{AGENTS}{agent.id}/versions/{bare.id}/retry/")
 
     assert response.status_code == status.HTTP_409_CONFLICT
-    assert response.json()["error"] == "version_not_checked"
+    assert response.json()["code"] == "version_not_checked"
 
 
 def test_a_prompt_edit_makes_a_version_for_a_built_in_agent_once(auth_client, agent):
@@ -351,7 +351,7 @@ def test_upload_refuses_a_missing_archive_and_keeps_the_same_one(
     )
 
     assert missing.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-    assert missing.json()["error"] == "archive_source_not_found"
+    assert missing.json()["code"] == "archive_source_not_found"
 
 
 def test_compatibility_needs_a_known_environment(auth_client, agent, production):
@@ -365,7 +365,7 @@ def test_compatibility_needs_a_known_environment(auth_client, agent, production)
     )
     missing = auth_client.get(url, {"environment_id": str(uuid.uuid4())})
     assert missing.status_code == status.HTTP_404_NOT_FOUND
-    assert missing.json()["error"] == "environment_not_found"
+    assert missing.json()["code"] == "environment_not_found"
 
 
 def test_another_organization_sees_none_of_the_version_endpoints(
@@ -446,7 +446,7 @@ def test_an_agent_an_environment_made_has_no_production_here(
     )
 
     assert refused.status_code == status.HTTP_409_CONFLICT, refused.content
-    assert refused.json()["error"] == "managed_by_environment"
+    assert refused.json()["code"] == "managed_by_environment"
     production.refresh_from_db()
     assert production.status == "active"
     assert auth_client.get(f"{AGENTS}{agent.id}/").json()["managed_by"] == {
@@ -494,3 +494,193 @@ def test_a_version_made_here_for_an_environments_agent_stays_that_environments(
         (str(call.args[0]), str(call.args[1]), call.kwargs.get("default_moved"))
         for call in nudge.call_args_list
     ] == [(str(environment.id), str(second.id), False)]
+
+
+def test_sync_reads_a_not_modified_head_as_the_branch_head(
+    auth_client, agent, production
+):
+    with patch(
+        "simulate.services.harness_agent_changes.github_head",
+        return_value=HeadResult("not_modified", "a" * 40),
+    ):
+        unchanged = _change(auth_client, agent, kind="sync")
+
+    assert unchanged.status_code == status.HTTP_200_OK, unchanged.content
+    assert unchanged.json()["up_to_date"] is True
+
+    with patch(
+        "simulate.services.harness_agent_changes.github_head",
+        return_value=HeadResult("not_modified", "c" * 40),
+    ):
+        moved = _change(auth_client, agent, kind="sync")
+
+    assert moved.status_code == status.HTTP_202_ACCEPTED, moved.content
+    assert moved.json()["version"]["source"]["commit_sha"] == "c" * 40
+
+
+def test_sync_of_a_missing_branch_is_not_retried(auth_client, agent, production):
+    with patch(
+        "simulate.services.harness_agent_changes.github_head",
+        return_value=HeadResult("not_found"),
+    ):
+        response = _change(auth_client, agent, kind="sync")
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.json()["code"] == "source_not_found"
+    assert response.json()["retryable"] is False
+
+
+def _private(version, installation_id="42"):
+    runtime = HarnessAgentVersionRuntime.objects.get(agent_version=version)
+    runtime.agent_payload = {
+        **runtime.agent_payload,
+        "source_access": {
+            "visibility": "private",
+            "installation_id": installation_id,
+            "repository_id": 7,
+        },
+    }
+    runtime.save(update_fields=["agent_payload"])
+
+
+def test_sync_of_a_private_repository_needs_this_workspaces_installation(
+    auth_client, agent, production
+):
+    _private(production)
+
+    with (
+        patch(
+            "simulate.services.harness_agent_changes.github_head",
+            return_value=HeadResult("ok", "b" * 40),
+        ) as public_head,
+        patch("integrations.services.github_app.branch_head") as private_head,
+    ):
+        response = _change(auth_client, agent, kind="sync")
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.json()["code"] == "github_installation_not_connected"
+    assert not public_head.called
+    assert not private_head.called
+
+
+def test_sync_of_a_private_repository_reads_the_head_with_the_installation(
+    auth_client, agent, production, user
+):
+    from integrations.models import (
+        ConnectionStatus,
+        IntegrationConnection,
+        IntegrationPlatform,
+    )
+    from integrations.services.credentials import CredentialManager
+
+    IntegrationConnection.no_workspace_objects.create(
+        organization=agent.organization,
+        workspace=agent.workspace,
+        created_by=user,
+        platform=IntegrationPlatform.GITHUB,
+        display_name="acme",
+        host_url="https://github.com",
+        encrypted_credentials=CredentialManager.encrypt({"installation_id": "42"}),
+        external_project_name="42",
+        status=ConnectionStatus.ACTIVE,
+        backfill_completed=True,
+    )
+    _private(production)
+
+    with (
+        patch("simulate.services.harness_agent_changes.github_head") as public_head,
+        patch(
+            "integrations.services.github_app.branch_head", return_value="a" * 40
+        ) as private_head,
+    ):
+        response = _change(auth_client, agent, kind="sync")
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.json()["up_to_date"] is True
+    assert not public_head.called
+    assert private_head.call_args.args == ("42",)
+    assert private_head.call_args.kwargs["repository_id"] == 7
+
+
+@pytest.mark.parametrize(
+    "secret_values",
+    [
+        {"PATH": "x"},
+        {"1BAD": "x"},
+        {"SIMULATOR_KEY": "x"},
+        {f"NAME_{index}": "x" for index in range(101)},
+    ],
+)
+def test_a_credentials_change_refuses_names_the_runner_cannot_take(
+    auth_client, agent, production, secret_values
+):
+    response = _change(
+        auth_client, agent, kind="credentials", secret_values=secret_values
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content
+    assert AgentVersion.objects.filter(agent_definition=agent).count() == 1
+
+
+def test_the_same_credentials_again_report_no_new_version(
+    auth_client, agent, production
+):
+    first = _change(
+        auth_client, agent, kind="credentials", secret_values={"DB_URL": "pg://x"}
+    )
+    again = _change(
+        auth_client, agent, kind="credentials", secret_values={"DB_URL": "pg://x"}
+    )
+
+    assert first.status_code == status.HTTP_202_ACCEPTED, first.content
+    assert again.status_code == status.HTTP_200_OK, again.content
+    assert again.json()["created"] is False
+    assert again.json()["version"]["id"] == first.json()["version"]["id"]
+
+
+def test_following_production_waits_while_the_environment_builds(
+    auth_client, agent, production
+):
+    from simulate.services.agent_setup import store_agent
+    from simulate.tests.test_agent_setup_service import source_agent
+
+    environment = _completed(_environment(agent, 1), production)
+    second = _connect(
+        agent,
+        parent=production,
+        commit="b",
+        trigger=HarnessAgentVersionRuntime.Trigger.SYNC,
+    )
+    assert store_agent(
+        agent_version_id=second.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+    with patch(NUDGE):
+        _preflight(second)
+        auth_client.post(f"{AGENTS}{agent.id}/versions/{second.id}/production/")
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        state=HostedHarnessJob.State.RUNNING
+    )
+
+    response = auth_client.post(
+        f"/simulate/api/harness-environments/{environment.id}/agent-policy/",
+        {"policy": "follow"},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT, response.content
+    assert response.json()["error"] == "environment_busy"
+    environment.refresh_from_db()
+    assert environment.agent_version_id == production.id
+    assert POLICY_KEY not in environment.payload.get("metadata", {})
+
+
+def test_a_version_named_with_follow_is_refused(auth_client, agent, production):
+    environment = _completed(_environment(agent, 1), production)
+
+    response = auth_client.post(
+        f"/simulate/api/harness-environments/{environment.id}/agent-policy/",
+        {"policy": "follow", "version_id": str(production.id)},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.content

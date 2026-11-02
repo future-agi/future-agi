@@ -56,6 +56,15 @@ export const toVersion = (v) => ({
   source: v.source ?? null,
 });
 
+export const CHECK_POLL_MS = 5000;
+
+export const pollWhileChecking = (query) =>
+  (query?.state?.data?.pages ?? []).some((page) =>
+    (page?.results ?? []).some((v) => v.preflight_status === "pending"),
+  )
+    ? CHECK_POLL_MS
+    : false;
+
 export const toPolicy = (value) => (value === "pinned" ? "pinned" : "follow");
 
 export const mapAgentDetail = (raw) => ({

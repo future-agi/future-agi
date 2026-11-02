@@ -666,6 +666,13 @@ class HarnessAgentPolicySerializer(serializers.Serializer):
     policy = serializers.ChoiceField(choices=("follow", "pinned"))
     version_id = serializers.UUIDField(required=False)
 
+    def validate(self, attrs):
+        if attrs.get("version_id") is not None and attrs["policy"] != "pinned":
+            raise serializers.ValidationError(
+                {"version_id": ["only a pin names a version"]}
+            )
+        return attrs
+
 
 class HarnessAgentPolicyResponseSerializer(serializers.Serializer):
     policy = serializers.ChoiceField(choices=("follow", "pinned"), read_only=True)

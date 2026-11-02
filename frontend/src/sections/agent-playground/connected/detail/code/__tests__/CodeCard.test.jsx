@@ -176,6 +176,26 @@ describe("CodeCard", () => {
     expect(screen.queryByTestId("code-changed-count")).toBeNull();
   });
 
+  it("shows the file, not a missing file, when a diff link lands on a first version", () => {
+    state.changes = {
+      data: { against: null, files: [], unavailable: "no_previous_version" },
+    };
+    renderCard("?file=agents%2Fsupport%2Fagent.py&diff=1");
+    expect(screen.queryByTestId("file-viewer-missing")).toBeNull();
+    expect(screen.queryByTestId("diff-editor")).toBeNull();
+    expect(screen.getByTestId("editor")).toHaveTextContent("return 'hello'");
+  });
+
+  it("waits for the file instead of calling it missing", () => {
+    state.files["v2:agents/support/agent.py"] = {
+      data: undefined,
+      isLoading: false,
+      isPending: true,
+    };
+    renderCard("?file=agents%2Fsupport%2Fagent.py");
+    expect(screen.queryByTestId("file-viewer-missing")).toBeNull();
+  });
+
   it("says when a version has no code", () => {
     state.tree = { data: null, isLoading: false, isError: false };
     renderCard();

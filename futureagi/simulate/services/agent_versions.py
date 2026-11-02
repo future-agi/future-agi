@@ -26,8 +26,9 @@ from simulate.services.harness_agent_versions import (
     discard_agent_version,
     environment_owned,
     environment_policy,
-    hand_move,
+    lock_agent_production,
     promote_to_production,
+    record_hand_move,
     retry_preflight,
 )
 from simulate.services.hosted_harness import HostedHarnessError
@@ -114,46 +115,96 @@ def _github_source(runtime: HarnessAgentVersionRuntime | None) -> dict[str, Any]
     }
 
 
-def sync_version(definition: AgentDefinition, *, user: Any = None) -> VersionChange:
-    """A version at the branch's current head, or the parent when it is at the head."""
+def _source_unreachable(status: str, *, retryable: bool = True) -> HostedHarnessError:
+    return HostedHarnessError(
+        "source_unreachable",
+        "The repository's branch could not be read; try again",
+        status_code=503,
+        retryable=retryable,
+        details={"status": status},
+    )
+
+
+def _source_gone() -> HostedHarnessError:
+    return HostedHarnessError(
+        "source_not_found",
+        "The repository or branch no longer exists on GitHub",
+        status_code=422,
+    )
+
+
+def _branch_head(definition: AgentDefinition, source: dict[str, Any]) -> str:
     from simulate.services.harness_agent_changes import github_head
 
-    parent = _parent(definition)
-    source = _github_source(_runtime(parent))
+    installation_id = source.get("installation_id")
+    if source.get("visibility") == "private" and installation_id:
+        from integrations.services.github_app import (
+            GitHubAppError,
+            branch_head,
+            installation_connected,
+        )
+
+        if not installation_connected(
+            organization_id=definition.organization_id,
+            workspace_id=definition.workspace_id,
+            installation_id=str(installation_id),
+        ):
+            raise HostedHarnessError(
+                "github_installation_not_connected",
+                "Connect GitHub in Settings > Integrations before syncing a"
+                " private repository",
+                status_code=422,
+            )
+        try:
+            sha = branch_head(
+                str(installation_id),
+                repository=str(source["repository"]),
+                repository_id=source.get("repository_id"),
+                ref=source.get("ref"),
+            )
+        except GitHubAppError as exc:
+            raise _source_unreachable(exc.code, retryable=exc.retryable) from exc
+        if sha is None:
+            raise _source_gone()
+        return sha
     head = github_head(
         str(source["repository"]),
         source.get("ref"),
         purpose="create",
         repository_id=source.get("repository_id"),
     )
-    if head.status != "ok" or not head.sha:
-        raise HostedHarnessError(
-            "source_unreachable",
-            "The repository's branch could not be read; try again",
-            status_code=503,
-            retryable=True,
-            details={"status": head.status},
-        )
-    if head.sha.lower() == str(source.get("commit_sha") or "").lower():
-        return VersionChange(parent, False)
+    if head.status == "not_found":
+        raise _source_gone()
+    if head.status not in ("ok", "not_modified") or not head.sha:
+        raise _source_unreachable(head.status)
+    return head.sha
+
+
+def sync_version(definition: AgentDefinition, *, user: Any = None) -> AgentVersion:
+    """A version at the branch's current head, or the parent when it is at the head."""
+    parent = _parent(definition)
+    source = _github_source(_runtime(parent))
+    head_sha = _branch_head(definition, source)
+    if head_sha.lower() == str(source.get("commit_sha") or "").lower():
+        return parent
     version = create_agent_version(
         definition,
         parent=parent,
         env=None,
         source={
             key: value
-            for key, value in {**source, "commit_sha": head.sha}.items()
+            for key, value in {**source, "commit_sha": head_sha}.items()
             if key != "repository_id" and value
         },
         trigger=Trigger.SYNC,
         user=user,
     )
-    return VersionChange(version, version.id != parent.id)
+    return version
 
 
 def upload_version(
     definition: AgentDefinition, *, archive_artifact_id: UUID, user: Any = None
-) -> VersionChange:
+) -> AgentVersion:
     from simulate.services.harness_versioning.archives import archive_exists
     from simulate.services.hosted_harness_gateway import _source_object_key
 
@@ -171,7 +222,7 @@ def upload_version(
     if runtime is not None and str(archive_artifact_id) == str(
         (runtime.source or {}).get("archive_artifact_id") or ""
     ):
-        return VersionChange(parent, False)
+        return parent
     if not archive_exists(
         _source_object_key(definition.organization_id, str(archive_artifact_id))
     ):
@@ -188,12 +239,12 @@ def upload_version(
         trigger=Trigger.UPLOAD,
         user=user,
     )
-    return VersionChange(version, version.id != parent.id)
+    return version
 
 
 def credentials_version(
     definition: AgentDefinition, *, secret_values: Mapping[str, str], user: Any = None
-) -> VersionChange:
+) -> AgentVersion:
     parent = _parent(definition)
     version = create_agent_version(
         definition,
@@ -203,12 +254,12 @@ def credentials_version(
         trigger=Trigger.CREDENTIALS,
         user=user,
     )
-    return VersionChange(version, version.id != parent.id)
+    return version
 
 
 def manual_version(
     definition: AgentDefinition, *, prompt: str, user: Any = None
-) -> VersionChange:
+) -> AgentVersion:
     parent = _parent(definition)
     runtime = _runtime(parent)
     if runtime is not None and runtime.source_kind in (
@@ -221,7 +272,7 @@ def manual_version(
             status_code=422,
         )
     if prompt == (parent.description or ""):
-        return VersionChange(parent, False)
+        return parent
     version = create_agent_version(
         definition,
         parent=parent,
@@ -230,7 +281,7 @@ def manual_version(
         trigger=Trigger.PROMPT,
         user=user,
     )
-    return VersionChange(version, version.id != parent.id)
+    return version
 
 
 def change_version(
@@ -251,22 +302,22 @@ def change_version(
         ).values_list("id", flat=True)
     )
     if kind == KIND_SYNC:
-        change = sync_version(definition, user=user)
+        version = sync_version(definition, user=user)
     elif kind == KIND_UPLOAD:
-        change = upload_version(
+        version = upload_version(
             definition, archive_artifact_id=archive_artifact_id, user=user
         )
     elif kind == KIND_CREDENTIALS:
-        change = credentials_version(
+        version = credentials_version(
             definition, secret_values=secret_values or {}, user=user
         )
     elif kind == KIND_MANUAL:
-        change = manual_version(definition, prompt=prompt or "", user=user)
+        version = manual_version(definition, prompt=prompt or "", user=user)
     else:
         raise HostedHarnessError(
             "kind_unknown", f"unknown kind {kind!r}", status_code=400
         )
-    return VersionChange(change.version, change.version.id not in before)
+    return VersionChange(version, version.id not in before)
 
 
 def set_production(version: AgentVersion) -> list[Any]:
@@ -304,13 +355,18 @@ def retry_version(version: AgentVersion) -> None:
 
 
 def discard_version(version: AgentVersion) -> None:
-    if version.is_active:
-        raise HostedHarnessError(
-            "version_in_production",
-            "The production version can't be discarded; make another production first",
-            status_code=409,
-        )
-    discard_agent_version(version)
+    with transaction.atomic():
+        lock_agent_production(version.agent_definition_id)
+        if AgentVersion._base_manager.filter(
+            id=version.id, status=AgentVersion.StatusChoices.ACTIVE
+        ).exists():
+            raise HostedHarnessError(
+                "version_in_production",
+                "The production version can't be discarded; make another production"
+                " first",
+                status_code=409,
+            )
+        discard_agent_version(version)
 
 
 def set_environment_policy(
@@ -322,7 +378,7 @@ def set_environment_policy(
 ) -> HostedHarnessJob:
     """Make the environment follow the agent's production version, or pin it to one;
     a pin names the version, a follow moves to production now."""
-    from simulate.services.harness_versioning.versions import move_agent
+    from simulate.services.harness_versioning.versions import move_default
     from simulate.services.hosted_harness import agent_version_pickable
 
     with transaction.atomic():
@@ -370,7 +426,15 @@ def set_environment_policy(
                     "that version can't be this environment's default yet",
                     status_code=409,
                 )
-            move_agent(locked, target, moved=hand_move(user, target.id))
+            locked = move_default(
+                locked,
+                "agent",
+                target.id,
+                expected_default_id=locked.agent_version_id,
+                user=user,
+            )
+        elif policy == POLICY_PINNED:
+            record_hand_move(locked, user, locked.agent_version_id)
         logger.info(
             "harness_environment_policy_set",
             environment_id=str(locked.id),

@@ -47,8 +47,8 @@ export default function AddVersionDialog({ agent, open, onClose }) {
           <Typography
             sx={{ typography: "s2_1", color: "text.secondary", mb: 1.5 }}
           >
-            Edit the prompt; the new version is checked and then becomes the one
-            in production.
+            Edit the prompt; the new version is checked, and then you can set it
+            as production.
           </Typography>
           <TextField
             fullWidth

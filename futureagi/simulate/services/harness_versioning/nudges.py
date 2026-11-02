@@ -883,6 +883,7 @@ def _compatibility(environment: HostedHarnessJob, new: AgentVersion) -> dict[str
             environment.id,
             new.id,
             type(exc).__name__,
+            exc_info=True,
         )
         return {"status": UNMEASURED, "reason": "compatibility_error", "base": None}
 

@@ -4,9 +4,11 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import {
+  CHECK_POLL_MS,
   mapAgentDetail,
   mapVersionDetail,
   passRateOf,
+  pollWhileChecking,
   toRun,
   toVersion,
   useAgentDetail,
@@ -340,5 +342,31 @@ describe("hooks", () => {
       },
     );
     expect(spy).toHaveBeenCalledWith({ queryKey: ["agents", "detail", "a1"] });
+  });
+});
+
+describe("pollWhileChecking", () => {
+  const query = (...pages) => ({
+    state: { data: { pages: pages.map((results) => ({ results })) } },
+  });
+
+  it("polls while any loaded version is still being checked", () => {
+    expect(
+      pollWhileChecking(
+        query(
+          [{ preflight_status: "passed" }],
+          [{ preflight_status: "pending" }],
+        ),
+      ),
+    ).toBe(CHECK_POLL_MS);
+  });
+
+  it("stops once no version is being checked", () => {
+    expect(
+      pollWhileChecking(
+        query([{ preflight_status: "passed" }, { preflight_status: null }]),
+      ),
+    ).toBe(false);
+    expect(pollWhileChecking({ state: {} })).toBe(false);
   });
 });

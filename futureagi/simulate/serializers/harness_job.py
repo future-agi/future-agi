@@ -65,7 +65,7 @@ def _check_variable_values(values: Mapping[str, Any]) -> list[str]:
     return []
 
 
-def _check_credential_values(values: Mapping[str, Any]) -> list[str]:
+def check_credential_values(values: Mapping[str, Any]) -> list[str]:
     problems = _check_variable_values(values)
     reserved = sorted(name for name in values if str(name).startswith("SIMULATOR_"))
     if reserved:
@@ -530,7 +530,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             data.get("credential_values"), Mapping
         ):
             secret_values = data["credential_values"]
-            problems = _check_credential_values(secret_values)
+            problems = check_credential_values(secret_values)
             if problems:
                 raise serializers.ValidationError({"credential_values": problems})
             agent = data.get("agent")

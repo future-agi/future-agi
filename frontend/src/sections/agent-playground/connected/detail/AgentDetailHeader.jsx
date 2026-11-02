@@ -8,10 +8,10 @@ import {
   IconButton,
   Skeleton,
   Stack,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { useChangeVersion } from "src/api/agents/agentDetail";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
@@ -58,7 +58,7 @@ function NewVersionButton({ agent }) {
   const reason = !next.kind
     ? "Coming soon"
     : !canEdit
-      ? "You need the Member role to add versions"
+      ? "You don't have permission to add versions."
       : "";
   const button = (
     <Button
@@ -75,9 +75,9 @@ function NewVersionButton({ agent }) {
   return (
     <>
       {reason ? (
-        <Tooltip arrow title={reason}>
+        <CustomTooltip show title={reason} size="small" arrow>
           <span>{button}</span>
-        </Tooltip>
+        </CustomTooltip>
       ) : (
         button
       )}

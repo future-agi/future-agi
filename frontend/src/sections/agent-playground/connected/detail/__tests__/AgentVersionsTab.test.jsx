@@ -488,4 +488,65 @@ describe("AgentVersionsTab", () => {
     expect(within(region).getByLabelText("Coming soon")).toBeInTheDocument();
     expect(within(region).queryByText(/prompts\/system\.md/)).toBeNull();
   });
+
+  describe("a version whose check failed", () => {
+    const failed = { ...V1, preflight_status: "failed" };
+    const base = `/simulate/agent-definitions/${HOSTED_AGENT_DETAIL.id}/versions/${V1.id}`;
+
+    beforeEach(() => {
+      servePages([[V2, failed]]);
+    });
+
+    it("checks it again on Retry and says so", async () => {
+      axios.post.mockResolvedValue({ data: {} });
+      renderTab();
+      const [, oldest] = await screen.findAllByTestId("version-entry");
+      fireEvent.click(within(oldest).getByRole("button", { name: "Retry" }));
+      await waitFor(() =>
+        expect(axios.post).toHaveBeenCalledWith(`${base}/retry/`),
+      );
+      await waitFor(() =>
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "v1 is being checked again",
+          { variant: "info" },
+        ),
+      );
+    });
+
+    it("discards it only after confirming", async () => {
+      axios.post.mockResolvedValue({ data: {} });
+      renderTab();
+      const [, oldest] = await screen.findAllByTestId("version-entry");
+      fireEvent.click(within(oldest).getByRole("button", { name: "Discard" }));
+      expect(axios.post).not.toHaveBeenCalled();
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
+      await waitFor(() =>
+        expect(axios.post).toHaveBeenCalledWith(`${base}/discard/`),
+      );
+      await waitFor(() =>
+        expect(enqueueSnackbar).toHaveBeenCalledWith("v1 discarded", {
+          variant: "success",
+        }),
+      );
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    });
+
+    it("keeps the dialog open and says why a discard was refused", async () => {
+      axios.post.mockRejectedValue({
+        response: { data: { detail: "v1 is in production" } },
+      });
+      renderTab();
+      const [, oldest] = await screen.findAllByTestId("version-entry");
+      fireEvent.click(within(oldest).getByRole("button", { name: "Discard" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
+      await waitFor(() =>
+        expect(enqueueSnackbar).toHaveBeenCalledWith("v1 is in production", {
+          variant: "error",
+        }),
+      );
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+  });
 });

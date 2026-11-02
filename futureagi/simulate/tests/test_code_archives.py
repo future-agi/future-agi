@@ -1,5 +1,6 @@
 import hashlib
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -64,6 +65,10 @@ def clones(monkeypatch):
     monkeypatch.setattr("simulate.services.hosted_harness_gateway.subprocess.run", run)
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway.shutil.which", lambda _: "git"
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.GitHubAppTokenProvider.from_settings",
+        lambda: SimpleNamespace(credential=lambda _: nullcontext("installation-token")),
     )
     return runs
 

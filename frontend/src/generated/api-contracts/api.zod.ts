@@ -32112,6 +32112,12 @@ export const SimulateAgentDefinitionsBuildPreflightListParams = zod.object({
   agent_id: zod.string(),
 });
 
+export const SimulateAgentDefinitionsBuildPreflightListQueryParams = zod.object(
+  {
+    version_id: zod.string().uuid().optional(),
+  },
+);
+
 export const SimulateAgentDefinitionsBuildPreflightListResponse = zod.object({
   ok: zod.boolean().optional(),
   version_id: zod.string().min(1).optional(),
@@ -33195,7 +33201,7 @@ export const SimulateAgentDefinitionsVersionsCodeChangesListParams = zod.object(
 
 export const SimulateAgentDefinitionsVersionsCodeChangesListQueryParams =
   zod.object({
-    against: zod.string().optional(),
+    against: zod.string().uuid().optional(),
   });
 
 export const SimulateAgentDefinitionsVersionsCodeChangesListResponse =
@@ -33220,9 +33226,13 @@ export const SimulateAgentDefinitionsVersionsCodeFileListParams = zod.object({
   version_id: zod.string(),
 });
 
+export const simulateAgentDefinitionsVersionsCodeFileListQueryPathMax = 4096;
+
 export const SimulateAgentDefinitionsVersionsCodeFileListQueryParams =
   zod.object({
-    path: zod.string(),
+    path: zod
+      .string()
+      .max(simulateAgentDefinitionsVersionsCodeFileListQueryPathMax),
   });
 
 export const SimulateAgentDefinitionsVersionsCodeFileListResponse = zod.object({
@@ -33262,6 +33272,11 @@ export const SimulateAgentDefinitionsVersionsCompatibilityListParams =
   zod.object({
     agent_id: zod.string(),
     version_id: zod.string(),
+  });
+
+export const SimulateAgentDefinitionsVersionsCompatibilityListQueryParams =
+  zod.object({
+    environment_id: zod.string().uuid(),
   });
 
 export const SimulateAgentDefinitionsVersionsCompatibilityListResponse =

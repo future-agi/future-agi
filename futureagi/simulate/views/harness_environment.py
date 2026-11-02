@@ -339,14 +339,16 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             id=locked.agent_version_id
         ).first()
         return Response(
-            {
-                "policy": environment_policy(locked),
-                "agent_version": (
-                    version_reads.agent_version_item(locked, version)
-                    if version is not None
-                    else None
-                ),
-            }
+            HarnessAgentPolicyResponseSerializer(
+                {
+                    "policy": environment_policy(locked),
+                    "agent_version": (
+                        version_reads.agent_version_item(locked, version)
+                        if version is not None
+                        else None
+                    ),
+                }
+            ).data
         )
 
     @validated_request(responses={200: HarnessSuiteMemberSerializer(many=True)})

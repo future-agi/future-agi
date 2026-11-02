@@ -86,7 +86,7 @@ def _validate_phone_connectivity(payload) -> None:
 
 
 def _validate_github_installation(
-    organization_id: Any, payload: dict[str, Any]
+    organization_id: Any, workspace_id: Any, payload: dict[str, Any]
 ) -> None:
     source = payload.get("source") or {}
     installation_id = str(source.get("installation_id") or "")
@@ -95,7 +95,9 @@ def _validate_github_installation(
     from integrations.services.github_app import installation_connected
 
     if organization_id is None or not installation_connected(
-        organization_id=organization_id, installation_id=installation_id
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        installation_id=installation_id,
     ):
         from simulate.services.hosted_harness import HostedHarnessError
 
@@ -1366,7 +1368,9 @@ class HostedHarnessProvider:
                 # Before the source is cloned; GitHub is asked once replays are out.
                 validate_public_github_source(payload, lookup=False)
             if replayed is None:
-                _validate_github_installation(organization.id, payload)
+                _validate_github_installation(
+                    organization.id, getattr(workspace, "id", None), payload
+                )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         from simulate.services.harness_usage import (
@@ -1489,7 +1493,9 @@ class HostedHarnessProvider:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
             _validate_phone_connectivity(payload)
             _validate_github_installation(
-                getattr(request_organization(request), "id", None), payload
+                getattr(request_organization(request), "id", None),
+                getattr(request_workspace(request), "id", None),
+                payload,
             )
             _validate_known_hosted_egress(payload, base_url)
         except HostedHarnessError as exc:

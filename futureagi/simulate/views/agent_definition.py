@@ -9,7 +9,7 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import APIException, NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -40,6 +40,7 @@ from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
 from simulate.services.agent_definition import (
+    delete_agents,
     is_masked,
     resolve_api_key_for_version,
     resolve_stored_api_key,
@@ -47,11 +48,11 @@ from simulate.services.agent_definition import (
 )
 from simulate.services.agent_overview import (
     annotate_agent_rows,
-    environment_counts,
     environment_refs,
     observability_on,
     observe_project,
     recent_agent_runs,
+    version_list_context,
 )
 from simulate.services.harness_agent_versions import (
     connected_agent,
@@ -61,6 +62,7 @@ from simulate.services.production_project import (
     ProductionProjectError,
     link_production_project,
 )
+from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.ee_stub import _ee_stub
 
@@ -70,6 +72,7 @@ except ImportError:
     VapiService = _ee_stub("VapiService")
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -93,14 +96,15 @@ from tracer.utils.replay_session import link_agent_to_replay_session
 logger = structlog.get_logger(__name__)
 
 
-def tested_agent_refusal(agent: AgentDefinition) -> str | None:
-    """Why this agent can't be deleted, or None when no environment tests it."""
-    total = environment_counts([agent.id]).get(agent.id, 0)
-    if not total:
-        return None
-    return (
-        f"{agent.agent_name} is tested by {total} environment"
-        f"{'s' if total != 1 else ''}. Delete those environments first."
+class AgentInUse(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_code = "agent_in_use"
+
+
+def _conflict(exc: HostedHarnessError) -> Response:
+    return Response(
+        build_error_envelope(exc.message, status_code=exc.status_code, code=exc.code),
+        status=exc.status_code,
     )
 
 
@@ -236,6 +240,7 @@ class AgentDefinitionView(APIView):
         responses={
             200: AgentDefinitionBulkDeleteResponseSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -247,23 +252,10 @@ class AgentDefinitionView(APIView):
         try:
             agent_ids = request.validated_data["agent_ids"]
 
-            with transaction.atomic():
-                agents = AgentDefinition.objects.filter(
-                    id__in=agent_ids,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
-                counts = environment_counts(list(agents.values_list("id", flat=True)))
-                for agent in agents:
-                    if counts.get(agent.id):
-                        return self._gm.bad_request(tested_agent_refusal(agent))
-                updated_agents = agents.update(deleted=True, deleted_at=timezone.now())
-
-                updated_versions = AgentVersion.objects.filter(
-                    agent_definition_id__in=agent_ids,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                ).update(deleted=True, deleted_at=timezone.now())
+            updated_agents, updated_versions = delete_agents(
+                getattr(request, "organization", None) or request.user.organization,
+                agent_ids,
+            )
 
             response_data = {
                 "message": "Agents deleted successfully",
@@ -274,6 +266,8 @@ class AgentDefinitionView(APIView):
                 AgentDefinitionBulkDeleteResponseSerializer(response_data).data,
                 status=status.HTTP_200_OK,
             )
+        except HostedHarnessError as exc:
+            return _conflict(exc)
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to delete agents: {str(e)}"
@@ -454,15 +448,23 @@ class AgentDefinitionDetailView(APIView):
             agent_data = AgentDefinitionResponseSerializer(agent).data
 
             # Get version information
-            versions = agent.get_version_history()
-            versions_data = AgentVersionListResponseSerializer(versions, many=True).data
-
-            # Get active version
+            versions = list(agent.get_version_history())
             active_version = agent.active_version
+            context = version_list_context(
+                versions
+                + (
+                    [active_version]
+                    if active_version is not None and active_version not in versions
+                    else []
+                )
+            )
+            versions_data = AgentVersionListResponseSerializer(
+                versions, many=True, context=context
+            ).data
             active_version_data = None
             if active_version:
                 active_version_data = AgentVersionListResponseSerializer(
-                    active_version
+                    active_version, context=context
                 ).data
 
             return Response(
@@ -590,6 +592,7 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
     @swagger_auto_schema(
         responses={
             400: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         }
@@ -598,10 +601,10 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
     def perform_destroy(self, instance):
-        refusal = tested_agent_refusal(instance)
-        if refusal:
-            raise ValidationError(refusal)
-        soft_delete_agent_definition_and_versions(instance)
+        try:
+            delete_agents(instance.organization, [instance.id])
+        except HostedHarnessError as exc:
+            raise AgentInUse(exc.message, code=exc.code) from exc
 
     @validated_request(
         request_serializer=FetchAssistantRequestSerializer,
@@ -905,6 +908,7 @@ class DeleteAgentDefinitionView(APIView):
         responses={
             200: AgentDefinitionDeleteResponseSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
@@ -921,11 +925,7 @@ class DeleteAgentDefinitionView(APIView):
                 deleted=False,
             )
 
-            refusal = tested_agent_refusal(agent)
-            if refusal:
-                return self._gm.bad_request(refusal)
-
-            soft_delete_agent_definition_and_versions(agent)
+            delete_agents(agent.organization, [agent.id])
 
             response_data = {"message": "Agent definition deleted successfully"}
             return Response(
@@ -933,6 +933,8 @@ class DeleteAgentDefinitionView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except HostedHarnessError as exc:
+            return _conflict(exc)
         except AgentDefinition.DoesNotExist:
             return self._gm.not_found("Agent definition not found")
         except Exception as e:

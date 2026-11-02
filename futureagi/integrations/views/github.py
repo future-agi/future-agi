@@ -2,7 +2,6 @@ from urllib.parse import urlencode
 
 import structlog
 from django.conf import settings
-from django.db import IntegrityError
 from django.http import HttpRequest, HttpResponseRedirect
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
@@ -23,7 +22,10 @@ from integrations.services.source_hosts import (
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
-from tfc.utils.api_serializers import StrictInputSerializer
+from tfc.utils.api_serializers import (
+    ApiErrorWithDetailsResponseSerializer,
+    StrictInputSerializer,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -77,9 +79,10 @@ class SourceBranchesResponseSerializer(serializers.Serializer):
     result = SourceBranchesResultSerializer()
 
 
-def _error(message: str, status_code: int) -> Response:
+def _error(message: str, status_code: int, *, code: str | None = None) -> Response:
     return Response(
-        build_error_envelope(message, status_code=status_code), status=status_code
+        build_error_envelope(message, status_code=status_code, code=code),
+        status=status_code,
     )
 
 
@@ -169,8 +172,9 @@ class GitHubInstallCompleteView(APIView):
         GitHubInstallCompleteSerializer,
         responses={
             200: GitHubInstallCompleteResponseSerializer,
-            400: GitHubInstallResponseSerializer,
-            403: GitHubInstallResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            403: ApiErrorWithDetailsResponseSerializer,
+            503: ApiErrorWithDetailsResponseSerializer,
         },
     )
     def post(self, request):
@@ -185,8 +189,8 @@ class GitHubInstallCompleteView(APIView):
             )
         except SourceHostError as exc:
             logger.warning("github_install_complete_refused", code=exc.code)
-            return _error(str(exc), exc.status_code)
-        except (ValueError, IntegrityError) as exc:
+            return _error(str(exc), exc.status_code, code=exc.code)
+        except ValueError as exc:
             logger.warning("github_install_complete_failed", exc_info=True)
             return _error(str(exc), 400)
         return Response({"status": True, "result": {"outcome": result.outcome}})

@@ -14,6 +14,9 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { paths } from "src/routes/paths";
 import { useDebounce } from "src/hooks/use-debounce";
 import {
@@ -37,7 +40,7 @@ const INSTALL_PATH = `${paths.dashboard.settings.integrations}?${new URLSearchPa
 
 const keepAll = (options) => options;
 
-function InstallApp({ onInstall, onPaste }) {
+function InstallApp({ onInstall, onPaste, canInstall }) {
   return (
     <Box>
       <Stack
@@ -55,16 +58,27 @@ function InstallApp({ onInstall, onPaste }) {
             Read only. We find the agents in the repositories you choose.
           </Typography>
         </Box>
-        <Button
+        <CustomTooltip
+          show={!canInstall}
+          title="You don't have permission to connect GitHub."
+          placement="top"
+          arrow
           size="small"
-          variant="outlined"
-          color="inherit"
-          onClick={onInstall}
-          startIcon={<Iconify icon="simple-icons:github" width={14} />}
-          sx={{ flexShrink: 0, borderColor: "divider" }}
         >
-          Install GitHub App
-        </Button>
+          <span>
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              disabled={!canInstall}
+              onClick={onInstall}
+              startIcon={<Iconify icon="simple-icons:github" width={14} />}
+              sx={{ flexShrink: 0, borderColor: "divider" }}
+            >
+              Install GitHub App
+            </Button>
+          </span>
+        </CustomTooltip>
       </Stack>
       <TextLink onClick={onPaste} sx={{ mt: 0.75 }}>
         Can&apos;t install the app? Paste the repository link instead
@@ -72,7 +86,11 @@ function InstallApp({ onInstall, onPaste }) {
     </Box>
   );
 }
-InstallApp.propTypes = { onInstall: PropTypes.func.isRequired, onPaste: PropTypes.func.isRequired };
+InstallApp.propTypes = {
+  onInstall: PropTypes.func.isRequired,
+  onPaste: PropTypes.func.isRequired,
+  canInstall: PropTypes.bool.isRequired,
+};
 
 function PickFromGitHub({ connection, repository, onRepository, branch, onBranch, onInstall }) {
   const [query, setQuery] = useState("");
@@ -90,7 +108,9 @@ function PickFromGitHub({ connection, repository, onRepository, branch, onBranch
             {`· from GitHub (${connection.display_name})`}
           </Typography>
           <Box flex={1} />
-          <TextLink onClick={onInstall}>Missing a repository or an account? Add it on GitHub</TextLink>
+          {onInstall && (
+            <TextLink onClick={onInstall}>Missing a repository or an account? Add it on GitHub</TextLink>
+          )}
         </Stack>
         <Autocomplete
           size="small"
@@ -191,7 +211,7 @@ PickFromGitHub.propTypes = {
   onRepository: PropTypes.func.isRequired,
   branch: PropTypes.string,
   onBranch: PropTypes.func.isRequired,
-  onInstall: PropTypes.func.isRequired,
+  onInstall: PropTypes.func,
 };
 
 function PasteLink({ link, onLink, branch, onBranch, entry, onEntry, onPick }) {
@@ -236,6 +256,8 @@ export default function GitHubConnectFlow({ outcome }) {
   const [linkBranch, setLinkBranch] = useState("");
   const [entry, setEntry] = useState("");
   const message = GITHUB_INSTALL_OUTCOMES[outcome];
+  const { role } = useAuthContext();
+  const canInstall = !!RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role];
   const install = () => navigate(INSTALL_PATH);
 
   const pickRepository = (picked) => {
@@ -249,7 +271,9 @@ export default function GitHubConnectFlow({ outcome }) {
   } else if (github.isError) {
     appBody = <Alert severity="error">Couldn&apos;t check the GitHub connection. Try again.</Alert>;
   } else if (!connection) {
-    appBody = <InstallApp onInstall={install} onPaste={() => setMode("link")} />;
+    appBody = (
+      <InstallApp onInstall={install} onPaste={() => setMode("link")} canInstall={canInstall} />
+    );
   } else if (connection.status !== "active") {
     appBody = (
       <Alert
@@ -271,7 +295,7 @@ export default function GitHubConnectFlow({ outcome }) {
         onRepository={pickRepository}
         branch={branch}
         onBranch={setBranch}
-        onInstall={install}
+        onInstall={canInstall ? install : undefined}
       />
     );
   }

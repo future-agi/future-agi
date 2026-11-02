@@ -50,7 +50,7 @@ Check.propTypes = { check: PropTypes.object.isRequired };
 /**
  * Build an environment from this agent: pick a checked version (production by
  * default), name it, choose how many scenarios, read the preflight, build.
- * The environment binds to the agent and follows production.
+ * The environment binds to the agent and stays on the version it was built from.
  */
 export default function BuildEnvironmentDialog({ agent, open, onClose }) {
   const navigate = useNavigate();
@@ -75,7 +75,7 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
   const listed = versions.find((v) => v.id === chosen);
   const version =
     listed ||
-    (detail.data && readyToBuild({ check: null })
+    (detail.data
       ? {
           id: detail.data.id,
           label: detail.data.label,
@@ -93,7 +93,7 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
       : preflight.isLoading
         ? "Checking the version"
         : preflight.isError
-          ? "Couldn't run the preflight; try again"
+          ? errorMessage(preflight.error)
           : preflight.data && !preflight.data.ok
             ? "Fix what the preflight found first"
             : "";
@@ -127,8 +127,8 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
       content={
         <Stack spacing={1.5}>
           <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
-            The environment runs the code of this agent and follows its
-            production version until you pin it.
+            The environment runs the version you pick and stays on it until you
+            change it or set it to follow production.
           </Typography>
           <TextField
             fullWidth
@@ -183,12 +183,23 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
             </Box>
           )}
           {reason && (
-            <Typography
-              sx={{ typography: "s2", color: "text.secondary" }}
-              data-testid="build-env-reason"
-            >
-              {reason}
-            </Typography>
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Typography
+                sx={{ typography: "s2", color: "text.secondary" }}
+                data-testid="build-env-reason"
+              >
+                {reason}
+              </Typography>
+              {preflight.isError && (
+                <Button
+                  size="small"
+                  color="inherit"
+                  onClick={() => preflight.refetch()}
+                >
+                  Retry
+                </Button>
+              )}
+            </Stack>
           )}
         </Stack>
       }

@@ -17,17 +17,30 @@ def issue_state(
     return signing.dumps(state_data, salt=salt)
 
 
-def consume_state(
+def read_state(
     state: str, *, salt: str, cache_prefix: str, ttl_seconds: int, label: str
 ) -> StateData:
     try:
         state_data = signing.loads(state, salt=salt, max_age=ttl_seconds)
     except signing.BadSignature as exc:
         raise ValueError(f"Invalid or expired {label} installation state.") from exc
-    key = f"{cache_prefix}:{state_data.get('nonce', '')}"
-    stored = cache.get(key)
+    stored = cache.get(f"{cache_prefix}:{state_data.get('nonce', '')}")
     if not stored or stored != state_data:
         raise ValueError(f"{label} installation state has expired or was already used.")
+    return state_data
+
+
+def consume_state(
+    state: str, *, salt: str, cache_prefix: str, ttl_seconds: int, label: str
+) -> StateData:
+    state_data = read_state(
+        state,
+        salt=salt,
+        cache_prefix=cache_prefix,
+        ttl_seconds=ttl_seconds,
+        label=label,
+    )
+    key = f"{cache_prefix}:{state_data.get('nonce', '')}"
     if not cache.add(f"{key}:used", True, timeout=ttl_seconds):
         raise ValueError(f"{label} installation state was already used.")
     cache.delete(key)

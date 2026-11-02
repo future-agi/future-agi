@@ -15,7 +15,7 @@ import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any
+from typing import Any, Literal
 
 from django.db import IntegrityError, transaction
 from django.db.models import Max
@@ -1889,14 +1889,8 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
         and not payload.get("created_for_environment")
         and payload.get("definition_owner") == CONNECTED_OWNER
     ):
-        if (
-            AgentVersion._base_manager.filter(
-                agent_definition_id=version.agent_definition_id,
-                status=AgentVersion.StatusChoices.ACTIVE,
-            )
-            .exclude(id=version.id)
-            .exists()
-        ):
+        moved = _activate_production(version, only_if_none=True)
+        if moved == "has_production":
             offered = [
                 str(environment.id)
                 for environment in bound_environments(version.agent_definition_id)
@@ -1908,7 +1902,7 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
                     environment_id, version.id, default_moved=False
                 )
             return []
-        return _activate_production(version, runtime)
+        return moved if isinstance(moved, list) else []
     others = []
     # TODO: offer legacy sharers a version of their own (Q6).
     if parent is not None and not legacy_runtime(parent):
@@ -2208,12 +2202,32 @@ def environment_policy(environment: HostedHarnessJob) -> str:
     return POLICY_FOLLOW if policy == POLICY_FOLLOW else POLICY_PINNED
 
 
-def make_production(version: AgentVersion) -> None:
+ProductionOutcome = Literal["promoted", "has_production", "discarded"]
+
+
+def make_production(
+    version: AgentVersion, *, only_if_none: bool = False
+) -> ProductionOutcome:
     """Make a connected agent's version its production one: the active version the
-    Agents page shows and the one following environments move to."""
+    Agents page shows and the one following environments move to. With
+    ``only_if_none`` an agent that already has one keeps it; a discarded version
+    never becomes production."""
     Statuses = AgentVersion.StatusChoices
     with transaction.atomic():
-        advisory_xact_lock(f"harness-agent-mirror:{version.agent_definition_id}")
+        lock_agent_production(version.agent_definition_id)
+        if (
+            only_if_none
+            and AgentVersion._base_manager.filter(
+                agent_definition_id=version.agent_definition_id,
+                status=Statuses.ACTIVE,
+            )
+            .exclude(id=version.id)
+            .exists()
+        ):
+            return "has_production"
+        runtime = _side_row(version.id, lock=True)
+        if runtime is not None and runtime.preflight_status == Status.DISCARDED:
+            return "discarded"
         now = timezone.now()
         AgentVersion._base_manager.filter(
             agent_definition_id=version.agent_definition_id, status=Statuses.ACTIVE
@@ -2221,11 +2235,12 @@ def make_production(version: AgentVersion) -> None:
         AgentVersion._base_manager.filter(id=version.id).update(
             status=Statuses.ACTIVE, updated_at=now
         )
+    return "promoted"
 
 
 def _activate_production(
-    version: AgentVersion, runtime: HarnessAgentVersionRuntime
-) -> list[Any]:
+    version: AgentVersion, *, only_if_none: bool = False
+) -> list[Any] | ProductionOutcome:
     """A connected agent's passed version becomes production; environments following
     production are moved to it as if they had asked, pinned ones are offered it."""
     from simulate.services.agent_compatibility import (
@@ -2236,7 +2251,9 @@ def _activate_production(
     )
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
 
-    make_production(version)
+    outcome = make_production(version, only_if_none=only_if_none)
+    if outcome != "promoted":
+        return outcome
     document = stored_document(version)
     following, pinned, offered = [], [], {}
     for environment in bound_environments(version.agent_definition_id):
@@ -2258,34 +2275,51 @@ def _activate_production(
                 "unmeasured" if fit["status"] == UNMEASURED else "major_change"
             )
     if following:
-        asked_at = timezone.now().isoformat()
-        stored = runtime.agent_payload or {}
-        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
-            agent_payload={
-                **stored,
-                "requested_by_environments": following,
-                "requested_at": {
-                    **(stored.get("requested_at") or {}),
-                    **dict.fromkeys(following, asked_at),
-                },
-            },
-            updated_at=timezone.now(),
-        )
+        _request_for(version.id, following)
     _record_activation(version.id, {**dict.fromkeys(pinned, "pinned"), **offered})
     for environment_id in [*pinned, *offered]:
         schedule_environment_nudge(environment_id, version.id, default_moved=False)
     return _activate(version, following)
 
 
+def _request_for(version_id: Any, environment_ids: list[str]) -> None:
+    """Add environments to the ones waiting for this version, keeping earlier ones."""
+    asked_at = timezone.now().isoformat()
+    with transaction.atomic():
+        runtime = _side_row(version_id, lock=True)
+        if runtime is None:
+            return
+        stored = runtime.agent_payload or {}
+        runtime.agent_payload = {
+            **stored,
+            "requested_by_environments": list(
+                dict.fromkeys(
+                    [*(stored.get("requested_by_environments") or []), *environment_ids]
+                )
+            ),
+            "requested_at": {
+                **(stored.get("requested_at") or {}),
+                **dict.fromkeys(environment_ids, asked_at),
+            },
+        }
+        runtime.save(update_fields=["agent_payload", "updated_at"])
+
+
 def promote_to_production(version: AgentVersion) -> list[Any]:
     """Make a connected agent's checked version production by hand, whether or not
     it was production before: followers move again, so a return to an earlier
     version carries them back. Returns the environments moved."""
-    runtime = _side_row(version.id)
-    if runtime is None:
+    if _side_row(version.id) is None:
         make_production(version)
         return []
-    return _activate_production(version, runtime)
+    moved = _activate_production(version)
+    if moved == "discarded":
+        raise HostedHarnessError(
+            "version_discarded",
+            "This version was discarded; it can't be made production",
+            status_code=409,
+        )
+    return moved
 
 
 def mirror_default_status(version: AgentVersion) -> None:
@@ -2295,7 +2329,7 @@ def mirror_default_status(version: AgentVersion) -> None:
     Statuses = AgentVersion.StatusChoices
     with transaction.atomic():
         # One mirror per agent at a time, so a shared agent never has two active.
-        advisory_xact_lock(f"harness-agent-mirror:{version.agent_definition_id}")
+        lock_agent_production(version.agent_definition_id)
         now = timezone.now()
         AgentVersion._base_manager.filter(
             agent_definition_id=version.agent_definition_id, status=Statuses.ACTIVE
@@ -2515,6 +2549,11 @@ def target_identity(
     )
 
 
+def lock_agent_production(definition_id: Any) -> None:
+    """Serialise every change to which of an agent's versions is production."""
+    advisory_xact_lock(f"harness-agent-mirror:{definition_id}")
+
+
 def advisory_xact_lock(name: str) -> None:
     """Hold a named lock until the current transaction ends."""
     from django.db import connection
@@ -2658,8 +2697,16 @@ def _bind_connected_agent(
 ) -> AgentVersion:
     """Pin a new environment to a connected agent's version: the one the creation
     names, else production. The environment takes the version's source and
-    credential names and writes nothing to the agent; it follows production unless
-    the creation pins it."""
+    credential names and writes nothing to the agent; it stays pinned unless the
+    creation asks to follow production."""
+    if not (
+        AgentDefinition._base_manager.select_for_update()
+        .filter(id=definition.id, deleted=False)
+        .exists()
+    ):
+        raise HostedHarnessError(
+            "agent_not_found", "that agent no longer exists", status_code=404
+        )
     payload = job.payload
     agent = dict(payload.get("agent") or {})
     requested = metadata.get("agent_version_id")

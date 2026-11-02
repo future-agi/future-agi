@@ -5581,6 +5581,41 @@ export interface GitHubInstallCompleteResponseApi {
   result: GitHubInstallCompleteResultApi;
 }
 
+export type ApiErrorWithDetailsResponseApiType =
+  (typeof ApiErrorWithDetailsResponseApiType)[keyof typeof ApiErrorWithDetailsResponseApiType];
+
+export const ApiErrorWithDetailsResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type ApiErrorWithDetailsResponseApiDetails = { [key: string]: string[] };
+
+export interface ApiErrorWithDetailsResponseApi {
+  status?: boolean;
+  type?: ApiErrorWithDetailsResponseApiType;
+  code?: string;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: ApiErrorWithDetailsResponseApiDetails;
+}
+
 export interface SlackInstallApi {
   connection_id?: string;
 }
@@ -15568,41 +15603,6 @@ export interface AgentDefinitionListResponseApi {
   readonly environment_count?: number;
   readonly environments?: readonly RunEnvironmentRefApi[];
   observe_project?: ObserveProjectRefApi;
-}
-
-export type ApiErrorWithDetailsResponseApiType =
-  (typeof ApiErrorWithDetailsResponseApiType)[keyof typeof ApiErrorWithDetailsResponseApiType];
-
-export const ApiErrorWithDetailsResponseApiType = {
-  validation_error: "validation_error",
-  authentication_error: "authentication_error",
-  payment_required: "payment_required",
-  entitlement_error: "entitlement_error",
-  permission_error: "permission_error",
-  not_found: "not_found",
-  conflict: "conflict",
-  client_error: "client_error",
-  rate_limit: "rate_limit",
-  server_error: "server_error",
-  service_unavailable: "service_unavailable",
-  timeout: "timeout",
-  api_error: "api_error",
-} as const;
-
-export type ApiErrorWithDetailsResponseApiDetails = { [key: string]: string[] };
-
-export interface ApiErrorWithDetailsResponseApi {
-  status?: boolean;
-  type?: ApiErrorWithDetailsResponseApiType;
-  code?: string;
-  detail?: string;
-  /** @minLength 1 */
-  result?: string;
-  /** @minLength 1 */
-  message?: string;
-  error?: string;
-  attr?: string;
-  details?: ApiErrorWithDetailsResponseApiDetails;
 }
 
 export interface AgentDefinitionBulkDeleteRequestApi {
@@ -36527,6 +36527,10 @@ export const SimulateAgentDefinitionsListAgentType = {
   text: "text",
 } as const;
 
+export type SimulateAgentDefinitionsBuildPreflightListParams = {
+  version_id?: string;
+};
+
 export type SimulateAgentDefinitionsRunsListParams = {
   /**
    * @minimum 1
@@ -36540,7 +36544,14 @@ export type SimulateAgentDefinitionsVersionsCodeChangesListParams = {
 };
 
 export type SimulateAgentDefinitionsVersionsCodeFileListParams = {
+  /**
+   * @maxLength 4096
+   */
   path: string;
+};
+
+export type SimulateAgentDefinitionsVersionsCompatibilityListParams = {
+  environment_id: string;
 };
 
 export type SimulateApiAgentDefinitionOperationsListParams = {

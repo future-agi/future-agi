@@ -166,7 +166,7 @@ describe("AgentNextSteps", () => {
     expect(environment()).toHaveTextContent("Build an environment");
     expect(
       within(environment()).getByRole("button", { name: "Build environment" }),
-    ).toBeDisabled();
+    ).toBeEnabled();
   });
 
   it("keeps the setup code in a drawer for a code agent", async () => {
@@ -399,6 +399,28 @@ describe("AgentNextSteps", () => {
       screen.getByRole("button", { name: "Change project" }),
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: "Unlink" })).toBeDisabled();
+  });
+
+  it("tells a viewer why connecting traces and building are off", async () => {
+    auth.role = "workspace_viewer";
+    renderCard(codeAgent({ environment_count: 0 }));
+    const connect = within(traces()).getByRole("button", {
+      name: "Connect traces",
+    });
+    fireEvent.mouseOver(connect.parentElement);
+    expect(
+      await screen.findByText("You don't have permission to connect traces."),
+    ).toBeInTheDocument();
+    const build = within(environment()).getByRole("button", {
+      name: "Build environment",
+    });
+    expect(build).toBeDisabled();
+    fireEvent.mouseOver(build.parentElement);
+    expect(
+      await screen.findByText(
+        "You don't have permission to build an environment.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("can't be hidden, so linking stays reachable", () => {

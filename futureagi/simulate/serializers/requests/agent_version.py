@@ -5,6 +5,7 @@ from simulate.models.agent_definition import (
     AgentDefinitionAuthenticationChoices,
     AgentTypeChoices,
 )
+from simulate.serializers.harness_job import check_credential_values
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 
 
@@ -117,6 +118,12 @@ class AgentVersionChangeRequestSerializer(serializers.Serializer):
         child=serializers.CharField(max_length=65_536, trim_whitespace=False),
         required=False,
     )
+
+    def validate_secret_values(self, value):
+        problems = check_credential_values(value)
+        if problems:
+            raise serializers.ValidationError(problems)
+        return value
 
     def validate(self, attrs):
         kind = attrs["kind"]

@@ -17906,13 +17906,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/GitHubInstallResponse"
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     },
                     "403": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/GitHubInstallResponse"
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     },
                     "default": {
@@ -48802,6 +48808,12 @@
                             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
                     "500": {
                         "description": "",
                         "schema": {
@@ -48925,12 +48937,26 @@
             "get": {
                 "operationId": "simulate_agent-definitions_build-preflight_list",
                 "description": "GET /agent-definitions/{id}/build-preflight/?version_id=.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "version_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentBuildPreflightResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     },
                     "404": {
@@ -48948,7 +48974,9 @@
                 },
                 "tags": [
                     "simulate"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -48972,6 +49000,12 @@
                         }
                     },
                     "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
@@ -49536,7 +49570,8 @@
                         "name": "against",
                         "in": "query",
                         "required": false,
-                        "type": "string"
+                        "type": "string",
+                        "format": "uuid"
                     }
                 ],
                 "responses": {
@@ -49544,6 +49579,12 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentCodeChangesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     },
                     "404": {
@@ -49567,7 +49608,9 @@
                 },
                 "tags": [
                     "simulate"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -49593,7 +49636,8 @@
                         "name": "path",
                         "in": "query",
                         "required": true,
-                        "type": "string"
+                        "type": "string",
+                        "maxLength": 4096
                     }
                 ],
                 "responses": {
@@ -49630,7 +49674,9 @@
                 },
                 "tags": [
                     "simulate"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -49701,7 +49747,15 @@
             "get": {
                 "operationId": "simulate_agent-definitions_versions_compatibility_list",
                 "description": "GET /agent-definitions/{id}/versions/{vid}/compatibility/?environment_id=.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "environment_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
@@ -49730,7 +49784,9 @@
                 },
                 "tags": [
                     "simulate"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -50363,6 +50419,12 @@
                         "description": ""
                     },
                     "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
@@ -96359,6 +96421,79 @@
                 }
             }
         },
+        "ApiErrorWithDetailsResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
         "SlackInstall": {
             "type": "object",
             "properties": {
@@ -121955,79 +122090,6 @@
                 },
                 "observe_project": {
                     "$ref": "#/definitions/ObserveProjectRef"
-                }
-            }
-        },
-        "ApiErrorWithDetailsResponse": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": false
-                },
-                "type": {
-                    "title": "Type",
-                    "type": "string",
-                    "enum": [
-                        "validation_error",
-                        "authentication_error",
-                        "payment_required",
-                        "entitlement_error",
-                        "permission_error",
-                        "not_found",
-                        "conflict",
-                        "client_error",
-                        "rate_limit",
-                        "server_error",
-                        "service_unavailable",
-                        "timeout",
-                        "api_error"
-                    ],
-                    "x-nullable": true
-                },
-                "code": {
-                    "title": "Code",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "detail": {
-                    "title": "Detail",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "result": {
-                    "title": "Result",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "message": {
-                    "title": "Message",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "error": {
-                    "title": "Error",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "attr": {
-                    "title": "Attr",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "details": {
-                    "title": "Details",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "minLength": 1
-                        }
-                    }
                 }
             }
         },

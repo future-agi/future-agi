@@ -867,14 +867,16 @@ def test_an_agent_with_environments_cannot_be_deleted_one_at_a_time(
     free = _agent(organization, workspace, "Spare")
 
     single = auth_client.delete(f"{AGENTS}{tested.id}/delete/")
-    assert single.status_code == status.HTTP_400_BAD_REQUEST, single.content
+    assert single.status_code == status.HTTP_409_CONFLICT, single.content
+    assert single.json()["code"] == "agent_in_use"
     assert single.json()["detail"] == (
         "Northwind is tested by 2 environments. Delete those environments first."
     )
     operations = auth_client.delete(
         f"/simulate/api/agent-definition-operations/{tested.id}/"
     )
-    assert operations.status_code == status.HTTP_400_BAD_REQUEST, operations.content
+    assert operations.status_code == status.HTTP_409_CONFLICT, operations.content
+    assert operations.json()["code"] == "agent_in_use"
     tested.refresh_from_db()
     assert tested.deleted is False
 
@@ -1163,7 +1165,8 @@ def test_bulk_delete_refuses_a_tested_agent_and_deletes_nothing(
         format="json",
     )
 
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["code"] == "agent_in_use"
     assert "tested is tested by 1 environment" in response.json()["error"]
     assert (
         AgentDefinition.objects.filter(

@@ -1585,11 +1585,6 @@ export const endpoints = {
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/agent/",
         { agent_id: id, version_id: version },
       ),
-    activateVersion: (id, version) =>
-      apiPath(
-        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/activate/",
-        { agent_id: id, version_id: version },
-      ),
     changeVersion: (id) =>
       apiPath("/simulate/agent-definitions/{agent_id}/versions/change/", {
         agent_id: id,
@@ -1607,11 +1602,6 @@ export const endpoints = {
     discardVersion: (id, version) =>
       apiPath(
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/",
-        { agent_id: id, version_id: version },
-      ),
-    versionCompatibility: (id, version) =>
-      apiPath(
-        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/compatibility/",
         { agent_id: id, version_id: version },
       ),
     buildPreflight: (id) =>

@@ -1,7 +1,6 @@
 """Versions of a connected agent from the Agents page: one change endpoint by kind,
 production, retry and discard."""
 
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -22,31 +21,20 @@ from simulate.services import agent_versions
 from simulate.services.agent_compatibility import environment_compatibility
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope, error_details
 from tfc.utils.api_serializers import (
     ApiErrorWithDetailsResponseSerializer,
     EmptyRequestSerializer,
+    StrictInputSerializer,
 )
 
 
-class EnvironmentQuerySerializer(serializers.Serializer):
+class EnvironmentQuerySerializer(StrictInputSerializer):
     environment_id = serializers.UUIDField()
 
 
-class VersionQuerySerializer(serializers.Serializer):
+class VersionQuerySerializer(StrictInputSerializer):
     version_id = serializers.UUIDField(required=False)
-
-
-def query_data(serializer_class, request):
-    """The declared query params, validated; a bad one is a 400, never a 500."""
-    serializer = serializer_class(data=request.query_params)
-    if not serializer.is_valid():
-        raise HostedHarnessError(
-            "query_invalid",
-            "invalid query parameters",
-            status_code=400,
-            details=serializer.errors,
-        )
-    return serializer.validated_data
 
 
 class _AgentVersionView(APIView):
@@ -54,7 +42,14 @@ class _AgentVersionView(APIView):
 
     def handle_exception(self, exc):
         if isinstance(exc, HostedHarnessError):
-            return Response(exc.as_dict(), status=exc.status_code)
+            body = build_error_envelope(
+                exc.message,
+                status_code=exc.status_code,
+                code=exc.code,
+                details=error_details(exc.details) if exc.details else None,
+                extra={"retryable": exc.retryable},
+            )
+            return Response(body, status=exc.status_code)
         return super().handle_exception(exc)
 
     def _agent(self, request, agent_id) -> AgentDefinition:
@@ -177,19 +172,18 @@ class AgentVersionDiscardView(_AgentVersionView):
 class AgentVersionCompatibilityView(_AgentVersionView):
     """GET /agent-definitions/{id}/versions/{vid}/compatibility/?environment_id=."""
 
-    @swagger_auto_schema(
+    @validated_request(
+        query_serializer=EnvironmentQuerySerializer,
         responses={
             200: AgentVersionCompatibilityResponseSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
-        }
+        },
     )
     def get(self, request, agent_id, version_id, *args, **kwargs):
         agent = self._agent(request, agent_id)
         version = self._version(agent, version_id)
-        environment_id = query_data(EnvironmentQuerySerializer, request)[
-            "environment_id"
-        ]
+        environment_id = request.validated_query_data["environment_id"]
         environment = agent_versions.environment_of(agent, environment_id)
         body = {"environment_id": str(environment.id), "version_id": str(version.id)}
         body.update(environment_compatibility(environment, version))
@@ -199,15 +193,17 @@ class AgentVersionCompatibilityView(_AgentVersionView):
 class AgentBuildPreflightView(_AgentVersionView):
     """GET /agent-definitions/{id}/build-preflight/?version_id=."""
 
-    @swagger_auto_schema(
+    @validated_request(
+        query_serializer=VersionQuerySerializer,
         responses={
             200: AgentBuildPreflightResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
-        }
+        },
     )
     def get(self, request, agent_id, *args, **kwargs):
         agent = self._agent(request, agent_id)
-        version_id = query_data(VersionQuerySerializer, request).get("version_id")
+        version_id = request.validated_query_data.get("version_id")
         version = self._version(agent, version_id) if version_id else None
         return Response(
             AgentBuildPreflightResponseSerializer(

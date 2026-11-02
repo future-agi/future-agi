@@ -3,7 +3,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from uuid import UUID
 
 import jwt
@@ -12,7 +12,7 @@ import structlog
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from accounts.models.organization import Organization
@@ -23,7 +23,7 @@ from integrations.models import (
     IntegrationPlatform,
 )
 from integrations.services.credentials import CredentialManager
-from integrations.services.oauth_state import consume_state, issue_state
+from integrations.services.oauth_state import consume_state, issue_state, read_state
 from integrations.services.source_hosts import (
     Branch,
     Repository,
@@ -157,12 +157,16 @@ def installation_token(installation_id: str) -> str:
 
 
 def revoke_installation_token(token: str) -> None:
-    response = _send("delete", f"{API_URL}/installation/token", headers=_headers(token))
+    try:
+        response = _send(
+            "delete", f"{API_URL}/installation/token", headers=_headers(token)
+        )
+    except GitHubAppError:
+        logger.warning("github_installation_token_not_revoked", exc_info=True)
+        return
     if response.status_code != 204:
-        raise GitHubAppError(
-            "github_installation_token_revoke_failed",
-            "GitHub installation token could not be revoked",
-            retryable=response.status_code >= 500,
+        logger.warning(
+            "github_installation_token_not_revoked", status_code=response.status_code
         )
 
 
@@ -255,8 +259,15 @@ def _verify_user_installation(code: str, installation_id: str) -> None:
             code="github_installations_unreadable",
             message="GitHub did not list the user's installations",
         ):
-            if str(installation.get("id")) == installation_id:
+            if str(installation.get("id")) != installation_id:
+                continue
+            if _administers(str(user_token), installation):
                 return
+            raise GitHubAppError(
+                "github_installation_not_admin",
+                "Only an admin of this GitHub account can connect its installation",
+                status_code=403,
+            )
     finally:
         _revoke_user_token(str(user_token))
     raise GitHubAppError(
@@ -264,6 +275,36 @@ def _verify_user_installation(code: str, installation_id: str) -> None:
         "That GitHub App installation is not accessible to you",
         status_code=403,
     )
+
+
+def _administers(user_token: str, installation: dict[str, Any]) -> bool:
+    account = installation.get("account")
+    if not isinstance(account, dict) or not account.get("login"):
+        return False
+    if account.get("type") == "Organization":
+        response = _send(
+            "get",
+            f"{API_URL}/user/memberships/orgs/{quote(str(account['login']), safe='')}",
+            headers=_headers(user_token),
+        )
+        if response.status_code in (403, 404):
+            return False
+        membership = _json(
+            response,
+            code="github_membership_unreadable",
+            message="GitHub did not return the user's organization role",
+        )
+        return (
+            isinstance(membership, dict)
+            and membership.get("state") == "active"
+            and membership.get("role") == "admin"
+        )
+    viewer = _json(
+        _send("get", f"{API_URL}/user", headers=_headers(user_token)),
+        code="github_user_unreadable",
+        message="GitHub did not return the signed-in user",
+    )
+    return isinstance(viewer, dict) and viewer.get("id") == account.get("id")
 
 
 def _installation_account(installation_id: str) -> tuple[str, bool]:
@@ -318,7 +359,7 @@ def _save_connection(
             )
             connection = existing
         else:
-            connection = IntegrationConnection.no_workspace_objects.create(
+            connection = _create_connection(
                 organization=organization,
                 workspace=workspace,
                 created_by=user,
@@ -334,6 +375,8 @@ def _save_connection(
                 status_message=status_message,
                 backfill_completed=True,
             )
+            if connection is None:
+                return InstallResult(outcome="already_connected")
     logger.info(
         "github_connection_saved",
         connection_id=str(connection.id),
@@ -342,12 +385,34 @@ def _save_connection(
     return InstallResult(outcome="connected", connection_id=connection.id)
 
 
+def _create_connection(**fields: Any) -> IntegrationConnection | None:
+    try:
+        with transaction.atomic():
+            return IntegrationConnection.no_workspace_objects.create(**fields)
+    except IntegrityError:
+        logger.info(
+            "github_connection_raced",
+            workspace_id=str(fields["workspace"].pk),
+        )
+        return None
+
+
+def _consume(state: str) -> None:
+    consume_state(
+        state,
+        salt=STATE_SALT,
+        cache_prefix=STATE_CACHE_PREFIX,
+        ttl_seconds=STATE_TTL_SECONDS,
+        label="GitHub",
+    )
+
+
 def complete_github_install(
     *, state: str, setup_action: str, code: str, installation_id: str, user: Any
 ) -> InstallResult:
     """Finish an install the signed-in ``user`` started: the state names them, and
     only they may complete it, so a link forwarded to someone else binds nothing."""
-    context = consume_state(
+    context = read_state(
         state,
         salt=STATE_SALT,
         cache_prefix=STATE_CACHE_PREFIX,
@@ -378,11 +443,13 @@ def complete_github_install(
     if not user.is_active or not user.can_write_to_workspace(workspace):
         raise ValueError("The user can no longer connect GitHub in this workspace.")
     if setup_action == "request":
+        _consume(state)
         return InstallResult(outcome="requested")
     if not code or not installation_id.isdigit():
         raise ValueError("GitHub did not return an installation.")
     _verify_user_installation(code, installation_id)
     account, suspended = _installation_account(installation_id)
+    _consume(state)
     return _save_connection(
         organization=organization,
         workspace=workspace,
@@ -393,9 +460,12 @@ def complete_github_install(
     )
 
 
-def installation_connected(*, organization_id: UUID, installation_id: str) -> bool:
+def installation_connected(
+    *, organization_id: UUID, workspace_id: UUID | None, installation_id: str
+) -> bool:
     return IntegrationConnection.no_workspace_objects.filter(
         organization_id=organization_id,
+        workspace_id=workspace_id,
         platform=IntegrationPlatform.GITHUB,
         external_project_name=installation_id,
         status=ConnectionStatus.ACTIVE,
@@ -410,6 +480,19 @@ def forget_repositories(installation_id: str) -> None:
     cache.delete(_repositories_key(installation_id))
 
 
+def _installation_suspended(installation_id: str) -> bool:
+    try:
+        _account, suspended = _installation_account(installation_id)
+    except GitHubAppError:
+        logger.warning(
+            "github_installation_state_unreadable",
+            installation_id=installation_id,
+            exc_info=True,
+        )
+        return True
+    return suspended
+
+
 def apply_installation_event(*, installation_id: str, action: str) -> None:
     connections = IntegrationConnection.no_workspace_objects.filter(
         platform=IntegrationPlatform.GITHUB, external_project_name=installation_id
@@ -417,16 +500,17 @@ def apply_installation_event(*, installation_id: str, action: str) -> None:
     now = timezone.now()
     if action == "deleted":
         changed = connections.update(deleted=True, deleted_at=now, updated_at=now)
-    elif action == "suspend":
-        changed = connections.update(
-            status=ConnectionStatus.PAUSED,
-            status_message=SUSPENDED_MESSAGE,
-            updated_at=now,
-        )
-    elif action == "unsuspend":
-        changed = connections.update(
-            status=ConnectionStatus.ACTIVE, status_message="", updated_at=now
-        )
+    elif action in ("suspend", "unsuspend"):
+        if _installation_suspended(installation_id):
+            changed = connections.update(
+                status=ConnectionStatus.PAUSED,
+                status_message=SUSPENDED_MESSAGE,
+                updated_at=now,
+            )
+        else:
+            changed = connections.update(
+                status=ConnectionStatus.ACTIVE, status_message="", updated_at=now
+            )
     else:
         return
     forget_repositories(installation_id)
@@ -514,6 +598,37 @@ def list_branches(installation_id: str, *, repository_id: int) -> list[Branch] |
     )
     cache.set(key, branches, LIST_CACHE_SECONDS)
     return branches
+
+
+def branch_head(
+    installation_id: str,
+    *,
+    repository: str,
+    repository_id: int | None,
+    ref: str | None,
+) -> str | None:
+    """The commit ``ref`` (the default branch when ``None``) points at, or None when
+    the repository or branch is gone."""
+    path = (
+        f"repositories/{int(repository_id)}"
+        if repository_id is not None
+        else f"repos/{quote(repository, safe='/')}"
+    )
+    with installation_credential(installation_id) as token:
+        response = _send(
+            "get",
+            f"{API_URL}/{path}/commits/{quote(ref or 'HEAD', safe='/')}",
+            headers={**_headers(token), "Accept": "application/vnd.github.sha"},
+        )
+    if response.status_code in (404, 422):
+        return None
+    if response.status_code != 200:
+        raise GitHubAppError(
+            "github_head_unreadable",
+            "GitHub did not return the branch's head",
+            retryable=response.status_code >= 500,
+        )
+    return response.text.strip() or None
 
 
 class GitHubSourceHost:

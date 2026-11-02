@@ -26,7 +26,9 @@ export default function CodeCard({ agentId, versionId, versionLabel }) {
   const diffOn = params.get("diff") === "1";
   const tree = useCodeTree(agentId, versionId);
   const changes = useCodeChanges(agentId, versionId);
-  const file = useCodeFile(agentId, versionId, diffOn ? "" : selected);
+  const againstId = changes.data?.against || null;
+  const showDiff = diffOn && Boolean(againstId);
+  const file = useCodeFile(agentId, versionId, showDiff ? "" : selected);
   const changedBy = useMemo(
     () =>
       Object.fromEntries(
@@ -34,7 +36,6 @@ export default function CodeCard({ agentId, versionId, versionLabel }) {
       ),
     [changes.data],
   );
-  const againstId = changes.data?.against || null;
 
   const set = (next) => {
     const copy = new URLSearchParams(params);
@@ -157,7 +158,7 @@ export default function CodeCard({ agentId, versionId, versionLabel }) {
             </Stack>
           )}
           <Box sx={{ flex: 1, minHeight: 0 }}>
-            {diffOn && selected && againstId ? (
+            {showDiff && selected ? (
               <FileDiff
                 agentId={agentId}
                 versionId={versionId}
@@ -171,7 +172,7 @@ export default function CodeCard({ agentId, versionId, versionLabel }) {
               >
                 Could not load this file.
               </Typography>
-            ) : selected && !file.isLoading && !file.data ? (
+            ) : selected && !file.isPending && !file.isLoading && !file.data ? (
               <Typography
                 sx={{ p: 2, typography: "s2", color: "text.secondary" }}
                 data-testid="file-viewer-missing"

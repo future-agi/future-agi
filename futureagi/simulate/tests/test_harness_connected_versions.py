@@ -412,3 +412,180 @@ def test_returning_production_to_an_earlier_version_carries_followers_back(agent
     assert second.status == "archived"
     assert following.agent_version_id == first.id
     assert [str(one) for one in moved] == [str(following.id)]
+
+
+def _passed(agent):
+    first = _connect(agent)
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        _preflight(first)
+    first.refresh_from_db()
+    return first
+
+
+def _compatible_draft(agent, parent):
+    second = _connect(agent, parent=parent, commit="b", trigger=Trigger.SYNC)
+    assert store_agent(
+        agent_version_id=second.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        _preflight(second)
+    second.refresh_from_db()
+    return second
+
+
+def test_a_pin_made_while_a_move_waits_keeps_the_environment_where_it_is(agent, user):
+    from simulate.services.agent_versions import set_environment_policy
+    from simulate.services.harness_versioning.rebuild import (
+        retry_deferred_activations,
+    )
+
+    first = _passed(agent)
+    following = _following(
+        _built_from(_completed(_environment(agent, 1), first), first, source_agent())
+    )
+    second = _compatible_draft(agent, first)
+    HostedHarnessJob.no_workspace_objects.filter(id=following.id).update(
+        state=HostedHarnessJob.State.RUNNING
+    )
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        set_production(second)
+    report = _runtime(second).preflight_report["activation"]
+    assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
+        str(following.id): "environment_busy",
+    }
+
+    following.refresh_from_db()
+    set_environment_policy(following, policy=POLICY_PINNED, user=user)
+    HostedHarnessJob.no_workspace_objects.filter(id=following.id).update(
+        state=HostedHarnessJob.State.COMPLETED
+    )
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        outcomes = retry_deferred_activations(second.id)
+
+    following.refresh_from_db()
+    assert outcomes == {str(following.id): "not_moved"}
+    assert following.agent_version_id == first.id
+    assert environment_policy(following) == POLICY_PINNED
+
+
+def test_compatibility_starts_from_the_agent_the_world_was_rebuilt_for(agent):
+    from simulate.services.agent_compatibility import built_from
+    from simulate.tests.test_agent_overview_api import _environment_version
+
+    first = _passed(agent)
+    second = _compatible_draft(agent, first)
+    environment = _built_from(
+        _completed(_environment(agent, 1), second), first, source_agent()
+    )
+    rebuilt = _environment_version(environment, 2)
+    rebuilt.agent_version = second
+    rebuilt.save(update_fields=["agent_version"])
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        environment_version=rebuilt
+    )
+    environment.refresh_from_db()
+
+    assert built_from(environment) == second
+
+
+def test_the_first_build_pin_is_the_base_when_no_world_records_its_agent(agent):
+    from simulate.services.agent_compatibility import built_from
+
+    first = _passed(agent)
+    second = _compatible_draft(agent, first)
+    environment = _built_from(
+        _completed(_environment(agent, 1), second), first, source_agent()
+    )
+
+    assert built_from(environment) == first
+
+
+def test_a_first_production_only_lands_when_the_agent_has_none(agent):
+    from simulate.services.harness_agent_versions import make_production
+
+    first = _passed(agent)
+    second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
+
+    assert make_production(second, only_if_none=True) == "has_production"
+    second.refresh_from_db()
+    first.refresh_from_db()
+    assert second.status != "active"
+    assert first.status == "active"
+
+    AgentVersion._base_manager.filter(id=first.id).update(status="archived")
+    assert make_production(second, only_if_none=True) == "promoted"
+    second.refresh_from_db()
+    assert second.status == "active"
+
+
+def test_a_discarded_version_never_becomes_production(agent):
+    from simulate.services.harness_agent_versions import (
+        make_production,
+        promote_to_production,
+    )
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    first = _passed(agent)
+    second = _compatible_draft(agent, first)
+    HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=second).update(
+        preflight_status=Status.DISCARDED
+    )
+
+    assert make_production(second) == "discarded"
+    with pytest.raises(HostedHarnessError) as refused:
+        promote_to_production(second)
+
+    assert refused.value.code == "version_discarded"
+    assert refused.value.status_code == 409
+    second.refresh_from_db()
+    first.refresh_from_db()
+    assert second.status != "active"
+    assert first.status == "active"
+
+
+def test_discard_reads_production_now_not_from_a_stale_copy(agent):
+    from simulate.services.agent_versions import discard_version
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    first = _passed(agent)
+    stale = AgentVersion.objects.get(id=first.id)
+    stale.status = "draft"
+
+    with pytest.raises(HostedHarnessError) as refused:
+        discard_version(stale)
+
+    assert refused.value.code == "version_in_production"
+    assert _runtime(first).preflight_status == Status.PASSED
+
+
+def test_production_adds_followers_to_the_environments_already_waiting(agent):
+    first = _passed(agent)
+    following = _following(
+        _built_from(_completed(_environment(agent, 1), first), first, source_agent())
+    )
+    second = _compatible_draft(agent, first)
+    waiting = "00000000-0000-0000-0000-000000000042"
+    runtime = _runtime(second)
+    runtime.agent_payload = {
+        **runtime.agent_payload,
+        "requested_by_environments": [waiting],
+        "requested_at": {waiting: "2026-11-02T00:00:00+00:00"},
+    }
+    runtime.save(update_fields=["agent_payload"])
+
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        set_production(second)
+
+    payload = _runtime(second).agent_payload
+    assert payload["requested_by_environments"] == [waiting, str(following.id)]
+    assert set(payload["requested_at"]) == {waiting, str(following.id)}

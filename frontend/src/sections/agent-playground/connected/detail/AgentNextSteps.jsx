@@ -13,11 +13,11 @@ import {
   TextField,
   ToggleButton,
   ToggleButtonGroup,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import {
   useAgentEnvironments,
@@ -36,6 +36,7 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { sourceLabel } from "../connectedAgentLabels";
 import { agentDetailPath } from "./agentDetailTabs";
 import { LineSkeleton } from "./bits";
+import BuildEnvironmentButton from "./BuildEnvironmentButton";
 
 const LANGUAGES = [
   { label: "Python", value: "python", key: "Python" },
@@ -280,6 +281,7 @@ function PathCell({
   done,
   action,
   secondary,
+  actionNode,
   testId,
 }) {
   return (
@@ -319,32 +321,34 @@ function PathCell({
           {unlocks}
         </Typography>
       )}
-      {action && (
+      {actionNode && (
         <Stack direction="row" spacing={1} sx={{ pt: 1 }}>
-          <Tooltip arrow title={action.tooltip || ""}>
-            <span>
-              <Button
-                size="small"
-                variant="outlined"
-                color="inherit"
-                disabled={!!action.disabled}
-                onClick={action.onClick}
-              >
-                {action.label}
-              </Button>
-            </span>
-          </Tooltip>
-          {secondary && (
-            <Button
+          {actionNode}
+        </Stack>
+      )}
+      {!actionNode && action && (
+        <Stack direction="row" spacing={1} sx={{ pt: 1 }}>
+          {[action, secondary].filter(Boolean).map((one) => (
+            <CustomTooltip
+              key={one.label}
+              show={!!one.tooltip}
+              title={one.tooltip || ""}
               size="small"
-              variant="outlined"
-              color="inherit"
-              disabled={!!secondary.disabled}
-              onClick={secondary.onClick}
+              arrow
             >
-              {secondary.label}
-            </Button>
-          )}
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  disabled={!!one.disabled}
+                  onClick={one.onClick}
+                >
+                  {one.label}
+                </Button>
+              </span>
+            </CustomTooltip>
+          ))}
         </Stack>
       )}
     </Stack>
@@ -359,6 +363,7 @@ PathCell.propTypes = {
   done: PropTypes.bool,
   action: PropTypes.object,
   secondary: PropTypes.object,
+  actionNode: PropTypes.node,
   testId: PropTypes.string,
 };
 
@@ -388,6 +393,8 @@ export default function AgentNextSteps({ agent }) {
   const { enqueueSnackbar } = useSnackbar();
   const { role } = useAuthContext();
   const canEdit = !!RolePermission.SIMULATION_AGENT[PERMISSIONS.UPDATE][role];
+  const denied = (action) =>
+    canEdit ? "" : `You don't have permission to ${action}.`;
   const [connecting, setConnecting] = useState(false);
   const [confirming, setConfirming] = useState(null);
   const link = useLinkObserveProject(agent.id);
@@ -471,17 +478,20 @@ export default function AgentNextSteps({ agent }) {
         ? {
             label: "Change project",
             disabled: !canEdit || busy,
+            tooltip: denied("change the project"),
             onClick: () => setConnecting(true),
           }
         : {
             label: "Turn off",
             disabled: !canEdit || busy,
+            tooltip: denied("turn off observability"),
             onClick: () => setConfirming("turnOff"),
           },
       secondary: isCode
         ? {
             label: "Unlink",
             disabled: !canEdit || busy,
+            tooltip: denied("unlink the project"),
             onClick: () => setConfirming("unlink"),
           }
         : null,
@@ -495,6 +505,7 @@ export default function AgentNextSteps({ agent }) {
       action: {
         label: "Connect traces",
         disabled: !canEdit,
+        tooltip: denied("connect traces"),
         onClick: () => setConnecting(true),
       },
     };
@@ -514,6 +525,7 @@ export default function AgentNextSteps({ agent }) {
       action: {
         label: "Turn on observability",
         disabled: !canEdit || busy,
+        tooltip: denied("turn on observability"),
         onClick: turnOn,
       },
     };
@@ -536,11 +548,7 @@ export default function AgentNextSteps({ agent }) {
         body: "Simulated tools, data and callers to run scenarios against.",
         unlocks:
           "Test changes, and let improvements try fixes before they ship.",
-        action: {
-          label: "Build environment",
-          disabled: true,
-          tooltip: "Coming soon",
-        },
+        actionNode: <BuildEnvironmentButton agent={agent} canEdit={canEdit} />,
       };
 
   const copy = confirming && CONFIRM[confirming];

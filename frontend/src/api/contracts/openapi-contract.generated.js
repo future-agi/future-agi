@@ -10151,10 +10151,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/GitHubInstallCompleteResponse",
           },
           400: {
-            $ref: "#/definitions/GitHubInstallResponse",
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           403: {
-            $ref: "#/definitions/GitHubInstallResponse",
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -27176,6 +27179,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
+          409: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
           500: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
@@ -27239,13 +27245,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/agent-definitions/{agent_id}/build-preflight/": {
       get: {
         operationId: "simulate_agent-definitions_build-preflight_list",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/AgentBuildPreflightResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
@@ -27271,6 +27288,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
@@ -27537,20 +27557,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
       {
         get: {
           operationId: "simulate_agent-definitions_versions_code_changes_list",
-          runtimeRequestValidation: false,
-          runtimeResponseValidation: false,
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
           requestBody: null,
           queryParameters: {
             against: {
               required: false,
               schema: {
                 type: "string",
+                format: "uuid",
               },
             },
           },
           responses: {
             200: {
               $ref: "#/definitions/AgentCodeChangesResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
             },
             404: {
               $ref: "#/definitions/ApiErrorWithDetailsResponse",
@@ -27567,14 +27591,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/": {
       get: {
         operationId: "simulate_agent-definitions_versions_code_file_list",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
           path: {
             required: true,
             schema: {
               type: "string",
+              maxLength: 4096,
             },
           },
         },
@@ -27624,10 +27649,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
       {
         get: {
           operationId: "simulate_agent-definitions_versions_compatibility_list",
-          runtimeRequestValidation: false,
-          runtimeResponseValidation: false,
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
           requestBody: null,
-          queryParameters: {},
+          queryParameters: {
+            environment_id: {
+              required: true,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+          },
           responses: {
             200: {
               $ref: "#/definitions/AgentVersionCompatibilityResponse",
@@ -27968,6 +28001,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {

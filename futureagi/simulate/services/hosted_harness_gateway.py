@@ -79,6 +79,7 @@ from simulate.services.hosted_harness_diagnostics import (
 from simulate.services.hosted_sandbox import (
     SandboxCommandRequest,
     SandboxConflictError,
+    SandboxFileNotFoundError,
     SandboxLaunchSpec,
     SandboxNotFoundError,
     SandboxProviderConfigurationError,
@@ -4496,8 +4497,9 @@ class HostedHarnessGateway:
                     exit_code,
                 )
         if refusal is not None:
+            kept = platform_set_failure(attempt)
             attempt.terminal_stage = "failed"
-            attempt.terminal_failure = platform_set_failure(attempt) or refusal
+            attempt.terminal_failure = kept or refusal
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
                 update_fields=[
@@ -4507,8 +4509,10 @@ class HostedHarnessGateway:
                     "updated_at",
                 ]
             )
-            retry_pending = refusal["retryable"] and self._should_retry(
-                attempt, str(refusal["domain"])
+            retry_pending = (
+                kept is None
+                and refusal["retryable"]
+                and self._should_retry(attempt, str(refusal["domain"]))
             )
         elif exit_code == 3:
             attempt.state = HostedHarnessAttempt.State.SUPERSEDED
@@ -4605,7 +4609,10 @@ class HostedHarnessGateway:
                 and not authoring_invalid
                 and self._should_retry(attempt, "infrastructure")
             )
-            if exit_code == 78:
+            if (
+                exit_code == 78
+                and observation.get("refusal_file") != _REFUSAL_FILE_UNREADABLE
+            ):
                 from simulate.services.harness_versioning.assembly import mark_failed
 
                 try:
@@ -5200,17 +5207,19 @@ def _secret_safe(value: Any, *, key: str = "") -> Any:
 
 _REFUSAL_FILE = "/work/authoring/failure.json"
 _REFUSAL_FILE_INVALID = "invalid"
+_REFUSAL_FILE_UNREADABLE = "unreadable"
 
 
 def _read_refusal_file(sandbox) -> Any:
-    """The failure the guest wrote before exiting: None, the parsed object, or invalid."""
+    """The failure the guest wrote before exiting: None when absent, the parsed object,
+    invalid, or unreadable when the read itself failed."""
     try:
         body = sandbox.fs.download_file(_REFUSAL_FILE, _PROGRESS_FILE_TIMEOUT_SECONDS)
-    except SandboxNotFoundError:
+    except (SandboxNotFoundError, SandboxFileNotFoundError, FileNotFoundError):
         return None
-    except Exception:  # noqa: BLE001 - read as "no file", but say so
+    except Exception:  # noqa: BLE001 - unknown, so never read as "no file"
         logger.warning("refusal_file_unreadable path=%s", _REFUSAL_FILE, exc_info=True)
-        return None
+        return _REFUSAL_FILE_UNREADABLE
     if not body:
         return None
     try:

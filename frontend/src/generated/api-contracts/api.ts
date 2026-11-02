@@ -1169,10 +1169,12 @@ import type {
   SharedLinkUpdateApi,
   SignupRequestApi,
   SignupResponseApi,
+  SimulateAgentDefinitionsBuildPreflightListParams,
   SimulateAgentDefinitionsListParams,
   SimulateAgentDefinitionsRunsListParams,
   SimulateAgentDefinitionsVersionsCodeChangesListParams,
   SimulateAgentDefinitionsVersionsCodeFileListParams,
+  SimulateAgentDefinitionsVersionsCompatibilityListParams,
   SimulateApiAgentDefinitionOperationsList200,
   SimulateApiAgentDefinitionOperationsListParams,
   SimulateApiAgentPromptOptimiserList200,
@@ -22066,18 +22068,23 @@ export type integrationsGithubInstallCompleteCreateResponse200 = {
 };
 
 export type integrationsGithubInstallCompleteCreateResponse400 = {
-  data: GitHubInstallResponseApi;
+  data: ApiErrorWithDetailsResponseApi;
   status: 400;
 };
 
 export type integrationsGithubInstallCompleteCreateResponse403 = {
-  data: GitHubInstallResponseApi;
+  data: ApiErrorWithDetailsResponseApi;
   status: 403;
+};
+
+export type integrationsGithubInstallCompleteCreateResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
 };
 
 export type integrationsGithubInstallCompleteCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 503>;
 };
 
 export type integrationsGithubInstallCompleteCreateResponseSuccess =
@@ -22087,6 +22094,7 @@ export type integrationsGithubInstallCompleteCreateResponseSuccess =
 export type integrationsGithubInstallCompleteCreateResponseError = (
   | integrationsGithubInstallCompleteCreateResponse400
   | integrationsGithubInstallCompleteCreateResponse403
+  | integrationsGithubInstallCompleteCreateResponse503
   | integrationsGithubInstallCompleteCreateResponseDefault
 ) & {
   headers: Headers;
@@ -56418,6 +56426,11 @@ export type simulateAgentDefinitionsDeleteResponse400 = {
   status: 400;
 };
 
+export type simulateAgentDefinitionsDeleteResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
 export type simulateAgentDefinitionsDeleteResponse500 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 500;
@@ -56425,7 +56438,7 @@ export type simulateAgentDefinitionsDeleteResponse500 = {
 
 export type simulateAgentDefinitionsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 409 | 500>;
 };
 
 export type simulateAgentDefinitionsDeleteResponseSuccess =
@@ -56434,6 +56447,7 @@ export type simulateAgentDefinitionsDeleteResponseSuccess =
   };
 export type simulateAgentDefinitionsDeleteResponseError = (
   | simulateAgentDefinitionsDeleteResponse400
+  | simulateAgentDefinitionsDeleteResponse409
   | simulateAgentDefinitionsDeleteResponse500
   | simulateAgentDefinitionsDeleteResponseDefault
 ) & {
@@ -56591,6 +56605,11 @@ export type simulateAgentDefinitionsBuildPreflightListResponse200 = {
   status: 200;
 };
 
+export type simulateAgentDefinitionsBuildPreflightListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
 export type simulateAgentDefinitionsBuildPreflightListResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -56598,7 +56617,7 @@ export type simulateAgentDefinitionsBuildPreflightListResponse404 = {
 
 export type simulateAgentDefinitionsBuildPreflightListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 404>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404>;
 };
 
 export type simulateAgentDefinitionsBuildPreflightListResponseSuccess =
@@ -56606,6 +56625,7 @@ export type simulateAgentDefinitionsBuildPreflightListResponseSuccess =
     headers: Headers;
   };
 export type simulateAgentDefinitionsBuildPreflightListResponseError = (
+  | simulateAgentDefinitionsBuildPreflightListResponse400
   | simulateAgentDefinitionsBuildPreflightListResponse404
   | simulateAgentDefinitionsBuildPreflightListResponseDefault
 ) & {
@@ -56618,8 +56638,25 @@ export type simulateAgentDefinitionsBuildPreflightListResponse =
 
 export const getSimulateAgentDefinitionsBuildPreflightListUrl = (
   agentId: string,
+  params?: SimulateAgentDefinitionsBuildPreflightListParams,
 ) => {
-  return `/simulate/agent-definitions/${agentId}/build-preflight/`;
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/build-preflight/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/build-preflight/`;
 };
 
 /**
@@ -56627,10 +56664,11 @@ export const getSimulateAgentDefinitionsBuildPreflightListUrl = (
  */
 export const simulateAgentDefinitionsBuildPreflightList = async (
   agentId: string,
+  params?: SimulateAgentDefinitionsBuildPreflightListParams,
   options?: RequestInit,
 ): Promise<simulateAgentDefinitionsBuildPreflightListResponse> => {
   return apiMutator<simulateAgentDefinitionsBuildPreflightListResponse>(
-    getSimulateAgentDefinitionsBuildPreflightListUrl(agentId),
+    getSimulateAgentDefinitionsBuildPreflightListUrl(agentId, params),
     {
       ...options,
       method: "GET",
@@ -56653,6 +56691,11 @@ export type simulateAgentDefinitionsDeleteDeleteResponse404 = {
   status: 404;
 };
 
+export type simulateAgentDefinitionsDeleteDeleteResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
 export type simulateAgentDefinitionsDeleteDeleteResponse500 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 500;
@@ -56660,7 +56703,7 @@ export type simulateAgentDefinitionsDeleteDeleteResponse500 = {
 
 export type simulateAgentDefinitionsDeleteDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 500>;
 };
 
 export type simulateAgentDefinitionsDeleteDeleteResponseSuccess =
@@ -56670,6 +56713,7 @@ export type simulateAgentDefinitionsDeleteDeleteResponseSuccess =
 export type simulateAgentDefinitionsDeleteDeleteResponseError = (
   | simulateAgentDefinitionsDeleteDeleteResponse400
   | simulateAgentDefinitionsDeleteDeleteResponse404
+  | simulateAgentDefinitionsDeleteDeleteResponse409
   | simulateAgentDefinitionsDeleteDeleteResponse500
   | simulateAgentDefinitionsDeleteDeleteResponseDefault
 ) & {
@@ -57296,6 +57340,11 @@ export type simulateAgentDefinitionsVersionsCodeChangesListResponse200 = {
   status: 200;
 };
 
+export type simulateAgentDefinitionsVersionsCodeChangesListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
 export type simulateAgentDefinitionsVersionsCodeChangesListResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -57308,7 +57357,7 @@ export type simulateAgentDefinitionsVersionsCodeChangesListResponse503 = {
 
 export type simulateAgentDefinitionsVersionsCodeChangesListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 404 | 503>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 503>;
 };
 
 export type simulateAgentDefinitionsVersionsCodeChangesListResponseSuccess =
@@ -57316,6 +57365,7 @@ export type simulateAgentDefinitionsVersionsCodeChangesListResponseSuccess =
     headers: Headers;
   };
 export type simulateAgentDefinitionsVersionsCodeChangesListResponseError = (
+  | simulateAgentDefinitionsVersionsCodeChangesListResponse400
   | simulateAgentDefinitionsVersionsCodeChangesListResponse404
   | simulateAgentDefinitionsVersionsCodeChangesListResponse503
   | simulateAgentDefinitionsVersionsCodeChangesListResponseDefault
@@ -57560,8 +57610,25 @@ export type simulateAgentDefinitionsVersionsCompatibilityListResponse =
 export const getSimulateAgentDefinitionsVersionsCompatibilityListUrl = (
   agentId: string,
   versionId: string,
+  params: SimulateAgentDefinitionsVersionsCompatibilityListParams,
 ) => {
-  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/compatibility/`;
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/versions/${versionId}/compatibility/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/versions/${versionId}/compatibility/`;
 };
 
 /**
@@ -57570,10 +57637,15 @@ export const getSimulateAgentDefinitionsVersionsCompatibilityListUrl = (
 export const simulateAgentDefinitionsVersionsCompatibilityList = async (
   agentId: string,
   versionId: string,
+  params: SimulateAgentDefinitionsVersionsCompatibilityListParams,
   options?: RequestInit,
 ): Promise<simulateAgentDefinitionsVersionsCompatibilityListResponse> => {
   return apiMutator<simulateAgentDefinitionsVersionsCompatibilityListResponse>(
-    getSimulateAgentDefinitionsVersionsCompatibilityListUrl(agentId, versionId),
+    getSimulateAgentDefinitionsVersionsCompatibilityListUrl(
+      agentId,
+      versionId,
+      params,
+    ),
     {
       ...options,
       method: "GET",
@@ -58295,6 +58367,11 @@ export type simulateApiAgentDefinitionOperationsDeleteResponse404 = {
   status: 404;
 };
 
+export type simulateApiAgentDefinitionOperationsDeleteResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
 export type simulateApiAgentDefinitionOperationsDeleteResponse500 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 500;
@@ -58302,7 +58379,7 @@ export type simulateApiAgentDefinitionOperationsDeleteResponse500 = {
 
 export type simulateApiAgentDefinitionOperationsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 204 | 400 | 404 | 409 | 500>;
 };
 
 export type simulateApiAgentDefinitionOperationsDeleteResponseSuccess =
@@ -58312,6 +58389,7 @@ export type simulateApiAgentDefinitionOperationsDeleteResponseSuccess =
 export type simulateApiAgentDefinitionOperationsDeleteResponseError = (
   | simulateApiAgentDefinitionOperationsDeleteResponse400
   | simulateApiAgentDefinitionOperationsDeleteResponse404
+  | simulateApiAgentDefinitionOperationsDeleteResponse409
   | simulateApiAgentDefinitionOperationsDeleteResponse500
   | simulateApiAgentDefinitionOperationsDeleteResponseDefault
 ) & {

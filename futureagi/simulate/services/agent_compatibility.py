@@ -121,6 +121,9 @@ def built_from(environment: HostedHarnessJob) -> AgentVersion | None:
     """The agent version the environment's world was last built from."""
     from simulate.services.hosted_harness import frozen_build_pin
 
+    environment_version = environment.environment_version
+    if environment_version is not None and environment_version.agent_version_id:
+        return environment_version.agent_version
     return frozen_build_pin(environment) or environment.agent_version
 
 

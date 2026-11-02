@@ -2905,11 +2905,78 @@ def test_reconcile_reads_the_refusal_file_before_the_exit_code(
 
 
 @pytest.mark.django_db
+def test_a_failure_the_platform_set_is_not_retried_for_a_retryable_refusal(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness import record_cleanup
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="kept-refusal")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    captured = {}
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    kept = {
+        "domain": "agent",
+        "stage": "running",
+        "code": "credentials_rejected",
+        "message": "The agent's credentials were rejected",
+        "details": {"set_by": "platform"},
+    }
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        terminal_failure=kept
+    )
+    attempt.refresh_from_db()
+    refusal = _refusal(
+        domain="infrastructure",
+        stage="acquiring_source",
+        code="source_unreachable",
+        retryable=True,
+    )
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 1, "logs": "", "refusal_file": refusal},
+    )
+
+    gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "credentials_rejected"
+    assert captured["retry_pending"] is False
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize(
     ("refusal_file", "marks_cache_failed"),
     [
         (_refusal(), False),
         (_refusal(code="subfolder_not_found", stage="acquiring_source"), False),
+        ("unreadable", False),
         (None, True),
     ],
 )
@@ -2948,10 +3015,10 @@ def test_only_a_runtime_validation_failure_marks_the_bundle_cache_failed(
     attempt.refresh_from_db()
     assert attempt.state == HostedHarnessAttempt.State.FAILED
     assert mark_failed.called is marks_cache_failed
-    if refusal_file is None:
-        assert attempt.terminal_failure["code"] == "authoring_runtime_validation_failed"
-    else:
+    if isinstance(refusal_file, dict):
         assert attempt.terminal_failure["code"] == refusal_file["code"]
+    else:
+        assert attempt.terminal_failure["code"] == "authoring_runtime_validation_failed"
 
 
 @pytest.mark.django_db
@@ -3011,17 +3078,27 @@ def test_reconcile_keeps_a_failure_the_platform_set_over_a_crash_exit(
 
 def test_read_refusal_file_tells_absent_from_malformed():
     from simulate.services.hosted_harness_gateway import _read_refusal_file
+    from simulate.services.hosted_sandbox import (
+        SandboxFileNotFoundError,
+        SandboxProviderError,
+    )
 
     def _sandbox(body):
         def download(path, timeout=None):
             assert path == "/work/authoring/failure.json"
             if body is None:
                 raise FileNotFoundError(path)
+            if isinstance(body, Exception):
+                raise body
             return body
 
         return SimpleNamespace(fs=SimpleNamespace(download_file=download))
 
     assert _read_refusal_file(_sandbox(None)) is None
+    assert _read_refusal_file(_sandbox(SandboxFileNotFoundError("gone"))) is None
+    assert (
+        _read_refusal_file(_sandbox(SandboxProviderError("timed out"))) == "unreadable"
+    )
     assert _read_refusal_file(_sandbox(b"")) is None
     assert _read_refusal_file(_sandbox(b"not json")) == "invalid"
     assert _read_refusal_file(_sandbox(b"\xff\xfe")) == "invalid"

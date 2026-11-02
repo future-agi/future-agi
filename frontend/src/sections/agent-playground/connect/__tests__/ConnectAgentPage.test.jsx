@@ -22,6 +22,12 @@ vi.mock("src/api/integrations", () => ({
 
 vi.mock("src/hooks/use-debounce", () => ({ useDebounce: (value) => value }));
 
+const auth = vi.hoisted(() => ({ role: "Member" }));
+vi.mock("src/auth/hooks", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useAuthContext: () => ({ role: auth.role }),
+}));
+
 const CONNECTION = { id: "connection-1", status: "active", display_name: "acme" };
 const REPOSITORY = {
   id: 7,
@@ -44,6 +50,7 @@ const row = (name) => screen.getByRole("button", { name: new RegExp(`^${name}`) 
 
 describe("ConnectAgentPage", () => {
   beforeEach(() => {
+    auth.role = "Member";
     mockNavigate.mockReset();
     mockGitHubConnection.mockReturnValue({ data: null, isLoading: false, isError: false });
     mockRepositories.mockReturnValue({ data: [], isFetching: false, isError: false });
@@ -95,6 +102,20 @@ describe("ConnectAgentPage", () => {
     expect(target.pathname).toBe("/dashboard/settings/integrations");
     expect(target.searchParams.get("platform")).toBe("github");
     expect(target.searchParams.get("return_to")).toBe("/dashboard/agents/connect?source=github");
+  });
+
+  it("won't let a viewer install the GitHub App", async () => {
+    auth.role = "Viewer";
+    renderPage();
+    fireEvent.click(row("GitHub"));
+
+    const install = screen.getByRole("button", { name: "Install GitHub App" });
+    expect(install).toBeDisabled();
+    fireEvent.mouseOver(install.parentElement);
+    expect(
+      await screen.findByText("You don't have permission to connect GitHub."),
+    ).toBeInTheDocument();
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it("says why when the install waits for an organization owner", () => {
