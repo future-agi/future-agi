@@ -8,6 +8,12 @@ export function dialog(theme) {
           borderRadius: 12,
           backgroundImage: "none",
           backgroundColor: theme.palette.background.overlay,
+          // A secondary button is bg.paper on the page; on the dialog's
+          // overlay surface it must be transparent or it reads as a dark box.
+          "& .MuiButton-outlinedInherit": {
+            backgroundColor: "transparent",
+            "&:hover": { backgroundColor: theme.palette.action.hover },
+          },
           ...(!ownerState.fullScreen && {
             margin: theme.spacing(2),
           }),
