@@ -419,12 +419,20 @@ class NormalBootstrapEnvelopeSampler:
             inst = bounded_installation(self.installation, MAX_READ_SECONDS, inherit_deadline=True)
             inst.runner.max_output = MAX_READER_OUTPUT
             result = inst.docker_run(*args, check=False)
-            _need(result.returncode == 0 and len(result.stdout) + len(result.stderr) <= MAX_READER_OUTPUT,
+            _need(result.returncode == 0, "resource_observation_unavailable")
+            _need(len(result.stdout) + len(result.stderr) <= MAX_READER_OUTPUT,
                   "resource_observation_unavailable")
             return json.loads(result.stdout)
         except ResourceObservationError:
             raise
-        except Exception:
+        except Exception as exc:
+            # Same closed code; separate raise sites, so a failure diagnostic's
+            # line names the bounded Docker read's failure kind.
+            kind = getattr(exc, "code", None)
+            if kind == "timeout":
+                raise ResourceObservationError("resource_observation_unavailable") from None
+            if kind == "output_limit":
+                raise ResourceObservationError("resource_observation_unavailable") from None
             raise ResourceObservationError("resource_observation_unavailable") from None
 
     def _daemon_info(self) -> tuple[str, str, str]:
@@ -708,7 +716,10 @@ class NormalBootstrapEnvelopeSampler:
             sudo = "/usr/bin/sudo"
             _need(Path(sudo).is_file() and os.access(sudo, os.X_OK), "resource_reader_failed")
             result = invoke([sudo, "-n", *command])
-        _need(result.returncode == 0 and not result.stderr, "resource_reader_failed")
+        # Separate checks so a failure diagnostic's line names the reader outcome.
+        _need(result.returncode != 4, "resource_reader_failed")  # a listed entry vanished mid-walk
+        _need(result.returncode == 0, "resource_reader_failed")
+        _need(not result.stderr, "resource_reader_failed")
         try:
             counters = _strict_json(result.stdout)
         except Exception:
@@ -765,6 +776,9 @@ class NormalBootstrapEnvelopeSampler:
         if operation_error is not None:
             raise operation_error
         if self._sample_error is not None:
+            if isinstance(self._sample_error, ResourceObservationError):
+                # Keep the background read's own closed code and raise site.
+                raise self._sample_error
             raise ResourceObservationError("resource_sampling_failed") from None
         _need(started is not None and completed is not None, "resource_sampling_failed")
         try:
@@ -1204,6 +1218,10 @@ def _reader_main() -> int:
         return 0
     except PermissionError:
         return 3
+    except FileNotFoundError:
+        # A path listed by the walk vanished before it was read. Still a refusal;
+        # the distinct status only lets a failure diagnostic say so.
+        return 4
     except BaseException:
         return 2
 

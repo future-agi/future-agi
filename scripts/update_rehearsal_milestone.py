@@ -423,7 +423,9 @@ class SnapshotMilestone(ShippingRehearsal):
                     Mounts=row['Mounts'], RestartPolicy=row['HostConfig']['RestartPolicy'])
             self._diagnostic_data['stack_inspect'] = inspect
         except Exception as exc:
-            self._diagnostic_data['collection_errors'].append(dict(exception_type=type(exc).__name__))
+            kind = getattr(exc,'code',None)
+            self._diagnostic_data['collection_errors'].append(dict(exception_type=type(exc).__name__,
+                kind=kind if isinstance(kind,str) and re.fullmatch(r'[a-z_]{1,40}',kind) else None))
             self._diagnostic_data['collection_errors'] = self._diagnostic_data['collection_errors'][-16:]
         if hasattr(self,'ledger'):
             checkpoint = self.ledger.snapshot

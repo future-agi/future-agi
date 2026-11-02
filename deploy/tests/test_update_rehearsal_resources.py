@@ -269,6 +269,83 @@ class ResourceEnvelopeTests(unittest.TestCase):
         self.assertTrue(sampler._stop.is_set())
         self.assertGreaterEqual(sampler.read_count, 1)
 
+    def test_background_read_failure_keeps_its_own_closed_code(self):
+        # A failed sample must say which bounded read refused, not a generic
+        # sampling failure: native qualification hid exactly this once.
+        class FailingRead(FixedSampler):
+            def _read(self):
+                if self.read_count:
+                    raise resources.ResourceObservationError("resource_reader_timeout")
+                return super()._read()
+
+        sampler = FailingRead(interval_seconds=0.005)
+        # assertRaises drops tracebacks; the raise site is part of the claim.
+        try:
+            sampler.measure(lambda: time.sleep(0.05))
+        except resources.ResourceObservationError as exc:
+            raised = exc
+        else:
+            self.fail("a failed background read must refuse")
+        self.assertEqual(raised.code, "resource_reader_timeout")
+        sites = []
+        trace = raised.__traceback__
+        while trace is not None:
+            sites.append(trace.tb_frame.f_code.co_name)
+            trace = trace.tb_next
+        self.assertEqual(sites[-1], "_read")  # the read's own raise site survives
+        self.assertTrue(sampler._stop.is_set())
+
+    def test_unexpected_background_failure_is_still_a_sampling_failure(self):
+        class BrokenRead(FixedSampler):
+            def _read(self):
+                if self.read_count:
+                    raise ValueError("not a closed observation code")
+                return super()._read()
+
+        with self.assertRaisesRegex(resources.ResourceObservationError, "^resource_sampling_failed$"):
+            BrokenRead(interval_seconds=0.005).measure(lambda: time.sleep(0.05))
+
+    def test_reader_names_a_vanished_entry_at_its_own_check(self):
+        def failing_line(returncode, stderr=b""):
+            class NativeReader:
+                def __init__(self):
+                    self.returncode = None
+                    self.stdin, self.stdout, self.stderr = io.BytesIO(), io.BytesIO(), io.BytesIO()
+
+                def communicate(self, _payload, timeout):
+                    self.returncode = returncode
+                    return b"", stderr
+
+                def poll(self):
+                    return self.returncode
+
+            with patch.object(resources.subprocess, "Popen", return_value=NativeReader()):
+                try:
+                    FixedSampler()._fixed_reader({})
+                except resources.ResourceObservationError as exc:
+                    raised = exc
+                else:
+                    self.fail("a failed native read must refuse")
+            self.assertEqual(raised.code, "resource_reader_failed")
+            trace, line = raised.__traceback__, None
+            while trace is not None:
+                if trace.tb_frame.f_code.co_name == "_fixed_reader":
+                    line = trace.tb_lineno
+                trace = trace.tb_next
+            return line
+
+        vanished, failed, noisy = failing_line(4), failing_line(2), failing_line(0, b"x")
+        self.assertEqual(len({vanished, failed, noisy}), 3)
+
+        class Stdin:
+            buffer = io.BytesIO(b"{}")
+
+        for error, status in ((FileNotFoundError(), 4), (PermissionError(), 3), (ValueError(), 2)):
+            with patch.object(resources.sys, "stdin", Stdin()), \
+                    patch.object(resources, "_native_reader", side_effect=error):
+                Stdin.buffer.seek(0)
+                self.assertEqual(resources._reader_main(), status)
+
     def test_reader_refuses_unbound_host_paths_and_container_ids(self):
         malformed = {
             "schema_version": 2,

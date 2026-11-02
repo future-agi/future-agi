@@ -925,8 +925,11 @@ class ShippingRehearsal:
                     if k in ('ID', 'CPUPerc', 'MemUsage', 'MemPerc', 'BlockIO', 'NetIO', 'PIDs')}
                     for line in stats.stdout.splitlines() if line.strip()]
         except Exception as exc:
+            kind = getattr(exc, 'code', None)
             self._diagnostic_data['collection_errors'].append(dict(exception_type=type(exc).__name__,
-                refusal=producer().failure_diagnostics(exc)['refusal_code']))
+                refusal=producer().failure_diagnostics(exc)['refusal_code'],
+                # ObservationFailure's closed vocabulary (timeout, output_limit, ...).
+                kind=kind if isinstance(kind, str) and re.fullmatch(r'[a-z_]{1,40}', kind) else None))
             self._diagnostic_data['collection_errors'] = self._diagnostic_data['collection_errors'][-16:]
         self._diagnostic_data['resources'].append(sample)
         self._diagnostic_data['resources'] = self._diagnostic_data['resources'][-128:]
