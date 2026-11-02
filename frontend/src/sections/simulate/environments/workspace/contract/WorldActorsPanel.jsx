@@ -136,6 +136,10 @@ function ActorForm({ actor, busy, error, onClose, onSave }) {
     const constraints = actor?.constraints || {};
     const activation = actor?.activation || {};
     const tool = value("tool", activation.trigger?.tool || "");
+    // Only an edit to the tool field changes the trigger; any other kind (delay, contact, chance) is kept as it was.
+    const trigger = "tool" in fields || !activation.trigger
+      ? tool ? { kind: "on_tool", tool } : { kind: "always" }
+      : activation.trigger;
     onSave({
       ...actor,
       id: value("id", actor?.id || ""),
@@ -150,7 +154,7 @@ function ActorForm({ actor, busy, error, onClose, onSave }) {
       permitted_actions: list(value("permitted", (actor?.permitted_actions || []).join(", "))),
       activation: {
         ...activation,
-        trigger: tool ? { kind: "on_tool", tool } : { kind: "always" },
+        trigger,
         fallback: value("fallback", activation.fallback || "silent"),
       },
     });

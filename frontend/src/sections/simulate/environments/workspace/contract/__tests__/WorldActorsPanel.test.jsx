@@ -61,6 +61,18 @@ describe("WorldActorsPanel", () => {
     });
   });
 
+  it("keeps an actor's trigger when only another field is edited", () => {
+    const delayed = { kind: "after_seconds", seconds: 30 };
+    actorsData = { actors: [{ ...MANAGER, activation: { trigger: delayed, fallback: "silent" } }], source: "draft", revision: 3 };
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Edit"));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Priya R." } });
+    fireEvent.click(screen.getByText("Save to draft"));
+    const [change] = mutate.mock.calls[0];
+    expect(change.actor.name).toBe("Priya R.");
+    expect(change.actor.activation.trigger).toEqual(delayed);
+  });
+
   it("removes an actor from the draft, and a locked environment offers no edits", () => {
     const { unmount } = render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByText("Remove"));
