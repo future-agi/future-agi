@@ -567,6 +567,16 @@ catalog, boots the stack with `bin/e2e up`, runs `bin/e2e test`, and always uplo
 HTML report (7-day retention); on failure it dumps `bin/e2e ps` and the last 200 log lines. The
 `E2E Tests Pass` gate fails closed unless every dependency succeeded or was legitimately skipped.
 
+After the Playwright suite, the same job runs the SDK live suites from
+[futureagi-sdk](https://github.com/future-agi/futureagi-sdk) against the stack it booted, on every
+PR and push: `python/tests/platform` calls every operation of the generated Python client and
+`src/platform/__tests__/live.test.ts` covers the TypeScript transport, so a backend change that
+breaks the SDKs fails here before it ships. The SDK checkout is the branch named like the PR's
+branch when the SDK repository has one, else the base branch (`dev` or `main`); a manual run can
+name any ref with the `sdk-ref` input. The account comes from `sdkgen/local_api_key.py --signup`
+(signup, token, user-info, keys — the same calls as `lib/provisioning.ts`). The suites take about a
+minute; they are skipped only when the stack never booted.
+
 The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
 the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`
 label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. The label counts
