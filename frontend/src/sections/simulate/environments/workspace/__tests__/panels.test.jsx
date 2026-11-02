@@ -217,7 +217,7 @@ describe("WorkspacePanels", () => {
     expect(screen.queryByRole("tab", { name: /Runs \d/ })).toBeNull();
   });
 
-  it("shows a gap badge whose tooltip lists the missing pieces", async () => {
+  it("shows a gap tab with no tooltip on hover", async () => {
     const user = userEvent.setup();
     renderPanels({
       gapsByTab: { evals: [{ id: "no-evals", title: "No evaluations added" }] },
@@ -225,28 +225,28 @@ describe("WorkspacePanels", () => {
     });
 
     await user.hover(screen.getByText("Evaluations"));
-    expect(await screen.findByText("Needs your input before you can run:")).toBeInTheDocument();
-    expect(screen.getByText(/No evaluations added/)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Evaluations" })).toBeInTheDocument();
+    expect(screen.queryByText("Needs your input before you can run:")).toBeNull();
+    expect(screen.queryByText(/No evaluations added/)).toBeNull();
   });
 
-  it("explains a tab on hover instead of repeating it as a heading", async () => {
+  it("shows no tooltip when a tab is hovered", async () => {
     const user = userEvent.setup();
     renderPanels();
     await user.hover(screen.getByText("Contract"));
-    expect(await screen.findByText(/What this environment is made of/)).toBeInTheDocument();
-    // The hint describes the tab; it never replaces the tab's name.
+    expect(screen.queryByText(/What this environment is made of/)).toBeNull();
     expect(screen.getByRole("tab", { name: "Contract" })).toBeInTheDocument();
   });
 
-  it("keeps the gap list in the tooltip alongside the tab's explanation", async () => {
+  it("shows neither the hint nor the gap list when a gap tab is hovered", async () => {
     const user = userEvent.setup();
     renderPanels({
       gapsByTab: { evals: [{ id: "no-evals", title: "No evaluations added" }] },
       counts: { scenarios: 2, evals: 0 },
     });
     await user.hover(screen.getByText("Evaluations"));
-    expect(await screen.findByText(/These decide whether each task passed/)).toBeInTheDocument();
-    expect(screen.getByText("Needs your input before you can run:")).toBeInTheDocument();
+    expect(screen.queryByText(/These decide whether each task passed/)).toBeNull();
+    expect(screen.queryByText("Needs your input before you can run:")).toBeNull();
   });
 
   it("falls back to the Overview body for an unknown tab", () => {
