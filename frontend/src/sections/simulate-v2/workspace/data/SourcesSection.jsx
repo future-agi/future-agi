@@ -1,23 +1,21 @@
 import PropTypes from "prop-types";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Box, Button, Menu, MenuItem, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { SectionCard } from "../../components/primitives";
 import CopyCommandButton from "../../components/CopyCommandButton";
 import {
-  ORG_SOURCES,
-  SUPPORTED_LINE,
-  KB_LIMIT_LINE,
-  UNAVAILABLE_CONNECTORS,
   participantViewsOf,
   readFile,
+  sourceFromOrg,
   roleLabel,
   visibilityLabel,
   usageOf,
   dataCli,
 } from "../../_mock/orgData";
+import AddSourceMenu from "./AddSourceMenu";
 import DataProposalCard from "./DataProposalCard";
 import SourceDrawer from "./SourceDrawer";
 import ClosableDialog from "../../components/ClosableDialog";
@@ -66,9 +64,10 @@ export default function SourcesSection({
       },
       { replace: true },
     );
-  const fileRef = useRef(null);
   const sources = (envState.sources || []).filter((s) => !s.archived);
   const inEnv = sources.filter((s) => s.inEnv);
+  /* Added from a citation: in the world as evidence, its proposal not yet reviewed. */
+  const pending = sources.filter((s) => s.suggestionsPending);
   const views = participantViewsOf(inEnv);
   const snapshot = inEnv.find((s) => s.snapshot)?.snapshot;
   const newest = inEnv
@@ -93,12 +92,7 @@ export default function SourcesSection({
     }
     /* From the Knowledge base, pinned to the revision chosen: a newer
        revision is offered as a refresh to review, never applied on its own. */
-    const s = {
-      ...readFile({ name: o.name, size: 64000 }),
-      owner: o.owner,
-      byReference: true,
-      kb: { collection: o.collection, revision: o.revision },
-    };
+    const s = sourceFromOrg(o);
     patch({ sources: [...(envState.sources || []), s] });
     setReview([s.id]);
   };
@@ -131,111 +125,54 @@ export default function SourcesSection({
       }
       sx={{ mb: 2 }}
     >
-      <Menu
+      <AddSourceMenu
         anchorEl={anchor}
-        open={!!anchor}
         onClose={() => setAnchor(null)}
-        slotProps={{ paper: { sx: { width: 320 } } }}
-      >
-        <MenuItem
-          onClick={() => {
-            setAnchor(null);
-            fileRef.current?.click();
-          }}
-          sx={{ alignItems: "flex-start", gap: 1, whiteSpace: "normal" }}
-        >
-          <Iconify icon="solar:upload-linear" width={16} sx={{ mt: "2px" }} />
-          <Box>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-              Upload files
-            </Typography>
-            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {SUPPORTED_LINE}
-            </Typography>
-          </Box>
-        </MenuItem>
-        <Typography
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-            px: 2,
-            pt: 1,
-            pb: 0.5,
-          }}
-        >
-          Choose from Knowledge base
-        </Typography>
-        {ORG_SOURCES.map((o) => (
-          <MenuItem key={o.id} onClick={() => addOrg(o)} sx={{ gap: 1 }}>
-            <Iconify
-              icon={
-                o.access
-                  ? "solar:document-text-linear"
-                  : "solar:lock-keyhole-minimalistic-linear"
-              }
-              width={16}
-              sx={{ color: "text.secondary" }}
-            />
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography noWrap sx={{ typography: "s2" }}>
-                {o.access ? o.name : `${o.owner} source`}
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {o.access
-                  ? `${o.collection} · revision ${o.revision} · pinned`
-                  : "No access — Request access"}
-              </Typography>
-            </Box>
-          </MenuItem>
-        ))}
-        <Typography
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-            px: 2,
-            pt: 0.5,
-            pb: 1,
-          }}
-        >
-          {`${KB_LIMIT_LINE} Updates are never pulled in on their own — a new revision waits for you to review it.`}
-        </Typography>
-        <Typography
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-            px: 2,
-            pt: 1,
-            pb: 0.5,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          Other connectors
-        </Typography>
-        {UNAVAILABLE_CONNECTORS.map((c) => (
-          <MenuItem key={c.id} disabled sx={{ gap: 1 }}>
-            <Iconify icon={c.icon} width={16} />
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography noWrap sx={{ typography: "s2" }}>
-                {c.name}
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                Not available yet
-              </Typography>
-            </Box>
-          </MenuItem>
-        ))}
-      </Menu>
-      <input
-        ref={fileRef}
-        hidden
-        multiple
-        type="file"
-        onChange={(e) => {
-          addFiles(Array.from(e.target.files || []));
-          e.target.value = "";
-        }}
+        onAddFiles={addFiles}
+        onAddOrg={addOrg}
       />
+      {!readOnly && pending.length > 0 && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            mb: 1.5,
+            px: 1.5,
+            py: 1,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+          }}
+        >
+          <Iconify
+            icon="solar:info-circle-linear"
+            width={14}
+            sx={{ color: "text.tertiary", flexShrink: 0 }}
+          />
+          <Typography
+            sx={{ typography: "s1", color: "text.secondary", flex: 1 }}
+          >
+            {`${pending.map((x) => x.name).join(", ")} ${pending.length === 1 ? "was" : "were"} added as evidence on a scenario. What ${pending.length === 1 ? "it suggests" : "they suggest"} for rules and scenarios hasn't been reviewed.`}
+          </Typography>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => {
+              setReview(pending.map((x) => x.id));
+              patch({
+                sources: (envState.sources || []).map((x) =>
+                  x.suggestionsPending
+                    ? { ...x, suggestionsPending: false }
+                    : x,
+                ),
+              });
+            }}
+          >
+            Review suggestions
+          </Button>
+        </Stack>
+      )}
 
       {sources.length > 0 && (
         <Box>

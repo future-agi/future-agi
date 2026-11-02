@@ -204,6 +204,14 @@ const TABLES = [
   },
 ];
 
+/** A Knowledge base source, by reference and pinned to its revision. */
+export const sourceFromOrg = (o) => ({
+  ...readFile({ name: o.name, size: 64000 }),
+  owner: o.owner,
+  byReference: true,
+  kb: { collection: o.collection, revision: o.revision },
+});
+
 /** What reading the file found — deterministic from its name. */
 export const readFile = (file) => {
   const name = file?.name || "file";

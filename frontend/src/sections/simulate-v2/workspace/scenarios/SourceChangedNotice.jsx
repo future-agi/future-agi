@@ -36,7 +36,7 @@ export default function SourceChangedNotice({ row, env, locked }) {
           borderColor: "divider",
         }}
       >
-        {`Kept on ${kept.name} v${row.sourcePinned.v}. v${kept.pendingRefresh.v} is waiting; re-ground it from Sources when this case should follow.`}
+        {`Kept on ${kept.name} v${row.sourcePinned.v}. v${kept.pendingRefresh.v} is waiting; move it to the new version from Sources when this case should follow.`}
       </Typography>
     );
   if (!change) return null;
@@ -64,7 +64,7 @@ export default function SourceChangedNotice({ row, env, locked }) {
         </Typography>
       </Stack>
       <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>
-        {`This case was grounded in v${source.version}. The new version was kept aside, so runs still use v${source.version}.`}
+        {`This case cites v${source.version}. The new version was kept aside, so runs still use v${source.version}.`}
       </Typography>
       {(pending.changed || []).map((c) => (
         <Box
@@ -97,12 +97,12 @@ export default function SourceChangedNotice({ row, env, locked }) {
             onClick={() => {
               patch(regroundPatch(env, envState, source, plan));
               enqueueSnackbar(
-                `Re-grounded on ${source.name} v${pending.v} as environment ${next}. ${plan.affected.length} case${plan.affected.length === 1 ? "" : "s"} to re-check.`,
+                `Moved to ${source.name} v${pending.v} as environment ${next}. ${plan.affected.length} case${plan.affected.length === 1 ? "" : "s"} to re-check.`,
                 { variant: "success" },
               );
             }}
           >
-            {`Re-ground · saves environment ${next}`}
+            {`Move to v${pending.v} · saves environment ${next}`}
           </Button>
           <Button
             size="small"
@@ -117,7 +117,7 @@ export default function SourceChangedNotice({ row, env, locked }) {
       )}
       {!locked && plan.affected.length > 1 && (
         <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
-          {`Re-grounding moves the whole environment: ${plan.affected.length} cases that touch this file are re-checked.`}
+          {`Moving to the new version changes the whole environment: ${plan.affected.length} cases that touch this file are re-checked.`}
         </Typography>
       )}
     </Box>

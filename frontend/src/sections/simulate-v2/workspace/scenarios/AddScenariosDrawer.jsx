@@ -161,6 +161,7 @@ export default function AddScenariosDrawer({
             blocked,
             env,
             currentEnvVersion(env, envState).label,
+            envState,
           );
           patch(validatePatch(envState, res));
           const ok = res.filter((x) => x.result.pass).length;

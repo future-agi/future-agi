@@ -53,6 +53,7 @@ import {
   unanswerableNote,
   rejectedNote,
 } from "../_mock/addScenarios";
+import { validateScenario } from "../_mock/scenarioValidation";
 import SelectionBar from "./scenarios/SelectionBar";
 import { PickRouteIllustration } from "./scenarios/RouteThumbs";
 import {
@@ -740,6 +741,24 @@ export default function ScenariosStep({
         envState,
         source: stampSource,
       });
+      /* Validate against the environment (scenarios.md): the records it
+         names, the tools it needs and the rules it expects too. A row that
+         fails joins the blocked drafts below with the check that failed. */
+      batch.rows = batch.rows.filter((r) => {
+        const bad = validateScenario(r, env, envState).checks.find(
+          (c) => !c.pass,
+        );
+        if (!bad) return true;
+        batch.rejected.push({
+          id: r.id,
+          name: r.summary || r.title || r.name || r.id,
+          gate: bad.id,
+          reason: bad.reason,
+        });
+        return false;
+      });
+      /* A missing tool is a failed check now, not a "not measured" warning. */
+      batch.needing = 0;
       /* Proved on add: a row that fails a gate isn't added — it's kept as a
          blocked draft you can open, fix and validate, never silently dropped. */
       const at0 = new Date().toISOString();
@@ -902,7 +921,7 @@ export default function ScenariosStep({
         `${copies.length} draft cop${copies.length === 1 ? "y" : "ies"} made — review them as proposals.`,
       );
     } else if (kind === "validate") {
-      const res = validateRows(rowsSel, env, envLabel);
+      const res = validateRows(rowsSel, env, envLabel, envState);
       patch(validatePatch(envState, res));
       const bad = res.filter((x) => !x.result.pass).length;
       say(

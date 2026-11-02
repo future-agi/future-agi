@@ -20,6 +20,7 @@
 */
 import { envChangePatch } from "./versions";
 import { proveOnAdd } from "./addScenarios";
+import { validateScenario } from "./scenarioValidation";
 
 export const TAG_CATEGORIES = [
   { id: "risk", label: "Risk" },
@@ -225,7 +226,7 @@ export const regroundPatch = (envState, rowId, citeId) => {
     ...envChangePatch(
       envState,
       "rules",
-      `${row?.title || "A scenario"} re-grounded on ${src?.name} v${src?.version}`,
+      `${row?.title || "A scenario"} moved to ${src?.name} v${src?.version}`,
     ),
   };
 };
@@ -246,13 +247,37 @@ export const duplicatePatch = (envState, rows) => {
   return { scenarios: [...(envState.scenarios || []), ...copies], copies };
 };
 
-/** Validate on demand: the admission gates again, with what each found. */
-export const validateRows = (rows, env, envLabel) =>
-  rows.map((r) => ({
-    id: r.id,
-    title: r.title || r.summary || r.id,
-    result: proveOnAdd(r, env, envLabel),
-  }));
+/**
+ * Validate on demand — against the environment (records, tools, rules, a
+ * wrong answer fails, a correct one can pass) when its state is given, else
+ * the admission gates alone. → [{ id, title, result: { pass, gates, failed? } }]
+ */
+export const validateRows = (rows, env, envLabel, envState) =>
+  rows.map((r) => {
+    if (!envState)
+      return {
+        id: r.id,
+        title: r.title || r.summary || r.id,
+        result: proveOnAdd(r, env, envLabel),
+      };
+    const v = validateScenario(r, env, envState);
+    const bad = v.checks.find((c) => !c.pass);
+    return {
+      id: r.id,
+      title: r.title || r.summary || r.id,
+      result: {
+        pass: v.pass,
+        gates: v.checks.map((c) => ({
+          id: c.id,
+          label: c.label,
+          pass: c.pass,
+        })),
+        ...(bad && {
+          failed: { id: bad.id, label: bad.label, reason: bad.reason },
+        }),
+      },
+    };
+  });
 
 export const validatePatch = (envState, results) => {
   const byId = new Map(results.map((x) => [x.id, x.result]));
@@ -328,7 +353,7 @@ export const scenarioCli = {
   group: (ids, group) =>
     `fi sim scenarios group add "${group || "Refund release gate"}" ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""}`,
   ground: (id) =>
-    `fi sim scenarios ground ${id} --source <source-ref> --supports expected`,
+    `fi sim scenarios cite ${id} --source <source-ref> --supports expected`,
   validate: (ids) =>
     `fi sim scenarios validate ${ids.slice(0, 2).join(" ")}${ids.length > 2 ? " …" : ""}`,
   duplicate: (id) => `fi sim scenarios duplicate ${id}`,

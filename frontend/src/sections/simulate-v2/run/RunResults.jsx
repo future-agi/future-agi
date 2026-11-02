@@ -115,6 +115,8 @@ import { approvalOf } from "../_mock/approvals";
 import ImprovementRunStrip from "./ImprovementRunStrip";
 
 import { SHOW_INSIGHTS } from "../_mock/featureFlags";
+import EvaluateTab from "./evaluate/EvaluateTab";
+import RunInsightsTab from "./runInsights/RunInsightsTab";
 import { nextSnapshotLabel } from "../_mock/envSnapshot";
 import logger from "src/utils/logger";
 import { ConfirmDialog } from "src/components/custom-dialog";
@@ -282,8 +284,6 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
     /* Insights leads once the run is finished — this screen only shows
        finished runs; a live one stays on the live view. */
     const t = params.get("tab") || (SHOW_INSIGHTS ? "insights" : "tasks");
-    /* Insights is hidden for now — its links land on Scenarios. */
-    if (t === "insights" && !SHOW_INSIGHTS) return "tasks";
     /* Stale deep-links to removed tabs — the old "Self improvement runs"
        (`optimize`/`omega`), the "Verify" tab, and the now-retired "Trials"
        tab (self-improvement trials are peer runs on the Runs list) — all
@@ -641,6 +641,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
      records the charge on the run; opening it again reads the same one. */
   const analysisCharge =
     (envState.runs || []).find((r) => r.id === runId)?.analysis || null;
+  const [debugConfirm, setDebugConfirm] = useState(null);
   const analysisCredits =
     failingScenarioIds.length * RATE_PLAN.rates.analysis_calls.credits;
   /* Debug selected: only the failures picked in the table go to the
@@ -1786,7 +1787,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               analysisCharge
                 ? `Already analysed (${analysisCharge.credits.toLocaleString()} credits) — opening it again isn't charged.`
                 : failingScenarioIds.length
-                  ? `Reads the ${failingScenarioIds.length} failing scenario${failingScenarioIds.length === 1 ? "" : "s"} · ${RATE_PLAN.rates.analysis_calls.credits} credits each, charged once on this run's Cost tab.`
+                  ? `About ${analysisCredits.toLocaleString()} credits for ${failingScenarioIds.length} failing scenario${failingScenarioIds.length === 1 ? "" : "s"} — you confirm before anything is charged.`
                   : "Nothing failed — nothing to analyse or charge."
             }
           >
@@ -1795,11 +1796,15 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               color="primary"
               size="small"
               startIcon={<Iconify icon="solar:magnifer-linear" width={16} />}
-              onClick={() => openDebug()}
+              onClick={(e) =>
+                /* The first open spends credits, so it asks first; opening
+                   it again is free and goes straight in. */
+                !analysisCharge && failingScenarioIds.length
+                  ? setDebugConfirm(e.currentTarget)
+                  : openDebug()
+              }
             >
-              {!analysisCharge && failingScenarioIds.length
-                ? `Debug failures · ≈ ${analysisCredits.toLocaleString()} credits`
-                : "Debug failures"}
+              Debug failures
             </Button>
           </Tooltip>
         )}
@@ -2007,6 +2012,8 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             <Tab value="tasks" label={`Scenarios (${stats.total})`} />
             <Tab value="analytics" label="Analytics" />
             <Tab value="cost" label="Cost" />
+            <Tab value="evaluate" label="Evaluate" />
+            {!SHOW_INSIGHTS && <Tab value="insights" label="Insights" />}
             <Tab
               value="improvements"
               label={
@@ -2464,6 +2471,69 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               />
             )}
 
+            {!SHOW_INSIGHTS && tab === "insights" && (
+              <RunInsightsTab
+                envState={envState}
+                patch={patch}
+                runId={runId}
+                runLabel={
+                  identity?.ordinal ? `Run ${identity.ordinal}` : "This run"
+                }
+                tasks={tasks}
+                insights={report.insights}
+                debug={
+                  candidate || fixFirst
+                    ? null
+                    : {
+                        /* Insights finds the pattern; Debug failures reads
+                           those failures step by step and proposes the
+                           change — narrowed to the finding's trials. */
+                        scenarioIdsOf: (taskIds) => [
+                          ...new Set(
+                            tasks
+                              .filter(
+                                (t) =>
+                                  taskIds.includes(t.id) &&
+                                  (t.status === "failed" ||
+                                    t.status === "flaky"),
+                              )
+                              .map((t) => t.scenarioId || t.id),
+                          ),
+                        ],
+                        creditsOf: (scenarioIds) =>
+                          scenarioIds.filter(
+                            (id) => !(analysisCharge?.ids || []).includes(id),
+                          ).length * RATE_PLAN.rates.analysis_calls.credits,
+                        open: (scenarioIds) => openDebug(scenarioIds),
+                      }
+                }
+                onOpenTask={(t) => {
+                  if (isVoiceRun) {
+                    setEvalFocus(null);
+                    setOpenTask(t);
+                  } else openTrace(t);
+                }}
+              />
+            )}
+
+            {tab === "evaluate" && (
+              <EvaluateTab
+                envState={envState}
+                patch={patch}
+                runId={runId}
+                runLabel={
+                  identity?.ordinal ? `Run ${identity.ordinal}` : "This run"
+                }
+                tasks={tasks}
+                onOpenTask={(t) => {
+                  if (isVoiceRun) {
+                    setEvalFocus(null);
+                    setOpenTask(t);
+                  } else openTrace(t);
+                }}
+              />
+            )}
+
             {tab === "analytics" && (
               <RunAnalytics
                 tasks={tasks}
@@ -2617,6 +2687,57 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       />
 
       {/* ── re-run chooser ── */}
+      {/* Debug failures, first open: what it reads and what it costs, then Start. */}
+      <Popover
+        open={!!debugConfirm}
+        anchorEl={debugConfirm}
+        onClose={() => setDebugConfirm(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        slotProps={{
+          paper: { sx: { mt: 0.75, width: 320, borderRadius: "8px" } },
+        }}
+      >
+        <Box sx={{ p: 1.5 }}>
+          <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+            {`Debug ${failingScenarioIds.length} failing scenario${failingScenarioIds.length === 1 ? "" : "s"}`}
+          </Typography>
+          <Typography
+            sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+          >
+            Reads each failure step by step, finds where it went wrong and
+            proposes the change to try.
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 1 }}>
+            {`About ${analysisCredits.toLocaleString()} credits · ${RATE_PLAN.rates.analysis_calls.credits} per scenario, charged once on this run's Cost tab. Opening it again is free.`}
+          </Typography>
+          <Stack
+            direction="row"
+            justifyContent="flex-end"
+            spacing={1}
+            sx={{ mt: 1.5 }}
+          >
+            <Button
+              size="small"
+              onClick={() => setDebugConfirm(null)}
+              sx={{ color: "text.secondary" }}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              onClick={() => {
+                setDebugConfirm(null);
+                openDebug();
+              }}
+            >
+              Start
+            </Button>
+          </Stack>
+        </Box>
+      </Popover>
       <Popover
         open={!!rerunAnchor}
         anchorEl={rerunAnchor}

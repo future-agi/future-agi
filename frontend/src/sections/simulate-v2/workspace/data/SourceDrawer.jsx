@@ -664,7 +664,7 @@ export default function SourceDrawer({
                         setPlan(null);
                       }}
                     >
-                      {`Re-ground and save as ${nextLabel}`}
+                      {`Move to the new version and save as ${nextLabel}`}
                     </Button>
                     <Button
                       size="small"

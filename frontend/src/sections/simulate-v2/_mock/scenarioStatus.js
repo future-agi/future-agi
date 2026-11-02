@@ -110,7 +110,7 @@ export const scenarioStatus = (row, ctx) => {
     return {
       id: "source-changed",
       ...STATUS_META["source-changed"],
-      detail: `${change.source.name} has v${change.pending.v} waiting; this case was grounded in v${change.source.version}. Re-ground it, or keep it on v${change.source.version}.`,
+      detail: `${change.source.name} has v${change.pending.v} waiting; this case cites v${change.source.version}. Move it to v${change.pending.v}, or keep it on v${change.source.version}.`,
     };
   }
   if (!buildMode) {

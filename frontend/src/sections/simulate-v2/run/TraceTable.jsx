@@ -1180,7 +1180,19 @@ export default function TraceTable({
     <Box
       sx={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
     >
-      <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+      {/* This table alone is boxed: a run's grouped columns (run details,
+          scenario, system metrics, evaluations) read as one sheet. It
+          shrinks to its rows and scrolls inside the frame when taller. */}
+      <Box
+        sx={{
+          flex: "0 1 auto",
+          minHeight: 0,
+          overflow: "auto",
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "8px",
+        }}
+      >
         {/*
           tableLayout: "auto" lets each column size to its widest cell
           (header or body) rather than being pinned to the width props.
@@ -1212,6 +1224,9 @@ export default function TraceTable({
             "& .MuiTableRow-root:last-of-type .MuiTableCell-root": {
               borderColor: "divider",
             },
+            /* The frame draws the bottom edge. */
+            "& .MuiTableBody-root .MuiTableRow-root:last-of-type .MuiTableCell-root":
+              { borderBottom: 0 },
           }}
         >
           <TableHead>

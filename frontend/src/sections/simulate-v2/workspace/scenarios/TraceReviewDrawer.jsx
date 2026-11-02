@@ -656,6 +656,7 @@ export default function TraceReviewDrawer({
                         [current],
                         env,
                         currentEnvVersion(env, envState)?.label,
+                        envState,
                       )[0]?.result;
                       save({
                         validated: {

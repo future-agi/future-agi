@@ -141,10 +141,11 @@ Tag.propTypes = { children: PropTypes.node };
 /* ── v8 · containers ────────────────────────────────────────────────────── */
 
 /**
- * One group per batch, newest first. Design system table: no box around it —
- * the header (who added the batch, how and when, what is in it) sits on the
- * page and the batch's scenarios follow beneath a single rule, rows divided
- * by hairlines. Air between groups separates one addition from the next.
+ * One group per batch, newest first, each in its own frame (a one-off, by
+ * request — the design system keeps tables unboxed): the header (who added
+ * the batch, how and when, Hide) is the frame's top strip, and the batch's
+ * scenarios follow beneath a single rule, rows divided by hairlines. Wide
+ * columns scroll inside the frame, so it always shows where a batch ends.
  */
 function BatchContainer({
   batch,
@@ -161,6 +162,14 @@ function BatchContainer({
       sx={{
         /* Clear of the sticky toolbar when the history jumps here. */
         scrollMarginTop: "calc(var(--scn-head, 64px) + 8px)",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        /* clip, not hidden: rounds the corners without breaking the
+           table's sticky pinned columns. */
+        overflow: "clip",
+        /* The frame draws the bottom edge. */
+        "& tbody tr:last-of-type > td": { borderBottom: 0 },
       }}
     >
       {/* The counts and actions drop to a second line when the pane is
@@ -177,7 +186,6 @@ function BatchContainer({
           flexWrap: "wrap",
           columnGap: 1.5,
           rowGap: 1,
-          borderRadius: 1,
           transition: "background-color 200ms",
           /* Picked in the history — a brief tint so the eye lands on it. */
           ...(flash && { bgcolor: "action.selected" }),
@@ -314,7 +322,7 @@ export function BatchContainers({
   latestId,
 }) {
   return (
-    <Stack spacing={3}>
+    <Stack spacing={2}>
       {batches.map((b, i) => (
         <BatchContainer
           key={b.meta.batchId}

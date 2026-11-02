@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Autocomplete,
   Box,
@@ -14,9 +15,18 @@ import {
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CopyCommandButton from "../../components/CopyCommandButton";
+import AddSourceMenu from "../data/AddSourceMenu";
+import { readFile, sourceFromOrg } from "../../_mock/orgData";
+import {
+  acceptRuleFix,
+  addCheckFix,
+  pickRecordFix,
+  syntheticRecordFix,
+  validateScenario,
+  validationPatchOf,
+} from "../../_mock/scenarioValidation";
 import { useEnvState } from "../../store";
 import { useRoleGates } from "../../_mock/previewRole";
-import { currentEnvVersion } from "../../_mock/versions";
 import {
   SUPPORTS,
   SUGGESTED_TAGS,
@@ -31,8 +41,6 @@ import {
   keepPinnedGroundPatch,
   regroundPatch,
   duplicatePatch,
-  validateRows,
-  validatePatch,
   promotePatch,
   scenarioCli,
 } from "../../_mock/scenarioOrg";
@@ -79,7 +87,20 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
   const [tagInput, setTagInput] = useState("");
   const [groupInput, setGroupInput] = useState("");
   const [citing, setCiting] = useState(null);
+  /* Add a file without leaving the citation: the same menu as World &
+     tools → Sources. The file joins the environment's sources as evidence;
+     what the builder would propose from it waits there for review. */
+  const sourcePickRef = useRef(null);
+  const [addAnchor, setAddAnchor] = useState(null);
   const [validation, setValidation] = useState(null);
+  const navigate = useNavigate();
+  /* Validate against the environment, or re-validate after a fix: the
+     result is saved on the scenario — Validated, or a blocked draft. */
+  const revalidate = (nextRow) => {
+    const result = validateScenario(nextRow, env, envState);
+    patch(validationPatchOf(envState, live.id, result, nextRow));
+    setValidation(result);
+  };
   const tags = tagsOf(envState);
   const myTags = tags.filter((t) => (live.tagIds || []).includes(t.id));
   const myGroups = groupsOfRow(envState, live.id);
@@ -87,12 +108,44 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
     (s) => s.inEnv && !s.archived && s.visibility !== "evaluator",
   );
   const stale = staleGroundingOf(live, envState);
+  /* A blocked draft shows what's wrong without being asked. */
+  const shownValidation =
+    validation || (live.blocked ? validateScenario(live, env, envState) : null);
   const fromProduction = ["production", "error-feed"].includes(
     live.provenance?.source || live.source,
   );
   const grounded = (live.grounding || []).some(
     (g) => g.supports === "expected" || g.supports === "policy",
   );
+
+  const addEvidenceSource = (src) => {
+    if (["unsupported", "unreadable"].includes(src.status)) {
+      enqueueSnackbar(src.statusNote || `Can't read ${src.name}.`, {
+        variant: "warning",
+      });
+      return;
+    }
+    const snapshot = (envState.sources || []).find(
+      (x) => x.inEnv && x.snapshot,
+    )?.snapshot;
+    patch({
+      sources: [
+        ...(envState.sources || []),
+        {
+          ...src,
+          inEnv: true,
+          snapshot: snapshot || null,
+          addedFor: "evidence",
+          suggestionsPending: true,
+        },
+      ],
+    });
+    setCiting((c) => c && { ...c, sourceId: src.id, passageId: "" });
+    enqueueSnackbar(
+      `${src.name} added to this environment's sources. What it suggests for rules and scenarios waits in World & tools → Sources.`,
+      { variant: "success" },
+    );
+  };
 
   const addCite = () => {
     const src = sources.find((s) => s.id === citing.sourceId);
@@ -390,32 +443,66 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                     >{`Supports: ${x.label}`}</MenuItem>
                   ))}
                 </Select>
-                {sources.length > 0 && (
-                  <Select
-                    size="small"
-                    displayEmpty
-                    value={citing.sourceId}
-                    onChange={(e) =>
-                      setCiting({
-                        ...citing,
-                        sourceId: e.target.value,
-                        passageId: "",
-                      })
+                <Select
+                  ref={sourcePickRef}
+                  size="small"
+                  displayEmpty
+                  value={citing.sourceId}
+                  onChange={(e) => {
+                    if (e.target.value === "__add") {
+                      setAddAnchor(sourcePickRef.current);
+                      return;
                     }
-                    sx={{ flex: 1, typography: "s2" }}
+                    setCiting({
+                      ...citing,
+                      sourceId: e.target.value,
+                      passageId: "",
+                    });
+                  }}
+                  sx={{ flex: 1, typography: "s2" }}
+                >
+                  <MenuItem value="" sx={{ typography: "s2" }}>
+                    Type a reference instead
+                  </MenuItem>
+                  {sources.map((s) => (
+                    <MenuItem
+                      key={s.id}
+                      value={s.id}
+                      sx={{ typography: "s2" }}
+                    >{`${s.name} · v${s.version}`}</MenuItem>
+                  ))}
+                  <MenuItem
+                    value="__add"
+                    sx={{
+                      typography: "s2",
+                      gap: 1,
+                      borderTop: "1px solid",
+                      borderColor: "divider",
+                    }}
                   >
-                    <MenuItem value="" sx={{ typography: "s2" }}>
-                      Type a reference instead
-                    </MenuItem>
-                    {sources.map((s) => (
-                      <MenuItem
-                        key={s.id}
-                        value={s.id}
-                        sx={{ typography: "s2" }}
-                      >{`${s.name} · v${s.version}`}</MenuItem>
-                    ))}
-                  </Select>
-                )}
+                    <Iconify icon="solar:add-circle-linear" width={14} />
+                    Add a file…
+                  </MenuItem>
+                </Select>
+                <AddSourceMenu
+                  anchorEl={addAnchor}
+                  multiple={false}
+                  onClose={() => setAddAnchor(null)}
+                  onAddFiles={(files) => {
+                    if (files[0]) addEvidenceSource(readFile(files[0]));
+                  }}
+                  onAddOrg={(o) => {
+                    setAddAnchor(null);
+                    if (!o.access) {
+                      enqueueSnackbar(
+                        `You don't have access to ${o.name}. Asked the ${o.owner} for it — you'll get a notification.`,
+                        { variant: "info" },
+                      );
+                      return;
+                    }
+                    addEvidenceSource(sourceFromOrg(o));
+                  }}
+                />
               </Stack>
               {citing.sourceId ? (
                 <Select
@@ -612,18 +699,10 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
             size="small"
             variant="outlined"
             disabled={ro}
-            onClick={() => {
-              const res = validateRows(
-                [live],
-                env,
-                currentEnvVersion(env, envState).label,
-              );
-              patch(validatePatch(envState, res));
-              setValidation(res[0].result);
-            }}
+            onClick={() => revalidate(live)}
             sx={{ color: "text.primary", borderColor: "divider" }}
           >
-            Validate
+            Validate against the environment
           </Button>
           {!live.promoted && (
             <>
@@ -642,27 +721,162 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
           )}
           <CopyCommandButton command={scenarioCli.validate([live.id])} />
         </Stack>
-        {validation && (
-          <Box sx={{ ...box, mt: 1, p: 1.25 }}>
-            {validation.gates.map((g) => (
-              <Stack key={g.id} direction="row" spacing={1} alignItems="center">
+        {shownValidation && (
+          <Box sx={{ ...box, mt: 1 }}>
+            <Box
+              sx={{
+                px: 1.25,
+                py: 1,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+                {shownValidation.pass
+                  ? "Validated against the environment"
+                  : `Blocked — ${shownValidation.checks.filter((c) => !c.pass).length} of ${shownValidation.checks.length} checks failed`}
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {`Checked on environment ${shownValidation.envVersion}. A broken test makes a good agent look bad, or lets every agent pass.`}
+              </Typography>
+            </Box>
+            {shownValidation.checks.map((c) => (
+              <Stack
+                key={c.id}
+                direction="row"
+                spacing={1}
+                sx={{
+                  px: 1.25,
+                  py: 0.75,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  "&:last-of-type": { borderBottom: 0 },
+                }}
+              >
                 <Iconify
                   icon={
-                    g.pass
+                    c.pass
                       ? "solar:check-circle-linear"
                       : "solar:close-circle-linear"
                   }
                   width={14}
-                  sx={{ color: g.pass ? "text.secondary" : "status.danger.fg" }}
+                  sx={{
+                    mt: "2px",
+                    flexShrink: 0,
+                    color: c.pass ? "text.secondary" : "status.danger.fg",
+                  }}
                 />
-                <Typography sx={{ typography: "s2" }}>{g.label}</Typography>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+                    {c.label}
+                  </Typography>
+                  {c.reason && (
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: c.pass ? "text.tertiary" : "text.secondary",
+                      }}
+                    >
+                      {c.reason}
+                    </Typography>
+                  )}
+                  {!c.pass && c.fix && !ro && (
+                    <Stack
+                      direction="row"
+                      flexWrap="wrap"
+                      alignItems="center"
+                      gap={0.75}
+                      sx={{ mt: 0.75 }}
+                    >
+                      {c.fix.kind === "record" && (
+                        <>
+                          <Typography
+                            sx={{ typography: "s3", color: "text.tertiary" }}
+                          >
+                            Use a real record:
+                          </Typography>
+                          {c.fix.options.map((id) => (
+                            <Button
+                              key={id}
+                              size="small"
+                              variant="outlined"
+                              onClick={() =>
+                                revalidate(
+                                  pickRecordFix(live, c.fix.missing, id),
+                                )
+                              }
+                            >
+                              {id}
+                            </Button>
+                          ))}
+                          <Button
+                            size="small"
+                            onClick={() =>
+                              revalidate(
+                                syntheticRecordFix(live, c.fix.missing),
+                              )
+                            }
+                            sx={{ color: "text.secondary" }}
+                          >
+                            {`Approve a synthetic ${c.fix.missing}`}
+                          </Button>
+                        </>
+                      )}
+                      {c.fix.kind === "rule" && (
+                        <>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() =>
+                              revalidate(
+                                acceptRuleFix(live, c.fix.from, c.fix.to),
+                              )
+                            }
+                          >
+                            {`Use the environment's rule — ${c.fix.to} days`}
+                          </Button>
+                          <Button
+                            size="small"
+                            onClick={() =>
+                              navigate(
+                                `/dashboard/simulate/environments/${env.id}/contract`,
+                              )
+                            }
+                            sx={{ color: "text.secondary" }}
+                          >
+                            {`Or change ${c.fix.ruleId} on the Contract tab`}
+                          </Button>
+                        </>
+                      )}
+                      {c.fix.kind === "tool" && (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() =>
+                            navigate(
+                              `/dashboard/simulate/environments/${env.id}/world`,
+                            )
+                          }
+                        >
+                          {`Add ${c.fix.tools.join(", ")} in World & tools`}
+                        </Button>
+                      )}
+                      {c.fix.kind === "check" && (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() =>
+                            revalidate(addCheckFix(live, c.fix.check))
+                          }
+                        >
+                          {`Add the check: “${c.fix.check}”`}
+                        </Button>
+                      )}
+                    </Stack>
+                  )}
+                </Box>
               </Stack>
             ))}
-            {!validation.pass && (
-              <Typography
-                sx={{ typography: "s3", color: "status.danger.fg", mt: 0.5 }}
-              >{`Blocked — ${validation.failed.reason}`}</Typography>
-            )}
           </Box>
         )}
       </Box>
