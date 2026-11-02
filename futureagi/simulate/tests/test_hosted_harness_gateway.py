@@ -2841,6 +2841,11 @@ def _refusal(**overrides):
             "source_unreachable",
             True,
         ),
+        (
+            _refusal(domain="artifact", code="artifact_unreadable"),
+            "artifact_unreadable",
+            False,
+        ),
         (_refusal(retryable="no"), "guest_crashed", True),
         (_refusal(domain="nowhere"), "guest_crashed", True),
         ("invalid", "guest_crashed", True),

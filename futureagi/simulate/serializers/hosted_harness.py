@@ -165,6 +165,7 @@ class HarnessFailureSerializer(serializers.Serializer):
             "infrastructure",
             "grading",
             "platform_sync",
+            "artifact",
         )
     )
     stage = serializers.CharField(max_length=64)
