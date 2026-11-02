@@ -16,7 +16,7 @@ export const STATE_LABEL = {
 
 export const OUTCOME_LABEL = {
   winner: "Winner",
-  finalist: "Passed, not picked",
+  finalist: "Not kept",
   rejected: "Rejected",
   pending: "Running",
 };

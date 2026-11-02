@@ -39,14 +39,14 @@ describe("labels", () => {
 
   it("calls a passing trial a finalist until the fix has finished", () => {
     expect(outcomeLabel("finalist", true)).toBe("Finalist");
-    expect(outcomeLabel("finalist", false)).toBe("Passed, not picked");
+    expect(outcomeLabel("finalist", false)).toBe("Not kept");
     expect(outcomeLabel("winner", true)).toBe("Winner");
   });
 
   it("names every candidate outcome", () => {
     expect(OUTCOME_LABEL).toEqual({
       winner: "Winner",
-      finalist: "Passed, not picked",
+      finalist: "Not kept",
       rejected: "Rejected",
       pending: "Running",
     });
