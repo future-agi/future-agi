@@ -214,3 +214,69 @@ def test_an_actor_edit_shows_in_review_as_that_actor_added_changed_or_removed(us
         {"actors.json": json.dumps({"actors": [{**MANAGER, "provenance": {"origin": "chat"}}]}).encode()}
     )
     assert before != after and before == restamped
+
+
+def test_a_sub_actor_is_in_the_cast_and_edited_where_the_call_reads_it(user, workspace, storage, auth_client):
+    from simulate.services.harness_versioning.drafts import edit_sides, fresh_draft
+
+    environment = _built(user, workspace, "actors-sub-actor")
+    colleague = {"id": "colleague", "name": "Jordan Taylor", "role": "the caller's colleague", "side": "caller",
+                 "surface": "call.beside", "loudness_ratio": 0.5}
+    added = _add(auth_client, environment, colleague)
+    _add(auth_client, environment, MANAGER)
+    files = edit_sides(environment)["environment"]
+
+    assert added.status_code == 200, added.content
+    assert json.loads(files["sub_actors.json"])["sub_actors"] == [
+        {"id": "colleague", "name": "Jordan Taylor", "role": "the caller's colleague", "channel": "audio_mix",
+         "loudness_ratio": 0.5, "provenance": json.loads(files["sub_actors.json"])["sub_actors"][0]["provenance"]}
+    ]
+    assert [one["id"] for one in json.loads(files["actors.json"])["actors"]] == ["manager"]
+    cast = {one["id"]: one for one in auth_client.get(f"{BASE}/{environment.id}/actors/").json()["actors"]}
+    assert (cast["colleague"]["side"], cast["colleague"]["surface"]) == ("caller", "call.beside")
+    assert fresh_draft(environment, "environment").diff["actors"]["added"] == ["colleague", "manager"]
+
+    replaced = auth_client.put(
+        f"{BASE}/{environment.id}/actors/colleague/", {"actor": {**colleague, "surface": "call.takes_phone"}},
+        format="json",
+    )
+    assert replaced.status_code == 200, replaced.content
+    assert json.loads(edit_sides(environment)["environment"]["sub_actors.json"])["sub_actors"][0]["channel"] == (
+        "audio_handoff"
+    )
+    from simulate.tests.test_harness_amend_archive import NAMES, _key
+
+    view = auth_client.get(f"{BASE}/{environment.id}/actors/colleague/", {"scenario_key": _key(NAMES[0])}).json()
+    assert view["permitted_actions"] == [] and "manager.goal" in view["never_sees"]
+    # As the call gives a sub-actor the caller's situation, so does its view.
+    assert "caller.situation" in {one["input"] for one in view["sees"]}
+
+    refused = auth_client.put(
+        f"{BASE}/{environment.id}/actors/colleague/", {"actor": {**colleague, "goal": "Get a bigger discount"}},
+        format="json",
+    )
+    assert (refused.status_code, refused.json()["error"]) == (400, "actor_invalid")
+    assert "only its name, role, persona and loudness are kept; remove goal" in refused.json()["message"]
+    loud = auth_client.put(
+        f"{BASE}/{environment.id}/actors/colleague/", {"actor": {**colleague, "side": "world"}}, format="json"
+    )
+    assert (loud.status_code, loud.json()["error"]) == (400, "actor_invalid")
+
+    removed = auth_client.delete(f"{BASE}/{environment.id}/actors/colleague/")
+    assert removed.status_code == 200, removed.content
+    assert json.loads(edit_sides(environment)["environment"]["sub_actors.json"])["sub_actors"] == []
+    assert [one["id"] for one in removed.json()["actors"]] == ["manager"]
+
+
+def test_a_sub_actor_a_scenario_includes_counts_as_in_use():
+    from simulate.services import harness_actors
+
+    suite = {"scenarios/one/scenario.json": json.dumps(
+        {"scenario_key": "one", "instruction": "I need my plan renewed. Your details: account 7", "sub_actors": [
+            {"id": "colleague", "instruction": "Ask for a bigger discount"}]}).encode()}
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            "simulate.services.harness_versioning.versions.suite_documents",
+            lambda files: [json.loads(raw) for raw in files.values()],
+        )
+        assert harness_actors._scenarios_using(suite, "colleague") == ["one"]

@@ -101,8 +101,11 @@ def environment_diff(
     with_actors = bool(previous_actors or actors)
     file_diff = None if previous_files is None else keyed_diff(previous_files, files)
     if file_diff is not None and with_actors:
-        # The actors section shows `actors.json` one actor at a time; listing the file too counts each edit twice.
-        file_diff = {key: [name for name in names if name != "actors.json"] for key, names in file_diff.items()}
+        # The actors section shows the cast one actor at a time; listing its files too counts each edit twice.
+        file_diff = {
+            key: [name for name in names if name not in ("actors.json", "sub_actors.json")]
+            for key, names in file_diff.items()
+        }
     return {
         "contract": contract_diff(previous_contract, contract),
         "sub_goals": keyed_diff(previous_sub_goals, sub_goals),

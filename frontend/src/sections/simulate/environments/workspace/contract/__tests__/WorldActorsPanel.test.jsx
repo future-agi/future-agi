@@ -6,8 +6,18 @@ let actorsData;
 
 vi.mock("src/api/simulate-environments/versions", () => ({
   useActors: () => ({ data: actorsData }),
-  useActorView: () => ({ data: { sees: [{ input: "actor.goal", value: "Approve fast" }], never_sees: ["scenario.solution"] } }),
-  useEditActor: () => ({ mutate, reset: vi.fn(), isPending: false, error: null }),
+  useActorView: () => ({
+    data: {
+      sees: [{ input: "actor.goal", value: "Approve fast" }],
+      never_sees: ["scenario.solution"],
+    },
+  }),
+  useEditActor: () => ({
+    mutate,
+    reset: vi.fn(),
+    isPending: false,
+    error: null,
+  }),
 }));
 
 const { default: WorldActorsPanel } = await import("../WorldActorsPanel");
@@ -30,8 +40,29 @@ describe("WorldActorsPanel", () => {
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.getByText("Actors (1)")).toBeInTheDocument();
     expect(screen.getByText(/Priya Raman/)).toBeInTheDocument();
-    expect(screen.getByText("May do: crm.approve_discount")).toBeInTheDocument();
+    expect(
+      screen.getByText("May do: crm.approve_discount"),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Unsaved changes/)).toBeInTheDocument();
+  });
+
+  it("leaves the caller's side to the Sub-actors panel", () => {
+    actorsData = {
+      actors: [
+        MANAGER,
+        {
+          id: "colleague",
+          name: "Jordan Taylor",
+          side: "caller",
+          surface: "call.beside",
+        },
+      ],
+      source: "saved",
+      revision: 0,
+    };
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.getByText("Actors (1)")).toBeInTheDocument();
+    expect(screen.queryByText(/Jordan Taylor/)).toBeNull();
   });
 
   it("opens what an actor sees and never sees", () => {
@@ -45,10 +76,18 @@ describe("WorldActorsPanel", () => {
     actorsData = { actors: [], source: "saved", revision: 0 };
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByText("Add actor"));
-    fireEvent.change(screen.getByLabelText("Id"), { target: { value: "manager" } });
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Priya" } });
-    fireEvent.change(screen.getByLabelText(/World actions they may take/), { target: { value: "crm.approve_discount, crm.reject_discount" } });
-    fireEvent.change(screen.getByLabelText(/Comes in when the agent calls/), { target: { value: "crm.request_approval" } });
+    fireEvent.change(screen.getByLabelText("Id"), {
+      target: { value: "manager" },
+    });
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Priya" },
+    });
+    fireEvent.change(screen.getByLabelText(/World actions they may take/), {
+      target: { value: "crm.approve_discount, crm.reject_discount" },
+    });
+    fireEvent.change(screen.getByLabelText(/Comes in when the agent calls/), {
+      target: { value: "crm.request_approval" },
+    });
     fireEvent.click(screen.getByText("Save to draft"));
     const [change] = mutate.mock.calls[0];
     expect(change.op).toBe("create");
@@ -57,16 +96,27 @@ describe("WorldActorsPanel", () => {
       id: "manager",
       name: "Priya",
       permitted_actions: ["crm.approve_discount", "crm.reject_discount"],
-      activation: { trigger: { kind: "on_tool", tool: "crm.request_approval" }, fallback: "silent" },
+      activation: {
+        trigger: { kind: "on_tool", tool: "crm.request_approval" },
+        fallback: "silent",
+      },
     });
   });
 
   it("keeps an actor's trigger when only another field is edited", () => {
     const delayed = { kind: "after_seconds", seconds: 30 };
-    actorsData = { actors: [{ ...MANAGER, activation: { trigger: delayed, fallback: "silent" } }], source: "draft", revision: 3 };
+    actorsData = {
+      actors: [
+        { ...MANAGER, activation: { trigger: delayed, fallback: "silent" } },
+      ],
+      source: "draft",
+      revision: 3,
+    };
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByText("Edit"));
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Priya R." } });
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Priya R." },
+    });
     fireEvent.click(screen.getByText("Save to draft"));
     const [change] = mutate.mock.calls[0];
     expect(change.actor.name).toBe("Priya R.");
@@ -76,7 +126,11 @@ describe("WorldActorsPanel", () => {
   it("removes an actor from the draft, and a locked environment offers no edits", () => {
     const { unmount } = render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByText("Remove"));
-    expect(mutate.mock.calls[0][0]).toEqual({ op: "delete", actorId: "manager", revision: 3 });
+    expect(mutate.mock.calls[0][0]).toEqual({
+      op: "delete",
+      actorId: "manager",
+      revision: 3,
+    });
     unmount();
     render(<WorldActorsPanel envId="env-1" locked />);
     expect(screen.queryByText("Add actor")).toBeNull();
