@@ -16,17 +16,19 @@ const (
 type CatalogueInfo struct {
 	Source    string    `json:"source"`
 	URL       string    `json:"url,omitempty"`
-	Entries   int       `json:"entries"`
+	Entries   int       `json:"entries"`                   // models priced: bundled plus fetched
+	Fetched   int       `json:"fetched_entries,omitempty"` // models the last good fetch held
 	LoadedAt  time.Time `json:"loaded_at"`
 	LastError string    `json:"last_error,omitempty"` // newest failed fetch; cleared by the next good one
 }
 
-// Catalogue owns the layers under the live ModelDB: bundled, then fetched,
-// then config overrides. It is the only writer of the shared ModelDB pointer,
+// Catalogue owns the layers under the live ModelDB: bundled, overlaid by
+// fetched (fetched wins on matching keys), then config overrides. A bundled
+// model the fetch lacks stays, so an older snapshot cannot remove a model. It is the only writer of the shared ModelDB pointer,
 // so a fetch and a config reload each rebuild from the other's latest input.
 type Catalogue struct {
 	mu        sync.Mutex
-	models    map[string]*ModelInfo
+	models    map[string]*ModelInfo // bundled overlaid by the last good fetch
 	overrides map[string]ModelOverride
 	info      CatalogueInfo
 	target    *atomic.Pointer[ModelDB]
@@ -52,12 +54,19 @@ func (c *Catalogue) SetOverrides(overrides map[string]ModelOverride) {
 	c.rebuild()
 }
 
-// Replace makes fetched the catalogue under the overrides.
-func (c *Catalogue) Replace(fetched map[string]*ModelInfo, url string) {
+// Overlay lays fetched over the bundled models, under the overrides.
+func (c *Catalogue) Overlay(fetched map[string]*ModelInfo, url string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.models = fetched
-	c.info = CatalogueInfo{Source: SourceFetched, URL: url, Entries: len(fetched), LoadedAt: time.Now()}
+	merged := make(map[string]*ModelInfo, len(BundledModels)+len(fetched))
+	for id, m := range BundledModels {
+		merged[id] = m
+	}
+	for id, m := range fetched {
+		merged[id] = m
+	}
+	c.models = merged
+	c.info = CatalogueInfo{Source: SourceFetched, URL: url, Entries: len(merged), Fetched: len(fetched), LoadedAt: time.Now()}
 	c.rebuild()
 }
 

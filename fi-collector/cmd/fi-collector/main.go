@@ -126,7 +126,7 @@ func main() {
 	// Sync a newer price table in the background; boot never waits on it.
 	if pricer != nil {
 		url, interval := catalogueSyncSettings(log, os.LookupEnv)
-		if syncer := pricing.NewSyncer(pricer, priceTable.Len(), url, interval, log); syncer != nil {
+		if syncer := pricing.NewSyncer(pricer, priceTable, url, interval, log); syncer != nil {
 			go syncer.Run(ctx)
 		} else {
 			log.Info("pricing catalogue sync off; pricing from the loaded table")

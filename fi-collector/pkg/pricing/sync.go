@@ -27,23 +27,24 @@ const (
 	minFetchedEntries   = 50
 )
 
-// Syncer fetches a price table from a URL at startup and on an interval and
-// swaps each good one into a Pricer. Fail-open: a failed or implausible fetch
+// Syncer fetches a price table from a URL at startup and on an interval,
+// lays each good one over the table the collector started with (fetched wins
+// on matching keys; a starting entry the fetch lacks stays) and swaps the
+// result into a Pricer. Fail-open: a failed or implausible fetch
 // keeps the table in use, logs a warning and never stops the collector.
 type Syncer struct {
 	pricer   *Pricer
 	url      string
 	interval time.Duration
 	client   *http.Client
-	baseline int // entries in the table the collector started with
+	base     *Table // the table the collector started with
 	log      *slog.Logger
 }
 
-// NewSyncer returns a Syncer, or nil when url is empty (sync off). baseline is
-// the entry count of the table in use at start; a fetched table needs at least
-// half of it. The interval is raised to MinSyncInterval, and an unset one is
+// NewSyncer returns a Syncer, or nil when url is empty (sync off). base is the
+// table in use at start; a fetched table needs at least half its entries. The interval is raised to MinSyncInterval, and an unset one is
 // DefaultSyncInterval.
-func NewSyncer(p *Pricer, baseline int, url string, interval time.Duration, log *slog.Logger) *Syncer {
+func NewSyncer(p *Pricer, base *Table, url string, interval time.Duration, log *slog.Logger) *Syncer {
 	if url == "" {
 		return nil
 	}
@@ -55,7 +56,7 @@ func NewSyncer(p *Pricer, baseline int, url string, interval time.Duration, log 
 			"configured", interval, "minimum", MinSyncInterval)
 		interval = MinSyncInterval
 	}
-	return &Syncer{pricer: p, url: url, interval: interval, client: &http.Client{}, baseline: baseline, log: log}
+	return &Syncer{pricer: p, url: url, interval: interval, client: &http.Client{}, base: base, log: log}
 }
 
 // Run syncs once with a short timeout, then on every interval, until ctx ends.
@@ -82,8 +83,10 @@ func (s *Syncer) syncOnce(ctx context.Context, timeout time.Duration) {
 		s.log.Warn("pricing catalogue sync failed; keeping the table in use", "url", s.url, "err", err)
 		return
 	}
-	s.pricer.SetTable(table)
-	s.log.Info("pricing catalogue loaded", "source", "fetched", "url", s.url, "entries", table.Len())
+	merged := s.base.overlay(table)
+	s.pricer.SetTable(merged)
+	s.log.Info("pricing catalogue loaded", "source", "fetched", "url", s.url,
+		"fetched_entries", table.Len(), "entries", merged.Len())
 }
 
 func (s *Syncer) fetch(ctx context.Context) (*Table, error) {
@@ -106,12 +109,12 @@ func (s *Syncer) fetch(ctx context.Context) (*Table, error) {
 	if len(body) > maxCatalogueBytes {
 		return nil, fmt.Errorf("catalogue larger than %d bytes", maxCatalogueBytes)
 	}
-	table, err := parseTable(body)
+	table, err := parseTable(body, true)
 	if err != nil {
 		return nil, err
 	}
-	if floor := max(minFetchedEntries, s.baseline/2); table.Len() < floor {
-		return nil, fmt.Errorf("catalogue has %d entries, fewer than the %d required", table.Len(), floor)
+	if floor := max(minFetchedEntries, s.base.usable/2); table.usable < floor {
+		return nil, fmt.Errorf("catalogue has %d entries, fewer than the %d required (entries without a token price do not count)", table.usable, floor)
 	}
 	return table, nil
 }

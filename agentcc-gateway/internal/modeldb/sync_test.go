@@ -54,7 +54,7 @@ func newTestSyncer(url string, bundledEntries int) (*Syncer, *atomic.Pointer[Mod
 	return s, &ptr, c
 }
 
-func TestSync_GoodCatalogueReplacesBundled(t *testing.T) {
+func TestSync_GoodCatalogueOverlaysBundled(t *testing.T) {
 	f := newFakeCatalogue(t, catalogueJSON(60, 1e-6))
 	s, ptr, c := newTestSyncer(f.URL, 100)
 
@@ -67,11 +67,12 @@ func TestSync_GoodCatalogueReplacesBundled(t *testing.T) {
 	if _, ok := db.Get("fetched-7"); !ok {
 		t.Error("fetched model missing after a good sync")
 	}
-	if _, ok := db.Get("gpt-4o"); ok {
-		t.Error("bundled-only model survived; the fetched catalogue should replace the bundled one")
+	if _, ok := db.Get("gpt-4o"); !ok {
+		t.Error("bundled-only model dropped; a fetch must not remove bundled models")
 	}
 	info := c.Info()
-	if info.Source != SourceFetched || info.URL != f.URL || info.Entries != 60 || info.LoadedAt.IsZero() {
+	if info.Source != SourceFetched || info.URL != f.URL || info.Fetched != 60 ||
+		info.Entries != len(BundledModels)+60 || info.LoadedAt.IsZero() {
 		t.Errorf("info = %+v", info)
 	}
 }
@@ -84,6 +85,7 @@ func TestSync_RejectedFetchKeepsLastGood(t *testing.T) {
 	}{
 		{"not json", "<html>nope</html>", http.StatusOK},
 		{"fewer than 50 entries", catalogueJSON(49, 1e-6), http.StatusOK},
+		{"wrong schema: objects with no price fields", wrongSchemaJSON(500), http.StatusOK},
 		{"under half of bundled", catalogueJSON(60, 1e-6), http.StatusOK},
 		{"http error", catalogueJSON(200, 1e-6), http.StatusInternalServerError},
 	}
@@ -105,7 +107,7 @@ func TestSync_RejectedFetchKeepsLastGood(t *testing.T) {
 				t.Error("last good catalogue was dropped")
 			}
 			info := c.Info()
-			if info.Entries != 150 || !info.LoadedAt.Equal(good.LoadedAt) {
+			if info.Fetched != 150 || !info.LoadedAt.Equal(good.LoadedAt) {
 				t.Errorf("catalogue changed: %+v", info)
 			}
 			if info.LastError == "" {
@@ -164,8 +166,8 @@ func TestSync_ConfigReloadKeepsFetchedCatalogue(t *testing.T) {
 	if _, ok := db.Get("fetched-7"); !ok {
 		t.Error("config reload dropped the fetched catalogue")
 	}
-	if _, ok := db.Get("gpt-4o"); ok {
-		t.Error("config reload brought the bundled catalogue back")
+	if _, ok := db.Get("gpt-4o"); !ok {
+		t.Error("config reload dropped the bundled models")
 	}
 	if c.Info().Source != SourceFetched {
 		t.Errorf("info = %+v", c.Info())
@@ -246,5 +248,60 @@ func TestNewSyncer_Interval(t *testing.T) {
 		if got := NewSyncer(c, "http://x", tc.in).interval; got != tc.want {
 			t.Errorf("interval(%v) = %v, want %v", tc.in, got, tc.want)
 		}
+	}
+}
+
+func wrongSchemaJSON(n int) string {
+	out := "{"
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			out += ","
+		}
+		out += fmt.Sprintf(`"fetched-%d":{"description":"wrong schema: no price fields"}`, i)
+	}
+	return out + "}"
+}
+
+// An older but valid snapshot lacks models the binary ships. The fetch must
+// not remove them, and a matching key takes the fetched price.
+func TestSync_OlderSnapshotKeepsBundledOnlyModels(t *testing.T) {
+	var bundledOnly string
+	for id := range BundledModels {
+		bundledOnly = id
+		break
+	}
+	body := catalogueJSON(60, 1e-6)
+	body = body[:len(body)-1] + fmt.Sprintf(`,%q:{"litellm_provider":"openai","mode":"chat","input_cost_per_token":7e-6,"output_cost_per_token":7e-6}}`, "gpt-4o")
+	f := newFakeCatalogue(t, body)
+	s, ptr, c := newTestSyncer(f.URL, 100)
+	s.syncOnce(context.Background(), time.Second)
+
+	for step := 0; step < 2; step++ { // second pass: after a config reload
+		db := ptr.Load()
+		if bundledOnly != "gpt-4o" {
+			if _, ok := db.Get(bundledOnly); !ok {
+				t.Errorf("step %d: bundled-only %q was dropped", step, bundledOnly)
+			}
+		}
+		if p, ok := db.GetPricing("gpt-4o"); !ok || p.InputPerToken != 7e-6 {
+			t.Errorf("step %d: fetched price did not win on a matching key: %+v", step, p)
+		}
+		c.SetOverrides(nil)
+	}
+}
+
+// A partly wrong download adds its usable entries and leaves the rest of the
+// catalogue alone: the objects with no prices must not zero a priced model.
+func TestSync_UnpricedObjectsDoNotOverwriteBundledPrices(t *testing.T) {
+	body := catalogueJSON(60, 1e-6)
+	body = body[:len(body)-1] + `,"gpt-4o":{"description":"no price fields"}}`
+	f := newFakeCatalogue(t, body)
+	s, ptr, _ := newTestSyncer(f.URL, 100)
+	want, _ := ptr.Load().GetPricing("gpt-4o")
+	s.syncOnce(context.Background(), time.Second)
+
+	got, ok := ptr.Load().GetPricing("gpt-4o")
+	if !ok || got.InputPerToken != want.InputPerToken || got.InputPerToken == 0 {
+		t.Errorf("gpt-4o price = %+v, want the bundled %+v", got, want)
 	}
 }

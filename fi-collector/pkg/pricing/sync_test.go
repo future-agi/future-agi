@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// tableJSON is n models fetched-0..n-1 that cost price USD per token.
 func tableJSON(n int, price float64) string {
 	out := "{"
 	for i := 0; i < n; i++ {
@@ -20,6 +21,11 @@ func tableJSON(n int, price float64) string {
 		out += fmt.Sprintf(`"fetched-%d":{"litellm_provider":"openai","input_cost_per_token":%g,"output_cost_per_token":%g}`, i, price, price)
 	}
 	return out + "}"
+}
+
+// withEntry adds one raw entry to a JSON object body.
+func withEntry(body, key, entry string) string {
+	return body[:len(body)-1] + fmt.Sprintf(`,%q:%s}`, key, entry)
 }
 
 type fakeCatalogue struct {
@@ -43,13 +49,28 @@ func newFakeCatalogue(t *testing.T, body string) *fakeCatalogue {
 	return f
 }
 
-func startingPricer(t *testing.T) *Pricer {
+const gpt4oPrice = 1.25e-6 // 1000 in + 1000 out costs 0.0025 at 1.25e-6
+
+// startingTable has n "base-i" models at 1e-6 and gpt-4o at gpt4oPrice, the
+// way the embedded table has models a fetch may not.
+func startingTable(t *testing.T, n int) *Table {
 	t.Helper()
-	tbl, err := LoadTable("testdata/prices_fixture.json")
+	body := fmt.Sprintf(`{"gpt-4o":{"litellm_provider":"openai","input_cost_per_token":%g,"output_cost_per_token":%g}}`, gpt4oPrice, gpt4oPrice)
+	for i := 0; i < n; i++ {
+		body = withEntry(body, fmt.Sprintf("base-%d", i), `{"litellm_provider":"openai","input_cost_per_token":1e-6,"output_cost_per_token":1e-6}`)
+	}
+	tbl, err := parseTable([]byte(body), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(tbl, nil)
+	return tbl
+}
+
+func newTestSyncer(t *testing.T, url string, baseEntries int) (*Syncer, *Pricer) {
+	t.Helper()
+	base := startingTable(t, baseEntries)
+	p := New(base, nil)
+	return NewSyncer(p, base, url, time.Hour, slog.Default()), p
 }
 
 func priced(p *Pricer, model string) bool {
@@ -57,18 +78,34 @@ func priced(p *Pricer, model string) bool {
 	return ok
 }
 
-func TestSync_GoodTableReplacesStarting(t *testing.T) {
+func cost(p *Pricer, model string) float64 {
+	c, _ := p.TokenCost(context.Background(), "", model, 1000, 1000)
+	return c
+}
+
+func TestSync_GoodTableOverlaysStarting(t *testing.T) {
 	f := newFakeCatalogue(t, tableJSON(60, 1e-6))
-	p := startingPricer(t)
-	s := NewSyncer(p, 100, f.URL, time.Hour, slog.Default())
+	s, p := newTestSyncer(t, f.URL, 100)
 
 	s.syncOnce(context.Background(), time.Second)
 
 	if !priced(p, "fetched-7") {
 		t.Error("fetched model not priced after a good sync")
 	}
-	if priced(p, "gpt-4o") {
-		t.Error("starting table survived; the fetched table should replace it")
+	if !priced(p, "gpt-4o") || !priced(p, "base-5") {
+		t.Error("a starting model the fetch lacks was dropped; an older snapshot must not remove models")
+	}
+}
+
+func TestSync_FetchedWinsOnMatchingKey(t *testing.T) {
+	f := newFakeCatalogue(t, withEntry(tableJSON(60, 1e-6), "gpt-4o",
+		`{"litellm_provider":"openai","input_cost_per_token":5e-6,"output_cost_per_token":5e-6}`))
+	s, p := newTestSyncer(t, f.URL, 100)
+
+	s.syncOnce(context.Background(), time.Second)
+
+	if got := cost(p, "gpt-4o"); got != 0.01 {
+		t.Errorf("gpt-4o cost = %v, want 0.01 (fetched price)", got)
 	}
 }
 
@@ -80,18 +117,20 @@ func TestSync_RejectedFetchKeepsTableInUse(t *testing.T) {
 	}{
 		{"not json", "<html>nope</html>", http.StatusOK},
 		{"fewer than 50 entries", tableJSON(49, 1e-6), http.StatusOK},
-		{"under half of baseline", tableJSON(60, 1e-6), http.StatusOK},
+		{"under half of the starting table", tableJSON(60, 1e-6), http.StatusOK},
 		{"http error", tableJSON(200, 1e-6), http.StatusInternalServerError},
+		{"wrong schema: objects with no price fields", wrongSchema(500), http.StatusOK},
+		{"wrong schema: negative prices", negativePrices(500), http.StatusOK},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newFakeCatalogue(t, tableJSON(150, 1e-6))
-			p := startingPricer(t)
-			s := NewSyncer(p, 150, f.URL, time.Hour, slog.Default())
+			f := newFakeCatalogue(t, tableJSON(150, 2e-6))
+			s, p := newTestSyncer(t, f.URL, 150)
 			s.syncOnce(context.Background(), time.Second)
 			if !priced(p, "fetched-149") {
 				t.Fatal("precondition: first sync did not load")
 			}
+			before := cost(p, "gpt-4o")
 
 			f.body.Store(tc.body)
 			f.code.Store(int32(tc.code))
@@ -100,15 +139,67 @@ func TestSync_RejectedFetchKeepsTableInUse(t *testing.T) {
 			if !priced(p, "fetched-149") {
 				t.Error("last good table was dropped")
 			}
+			if cost(p, "gpt-4o") != before || before == 0 {
+				t.Errorf("gpt-4o cost changed to %v from %v", cost(p, "gpt-4o"), before)
+			}
 		})
+	}
+}
+
+// 500 existing model keys with objects that state no price: enough entries to
+// pass a count, none usable. The good table must stay and gpt-4o keep its price.
+func TestSync_WrongSchemaDoesNotZeroPrices(t *testing.T) {
+	body := wrongSchema(500)
+	body = withEntry(body, "gpt-4o", `{"description":"wrong schema: no price fields"}`)
+	f := newFakeCatalogue(t, body)
+	s, p := newTestSyncer(t, f.URL, 100)
+
+	s.syncOnce(context.Background(), time.Second)
+
+	if got := cost(p, "gpt-4o"); got != 0.0025 {
+		t.Errorf("gpt-4o cost = %v, want 0.0025", got)
+	}
+}
+
+// A partly wrong download adds its usable entries; the unpriced objects are
+// dropped and cannot overwrite a priced starting model.
+func TestSync_PartiallyMalformedKeepsUsableEntries(t *testing.T) {
+	body := tableJSON(60, 1e-6)
+	body = withEntry(body, "gpt-4o", `{"description":"no price fields"}`)
+	body = withEntry(body, "bad-type", `{"input_cost_per_token":"cheap"}`)
+	f := newFakeCatalogue(t, body)
+	s, p := newTestSyncer(t, f.URL, 100)
+
+	s.syncOnce(context.Background(), time.Second)
+
+	if !priced(p, "fetched-7") {
+		t.Error("usable fetched entries were not loaded")
+	}
+	if got := cost(p, "gpt-4o"); got != 0.0025 {
+		t.Errorf("gpt-4o cost = %v, want the starting 0.0025", got)
+	}
+	if priced(p, "bad-type") {
+		t.Error("an entry with a non-numeric price was loaded")
+	}
+}
+
+func TestSync_ExplicitFreePricingAccepted(t *testing.T) {
+	body := withEntry(tableJSON(60, 1e-6), "free-model",
+		`{"litellm_provider":"openai","input_cost_per_token":0,"output_cost_per_token":0}`)
+	f := newFakeCatalogue(t, body)
+	s, p := newTestSyncer(t, f.URL, 100)
+
+	s.syncOnce(context.Background(), time.Second)
+
+	if c, ok := p.TokenCost(context.Background(), "", "free-model", 1000, 1000); !ok || c != 0 {
+		t.Errorf("free-model = (%v, %v), want (0, true)", c, ok)
 	}
 }
 
 func TestSync_UnreachableKeepsStartingTable(t *testing.T) {
 	f := newFakeCatalogue(t, "")
 	f.Close()
-	p := startingPricer(t)
-	s := NewSyncer(p, 100, f.URL, time.Hour, slog.Default())
+	s, p := newTestSyncer(t, f.URL, 100)
 
 	s.syncOnce(context.Background(), time.Second)
 
@@ -119,7 +210,8 @@ func TestSync_UnreachableKeepsStartingTable(t *testing.T) {
 
 func TestNewSyncer_EmptyURLTurnsSyncOff(t *testing.T) {
 	f := newFakeCatalogue(t, tableJSON(60, 1e-6))
-	if s := NewSyncer(startingPricer(t), 100, "", time.Hour, slog.Default()); s != nil {
+	base := startingTable(t, 100)
+	if s := NewSyncer(New(base, nil), base, "", time.Hour, slog.Default()); s != nil {
 		t.Fatal("an empty URL must give no syncer")
 	}
 	if f.hits.Load() != 0 {
@@ -129,8 +221,7 @@ func TestNewSyncer_EmptyURLTurnsSyncOff(t *testing.T) {
 
 func TestSync_RunFetchesAtStartup(t *testing.T) {
 	f := newFakeCatalogue(t, tableJSON(60, 1e-6))
-	p := startingPricer(t)
-	s := NewSyncer(p, 100, f.URL, time.Hour, slog.Default())
+	s, p := newTestSyncer(t, f.URL, 100)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { s.Run(ctx); close(done) }()
@@ -148,14 +239,37 @@ func TestSync_RunFetchesAtStartup(t *testing.T) {
 }
 
 func TestNewSyncer_Interval(t *testing.T) {
-	p := startingPricer(t)
+	base := startingTable(t, 1)
+	p := New(base, nil)
 	for _, tc := range []struct{ in, want time.Duration }{
 		{0, DefaultSyncInterval},
 		{time.Minute, MinSyncInterval},
 		{6 * time.Hour, 6 * time.Hour},
 	} {
-		if got := NewSyncer(p, 1, "http://x", tc.in, slog.Default()).interval; got != tc.want {
+		if got := NewSyncer(p, base, "http://x", tc.in, slog.Default()).interval; got != tc.want {
 			t.Errorf("interval(%v) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
+}
+
+func wrongSchema(n int) string {
+	out := "{"
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			out += ","
+		}
+		out += fmt.Sprintf(`"fetched-%d":{"description":"wrong schema: no price fields"}`, i)
+	}
+	return out + "}"
+}
+
+func negativePrices(n int) string {
+	out := "{"
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			out += ","
+		}
+		out += fmt.Sprintf(`"fetched-%d":{"input_cost_per_token":-1,"output_cost_per_token":-1}`, i)
+	}
+	return out + "}"
 }

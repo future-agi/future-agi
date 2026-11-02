@@ -32,7 +32,7 @@ func fetchedOnly() map[string]*modeldb.ModelInfo {
 // which dropped a fetched catalogue on every config reload.
 func TestReloadRoutingKeepsFetchedCatalogue(t *testing.T) {
 	srv, ptr, c := newCatalogueTestServer(t)
-	c.Replace(fetchedOnly(), "https://catalogue.test/litellm.json")
+	c.Overlay(fetchedOnly(), "https://catalogue.test/litellm.json")
 
 	if err := srv.handlers.ReloadRouting(srv.cfg, srv.registry); err != nil {
 		t.Fatalf("ReloadRouting: %v", err)
@@ -48,7 +48,7 @@ func TestReloadRoutingKeepsFetchedCatalogue(t *testing.T) {
 
 func TestReloadRoutingAppliesNewOverridesOverFetched(t *testing.T) {
 	srv, ptr, c := newCatalogueTestServer(t)
-	c.Replace(fetchedOnly(), "https://catalogue.test/litellm.json")
+	c.Overlay(fetchedOnly(), "https://catalogue.test/litellm.json")
 
 	price := 9e-6
 	cfg := config.DefaultConfig()
@@ -92,10 +92,10 @@ func TestCatalogueSourceEndpoint(t *testing.T) {
 		t.Errorf("bundled: %+v err=%v", info, err)
 	}
 
-	c.Replace(fetchedOnly(), "https://catalogue.test/litellm.json")
+	c.Overlay(fetchedOnly(), "https://catalogue.test/litellm.json")
 	w = get("admin-secret")
 	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil ||
-		info.Source != modeldb.SourceFetched || info.URL != "https://catalogue.test/litellm.json" || info.Entries != 1 {
+		info.Source != modeldb.SourceFetched || info.URL != "https://catalogue.test/litellm.json" || info.Entries != len(modeldb.BundledModels)+1 {
 		t.Errorf("fetched: %+v err=%v", info, err)
 	}
 }

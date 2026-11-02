@@ -86,8 +86,8 @@ func (s *Syncer) syncOnce(ctx context.Context, timeout time.Duration) {
 			"url", s.url, "error", err, "source", s.catalogue.Info().Source)
 		return
 	}
-	s.catalogue.Replace(fetched, s.url)
-	slog.Info("model catalogue loaded", "source", SourceFetched, "url", s.url, "entries", len(fetched))
+	s.catalogue.Overlay(fetched, s.url)
+	slog.Info("model catalogue loaded", "source", SourceFetched, "url", s.url, "fetched_entries", len(fetched), "entries", s.catalogue.Info().Entries)
 }
 
 func (s *Syncer) fetch(ctx context.Context) (map[string]*ModelInfo, error) {
