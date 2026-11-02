@@ -151044,7 +151044,8 @@
                 },
                 "avg_score": {
                     "title": "Avg score",
-                    "type": "number"
+                    "type": "number",
+                    "x-nullable": true
                 },
                 "p50_latency": {
                     "title": "P50 latency",
@@ -151056,7 +151057,8 @@
                 },
                 "avg_turns": {
                     "title": "Avg turns",
-                    "type": "number"
+                    "type": "number",
+                    "x-nullable": true
                 }
             }
         },
