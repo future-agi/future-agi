@@ -2986,6 +2986,7 @@ class SandboxHarnessProvider:
                 flat["github_commit_sha"] = source["commit_sha"]
             if source.get("subfolder"):
                 flat["github_subfolder"] = source["subfolder"]
+                flat["metadata"] = {**flat["metadata"], "generic_harness_v1": True}
             flat["github_visibility"] = source.get("visibility", "public")
             if source.get("installation_id"):
                 flat["github_installation_id"] = source["installation_id"]

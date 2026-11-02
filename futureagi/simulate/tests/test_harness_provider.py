@@ -1087,12 +1087,25 @@ def test_sandbox_flatten_maps_github_source():
     assert flat["github_ref"] == "main"
     assert flat["github_commit_sha"] == "a" * 40
     assert flat["github_subfolder"] == "agents/support"
+    assert flat["metadata"] == {"k": "v", "generic_harness_v1": True}
     assert flat["github_visibility"] == "public"
     assert flat["connector"] == "livekit"
     assert flat["connector_config"] == {"room": "r1"}
     assert flat["scenario_count"] == 7
     assert flat["seed"] == 42
     assert "source_path" not in flat and "source_id" not in flat
+
+
+def test_sandbox_flatten_asks_for_the_generic_harness_only_with_a_subfolder():
+    flat = SandboxHarnessProvider._flatten_source(
+        {
+            "source": {"kind": "github", "repository": "acme/agent"},
+            "agent": {"connector": "auto"},
+            "metadata": {"k": "v"},
+        }
+    )
+    assert "github_subfolder" not in flat
+    assert flat["metadata"] == {"k": "v"}
 
 
 def test_sandbox_flatten_maps_archive_source():
