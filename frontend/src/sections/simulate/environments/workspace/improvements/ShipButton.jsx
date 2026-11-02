@@ -13,6 +13,7 @@ import {
 } from "src/api/simulate-environments/fixRuns";
 
 import { downloadText } from "./downloadText";
+import ShipConfirmDialog from "./ShipConfirmDialog";
 import { isShipped, winnerOf } from "./fixRunView";
 
 const shipHint = (fix, winner) =>
@@ -20,14 +21,16 @@ const shipHint = (fix, winner) =>
     ? `Opens a pull request with Trial ${winner.attempt}'s change on the agent's repository`
     : `Makes Trial ${winner.attempt}'s version the environment's default`;
 
-// Ship: only the fix's winner, only once the fix is ready. An uploaded agent's
-// winner becomes the environment's default; a GitHub agent's opens a pull
-// request, with the patch as the way out when the repository cannot take one.
+// Ship: only the fix's winner, only once the fix is ready, and only after the
+// user confirms what it will do. An uploaded agent's winner becomes the
+// environment's default; a GitHub agent's opens a pull request, with the patch
+// as the way out when the repository cannot take one.
 export default function ShipButton({ fix }) {
   const winner = winnerOf(fix);
   const ship = useShipCandidate(fix);
   const [offerPatch, setOfferPatch] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   if (fix.state !== "ready" || !winner) return null;
 
   if (winner.pull_request_url) {
@@ -68,34 +71,47 @@ export default function ShipButton({ fix }) {
       </Button>
     );
   }
+  const shipWinner = async () => {
+    setBusy(true);
+    try {
+      await ship.mutateAsync(winner.id);
+      setConfirming(false);
+    } catch (error) {
+      const parsed = fixErrorOf(error);
+      if (parsed.offerPatch) setOfferPatch(true);
+      setConfirming(false);
+      enqueueSnackbar(parsed.message || "Could not ship this change", {
+        variant: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <CustomTooltip show title={shipHint(fix, winner)} size="small" arrow>
-      <Box component="span">
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled={busy}
-          startIcon={<Iconify icon="solar:upload-linear" width={16} />}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              await ship.mutateAsync(winner.id);
-            } catch (error) {
-              const parsed = fixErrorOf(error);
-              if (parsed.offerPatch) setOfferPatch(true);
-              enqueueSnackbar(parsed.message || "Could not ship this change", {
-                variant: "error",
-              });
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          Ship
-        </Button>
-      </Box>
-    </CustomTooltip>
+    <>
+      <CustomTooltip show title={shipHint(fix, winner)} size="small" arrow>
+        <Box component="span">
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            disabled={busy}
+            startIcon={<Iconify icon="solar:upload-linear" width={16} />}
+            onClick={() => setConfirming(true)}
+          >
+            Ship
+          </Button>
+        </Box>
+      </CustomTooltip>
+      <ShipConfirmDialog
+        fix={fix}
+        winner={winner}
+        open={confirming}
+        busy={busy}
+        onClose={() => setConfirming(false)}
+        onConfirm={shipWinner}
+      />
+    </>
   );
 }
 

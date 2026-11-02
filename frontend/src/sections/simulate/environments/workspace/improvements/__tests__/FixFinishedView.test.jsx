@@ -98,6 +98,7 @@ describe("finished fix", () => {
     const user = userEvent.setup();
     renderPage("fix-ready-archive");
     await user.click(await screen.findByRole("button", { name: "Ship" }));
+    await user.click(await screen.findByRole("button", { name: "Make default" }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Default" })).toBeDisabled(),
     );
@@ -107,6 +108,7 @@ describe("finished fix", () => {
     const user = userEvent.setup();
     renderPage("fix-ready-github");
     await user.click(await screen.findByRole("button", { name: "Ship" }));
+    await user.click(await screen.findByRole("button", { name: "Open pull request" }));
     expect(
       await screen.findByRole("link", { name: "View pull request" }),
     ).toHaveAttribute("href", "https://github.com/acme/dispatch-agent/pull/42");
@@ -124,10 +126,12 @@ describe("finished fix", () => {
     };
     renderPage("fix-ready-archive");
     await user.click(await screen.findByRole("button", { name: "Ship" }));
+    await user.click(await screen.findByRole("button", { name: "Make default" }));
     expect(
       await screen.findByText("Could not activate v11"),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ship" })).toBeEnabled();
+    // The confirmation closes on the error; Ship is there to try again.
+    expect(await screen.findByRole("button", { name: "Ship" })).toBeEnabled();
   });
 
   it("offers the patch when the repository cannot take a pull request", async () => {
@@ -142,6 +146,7 @@ describe("finished fix", () => {
     };
     renderPage("fix-ready-github");
     await user.click(await screen.findByRole("button", { name: "Ship" }));
+    await user.click(await screen.findByRole("button", { name: "Open pull request" }));
     expect(
       await screen.findByRole("button", { name: "Download patch" }),
     ).toBeInTheDocument();
