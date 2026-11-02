@@ -9717,6 +9717,8 @@ export interface DatasetRowCellRequestApi {
 
 export interface DatasetRowRequestApi {
   id?: string;
+  /** Legacy input accepted for compatibility; rows are appended in request order. */
+  order?: number;
   cells?: DatasetRowCellRequestApi[];
 }
 
@@ -27117,10 +27119,10 @@ export interface TracesAggregatesApi {
   total_traces: number;
   failing_traces: number;
   passing_traces: number;
-  avg_score: number;
+  avg_score: number | null;
   p50_latency: number;
   p95_latency: number;
-  avg_turns: number;
+  avg_turns: number | null;
 }
 
 export interface TracesListRowApi {
