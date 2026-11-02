@@ -250,7 +250,7 @@ const DrawerHeader = ({
           <IconButton
             type="button"
             size="small"
-            aria-label="Close"
+            aria-label={closeOnEscape ? "Close (Esc)" : "Close"}
             onClick={onClose}
           >
             <Iconify
