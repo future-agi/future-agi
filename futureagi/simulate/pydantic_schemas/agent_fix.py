@@ -10,6 +10,9 @@ from pydantic import BaseModel, Field
 SCENARIOS_MAX = 200
 BUDGET_CREDITS_MAX = 50_000
 MAX_MINUTES_MAX = 24 * 60
+# Held-back cases a fix needs to count as verified. On a failure that fails every baseline
+# run, 4 pass a large real fix 87% of the time and 2 only 56%.
+HELD_BACK_VERIFIED_MIN = 4
 
 
 class Surface(StrEnum):
@@ -100,6 +103,8 @@ class CheckRunRequest(BaseModel):
     agent_version_id: UUID
     scenario_keys: list[str] = Field(min_length=1)
     trials: int = Field(ge=1, le=20)
+    # Which repeat of a check this run is: it sets the run's seed.
+    repeat: int = Field(default=1, ge=1, le=20)
 
 
 class FailureOwner(StrEnum):
@@ -129,6 +134,8 @@ class CheckRecord(BaseModel):
     sub_goals: dict[str, bool]
     reasons: dict[str, str]
     transcript: str
+    # How long the conversation took; none for a trial that never had one.
+    duration_s: float | None = None
 
 
 class CheckRunStatus(BaseModel):
@@ -139,6 +146,8 @@ class CheckRunStatus(BaseModel):
     # Set when the run itself failed, after its own retries.
     failure: CheckFailure | None = None
     records: list[CheckRecord]
+    # The parallelism the run really had, once it has finished.
+    parallelism: int | None = None
 
 
 class VerdictTier(BaseModel):
@@ -159,6 +168,16 @@ class CandidateVerdict(BaseModel):
     # Must-pass checks that dropped within the baseline's own noise: shown, not counted.
     must_pass_within_noise: list[str] = Field(default_factory=list)
     tiers: list[VerdictTier] = Field(default_factory=list)
+
+
+class EvalWarning(BaseModel):
+    """A platform eval the winner passes less often than the base version."""
+
+    name: str
+    pass_rate: float
+    base_pass_rate: float
+    trials: int
+    base_trials: int
 
 
 class CandidateUpdate(BaseModel):
@@ -271,6 +290,7 @@ class LaunchDefaults(BaseModel):
 class LaunchLimits(BaseModel):
     budget_credits_max: int
     max_minutes_max: int
+    scenarios_min: int
     scenarios_max: int
 
 

@@ -40,6 +40,7 @@ from simulate.serializers.agent_fix import (
     AgentFixListQuerySerializer,
     AgentFixMakeDefaultSerializer,
     AgentFixPullRequestSerializer,
+    AgentFixRunDetailSerializer,
     AgentFixRunListSerializer,
     AgentFixRunSerializer,
 )
@@ -68,9 +69,8 @@ def _error_response(exc):
     if isinstance(exc, HostedHarnessError):
         return Response(exc.as_dict(), status=exc.status_code)
     if isinstance(exc, PydanticValidationError):
-        return Response(
-            {"error": "validation_error", "message": str(exc), "retryable": False},
-            status=status.HTTP_400_BAD_REQUEST,
+        return _error_response(
+            HostedHarnessError("validation_error", str(exc), status_code=400)
         )
     return _usage_limit_response(exc)
 
@@ -81,9 +81,8 @@ def _engine_error_response(exc):
 
 
 def _not_found():
-    return Response(
-        {"error": "not_found", "message": "Not found", "retryable": False},
-        status=status.HTTP_404_NOT_FOUND,
+    return _error_response(
+        HostedHarnessError("not_found", "Not found", status_code=404)
     )
 
 
@@ -201,12 +200,12 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             status=status.HTTP_201_CREATED,
         )
 
-    @validated_request(responses={200: AgentFixRunSerializer})
+    @validated_request(responses={200: AgentFixRunDetailSerializer})
     def retrieve(self, request, pk=None):
         fix_run = self._fix_run(request, pk)
         if fix_run is None:
             return _not_found()
-        return Response(AgentFixRunSerializer(fix_run).data)
+        return Response(AgentFixRunDetailSerializer(fix_run).data)
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,
@@ -281,6 +280,14 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             return _not_found()
         return Response({"pull_request_url": open_pull_request(candidate)})
 
+    @swagger_auto_schema(
+        responses={
+            200: openapi.Response(
+                description="The candidate's change as a git patch.",
+                schema=openapi.Schema(type=openapi.TYPE_STRING),
+            )
+        }
+    )
     @action(
         detail=True,
         methods=["get"],

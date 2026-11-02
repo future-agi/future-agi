@@ -3,22 +3,15 @@ simulate.services.agent_fix_sandbox, where the decisions live."""
 
 from __future__ import annotations
 
-import asyncio
-
 from temporalio import activity
 
 from simulate.temporal.activities.hosted_runner import _run_db
-from simulate.temporal.constants import (
-    AGENT_FIX_WATCH_TICK_SECONDS,
-    AGENT_FIX_WATCH_WINDOW_SECONDS,
-)
 from simulate.temporal.types.agent_fix import (
     AgentFixCloseInput,
     AgentFixInput,
     AgentFixLaunch,
     AgentFixWatch,
     AgentFixWatchInput,
-    Observation,
 )
 from tfc.temporal.common.heartbeat import Heartbeater
 
@@ -33,16 +26,11 @@ async def launch_agent_fix_sandbox(input: AgentFixInput) -> AgentFixLaunch:
 
 @activity.defn(name="watch_agent_fix_engine")
 async def watch_agent_fix_engine(input: AgentFixWatchInput) -> AgentFixWatch:
-    """Look at the engine every tick; return once something changed or the window ends."""
+    """One look at the engine. The workflow waits between looks, so a fix holds no worker
+    slot while its engine works."""
     from simulate.services.agent_fix_sandbox import observe
 
-    observation = Observation.RUNNING
-    async with Heartbeater():
-        for _ in range(AGENT_FIX_WATCH_WINDOW_SECONDS // AGENT_FIX_WATCH_TICK_SECONDS):
-            observation = await _run_db(observe, input.fix_run_id, input.command_id)
-            if observation != Observation.RUNNING:
-                break
-            await asyncio.sleep(AGENT_FIX_WATCH_TICK_SECONDS)
+    observation = await _run_db(observe, input.fix_run_id, input.command_id)
     return AgentFixWatch(observation=observation)
 
 

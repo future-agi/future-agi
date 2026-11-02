@@ -1,5 +1,6 @@
 """Reads for "Fix my agent": the engine's brief, a check run's results, the run list."""
 
+from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -24,6 +25,7 @@ from django.db.models import (
 from django.db.models.functions import Coalesce
 
 from simulate.models import (
+    AgentFixCandidate,
     AgentFixRun,
     AgentVersion,
     HarnessAgentVersionRuntime,
@@ -35,6 +37,7 @@ from simulate.models import (
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
+    HELD_BACK_VERIFIED_MIN,
     MAX_MINUTES_MAX,
     SCENARIOS_MAX,
     AgentIdentity,
@@ -42,6 +45,7 @@ from simulate.pydantic_schemas.agent_fix import (
     CheckRecord,
     CheckRunStatus,
     EngineBrief,
+    EvalWarning,
     FailureOwner,
     FixRequest,
     InventoryScenario,
@@ -62,6 +66,12 @@ from simulate.services.harness_environment import environment_name
 from simulate.services.harness_github import short_ref
 from simulate.services.harness_usage import check_harness_action
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.run_compare import REGRESSED, verdict
+from simulate.services.run_results_v3_scoring import (
+    LiveEvals,
+    judge_stored_eval,
+    live_eval_specs,
+)
 
 TRANSCRIPT_CHARS = 8000
 FINISHED_RUN_STATES = {
@@ -185,7 +195,24 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
             else None
         ),
         records=records,
+        parallelism=ran_at(run, len(executions)) if finished else None,
     )
+
+
+def ran_at(run: HostedHarnessJob, trials: int | None = None) -> int:
+    """The parallelism a run really had: what it was admitted at, less any degrade its last
+    attempt recorded. Two arms are only comparable when these match. A run with fewer trials
+    than its parallelism uses a world for each: that is no lower a parallelism, so it reads
+    as what it asked for."""
+    payload = run.payload or {}
+    requested = (payload.get("runtime") or {}).get("parallelism") or 1
+    clamped = (payload.get("metadata") or {}).get("parallelism_clamped") or {}
+    admitted = clamped.get("admitted") or requested
+    attempt = run.attempts.order_by("-attempt_number").first()
+    ran = (attempt.effective_parallelism if attempt else None) or admitted
+    if trials is None:
+        trials = HostedHarnessExecution.no_workspace_objects.filter(job=run).count()
+    return requested if ran >= min(requested, trials) else ran
 
 
 # A plan's limit, met mid-run, is the user's to lift even though the platform reports it.
@@ -233,6 +260,8 @@ def _record(
     failure = receipt.get("failure")
     # An agent that broke the conversation is judged, not excused.
     agent_broke_it = isinstance(failure, Mapping) and failure.get("domain") == "agent"
+    call = receipt.get("call")
+    duration_ms = call.get("duration_ms") if isinstance(call, Mapping) else None
     return CheckRecord(
         scenario_key=scenario_key,
         trial=trial,
@@ -248,6 +277,7 @@ def _record(
             if one.get("name")
         },
         transcript=transcript,
+        duration_s=duration_ms / 1000 if duration_ms else None,
     )
 
 
@@ -393,6 +423,7 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         "fix_run_id",
         "fix_label",
         "state",
+        "run_test_id",
         "test_execution_id",
         "agent_version_id",
         "created_at",
@@ -427,6 +458,12 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
 
 
+def limited_validation(fix_run: AgentFixRun) -> bool:
+    """Whether too few cases were held back to call this fix verified, however it scored."""
+    held_back = fix_run.request.get("held_back_scenario_keys") or []
+    return len(held_back) < HELD_BACK_VERIFIED_MIN
+
+
 def is_retryable(fix_run: AgentFixRun) -> bool:
     """A failed fix not started again yet. Whatever failed it, the user may try once more;
     a fix that came through fix_runs_for_read answers without a query."""
@@ -447,6 +484,25 @@ def fix_lineage(fix_run: AgentFixRun) -> list[Any]:
             .first()
         )
     return ids
+
+
+def check_run_parallelism(fix_run: AgentFixRun) -> int:
+    """The parallelism a fix's next check run asks for. Arms compare only at one parallelism,
+    and a baseline can run below the setting: a bundle sealed by an older runtime can hold its
+    agent to one world while a new candidate's would not. So candidates follow the baseline."""
+    baseline = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            fix_run_id__in=fix_lineage(fix_run),
+            agent_version_id=fix_run.base_agent_version_id,
+            state=HostedHarnessJob.State.COMPLETED,
+            deleted=False,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if baseline is None:
+        return settings.AGENT_FIX_CHECK_RUN_PARALLELISM
+    return ran_at(baseline)
 
 
 def base_check_runs(fix_run: AgentFixRun) -> list[HostedHarnessJob]:
@@ -470,6 +526,76 @@ def base_check_runs(fix_run: AgentFixRun) -> list[HostedHarnessJob]:
     return runs
 
 
+def _eval_trials(
+    run_ids: Iterable[Any], evals: LiveEvals
+) -> dict[str, dict[str, list[int]]]:
+    """Each eval's trials on the given runs, by scenario: [passed, judged]. An eval that
+    errored says nothing about the agent, so it is not a trial."""
+    trials: dict[str, dict[str, list[int]]] = defaultdict(
+        lambda: defaultdict(lambda: [0, 0])
+    )
+    for scenario_key, outputs in HostedHarnessExecution.no_workspace_objects.filter(
+        job_id__in=run_ids
+    ).values_list("source_scenario__scenario_key", "call_execution__eval_outputs"):
+        for config_id, live in evals.items():
+            outcome = judge_stored_eval(
+                (outputs or {}).get(config_id), live.spec
+            ).outcome
+            if outcome in ("passed", "failed"):
+                trials[config_id][scenario_key][0] += outcome == "passed"
+                trials[config_id][scenario_key][1] += 1
+    return trials
+
+
+def _pooled(
+    trials: Mapping[str, list[int]], scenario_keys: Iterable[str]
+) -> tuple[int, int]:
+    rows = [trials[key] for key in scenario_keys]
+    return sum(one[0] for one in rows), sum(one[1] for one in rows)
+
+
+def eval_warnings(fix_run: AgentFixRun) -> list[EvalWarning]:
+    """The platform evals the winner does worse on than the base version, on the scenarios
+    both ran. They do not decide a fix's verdict, so the person who reviews it reads them
+    here. Evals land after their call ends, so this reads them rather than a snapshot."""
+    winner = next(
+        (
+            one
+            for one in fix_run.candidates.all()
+            if one.outcome == AgentFixCandidate.Outcome.WINNER
+        ),
+        None,
+    )
+    if winner is None:
+        return []
+    evals = live_eval_specs(fix_run.environment.run_test_id)
+    mine = _eval_trials(
+        [
+            run.id
+            for run in fix_run.check_run_list
+            if run.agent_version_id == winner.agent_version_id
+        ],
+        evals,
+    )
+    base = _eval_trials([run.id for run in base_check_runs(fix_run)], evals)
+    warnings = []
+    for config_id, live in evals.items():
+        shared = mine[config_id].keys() & base[config_id].keys()
+        passed, trials = _pooled(mine[config_id], shared)
+        base_passed, base_trials = _pooled(base[config_id], shared)
+        if verdict(passed, trials, base_passed, base_trials)[0] == REGRESSED:
+            warnings.append(
+                EvalWarning(
+                    name=live.config.name,
+                    pass_rate=passed / trials,
+                    base_pass_rate=base_passed / base_trials,
+                    trials=trials,
+                    base_trials=base_trials,
+                )
+            )
+    return warnings
+
+
 def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFixRun]:
     return fix_runs_for_read(
         AgentFixRun.no_workspace_objects.filter(environment=environment)
@@ -485,11 +611,11 @@ SURFACE_LABELS = {
     Surface.SETTINGS: "Settings",
     Surface.CODE: "Code",
 }
-# What the launch form starts from: the instructions only, within 1,500 credits and two
-# and a half hours.
+# What the launch form starts from: the instructions only, within 1,500 credits and three
+# hours.
 DEFAULT_SURFACES = [Surface.PROMPT]
 DEFAULT_BUDGET_CREDITS = 1500
-DEFAULT_MAX_MINUTES = 150
+DEFAULT_MAX_MINUTES = 180
 
 
 def launch_blocker(
@@ -596,6 +722,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         limits=LaunchLimits(
             budget_credits_max=BUDGET_CREDITS_MAX,
             max_minutes_max=MAX_MINUTES_MAX,
+            scenarios_min=settings.AGENT_FIX_MIN_FAILING_CASES,
             scenarios_max=SCENARIOS_MAX,
         ),
         blocked=LaunchBlocked(code=blocked.code, message=blocked.message)

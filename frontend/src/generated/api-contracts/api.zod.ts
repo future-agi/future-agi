@@ -34235,6 +34235,9 @@ export const simulateApiAgentFixEngineCheckRunsBodyScenarioKeysItemMax = 255;
 
 export const simulateApiAgentFixEngineCheckRunsBodyTrialsMax = 20;
 
+export const simulateApiAgentFixEngineCheckRunsBodyRepeatDefault = 1;
+export const simulateApiAgentFixEngineCheckRunsBodyRepeatMax = 20;
+
 export const SimulateApiAgentFixEngineCheckRunsBody = zod.object({
   label: zod
     .string()
@@ -34253,6 +34256,11 @@ export const SimulateApiAgentFixEngineCheckRunsBody = zod.object({
     .number()
     .min(1)
     .max(simulateApiAgentFixEngineCheckRunsBodyTrialsMax),
+  repeat: zod
+    .number()
+    .min(1)
+    .max(simulateApiAgentFixEngineCheckRunsBodyRepeatMax)
+    .default(simulateApiAgentFixEngineCheckRunsBodyRepeatDefault),
 });
 
 /**
@@ -34603,6 +34611,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
       }),
       retried_from_id: zod.string().uuid(),
       retryable: zod.boolean().optional(),
+      limited_validation: zod.boolean().optional(),
       check_runs: zod
         .array(
           zod.object({
@@ -34799,6 +34808,7 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
   limits: zod.object({
     budget_credits_max: zod.number(),
     max_minutes_max: zod.number(),
+    scenarios_min: zod.number(),
     scenarios_max: zod.number(),
   }),
   blocked: zod.object({
@@ -34952,6 +34962,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
   }),
   retried_from_id: zod.string().uuid(),
   retryable: zod.boolean().optional(),
+  limited_validation: zod.boolean().optional(),
   check_runs: zod
     .array(
       zod.object({
@@ -35024,6 +35035,17 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
   started_at: zod.string().datetime({ offset: true }).optional(),
   finished_at: zod.string().datetime({ offset: true }).optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
+  eval_warnings: zod
+    .array(
+      zod.object({
+        name: zod.string().min(1),
+        pass_rate: zod.number(),
+        base_pass_rate: zod.number(),
+        trials: zod.number(),
+        base_trials: zod.number(),
+      }),
+    )
+    .optional(),
 });
 
 /**
@@ -35050,6 +35072,9 @@ export const SimulateApiAgentFixRunsCandidatesCandidatePatchParams = zod.object(
     candidate_id: zod.string(),
   },
 );
+
+export const SimulateApiAgentFixRunsCandidatesCandidatePatchResponse =
+  zod.string();
 
 /**
  * A GitHub agent's winner, opened once as a pull request on its repository.
@@ -35222,6 +35247,7 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
   }),
   retried_from_id: zod.string().uuid(),
   retryable: zod.boolean().optional(),
+  limited_validation: zod.boolean().optional(),
   check_runs: zod
     .array(
       zod.object({

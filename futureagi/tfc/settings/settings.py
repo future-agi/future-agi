@@ -1091,8 +1091,18 @@ AGENT_FIX_E2B_TEMPLATE_REFERENCE = os.getenv("AGENT_FIX_E2B_TEMPLATE_REFERENCE",
 AGENT_FIX_ENGINE_COMMAND = os.getenv(
     "AGENT_FIX_ENGINE_COMMAND", "node /opt/agent-improvement/platform-entry.mjs"
 )
+# Fixes running at once, on the platform and in one organization; the rest wait as queued. Size
+# these for sandboxes and models: a fix holds about 4 sandboxes at its peak (the engine and one
+# for each check run side by side). Two claims can race past a cap by a few fixes.
+AGENT_FIX_MAX_RUNNING = int(os.getenv("AGENT_FIX_MAX_RUNNING", "10"))
+AGENT_FIX_MAX_RUNNING_PER_ORG = int(os.getenv("AGENT_FIX_MAX_RUNNING_PER_ORG", "3"))
+# How long a fix may wait for room before it fails, free to retry.
+AGENT_FIX_MAX_QUEUED_SECONDS = int(os.getenv("AGENT_FIX_MAX_QUEUED_SECONDS", "3600"))
 # Sandboxes one fix may use in all; an engine that dies is started again after a pause.
 AGENT_FIX_MAX_SANDBOX_ATTEMPTS = int(os.getenv("AGENT_FIX_MAX_SANDBOX_ATTEMPTS", "3"))
+# Conversations a fix's check run holds at once. Every run of a fix asks for the same, so
+# its arms stay comparable.
+AGENT_FIX_CHECK_RUN_PARALLELISM = int(os.getenv("AGENT_FIX_CHECK_RUN_PARALLELISM", "2"))
 # The engine reports at least every minute; silent this long, it is treated as dead.
 AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
     os.getenv("AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS", "600")
@@ -1101,9 +1111,13 @@ AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
 AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = os.getenv(
     "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"
 )
-# Models the engine may call through its fix's API; Future AGI pays for them.
+# Failing cases a fix needs at launch. A third are held back, and a fix proven only on the
+# cases it was made on can pass by chance, so this leaves the 4 that verifying it takes.
+AGENT_FIX_MIN_FAILING_CASES = int(os.getenv("AGENT_FIX_MIN_FAILING_CASES", "12"))
+# Models the engine may call through its fix's API; Future AGI pays for them. The second is
+# the backup its profile moves to when the first loses a call.
 AGENT_FIX_ENGINE_MODELS = os.getenv(
-    "AGENT_FIX_ENGINE_MODELS", "deepseek/deepseek-v4.1-flash"
+    "AGENT_FIX_ENGINE_MODELS", "deepseek/deepseek-v4.1-flash,openai/gpt-6-luna"
 ).split(",")
 # How long past the fix's deadline its token still works, for the final report.
 AGENT_FIX_TOKEN_GRACE_SECONDS = int(os.getenv("AGENT_FIX_TOKEN_GRACE_SECONDS", "600"))

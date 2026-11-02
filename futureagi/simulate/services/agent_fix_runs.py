@@ -6,6 +6,7 @@ from hashlib import sha256
 from typing import Any
 
 import structlog
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -14,7 +15,11 @@ from simulate.models import (
     AgentFixRun,
     HostedHarnessJob,
 )
-from simulate.pydantic_schemas.agent_fix import FixRequest, Surface
+from simulate.pydantic_schemas.agent_fix import (
+    HELD_BACK_VERIFIED_MIN,
+    FixRequest,
+    Surface,
+)
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     failing_sub_goals_by_scenario,
@@ -37,10 +42,9 @@ from simulate.temporal.client import (
 logger = structlog.get_logger(__name__)
 
 
-# A third of the failing cases are held back, once there are enough for a third to tell:
-# 4 held back pass a large real fix 87% of the time, 2 only 56%.
+# A third of the failing cases are held back, once there are enough for a third to tell.
 HELD_BACK_SHARE = 3
-HELD_BACK_MIN_CASES = 12
+HELD_BACK_MIN_CASES = HELD_BACK_VERIFIED_MIN * HELD_BACK_SHARE
 
 
 def split_held_back(seed: str, failing: Mapping[str, list[str]]) -> list[str]:
@@ -117,6 +121,14 @@ def launch_fix_run(
         raise HostedHarnessError(
             "fix_targets_passed",
             "nothing failed on the chosen scenarios in this run",
+            status_code=422,
+        )
+    failing_cases = sum(1 for names in by_scenario.values() if names)
+    if failing_cases < settings.AGENT_FIX_MIN_FAILING_CASES:
+        raise HostedHarnessError(
+            "fix_targets_too_few",
+            f"a fix needs at least {settings.AGENT_FIX_MIN_FAILING_CASES} failing cases "
+            f"to be proven; these have {failing_cases}",
             status_code=422,
         )
     request = FixRequest(

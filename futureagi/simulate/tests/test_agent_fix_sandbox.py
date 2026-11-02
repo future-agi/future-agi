@@ -10,10 +10,13 @@ import pytest
 from django.db import OperationalError
 from django.test import RequestFactory
 from django.utils import timezone
+from structlog.testing import capture_logs
 
+from accounts.models.organization import Organization
 from simulate.authentication import AgentFixEngineAuthentication
 from simulate.models import AgentFixRun
 from simulate.pydantic_schemas.agent_fix import FixRequest, Surface
+from simulate.selectors.agent_fix import is_retryable
 from simulate.services import agent_fix_sandbox
 from simulate.services.agent_fix_sandbox import (
     CAPABILITY_PATH,
@@ -74,6 +77,10 @@ class _Process:
         assert command_id == "4242:engine"
         return SimpleNamespace(exit_code=self.exit_code)
 
+    def get_session_command_logs(self, _session_id, command_id, request_timeout=None):
+        assert command_id == "4242:engine"
+        return SimpleNamespace(output="improve.mjs exited (13) before the fix ended")
+
 
 class _Sandbox:
     def __init__(self, sandbox_id):
@@ -133,8 +140,7 @@ def provider(monkeypatch):
     return fake
 
 
-@pytest.fixture
-def fix_run(user, workspace):
+def _new_fix(user, workspace):
     environment, _ = create_hosted_job(
         user.organization,
         _payload(),
@@ -154,6 +160,11 @@ def fix_run(user, workspace):
             max_minutes=60,
         ).model_dump(mode="json"),
     )
+
+
+@pytest.fixture
+def fix_run(user, workspace):
+    return _new_fix(user, workspace)
 
 
 def _running(fix_run, **fields):
@@ -375,6 +386,98 @@ def test_launch_past_the_deadline_closes_the_run(fix_run, provider):
     assert provider.specs == []
 
 
+def test_a_fix_waits_while_the_platform_is_full(
+    fix_run, provider, user, workspace, settings
+):
+    settings.AGENT_FIX_MAX_RUNNING = 1
+    _running(_new_fix(user, workspace))
+
+    launched = launch(str(fix_run.id))
+
+    fix_run.refresh_from_db()
+    assert launched.observation == Observation.WAITING
+    assert fix_run.state == AgentFixRun.State.QUEUED
+    assert fix_run.started_at is None
+    assert provider.specs == []
+
+
+def test_a_fix_waits_while_its_organization_is_full(
+    fix_run, provider, user, workspace, settings
+):
+    settings.AGENT_FIX_MAX_RUNNING_PER_ORG = 1
+    _running(_new_fix(user, workspace))
+
+    assert launch(str(fix_run.id)).observation == Observation.WAITING
+    assert provider.specs == []
+
+
+def test_a_full_organization_does_not_hold_back_another(
+    fix_run, provider, user, workspace, settings
+):
+    settings.AGENT_FIX_MAX_RUNNING_PER_ORG = 1
+    elsewhere = _new_fix(user, workspace)
+    _running(
+        elsewhere,
+        organization=Organization.objects.create(name="Another organization"),
+    )
+
+    assert launch(str(fix_run.id)).observation == Observation.RUNNING
+
+
+def test_the_oldest_waiting_fix_of_an_organization_goes_first(
+    fix_run, provider, user, workspace, settings
+):
+    settings.AGENT_FIX_MAX_RUNNING_PER_ORG = 1
+    younger = _new_fix(user, workspace)
+
+    assert launch(str(younger.id)).observation == Observation.WAITING
+    assert launch(str(fix_run.id)).observation == Observation.RUNNING
+    assert launch(str(younger.id)).observation == Observation.WAITING
+
+
+def test_a_stopped_fix_frees_its_place(fix_run, provider, user, workspace, settings):
+    settings.AGENT_FIX_MAX_RUNNING = 1
+    other = _new_fix(user, workspace)
+    _running(other)
+    assert launch(str(fix_run.id)).observation == Observation.WAITING
+
+    AgentFixRun.no_workspace_objects.filter(id=other.id).update(
+        state=AgentFixRun.State.STOPPED
+    )
+
+    assert launch(str(fix_run.id)).observation == Observation.RUNNING
+
+
+def test_a_running_fix_is_started_again_even_when_the_caps_are_full(
+    fix_run, provider, settings
+):
+    settings.AGENT_FIX_MAX_RUNNING = 1
+    settings.AGENT_FIX_MAX_RUNNING_PER_ORG = 1
+    _running(fix_run, sandbox_attempt=1)
+
+    assert launch(str(fix_run.id)).observation == Observation.RUNNING
+
+
+def test_a_fix_that_waits_too_long_fails_free_to_retry(
+    fix_run, provider, user, workspace, settings
+):
+    settings.AGENT_FIX_MAX_RUNNING = 1
+    settings.AGENT_FIX_MAX_QUEUED_SECONDS = 60
+    _running(_new_fix(user, workspace))
+    AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+        created_at=timezone.now() - timedelta(seconds=61)
+    )
+
+    launched = launch(str(fix_run.id))
+
+    fix_run.refresh_from_db()
+    assert launched.observation == Observation.ENDED
+    assert fix_run.state == AgentFixRun.State.FAILED
+    assert fix_run.failure["code"] == "fix_queue_timeout"
+    assert is_retryable(fix_run) is True
+    assert provider.specs == []
+
+
 def test_launch_of_a_stopping_run_starts_nothing(fix_run, provider):
     _running(fix_run, state=AgentFixRun.State.STOPPING)
 
@@ -403,8 +506,12 @@ def test_an_exited_engine_is_gone(fix_run, provider):
     launched = launch(str(fix_run.id))
     provider.live["sandbox-1"].process.exit_code = 1
 
-    assert observe(str(fix_run.id), launched.command_id) == Observation.ENGINE_GONE
+    with capture_logs() as logs:
+        assert observe(str(fix_run.id), launched.command_id) == Observation.ENGINE_GONE
+
     assert provider.renewed == []
+    [exited] = [log for log in logs if log["event"] == "agent_fix_engine_exited"]
+    assert exited["output"] == "improve.mjs exited (13) before the fix ended"
 
 
 def test_a_deleted_sandbox_means_the_engine_is_gone(fix_run, provider):

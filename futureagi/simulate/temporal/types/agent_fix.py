@@ -8,6 +8,8 @@ from enum import StrEnum
 class Observation(StrEnum):
     """What the platform last saw of a fix and the engine working on it."""
 
+    # The fix is held back by the running-fix caps; it has no sandbox yet.
+    WAITING = "waiting"
     # The engine runs in its sandbox.
     RUNNING = "running"
     # The run reached its ending; nothing is left to do.

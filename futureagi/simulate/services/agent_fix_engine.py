@@ -6,6 +6,7 @@ is running: ``close_fix_run`` takes the same lock, so nothing starts after a fix
 """
 
 import fnmatch
+import hashlib
 import io
 import tarfile
 from decimal import Decimal
@@ -30,7 +31,12 @@ from simulate.pydantic_schemas.agent_fix import (
     EngineReport,
     FailureOwner,
 )
-from simulate.selectors.agent_fix import committed_usd, fix_lineage
+from simulate.selectors.agent_fix import (
+    check_run_parallelism,
+    committed_usd,
+    fix_lineage,
+    ran_at,
+)
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.harness_usage import require_harness_call_usage
@@ -207,8 +213,9 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
         )
     environment = fix_run.environment
     kind = agent_kind(environment)
+    parallelism = check_run_parallelism(fix_run)
     finished = _finished_earlier(
-        fix_run, request, kind.run_options(fix_run, version_id)
+        fix_run, request, kind.run_options(fix_run, version_id), parallelism
     )
     idempotency_key = f"fix:{fix_run.id}:{request.label}"
     replay = (
@@ -235,6 +242,8 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
             trials=request.trials,
             idempotency_key=idempotency_key,
             fix_run=locked,
+            seed=_repeat_seed(locked, request.repeat),
+            parallelism=parallelism,
             **kind.run_options(locked, version_id),
         )
         if created:
@@ -247,12 +256,22 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
     return run
 
 
+def _repeat_seed(fix_run: AgentFixRun, repeat: int) -> int:
+    """One seed for a repeat, in both arms: the arms stay paired and the repeats differ. A
+    retry keeps the seeds of the fix it retries, so it pairs with what it reuses."""
+    digest = hashlib.sha256(f"{fix_lineage(fix_run)[-1]}:{repeat}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") >> 1
+
+
 def _finished_earlier(
-    fix_run: AgentFixRun, request: CheckRunRequest, options: dict[str, Any]
+    fix_run: AgentFixRun,
+    request: CheckRunRequest,
+    options: dict[str, Any],
+    parallelism: int,
 ) -> HostedHarnessJob | None:
     """The same check, finished by a failed fix this one retries: the user paid for it
-    once, so it is read again instead of run again. Same label, versions, scenarios and
-    trials; a run that failed or was canceled is run again."""
+    once, so it is read again instead of run again. Same label, versions, scenarios, trials
+    and parallelism; a run that failed or was canceled is run again."""
     earlier = fix_lineage(fix_run)[1:]
     picks = options.get("picks")
     if not earlier or picks is None:
@@ -277,6 +296,7 @@ def _finished_earlier(
             tuple(str(one) for one in pins) == wanted
             and metadata.get("selected_scenario_keys") == request.scenario_keys
             and metadata.get("trials") == request.trials
+            and ran_at(run) == parallelism
         ):
             return run
     return None

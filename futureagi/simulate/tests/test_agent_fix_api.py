@@ -44,9 +44,13 @@ from simulate.tests.test_agent_fix_services import (
     PATCH,
     _candidate,
     _check,
+    _executions,
     _fix_run,
     _run,
     _tree,
+)
+from simulate.tests.test_agent_fix_services import (
+    any_suite_may_launch as any_suite_may_launch,
 )
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixtures
     environment as environment,
@@ -95,10 +99,11 @@ def _engine(client, method, fix_run, path, *, token=TOKEN, **kwargs):
 
 
 def _billed(usd):
-    """A model call's cost as the organization is billed for it: at the AI markup."""
+    """A model call's cost as the organization is billed for it: at the AI markup, to the
+    spend column's four places."""
     from ee.usage.services.config import BillingConfig
 
-    return usd * BillingConfig.get().get_ai_cost_markup()
+    return (usd * BillingConfig.get().get_ai_cost_markup()).quantize(Decimal("0.0001"))
 
 
 def _out_of_credits():
@@ -227,6 +232,7 @@ class TestEngineCalls:
             "total": 1,
             "failure": None,
             "records": [],
+            "parallelism": None,
         }
 
         ended = _engine(
@@ -755,11 +761,12 @@ class TestUserApi:
         assert options["defaults"] == {
             "surfaces": ["prompt"],
             "budget_credits": 1500,
-            "max_minutes": 150,
+            "max_minutes": 180,
         }
         assert options["limits"] == {
             "budget_credits_max": 50000,
             "max_minutes_max": 1440,
+            "scenarios_min": 1,
             "scenarios_max": 200,
         }
         assert options["blocked"] is None
@@ -864,6 +871,7 @@ class TestUserApi:
                 f"{BASE}/", {"environment_id": str(environment.id)}
             ).json()
             read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+            read.pop("eval_warnings")
             assert listed["results"] == [read]
             return read["spent_credits"], read["committed_credits"]
 
@@ -1000,9 +1008,11 @@ class TestUserApi:
 
         body = auth_client.get(f"{BASE}/{fix_run.id}/").json()
 
+        # The results page takes the environment's run, not the job.
+        assert baseline.run_test_id
         assert body["check_runs"] == [
             {
-                "run_id": str(baseline.id),
+                "run_id": str(baseline.run_test_id),
                 "test_execution_id": str(baseline.test_execution_id),
                 "label": "baseline",
                 "state": baseline.state,
@@ -1010,7 +1020,7 @@ class TestUserApi:
         ]
         [shown] = body["candidates"]
         assert [(run["run_id"], run["label"]) for run in shown["check_runs"]] == [
-            (str(screen.id), "c1-target")
+            (str(screen.run_test_id), "c1-target")
         ]
 
     def test_a_retry_shows_the_check_runs_it_reused(self, auth_client, source_run):
@@ -1028,7 +1038,7 @@ class TestUserApi:
         body = auth_client.get(f"{BASE}/{retried.id}/").json()
 
         assert [(run["run_id"], run["label"]) for run in body["check_runs"]] == [
-            (str(baseline.id), "baseline")
+            (str(baseline.run_test_id), "baseline")
         ]
 
     def test_http_patch_is_not_an_action_of_a_fix(self, auth_client, source_run):
@@ -1187,6 +1197,77 @@ class TestUserApi:
         [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
         assert shown["pull_request_url"] == self.PULL
 
+    def test_a_limited_fix_ships_as_a_draft_that_says_so(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+
+        response, [(_, _, sent)] = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert response.status_code == 200, response.content
+        assert sent["json"]["draft"] is True
+        assert "limited validation" in sent["json"]["title"]
+        assert sent["json"]["body"].startswith("**Limited validation.**")
+        assert "Proven by" not in sent["json"]["body"]
+
+    def test_a_verified_fix_ships_as_a_normal_pull_request(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={
+                **fix_run.request,
+                "held_back_scenario_keys": [f"held-{n}" for n in range(4)],
+            }
+        )
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            verdict={
+                "reason": "passed every tier",
+                "target_pass_rate": [0, 0.625],
+                "held_back_pass_rate": [0, 0.6111],
+            },
+            summary=f"{'Keep the date the caller asked for ' * 6}\nWhy it works.",
+        )
+
+        response, [(_, _, sent)] = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert response.status_code == 200, response.content
+        assert sent["json"]["draft"] is False
+        assert "limited validation" not in sent["json"]["title"].lower()
+        assert "limited validation" not in sent["json"]["body"].lower()
+        assert (
+            "Proven by Fix my agent: held-back cases 0% → 61%, target cases 0% → 63%; "
+            "passed every tier" in sent["json"]["body"]
+        )
+        title = sent["json"]["title"]
+        assert len(title) <= 120 and title.endswith("r asked for…")
+
+    def test_a_repository_without_drafts_gets_a_pull_request_that_still_says_so(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        refused = {
+            "message": "Validation Failed",
+            "errors": [
+                {"message": "Draft pull requests are not supported in this repository."}
+            ],
+        }
+
+        response, calls = self._ship(
+            auth_client,
+            fix_run,
+            candidate,
+            [(422, refused), (201, {"html_url": self.PULL})],
+        )
+
+        assert response.status_code == 200, response.content
+        assert [sent["json"]["draft"] for _, _, sent in calls] == [True, False]
+        assert "limited validation" in calls[1][2]["json"]["title"]
+
     def test_a_pull_request_github_already_has_is_found_not_duplicated(
         self, auth_client, source_run, github
     ):
@@ -1279,6 +1360,129 @@ class TestUserApi:
             "fix_github_not_connected",
             [],
         )
+
+
+@pytest.mark.parametrize(
+    "held_back, limited", [(0, True), (3, True), (4, False), (6, False)]
+)
+def test_too_few_held_back_cases_limit_a_fix_s_validation(
+    auth_client, environment, source_run, held_back, limited
+):
+    fix_run = _fix_run(source_run)
+    AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+        request={
+            **fix_run.request,
+            "held_back_scenario_keys": [f"held-{n}" for n in range(held_back)],
+        }
+    )
+
+    read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+    listed = auth_client.get(f"{BASE}/", {"environment_id": str(environment.id)}).json()
+
+    assert read["limited_validation"] is limited
+    assert listed["results"][0]["limited_validation"] is limited
+
+
+def _judged(run, config, *, passes=0, status="completed"):
+    """Stores an eval on each of a run's calls, the first ``passes`` of them passing."""
+    for index, execution in enumerate(_executions(run)):
+        call = execution.call_execution
+        call.eval_outputs = {
+            str(config.id): {
+                "status": status,
+                "output": "Passed" if index < passes else "Failed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+
+class TestEvalWarnings:
+    TRIALS = 12
+
+    def _arms(self, source_run, *, keys=(KEYS[0],), outcome="winner"):
+        fix_run = _armed(_fix_run(source_run))
+        candidate = _candidate(fix_run)
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=outcome
+        )
+        base = _check(fix_run, label="base", keys=keys, trials=self.TRIALS)
+        mine = _check(
+            fix_run,
+            label="c1",
+            version_id=candidate.agent_version_id,
+            keys=(KEYS[0],),
+            trials=self.TRIALS,
+        )
+        return fix_run, base, mine, _mapped_eval(source_run)
+
+    def _warnings(self, auth_client, fix_run):
+        read = auth_client.get(f"{BASE}/{fix_run.id}/")
+        assert read.status_code == 200, read.content
+        return read.json()["eval_warnings"]
+
+    def test_the_read_warns_when_the_winner_does_worse_on_a_platform_eval(
+        self, auth_client, source_run
+    ):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=3)
+
+        assert self._warnings(auth_client, fix_run) == [
+            {
+                "name": config.name,
+                "pass_rate": 0.25,
+                "base_pass_rate": 1.0,
+                "trials": self.TRIALS,
+                "base_trials": self.TRIALS,
+            }
+        ]
+
+    def test_an_eval_the_winner_holds_does_not_warn(self, auth_client, source_run):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, passes=self.TRIALS)
+
+        assert self._warnings(auth_client, fix_run) == []
+
+    def test_only_the_winner_is_warned_about(self, auth_client, source_run):
+        fix_run, base, mine, config = self._arms(source_run, outcome="rejected")
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config)
+
+        assert self._warnings(auth_client, fix_run) == []
+
+    def test_an_eval_that_errored_is_not_a_trial(self, auth_client, source_run):
+        fix_run, base, mine, config = self._arms(source_run)
+        _judged(base, config, passes=self.TRIALS)
+        _judged(mine, config, status="error")
+
+        assert self._warnings(auth_client, fix_run) == []
+
+    def test_only_the_scenarios_both_ran_compare(self, auth_client, source_run):
+        """Pooled over everything the base ran, this one would read as 50% to 0%."""
+        fix_run, base, mine, config = self._arms(source_run, keys=KEYS)
+        for execution in _executions(base):
+            passed = execution.source_scenario.scenario_key != KEYS[0]
+            call = execution.call_execution
+            call.eval_outputs = {
+                str(config.id): {
+                    "status": "completed",
+                    "output": "Passed" if passed else "Failed",
+                    "output_type": "Pass/Fail",
+                }
+            }
+            call.save(update_fields=["eval_outputs"])
+        _judged(mine, config)
+
+        assert self._warnings(auth_client, fix_run) == []
+
+    def test_a_list_leaves_the_warnings_out(self, auth_client, environment, source_run):
+        self._arms(source_run)
+
+        listed = auth_client.get(f"{BASE}/", {"environment_id": str(environment.id)})
+
+        assert "eval_warnings" not in listed.json()["results"][0]
 
 
 class TestCheckRunsStayOutOfTheUsersRuns:

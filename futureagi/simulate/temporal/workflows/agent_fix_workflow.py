@@ -6,7 +6,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, CancelledError
 
-from simulate.temporal.constants import AGENT_FIX_WATCH_WINDOW_SECONDS, QUEUE_RUNNER
+from simulate.temporal.constants import AGENT_FIX_WATCH_TICK_SECONDS, QUEUE_RUNNER
 from simulate.temporal.types.agent_fix import (
     AgentFixCloseInput,
     AgentFixInput,
@@ -37,6 +37,8 @@ _WATCH_RETRY = RetryPolicy(
 _WATCH_PAUSE = timedelta(seconds=15)
 # Before an engine is started again: long enough for a model or platform blip to pass.
 _RELAUNCH_PAUSE = timedelta(minutes=2)
+# Before a fix held back by the running-fix caps asks again.
+_QUEUE_PAUSE = timedelta(minutes=1)
 
 
 @workflow.defn
@@ -86,6 +88,9 @@ class AgentFixWorkflow:
                 )
                 await self._close(input, "failed", "fix_sandbox_failed", _cause(exc))
                 return Observation.ENDED
+            if launch.observation == Observation.WAITING:
+                await self._wait(_QUEUE_PAUSE)
+                continue
             if launch.observation != Observation.RUNNING:
                 return launch.observation
             observation = await self._watch(
@@ -98,13 +103,15 @@ class AgentFixWorkflow:
             # The engine died, or stopped on a failure a later launch may not meet (a model or
             # platform outage). The next launch starts it again, or ends the run once its
             # sandboxes are used up; a stop during the pause ends it at once.
-            try:
-                await workflow.wait_condition(
-                    lambda: self.cancel_requested, timeout=_RELAUNCH_PAUSE
-                )
-            except TimeoutError:
-                pass
+            await self._wait(_RELAUNCH_PAUSE)
         return Observation.STOPPING
+
+    async def _wait(self, pause: timedelta) -> None:
+        """Wait without holding a worker slot; a stop ends the wait at once."""
+        try:
+            await workflow.wait_condition(lambda: self.cancel_requested, timeout=pause)
+        except TimeoutError:
+            pass
 
     async def _watch(self, input: AgentFixWatchInput) -> Observation:
         """Watch the engine until something changes."""
@@ -114,10 +121,8 @@ class AgentFixWorkflow:
                     "watch_agent_fix_engine",
                     input,
                     task_queue=QUEUE_RUNNER,
-                    start_to_close_timeout=timedelta(
-                        seconds=AGENT_FIX_WATCH_WINDOW_SECONDS + 5 * 60
-                    ),
-                    heartbeat_timeout=timedelta(minutes=2),
+                    # Three sandbox API calls of 15 seconds at most, and the database.
+                    start_to_close_timeout=timedelta(minutes=2),
                     retry_policy=_WATCH_RETRY,
                     result_type=AgentFixWatch,
                 )
@@ -136,6 +141,7 @@ class AgentFixWorkflow:
                 continue
             if watch.observation != Observation.RUNNING:
                 return watch.observation
+            await self._wait(timedelta(seconds=AGENT_FIX_WATCH_TICK_SECONDS))
         return Observation.STOPPING
 
     async def _release(self, input: AgentFixInput) -> None:

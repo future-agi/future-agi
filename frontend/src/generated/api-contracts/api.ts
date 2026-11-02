@@ -94,6 +94,7 @@ import type {
   AgentFixMakeDefaultApi,
   AgentFixPullRequestApi,
   AgentFixRunApi,
+  AgentFixRunDetailApi,
   AgentFixRunListApi,
   AgentPlaygroundErrorResponseApi,
   AgentPlaygroundGraphsExecutionsListParams,
@@ -58069,7 +58070,7 @@ export const simulateApiAgentFixRunsLaunchOptions = async (
 };
 
 export type simulateApiAgentFixRunsReadResponse200 = {
-  data: AgentFixRunApi;
+  data: AgentFixRunDetailApi;
   status: 200;
 };
 
@@ -58164,7 +58165,7 @@ export const simulateApiAgentFixRunsCandidatesMakeDefault = async (
 };
 
 export type simulateApiAgentFixRunsCandidatesCandidatePatchResponse200 = {
-  data: void;
+  data: string;
   status: 200;
 };
 

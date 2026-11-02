@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from django.conf import settings as django_settings
 from django.test import TestCase
 from django.utils import timezone
 
@@ -17,6 +18,7 @@ from simulate.models import (
     AgentFixRun,
     AgentVersion,
     HarnessAgentVersionRuntime,
+    HostedHarnessAttempt,
     HostedHarnessExecution,
     HostedHarnessJob,
 )
@@ -40,9 +42,11 @@ from simulate.selectors.agent_fix import (
     committed_usd,
     engine_brief,
     is_retryable,
+    ran_at,
 )
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_runs import (
+    HELD_BACK_MIN_CASES,
     close_fix_run,
     launch_fix_run,
     make_candidate_default,
@@ -66,6 +70,9 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
     storage as storage,
 )
 from simulate.tests.test_harness_versioning_record import _authoring
+from simulate.utils.test_execution_utils import eval_source
+from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
+from tfc.settings import settings as default_settings
 
 pytestmark = pytest.mark.django_db
 
@@ -77,6 +84,12 @@ PATCH = (
 )
 State = AgentFixRun.State
 Outcome = AgentFixCandidate.Outcome
+
+
+@pytest.fixture(autouse=True)
+def any_suite_may_launch(settings):
+    """These tests run on a two-scenario suite; the floor has its own."""
+    settings.AGENT_FIX_MIN_FAILING_CASES = 1
 
 
 @pytest.fixture(autouse=True)
@@ -232,7 +245,9 @@ def _candidate(fix_run, attempt=1, *, tree=None, patch_body=PATCH):
         )[0]
 
 
-def _check(fix_run, *, label="base", version_id=None, keys=(KEYS[0],), trials=1):
+def _check(
+    fix_run, *, label="base", version_id=None, keys=(KEYS[0],), trials=1, repeat=1
+):
     # A check run is dispatched once its transaction commits.
     with TestCase.captureOnCommitCallbacks(execute=True):
         return engine.start_check_run(
@@ -242,8 +257,22 @@ def _check(fix_run, *, label="base", version_id=None, keys=(KEYS[0],), trials=1)
                 agent_version_id=str(version_id or fix_run.base_agent_version_id),
                 scenario_keys=list(keys),
                 trials=trials,
+                repeat=repeat,
             ),
         )
+
+
+def _degraded(run, *, to):
+    """Finish a check run that really ran at parallelism ``to``."""
+    HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(state="completed")
+    HostedHarnessAttempt.no_workspace_objects.create(
+        job=run,
+        attempt_number=1,
+        token_hash=hash_secret("a"),
+        fence_hash=hash_secret("b"),
+        expires_at=timezone.now(),
+        effective_parallelism=to,
+    )
 
 
 def _refusal(call, *args, **kwargs):
@@ -264,6 +293,10 @@ def _move_default_suite(environment, user):
         environment, _authoring(names=NAMES[:1]), origin="manual", user=user
     )
     environment.refresh_from_db()
+
+
+def test_the_floor_leaves_enough_held_back_to_verify_a_fix():
+    assert default_settings.AGENT_FIX_MIN_FAILING_CASES == HELD_BACK_MIN_CASES
 
 
 class TestHeldBackSplit:
@@ -297,6 +330,18 @@ class TestHeldBackSplit:
 
 
 class TestLaunch:
+    def test_too_few_failing_cases_are_refused_and_passing_ones_do_not_count(
+        self, source_run, user, settings
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 2
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _launch(source_run, user, targets=KEYS)
+
+        assert refused.value.code == "fix_targets_too_few"
+        assert refused.value.status_code == 422
+        assert not AgentFixRun.no_workspace_objects.exists()
+
     def test_the_split_reaches_the_request_and_the_engine(self, source_run, user):
         with patch(
             "simulate.services.agent_fix_runs.split_held_back", return_value=[KEYS[0]]
@@ -492,6 +537,47 @@ class TestRetry:
         ) == [rerun.id]
         # Another trial count is another check: it runs.
         assert _check(retried, label="baseline", trials=2).id != baseline.id
+
+    def test_a_retry_keeps_the_baseline_it_paid_for_when_the_setting_changes(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks, settings
+    ):
+        failed = _fix_run(source_run, token_hash=hash_secret("t"))
+        baseline = _check(failed, label="baseline")
+        HostedHarnessJob.no_workspace_objects.filter(id=baseline.id).update(
+            state="completed"
+        )
+        close_fix_run(failed.id, State.FAILED, failure={"code": "x", "message": "m"})
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(
+                AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
+            )
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.RUNNING
+        )
+        retried.refresh_from_db()
+        settings.AGENT_FIX_CHECK_RUN_PARALLELISM += 1
+
+        assert _check(retried, label="baseline").id == baseline.id
+
+    def test_a_retry_keeps_the_seeds_of_the_fix_it_retries(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks
+    ):
+        failed = _fix_run(source_run, token_hash=hash_secret("t"))
+        first = _check(failed, label="c1-target", repeat=2)
+        close_fix_run(failed.id, State.FAILED, failure={"code": "x", "message": "m"})
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(
+                AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
+            )
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.RUNNING
+        )
+        retried.refresh_from_db()
+
+        again = _check(retried, label="c1-target", repeat=2)
+
+        assert again.id != first.id
+        assert again.seed == first.seed
 
 
 class TestAddCandidate:
@@ -795,7 +881,166 @@ class TestCheckRuns:
         temporal.start_run.assert_not_called()
 
 
+class TestRanAt:
+    """Arms compare only at one parallelism, so a false mismatch rejects a working fix."""
+
+    def _asked_for(self, run, *, parallelism=4, admitted=None):
+        payload = dict(run.payload)
+        payload["runtime"] = {**payload.get("runtime", {}), "parallelism": parallelism}
+        if admitted is not None:
+            payload["metadata"] = {
+                **payload.get("metadata", {}),
+                "parallelism_clamped": {
+                    "requested": parallelism,
+                    "admitted": admitted,
+                },
+            }
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(payload=payload)
+        run.refresh_from_db()
+        return run
+
+    def test_a_run_with_fewer_trials_than_worlds_is_not_a_lower_parallelism(
+        self, source_run
+    ):
+        run = self._asked_for(_check(_fix_run(source_run)), admitted=1)
+
+        assert ran_at(run) == 4
+
+    def test_a_clamp_that_cost_the_run_worlds_still_shows(self, source_run):
+        check = _check(_fix_run(source_run), keys=KEYS, trials=3)
+
+        assert ran_at(self._asked_for(check, admitted=2)) == 2
+
+    def test_a_degrade_still_shows(self, source_run):
+        run = self._asked_for(_check(_fix_run(source_run), keys=KEYS, trials=3))
+        _degraded(run, to=2)
+
+        assert ran_at(run) == 2
+
+
+def test_the_engine_may_call_its_backup_model():
+    """The engine's profile moves to this model when DeepSeek loses a call. The proxy refuses
+    any model that is not listed, so a fix would die on the very call that needs the backup."""
+    assert "openai/gpt-6-luna" in django_settings.AGENT_FIX_ENGINE_MODELS
+
+
+def test_a_check_run_s_evals_have_a_source_of_their_own(source_run):
+    check = _check(_fix_run(source_run))
+
+    assert eval_source(check.test_execution_id) == FIX_CHECK_RUN_EVAL_SOURCE
+    assert eval_source(source_run.test_execution_id) == "simulate"
+    assert eval_source(source_run.test_execution_id, "other") == "other"
+
+
+class TestCheckRunSeeds:
+    def test_a_repeat_has_one_seed_in_both_arms_and_repeats_differ(self, source_run):
+        fix_run = _fix_run(source_run, token_hash=hash_secret("t"))
+        candidate = _candidate(fix_run)
+
+        base = [_check(fix_run, label=f"b-r{k}", repeat=k) for k in (1, 2)]
+        tried = [
+            _check(
+                fix_run,
+                label=f"c-r{k}",
+                repeat=k,
+                version_id=candidate.agent_version_id,
+            )
+            for k in (1, 2)
+        ]
+
+        assert [run.seed for run in base] == [run.seed for run in tried]
+        assert base[0].seed != base[1].seed
+
+    def test_a_check_run_asks_for_the_fix_parallelism(self, source_run, settings):
+        settings.AGENT_FIX_CHECK_RUN_PARALLELISM = 3
+
+        run = _check(_fix_run(source_run, token_hash=hash_secret("t")))
+
+        assert run.payload["runtime"]["parallelism"] == 3
+
+    def test_a_candidate_follows_a_baseline_that_ran_below_the_setting(
+        self, source_run, settings
+    ):
+        settings.AGENT_FIX_CHECK_RUN_PARALLELISM = 4
+        fix_run = _fix_run(source_run, token_hash=hash_secret("t"))
+        baseline = _check(fix_run, label="baseline", keys=KEYS, trials=3)
+        _degraded(baseline, to=1)
+        candidate = _candidate(fix_run)
+
+        run = _check(fix_run, label="c1", version_id=candidate.agent_version_id)
+
+        assert baseline.payload["runtime"]["parallelism"] == 4
+        assert run.payload["runtime"]["parallelism"] == 1
+
+    def test_a_retry_reuses_a_baseline_that_ran_below_the_setting(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks, settings
+    ):
+        settings.AGENT_FIX_CHECK_RUN_PARALLELISM = 4
+        failed = _fix_run(source_run, token_hash=hash_secret("t"))
+        baseline = _check(failed, label="baseline")
+        _degraded(baseline, to=1)
+        close_fix_run(failed.id, State.FAILED, failure={"code": "x", "message": "m"})
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(
+                AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
+            )
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.RUNNING
+        )
+        retried.refresh_from_db()
+
+        assert _check(retried, label="baseline").id == baseline.id
+
+
 class TestCheckRunStatus:
+    def test_a_trial_says_how_long_its_conversation_took(self, source_run):
+        fix_run = _fix_run(source_run, token_hash=hash_secret("t"))
+        run = _check(fix_run)
+        call = HostedHarnessExecution.no_workspace_objects.get(job=run).call_execution
+        call.call_metadata = {
+            "hosted_harness_receipt": {
+                "sub_goals": [{"name": "refunded", "held": True}],
+                "call": {"duration_ms": 36100},
+            }
+        }
+        call.save(update_fields=["call_metadata"])
+
+        [record] = check_run_status(run).records
+
+        assert record.duration_s == 36.1
+
+    @pytest.mark.parametrize(
+        ("attempt", "clamped", "expected"),
+        [
+            pytest.param(1, None, 1, id="degraded in its attempt"),
+            pytest.param(None, None, 3, id="never degraded: as it asked"),
+            pytest.param(None, {"requested": 3, "admitted": 2}, 2, id="clamped"),
+        ],
+    )
+    def test_a_finished_run_says_the_parallelism_it_really_had(
+        self, source_run, settings, attempt, clamped, expected
+    ):
+        settings.AGENT_FIX_CHECK_RUN_PARALLELISM = 3
+        run = _check(
+            _fix_run(source_run, token_hash=hash_secret("t")), keys=KEYS, trials=3
+        )
+        assert check_run_status(run).parallelism is None  # Still going.
+        run.payload["metadata"]["parallelism_clamped"] = clamped
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            state="completed", payload=run.payload
+        )
+        run.refresh_from_db()
+        HostedHarnessAttempt.no_workspace_objects.create(
+            job=run,
+            attempt_number=1,
+            token_hash=hash_secret("a"),
+            fence_hash=hash_secret("b"),
+            expires_at=timezone.now(),
+            effective_parallelism=attempt,
+        )
+
+        assert check_run_status(run).parallelism == expected
+
     @pytest.mark.parametrize(
         ("receipt", "status", "error", "sub_goals"),
         [
@@ -994,13 +1239,13 @@ class TestCheckRunStatus:
                 speaker_role="user",
                 content=key,
             )
-        # A finished run, so the transcripts are read too.
+        # A finished run, so the transcripts and its last attempt are read too.
         HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
             state="completed"
         )
         run.refresh_from_db()
 
-        with django_assert_num_queries(2):
+        with django_assert_num_queries(3):
             status = check_run_status(run)
 
         assert len(status.records) == status.total == 10

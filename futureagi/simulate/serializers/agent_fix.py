@@ -15,7 +15,9 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.agent_fix import (
     agent_identity,
     base_check_runs,
+    eval_warnings,
     is_retryable,
+    limited_validation,
 )
 from simulate.services.harness_environment import environment_name
 
@@ -141,9 +143,10 @@ class AgentFixFailureSerializer(serializers.Serializer):
 
 class AgentFixCheckRunSerializer(serializers.Serializer):
     """A Run the fix started to check a candidate or the base version. It stays out of
-    the environment's run list; its results open by ``test_execution_id``."""
+    the environment's run list; its results open by ``run_id`` and ``test_execution_id``,
+    the environment's run and this execution of it."""
 
-    run_id = serializers.UUIDField(source="id")
+    run_id = serializers.UUIDField(source="run_test_id", allow_null=True)
     test_execution_id = serializers.UUIDField(allow_null=True)
     # The engine's name for the run ("baseline", "c2-target"), for display.
     label = serializers.CharField(source="fix_label")
@@ -209,10 +212,16 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     # The failed fix this one starts again, and whether this one may be started again.
     retried_from_id = serializers.UUIDField(allow_null=True)
     retryable = serializers.SerializerMethodField()
+    # Too few held-back cases to call the fix verified, whatever its verdict says.
+    limited_validation = serializers.SerializerMethodField()
 
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
     def get_retryable(self, fix_run: AgentFixRun) -> bool:
         return is_retryable(fix_run)
+
+    @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
+    def get_limited_validation(self, fix_run: AgentFixRun) -> bool:
+        return limited_validation(fix_run)
 
     @swagger_serializer_method(
         serializer_or_field=serializers.ChoiceField(
@@ -269,12 +278,38 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "failure",
             "retried_from_id",
             "retryable",
+            "limited_validation",
             "check_runs",
             "candidates",
             "started_at",
             "finished_at",
             "created_at",
         ]
+
+
+class AgentFixEvalWarningSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    pass_rate = serializers.FloatField()
+    base_pass_rate = serializers.FloatField()
+    trials = serializers.IntegerField()
+    base_trials = serializers.IntegerField()
+
+
+class AgentFixRunDetailSerializer(AgentFixRunSerializer):
+    """One fix's read. The warnings read every call of its check runs, so a list leaves
+    them out."""
+
+    eval_warnings = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(
+        serializer_or_field=AgentFixEvalWarningSerializer(many=True)
+    )
+    def get_eval_warnings(self, fix_run: AgentFixRun) -> list[dict]:
+        warnings = [one.model_dump() for one in eval_warnings(fix_run)]
+        return AgentFixEvalWarningSerializer(warnings, many=True).data
+
+    class Meta(AgentFixRunSerializer.Meta):
+        fields = [*AgentFixRunSerializer.Meta.fields, "eval_warnings"]
 
 
 class AgentFixRunListSerializer(serializers.Serializer):
@@ -320,6 +355,7 @@ class AgentFixCheckRunRequestSerializer(serializers.Serializer):
         child=serializers.CharField(max_length=255), min_length=1
     )
     trials = serializers.IntegerField(min_value=1, max_value=20)
+    repeat = serializers.IntegerField(min_value=1, max_value=20, default=1)
 
 
 class AgentFixCheckRunCreatedSerializer(serializers.Serializer):
@@ -407,6 +443,7 @@ class AgentFixLaunchDefaultsSerializer(serializers.Serializer):
 class AgentFixLaunchLimitsSerializer(serializers.Serializer):
     budget_credits_max = serializers.IntegerField()
     max_minutes_max = serializers.IntegerField()
+    scenarios_min = serializers.IntegerField()
     scenarios_max = serializers.IntegerField()
 
 
