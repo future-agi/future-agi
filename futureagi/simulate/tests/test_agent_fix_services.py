@@ -918,10 +918,20 @@ class TestRanAt:
         assert ran_at(run) == 2
 
 
-def test_the_engine_may_call_its_backup_model():
-    """The engine's profile moves to this model when DeepSeek loses a call. The proxy refuses
-    any model that is not listed, so a fix would die on the very call that needs the backup."""
-    assert "openai/gpt-6-luna" in django_settings.AGENT_FIX_ENGINE_MODELS
+@pytest.mark.parametrize(
+    "model",
+    [
+        "anthropic/claude-opus-5.5",  # Plans.
+        "deepseek/deepseek-v4.1-flash",  # Codes.
+        "openai/gpt-6.1-sol",  # Reviews.
+        "openai/gpt-6-luna",  # Backs up the planner and the coder.
+        "anthropic/claude-sonnet-5.5",  # Backs up the reviewer.
+    ],
+)
+def test_the_engine_may_call_every_model_in_its_profile(model):
+    """The proxy refuses any model that is not listed, so a fix would die on its first call
+    to one, or on the very call that needs a backup."""
+    assert model in django_settings.AGENT_FIX_ENGINE_MODELS
 
 
 def test_a_check_run_s_evals_have_a_source_of_their_own(source_run):
