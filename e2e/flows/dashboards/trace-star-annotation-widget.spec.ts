@@ -523,7 +523,7 @@ test('DASH-E2E-011: a saved trace annotation widget retains star ratings', {
           await uiExpect(drawer).toHaveCount(1); const heading = drawer.getByText(`${labelName}*`, { exact: true });
           await uiExpect(heading).toHaveCount(1); await heading.click();
           // label-input.jsx StarInput: five clickable Boxes; no numeric input or CSS-state oracle.
-          const stars = heading.locator('../..').locator('.MuiStack-root > .MuiStack-root > .MuiBox-root');
+          const stars = heading.locator('../..').locator('.MuiStack-root > .MuiStack-root > .MuiButtonBase-root');
           await uiExpect(stars).toHaveCount(5); await stars.nth(Number(seed.value) - 1).click(); // One click: a repeated rating clears to0.
           // AnnotationSidebarContent includes keyboard shortcut glyphs in this name.
           const save = drawer.getByRole('button', { name: /^Save(?:\s|$)/ }); await uiExpect(save).toHaveCount(1);
@@ -582,7 +582,7 @@ test('DASH-E2E-011: a saved trace annotation widget retains star ratings', {
 
       await test.step('2 create and name a Table widget with 7D and Day', async () => {
         await page.goto('/dashboard/dashboards', { waitUntil: 'domcontentloaded' });
-        let since = Date.now(); await page.getByRole('button', { name: 'Create Dashboard', exact: true }).click();
+        let since = Date.now(); await page.getByRole('button', { name: /^create dashboard$/i }).click();
         const created = await readNative<{ result: { id: string } }>(DASHBOARDS, undefined, since);
         dashboardId = created.body!.result.id; expect(dashboardId).toMatch(/^[0-9a-f-]{36}$/); await attach('dashboard-id', { dashboardId, dashboardName, widgetName });
         await page.getByRole('heading', { name: 'Untitled', exact: true }).click(); await page.getByPlaceholder('Untitled Dashboard').fill(dashboardName);

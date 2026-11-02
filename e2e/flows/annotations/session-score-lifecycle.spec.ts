@@ -229,9 +229,9 @@ test('ANNOT-E2E-004: corrected session annotations match only current authorized
           await heading.click();
           if (label.type === 'numeric') await control.getByRole('spinbutton').fill(String(label.filter[phase]));
           else if (label.type === 'star') {
-            // StarInput renders one clickable Box per rating in its inner Stack.
+            // StarInput renders one ButtonBase per rating in its inner Stack.
             // InlineAnnotator does not pass focused, so numeric hints are absent.
-            const stars = control.locator('.MuiStack-root > .MuiStack-root > .MuiBox-root');
+            const stars = control.locator('.MuiStack-root > .MuiStack-root > .MuiButtonBase-root');
             await expect(stars).toHaveCount(Number(label.settings.no_of_stars), { timeout: UI_READY });
             await stars.nth(Number(label.filter[phase]) - 1).click();
           }

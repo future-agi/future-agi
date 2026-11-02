@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import React, { useCallback, useMemo } from "react";
 import { FilterButton } from "src/components/filter";
 import { useAvailableModels } from "../hooks/useAvailableModels";
+import useMetadataValues from "./hooks/useMetadataValues";
 import {
   REQUEST_FILTER_KEYS,
   fromPanelValue,
@@ -16,9 +17,10 @@ import {
  */
 const RequestFilterButton = ({ filters, onApply }) => {
   const availableModels = useAvailableModels();
+  const { data: metadataValues } = useMetadataValues();
   const fields = useMemo(
-    () => requestFilterFields(availableModels),
-    [availableModels],
+    () => requestFilterFields(availableModels, metadataValues),
+    [availableModels, metadataValues],
   );
   const value = useMemo(() => toPanelValue(filters), [filters]);
 

@@ -25,6 +25,9 @@ describe("request log filter adapter", () => {
       "started",
       "model",
       "provider",
+      "application",
+      "service",
+      "tags",
       "status_code",
       "latency",
       "cost",
@@ -35,6 +38,30 @@ describe("request log filter adapter", () => {
       "guardrail_triggered",
     ]);
     expect(fields.find((f) => f.id === "model").options).toEqual(["gpt-4o"]);
+  });
+
+  it("offers the metadata values seen in request logs", () => {
+    const fields = requestFilterFields([], {
+      application: ["checkout"],
+      service: ["api"],
+      tags: ["team:search", "untagged"],
+    });
+    const options = (id) => fields.find((f) => f.id === id).options;
+    expect(options("application")).toEqual(["checkout"]);
+    expect(options("service")).toEqual(["api"]);
+    expect(options("tags")).toEqual(["team:search"]);
+  });
+
+  it("round-trips application, service and tag filters", () => {
+    const flat = {
+      application: "checkout,search",
+      service: "api",
+      tags: "team:search",
+    };
+    expect(fromPanelValue(toPanelValue(flat))).toEqual(flat);
+    expect(REQUEST_FILTER_KEYS).toEqual(
+      expect.arrayContaining(["application", "service", "tags"]),
+    );
   });
 
   it("round-trips the flat URL filters through the panel", () => {

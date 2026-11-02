@@ -1,3 +1,5 @@
+import { CUSTOM_TAG_SEPARATOR } from "../constants/requestTags";
+
 /**
  * Request log filters <-> shared Filter panel.
  *
@@ -30,6 +32,15 @@ const LISTS = [
   { id: "model", label: "Model", key: "model" },
   { id: "provider", label: "Provider", key: "provider" },
 ];
+// Picked from the values seen in recent request logs (metadata-values).
+const METADATA = [
+  { id: "application", label: "Application", key: "application" },
+  { id: "service", label: "Service", key: "service" },
+  { id: "tags", label: "Custom tags", key: "tags" },
+];
+const LIST_KEYS = [...LISTS, ...METADATA];
+// A custom tag is key:value; any value of a key matches, every key must match.
+const isCustomTag = (tag) => String(tag).indexOf(CUSTOM_TAG_SEPARATOR) > 0;
 const TEXTS = [
   { id: "user_id", label: "User ID", key: "userId" },
   { id: "session_id", label: "Session ID", key: "sessionId" },
@@ -49,7 +60,7 @@ export const REQUEST_FILTER_KEYS = [
   DATE_RANGE.min,
   DATE_RANGE.max,
   ...RANGES.flatMap(({ min, max }) => [min, max]),
-  ...LISTS.map(({ key }) => key),
+  ...LIST_KEYS.map(({ key }) => key),
   ...TEXTS.map(({ key }) => key),
   ...FLAGS.map(({ key }) => key),
 ];
@@ -61,7 +72,10 @@ const RANGE_OPERATORS = [
 ];
 const DATE_OPERATORS = ["between", "greater_than", "less_than"];
 
-export const requestFilterFields = (availableModels = []) => [
+export const requestFilterFields = (
+  availableModels = [],
+  metadataValues = {},
+) => [
   {
     id: DATE_RANGE.id,
     label: DATE_RANGE.label,
@@ -77,6 +91,17 @@ export const requestFilterFields = (availableModels = []) => [
     operators: ["in"],
   },
   { id: "provider", label: "Provider", type: "text", operators: ["in"] },
+  ...METADATA.map(({ id, label }) => ({
+    id,
+    label,
+    type: "enum",
+    multiple: true,
+    options:
+      id === "tags"
+        ? (metadataValues?.tags ?? []).filter(isCustomTag)
+        : metadataValues?.[id] ?? [],
+    operators: ["in"],
+  })),
   ...RANGES.map(({ id, label }) => ({
     id,
     label,
@@ -137,7 +162,7 @@ export const toPanelValue = (filters = {}) => {
   };
 
   range(DATE_RANGE, "date", { min: "greater_than", max: "less_than" });
-  LISTS.forEach(({ id, key }) => {
+  LIST_KEYS.forEach(({ id, key }) => {
     const values = split(filters[key]);
     if (values.length) {
       rows.push({
@@ -209,9 +234,11 @@ export const fromPanelValue = (rows = []) => {
 
   range(DATE_RANGE);
   RANGES.forEach(range);
-  LISTS.forEach(({ id, key }) => {
+  LIST_KEYS.forEach(({ id, key }) => {
     const row = byField[id];
-    const values = (row ? [].concat(row.value) : []).filter(filled);
+    const values = (row ? [].concat(row.value) : [])
+      .filter(filled)
+      .filter((value) => id !== "tags" || isCustomTag(value));
     if (values.length) out[key] = values.join(",");
   });
   TEXTS.forEach(({ id, key }) => {

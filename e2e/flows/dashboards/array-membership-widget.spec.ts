@@ -430,7 +430,7 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
         await page.goto('/dashboard/dashboards', { waitUntil: 'domcontentloaded' });
         const [created] = await Promise.all([
           page.waitForResponse(response => new URL(response.url()).pathname === DASHBOARDS && response.request().method() === 'POST', { timeout: UI_READY }),
-          page.getByRole('button', { name: 'Create Dashboard', exact: true }).click(),
+          page.getByRole('button', { name: /^create dashboard$/i }).click(),
         ]);
         expect(created.status()).toBe(200); expect(scopeOf(created)).toEqual(expectedScope);
         dashboardId = ((await created.json()) as { result: { id: string } }).result.id;

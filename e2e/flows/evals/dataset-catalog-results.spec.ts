@@ -233,7 +233,7 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
 
   // DATA001 / file_upload.py: real upload, never insert equivalent rows ourselves.
   await page.goto('/dashboard/develop', { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: 'Add Dataset', exact: true }).first().click();
+  await page.getByRole('button', { name: /^add dataset$/i }).first().click();
   await page.getByText('Upload a file (JSON, CSV)', { exact: true }).click();
   const uploadDialog = page.getByRole('dialog').filter({ has: page.getByText('Upload a File', { exact: true }) });
   await uploadFixture(uploadDialog.locator('input[type="file"]'), 'catalog-regions.csv');
@@ -588,7 +588,7 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
     const createdAt = Date.now();
     const [createdResponse] = await Promise.all([
       page.waitForResponse(r => fresh(r, DASHBOARDS, 'POST', createdAt), { timeout: UI_READY }),
-      page.getByRole('button', { name: 'Create Dashboard', exact: true }).click(),
+      page.getByRole('button', { name: /^create dashboard$/i }).click(),
     ]);
     const created = await receipt<{ result: { id: string } }>('dashboard-created', createdResponse);
     const dashboardId = created.result.id;

@@ -177,7 +177,7 @@ test('DASH-E2E-002: a saved trace-metric widget preserves its project, cohort an
     await test.step('create and name the dashboard and Table widget', async () => {
       await page.goto('/dashboard/dashboards', { waitUntil: 'domcontentloaded' });
       const created = page.waitForResponse(r => new URL(r.url()).pathname === DASHBOARDS && r.request().method() === 'POST');
-      await page.getByRole('button', { name: 'Create Dashboard', exact: true }).click();
+      await page.getByRole('button', { name: /^create dashboard$/i }).click();
       const response = await created;
       expect(response.status()).toBe(200);
       dashboardId = ((await response.json()) as { result: { id: string } }).result.id;

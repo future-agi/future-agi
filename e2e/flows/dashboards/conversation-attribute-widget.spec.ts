@@ -446,7 +446,7 @@ test('DASH-E2E-009: a saved conversation widget excludes child-model call-metric
     try {
       await test.step('1 create and name a Table widget with 7D and Day', async () => {
         await page.goto('/dashboard/dashboards', { waitUntil: 'domcontentloaded' });
-        let since = Date.now(); await page.getByRole('button', { name: 'Create Dashboard', exact: true }).click();
+        let since = Date.now(); await page.getByRole('button', { name: /^create dashboard$/i }).click();
         const created = await readNative<{ result: { id: string } }>(DASHBOARDS, undefined, since);
         dashboardId = created.body!.result.id; expect(dashboardId).toMatch(/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
         await attach('dashboard-id', { dashboardId, dashboardName, widgetName });

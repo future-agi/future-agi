@@ -563,7 +563,7 @@ test('DASH-E2E-008: a saved User widget keeps project and identifier-type scope'
         await page.goto('/dashboard/dashboards', { waitUntil: 'domcontentloaded' });
         const [created] = await Promise.all([
           page.waitForResponse(r => new URL(r.url()).pathname === DASHBOARDS && r.request().method() === 'POST', { timeout: UI_READY }),
-          page.getByRole('button', { name: 'Create Dashboard', exact: true }).click(),
+          page.getByRole('button', { name: /^create dashboard$/i }).click(),
         ]);
         expect(created.status()).toBe(200); expect(scopeOf(created)).toEqual(expectedScope);
         dashboardId = ((await created.json()) as { result: { id: string } }).result.id;

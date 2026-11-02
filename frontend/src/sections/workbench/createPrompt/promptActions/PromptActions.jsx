@@ -383,6 +383,7 @@ const PromptActions = () => {
                   flexShrink: 0,
                 }}
                 onClick={handleWritePrompt}
+                aria-label="Add new prompt"
               >
                 <ShowComponent condition={!isLoadingCreate}>
                   <Iconify icon="solar:add-linear" width="16px" height="16px" />
@@ -505,7 +506,7 @@ const PromptActions = () => {
                 !isLoadingCreate &&
                 RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole] && (
                   <span style={{ display: "inline-block" }}>
-                    <IconButton onClick={handleEdit}>
+                    <IconButton onClick={handleEdit} aria-label="Rename prompt">
                       <SvgColor
                         src="/assets/icons/ic_edit_pencil.svg"
                         sx={{
@@ -772,14 +773,21 @@ const PromptActions = () => {
           sx={tabSx}
         >
           <Tab
-            icon={<SvgColor width={16} src={"/assets/icons/navbar/ic_evaluate.svg"} />}
+            icon={
+              <SvgColor
+                width={16}
+                src={"/assets/icons/navbar/ic_evaluate.svg"}
+              />
+            }
             iconPosition="start"
             label={"Playground"}
             value={"Playground"}
           />
 
           <Tab
-            icon={<SvgColor width={16} src={"/assets/icons/navbar/ic_eval.svg"} />}
+            icon={
+              <SvgColor width={16} src={"/assets/icons/navbar/ic_eval.svg"} />
+            }
             iconPosition="start"
             label={
               versions.length === 0 ||

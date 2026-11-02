@@ -235,7 +235,7 @@ test('DASH-E2E-005: a saved widget keeps boolean scope distinct from same-spelle
         await page.goto('/dashboard/dashboards', { waitUntil: 'domcontentloaded' });
         const [created] = await Promise.all([
           page.waitForResponse(r => new URL(r.url()).pathname === DASHBOARDS && r.request().method() === 'POST'),
-          page.getByRole('button', { name: 'Create Dashboard', exact: true }).click(),
+          page.getByRole('button', { name: /^create dashboard$/i }).click(),
         ]);
         expect(created.status()).toBe(200);
         dashboardId = ((await created.json()) as { result: { id: string } }).result.id;
