@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 
 import structlog
 from django.db import transaction
-from django.utils import timezone
 
 from accounts.models.workspace import Workspace
 
@@ -37,6 +36,7 @@ from tracer.models.observation_span import (
 )
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.utils.attribute_accessor import span_raw_log
 from tracer.utils.helper import (
     FieldConfig,
@@ -2180,9 +2180,11 @@ def evaluate_observation_span(
         ) from None
 
     # mark all previous eval_logger as deleted
-    EvalLogger.objects.filter(
-        observation_span=observation_span, custom_eval_config=custom_eval_config
-    ).update(deleted=True, deleted_at=timezone.now())
+    soft_delete_eval_results(
+        EvalLogger.objects.filter(
+            observation_span=observation_span, custom_eval_config=custom_eval_config
+        )
+    )
 
     try:
         run_params = _process_mapping(
@@ -2320,11 +2322,13 @@ def evaluate_observation_span_observe(
         return
 
     # mark all previous eval_logger as deleted
-    EvalLogger.objects.filter(
-        observation_span=observation_span,
-        custom_eval_config=custom_eval_config,
-        eval_task_id=eval_task_id,
-    ).update(deleted=True, deleted_at=timezone.now())
+    soft_delete_eval_results(
+        EvalLogger.objects.filter(
+            observation_span=observation_span,
+            custom_eval_config=custom_eval_config,
+            eval_task_id=eval_task_id,
+        )
+    )
 
     try:
         run_params = _process_mapping(
