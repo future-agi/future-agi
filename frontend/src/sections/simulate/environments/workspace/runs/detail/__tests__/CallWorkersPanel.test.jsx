@@ -34,6 +34,17 @@ describe("CallWorkersPanel", () => {
     expect(screen.getByText("Coordinator · send_reply")).toBeInTheDocument();
   });
 
+  it("says a call no agent can be named for is unknown, not the coordinator's", () => {
+    result = {
+      data: { ...TIMELINE, events: [{ seq: 1, type: "tool_call", worker_id: null, tool: "get_order", status: "ok", at: "t1", attribution: "unattributed" }] },
+      isLoading: false,
+      isError: false,
+    };
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.getByText("Unknown · get_order")).toBeInTheDocument();
+    expect(screen.queryByText("Coordinator · get_order")).toBeNull();
+  });
+
   it("marks a declared worker that sent nothing as not observed", () => {
     render(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.getByText("Audit worker · not observed")).toBeInTheDocument();

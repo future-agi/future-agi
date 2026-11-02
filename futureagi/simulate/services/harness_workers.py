@@ -159,15 +159,17 @@ def worker_timeline(
     for span in by_id.values():
         if _kind(span) != TOOL_KIND or span["span_id"] in delegating:
             continue
+        owner = agent_ancestor(span)
         events.append(
             {
                 "type": "tool_call",
-                "worker_id": worker_of(agent_ancestor(span)),
+                "worker_id": worker_of(owner),
                 "tool": str(span.get("name") or ""),
                 "span_id": str(span["span_id"]),
                 "status": "error" if str(span.get("status") or "").upper() == "ERROR" else "ok",
                 "at": span.get("start_time"),
-                "attribution": "reported",
+                # No agent span above the call: neither the coordinator nor a worker can be named for it.
+                "attribution": "reported" if owner is not None else "unattributed",
             }
         )
     # A return sorts after the work it closes even when timestamps tie.

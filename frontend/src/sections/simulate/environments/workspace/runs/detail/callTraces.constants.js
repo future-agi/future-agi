@@ -10,6 +10,7 @@ export const CALL_WORKERS_COPY = {
   none: "No worker record for this call: the app sent no traces, or they are still arriving.",
   error: "Couldn't load this call's workers.",
   coordinator: "Coordinator",
+  unknown: "Unknown",
   notObserved: "not observed",
   undeclared: "not declared",
   delegated: (name) => `Delegated to ${name}`,

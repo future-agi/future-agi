@@ -47,7 +47,7 @@ function EventLine({ event, nameOf }) {
       ? `${C.delegated(nameOf(event.worker_id))}${event.task ? `: ${event.task}` : ""}`
       : event.type === "returned"
         ? `${C.returned(nameOf(event.worker_id))}${event.result ? `: ${event.result}` : ""}`
-        : `${nameOf(event.worker_id)} · ${event.tool}`;
+        : `${event.attribution === "unattributed" ? C.unknown : nameOf(event.worker_id)} · ${event.tool}`;
   return (
     <Box sx={{ pl: nested ? 3 : 0 }}>
       <Typography

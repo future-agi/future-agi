@@ -109,6 +109,14 @@ def test_no_agent_spans_means_no_worker_was_observed():
     assert timeline["events"] == []
 
 
+def test_a_tool_call_with_no_agent_above_it_is_unattributed_not_the_coordinator_s():
+    orphan = _span("o1", None, "tool", "send_reply", "t30", "t30")
+    events = worker_timeline([*SPANS, orphan], DECLARED, run_key=RUN)["events"]
+    by_span = {one.get("span_id"): one for one in events if one["type"] == "tool_call"}
+    assert by_span["o1"]["worker_id"] is None and by_span["o1"]["attribution"] == "unattributed"
+    assert by_span["s9"]["worker_id"] is None and by_span["s9"]["attribution"] == "reported"
+
+
 def test_a_parent_loop_in_broken_spans_does_not_hang():
     spans = [_span("p", "q", "tool", "x", "t1"), _span("q", "p", "tool", "y", "t2")]
     assert [one["worker_id"] for one in worker_timeline(spans, [], run_key=RUN)["events"]] == [None, None]

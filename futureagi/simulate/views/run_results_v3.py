@@ -574,7 +574,7 @@ class CallWorkerEventSerializer(serializers.Serializer):
     tool = serializers.CharField(required=False)
     status = serializers.CharField(required=False)
     at = serializers.CharField(allow_null=True)
-    attribution = serializers.ChoiceField(choices=("reported", "bound", "conflict"))
+    attribution = serializers.ChoiceField(choices=("reported", "bound", "conflict", "unattributed"))
 
 
 class CallWorkersResponseSerializer(serializers.Serializer):
