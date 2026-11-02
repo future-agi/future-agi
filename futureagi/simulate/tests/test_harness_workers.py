@@ -193,7 +193,7 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(user, worksp
         assert harness_workers.record_call_workers(str(call.id)) is None
 
     # No spans reach us, but the runtime named the worker of a sealed tool call: that alone is a timeline.
-    call.provider_call_data = {"livekit": {"tool_calls": [{"name": "get_order", "ok": True, "at": 1.0, "by": "order_lookup"}]}}
+    call.provider_call_data = {"livekit": {"tool_calls": [{"name": "get_order", "ok": True, "at": 1.0, "worker_id": "order_lookup"}]}}
     call.save(update_fields=["provider_call_data"])
     with patch("simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)), patch(
         "tracer.services.clickhouse.v2.get_reader", side_effect=AssertionError("no spans to read")
@@ -305,10 +305,10 @@ def test_tool_calls_a_runtime_attributes_to_a_worker_join_the_timeline_without_r
     # CrewAI's event bus names the agent and task of an in-process tool call; no span covers it.
     declared = [{"id": "shakespearean_bard", "name": "Shakespearean bard"}, {"id": "x_post_verifier"}]
     traced = [
-        {"name": "write_post", "ok": True, "at": 1730454600.5, "by": "shakespearean_bard", "task": "Write a post",
+        {"name": "write_post", "ok": True, "at": 1730454600.5, "worker_id": "shakespearean_bard", "task_label": "Write a post",
          "runtime_ids": {"event_id": "e2", "parent_event_id": "e1"}},
-        {"name": "verify_post", "ok": False, "at": 1730454601.0, "by": "x_post_verifier"},
-        {"name": "lookup", "ok": True, "at": 1730454602.0, "by": "Researcher"},
+        {"name": "verify_post", "ok": False, "at": 1730454601.0, "worker_id": "x_post_verifier"},
+        {"name": "lookup", "ok": True, "at": 1730454602.0, "worker_label": "Researcher"},
         {"name": "send_reply", "ok": True, "at": 1730454603.0},
     ]
     timeline = worker_timeline([], declared, run_key=RUN, traced_calls=traced)
@@ -328,5 +328,5 @@ def test_tool_calls_a_runtime_attributes_to_a_worker_join_the_timeline_without_r
     assert first["at"] == "2024-11-01T09:50:00.500000" and first["attribution"] == "reported"
 
     # The same call seen in the worker's spans is shown once.
-    both = worker_timeline(SPANS, DECLARED, run_key=RUN, traced_calls=[{"name": "get_order", "by": "Order-lookup worker"}])
+    both = worker_timeline(SPANS, DECLARED, run_key=RUN, traced_calls=[{"name": "get_order", "worker_label": "Order-lookup worker"}])
     assert [one.get("tool") for one in both["events"]].count("get_order") == 1

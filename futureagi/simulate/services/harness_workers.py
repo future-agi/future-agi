@@ -181,7 +181,8 @@ def worker_timeline(
         )
     shown = Counter((one["worker_id"], one["tool"]) for one in events if one["type"] == "tool_call")
     for call in traced_calls:
-        by = str(call.get("by") or "").strip()
+        # The runtime's stable worker id, else its label for the worker.
+        by = str(call.get("worker_id") or call.get("worker_label") or "").strip()
         if not by:
             continue
         match = declared_by_key.get(_slug(by))
@@ -192,7 +193,7 @@ def worker_timeline(
             {
                 "worker_id": worker_id,
                 "id": local,
-                "name": str(match.get("name") or by) if match is not None else by,
+                "name": str(match.get("name") or by) if match is not None else str(call.get("worker_label") or by),
                 "observed": True,
                 "undeclared": match is None,
                 "instance_ids": [],
@@ -216,7 +217,7 @@ def worker_timeline(
                 if isinstance(at, (int, float)) and at > 0
                 else None,
                 "attribution": "reported",
-                **({"task": str(call["task"])} if call.get("task") else {}),
+                **({"task": str(call.get("task_label") or call["task_id"])} if call.get("task_label") or call.get("task_id") else {}),
                 **({"runtime_event_id": str(runtime_ids["event_id"])} if runtime_ids.get("event_id") else {}),
                 **(
                     {"runtime_parent_event_id": str(runtime_ids["parent_event_id"])}
@@ -293,7 +294,7 @@ def record_call_workers(call_execution_id: str) -> dict[str, Any] | None:
     traced_calls = [
         one
         for one in ((call.provider_call_data or {}).get("livekit") or {}).get("tool_calls") or []
-        if isinstance(one, dict) and one.get("by")
+        if isinstance(one, dict) and (one.get("worker_id") or one.get("worker_label"))
     ]
     if traces.project_id is None and not traced_calls:
         return None
