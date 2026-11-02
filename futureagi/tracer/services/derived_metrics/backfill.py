@@ -26,6 +26,10 @@ from tracer.models.derived_metric import (
     MetricStateConflict,
 )
 from tracer.services.derived_metrics import changes
+from tracer.services.derived_metrics.bounded_reads import (
+    committed_key_pages,
+    merge_bindings,
+)
 from tracer.services.derived_metrics.deletion_protocol import serialized_project
 from tracer.services.derived_metrics.publication import committed_rows_select
 from tracer.services.derived_metrics.storage import (
@@ -515,6 +519,82 @@ def _bound_after(columns, after, prefix):
     return changes.keyset_after(columns, tuple(after), prefix)
 
 
+def _grouped_committed_page(
+    analytics, writer, head, table, columns, after, start, end, limit, budget
+):
+    """Find the globally first groups, not the first groups in storage order.
+
+    A field's physical key starts with its definition, while backfill groups
+    by owner. Every full-key page must be collapsed and inspected before a
+    grouped cursor can be advanced. A read-budget failure leaves that cursor
+    unchanged; it is never evidence that the final group has been visited.
+    """
+    if limit <= 0:
+        return []
+    winners = {}
+    used_bytes = 0
+    for keys in committed_key_pages(
+        writer.store,
+        table,
+        head,
+        org_id=writer.org_id,
+        project_id=writer.lease.project_id,
+        target_rows=500,
+    ):
+        physical_keys = tuple(
+            c for c in table.logical_key if c not in {"org_id", "project_id"}
+        )
+        relation, bound = committed_rows_select(
+            table,
+            head,
+            org_id=writer.org_id,
+            project_id=writer.lease.project_id,
+            key_in={physical_keys: keys},
+            param_prefix="history_group",
+        )
+        predicate, cursor_bound = _bound_after(columns, after, "history_group_after")
+        group = ", ".join(columns)
+        rows = changes.read(
+            analytics,
+            f"SELECT {group}, min(unit_start) AS keyset_start FROM ({relation}) "
+            "WHERE unit_start >= toDateTime64(%(history_group_start)s, 6, 'UTC') "
+            "AND unit_start < toDateTime64(%(history_group_end)s, 6, 'UTC') "
+            f"AND {predicate} GROUP BY {group} ORDER BY {group}",
+            merge_bindings(
+                bound,
+                cursor_bound,
+                {
+                    "history_group_start": start,
+                    "history_group_end": end,
+                },
+            ),
+            budget,
+            settings=changes._block_settings(500),
+        )
+        for row in rows:
+            key = tuple(str(row[column]) for column in columns)
+            if key in winners:
+                winners[key] = min(winners[key], row["keyset_start"])
+                continue
+            size = sum(len(part.encode("utf-8")) for part in key)
+            if len(winners) == limit and key >= max(winners):
+                continue
+            if len(winners) == limit:
+                discarded = max(winners)
+                used_bytes -= sum(len(part.encode("utf-8")) for part in discarded)
+                del winners[discarded]
+            if used_bytes + size > 1024 * 1024:
+                raise changes.MetricChangeReadError(
+                    "backfill grouped key budget exceeded"
+                )
+            winners[key] = row["keyset_start"]
+            used_bytes += size
+    return [
+        {**dict(zip(columns, key, strict=True)), "keyset_start": winners[key]}
+        for key in sorted(winners)
+    ]
+
+
 def day_page(analytics, writer, head, cursor, *, page_size, cutoff=None):
     """Nominate one day's bounded source/dependency/field keys, newest first.
 
@@ -565,24 +645,28 @@ def day_page(analytics, writer, head, cursor, *, page_size, cutoff=None):
             columns = changes.SOURCE_ORDER
         else:
             table = SOURCE_DEPENDENCIES if phase == "dependencies" else FIELD_VALUES
-            relation, rp = committed_rows_select(
-                table, head, org_id=writer.org_id, project_id=writer.lease.project_id
-            )
-            params.update(rp)
             columns = (
                 ("trace_id", "span_id") if phase == "dependencies" else ("unit_id",)
             )
-            predicate, bound = _bound_after(columns, after, "history_after")
-            query = (
-                f"SELECT {', '.join(columns)}, min(unit_start) AS keyset_start FROM ({relation}) "
-                "WHERE unit_start >= toDateTime64(%(day_start)s, 6, 'UTC') "
-                "AND unit_start < toDateTime64(%(day_end)s, 6, 'UTC') "
-                f"AND {predicate} GROUP BY {', '.join(columns)} "
-                f"ORDER BY {', '.join(columns)} LIMIT %(history_limit)s"
+            rows = _grouped_committed_page(
+                analytics,
+                writer,
+                head,
+                table,
+                columns,
+                after,
+                start,
+                end,
+                remaining,
+                budget,
             )
-        rows = changes.read(
-            analytics, query, {**params, **bound, "history_limit": remaining}, budget
-        )
+        if phase == "sources":
+            rows = changes.read(
+                analytics,
+                query,
+                {**params, **bound, "history_limit": remaining},
+                budget,
+            )
         scanned += len(rows)
         if phase in {"sources", "dependencies"}:
             keys.update(
@@ -725,20 +809,17 @@ def version_coverage_page(
             # dependencies above independently nominate moved/deleted members.
             else (FIELD_VALUES, ("level", "unit_id"))
         )
-        relation, bound = committed_rows_select(
-            table, head, org_id=writer.org_id, project_id=writer.lease.project_id
-        )
-        predicate, keyset = _bound_after(columns, after, "catchup_after")
-        rows = changes.read(
+        rows = _grouped_committed_page(
             analytics,
-            f"SELECT {', '.join(columns)}, min(unit_start) AS keyset_start FROM ({relation}) "
-            "WHERE unit_start >= toDateTime64(%(coverage_start)s, 6, 'UTC') "
-            "AND unit_start < toDateTime64(%(coverage_end)s, 6, 'UTC') "
-            f"AND {predicate} GROUP BY {', '.join(columns)} "
-            f"ORDER BY {', '.join(columns)} LIMIT %(coverage_limit)s",
-            {**params, **bound, **keyset, "coverage_limit": page_size},
+            writer,
+            head,
+            table,
+            columns,
+            after,
+            start,
+            end,
+            page_size,
             budget,
-            settings=changes._block_settings(page_size),
         )
         scanned = len(rows)
         values = [tuple(str(r[c]) for c in columns) for r in rows]

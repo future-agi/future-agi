@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from django.db import transaction
+from django.db.models import Count, Sum
 
 from tracer.models.derived_metric import (
     LEDGER_CHUNK_MAX_KEYS,
@@ -28,6 +29,7 @@ from tracer.models.derived_metric import (
     MetricStateConflict,
 )
 from tracer.services.derived_metrics.bounded_reads import (
+    committed_key_pages,
     iter_key_membership_batches,
     merge_bindings,
 )
@@ -271,28 +273,39 @@ class RefreshWriter:
         return result
 
     def freeze_current(self, attempt, table, manifest, *, where="1", params=None):
-        """Stream a checkpoint with keyset predicates INSIDE the allowed collapse."""
+        """Nominate finite full keys, then collapse every revision of those keys.
 
-        def page(after):
+        The nominated cursor is independent of the surviving output. A page
+        filtered entirely by an obsolete-version or retention predicate still
+        advances to the next nominated key rather than ending the checkpoint.
+        """
+        keys = tuple(c for c in table.logical_key if c not in {"org_id", "project_id"})
+        for nominated in committed_key_pages(
+            self.store,
+            table,
+            manifest,
+            org_id=self.org_id,
+            project_id=self.lease.project_id,
+            target_rows=MAX_BATCH_ROWS,
+        ):
             sql, bound = committed_rows_select(
                 table,
                 manifest,
                 org_id=self.org_id,
                 project_id=self.lease.project_id,
-                key_after=after,
+                key_in={keys: nominated},
             )
-            return f"SELECT * FROM ({sql}) WHERE {where}", {**bound, **(params or {})}
-
-        return self.freeze(
-            attempt,
-            table,
-            "",
-            source_page=page,
-            collect_payloads=False,
-            extra={"workspace_id": "workspace_id"}
-            if "workspace_id" in table.columns
-            else None,
-        )
+            self.freeze(
+                attempt,
+                table,
+                f"SELECT * FROM ({sql}) WHERE {where}",
+                merge_bindings(bound, params or {}),
+                collect_payloads=False,
+                extra={"workspace_id": "workspace_id"}
+                if "workspace_id" in table.columns
+                else None,
+            )
+        return []
 
     def plans(self, attempt, *, kind=None):
         for chunk in (
@@ -320,11 +333,13 @@ class RefreshWriter:
                 }
             ],
         )
-        chunks = MetricAttemptLedgerChunk.objects.filter(attempt=attempt)
+        metadata = MetricAttemptLedgerChunk.objects.filter(attempt=attempt).aggregate(
+            chunks=Count("id"), keys=Sum("key_count")
+        )
         MetricRefreshAttempt.seal_ledger(
             attempt.id,
-            expected_chunks=chunks.count(),
-            expected_keys=sum(chunks.values_list("key_count", flat=True)),
+            expected_chunks=metadata["chunks"],
+            expected_keys=metadata["keys"] or 0,
             **self.lease.check(),
         )
 
@@ -1099,10 +1114,34 @@ class RefreshWriter:
                         version=definition.version,
                         ids=candidates,
                     )
-                    before = self.store.execute(
-                        f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum FROM ({old_sql}) WHERE {where} AND unit_id IN %(ids)s",
-                        old_params,
-                    )
+                    # Dirty-before is indexed by raw candidate owners. Keep its
+                    # membership separate from the remap-aware output-domain
+                    # readers below: their canonical unit_id can differ from
+                    # every candidate supplied to unit_values_select.
+                    before = []
+                    for membership in iter_key_membership_batches(
+                        FIELD_VALUES,
+                        fixed={
+                            "field_id": (definition.metric_id,),
+                            "field_version": (definition.version,),
+                        },
+                        columns="unit_id",
+                        values=candidates,
+                    ):
+                        candidate_sql, candidate_params = committed_rows_select(
+                            FIELD_VALUES,
+                            head,
+                            org_id=self.org_id,
+                            project_id=scope.project,
+                            key_in=membership,
+                            param_prefix="dirty_candidate",
+                        )
+                        before.extend(
+                            self.store.execute(
+                                f"SELECT unit_id, bucket_start, group_key, sampling_scope, sampling_stratum FROM ({candidate_sql}) WHERE {where}",
+                                merge_bindings(candidate_params, old_params),
+                            )
+                        )
                     self.append(
                         attempt,
                         "dirty_before",

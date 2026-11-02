@@ -1293,29 +1293,40 @@ class MetricRefreshAttempt(models.Model):
             )
             if attempt.ledger_sealed_at is not None:
                 raise MetricStateConflict("the dirty-key ledger is already sealed")
-            rows = list(
+            rows = (
                 MetricAttemptLedgerChunk.objects.filter(attempt_id=attempt_id)
                 .order_by("part", "chunk_no")
                 .values_list("part", "chunk_no", "key_count", "payload_sha256")
+                .iterator(chunk_size=256)
             )
-            key_count = sum(row[2] for row in rows)
-            if len(rows) != expected_chunks or key_count != expected_keys:
+            key_count = chunk_count = 0
+            previous_part, next_chunk = None, 0
+            contiguous = True
+            digest_state = hashlib.sha256()
+            for part, chunk_no, count, sha in rows:
+                if part != previous_part:
+                    previous_part, next_chunk = part, 0
+                if chunk_no != next_chunk:
+                    contiguous = False
+                next_chunk = chunk_no + 1
+                # Preserve the original newline-delimited digest byte for byte.
+                if chunk_count:
+                    digest_state.update(b"\n")
+                digest_state.update(f"{part}:{chunk_no}:{sha}".encode())
+                chunk_count += 1
+                key_count += count
+            if chunk_count != expected_chunks or key_count != expected_keys:
                 raise MetricLedgerConflict(
                     f"ledger is incomplete: expected {expected_chunks} chunks and "
-                    f"{expected_keys} keys, found {len(rows)} and {key_count}"
+                    f"{expected_keys} keys, found {chunk_count} and {key_count}"
                 )
-            numbers: dict[str, list[int]] = {}
-            for part, chunk_no, _count, _digest in rows:
-                numbers.setdefault(part, []).append(chunk_no)
-            if any(found != list(range(len(found))) for found in numbers.values()):
+            if not contiguous:
                 raise MetricLedgerConflict("ledger chunks are not contiguous")
-            digest = hashlib.sha256(
-                "\n".join(f"{part}:{no}:{sha}" for part, no, _c, sha in rows).encode()
-            ).hexdigest()
+            digest = digest_state.hexdigest()
             cls.objects.filter(
                 id=attempt_id, state=cls.State.PREPARED, ledger_sealed_at__isnull=True
             ).update(
-                ledger_chunk_count=len(rows),
+                ledger_chunk_count=chunk_count,
                 ledger_key_count=key_count,
                 ledger_sha256=digest,
                 ledger_sealed_at=now,

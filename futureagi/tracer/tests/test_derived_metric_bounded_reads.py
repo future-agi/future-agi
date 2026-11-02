@@ -546,3 +546,189 @@ def test_current_fact_long_keys_split_source_and_prior_together(monkeypatch):
         for key in page
     ] == keys
     assert len(ledger) == 1 and len(ledger[0][1]) == 500
+
+
+def test_checkpoint_freeze_advances_past_empty_nominated_page(monkeypatch):
+    from tracer.services.derived_metrics import refresh
+
+    head = manifest()
+    org = uuid4()
+    field = uuid4()
+    batches = [
+        ((field, 1, "conversation", "obsolete"),),
+        ((field, 1, "conversation", "surviving"),),
+    ]
+    visited = []
+    frozen = []
+
+    def nominate(*args, **kwargs):
+        assert kwargs["target_rows"] == refresh.MAX_BATCH_ROWS
+        for batch in batches:
+            visited.append(batch)
+            yield batch
+
+    monkeypatch.setattr(refresh, "committed_key_pages", nominate)
+    writer = SimpleNamespace(
+        org_id=org,
+        workspace_id=None,
+        lease=SimpleNamespace(project_id=head.project_id),
+        store=object(),
+        freeze=lambda *args, **kwargs: frozen.append((args, kwargs)),
+    )
+    assert (
+        refresh.RefreshWriter.freeze_current(
+            writer,
+            object(),
+            FIELD_VALUES,
+            head,
+            where="field_version NOT IN %(obsolete_versions)s",
+            params={"obsolete_versions": (1,)},
+        )
+        == []
+    )
+    assert visited == batches
+    assert len(frozen) == 2
+    assert all("field_version NOT IN" in call[0][2] for call in frozen)
+    assert frozen[0][0][3]["pub_kin_0"] == batches[0]
+    assert frozen[1][0][3]["pub_kin_0"] == batches[1]
+    assert all(call[1]["collect_payloads"] is False for call in frozen)
+
+
+@pytest.mark.parametrize(
+    "page_size, expected", [(1, ["a"]), (2, ["a", "b"]), (3, ["a", "b", "z"])]
+)
+def test_grouped_backfill_scans_all_storage_pages_before_cursor(
+    monkeypatch, page_size, expected
+):
+    from tracer.services.derived_metrics import backfill
+
+    at = datetime(2026, 1, 1, tzinfo=UTC)
+    pages = [
+        [{"unit_id": "z", "keyset_start": at + timedelta(hours=5)}],
+        [{"unit_id": "b", "keyset_start": at + timedelta(hours=4)}],
+        [{"unit_id": "a", "keyset_start": at + timedelta(hours=3)}],
+        [{"unit_id": "a", "keyset_start": at + timedelta(hours=1)}],
+        [],
+    ]
+    visited = []
+
+    def nominate(*args, **kwargs):
+        field = uuid4()
+        for index in range(len(pages)):
+            yield ((field, 1, "conversation", f"physical-{index}"),)
+
+    def read(*args, **kwargs):
+        index = len(visited)
+        visited.append(index)
+        return pages[index]
+
+    monkeypatch.setattr(backfill, "committed_key_pages", nominate)
+    monkeypatch.setattr(backfill.changes, "read", read)
+    head = manifest()
+    writer = SimpleNamespace(
+        org_id=uuid4(),
+        lease=SimpleNamespace(project_id=head.project_id),
+        store=object(),
+    )
+    result = backfill._grouped_committed_page(
+        None,
+        writer,
+        head,
+        FIELD_VALUES,
+        ("unit_id",),
+        None,
+        at,
+        at + timedelta(days=1),
+        page_size,
+        backfill.changes.MetricReadBudget(),
+    )
+    assert [row["unit_id"] for row in result] == expected
+    assert result[0]["keyset_start"] == at + timedelta(hours=1)
+    assert visited == list(range(len(pages)))
+
+
+def test_grouped_backfill_restarts_after_full_scan_and_does_not_emit_partial(
+    monkeypatch,
+):
+    from tracer.services.derived_metrics import backfill
+
+    at = datetime(2026, 1, 1, tzinfo=UTC)
+    head = manifest()
+    writer = SimpleNamespace(
+        org_id=uuid4(),
+        lease=SimpleNamespace(project_id=head.project_id),
+        store=object(),
+    )
+    pages = [
+        [
+            {
+                "level": "conversation",
+                "unit_id": "z",
+                "keyset_start": at + timedelta(hours=4),
+            }
+        ],
+        [
+            {
+                "level": "conversation",
+                "unit_id": "a",
+                "keyset_start": at + timedelta(hours=2),
+            }
+        ],
+        [
+            {
+                "level": "conversation",
+                "unit_id": "a",
+                "keyset_start": at + timedelta(hours=1),
+            }
+        ],
+    ]
+    field = uuid4()
+
+    def nominate(*args, **kwargs):
+        for index in range(len(pages)):
+            yield ((field, 1, "conversation", f"physical-{index}"),)
+
+    monkeypatch.setattr(backfill, "committed_key_pages", nominate)
+    interrupted = [True]
+    seen = []
+
+    def read(_analytics, _query, params, _budget, **_kwargs):
+        index = len(seen) % len(pages)
+        seen.append(params.get("history_group_after_1"))
+        if interrupted[0] and index == 1:
+            raise backfill.changes.MetricChangeReadError("scan interrupted")
+        after = params.get("history_group_after_1")
+        return [r for r in pages[index] if after is None or r["unit_id"] > after]
+
+    monkeypatch.setattr(backfill.changes, "read", read)
+
+    def page(after):
+        return backfill._grouped_committed_page(
+            None,
+            writer,
+            head,
+            FIELD_VALUES,
+            ("level", "unit_id"),
+            after,
+            at,
+            at + timedelta(days=1),
+            1,
+            backfill.changes.MetricReadBudget(),
+        )
+
+    with pytest.raises(backfill.changes.MetricChangeReadError, match="interrupted"):
+        page(None)
+    interrupted[0] = False
+    seen.clear()
+    first = page(None)
+    assert first == [
+        {
+            "level": "conversation",
+            "unit_id": "a",
+            "keyset_start": at + timedelta(hours=1),
+        }
+    ]
+    seen.clear()
+    second = page((first[-1]["level"], first[-1]["unit_id"]))
+    assert [r["unit_id"] for r in second] == ["z"]
+    assert seen == ["a", "a", "a"]

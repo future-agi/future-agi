@@ -1,5 +1,6 @@
 """Postgres/fake recorder proofs. Live races are in the ClickHouse suites."""
 
+import hashlib
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ from django.utils import timezone
 
 from tracer.models.derived_metric import (
     MetricAttemptBatch,
+    MetricAttemptLedgerChunk,
     MetricFencingError,
     MetricProjectRefresh,
     MetricReadManifest,
@@ -56,6 +58,30 @@ def writer(observe_project, workspace):
             org_id=workspace.organization_id,
             workspace_id=workspace.id,
         )
+
+
+@pytest.mark.django_db
+def test_sealed_ledger_stream_preserves_original_digest_across_parts(writer):
+    attempt = writer.begin()
+    for part, entries in (
+        ("vanished", [{"unit_id": "last"}]),
+        ("dirty_before", [{"unit_id": "first"}, {"unit_id": "second"}]),
+        ("dirty_after", [{"unit_id": "middle"}]),
+    ):
+        writer.append(attempt, part, entries)
+    writer.seal(attempt)
+    attempt.refresh_from_db()
+    chunks = list(
+        MetricAttemptLedgerChunk.objects.filter(attempt=attempt)
+        .order_by("part", "chunk_no")
+        .values_list("part", "chunk_no", "payload_sha256")
+    )
+    expected = hashlib.sha256(
+        "\n".join(f"{part}:{no}:{sha}" for part, no, sha in chunks).encode()
+    ).hexdigest()
+    assert attempt.ledger_sha256 == expected
+    assert attempt.ledger_chunk_count == 4
+    assert attempt.ledger_key_count == 5
 
 
 @pytest.mark.django_db
