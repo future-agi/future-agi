@@ -889,28 +889,24 @@ class CallExecutionV3DetailView(APIView):
         operation_id="simulate_v3_call_execution_detail",
     )
     def get(self, request, call_execution_id, *args, **kwargs):
-        organization = getattr(request, "organization", None) or getattr(
-            request.user, "organization", None
-        )
-        call = get_object_or_404(
+        call = _call_for_request(
+            request,
+            call_execution_id,
             CallExecution.objects.select_related(
                 "scenario",
                 "test_execution__run_test",
                 "test_execution__agent_definition",
                 "test_execution__simulator_agent",
             ).prefetch_related("transcripts", "chat_messages", "snapshots"),
-            run_test_workspace_filter(request, "test_execution__run_test"),
-            id=call_execution_id,
-            test_execution__run_test__organization=organization,
-            test_execution__run_test__deleted=False,
         )
         return Response(build_call_execution_detail(call, request=request))
 
 
-def _call_for_request(request, call_execution_id) -> CallExecution:
+def _call_for_request(request, call_execution_id, calls=None) -> CallExecution:
+    """One call the requester's organization and workspace may read, or 404."""
     organization = getattr(request, "organization", None) or getattr(request.user, "organization", None)
     return get_object_or_404(
-        CallExecution.objects.select_related("test_execution__run_test"),
+        calls if calls is not None else CallExecution.objects.select_related("test_execution__run_test"),
         run_test_workspace_filter(request, "test_execution__run_test"),
         id=call_execution_id,
         test_execution__run_test__organization=organization,
