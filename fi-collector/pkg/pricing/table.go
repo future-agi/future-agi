@@ -72,6 +72,11 @@ func LoadTable(path string) (*Table, error) {
 		}
 		raw = b
 	}
+	return parseTable(raw)
+}
+
+// parseTable decodes a price file as LoadTable describes.
+func parseTable(raw []byte) (*Table, error) {
 	var rawEntries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &rawEntries); err != nil {
 		return nil, fmt.Errorf("pricing: parse price table: %w", err)
@@ -99,6 +104,9 @@ func LoadTable(path string) (*Table, error) {
 	}
 	return &Table{prices: m, providers: providers, Skipped: skipped}, nil
 }
+
+// Len is the number of priced entries.
+func (t *Table) Len() int { return len(t.prices) }
 
 // Cost prices a call by exact model-key lookup — the same gate Django used
 // (`model_cost.get(model)`), so provider-prefixed names ("azure/gpt-4o") only

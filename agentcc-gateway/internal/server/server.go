@@ -51,6 +51,7 @@ type Server struct {
 	registry         *providers.Registry
 	engine           *pipeline.Engine
 	handlers         *Handlers
+	catalogue        *modeldb.Catalogue
 	keyStore         *auth.KeyStore
 	keyHandlers      *KeyHandlers
 	metricsRegistry  *metrics.Registry
@@ -528,6 +529,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Admin endpoints (core).
 	router.Handle("POST", "/-/reload", s.reloadHandler)
 	router.Handle("GET", "/-/config", s.configHandler)
+	router.Handle("GET", "/-/model-catalogue/source", s.catalogueSourceHandler)
 	router.Handle("GET", "/-/health/providers", s.providerHealthHandler)
 	router.Handle("GET", "/-/health/providers/{org_id}", s.orgProviderHealthHandler)
 
@@ -1072,6 +1074,29 @@ func (s *Server) configHandler(w http.ResponseWriter, r *http.Request) {
 		"models_count":    len(s.cfg.ModelMap),
 		"plugins_count":   s.engine.PluginCount(),
 	})
+}
+
+// SetCatalogue gives the server the catalogue that config reloads rebuild
+// from and the source endpoint reports on. Call it before serving.
+func (s *Server) SetCatalogue(c *modeldb.Catalogue) {
+	s.catalogue = c
+	s.handlers.catalogue = c
+}
+
+// catalogueSourceHandler reports which pricing catalogue is loaded.
+func (s *Server) catalogueSourceHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAdminAuth(w, r) {
+		return
+	}
+	if s.catalogue == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "no model catalogue is managed"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(s.catalogue.Info())
 }
 
 func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
