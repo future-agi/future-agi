@@ -187,7 +187,7 @@ test('DASH-E2E-002: a saved trace-metric widget preserves its project, cohort an
       const named = page.waitForResponse(r => new URL(r.url()).pathname === `${DASHBOARDS}${dashboardId}/` && ['PATCH', 'PUT'].includes(r.request().method()));
       await page.getByPlaceholder('Untitled Dashboard').press('Enter');
       expect((await named).status()).toBe(200);
-      await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
+      await page.getByRole('button', { name: /^add widget$/i }).first().click();
       await page.getByText('Untitled widget', { exact: true }).click();
       await page.getByPlaceholder('Untitled widget').fill(widgetName);
       await page.getByPlaceholder('Untitled widget').press('Enter');

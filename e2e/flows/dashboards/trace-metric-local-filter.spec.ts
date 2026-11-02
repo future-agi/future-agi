@@ -219,7 +219,7 @@ test('DASH-E2E-003: a metric-specific Model filter changes only that metric afte
         page.getByPlaceholder('Untitled Dashboard').press('Enter'),
       ]);
       expect(named.status()).toBe(200);
-      await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
+      await page.getByRole('button', { name: /^add widget$/i }).first().click();
       await page.getByText('Untitled widget', { exact: true }).click();
       await page.getByPlaceholder('Untitled widget').fill(widgetName);
       await page.getByPlaceholder('Untitled widget').press('Enter');

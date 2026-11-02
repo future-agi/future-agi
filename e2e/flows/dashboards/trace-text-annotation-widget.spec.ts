@@ -635,7 +635,7 @@ test('DASH-E2E-012: a saved trace annotation widget retains exact text membershi
         for (const method of new Set(receipts.filter(r => r.path === path && r.startedAt >= since && ['PATCH', 'PUT'].includes(r.method)).map(r => r.method))) {
           const named = await readNative<unknown>(path, undefined, since, method); expect(named.input).toMatchObject({ name: dashboardName });
         }
-        await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
+        await page.getByRole('button', { name: /^add widget$/i }).first().click();
         await page.getByText('Untitled widget', { exact: true }).click(); await page.getByPlaceholder('Untitled widget').fill(widgetName);
         await page.getByPlaceholder('Untitled widget').press('Enter');
         await page.getByRole('combobox').filter({ hasText: 'Line' }).click(); await page.getByRole('option', { name: 'Table', exact: true }).click();

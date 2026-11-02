@@ -457,7 +457,7 @@ test('DASH-E2E-009: a saved conversation widget excludes child-model call-metric
         await expect.poll(() => receipts.some(r => r.path === namedPath && ['PATCH', 'PUT'].includes(r.method) && r.startedAt >= since && r.settled), { timeout: UI_READY }).toBe(true);
         const namedMethod = receipts.filter(r => r.path === namedPath && r.startedAt >= since).at(-1)!.method;
         const named = await readNative<unknown>(namedPath, undefined, since, namedMethod); expect(named.input).toMatchObject({ name: dashboardName });
-        await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
+        await page.getByRole('button', { name: /^add widget$/i }).first().click();
         await page.getByText('Untitled widget', { exact: true }).click(); await page.getByPlaceholder('Untitled widget').fill(widgetName);
         await page.getByPlaceholder('Untitled widget').press('Enter');
         await page.getByRole('combobox').filter({ hasText: 'Line' }).click(); await page.getByRole('option', { name: 'Table', exact: true }).click();

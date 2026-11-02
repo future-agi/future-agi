@@ -600,7 +600,7 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
       page.getByPlaceholder('Untitled Dashboard').press('Enter'),
     ]);
     await receipt('dashboard-named', named);
-    await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
+    await page.getByRole('button', { name: /^add widget$/i }).first().click();
     await page.getByText('Untitled widget', { exact: true }).click();
     await page.getByPlaceholder('Untitled widget').fill(widgetName);
     await page.getByPlaceholder('Untitled widget').press('Enter');

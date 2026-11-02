@@ -444,7 +444,7 @@ test('DASH-E2E-006: a saved widget retains native array membership through popup
         expect(named.status()).toBe(200); expect(scopeOf(named)).toEqual(expectedScope);
         expect(named.request().postDataJSON()).toMatchObject({ name: dashboardName });
         saves.push({ label: 'dashboard-create-rename', created: await created.json(), renamed: await named.json(), scope: scopeOf(named) });
-        await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
+        await page.getByRole('button', { name: /^add widget$/i }).first().click();
         await page.getByText('Untitled widget', { exact: true }).click();
         await page.getByPlaceholder('Untitled widget').fill(widgetName);
         await page.getByPlaceholder('Untitled widget').press('Enter');

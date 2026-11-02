@@ -230,7 +230,7 @@ test('DASH-E2E-004: a saved numeric attribute widget preserves numeric filtering
           page.getByPlaceholder('Untitled Dashboard').press('Enter'),
         ]);
         expect(named.status()).toBe(200);
-        await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
+        await page.getByRole('button', { name: /^add widget$/i }).first().click();
         await page.getByText('Untitled widget', { exact: true }).click();
         await page.getByPlaceholder('Untitled widget').fill(widgetName);
         await page.getByPlaceholder('Untitled widget').press('Enter');
