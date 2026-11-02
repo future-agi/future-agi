@@ -88908,7 +88908,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         attribution: {
           title: "Attribution",
           type: "string",
-          enum: ["reported", "bound", "conflict"],
+          enum: ["reported", "bound", "conflict", "unattributed"],
         },
       },
     },

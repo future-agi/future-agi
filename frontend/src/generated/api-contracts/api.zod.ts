@@ -50128,7 +50128,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       tool: zod.string().min(1).optional(),
       status: zod.string().min(1).optional(),
       at: zod.string().min(1),
-      attribution: zod.enum(["reported", "bound", "conflict"]),
+      attribution: zod.enum(["reported", "bound", "conflict", "unattributed"]),
     }),
   ),
   collected_at: zod.string().min(1),

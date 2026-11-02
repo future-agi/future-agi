@@ -23846,6 +23846,7 @@ export const CallWorkerEventApiAttribution = {
   reported: "reported",
   bound: "bound",
   conflict: "conflict",
+  unattributed: "unattributed",
 } as const;
 
 export interface CallWorkerEventApi {
