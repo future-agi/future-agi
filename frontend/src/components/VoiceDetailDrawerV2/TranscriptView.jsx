@@ -410,6 +410,38 @@ const TurnRow = React.forwardRef(
             </Tooltip>
           )}
 
+          {showTemporalMetadata && turn.slowResponse && (
+            <Tooltip
+              title={`Slow response: agent took ${turn.silenceBefore.toFixed(1)}s to reply`}
+              arrow
+            >
+              <Box
+                sx={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "2px",
+                  px: 0.5,
+                  bgcolor: (theme) =>
+                    theme.palette.mode === "dark"
+                      ? theme.palette.warning.darker
+                      : theme.palette.warning.lighter,
+                  color: (theme) =>
+                    theme.palette.mode === "dark"
+                      ? theme.palette.warning.main
+                      : theme.palette.warning.darker,
+                  borderRadius: "2px",
+                  fontSize: 9,
+                  fontWeight: 600,
+                  letterSpacing: "0.02em",
+                  textTransform: "uppercase",
+                }}
+              >
+                <Iconify icon="mdi:timer-sand" width={10} />
+                {` slow ${turn.silenceBefore.toFixed(1)}s`}
+              </Box>
+            </Tooltip>
+          )}
+
           <Box sx={{ flex: 1 }} />
 
           {/* Hover actions */}

@@ -64,6 +64,8 @@ export const readTime = (obj, keys) => {
   return null;
 };
 
+const SLOW_RESPONSE_SECONDS = 2;
+
 /**
  * Enrich the raw transcript with silence, overlap, and duration info.
  *
@@ -78,6 +80,8 @@ export const readTime = (obj, keys) => {
  *   duration   → seconds
  *   silenceBefore → seconds (null if < 0.3s or indeterminate)
  *   overlapsPrev  → true when this turn started before the previous ended
+ *   slowResponse  → true when an agent turn replied to the caller after a
+ *                   gap longer than SLOW_RESPONSE_SECONDS
  */
 export const enrichTurns = (
   transcript,
@@ -134,6 +138,7 @@ export const enrichTurns = (
       end: null,
       silenceBefore: null,
       overlapsPrev: false,
+      slowResponse: false,
     }));
   }
 
@@ -214,6 +219,7 @@ export const enrichTurns = (
   for (const cur of sorted) {
     cur.silenceBefore = null;
     cur.overlapsPrev = false;
+    cur.slowResponse = false;
     if (cur.role === "tool") continue;
     if (prev && prev.end != null && cur.start != null) {
       const gap = cur.start - prev.end;
@@ -222,6 +228,13 @@ export const enrichTurns = (
         cur.overlapsPrev = true;
       } else if (gap > 0.3) {
         cur.silenceBefore = gap;
+        if (
+          cur.role === "assistant" &&
+          prev.role === "user" &&
+          gap > SLOW_RESPONSE_SECONDS
+        ) {
+          cur.slowResponse = true;
+        }
       }
     }
     prev = cur;
