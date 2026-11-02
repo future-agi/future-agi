@@ -662,7 +662,7 @@ const traceRow = (raw) => ({
 });
 
 // Which of a multi-agent app's workers did what in one call. A 404 means the trial has
-// no worker record (the app sent no traces, or they are still arriving): null, not an error.
+// no worker record (no hand-off was seen, or the record is still arriving): null, not an error.
 export function useCallWorkers(callExecutionId) {
   return useQuery({
     queryKey: ["simulation-call-workers-v3", callExecutionId],

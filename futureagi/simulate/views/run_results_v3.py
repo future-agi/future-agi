@@ -932,7 +932,10 @@ class CallExecutionV3WorkersView(APIView):
             return Response(
                 {
                     "code": "workers_unavailable",
-                    "reason": "this trial has no record of its workers: the app sent no traces, or they are still arriving",
+                    "reason": (
+                        "no workers were recorded for this call: it handed no work to other agents that could be seen, "
+                        "or the record is still arriving"
+                    ),
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )

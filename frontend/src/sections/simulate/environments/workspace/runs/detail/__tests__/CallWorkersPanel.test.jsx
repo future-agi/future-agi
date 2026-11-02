@@ -146,7 +146,7 @@ describe("CallWorkersPanel", () => {
     result = { data: null, isLoading: false, isError: false };
     const { unmount } = render(<CallWorkersPanel callExecutionId="c1" />);
     expect(
-      screen.getByText(/No worker record for this call/),
+      screen.getByText(/No workers recorded for this call/),
     ).toBeInTheDocument();
     unmount();
     result = { data: undefined, isLoading: false, isError: true };

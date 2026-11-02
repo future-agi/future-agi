@@ -7,7 +7,7 @@ export const CALL_TRACES_COPY = {
 
 export const CALL_WORKERS_COPY = {
   tab: "Workers",
-  none: "No worker record for this call: the app sent no traces, or they are still arriving.",
+  none: "No workers recorded for this call. Hand-offs to other agents show here once they are seen, which can take a minute after the call.",
   error: "Couldn't load this call's workers.",
   coordinator: "Coordinator",
   unknown: "Unknown",
