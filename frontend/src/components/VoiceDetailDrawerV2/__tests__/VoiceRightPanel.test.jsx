@@ -306,3 +306,61 @@ describe("VoiceRightPanel", () => {
     expect(screen.queryByRole("tab", { name: "Scenario" })).not.toBeInTheDocument();
   });
 });
+
+describe("VoiceRightPanel host additions", () => {
+  const call = {
+    id: "call-5",
+    module: "simulate",
+    status: "completed",
+    provider: "vapi",
+    call_type: "Outbound",
+    transcript: [],
+    eval_metrics: {
+      "eval-1": {
+        id: "eval-1",
+        name: "Refund correctness",
+        value: "Failed",
+        type: "Pass/Fail",
+        reason: "Refunded the wrong amount.",
+      },
+    },
+  };
+
+  it("adds the host's tabs after its own and shows the host's notice", async () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={call}
+        notice={<div>No verdict here</div>}
+        extraTabs={[
+          { label: "Tool calls (0)", value: "toolCalls", content: <p>No tools</p> },
+        ]}
+      />,
+    );
+    expect(screen.getByText("No verdict here")).toBeInTheDocument();
+    expect(screen.queryByText("No tools")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "Tool calls (0)" }));
+    expect(screen.getByText("No tools")).toBeInTheDocument();
+  });
+
+  it("opens on the focused eval, expanded", () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={call}
+        initialEvalFocus
+        focusEvalName="Refund correctness"
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Evals" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("Refunded the wrong amount.")).toBeInTheDocument();
+  });
+
+  it("keeps every eval collapsed without a focus", async () => {
+    renderWithQueryClient(<VoiceRightPanel data={call} initialEvalFocus />);
+    expect(
+      screen.queryByText("Refunded the wrong amount."),
+    ).not.toBeInTheDocument();
+  });
+});

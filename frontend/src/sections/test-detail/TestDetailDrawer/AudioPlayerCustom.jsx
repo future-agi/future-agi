@@ -14,6 +14,7 @@ import { normalizeRecordings } from "src/utils/utils";
 import useStereoChannels from "src/hooks/use-stereo-channels";
 import RecordingFailure from "src/components/multi-track-audio-player/RecordingFailure";
 import { UNAVAILABLE } from "src/components/multi-track-audio-player/failureVariants";
+import { useSpeakerColors } from "src/components/VoiceDetailDrawerV2/speakerColors";
 
 const isUpdatedWithinTwoMinutes = (timestamp) => {
   if (!timestamp) return false;
@@ -94,7 +95,9 @@ export const StereoMultiTrackPlayer = ({
       ? theme.palette.primary.light
       : theme.palette.primary.main;
   const assistantColor = primary;
-  const customerColor = theme.palette.mode === "dark" ? "#FF9933" : "#E9690C";
+  // The caller's wave reads the transcript's own caller colour, from the
+  // one palette, so the two can't drift apart.
+  const customerColor = useSpeakerColors().user;
 
   const {
     assistantUrl: stereoAssistant,

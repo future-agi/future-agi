@@ -39,7 +39,13 @@ import ChatSplitPane from "../components/ChatSplitPane";
 import EmptyState from "../components/EmptyState";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
-import { subscribeScenarioSelection } from "../buildEnvironment/console/scenarioSelectionBus";
+import {
+  clearScenarioSelection,
+  subscribeScenarioSelection,
+} from "../buildEnvironment/console/scenarioSelectionBus";
+import { CHAT_SUGGESTIONS } from "./chat/chatSuggestions";
+import SelectionContextChip from "./chat/SelectionContextChip";
+import RunUsageBanner from "./run/RunUsageBanner";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
@@ -50,6 +56,7 @@ import WorkspacePanels from "./WorkspacePanels";
 import RunDialog from "./run/RunDialog";
 import { inlineRunError } from "./run/runErrors";
 import useWorkspaceTab from "./helpers/useWorkspaceTab";
+import useUiSample from "../hooks/useUiSample";
 import { gapsByTab, counts } from "./helpers/workspaceGaps";
 import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
@@ -114,6 +121,9 @@ export default function EnvironmentWorkspace() {
     building || buildFailed ? undefined : bootstrapState,
   );
   const { tab, setTab } = useWorkspaceTab();
+  // The setup gaps are sample data, so their tab badges show only with
+  // ?uiSample=gaps, like the Needs input count.
+  const sampleGaps = useUiSample("gaps");
   const {
     exhaustionError,
     handleError: handleCreditError,
@@ -336,6 +346,7 @@ export default function EnvironmentWorkspace() {
         <WorkspaceHeader
           env={env}
           envState={envState}
+          patch={patch}
           canRun={false}
           runBlockedReason={buildFailed ? WORKSPACE_COPY.failedTooltip : WORKSPACE_COPY.buildingTooltip}
           locked
@@ -497,6 +508,7 @@ export default function EnvironmentWorkspace() {
       <WorkspaceHeader
         env={displayEnv}
         envState={envState}
+        patch={patch}
         canRun={runnable && !runMutation.isPending && !detailBlock}
         runBlockedReason={detailBlock || blockedReason(envState, env, backed, runMutation.isPending, backedScenarioCount)}
         locked={locked}
@@ -504,13 +516,20 @@ export default function EnvironmentWorkspace() {
         onFork={onFork}
         onStartRun={startRun}
         selectionActive={selectionActive}
+        onGo={setTab}
         scenarioCount={backedScenarioCount}
       />
       {creditBanner}
       {refusalLine}
 
       <SystemBanners env={env} />
-      {!detailLoading && !detailFailed && <VersionBar env={env} envState={envState} />}
+      {!detailLoading && !detailFailed && (
+        <VersionBar
+          env={env}
+          envState={envState}
+          onOpenVersions={() => setTab("versions")}
+        />
+      )}
       <DraftBar
         env={env}
         busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
@@ -519,6 +538,7 @@ export default function EnvironmentWorkspace() {
           setTab("versions", { version: `${piece}:${id}` })
         }
       />
+      <RunUsageBanner />
 
       {/* A template-seeded env is read-only until forked — the banner states the
           lock and offers the fork. */}
@@ -529,9 +549,22 @@ export default function EnvironmentWorkspace() {
           busy={
             chat.running || chat.inFlight || chat.waiting || chat.nudgePending
           }
+          replies={(chat.turns || []).filter((t) => t.role === "builder").length}
           chat={({ collapse, open, collapseRef }) => (
             <BuilderConsole
               turns={chat.turns}
+              chips={CHAT_SUGGESTIONS[activeTab] || []}
+              emptyText={`${displayEnv.name || "This environment"} is ready. Ask me to add scenarios, change a rule, or add an evaluation, or edit directly on the right.`}
+              preComposer={
+                selectionActive && (
+                  <SelectionContextChip
+                    count={selection.count ?? selection.ids.length}
+                    rows={selection.rows}
+                    all={selection.all}
+                    onClear={clearScenarioSelection}
+                  />
+                )
+              }
               running={chat.running}
               onSend={chat.send}
               onStop={chat.stop}
@@ -572,7 +605,7 @@ export default function EnvironmentWorkspace() {
             locked={locked}
             backed={source === "harness"}
             onFork={onFork}
-            gapsByTab={gapsByTab(env, serverEnvState)}
+            gapsByTab={sampleGaps ? gapsByTab(env, serverEnvState) : undefined}
             counts={counts(serverEnvState, backedScenarioCount)}
             overviewCounts={overviewCounts}
             overviewWorld={overviewWorld}

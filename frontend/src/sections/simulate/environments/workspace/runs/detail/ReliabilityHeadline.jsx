@@ -1,26 +1,20 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 
-import { useRunReliability } from "src/api/simulate-environments/runAnalytics";
-
-// Below this many scenarios the backend withholds the range; rates read as more
-// certain than they are, so the header falls back to raw counts.
-const MIN_INTERVAL_SCENARIOS = 10;
+import SoonChip from "../../../components/SoonChip";
+import { MIN_INTERVAL_SCENARIOS, countsOnly } from "./runHeaderFormat";
 
 const percent = (value) => `${Math.round(value)}%`;
+const scenarioNoun = (n) => `scenario${n === 1 ? "" : "s"}`;
 
 function Stat({ label, value, help }) {
   return (
-    <Tooltip arrow title={help}>
-      <Box sx={{ minWidth: 0 }}>
-        <Typography
-          noWrap
-          sx={{ fontSize: 10, color: "text.secondary", lineHeight: 1.2 }}
-        >
+    <Box sx={{ minWidth: 0 }}>
+      <Stack direction="row" spacing={1} alignItems="baseline">
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {label}
         </Typography>
         <Typography
-          noWrap
           sx={{
             typography: "s2",
             fontWeight: 700,
@@ -29,8 +23,11 @@ function Stat({ label, value, help }) {
         >
           {value}
         </Typography>
-      </Box>
-    </Tooltip>
+      </Stack>
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        {help}
+      </Typography>
+    </Box>
   );
 }
 Stat.propTypes = {
@@ -39,10 +36,12 @@ Stat.propTypes = {
   help: PropTypes.string.isRequired,
 };
 
-/** pass^1, pass^k and the pass^1 95% range for a finished run. */
-export default function ReliabilityHeadline({ executionId, enabled }) {
-  const { data: reliability } = useRunReliability(executionId, { enabled });
-  if (!enabled || reliability?.pass_hat_1 == null) return null;
+/**
+ * The run summary chip's hover card: pass^1, pass^k, the pass^1 95% range and
+ * the inconclusive trials for a finished run, each with what it means.
+ */
+export default function ReliabilityHeadline({ reliability }) {
+  if (reliability?.pass_hat_1 == null) return null;
 
   const {
     k,
@@ -54,19 +53,16 @@ export default function ReliabilityHeadline({ executionId, enabled }) {
   } = reliability;
   const conclusive = (reliability.rows ?? []).filter((row) => row.evaluated);
   const interval = reliability.pass_rate_interval;
-  const countsOnly = conclusive.length < MIN_INTERVAL_SCENARIOS;
-  const scenarioNoun = (n) => `scenario${n === 1 ? "" : "s"}`;
+  const fewScenarios = countsOnly(reliability);
 
   return (
-    <Stack
-      direction="row"
-      spacing={2.5}
-      alignItems="center"
-      sx={{ flexShrink: 0, minWidth: 0 }}
-    >
+    <Stack spacing={1} sx={{ py: 0.25, maxWidth: 360 }}>
+      <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+        Run summary
+      </Typography>
       {/* Too few scenarios for a rate: show the pooled trial count, labelled
           as such, rather than a scenario average it would not match. */}
-      {countsOnly ? (
+      {fewScenarios ? (
         <Stat
           label="Trials passed"
           value={`${reliability.trials_passed} / ${reliability.trials_evaluated}`}
@@ -85,7 +81,7 @@ export default function ReliabilityHeadline({ executionId, enabled }) {
         <Stat
           label={`pass^${k}`}
           value={
-            countsOnly
+            fewScenarios
               ? `${passHatKPassed} / ${passHatKScenarios} ${scenarioNoun(passHatKScenarios)}`
               : `${percent(passHatK)} of ${passHatKScenarios} ${scenarioNoun(passHatKScenarios)}`
           }
@@ -103,7 +99,7 @@ export default function ReliabilityHeadline({ executionId, enabled }) {
           help={`Range for pass^1 across ${interval.scenarios} scenarios. Trials of one scenario are counted together, never as independent samples.`}
         />
       ) : (
-        countsOnly && (
+        fewScenarios && (
           <Stat
             label="95% range"
             value="-"
@@ -118,10 +114,22 @@ export default function ReliabilityHeadline({ executionId, enabled }) {
           help="Infra, simulator or missing-evidence results. They say nothing about the agent, so they are left out of every rate."
         />
       )}
+      <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+        <SoonChip
+          label="Your bar" detail="A pass rate you set for this environment, so each run shows whether it clears it."
+          what="A pass-rate bar for this environment"
+          size="tiny"
+        />
+        <SoonChip
+          label="Causes" detail="Why calls failed: the agent, the simulated caller, the grader or the infrastructure."
+          what="Verdict causes per run"
+          plural
+          size="tiny"
+        />
+      </Stack>
     </Stack>
   );
 }
 ReliabilityHeadline.propTypes = {
-  executionId: PropTypes.string,
-  enabled: PropTypes.bool,
+  reliability: PropTypes.object,
 };

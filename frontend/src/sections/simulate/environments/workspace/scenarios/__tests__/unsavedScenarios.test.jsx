@@ -187,11 +187,13 @@ describe("ScenariosStep — unsaved changes", () => {
     });
     renderStep(draftRows(4));
     await screen.findByRole("table");
+    // The row's remove sits in its More actions menu.
     fireEvent.click(
       within(rowOf(CHANGED_NAME)).getByRole("button", {
-        name: "Remove from this environment",
+        name: /^More actions for /,
       }),
     );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(mockSnack.calls).toHaveLength(1));
@@ -202,11 +204,13 @@ describe("ScenariosStep — unsaved changes", () => {
     amendScenarios.mockResolvedValue({ receipts: [], draft: null });
     renderStep(draftRows(4));
     await screen.findByRole("table");
+    // The row's remove sits in its More actions menu.
     fireEvent.click(
       within(rowOf(CHANGED_NAME)).getByRole("button", {
-        name: "Remove from this environment",
+        name: /^More actions for /,
       }),
     );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(mockSnack.calls).toHaveLength(1));

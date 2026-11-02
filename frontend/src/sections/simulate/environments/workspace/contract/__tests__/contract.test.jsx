@@ -1,135 +1,171 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { screen, fireEvent, within } from "@testing-library/react";
+import { renderWithRouter } from "src/utils/test-utils";
 import RlContractPanel from "../RlContractPanel";
 
-// A voice environment with two tools, two hard rules and a seeded table —
-// enough to exercise the world (capability graph), the internals (tables +
-// tools) and the run-end card.
+const enqueueSnackbar = vi.fn();
+vi.mock("notistack", async (orig) => ({
+  ...(await orig()),
+  enqueueSnackbar: (...a) => enqueueSnackbar(...a),
+  useSnackbar: () => ({ enqueueSnackbar }),
+}));
+
+// A built voice environment as the detail mapper shapes it: rules from
+// hard_constraints, use cases from real_use_cases, tools with arg_values,
+// end_conditions and settings.seed.
 const voiceEnv = {
-  name: "Refund Copilot",
+  name: "Ride line",
   surface: "voice",
   tools: [
-    { name: "lookup_account", desc: "Reads the caller's account." },
-    { name: "issue_refund", desc: "Refunds a charge." },
+    {
+      name: "geocode_address",
+      desc: "Find an address.",
+      args: ["query", "address_kind"],
+      argTypes: { query: "str", address_kind: "str" },
+      argValues: { address_kind: ["pickup", "dropoff"] },
+    },
+    { name: "end_call", desc: "End the call.", args: [] },
   ],
-  rules: ["Never disclose another caller's data.", "Only refund verified callers."],
-  seed: { tables: [{ name: "customers", rows: 240, note: "40 with saved cards" }] },
+  rules: ["Never invent a fare.", "Never accept a full card number."],
+  useCases: ["Book a ride for a recognized caller.", "Cancel a ride and quote the fee."],
+  amendments: [{ field: "x", reason: "y" }],
+  endConditions: {
+    max_turns: null,
+    max_duration_seconds: 3600,
+    clock: "real-time",
+    ended_reasons: ["customer-ended-call", "silence-timed-out"],
+  },
+  runSeed: 8537093545867,
 };
 
-const renderPanel = (props = {}) =>
-  render(
+const renderPanel = (props = {}, route = "/x") =>
+  renderWithRouter(
     <RlContractPanel
       env={voiceEnv}
-      envState={{ evals: [{ id: "task_success" }], agent: { name: "Support agent" } }}
+      envState={{ agent: { name: "Ride agent" } }}
       patch={vi.fn()}
       onGo={vi.fn()}
+      backed
       {...props}
     />,
+    { route },
   );
 
-describe("RlContractPanel", () => {
-  it("opens on its content, with no heading repeating the tab", () => {
+beforeEach(() => enqueueSnackbar.mockClear());
+
+describe("Contract tab", () => {
+  it("rules list the real hard_constraints with R1..RN ids; coverage is a soon chip", () => {
     renderPanel();
-    expect(screen.queryByText("Environment contract")).toBeNull();
-    expect(screen.queryByText(/What this environment is made of/)).toBeNull();
+    expect(screen.getByText("Rules (2)")).toBeInTheDocument();
+    expect(screen.getByText("R1")).toBeInTheDocument();
+    expect(screen.getByText("Never invent a fare.")).toBeInTheDocument();
+    expect(screen.getByText("R2")).toBeInTheDocument();
+    expect(screen.getAllByText("From the agent's prompt").length).toBe(2);
+    expect(screen.getByText("Coverage soon")).toBeInTheDocument();
+    // Which sub-goals test a rule isn't reported, so no invented coverage.
+    expect(screen.queryByText(/Tested by/)).toBeNull();
+    expect(screen.queryByText(/Not tested/)).toBeNull();
   });
 
-  it("renders the world-internals cards over real data only: tables and tools", () => {
+  it("Add rule opens the dialog flagged UI only; Create sends nothing and the list is unchanged", () => {
     renderPanel();
-    expect(screen.getByText("World state · database")).toBeInTheDocument();
-    expect(screen.getAllByText("Tools").length).toBeGreaterThan(0);
-    // The synthesised handler/check source cards are gone: their bodies were
-    // generated from the env manifest by _fixtures/envInternals, not read from
-    // the job.
-    expect(screen.queryByText("Tool implementations")).toBeNull();
-    expect(screen.queryByText("Check implementations")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Add rule")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("UI only")).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Rule"), { target: { value: "Always confirm the pickup." } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create the next environment version" }));
+    expect(enqueueSnackbar).toHaveBeenCalledWith("UI only. Nothing was saved.", { variant: "info" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("Rules (2)")).toBeInTheDocument();
+    expect(screen.queryByText("Always confirm the pickup.")).toBeNull();
   });
 
-  it("renders the authored run end conditions: terminate, truncate and clock", () => {
-    renderPanel({
-      env: {
-        ...voiceEnv,
-        endConditions: {
-          ended_reasons: ["customer-ended-call", "silence-timed-out"],
-          max_turns: 10,
-          max_duration_seconds: 3600,
-          clock: "real-time",
-        },
-      },
-    });
-    expect(screen.getByText("Run end conditions")).toBeInTheDocument();
-    expect(screen.getByText("Terminate")).toBeInTheDocument();
+  it("Edit and Remove on a rule open the same dialog", () => {
+    renderPanel();
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Remove rule R2")).toBeInTheDocument();
+    expect(within(dialog).getByText("Never accept a full card number.")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    expect(within(screen.getByRole("dialog")).getByLabelText("Rule")).toHaveValue("Never invent a fare.");
+  });
+
+  it("use cases render here with ids; amendments stay on Overview", () => {
+    renderPanel();
+    expect(screen.getByText("Use cases (2)")).toBeInTheDocument();
+    expect(screen.getAllByText(/^UC-[0-9a-z]{4}$/).length).toBe(2);
+    expect(screen.getByText("Book a ride for a recognized caller.")).toBeInTheDocument();
+    expect(screen.queryByText(/Amendments/)).toBeNull();
+  });
+
+  it("argument limits list the real allowed values; ranges are a soon chip", () => {
+    const onGo = vi.fn();
+    renderPanel({ onGo });
+    expect(screen.getByText("Argument limits (1)")).toBeInTheDocument();
+    expect(screen.getByText("Ranges soon")).toBeInTheDocument();
+    expect(screen.getByText("pickup")).toBeInTheDocument();
+    expect(screen.getByText("geocode_address.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View tools" }));
+    expect(onGo).toHaveBeenCalledWith("world");
+  });
+
+  it('end conditions read "When a conversation ends", "It ends", "It\'s cut off", "Time", and the seed', () => {
+    renderPanel();
+    expect(screen.getByText("When a conversation ends")).toBeInTheDocument();
+    expect(screen.getByText("It ends")).toBeInTheDocument();
+    expect(screen.getByText("It's cut off")).toBeInTheDocument();
     expect(screen.getByText("customer-ended-call")).toBeInTheDocument();
-    expect(screen.getByText("Truncate")).toBeInTheDocument();
-    expect(screen.getByText("10 turns")).toBeInTheDocument();
-    expect(screen.getByText("Clock · real-time")).toBeInTheDocument();
+    expect(screen.getByText("60 minutes")).toBeInTheDocument();
+    expect(screen.getByText("Time · Real time")).toBeInTheDocument();
+    expect(screen.getByText("Same starting data every time")).toBeInTheDocument();
+    expect(screen.getByText(/Seed 8537093545867\./)).toBeInTheDocument();
   });
 
-  it("has no seed row: the API carries no seed for it to describe", () => {
-    renderPanel({ env: { ...voiceEnv, endConditions: { ended_reasons: ["cancelled"] } } });
-    expect(screen.queryByText("Deterministic seed")).toBeNull();
-  });
-
-  it("says a template or fork has no end conditions because it was never built", () => {
-    renderPanel({ env: { ...voiceEnv, endConditions: null } });
-    expect(screen.getByText("Not authored yet")).toBeInTheDocument();
-    expect(screen.getByText("This environment hasn't been built, so it has none.")).toBeInTheDocument();
-    expect(screen.queryByText(/The build writes these/)).toBeNull();
+  it("leaves out a seed JSON has already rounded", () => {
+    renderPanel({ env: { ...voiceEnv, runSeed: JSON.parse("195790417783341077") } });
+    expect(screen.getByText("Same starting data every time")).toBeInTheDocument();
+    expect(screen.queryByText(/Seed \d/)).toBeNull();
   });
 
   it("says the end conditions are not authored yet instead of showing sample ones", () => {
-    renderPanel({ env: { ...voiceEnv, endConditions: null }, backed: true });
-    expect(screen.getByText(/The build writes these once it has read how a run of this agent ends/)).toBeInTheDocument();
-    expect(screen.getByText("Run end conditions")).toBeInTheDocument();
+    renderPanel({ env: { ...voiceEnv, endConditions: null } });
+    expect(screen.getByText("When a conversation ends")).toBeInTheDocument();
     expect(screen.getByText("Not authored yet")).toBeInTheDocument();
-    expect(screen.queryByText("Terminate")).toBeNull();
-    expect(screen.queryByText(/^Clock ·/)).toBeNull();
+    expect(screen.queryByText("It ends")).toBeNull();
   });
 
-  it("lists each declared tool with its description and no inferred effect chip", () => {
+  it("Actors shows the empty state; Create actor opens the editor flagged UI only and sends nothing", () => {
     renderPanel();
-    expect(screen.getAllByText("lookup_account").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("issue_refund").length).toBeGreaterThan(0);
-    expect(screen.getByText("Reads the caller's account.")).toBeInTheDocument();
-    // The read-only/writes classification came from a verb heuristic over the
-    // tool name, so the chip and its override picker were dropped.
-    expect(screen.queryByText("read-only · inferred")).toBeNull();
-    expect(screen.queryByText("writes · inferred")).toBeNull();
-    expect(screen.queryByText("Writes data")).toBeNull();
+    expect(screen.getByText("No actors yet")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Create actor" }));
+    const drawer = screen.getByRole("presentation");
+    expect(within(drawer).getAllByLabelText("UI only").length).toBeGreaterThan(0);
+    fireEvent.click(within(drawer).getAllByRole("button", { name: "Create actor" }).pop());
+    expect(enqueueSnackbar).toHaveBeenCalledWith("UI only. Nothing was saved.", { variant: "info" });
   });
 
-  it("shows where a tool runs only when ALK reported an entrypoint for it", () => {
-    renderPanel({
-      env: {
-        ...voiceEnv,
-        toolEntrypoints: [
-          { tool: "issue_refund", module: "billing", callable: "refund" },
-        ],
-      },
-    });
-    expect(screen.getByText("billing.refund")).toBeInTheDocument();
-    // lookup_account has no entrypoint, so it carries no invented location.
-    expect(screen.queryByText(/lookup_account\./)).toBeNull();
+  it("?uiSample=actors shows Vel's cast, flagged", () => {
+    renderPanel({}, "/x?uiSample=actors");
+    expect(screen.queryByText("No actors yet")).toBeNull();
+    expect(screen.getByText(/In this environment \(\d+\)/)).toBeInTheDocument();
   });
 
-  it("no longer mounts the dummy Actors section (commented out, to be picked up later)", () => {
+  it("no longer holds the world's tables, tools or capability graph: they live on World", () => {
     renderPanel();
-    expect(screen.queryByText("Colleague with a different plan")).toBeNull();
+    expect(screen.queryByText(/World state/)).toBeNull();
+    expect(screen.queryByText("Capability graph")).toBeNull();
   });
 
-  describe("template lock (read-only until forked)", () => {
-    const LOCK_TOOLTIP = "Fork this environment to edit.";
+  it("locks edits on a template until it's forked", () => {
+    renderPanel({ locked: true });
+    expect(screen.queryByRole("button", { name: "Add rule" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+  });
 
-    it("renders the tool list as a static read-out — no override menu, no patch", () => {
-      const patch = vi.fn();
-      renderPanel({ patch, locked: true });
-
-      // With the effect override gone there is nothing on this card to lock,
-      // and nothing that can reach patch.
-      expect(screen.getAllByText("lookup_account").length).toBeGreaterThan(0);
-      expect(screen.queryByText("Writes data")).toBeNull();
-      expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
-      expect(patch).not.toHaveBeenCalled();
-    });
+  it("uses no em dashes", () => {
+    renderPanel();
+    expect(document.body.textContent).not.toMatch(/—/);
   });
 });

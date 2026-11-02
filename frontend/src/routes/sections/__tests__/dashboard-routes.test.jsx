@@ -89,6 +89,8 @@ const ENVIRONMENT_URLS = [
   `${SIMULATE}/environments/env-1/runs/test-1/exec-1/performance`,
   `${SIMULATE}/environments/env-1/runs/test-1/exec-1/analytics`,
   `${SIMULATE}/environments/env-1/runs/test-1/exec-1/optimization_runs`,
+  `${SIMULATE}/environments/env-1/compare`,
+  `${SIMULATE}/environments/env-1/runs/test-1/exec-1/widgets/new`,
 ];
 
 // Each Prebuilt template URL and the route that must serve it, so
@@ -148,6 +150,21 @@ describe.each([
     expect(redirectTarget(route)).toBeNull();
   });
 
+  it("the compare page opens its own route, not the workspace", () => {
+    const route = leafRoute(user, `${SIMULATE}/environments/env-1/compare`);
+    expect(route.path).toBe("environments/:envId/compare");
+  });
+
+  it("the run widget editor opens its own route, not the run detail", () => {
+    const route = leafRoute(
+      user,
+      `${SIMULATE}/environments/env-1/runs/test-1/exec-1/widgets/widget-1`,
+    );
+    expect(route.path).toBe(
+      "environments/:envId/runs/:testId/:executionId/widgets/:widgetId",
+    );
+  });
+
   it("an old harness job link opens that environment", () => {
     const route = leafRoute(user, `${SIMULATE}/harness/job-1`);
     expect(route.element.type).toBe(HarnessToEnvironment);
@@ -164,5 +181,17 @@ describe("old Agent Definition link", () => {
     expect(
       findChildRoute(simulate, "agent-definitions/:agentDefinitionId"),
     ).toBeTruthy();
+  });
+});
+
+describe("New agent page", () => {
+  it("opens on its own, outside the Agents tabs", () => {
+    const routes = dashboardRoutes(null, null, { isCloud: true });
+    const matches = matchRoutes(routes, "/dashboard/agents/connect");
+    const leaf = matches[matches.length - 1].route;
+    expect(leaf.path).toBe("connect");
+    const agents = matches.find((m) => m.route.path === "agents").route;
+    const tabsLayout = agents.children.find((c) => !c.path);
+    expect(matches.some((m) => m.route === tabsLayout)).toBe(false);
   });
 });

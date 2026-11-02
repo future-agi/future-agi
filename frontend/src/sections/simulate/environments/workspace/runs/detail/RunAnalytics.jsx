@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -12,11 +13,16 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  Tooltip,
   Typography,
 } from "@mui/material";
+import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { useRunAnalytics } from "src/api/simulate-environments/runAnalytics";
+import { useRunDetail } from "src/api/simulate-environments/runDetail";
+import { paths } from "src/routes/paths";
 import EmptyState from "../../../components/EmptyState";
+import SoonChip from "../../../components/SoonChip";
+import UiOnlyFlag from "../../../components/UiOnlyFlag";
 import {
   Bars,
   COLORS,
@@ -27,98 +33,26 @@ import {
   TrendLine,
   Widget,
 } from "./analytics/DashboardCharts";
-import DashboardControls, {
-  printDashboard,
-} from "./analytics/DashboardControls";
+import { printDashboard } from "./analytics/DashboardControls";
 import DashboardHistogram from "./analytics/DashboardHistogram";
 import { CHART_GUIDE } from "./analytics/chartGuide";
+import { csvFilename, downloadCsv } from "./analytics/csv";
+import HiddenWidgetsPopover from "./analytics/HiddenWidgetsPopover";
+import LayoutBody from "./analytics/LayoutBody";
+import RegressionBanner from "./analytics/RegressionBanner";
+import ViewTabBar from "./analytics/ViewTabBar";
+import { defaultSectionOf, panelTitle } from "./analytics/panelRegistry";
+import { DEFAULT_VIEW_NAME, useRunLayout } from "./analytics/useRunLayout";
+import { widgetRows } from "./analytics/widgetRows";
+import RunQueryWidget from "./widgets/RunQueryWidget";
 
-const WIDGETS = [
-  { id: "goal_outcome", title: "Goal outcome breakdown", section: "Outcomes" },
-  {
-    id: "disconnection",
-    title: "How calls ended",
-    section: "Outcomes",
-  },
-  {
-    id: "provider_success",
-    title: "Provider's own success flag",
-    section: "Outcomes",
-  },
-  { id: "sentiment", title: "Provider sentiment", section: "Outcomes" },
-  {
-    id: "reliability",
-    title: "Reliability across trials",
-    section: "Reliability",
-    wide: true,
-  },
-  {
-    id: "evaluations",
-    title: "Evaluations",
-    section: "Evaluations",
-    wide: true,
-  },
-  {
-    id: "voice_slos",
-    title: "Voice pipeline latency",
-    section: "Voice latency",
-  },
-  {
-    id: "pipeline_cost",
-    title: "Cost breakdown by pipeline stage",
-    section: "Voice latency",
-  },
-  {
-    id: "csat",
-    title: "CSAT distribution (0–10)",
-    section: "CSAT and provider scores",
-    wide: true,
-  },
-  { id: "task_latency", title: "Agent latency", section: "Latency" },
-  {
-    id: "percentiles",
-    title: "Agent response time percentiles",
-    section: "Latency",
-  },
-  {
-    id: "response_time",
-    title: "Agent response time per call",
-    section: "Latency",
-    wide: true,
-  },
-  {
-    id: "distribution",
-    title: "Distribution summary",
-    section: "Distribution",
-    wide: true,
-  },
-  {
-    id: "risk",
-    title: "Weakest scenarios",
-    section: "Failure analysis",
-    wide: true,
-  },
-  { id: "tools_volume", title: "Tool call volume", section: "Tools" },
-  { id: "tools_failure", title: "Tool failure rate", section: "Tools" },
-  { id: "slowest", title: "Slowest calls", section: "Performance tails" },
-  {
-    id: "expensive",
-    title: "Most expensive calls",
-    section: "Performance tails",
-  },
-];
-const SECTIONS = [
-  "Outcomes",
-  "Reliability",
-  "Evaluations",
-  "CSAT and provider scores",
-  "Voice latency",
-  "Latency",
-  "Distribution",
-  "Failure analysis",
-  "Tools",
-  "Performance tails",
-];
+// The voice-pipeline p90 a caller starts to hear as silence. Over it, the
+// cell turns red.
+const VOICE_P90_LIMITS_MS = {
+  model: 2500,
+  voice: 800,
+  transcriber: 500,
+};
 const BREAKDOWNS = [
   "goal_outcome",
   "disconnection",
@@ -152,11 +86,23 @@ const tableSx = {
   "& tr:last-child td": { borderBottom: 0 },
 };
 
-export default function RunAnalytics({ executionId, onOpenCall, onOpenCalls }) {
+// Durations arrive in milliseconds; whole calls read in seconds.
+const seconds = (ms) => (ms == null ? "-" : format(ms / 1000, "seconds"));
+
+export default function RunAnalytics({
+  executionId,
+  envId,
+  testId,
+  onOpenCall,
+  onOpenCalls,
+}) {
+  const params = useParams();
   return (
     <AnalyticsDashboard
       key={executionId}
       executionId={executionId}
+      envId={envId ?? params.envId}
+      testId={testId ?? params.testId}
       onOpenCall={onOpenCall}
       onOpenCalls={onOpenCalls}
     />
@@ -164,14 +110,22 @@ export default function RunAnalytics({ executionId, onOpenCall, onOpenCalls }) {
 }
 RunAnalytics.propTypes = {
   executionId: PropTypes.string.isRequired,
+  // Layouts are kept per environment; defaults to the route's envId.
+  envId: PropTypes.string,
+  // Builds the widget editor link; defaults to the route's testId.
+  testId: PropTypes.string,
   onOpenCall: PropTypes.func,
   onOpenCalls: PropTypes.func,
 };
 
-function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
+function AnalyticsDashboard({
+  executionId,
+  envId,
+  testId,
+  onOpenCall,
+  onOpenCalls,
+}) {
   const { data, isPending, isError, refetch } = useRunAnalytics(executionId);
-  const printable = useRef(null);
-  const [showDetails, setShowDetails] = useState(false);
   if (isPending)
     return (
       <Stack alignItems="center" sx={{ py: 8 }}>
@@ -199,18 +153,90 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
         title="Dashboard data is unavailable"
       />
     );
+  return (
+    <Dashboard
+      data={data}
+      envId={envId}
+      testId={testId}
+      executionId={executionId}
+      onOpenCall={onOpenCall}
+      onOpenCalls={onOpenCalls}
+    />
+  );
+}
+AnalyticsDashboard.propTypes = RunAnalytics.propTypes;
+
+function Dashboard({
+  data,
+  envId,
+  testId,
+  executionId,
+  onOpenCall,
+  onOpenCalls,
+}) {
+  const navigate = useNavigate();
+  const printable = useRef(null);
+  const [showDetails, setShowDetails] = useState(false);
+  const [hiddenAnchor, setHiddenAnchor] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
   const dashboard = data.dashboard;
-  const latencyLabel =
-    dashboard.metrics.find((metric) => metric.key === "agent_latency")?.label ||
-    "Agent latency";
+  const metricsByKey = Object.fromEntries(
+    (dashboard.metrics || []).map((metric) => [metric.key, metric]),
+  );
+  // The backend names the run's noun in its labels ("Total chats"); a run
+  // with no voice call is a chat run.
+  const isChat = /\bchats?\b/i.test(
+    metricsByKey.total?.label || metricsByKey.pass_rate?.label || "",
+  );
+  const noun = isChat ? "chat" : "call";
+  const Noun = isChat ? "Chat" : "Call";
+  const surface = isChat ? "chat" : "voice";
+
+  const layout = useRunLayout({
+    envId,
+    surface,
+    initialView: searchParams.get("view"),
+  });
+  // `?view=` names the open saved view, so the link opens it.
+  useEffect(() => {
+    const wanted =
+      layout.activeView === DEFAULT_VIEW_NAME ? null : layout.activeView;
+    if ((searchParams.get("view") || null) === wanted) return;
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (wanted) next.set("view", wanted);
+        else next.delete("view");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [layout.activeView, searchParams, setSearchParams]);
+
+  const comparison = dashboard.comparison;
+  const previous = useRunDetail(
+    undefined,
+    comparison?.available ? comparison.previous_execution_id : undefined,
+  );
+  const previousOrdinal = previous?.identity?.ordinal;
+  // Shares the run header's read; names the run on a saved widget's axis.
+  const currentOrdinal = useRunDetail(undefined, executionId)?.identity
+    ?.ordinal;
+
+  const latencyLabel = metricsByKey.agent_latency?.label || "Agent latency";
   // Call length kept in the payload for earlier builds of this page.
-  const distributionRows = dashboard.distributions.filter(
+  const distributionRows = (dashboard.distributions || []).filter(
     (row) => row.key !== "end_to_end_ms",
   );
   const latencyAt = (percentile) =>
     dashboard.agent_latency_percentiles?.find(
       (row) => row.percentile === percentile,
     )?.value;
+  const durationAt = (percentile) =>
+    dashboard.latency_percentiles?.find((row) => row.percentile === percentile)
+      ?.value;
+  const unavailable = (key) =>
+    dashboard.unavailable_features?.find((item) => item.key === key)?.reason;
   const open = onOpenCall
     ? (task) =>
         onOpenCall({
@@ -224,8 +250,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   const reliability = data.reliability ?? {};
   const interval = reliability?.pass_rate_interval;
   const evalSummary = dashboard.evaluation_summary;
+  const bucketed = dashboard.series_mode === "time_buckets";
   const subtitles = {
-    goal_outcome: `${summary.measured} evaluated of ${summary.total} · errored and not-evaluated calls never count against the agent`,
+    goal_outcome: `${summary.measured} evaluated of ${summary.total} · errored and not-evaluated ${noun}s never count against the agent`,
     disconnection:
       "Every provider's end reason mapped to one list; unrecognised reasons stay visible",
     provider_success:
@@ -233,47 +260,64 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     sentiment:
       "As reported by the provider; the platform does not compute sentiment",
     reliability: `${reliability.scenarios ?? 0} scenarios × ${reliability.trials ?? 0} trial${reliability.trials === 1 ? "" : "s"}${interval ? ` · pass^1 95% range ${format(interval.low, "percent")}–${format(interval.high, "percent")}` : ""}`,
-    evaluations: `${evalSummary.graders} evals · ${evalSummary.passed} of ${evalSummary.measured} evaluated calls passed every eval (${format(evalSummary.pass_rate, "percent")})${evalSummary.errored_checks ? ` · ${evalSummary.errored_checks} checks could not run` : ""}`,
+    evaluations: `${evalSummary.graders} evals · ${evalSummary.passed} of ${evalSummary.measured} evaluated ${noun}s passed every eval (${format(evalSummary.pass_rate, "percent")})${evalSummary.errored_checks ? ` · ${evalSummary.errored_checks} checks could not run` : ""}`,
     csat: "Scorer CSAT on a 0–10 scale; a provider success flag is never mixed in",
     response_time:
       "Each call's average wait before the agent replies; one long pause inside a call is not visible here",
     voice_slos: "p50 / p90 / p99 of recorded per-call pipeline timings (ms)",
-    pipeline_cost:
-      dashboard.series_mode === "time_buckets"
-        ? "LLM / TTS / STT / Storage · up to 100 time buckets; costs summed per bucket"
-        : "Recorded LLM / TTS / STT / Storage cost per call",
-    task_latency:
-      dashboard.series_mode === "time_buckets"
-        ? `${latencyLabel} · average per time bucket`
-        : `${latencyLabel} per call`,
+    pipeline_cost: bucketed
+      ? "LLM / TTS / STT / Storage · up to 100 time buckets; costs summed per bucket"
+      : `Recorded LLM / TTS / STT / Storage cost per ${noun}`,
+    call_duration: bucketed
+      ? `${Noun} duration · average per time bucket`
+      : `Wall-clock length of each ${noun}`,
+    duration_percentiles: `p50 ${seconds(durationAt(50))} · p90 ${seconds(durationAt(90))} · p99 ${seconds(durationAt(99))} of measured durations`,
+    task_latency: bucketed
+      ? `${latencyLabel} · average per time bucket`
+      : `${latencyLabel} per call`,
     percentiles: `p50 ${format(latencyAt(50), "ms")} · p90 ${format(latencyAt(90), "ms")} · p99 ${format(latencyAt(99), "ms")} of per-call averages`,
     distribution: "p50 · p90 · p99 · max for every measured metric",
-    risk: `Weakest ${dashboard.use_case_risk.length} of ${dashboard.goal_count} scenarios · fewer than 3 evaluated calls ranked last`,
+    attribution: "Which layer to blame first",
+    risk: `Weakest ${dashboard.use_case_risk.length} of ${dashboard.goal_count} scenarios · fewer than 3 evaluated ${noun}s ranked last`,
     tools_volume: `${dashboard.tools.total_invocations} recorded invocations · ${dashboard.tools.total_tools} tools · top 20`,
     tools_failure:
       "Failures among invocations with a recorded verdict · threshold at 40%",
-    slowest: "Top 8 by wall-clock duration · select a call to inspect it",
-    expensive: "Top 8 by recorded cost · select a call to inspect it",
+    slowest: `Top 8 by wall-clock duration · select a ${noun} to inspect it`,
+    expensive: `Top 8 by recorded cost · select a ${noun} to inspect it`,
+  };
+  const drillSoon = (
+    <SoonChip label="Drill-down" what="Drill-down" size="tiny" />
+  );
+  const headerActions = {
+    disconnection: drillSoon,
+    provider_success: drillSoon,
+    sentiment: drillSoon,
+    attribution: (
+      <SoonChip label="Attribution" what="Failure attribution" size="tiny" />
+    ),
+    tools_failure: (
+      <SoonChip
+        label="Failure split"
+        what="The split between a tool failing and the agent never calling it"
+        size="tiny"
+      />
+    ),
   };
   const breakdown = (key) =>
     dashboard.breakdowns.find((item) => item.key === key);
-  // Provider-only charts render only when some call reported the value.
-  const availableWidgets = WIDGETS.filter(
-    (widget) =>
-      !["provider_success", "sentiment"].includes(widget.id) ||
-      breakdown(widget.id),
-  );
-  // The details toggle only reveals the reliability section.
-  const widgets = availableWidgets.filter(
-    (widget) => widget.id !== "reliability" || showDetails,
-  );
-  const metricsByKey = Object.fromEntries(
-    dashboard.metrics.map((metric) => [metric.key, metric]),
-  );
+  // Provider-only charts render only when some call reported the value; the
+  // details toggle only reveals the reliability section.
+  const available = (id) => {
+    if (["provider_success", "sentiment"].includes(id))
+      return Boolean(breakdown(id));
+    if (id === "reliability") return showDetails;
+    return true;
+  };
+
   const passRate = metricsByKey.pass_rate;
   const dropOff = metricsByKey.drop_off;
   const costPerPass = metricsByKey.cost_per_pass;
-  const comparison = dashboard.comparison;
+  const csatMetric = metricsByKey.csat;
   const health = dashboard.run_health;
   const metricTile = (key, label, coverage, unit) => {
     const metric = metricsByKey[key];
@@ -289,21 +333,24 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   };
   const measuredOf = (metric) =>
     `${metric.measured ?? 0} / ${metric.total ?? 0} measured`;
+  const durationP90 = metricsByKey.duration_p90;
   // Voice-only metrics are absent from chat runs, so their tiles drop out.
   const callTiles = [
-    metricTile("total", "Total Calls", () => "this run"),
+    metricTile("total", `Total ${Noun}s`, () => "this run"),
     health && {
       key: "connected",
-      label: "Connected",
+      label: isChat ? "Completed" : "Connected",
       value: format(health.connected),
       reported: health.connected != null,
       coverage: `of ${health.attempted ?? 0}`,
-      note: "Calls that exchanged at least one message",
+      note: isChat
+        ? "Chats that exchanged at least one message"
+        : "Calls that exchanged at least one message",
     },
     metricTile(
       "connected_rate",
-      "Calls Connected (%)",
-      (metric) => `${metric.measured ?? 0} / ${metric.total ?? 0} calls`,
+      isChat ? "Completion (%)" : "Calls Connected (%)",
+      (metric) => `${metric.measured ?? 0} / ${metric.total ?? 0} ${noun}s`,
     ),
     metricTile("agent_latency", "Agent Latency", measuredOf),
     metricTile("wpm", "Agent WPM", () => "words/min"),
@@ -313,23 +360,34 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     metricTile(
       "duration",
       "Avg duration",
-      (metric) => `${metric.measured ?? 0} timed calls`,
+      (metric) => `${metric.measured ?? 0} timed ${noun}s`,
     ),
+    durationP90 && {
+      key: "duration_p90",
+      label: "Duration p90",
+      value: seconds(durationP90.value),
+      reported: durationP90.value != null,
+      coverage: `${durationP90.measured ?? 0} timed ${noun}s`,
+      note: durationP90.note,
+    },
     metricTile(
       "turns",
       "Avg turns",
-      (metric) => `${metric.measured ?? 0} calls`,
+      (metric) => `${metric.measured ?? 0} ${noun}s`,
+    ),
+    metricTile(
+      "total_cost",
+      "Total cost",
+      (metric) => `${metric.measured ?? 0} / ${metric.total ?? 0} reported`,
     ),
   ].filter(Boolean);
+  const csat = dashboard.csat || {};
   const headlines = [
     {
       key: "pass_rate",
-      label: "Calls passed",
+      label: passRate?.label || `${Noun}s passed`,
       value: format(passRate?.value, "percent"),
       reported: passRate?.value != null,
-      // No range here: pass^1's range brackets the scenario average, which this
-      // pooled rate need not sit inside.
-      detail: null,
       coverage: `${passRate?.measured ?? 0} / ${passRate?.total ?? 0} evaluated`,
       note: passRate?.note,
     },
@@ -347,7 +405,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       value: format(dashboard.agent_response_time.p95, "ms"),
       reported: dashboard.agent_response_time.p95 != null,
       coverage: `${dashboard.agent_response_time.measured} / ${dashboard.agent_response_time.total} measured`,
-      note: "Slow 1-in-20 per-call average response time",
+      note: `Slow 1-in-20 per-${noun} average response time`,
     },
     {
       key: "cost_per_pass",
@@ -357,13 +415,17 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       coverage: `${costPerPass?.measured ?? 0} / ${costPerPass?.total ?? 0} reported`,
       note: costPerPass?.note,
     },
+    // R22: Avg CSAT replaces the satisfied share, which moves to its hover.
     {
-      key: "csat_satisfied",
-      label: "CSAT satisfied",
-      value: format(dashboard.csat.satisfied_percent, "percent"),
-      reported: dashboard.csat.satisfied_percent != null,
-      coverage: `${dashboard.csat.satisfied} / ${dashboard.csat.measured} scored`,
-      note: "Share of true 0–10 CSAT scores at 8 or above",
+      key: "csat",
+      label: "Avg CSAT Score",
+      value: format(csatMetric?.value),
+      reported: csatMetric?.value != null,
+      coverage: `${csatMetric?.measured ?? csat.measured ?? 0} scored`,
+      note:
+        csat.satisfied_percent == null
+          ? "No 0–10 CSAT scores were recorded"
+          : `${csat.satisfied} of ${csat.measured} scored at 8 or above (${format(csat.satisfied_percent, "percent")})`,
     },
     {
       key: "change",
@@ -383,15 +445,15 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   const notConnected = (health?.attempted ?? 0) - (health?.connected ?? 0);
   if (notConnected)
     healthIssues.push(
-      `${notConnected} call${notConnected === 1 ? "" : "s"} did not connect`,
+      `${notConnected} ${noun}${notConnected === 1 ? "" : "s"} did not connect`,
     );
   if (health?.errored)
     healthIssues.push(
-      `${health.errored} call${health.errored === 1 ? "" : "s"} failed to run`,
+      `${health.errored} ${noun}${health.errored === 1 ? "" : "s"} failed to run`,
     );
   if (health?.not_evaluated)
     healthIssues.push(
-      `${health.not_evaluated} call${health.not_evaluated === 1 ? " was" : "s were"} not evaluated`,
+      `${health.not_evaluated} ${noun}${health.not_evaluated === 1 ? " was" : "s were"} not evaluated`,
     );
   if (health?.eval_errors)
     healthIssues.push(
@@ -408,7 +470,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     );
   if ((dashboard.agent_response_time.at_or_above_target_percent ?? 0) > 5)
     findings.push(
-      `${format(dashboard.agent_response_time.at_or_above_target_percent, "percent")} of measured calls exceeded the response-time target.`,
+      `${format(dashboard.agent_response_time.at_or_above_target_percent, "percent")} of measured ${noun}s exceeded the response-time target.`,
     );
   const failingTools = dashboard.tools.failures.filter(
     (tool) => (tool.failure_rate ?? 0) > 5,
@@ -503,15 +565,33 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
               {dashboard.voice_slos.map((row) => (
                 <TableRow key={row.key}>
                   <TableCell>
-                    <Tooltip title={`${row.measured} measured calls`}>
+                    <CustomTooltip
+                      show
+                      size="small"
+                      title={`${row.measured} measured calls`}
+                    >
                       <span>{row.label}</span>
-                    </Tooltip>
+                    </CustomTooltip>
                   </TableCell>
-                  {["p50", "p90", "p99"].map((p) => (
-                    <TableCell key={p} align="right">
-                      {format(row[p], "ms")}
-                    </TableCell>
-                  ))}
+                  {["p50", "p90", "p99"].map((p) => {
+                    const limit = VOICE_P90_LIMITS_MS[row.key];
+                    const over = p === "p90" && limit != null && row[p] > limit;
+                    return (
+                      <TableCell key={p} align="right">
+                        {over ? (
+                          <Box
+                            component="span"
+                            aria-label={`${format(row[p], "ms")}, over the ${limit} ms target`}
+                            sx={{ color: "error.main", fontWeight: 600 }}
+                          >
+                            {format(row[p], "ms")}
+                          </Box>
+                        ) : (
+                          format(row[p], "ms")
+                        )}
+                      </TableCell>
+                    );
+                  })}
                 </TableRow>
               ))}
             </TableBody>
@@ -553,12 +633,45 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
               </Typography>
             ))}
           </Stack>
-          <Typography
-            sx={{ px: 2, pb: 1.5, fontSize: 10, color: "text.secondary" }}
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ px: 2, pb: 1.5 }}
           >
-            Transport cost is not recorded. Storage is shown separately.
-          </Typography>
+            <SoonChip
+              label="Transport cost"
+              what="Transport cost"
+              size="tiny"
+            />
+            <Typography sx={{ fontSize: 10, color: "text.secondary" }}>
+              Storage is shown separately.
+            </Typography>
+          </Stack>
         </>
+      );
+    if (id === "call_duration")
+      return (
+        <TrendLine
+          rows={dashboard.series}
+          xKey="label"
+          valueKey="duration_ms"
+          valueLabel={`${Noun} duration`}
+          formatValue={seconds}
+          noun={Noun}
+          bucketed={bucketed}
+        />
+      );
+    if (id === "duration_percentiles")
+      return (
+        <TrendLine
+          rows={dashboard.latency_percentiles}
+          xKey="percentile"
+          valueKey="value"
+          valueLabel={`${Noun} duration`}
+          formatValue={seconds}
+          percentile
+        />
       );
     if (id === "task_latency")
       return (
@@ -567,7 +680,8 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           xKey="label"
           valueKey="latency_ms"
           valueLabel={latencyLabel}
-          bucketed={dashboard.series_mode === "time_buckets"}
+          noun={Noun}
+          bucketed={bucketed}
         />
       );
     if (id === "percentiles")
@@ -650,6 +764,15 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           })}
         </Box>
       );
+    if (id === "attribution")
+      return (
+        <NoMeasurement
+          text={
+            unavailable("failure_attribution") ||
+            "Failure attribution isn't in the API yet"
+          }
+        />
+      );
     if (id === "risk")
       return (
         <Bars
@@ -717,95 +840,233 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       );
     return null;
   };
-  return (
-    <>
-      <DashboardControls
-        onPrint={() =>
-          printDashboard(
-            printable.current,
-            `${data.execution?.name || "Simulation run"} - Analytics`,
-          )
-        }
-      />
-      <Box
-        className="analytics-no-print"
-        sx={{ display: "flex", justifyContent: "flex-end", mt: -1.5, mb: 2 }}
+
+  const customById = useMemo(
+    () => new Map(layout.customWidgets.map((widget) => [widget.id, widget])),
+    [layout.customWidgets],
+  );
+  const sourceOf = (id) => customById.get(id)?.of || id;
+  const titleOf = (id) => customById.get(id)?.title || panelTitle(id, noun);
+  const { sectionOverrides } = layout;
+  const sectionOf = useCallback(
+    (id) =>
+      sectionOverrides[id] || defaultSectionOf(id, customById.get(id), surface),
+    [sectionOverrides, customById, surface],
+  );
+  const rowsOf = (id) => widgetRows(sourceOf(id), { data, noun });
+  const visibleIds = layout.visibleIds.filter((id) => available(sourceOf(id)));
+  const hidden = layout.hiddenIds
+    .filter((id) => available(sourceOf(id)))
+    .map((id) => ({
+      id,
+      title: titleOf(id),
+      section: sectionOf(id),
+      custom: customById.has(id),
+    }));
+  // The widget editor page, back into the view it was opened from.
+  const openEditor = (id) => {
+    const view =
+      layout.activeView === DEFAULT_VIEW_NAME
+        ? ""
+        : `?view=${encodeURIComponent(layout.activeView)}`;
+    navigate(
+      `${paths.dashboard.simulate.environments.widgetEditor(
+        envId,
+        testId,
+        executionId,
+        id,
+      )}${view}`,
+    );
+  };
+  const actionsFor = (id, columns) => {
+    const custom = customById.has(id);
+    return {
+      onEdit: () => openEditor(id),
+      onDuplicate: () => layout.duplicate(id, titleOf(id)),
+      onResetOverride: () => layout.resetOverride(id),
+      onSetSpan: (span) => layout.setSpan(id, Math.min(span, columns)),
+      canExport: rowsOf(id).length > 0,
+      onExport: () => downloadCsv(csvFilename(titleOf(id)), rowsOf(id)),
+      // A built-in goes to Hidden; a copy is removed for good.
+      onDelete: custom ? () => layout.removeCustom(id) : () => layout.hide(id),
+    };
+  };
+  const frame = (id) => {
+    const saved = customById.get(id);
+    if (saved?.kind === "query")
+      return (
+        <Widget id={id} title={titleOf(id)} subtitle={saved.description}>
+          <RunQueryWidget
+            widget={saved}
+            executionId={executionId}
+            runLabel={
+              currentOrdinal != null ? `Run ${currentOrdinal}` : undefined
+            }
+          />
+        </Widget>
+      );
+    const source = sourceOf(id);
+    return (
+      <Widget
+        id={id}
+        title={titleOf(id)}
+        subtitle={subtitles[source]}
+        help={CHART_GUIDE[source]}
+        action={headerActions[source]}
       >
+        {renderWidget(source)}
+      </Widget>
+    );
+  };
+
+  return (
+    <Stack spacing={2}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        className="analytics-no-print"
+      >
+        <ViewTabBar
+          activeView={layout.activeView}
+          viewNames={layout.viewNames}
+          defaultName={DEFAULT_VIEW_NAME}
+          onSwitch={layout.switchView}
+          onRename={layout.renameView}
+          onDuplicate={layout.duplicateView}
+          onDelete={layout.deleteView}
+          onReorder={layout.reorderViews}
+          adornment={<UiOnlyFlag feature="analyticsViews" />}
+        />
         <Button
           size="small"
           variant="text"
           onClick={() => setShowDetails((current) => !current)}
+          sx={{ flexShrink: 0 }}
         >
           {showDetails ? "Hide detailed analytics" : "Show detailed analytics"}
         </Button>
-      </Box>
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
+          onClick={() => openEditor("new")}
+          sx={{ flexShrink: 0, borderColor: "divider" }}
+        >
+          Add widget
+        </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          startIcon={<Iconify icon="solar:eye-closed-linear" width={16} />}
+          onClick={(event) => setHiddenAnchor(event.currentTarget)}
+          sx={{ flexShrink: 0, borderColor: "divider" }}
+        >
+          {hidden.length ? `Hidden (${hidden.length})` : "Hidden"}
+        </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          startIcon={<Iconify icon="solar:printer-linear" width={16} />}
+          onClick={() =>
+            printDashboard(
+              printable.current,
+              `${data.execution?.name || "Simulation run"} - Analytics`,
+            )
+          }
+          sx={{ flexShrink: 0, borderColor: "divider" }}
+        >
+          Export PDF
+        </Button>
+      </Stack>
       <Stack ref={printable} spacing={2.5}>
         {health?.show_banner && (
           <Alert severity="warning">
             <strong>Run health:</strong> {healthIssues.join(" · ")}
           </Alert>
         )}
+        <RegressionBanner
+          comparison={comparison}
+          previousLabel={
+            previousOrdinal != null ? `Run ${previousOrdinal}` : null
+          }
+        />
         <Box
           sx={{
             display: "grid",
             gridTemplateColumns: {
               xs: "repeat(2,minmax(0,1fr))",
-              md: "repeat(3,minmax(0,1fr))",
-              lg: "repeat(5,minmax(0,1fr))",
+              sm: "repeat(3,minmax(0,1fr))",
+              md: "repeat(5,minmax(0,1fr))",
+              lg: "repeat(7,minmax(0,1fr))",
             },
             border: "1px solid",
             borderColor: "divider",
             bgcolor: "background.paper",
-            borderRadius: 1.5,
+            borderRadius: 1,
             overflow: "hidden",
+            // Right and bottom hairlines per cell; the outer edge clips them.
+            "& > *": {
+              boxShadow: (theme) =>
+                `1px 0 0 ${theme.palette.divider}, 0 1px 0 ${theme.palette.divider}`,
+            },
           }}
         >
           {headlines.map((card) => (
-            <Tooltip key={card.key} title={card.note || card.coverage}>
+            <CustomTooltip
+              key={card.key}
+              show
+              size="small"
+              title={card.note || card.coverage}
+            >
               <Box
                 sx={{
-                  p: 1.5,
-                  borderRight: "1px solid",
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
+                  px: 2,
+                  py: 1.75,
                   minWidth: 0,
+                  minHeight: 96,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-start",
                 }}
               >
                 <Typography
-                  sx={{
-                    fontSize: 10,
-                    fontWeight: 600,
-                    color: "text.secondary",
-                  }}
+                  typography="s2"
+                  sx={{ color: "text.subtitle", fontWeight: 500 }}
                 >
                   {card.label}
                 </Typography>
-                <Stack direction="row" alignItems="baseline" spacing={0.75}>
-                  <Typography
-                    sx={{
-                      fontSize: 22,
-                      mt: 0.5,
-                      fontWeight: card.reported ? 650 : 400,
-                      color: card.reported ? "text.primary" : "text.disabled",
-                    }}
-                  >
-                    {card.value}
-                  </Typography>
-                  {card.detail && (
-                    <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
-                      {card.detail}
-                    </Typography>
-                  )}
-                </Stack>
                 <Typography
-                  sx={{ fontSize: 10, color: "text.secondary", mt: 0.3 }}
+                  sx={{
+                    mt: 0.75,
+                    fontSize: 24,
+                    lineHeight: 1,
+                    letterSpacing: -0.5,
+                    fontVariantNumeric: "tabular-nums",
+                    fontWeight: card.reported ? 600 : 400,
+                    color: card.reported ? "text.primary" : "text.disabled",
+                  }}
+                >
+                  {card.value}
+                </Typography>
+                <Typography
+                  typography="s2"
+                  sx={{
+                    mt: "auto",
+                    pt: 0.75,
+                    color: "text.subtitle",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
                 >
                   {card.reported || card.key === "drop_off"
                     ? card.coverage
                     : "Not reported"}
                 </Typography>
               </Box>
-            </Tooltip>
+            </CustomTooltip>
           ))}
         </Box>
         <Box
@@ -815,83 +1076,60 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             border: "1px solid",
             borderColor: "divider",
             bgcolor: "background.paper",
-            borderRadius: 1.5,
+            borderRadius: 1,
             px: 2,
             py: 1.5,
           }}
         >
-          <Typography component="h2" sx={{ fontSize: 13, fontWeight: 600 }}>
+          <Typography component="h2" typography="s1" sx={{ fontWeight: 600 }}>
             What to look at first
           </Typography>
           {findings.length ? (
             <Box component="ul" sx={{ m: 0, mt: 1, pl: 2.5 }}>
               {findings.map((finding) => (
-                <Typography component="li" key={finding} sx={{ fontSize: 12 }}>
+                <Typography component="li" key={finding} typography="s2">
                   {finding}
                 </Typography>
               ))}
             </Box>
           ) : (
             <Typography
-              sx={{ mt: 0.75, fontSize: 12, color: "text.secondary" }}
+              typography="s2"
+              sx={{ mt: 0.75, color: "text.secondary" }}
             >
               No priority findings in this run.
             </Typography>
           )}
         </Box>
-        {SECTIONS.map((section) => {
-          const visible = widgets.filter(
-            (widget) => widget.section === section,
-          );
-          if (!visible.length) return null;
-          return (
-            <Box key={section}>
-              <Typography
-                component="h2"
-                sx={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  mb: 1,
-                  pt: 1,
-                  borderTop: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                {section}
-              </Typography>
-              <Box
-                sx={{
-                  display: "grid",
-                  gridTemplateColumns: {
-                    xs: "1fr",
-                    md: "repeat(2,minmax(0,1fr))",
-                    lg:
-                      section === "Outcomes"
-                        ? "repeat(4,minmax(0,1fr))"
-                        : "repeat(2,minmax(0,1fr))",
-                  },
-                  gap: 1.5,
-                }}
-              >
-                {visible.map((widget) => (
-                  <Widget
-                    key={widget.id}
-                    {...widget}
-                    subtitle={subtitles[widget.id]}
-                    help={CHART_GUIDE[widget.id]}
-                  >
-                    {renderWidget(widget.id)}
-                  </Widget>
-                ))}
-              </Box>
-            </Box>
-          );
-        })}
+        <LayoutBody
+          layout={layout}
+          ids={visibleIds}
+          sectionOf={sectionOf}
+          titleOf={titleOf}
+          renderWidget={frame}
+          actionsFor={actionsFor}
+        />
       </Stack>
-    </>
+      <HiddenWidgetsPopover
+        anchorEl={hiddenAnchor}
+        onClose={() => setHiddenAnchor(null)}
+        hidden={hidden}
+        sectionOrder={layout.sectionOrder}
+        onShow={layout.show}
+        onRemove={layout.removeCustom}
+        onReset={layout.reset}
+      />
+    </Stack>
   );
 }
-AnalyticsDashboard.propTypes = RunAnalytics.propTypes;
+Dashboard.propTypes = {
+  data: PropTypes.object.isRequired,
+  envId: PropTypes.string,
+  testId: PropTypes.string,
+  executionId: PropTypes.string,
+  onOpenCall: PropTypes.func,
+  onOpenCalls: PropTypes.func,
+};
 
 function Reliability({ data, onOpenCalls }) {
   if (!data?.scenarios) return <NoMeasurement />;

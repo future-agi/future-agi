@@ -1,5 +1,12 @@
 import PropTypes from "prop-types";
-import { ListItemIcon, ListItemText, Menu, MenuItem } from "@mui/material";
+import { enqueueSnackbar } from "notistack";
+import {
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
+  Stack,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useEnvironmentRunTest } from "src/api/simulate-environments/environments";
 import {
@@ -10,6 +17,8 @@ import {
   NOT_COMPLETED_TOOLTIP,
   NOT_EDITABLE_TOOLTIP,
 } from "./allEvaluationsDrawer.constants";
+import UiOnlyFlag from "../../../components/UiOnlyFlag";
+import { UI_ONLY_SAVED } from "../../gaps/NeedsInputButton";
 
 // Set on the item, not the icon: MenuItem's own 36px icon slot outranks an
 // icon-level sx. 16px matches the Columns picker's checkbox-to-label gap.
@@ -86,7 +95,7 @@ export default function EvalColumnActions({
   // waits for it as a second re-run does.
   const editDisabled = !known || Boolean(editReason) || rerunPending;
 
-  const menuItem = ({ label, icon, reason, disabled, onClick }) => (
+  const menuItem = ({ label, icon, reason, disabled, onClick, flag }) => (
     <MenuItem
       disabled={disabled}
       onClick={() => {
@@ -101,7 +110,16 @@ export default function EvalColumnActions({
       {/* A disabled menu item can't take focus, so its reason is written
           under it rather than hidden in a tooltip. */}
       <ListItemText
-        primary={label}
+        primary={
+          flag ? (
+            <Stack direction="row" alignItems="center" spacing={0.75}>
+              <span>{label}</span>
+              {flag}
+            </Stack>
+          ) : (
+            label
+          )
+        }
         secondary={reason}
         primaryTypographyProps={{ sx: { typography: "s2" } }}
         secondaryTypographyProps={{
@@ -133,6 +151,15 @@ export default function EvalColumnActions({
         reason: editReason,
         disabled: editDisabled,
         onClick: () => onEdit?.(config),
+      })}
+      {/* Removing one eval's results from a run has no backend yet. */}
+      {menuItem({
+        label: "Delete column",
+        icon: "solar:trash-bin-trash-linear",
+        reason: null,
+        disabled: false,
+        flag: <UiOnlyFlag feature="deleteEvalColumn" />,
+        onClick: () => enqueueSnackbar(UI_ONLY_SAVED, { variant: "info" }),
       })}
     </Menu>
   );

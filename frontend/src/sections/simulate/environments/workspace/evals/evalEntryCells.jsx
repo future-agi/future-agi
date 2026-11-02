@@ -63,3 +63,48 @@ export function EvalInputs({ entry, heading = "INPUTS" }) {
   );
 }
 EvalInputs.propTypes = { entry: EVAL_ENTRY_SHAPE, heading: PropTypes.string };
+
+// Vel's mapping chips: each input and what fills it, "conversation → Call
+// recording", side by side and wrapping. Same rows as EvalInputs.
+export function EvalMappingChips({ entry }) {
+  const rows = inputRowsOf(entry);
+  if (rows.length === 0) return null;
+  return (
+    <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
+      {rows.map((row) => (
+        <Box
+          key={row.key}
+          aria-label={`${row.key} → ${row.label}`}
+          sx={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 0.5,
+            px: 0.75,
+            py: 0.125,
+            borderRadius: "4px",
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "action.hover",
+          }}
+        >
+          <Typography
+            sx={{ typography: "s3", color: "text.secondary", fontFamily: MONO }}
+          >
+            {row.key}
+          </Typography>
+          <Iconify
+            icon="solar:arrow-right-linear"
+            width={12}
+            sx={{ color: "text.disabled" }}
+          />
+          <Typography
+            sx={{ typography: "s3", color: "text.primary", fontFamily: MONO }}
+          >
+            {row.label}
+          </Typography>
+        </Box>
+      ))}
+    </Stack>
+  );
+}
+EvalMappingChips.propTypes = { entry: EVAL_ENTRY_SHAPE };

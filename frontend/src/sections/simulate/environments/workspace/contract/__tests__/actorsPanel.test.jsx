@@ -1,3 +1,4 @@
+import { renderWithRouter } from "src/utils/test-utils";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import ActorsPanel from "../ActorsPanel";
@@ -68,8 +69,9 @@ describe("ActorsPanel", () => {
 });
 
 describe("RlContractPanel actors slot", () => {
-  it("no longer mounts the dummy Actors section (commented out on the panel)", () => {
-    render(<RlContractPanel env={voiceEnv} envState={{ evals: [] }} patch={vi.fn()} />);
+  it("mounts Actors with no sample cast: a real environment has none yet", () => {
+    renderWithRouter(<RlContractPanel env={voiceEnv} envState={{ evals: [] }} patch={vi.fn()} />);
+    expect(screen.getByText("No actors yet")).toBeInTheDocument();
     expect(screen.queryByText("Colleague with a different plan")).toBeNull();
   });
 });

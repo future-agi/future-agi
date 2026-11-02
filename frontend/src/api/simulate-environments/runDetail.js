@@ -30,8 +30,8 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  * @property {?string} name         The environment name (from `envName` opt).
  * @property {?string} agentVersion Agent version the run was recorded against.
  * @property {?string} startedAt    ISO start time.
- * @property {?string} finishedAt   ISO finish time — GAP: the executions row
- *                                   carries no end time, so this is null.
+ * @property {?string} finishedAt   ISO finish time (`completed_at`); null
+ *                                   until the run ends.
  * @property {"passed"|"failed"|"running"|"cancelling"|"cancelled"} status  Run-level outcome.
  * @property {?string} executionStatus  The execution's own status
  *                                   (`completed`, `evaluating`, …).
@@ -42,7 +42,13 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  * @typedef {Object} RunStats
  * @property {number} total         Calls/chats run (`kpis.total_calls`).
  * @property {number} passed        `total - failed`.
- * @property {number} failed        `kpis.failed_calls`.
+ * @property {number} failed        `kpis.failed_calls`; on the v3 header,
+ *                                  failed plus errored calls.
+ * @property {number} [errored]     v3: calls that ended in an error.
+ * @property {number} [notScored]   v3: errored plus inconclusive calls, which
+ *                                  carry no verdict on the agent.
+ * @property {number} [queued]      v3: calls not started yet.
+ * @property {number} [inProgress]  v3: calls still running.
  * @property {?number} completed    `kpis.completed_calls`, both modalities;
  *                                  null while the KPIs haven't loaded or the
  *                                  field is absent — never 0, never `total`.
@@ -205,6 +211,7 @@ export function useRunDetail(
       name: envName ?? null,
       agentVersion: execution.agent_version ?? null,
       startedAt: execution.started_at ?? null,
+      finishedAt: execution.completed_at ?? null,
       status:
         execution.status === "cancelling"
           ? "cancelling"
@@ -237,6 +244,12 @@ export function useRunDetail(
       passed: summary?.outcomes?.passed ?? 0,
       failed:
         (summary?.outcomes?.failed ?? 0) + (summary?.outcomes?.error ?? 0),
+      errored: summary?.outcomes?.error ?? 0,
+      notScored:
+        (summary?.outcomes?.error ?? 0) +
+        (summary?.outcomes?.inconclusive ?? 0),
+      queued: summary?.outcomes?.queued ?? 0,
+      inProgress: summary?.outcomes?.in_progress ?? 0,
       passRate: summary?.pass_rate ?? 0,
       durationS: summary?.duration?.average ?? null,
       avgDurationMs:
@@ -265,7 +278,26 @@ export function useRunDetail(
 
   const isLoading = !!executionId && query.isPending;
 
-  return { identity, stats, isLoading, error: query.error };
+  return {
+    identity,
+    stats,
+    isLoading,
+    error: query.error,
+    refetch: query.refetch,
+  };
+}
+
+/**
+ * A finished run's verdict. Failed means the run failed, not that something
+ * in it did: nothing passed is a failed run, nothing failed is a passed run,
+ * and a mix is a completed run with findings. Errors count as failures.
+ * @param {{passed: number, failed: number}} stats
+ * @returns {"passed"|"failed"|"completed"}
+ */
+export function runVerdict({ passed = 0, failed = 0 } = {}) {
+  if (passed === 0 && failed > 0) return "failed";
+  if (failed === 0 && passed > 0) return "passed";
+  return "completed";
 }
 
 /**
@@ -279,7 +311,6 @@ export function useRunDetail(
  * @property {"queued"|"in_progress"|"passed"|"failed"|"error"|"inconclusive"} status
  * @property {?string} harnessOutcomeStatus Authoritative sealed trial verdict.
  * @property {?string} executionStatus Transport lifecycle status; kept separate.
- * @property {boolean} critical    Whether the scenario is a release blocker.
  * @property {?number} csat        Per-call CSAT, on the product's 0–10 scale
  *                                 (`overall_score`); null when absent.
  * @property {?string} scoringStatus The call's overall scoring state.
@@ -348,6 +379,11 @@ export { useOptimizationRuns, mapOptimizationRuns } from "./optimizer";
  * @property {Array<{ id: string, name: string, score: ?number,
  *   passed: ?boolean, reason: string, removed: boolean }>} evalResults  From
  *   `eval_metrics`; `removed` is true for a verdict whose eval was removed.
+ * @property {Array<{ name: string, passed: ?boolean }>} subGoalResults  From
+ *   `sub_goal_results`; the drawer's Checklist.
+ * @property {Array<{ id: string, name: string, passed: ?boolean,
+ *   reason: string }>} subGoalChecks  The `eval_metrics` rows of kind
+ *   `sub_goal`: each sub-goal's grade and reason, kept out of `evalResults`.
  */
 
 // Normalise a transcript/chat role to the two the drawer paints. Voice
@@ -582,11 +618,18 @@ export function mapCallDetail(raw) {
       : {},
     raw.evaluations,
   );
-  // A sub-goal check is the scenario's, not an eval: the evals tab skips it.
+  // A sub-goal check is the scenario's, not an eval: the evals tab skips it
+  // and the Checklist reads it.
+  const isSubGoal = ([, data]) => data?.kind === "sub_goal";
   const evalResults = Object.entries(evalMetrics)
-    .filter(([, data]) => data?.kind !== "sub_goal")
+    .filter((entry) => !isSubGoal(entry))
     .map(([id, data]) => callEvalResult(id, data))
     .filter(Boolean);
+  const subGoalChecks = Object.entries(evalMetrics)
+    .filter(isSubGoal)
+    .map(([id, data]) => callEvalResult(id, data))
+    .filter(Boolean)
+    .map(({ id, name, passed, reason }) => ({ id, name, passed, reason }));
 
   return {
     id: raw.id,
@@ -615,6 +658,10 @@ export function mapCallDetail(raw) {
         ? raw.recordings
         : {},
     evalResults,
+    subGoalResults: Array.isArray(raw.sub_goal_results)
+      ? raw.sub_goal_results
+      : [],
+    subGoalChecks,
   };
 }
 

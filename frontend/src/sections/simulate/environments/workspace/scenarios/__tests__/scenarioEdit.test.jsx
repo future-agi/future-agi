@@ -10,13 +10,19 @@ afterAll(() => configure({ asyncUtilTimeout: 1000 }));
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioPool";
 import ScenariosStep from "../ScenariosStep";
-import AddScenariosDrawer from "../AddScenariosDrawer";
 import {
   TEST_ENV,
   SERVER_ROWS,
   envStateFor,
   renderWithClient,
 } from "./scenariosTestUtils";
+
+// Edit and Remove live in each row's ⋯ menu (Vel's row actions).
+const ROW_MENU = /^More actions for /;
+const rowAction = (i, name) => {
+  fireEvent.click(screen.getAllByRole("button", { name: ROW_MENU })[i]);
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+};
 
 // The list reads the server (fixtures) source.
 vi.mock("src/api/simulate-environments/scenarios", async () => {
@@ -63,27 +69,12 @@ beforeEach(() => {
 });
 
 describe("ScenariosStep — add", () => {
-  it("disables the Add scenarios button (coming soon) — the drawer stays built", () => {
+  it("enables Add scenarios; it opens the add drawer", async () => {
     renderStep();
-    expect(screen.getByRole("button", { name: "Add scenarios" })).toBeDisabled();
-  });
-
-  // The drawer is kept fully wired even though the Add button is disabled for
-  // now, so it is exercised directly here rather than through the trigger.
-  it("the add drawer appends the chosen scenarios through onAdd", () => {
-    const onAdd = vi.fn();
-    render(
-      <AddScenariosDrawer open env={env} selected={pooled} onAdd={onAdd} onClose={() => {}} />,
-    );
-
-    expect(screen.getByText(/could not know to write/i)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("checkbox", { name: /select all/i }));
-    fireEvent.click(screen.getByRole("button", { name: /^Add \d+ scenarios?$/ }));
-
-    expect(onAdd).toHaveBeenCalledTimes(1);
-    const added = onAdd.mock.calls[0][0];
-    expect(added.length).toBeGreaterThan(0);
+    const add = screen.getByRole("button", { name: "Add scenarios" });
+    expect(add).toBeEnabled();
+    fireEvent.click(add);
+    expect(await screen.findByText(/couldn't work out from your agent/i)).toBeInTheDocument();
   });
 });
 
@@ -91,15 +82,14 @@ describe("ScenariosStep — edit", () => {
   it("enables the per-row edit pencil", async () => {
     renderStep();
     await screen.findByRole("table");
-    const pencils = screen.getAllByRole("button", { name: "Edit scenario" });
-    expect(pencils[0]).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: ROW_MENU })[0]).toBeEnabled();
   });
 
   it("opens the editor prefilled, gates read-only fields, and amends the changed editable field", async () => {
     renderStep();
     await screen.findByRole("table");
     const row = firstRow();
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit scenario" })[0]);
+    rowAction(0, "Edit");
 
     // Name is proved, not described — it prefills but is read-only (not in the
     // server's editable_fields).
@@ -152,7 +142,7 @@ describe("ScenarioEditor persona choices", () => {
     expect(await screen.findByRole("option", { name: "Indian" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Scottish" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: "Indian" }));
-    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Save scenario" }));
     expect(onSave.mock.calls[0][0].changes).toEqual([
       { op: "set_persona", scenario: "s1", persona: { accent: "Indian" } },
     ]);

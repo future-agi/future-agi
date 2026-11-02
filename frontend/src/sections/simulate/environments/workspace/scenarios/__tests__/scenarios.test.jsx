@@ -24,6 +24,13 @@ import {
   pickGroupBy,
 } from "./scenariosTestUtils";
 
+// Edit and Remove live in each row's ⋯ menu (Vel's row actions).
+const ROW_MENU = /^More actions for /;
+const rowAction = (i, name) => {
+  fireEvent.click(screen.getAllByRole("button", { name: ROW_MENU })[i]);
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+};
+
 const { mockSnack } = vi.hoisted(() => ({
   mockSnack: { calls: [], close: () => {} },
 }));
@@ -102,7 +109,8 @@ describe("ScenariosStep", () => {
     renderStep();
     await screen.findByRole("table");
     expect(screen.queryByRole("tab", { name: "List" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Group by/ })).toBeNull();
+    // Group by is also on the toolbar, as in Vel's; the Display panel keeps it too.
+    expect(screen.getByRole("button", { name: /^Group by/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Row height" })).toBeNull();
 
     const panel = openDisplay();
@@ -208,10 +216,7 @@ describe("ScenariosStep", () => {
     renderStep();
     await screen.findByRole("table");
     const firstName = defaultView().results[0].name;
-    const removes = screen.getAllByRole("button", {
-      name: "Remove from this environment",
-    });
-    fireEvent.click(removes[0]);
+    rowAction(0, "Remove");
 
     // The trash asks first — a server delete has no undo.
     expect(screen.getByText("Delete scenarios?")).toBeInTheDocument();
@@ -224,20 +229,19 @@ describe("ScenariosStep", () => {
     });
   });
 
-  it("shows the empty placeholder with a disabled (coming-soon) Add when there are no scenarios", async () => {
+  it("shows the empty placeholder with an enabled Add when there are no scenarios", async () => {
     // The empty-state gate reads the server's unfiltered suite total now, so the
     // list source must report an empty suite (not just an empty envState).
     listScenarios.mockImplementation((jobId, params) => queryScenarioFixture(params, []));
     renderStep([]);
     expect(await screen.findByText("No scenarios yet")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add scenarios" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add scenarios" })).toBeEnabled();
   });
 
   it("enables the edit pencil", async () => {
     renderStep();
     await screen.findByRole("table");
-    const pencils = screen.getAllByRole("button", { name: "Edit scenario" });
-    expect(pencils[0]).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: ROW_MENU })[0]).toBeEnabled();
   });
 });
 
@@ -306,10 +310,7 @@ describe("ScenariosStep — locked template", () => {
   it("disables the per-row edit and delete with the fork tooltip", async () => {
     renderLocked(true);
     await screen.findByRole("table");
-    expect(screen.getAllByRole("button", { name: "Edit scenario" })[0]).toBeDisabled();
-    expect(
-      screen.getAllByRole("button", { name: "Remove from this environment" })[0],
-    ).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: ROW_MENU })[0]).toBeDisabled();
     expect(screen.getAllByLabelText(LOCK_TOOLTIP).length).toBeGreaterThan(0);
   });
 
@@ -340,8 +341,7 @@ describe("ScenariosStep — locked template", () => {
   it("leaves the row controls enabled and checkboxes present when not locked", async () => {
     renderLocked(false);
     await screen.findByRole("table");
-    expect(screen.getAllByRole("button", { name: "Edit scenario" })[0]).toBeEnabled();
-    expect(screen.getAllByRole("button", { name: "Remove from this environment" })[0]).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: ROW_MENU })[0]).toBeEnabled();
     expect(screen.queryAllByRole("checkbox").length).toBeGreaterThan(0);
     expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
   });

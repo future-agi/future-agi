@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
-import { configure } from "@testing-library/react";
+import { act, configure } from "@testing-library/react";
+import { clearScenarioSelection } from "../../../buildEnvironment/console/scenarioSelectionBus";
 import { screen, fireEvent, waitFor } from "src/utils/test-utils";
 
 // Heavy ScenariosStep render — give async utils headroom so page-range/count
@@ -16,6 +17,13 @@ import {
   renderWithClient,
   pickView,
 } from "./scenariosTestUtils";
+
+// Edit and Remove live in each row's ⋯ menu (Vel's row actions).
+const ROW_MENU = /^More actions for /;
+const rowAction = (i, name) => {
+  fireEvent.click(screen.getAllByRole("button", { name: ROW_MENU })[i]);
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+};
 
 const { mockSnack } = vi.hoisted(() => ({ mockSnack: { calls: [], close: () => {} } }));
 vi.mock("notistack", () => ({
@@ -131,9 +139,7 @@ describe("ScenariosStep — pagination", () => {
     expect(await screen.findByText(/Showing 51–60 of 60/)).toBeInTheDocument();
 
     // Delete a row on the (now non-existent after shrink) last page.
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "Remove from this environment" })[0],
-    );
+    rowAction(0, "Remove");
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     // The suite is now 40 rows (2 pages); page 3 is gone, so it clamps to page 2
@@ -261,6 +267,15 @@ describe("ScenariosStep — keyboard and drawer", () => {
 describe("ScenariosStep — run a selection", () => {
   const runButton = () => screen.getByRole("button", { name: /scenarios? × \d+ repeat/ });
 
+  it("clears the ticked rows when the chat's selection chip is cleared", async () => {
+    renderStep();
+    await screen.findByText(/Showing 1–25 of 60/);
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    expect(screen.getAllByRole("checkbox")[1]).toBeChecked();
+    act(() => clearScenarioSelection());
+    await waitFor(() => expect(screen.getAllByRole("checkbox")[1]).not.toBeChecked());
+  });
+
   it("runs the ticked rows by scenario key, not row id", async () => {
     const { onStartRun } = renderStep();
     await screen.findByText(/Showing 1–25 of 60/);
@@ -274,7 +289,8 @@ describe("ScenariosStep — run a selection", () => {
     // never the row ids (`srv-N`) the selection holds.
     expect(keys).toHaveLength(2);
     keys.forEach((k) => expect(k).toMatch(/^key-\d+$/));
-    expect(trials).toBe(1);
+    // The shared default: three repeats.
+    expect(trials).toBe(3);
   });
 
   it("runs every match minus the un-ticked rows, by key", async () => {

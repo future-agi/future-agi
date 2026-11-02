@@ -6,7 +6,7 @@ import Iconify from "src/components/iconify";
 /**
  * StateSummary — the state-of-the-env answer that Overview leads with.
  *
- * Four tiles (Scenarios, Evaluations, Runs, Hard rules) each clickable to jump
+ * Four tiles (Scenarios, Evaluations, Runs, Rules) each clickable to jump
  * to the relevant tab, plus a latest-run card when there is one. Every number
  * comes from the same state the Runs/Scenarios/Evaluations tabs read from, so
  * the summary and the detail can't drift.
@@ -26,8 +26,8 @@ export default function StateSummary({ env, envState, counts, latestRun, onGo })
   const tiles = [
     { id: "scenarios", label: "Scenarios", value: scenarioCount, icon: "solar:layers-minimalistic-linear", to: "scenarios" },
     { id: "evals", label: "Evaluations", value: evalCount, icon: "solar:shield-check-linear", to: "evals" },
-    { id: "runs", label: "Runs", value: runCount, icon: "solar:play-circle-linear", to: "runs", disabled: !runCount },
-    { id: "rules", label: "Hard rules", value: ruleCount, icon: "solar:shield-keyhole-linear", to: "contract" },
+    { id: "runs", label: "Runs", value: runCount, icon: "solar:play-circle-linear", to: "runs" },
+    { id: "rules", label: "Rules", value: ruleCount, icon: "solar:shield-keyhole-linear", to: "contract" },
   ];
 
   return (
@@ -51,7 +51,7 @@ export default function StateSummary({ env, envState, counts, latestRun, onGo })
           >
             <Stack direction="row" alignItems="center" spacing={1}>
               <Iconify icon={t.icon} width={14} sx={{ color: "text.subtitle" }} />
-              <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4, flex: 1 }}>
+              <Typography sx={{ typography: "s2", color: "text.subtitle", fontWeight: 600, flex: 1 }}>
                 {t.label}
               </Typography>
               {!t.disabled && (
@@ -90,7 +90,7 @@ export default function StateSummary({ env, envState, counts, latestRun, onGo })
               <Iconify icon="solar:play-circle-linear" width={16} />
             </Box>
             <Box flex={1} minWidth={0}>
-              <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>
+              <Typography sx={{ typography: "s2", color: "text.subtitle", fontWeight: 600 }}>
                 Latest run
               </Typography>
               <Typography noWrap sx={{ typography: "s2", fontWeight: 700 }}>

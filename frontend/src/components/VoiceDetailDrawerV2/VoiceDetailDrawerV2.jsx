@@ -75,6 +75,9 @@ const VoiceDetailDrawerV2 = ({
   hiddenActionIds = [],
   hidePathTabs = false,
   leftPanelTabs,
+  rightPanelTabs,
+  rightPanelNotice,
+  focusEvalName,
   hideAnnotationTab = false,
   showFixWithFalcon = true,
 }) => {
@@ -521,7 +524,10 @@ const VoiceDetailDrawerV2 = ({
                 hiddenActionIds={hiddenActionIds}
                 hideAnnotationTab={hideAnnotationTab}
                 showFixWithFalcon={showFixWithFalcon}
-                initialEvalFocus={evalFocus === true}
+                initialEvalFocus={evalFocus === true || !!focusEvalName}
+                focusEvalName={focusEvalName}
+                extraTabs={rightPanelTabs}
+                notice={rightPanelNotice}
               />
             </Box>
           </>
@@ -639,6 +645,9 @@ VoiceDetailDrawerV2.propTypes = {
   hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hidePathTabs: PropTypes.bool,
   leftPanelTabs: PropTypes.arrayOf(LEFT_PANEL_TAB_SHAPE),
+  rightPanelTabs: PropTypes.arrayOf(LEFT_PANEL_TAB_SHAPE),
+  rightPanelNotice: PropTypes.node,
+  focusEvalName: PropTypes.string,
   hideAnnotationTab: PropTypes.bool,
   showFixWithFalcon: PropTypes.bool,
 };

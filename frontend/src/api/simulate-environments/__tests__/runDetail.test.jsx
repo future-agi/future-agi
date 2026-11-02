@@ -29,6 +29,7 @@ const {
   useCallTraces,
   withScoringStatus,
   useRunCalls,
+  runVerdict,
 } = await import("../runDetail");
 const { runSummaryKey } = await import("../runCalls");
 const { RUN_COLORS } = await import(
@@ -80,6 +81,17 @@ const perfPayload = () => ({
     latest_fail_rate: 26,
   },
   top_performing_scenarios: [],
+});
+
+describe("runVerdict", () => {
+  it.each([
+    [{ passed: 3, failed: 0 }, "passed"],
+    [{ passed: 0, failed: 2 }, "failed"],
+    [{ passed: 2, failed: 1 }, "completed"],
+    [{ passed: 0, failed: 0 }, "completed"],
+  ])("%o is %s", (stats, verdict) => {
+    expect(runVerdict(stats)).toBe(verdict);
+  });
 });
 
 describe("buildRunIdentity", () => {
@@ -820,6 +832,65 @@ describe("useRunDetail", () => {
       endpoints.runResultsV3.calls("ex-new"),
       { params: { page: 1, page_size: 1 } },
     );
+  });
+
+  it("maps completed_at to finishedAt and the outcome counts the header reads", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: {
+        execution: {
+          id: "ex-counts",
+          status: "running",
+          started_at: "2026-01-14T09:12:00.000Z",
+          completed_at: "2026-01-14T09:22:00.000Z",
+          summary: {
+            total: 12,
+            outcomes: {
+              queued: 2,
+              in_progress: 1,
+              passed: 5,
+              failed: 1,
+              error: 2,
+              inconclusive: 1,
+            },
+          },
+        },
+      },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-counts"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.identity.finishedAt).toBe(
+      "2026-01-14T09:22:00.000Z",
+    );
+    expect(result.current.stats).toMatchObject({
+      queued: 2,
+      inProgress: 1,
+      passed: 5,
+      // Errors still count as failures for the verdict.
+      failed: 3,
+      errored: 2,
+      notScored: 3,
+    });
+  });
+
+  it("leaves finishedAt null and the counts at zero when the API sends none", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: { execution: { id: "ex-bare", status: "pending" } },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-bare"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.identity.finishedAt).toBeNull();
+    expect(result.current.stats).toMatchObject({
+      queued: 0,
+      inProgress: 0,
+      errored: 0,
+      notScored: 0,
+    });
   });
 
   it.each([
@@ -1578,5 +1649,41 @@ describe("useCallTraces", () => {
     renderHook(() => useCallTraces("exec-1", null), { wrapper: makeWrapper() });
 
     expect(axios.get).not.toHaveBeenCalled();
+  });
+});
+
+describe("mapCallDetail keeps sub-goals for the Checklist", () => {
+  it("maps sub_goal_results and the sub-goal checks, still out of the evals", () => {
+    const detail = mapCallDetail({
+      id: "c1",
+      sub_goal_results: [
+        { name: "verify_identity", passed: true },
+        { name: "issue_refund", passed: null },
+      ],
+      eval_metrics: {
+        e1: { name: "Tone", value: "Passed", type: "Pass/Fail" },
+        sg1: {
+          name: "issue_refund",
+          kind: "sub_goal",
+          value: "Failed",
+          type: "Pass/Fail",
+          reason: "never issued",
+        },
+      },
+    });
+    expect(detail.subGoalResults).toEqual([
+      { name: "verify_identity", passed: true },
+      { name: "issue_refund", passed: null },
+    ]);
+    expect(detail.subGoalChecks).toEqual([
+      { id: "sg1", name: "issue_refund", passed: false, reason: "never issued" },
+    ]);
+    expect(detail.evalResults.map((r) => r.name)).toEqual(["Tone"]);
+  });
+
+  it("reads no sub-goals as an empty list", () => {
+    const detail = mapCallDetail({ id: "c2" });
+    expect(detail.subGoalResults).toEqual([]);
+    expect(detail.subGoalChecks).toEqual([]);
   });
 });

@@ -2,8 +2,8 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Tab } from "@mui/material";
 import { CustomTabs } from "src/components/tabs/tabs";
+import { WORKSPACE_TABS_SX } from "../../environmentOptions";
 
-import { ENV_TABS_SX } from "../../environmentOptions";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "../../workspace/overview/overview.constants";
 import WorkspacePanels from "../../workspace/WorkspacePanels";
 import { gapsByTab, counts as countsFor } from "../../workspace/helpers/workspaceGaps";
@@ -81,7 +81,7 @@ export default function BuildingPane({
           onChange={() => {}}
           variant="scrollable"
           scrollButtons={false}
-          sx={ENV_TABS_SX}
+          sx={WORKSPACE_TABS_SX}
         >
           {BUILDING_TABS.map((t) => (
             <Tab key={t.id} value={t.id} label={t.label} />

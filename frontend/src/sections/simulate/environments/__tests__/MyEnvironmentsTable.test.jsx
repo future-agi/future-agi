@@ -21,6 +21,7 @@ const { listHarnessEnvironments, deleteHarnessEnvironment } = await import(
   "src/api/simulate-environments/harnessEnvironments"
 );
 const { default: MyEnvironmentsTab } = await import("../MyEnvironmentsTab");
+const { buildEnvironmentColumns } = await import("../components/environmentTableColumns");
 
 
 // A small harness-environments page: the four pill states, two voice rows and
@@ -335,5 +336,50 @@ describe("MyEnvironmentsTable", () => {
     expect(navigate).toHaveBeenCalledWith(
       "/dashboard/simulate/environments/job-support",
     );
+  });
+
+  it("shows Vel's columns in order", async () => {
+    renderTab();
+    await screen.findByText("Customer Support Line");
+    const headers = screen
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent.trim())
+      .filter(Boolean);
+    expect(headers).toEqual([
+      "Name",
+      "Status",
+      "Agent type",
+      "Agent",
+      "Last run",
+      "Tools",
+      "Scenarios",
+      "Sub-goals",
+      "Runs",
+      "Owner",
+      "Updated",
+    ]);
+  });
+
+  it("runs only from the row menu, with no Run button in the row", async () => {
+    listHarnessEnvironments.mockResolvedValue({
+      ...HARNESS_ENVS,
+      results: [
+        { ...HARNESS_ENVS.results[0], agent_version: { id: "v", version_number: 4 } },
+        ...HARNESS_ENVS.results.slice(1),
+      ],
+    });
+    renderTab();
+    await screen.findByText("Customer Support Line");
+    expect(within(rowFor("Customer Support Line")).queryByRole("button", { name: /^Run/ })).toBeNull();
+  });
+
+  it("keeps the Name column wide enough to read a name beside its version chip", () => {
+    const name = buildEnvironmentColumns({}).find((c) => c.id === "name");
+    expect(name.minSize).toBeGreaterThanOrEqual(280);
+  });
+
+  it("offers no column sorting, since the list API always returns newest first", () => {
+    const sortable = buildEnvironmentColumns({}).filter((c) => c.enableSorting !== false);
+    expect(sortable.map((c) => c.id)).toEqual([]);
   });
 });

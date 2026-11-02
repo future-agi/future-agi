@@ -13,6 +13,7 @@ import { act } from "@testing-library/react";
 import { render, screen, fireEvent } from "src/utils/test-utils";
 
 import ChatSplitPane from "../ChatSplitPane";
+import { injectComposerScaffold } from "../../buildEnvironment/console/composerScaffoldBus";
 import {
   CHAT_PANE_DEFAULT_WIDTH,
   CHAT_PANE_MIN_WIDTH,
@@ -114,6 +115,14 @@ describe("ChatSplitPane", () => {
     expect(
       screen.queryByRole("button", { name: "Open chat" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens a collapsed chat when something pins an ask in its composer", () => {
+    renderSplit();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse chat" }));
+    expect(chatPane()).not.toBeVisible();
+    act(() => injectComposerScaffold("Add scenarios. Callers disputing a charge"));
+    expect(chatPane()).toBeVisible();
   });
 
   it("reopens from the rail's expand arrow too", () => {

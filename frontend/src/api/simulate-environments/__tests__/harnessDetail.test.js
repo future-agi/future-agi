@@ -211,6 +211,24 @@ describe("harnessDetailToEnvironment", () => {
     expect(env.agentMode).toBeNull();
   });
 
+  it("attaches settings.runtime, security and artifacts verbatim, null when absent", () => {
+    const runtime = { isolation: "dedicated_vm", cpu_units: 4, memory_mb: 8192, parallelism: 1 };
+    const security = { allowed_egress_domains: ["api.acme.com"], read_only_source: true };
+    const artifacts = { level: "full", retention_days: 30 };
+    const { env } = harnessDetailToEnvironment({
+      ...DETAIL,
+      settings: { ...DETAIL.settings, runtime, security, artifacts },
+    });
+    expect(env.runtime).toEqual(runtime);
+    expect(env.security).toEqual(security);
+    expect(env.artifacts).toEqual(artifacts);
+
+    const { env: bare } = harnessDetailToEnvironment({ ...DETAIL, settings: {} });
+    expect(bare.runtime).toBeNull();
+    expect(bare.security).toBeNull();
+    expect(bare.artifacts).toBeNull();
+  });
+
   it("flattens world.stores into seed tables and keeps the raw stores", () => {
     const { env } = harnessDetailToEnvironment(DETAIL);
     expect(env.seed.tables).toEqual([

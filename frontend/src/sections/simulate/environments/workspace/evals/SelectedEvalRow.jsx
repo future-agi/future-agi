@@ -2,11 +2,12 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SELECTED_EVAL_SHAPE } from "./evalEntry";
-import { EvalEntryChips, EvalInputs } from "./evalEntryCells";
+import CustomTooltip from "src/components/tooltip";
+import { EvalEntryChips, EvalMappingChips } from "./evalEntryCells";
 
 // One row of the Evaluations tab for a backend-backed environment: the entry
 // as `evaluations.selected[]` sends it — name, description,
-// Library/Custom, the cost line and what fills each input — plus the
+// Library/Custom, the cost line and Vel's chips for what fills each input — plus the
 // caller's Remove action. Removing stops future grading only: every verdict
 // it already produced stays on its call and is still shown there, marked.
 export default function SelectedEvalRow({ item, action }) {
@@ -28,13 +29,16 @@ export default function SelectedEvalRow({ item, action }) {
           </Typography>
           <EvalEntryChips entry={item} />
         </Stack>
+        {/* One line, as Vel's; the whole description on hover. */}
         {item.description && (
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {item.description}
-          </Typography>
+          <CustomTooltip show arrow size="small" placement="bottom-start" title={item.description}>
+            <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+              {item.description}
+            </Typography>
+          </CustomTooltip>
         )}
-        <Box sx={{ mt: 1 }}>
-          <EvalInputs entry={item} heading="READS" />
+        <Box sx={{ mt: 0.75 }}>
+          <EvalMappingChips entry={item} />
         </Box>
       </Box>
       <Box sx={{ flexShrink: 0 }}>{action}</Box>

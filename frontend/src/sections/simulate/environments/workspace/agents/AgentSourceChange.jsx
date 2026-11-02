@@ -21,7 +21,7 @@ import {
   uploadErrorText,
   uploadSourceFolder,
 } from "src/pages/dashboard/harness/sourceUpload";
-import { FolderInput } from "../../panels/PanelCodeUpload";
+import FolderInput from "../../components/FolderInput";
 import { AGENT_VERSIONS_COPY } from "../workspace.constants";
 import { refusalText } from "../evals/refusalText";
 

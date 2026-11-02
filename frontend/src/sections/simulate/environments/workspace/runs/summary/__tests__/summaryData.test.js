@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildSummaryRow, buildEvalSeries, countCoveredScenarios, deriveEvals, EVAL_COLORS } from "../summaryData";
+import {
+  buildSummaryRow,
+  countCoveredScenarios,
+  deriveEvals,
+  EVAL_COLORS,
+  isFinishedRun,
+} from "../summaryData";
 
 // A run row as produced by `mapExecutions` (newest-first ordinal already
 // stamped), extended with the run-level duration the summary table shows.
@@ -43,37 +49,18 @@ describe("buildSummaryRow", () => {
     expect(row).not.toHaveProperty("meanReturn");
   });
 
+  it("carries the real passed and failed counts and when the run finished", () => {
+    const row = buildSummaryRow(run, {});
+    expect(row.passed).toBe(15);
+    expect(row.failed).toBe(5);
+    expect(row.finishedAt).toBe("2026-01-13T16:42:10.000Z");
+    expect(buildSummaryRow({ ...run, failed: undefined }, {}).failed).toBe(5);
+  });
+
   it("does not divide by zero on an empty run", () => {
     const row = buildSummaryRow({ ...run, total: 0, passed: 0 }, undefined);
     expect(row.passRate).toBe(0);
     expect(row.scores).toEqual({});
-  });
-});
-
-describe("buildEvalSeries", () => {
-  const rowsChrono = [
-    { label: "Run 1", scores: { task_success: 40, policy: 55 } },
-    { label: "Run 2", scores: { task_success: 49 } }, // policy missing → gap
-  ];
-  const evals = [
-    { id: "task_success", name: "Task success", color: "#16A34A" },
-    { id: "policy", name: "Policy adherence", color: "#7857FC" },
-  ];
-
-  it("builds one series per applied eval, carrying name and colour", () => {
-    const series = buildEvalSeries(rowsChrono, evals);
-    expect(series).toHaveLength(2);
-    expect(series[0]).toMatchObject({ id: "task_success", name: "Task success", color: "#16A34A" });
-  });
-
-  it("reads each run's score for the eval and leaves a null gap when absent", () => {
-    const series = buildEvalSeries(rowsChrono, evals);
-    expect(series[0].data).toEqual([40, 49]);
-    expect(series[1].data).toEqual([55, null]); // Run 2 has no policy score
-  });
-
-  it("returns no series when the environment has no applied evals", () => {
-    expect(buildEvalSeries(rowsChrono, [])).toEqual([]);
   });
 });
 
@@ -85,7 +72,10 @@ describe("deriveEvals", () => {
 
   it("derives the eval set from the union of the runs' score keys, first-seen order", () => {
     const evals = deriveEvals(rows);
-    expect(evals.map((e) => e.id)).toEqual(["task_success", "policy_adherence"]);
+    expect(evals.map((e) => e.id)).toEqual([
+      "task_success",
+      "policy_adherence",
+    ]);
   });
 
   it("humanises the score key into a sentence-case display name", () => {
@@ -125,5 +115,21 @@ describe("countCoveredScenarios", () => {
     expect(countCoveredScenarios([{ scenarioIds: [] }, {}], 20)).toBe(20);
     expect(countCoveredScenarios([], 20)).toBe(20);
     expect(countCoveredScenarios(undefined, 20)).toBe(20);
+  });
+});
+
+describe("isFinishedRun", () => {
+  it("counts a run that finished with a verdict", () => {
+    expect(isFinishedRun(run)).toBe(true);
+    expect(isFinishedRun({ ...run, status: "failed" })).toBe(true);
+  });
+
+  it("leaves off running, stopped and empty runs", () => {
+    expect(isFinishedRun({ ...run, status: "running", finishedAt: null })).toBe(
+      false,
+    );
+    expect(isFinishedRun({ ...run, status: "cancelled" })).toBe(false);
+    expect(isFinishedRun({ ...run, total: 0 })).toBe(false);
+    expect(isFinishedRun({ ...run, finishedAt: null })).toBe(false);
   });
 });

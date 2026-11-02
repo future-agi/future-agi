@@ -13,6 +13,7 @@ import {
 import SideDrawer from "../../components/SideDrawer";
 import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { Label } from "./ContractPart";
 import { CONTRACT_COPY } from "./contract.constants";
 
@@ -31,7 +32,7 @@ const LOCK_TOOLTIP = "Fork this environment to edit.";
  * removal persists via patch; the library of injectable pre-builts is not shown
  * here). A template-locked env renders everything read-only.
  */
-export default function ActorsPanel({ env, envState, patch, onGo, locked = false }) {
+export default function ActorsPanel({ env, envState, patch, onGo, locked = false, onSave }) {
   const [editing, setEditing] = useState(null);
   const cast = envState?.actors || castFor(env);
   const canEdit = !!patch && !locked;
@@ -47,7 +48,10 @@ export default function ActorsPanel({ env, envState, patch, onGo, locked = false
     <Box>
       <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "flex-end" }} spacing={2} sx={{ mb: 2 }}>
         <Box flex={1}>
-          <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>{C.heading}</Typography>
+          <Stack direction="row" alignItems="center" spacing={0.75}>
+            <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>{C.heading}</Typography>
+            {onSave && <UiOnlyFlag feature="actors" />}
+          </Stack>
           <Typography sx={{ typography: "s2", color: "text.secondary", maxWidth: 780 }}>
             {C.headingBlurb}
           </Typography>
@@ -116,7 +120,17 @@ export default function ActorsPanel({ env, envState, patch, onGo, locked = false
         )}
       </SectionCard>
 
-      {canEdit && <ActorEditor actor={editing} onClose={() => setEditing(null)} />}
+      {canEdit && (
+        <ActorEditor
+          actor={editing}
+          uiOnly={!!onSave}
+          onClose={() => setEditing(null)}
+          onSave={() => {
+            setEditing(null);
+            onSave?.();
+          }}
+        />
+      )}
     </Box>
   );
 }
@@ -143,6 +157,8 @@ ActorsPanel.propTypes = {
   patch: PropTypes.func,
   onGo: PropTypes.func,
   locked: PropTypes.bool,
+  // Saving and removing have no endpoint: called instead, and the panel is flagged UI only.
+  onSave: PropTypes.func,
 };
 
 // Wraps a disabled control in the "Fork this environment to edit." tooltip when
@@ -304,7 +320,7 @@ DetailBlock.propTypes = { label: PropTypes.node, body: PropTypes.node };
 // Create / edit an actor. A prototype form: fields are pre-filled from the actor
 // and the footer action closes the drawer — removal is the persisted mutation,
 // authoring a bespoke actor lands when the actor library is wired.
-function ActorEditor({ actor, onClose }) {
+function ActorEditor({ actor, uiOnly, onClose, onSave }) {
   const existing = !!actor?.id;
   return (
     <SideDrawer open={!!actor} onClose={onClose} width={{ xs: "100%", sm: 480 }}>
@@ -313,7 +329,10 @@ function ActorEditor({ actor, onClose }) {
           {/* No close button here — SideDrawer renders the single (outlined)
               close in the corner. pr clears it so a long name doesn't collide. */}
           <Box sx={{ pl: 2.5, pr: 6, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
-            <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold" }}>{existing ? actor.name : "Create actor"}</Typography>
+            <Stack direction="row" alignItems="center" spacing={0.75}>
+              <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold" }}>{existing ? actor.name : "Create actor"}</Typography>
+              {uiOnly && <UiOnlyFlag feature="actors" />}
+            </Stack>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
               {existing ? `Editing ${actor.version}: saving creates a new version` : "Available to every environment once saved"}
             </Typography>
@@ -375,7 +394,7 @@ function ActorEditor({ actor, onClose }) {
           <Stack direction="row" spacing={1.5} sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}>
             <Box flex={1} />
             <Button onClick={onClose} sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", color: "text.secondary" }}>Cancel</Button>
-            <Button variant="contained" color="primary" onClick={onClose} sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
+            <Button variant="contained" color="primary" onClick={onSave} sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
               {existing ? "Save as new version" : "Create actor"}
             </Button>
           </Stack>
@@ -384,4 +403,4 @@ function ActorEditor({ actor, onClose }) {
     </SideDrawer>
   );
 }
-ActorEditor.propTypes = { actor: PropTypes.object, onClose: PropTypes.func };
+ActorEditor.propTypes = { actor: PropTypes.object, uiOnly: PropTypes.bool, onClose: PropTypes.func, onSave: PropTypes.func };

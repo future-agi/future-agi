@@ -10,6 +10,7 @@ describe("workspace tab constants", () => {
   it("declares the tabs in rail order with Overview first and Settings last", () => {
     expect(WORKSPACE_TABS.map((t) => t.id)).toEqual([
       "overview",
+      "world",
       "contract",
       "scenarios",
       "evals",
@@ -35,8 +36,15 @@ describe("workspace tab constants", () => {
 });
 
 describe("setup-gap to tab mapping", () => {
-  it("routes contract gaps to Contract and grading gaps to Evaluations", () => {
-    expect(GAP_AREA_TO_TAB).toEqual({ Contract: "contract", Grading: "evals" });
+  it("routes agent gaps to Overview, sandbox and tool gaps to World, contract and grading gaps to their tabs", () => {
+    expect(GAP_AREA_TO_TAB).toEqual({
+      Agent: "overview",
+      Sandbox: "world",
+      Tools: "world",
+      World: "world",
+      Contract: "contract",
+      Grading: "evals",
+    });
   });
 
   it("only maps gaps onto tabs the workspace actually renders", () => {

@@ -17,7 +17,13 @@ import { SCORING_STATUS } from "../runs.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import CallTracesPanel from "./CallTracesPanel";
 import { CALL_TRACES_COPY } from "./callTraces.constants";
-import { Meta, Cell, Attr } from "./chatDrawerCells";
+import { Meta, Cell } from "./chatDrawerCells";
+import CallAttributes from "./call/CallAttributes";
+import CallChecklist from "./call/CallChecklist";
+import CallGraphPane from "./call/CallGraphPane";
+import CallToolCalls from "./call/CallToolCalls";
+import { toolCallsOf } from "./call/callDrawer.utils";
+import UnmeasuredBanner from "./call/UnmeasuredBanner";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
 const secs = (ms) => (ms == null ? "-" : `${(ms / 1000).toFixed(1)}s`);
@@ -44,11 +50,12 @@ function RemovedChip() {
   );
 }
 
-// The chat / non-voice call drawer — a lean port of the designer's two-pane
-// CallDrawer over REAL call-detail data. The left pane is the transcript (with
-// tool calls inline); the right pane is the measurement — meta chips, the
-// failed-eval banner and the Analytics / Evals / Messages / Attributes tabs.
-// Checklist and Graph are left out until they have a real feed.
+// The chat / non-voice call drawer: a port of the designer's two-pane
+// CallDrawer over REAL call-detail data. The left pane is the artifact:
+// transcript (with tool calls inline), the sub-goal Checklist, the Graph (not
+// in the API yet) and the call's traces. The right pane is the measurement:
+// meta chips, the no-verdict and failed-eval banners and the Analytics / Tool
+// calls / Evals / Messages / Attributes tabs.
 // Prev/next call, the same controls and ↑/↓ keys as the voice drawer header.
 function NavArrow({ icon, label, onClick, disabled }) {
   return (
@@ -88,6 +95,7 @@ const ownsArrowKeys = {
 export default function ChatCallDrawer({
   task,
   executionId = null,
+  focusEvalId = null,
   onClose,
   onPrev,
   onNext,
@@ -113,11 +121,15 @@ export default function ChatCallDrawer({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
-  const [side, setSide] = useState("analytics");
+  const [side, setSide] = useState(focusEvalId ? "evals" : "analytics");
+  // Opened from an eval cell (or stepped to another call from one): land on
+  // the Evals tab, that eval expanded.
+  useEffect(() => {
+    if (focusEvalId) setSide("evals");
+  }, [focusEvalId, task.id]);
   const [artifact, setArtifact] = useState("transcript");
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
-  const showTraces = artifact === "traces";
 
   // The header and chips paint from the already-loaded row immediately, then
   // hydrate from the call detail once it resolves.
@@ -156,6 +168,9 @@ export default function ChatCallDrawer({
   const tokens = callDetail?.tokens ?? task.tokens;
   const talkRatio =
     stats.aiPct != null && stats.userPct != null ? `${stats.aiPct}/${stats.userPct}` : "-";
+  const toolCalls = toolCallsOf(turns);
+  const focusEvalName =
+    evalResults.find((r) => r.id === focusEvalId)?.name ?? null;
 
   return (
     <Stack sx={{ height: "100%" }}>
@@ -195,16 +210,25 @@ export default function ChatCallDrawer({
         {/* left: the artifact */}
         <Stack sx={{ flex: 1.15, minWidth: 0, borderRight: { md: "1px solid" }, borderColor: { md: "divider" } }}>
           <CustomTabs
-            value={showTraces ? "traces" : "transcript"}
+            value={artifact}
             onChange={(_, value) => setArtifact(value)}
             sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider", minHeight: 40 }}
           >
             <Tab value="transcript" label="Transcript" sx={{ minHeight: 40 }} />
+            <Tab value="checklist" label="Checklist" sx={{ minHeight: 40 }} />
+            <Tab value="graph" label="Graph" sx={{ minHeight: 40 }} />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} sx={{ minHeight: 40 }} />
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
-            {showTraces ? (
+            {artifact === "checklist" ? (
+              <CallChecklist
+                subGoalResults={callDetail?.subGoalResults?.length ? callDetail.subGoalResults : task.subGoalResults ?? []}
+                checks={callDetail?.subGoalChecks ?? []}
+              />
+            ) : artifact === "graph" ? (
+              <CallGraphPane />
+            ) : artifact === "traces" ? (
               <Box sx={{ px: 1.5, py: 1, display: "flex", flexDirection: "column", minHeight: "100%" }}>
                 <CallTracesPanel
                   traces={callTraces.traces}
@@ -228,13 +252,19 @@ export default function ChatCallDrawer({
         <Stack sx={{ flex: 1, minWidth: 0 }}>
           <Box sx={{ px: 2, pt: 1.75, pb: 1.25 }}>
             <Stack direction="row" flexWrap="wrap" gap={0.75}>
-              <Meta label="Type" value="Chat" />
+              <Meta label="Type" value={callDetail?.direction ?? "-"} />
               <Meta label="Status" value={task.status === "passed" ? "completed" : task.status} />
               <Meta label="Duration" value={secs(durationMs)} />
               <Meta label="Turns" value={turnCount ?? "-"} />
               <Meta label="Provider" value={callDetail?.provider || task.provider || "-"} />
             </Stack>
           </Box>
+
+          <UnmeasuredBanner
+            status={task.status}
+            harnessOutcomeStatus={task.harnessOutcomeStatus}
+            sx={{ mx: 2, mb: 1.5 }}
+          />
 
           {failed.length > 0 && (
             <Stack
@@ -276,6 +306,7 @@ export default function ChatCallDrawer({
             sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider", minHeight: 40 }}
           >
             <Tab value="analytics" label="Chat analytics" sx={{ minHeight: 40 }} />
+            <Tab value="toolCalls" label={`Tool calls (${toolCalls.length})`} sx={{ minHeight: 40 }} />
             <Tab value="evals" label={`Evals (${evalResults.length})`} sx={{ minHeight: 40 }} />
             <Tab value="messages" label="Messages" sx={{ minHeight: 40 }} />
             <Tab value="attributes" label="Attributes" sx={{ minHeight: 40 }} />
@@ -294,9 +325,13 @@ export default function ChatCallDrawer({
               </Box>
             )}
 
+            {side === "toolCalls" && <CallToolCalls calls={toolCalls} />}
+
             {side === "evals" && (
               <EvalsTabView
+                key={task.id}
                 evals={drawerEvals}
+                focusEvalName={focusEvalName}
                 emptyMessage="No evaluations ran on this call."
                 showSpanColumn={false}
                 showFixWithFalcon={false}
@@ -321,11 +356,13 @@ export default function ChatCallDrawer({
             )}
 
             {side === "attributes" && (
-              <Stack>
-                <Attr label="scenario" value={task.scenario} />
-                <Attr label="persona" value={task.persona} />
-                <Attr label="status" value={task.status} />
-              </Stack>
+              <CallAttributes
+                scenario={task.scenario}
+                status={task.status}
+                persona={task.personaDetails}
+                personaName={task.persona}
+                expected={task.idealOutcome}
+              />
             )}
           </Box>
         </Stack>
@@ -347,6 +384,10 @@ ChatCallDrawer.propTypes = {
     id: PropTypes.string,
     scenario: PropTypes.string,
     persona: PropTypes.string,
+    personaDetails: PropTypes.object,
+    idealOutcome: PropTypes.string,
+    subGoalResults: PropTypes.array,
+    harnessOutcomeStatus: PropTypes.string,
     status: PropTypes.string,
     turns: PropTypes.number,
     tokens: PropTypes.number,
@@ -355,6 +396,7 @@ ChatCallDrawer.propTypes = {
     evalResults: PropTypes.array,
   }).isRequired,
   executionId: PropTypes.string,
+  focusEvalId: PropTypes.string,
   onClose: PropTypes.func,
   onPrev: PropTypes.func,
   onNext: PropTypes.func,

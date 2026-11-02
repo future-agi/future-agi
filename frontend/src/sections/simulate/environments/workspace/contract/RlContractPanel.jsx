@@ -1,23 +1,29 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
+import { useState } from "react";
+import { enqueueSnackbar } from "notistack";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { castFor } from "src/api/simulate-environments/_fixtures/actors";
 import SectionCard from "../../components/SectionCard";
-// Actors section (ActorsPanel) is commented out below — it was a dummy cast from
-// the fixture ACTOR_LIBRARY, not backed by §6. To be picked up later.
-// import ActorsPanel from "./ActorsPanel";
-import CapabilityGraph from "../overview/CapabilityGraph";
-import WorldInternalsSection from "./WorldInternalsSection";
+import useUiSample from "../../hooks/useUiSample";
+import { UI_ONLY_SAVED } from "../gaps/NeedsInputButton";
+import { realToolArgs } from "../world/ToolArgsGrid";
+import ActorsPanel from "./ActorsPanel";
+import ContractEditDialog from "./ContractEditDialog";
+import { ArgLimitsSection, RulesSection, UseCasesSection } from "./ContractSections";
 import { CONTRACT_COPY } from "./contract.constants";
 
-// Map the real §6 `end_conditions` onto the episode-card shape. Returns null when
-// the environment carries no end conditions yet, and the card says so.
-// `ended_reasons` is the vocabulary a finished call may carry (terminate); the
-// two limits are the run's truncation ceilings.
-const CLOCK_NOTE = {
-  "real-time": "Wall-clock time: the voice call runs in real time.",
-  stepped: "Stepped: the chat advances a turn at a time.",
+// Map the real §6 `end_conditions` onto the card's shape. Returns null when the
+// environment carries no end conditions yet, and the card says so.
+// `ended_reasons` is the vocabulary a finished call may carry (it ends); the
+// two limits are the conversation's ceilings (it's cut off).
+const CLOCK = {
+  "real-time": { mode: "Real time", note: "Pauses and slow replies are part of the test, so time runs as it would on a real call." },
+  stepped: { mode: "Stepped", note: "The chat advances a turn at a time, so a slow reply costs nothing." },
 };
+// 3600 → "60 minutes", 45 → "45 seconds", as Vel words the limit.
+const durationWords = (sec) =>
+  sec % 60 === 0 ? `${sec / 60} minute${sec === 60 ? "" : "s"}` : `${sec} seconds`;
 function realEpisode(env) {
   const ec = env?.endConditions;
   if (!ec) return null;
@@ -27,55 +33,53 @@ function realEpisode(env) {
       note: "Ceiling across the suite. Each scenario carries its own.",
     },
     ec.max_duration_seconds != null && {
-      when: `${ec.max_duration_seconds}s`,
+      when: durationWords(ec.max_duration_seconds),
       note: "The job's wall-clock limit.",
     },
   ].filter(Boolean);
   return {
-    terminate: (ec.ended_reasons || []).map((reason) => ({ when: reason, note: "" })),
+    terminate: (ec.ended_reasons || []).map((reason) => ({ when: reason })),
     truncate,
-    clock: {
-      mode: ec.clock || "-",
-      note: CLOCK_NOTE[ec.clock] || "How run time is measured.",
-    },
+    clock: CLOCK[ec.clock] || { mode: ec.clock || "-", note: "How run time is measured." },
   };
 }
 
+// The seed as sent, or null when JSON.parse has already rounded it: settings.seed
+// is often past 2^53, and a rounded seed would replay a different run.
+const exactSeed = (seed) =>
+  typeof seed === "string" || Number.isSafeInteger(seed) ? String(seed) : null;
+
+// An argument is a limit when the contract says which values it allows.
+const limitsOf = (tools = []) =>
+  tools.flatMap((t) => realToolArgs(t).filter((a) => a.values?.length).map((a) => ({ ...a, tool: t.name })));
+
 /**
- * The environment contract — what this environment IS.
- *
- * Concrete over formal: the world (capability graph), the internals a run reads
- * from (DB schema, tool code, check code), how a run ends, and who else acts in
- * it. The five-part RL-textbook framing that used to live here — modality
- * adapter, obs/action spaces, transition dynamics, reward spec — mostly
- * duplicated other tabs in RL notation, so it was removed. The RL vocabulary
- * still lives in `_fixtures/rlContract.js` if it needs to come back.
- *
- * Twin-backed envs are out of scope in this integration, so the world is always
- * the capability graph (the designer's TwinSandboxSection branch is omitted).
+ * The environment contract as Vel lays it out: the rules, the argument
+ * limits, the use cases, when a conversation ends, and the actors. Rules, use
+ * cases, limits, end conditions and the seed are real. Editing them, rule
+ * coverage, number ranges and actors have no API yet: edits are flagged UI
+ * only and save nothing, and ?uiSample=actors shows Vel's cast. The world a
+ * run executes against lives on the World tab.
  */
-export default function RlContractPanel({ env, envState, patch, locked = false, graphData, backed = false }) {
-  // The real §6 `end_conditions`, mapped into the terminate/truncate/clock shape
-  // the card renders: `ended_reasons` are the ways a run terminates,
-  // `max_turns`/`max_duration_seconds` are the truncation ceilings, `clock` is
-  // real-time (voice) or stepped (chat). Null until the build authors them.
+export default function RlContractPanel({ env, envState, patch, onGo, locked = false, backed = false }) {
+  const sampleActors = useUiSample("actors");
+  const [editing, setEditing] = useState(null);
+  const [sampleCast, setSampleCast] = useState(() => castFor(env));
   const episode = realEpisode(env);
-  const hasWorld = !!envState?.agent || (env.tools?.length || 0) > 0;
+  const canEdit = !!patch && !locked;
+  const onEdit = canEdit ? setEditing : null;
+  const uiOnly = () => enqueueSnackbar(UI_ONLY_SAVED, { variant: "info" });
+  const rules = env?.rules || [];
+  const useCases = env?.useCases || [];
+  const limits = limitsOf(env?.tools);
+  const seed = exactSeed(env?.runSeed);
 
   return (
     <Box sx={{ p: 2 }}>
+      <RulesSection rules={rules} onEdit={onEdit} />
+      {limits.length > 0 && <ArgLimitsSection limits={limits} onEdit={onEdit} onGo={onGo} />}
+      {(useCases.length > 0 || canEdit) && <UseCasesSection useCases={useCases} onEdit={onEdit} />}
 
-      {/* ── the world ─────────────────────────────────────────────────── */}
-      {hasWorld && (
-        <Box sx={{ mb: 2 }}>
-          <CapabilityGraph env={env} envState={envState} data={graphData} />
-        </Box>
-      )}
-
-      {/* ── internals: DB schema + tool code + check code ─────────────── */}
-      <WorldInternalsSection env={env} envState={envState} patch={patch} locked={locked} />
-
-      {/* ── run end conditions ────────────────────────────────────────── */}
       <SectionCard
         title={CONTRACT_COPY.endConditions.title}
         subtitle={CONTRACT_COPY.endConditions.subtitle}
@@ -83,111 +87,106 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
       >
         {!episode ? (
           <Box sx={{ px: 2.5, py: 2.25 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-              {CONTRACT_COPY.endConditions.notAuthored}
-            </Typography>
+            <Typography sx={{ typography: "s2", fontWeight: 600 }}>{CONTRACT_COPY.endConditions.notAuthored}</Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {backed
-                ? CONTRACT_COPY.endConditions.notAuthoredBuilt
-                : CONTRACT_COPY.endConditions.notAuthoredUnbuilt}
+              {backed ? CONTRACT_COPY.endConditions.notAuthoredBuilt : CONTRACT_COPY.endConditions.notAuthoredUnbuilt}
             </Typography>
           </Box>
         ) : (
-        <>
-        <Box
-          sx={{
-            display: "grid", gap: "1px",
-            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
-            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.09 : 0.07),
-          }}
-        >
-          <Box sx={{ p: 2.5, bgcolor: "background.paper" }}>
-            <Label>Terminate</Label>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}>
-              The episode has a value. Goal verifiers settle.
-            </Typography>
-            <Stack spacing={1}>
-              {episode.terminate.map((e) => (
-                <Box key={e.when}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>{e.when}</Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{e.note}</Typography>
-                </Box>
-              ))}
+          <>
+            <Box sx={{ display: "grid", gap: "1px", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, bgcolor: "divider" }}>
+              <EndColumn label="It ends" note="The conversation is over, and its checks decide the result." items={episode.terminate} />
+              <EndColumn label="It's cut off" note="A limit stops the conversation before it's over." items={episode.truncate} />
+            </Box>
+            <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />} sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+              <EndRow icon="solar:clock-circle-linear" title={`Time · ${episode.clock.mode}`} body={episode.clock.note} />
+              <EndRow
+                icon="solar:dice-linear"
+                title="Same starting data every time"
+                body={`Every conversation starts from the same data. Run it again and the world, the caller's turns and the tool answers come back the same, so a failing scenario can be replayed and debugged.${seed ? ` Seed ${seed}.` : ""}`}
+              />
             </Stack>
-          </Box>
-          <Box sx={{ p: 2.5, bgcolor: "background.paper" }}>
-            <Label>Truncate</Label>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}>
-              Not a failure, and not terminal. Bootstrap from the last state.
-            </Typography>
-            <Stack spacing={1}>
-              {episode.truncate.map((e) => (
-                <Box key={e.when}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>{e.when}</Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{e.note}</Typography>
-                </Box>
-              ))}
-            </Stack>
-          </Box>
-        </Box>
-        <Stack
-          direction="row"
-          spacing={1.75}
-          alignItems="flex-start"
-          sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
-        >
-          <Iconify icon="solar:clock-circle-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }} />
-          <Box>
-            <Typography sx={{ typography: "s2", fontWeight: 700 }}>Clock · {episode.clock.mode}</Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>{episode.clock.note}</Typography>
-          </Box>
-        </Stack>
-        </>
+          </>
         )}
       </SectionCard>
 
-      {/*
-        Actors section removed — it was a dummy cast from the fixture
-        ACTOR_LIBRARY (not backed by §6), and actors were also dropped from the
-        capability graph (now Personas only). To be picked up later if a real
-        actors field lands.
-        <ActorsPanel env={env} envState={envState} patch={patch} onGo={onGo} locked={locked} />
-      */}
+      <ActorsPanel
+        env={env}
+        envState={{ ...envState, actors: sampleActors ? sampleCast : [] }}
+        patch={
+          patch
+            ? (p) => {
+                if (sampleActors && p?.actors) setSampleCast(p.actors);
+                uiOnly();
+              }
+            : undefined
+        }
+        onGo={onGo}
+        locked={locked}
+        onSave={uiOnly}
+      />
+
+      {editing && (
+        <ContractEditDialog
+          edit={editing}
+          onClose={() => setEditing(null)}
+          onApply={() => {
+            setEditing(null);
+            uiOnly();
+          }}
+        />
+      )}
     </Box>
   );
 }
 
 const ENV_SHAPE = PropTypes.shape({
   surface: PropTypes.string,
-  tools: PropTypes.arrayOf(PropTypes.shape({ name: PropTypes.string, desc: PropTypes.string })),
+  tools: PropTypes.array,
   rules: PropTypes.arrayOf(PropTypes.string),
-  seed: PropTypes.shape({ tables: PropTypes.arrayOf(PropTypes.shape({ name: PropTypes.string })) }),
-});
-
-const ENV_STATE_SHAPE = PropTypes.shape({
-  agent: PropTypes.shape({ name: PropTypes.string }),
-  evals: PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.string, PropTypes.shape({ id: PropTypes.string })])),
-  actors: PropTypes.arrayOf(PropTypes.string),
-  toolResolutions: PropTypes.objectOf(PropTypes.string),
+  useCases: PropTypes.arrayOf(PropTypes.string),
+  endConditions: PropTypes.object,
+  runSeed: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
 });
 
 RlContractPanel.propTypes = {
   env: ENV_SHAPE.isRequired,
-  envState: ENV_STATE_SHAPE.isRequired,
+  envState: PropTypes.object.isRequired,
   patch: PropTypes.func,
+  onGo: PropTypes.func,
   locked: PropTypes.bool,
-  // Real §6 capability-graph data for a backed env (tools/flows/personas/
-  // guardrails); undefined for a non-backed env (fixture derivation).
-  graphData: PropTypes.object,
   // A built (harness) environment; a template or fork is never built.
   backed: PropTypes.bool,
 };
 
-function Label({ children }) {
+function EndColumn({ label, note, items }) {
   return (
-    <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, mb: 1 }}>
-      {children}
-    </Typography>
+    <Box sx={{ p: 2.5, bgcolor: "background.paper" }}>
+      <Typography sx={{ typography: "s3", fontWeight: 600, color: "text.subtitle", mb: 1 }}>{label}</Typography>
+      <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}>{note}</Typography>
+      <Stack spacing={1}>
+        {items.map((e) => (
+          <Box key={e.when}>
+            <Typography sx={{ typography: "s2", fontWeight: 600 }}>{e.when}</Typography>
+            {e.note && <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{e.note}</Typography>}
+          </Box>
+        ))}
+        {items.length === 0 && <Typography sx={{ typography: "s3", color: "text.subtitle" }}>-</Typography>}
+      </Stack>
+    </Box>
   );
 }
-Label.propTypes = { children: PropTypes.node };
+EndColumn.propTypes = { label: PropTypes.string, note: PropTypes.string, items: PropTypes.array };
+
+function EndRow({ icon, title, body }) {
+  return (
+    <Stack direction="row" spacing={1.75} alignItems="flex-start" sx={{ px: 2.5, py: 1.75 }}>
+      <Iconify icon={icon} width={16} sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }} />
+      <Box>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>{title}</Typography>
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>{body}</Typography>
+      </Box>
+    </Stack>
+  );
+}
+EndRow.propTypes = { icon: PropTypes.string, title: PropTypes.string, body: PropTypes.string };

@@ -34,7 +34,8 @@ export default function StepPlatformSelect({ data, onUpdate, onNext, onSelectSla
         Select the platform you want to connect
       </Typography>
 
-      {PLATFORMS.map((platform) => (
+      {/* Slack lives under Code & collaboration, not in the observability wizard. */}
+      {PLATFORMS.filter((platform) => platform.id !== "slack").map((platform) => (
         <Card
           key={platform.id}
           variant="outlined"

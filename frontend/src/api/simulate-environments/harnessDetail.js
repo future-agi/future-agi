@@ -32,6 +32,7 @@ const toWorldTool = (tool) =>
         args: tool?.args || [],
         desc: tool?.description || tool?.name || "",
         argTypes: tool?.arg_types || undefined,
+        argValues: tool?.arg_values || undefined,
         requires: tool?.requires || undefined,
       };
 
@@ -134,6 +135,8 @@ export function harnessDetailToEnvironment(detail) {
     amendments: contract?.amendments || null,
     subGoals: contract?.sub_goals || null,
     endConditions: contract?.end_conditions || null,
+    // The seed every conversation starts from (settings.seed), so a run replays.
+    runSeed: settings.seed ?? null,
     useCases: contract?.real_use_cases || null,
     personas: world?.personas || null,
     stores: world?.stores || null,
@@ -142,6 +145,11 @@ export function harnessDetailToEnvironment(detail) {
     // and how it is run (`settings.agent.mode`), for the Overview's facts.
     source: settings.source ?? null,
     agentMode: settings.agent?.mode ?? null,
+    // How the build runs (isolation, resources, parallelism), what it may reach
+    // (allowed egress domains) and what it keeps, for the Settings tab.
+    runtime: settings.runtime ?? null,
+    security: settings.security ?? null,
+    artifacts: settings.artifacts ?? null,
     // Real per-table field types and per-tool callables, when ALK read them
     // from source. Empty for provider agents, which have neither.
     dataSchema: contract?.data_schema || null,

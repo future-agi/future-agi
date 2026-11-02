@@ -8,7 +8,6 @@ export const useEnvironmentsStore = create(
   devtools(
     persist(
       (set, get, store) => ({
-        choice: null, // OPTION_ID of the open entry card | null
         // The last passing source draft a panel committed. Persisted so the panel
         // form rehydrates on a back-navigation from the workspace; the create call
         // itself happens in the panel (usePanelBuild) and routes to the workspace.
@@ -19,8 +18,6 @@ export const useEnvironmentsStore = create(
         // Per-environment workspace state, keyed by id — the emptyEnvState shape.
         byEnv: {},
 
-        setChoice: (id) => set({ choice: id }, false, "setChoice"),
-        clearChoice: () => set({ choice: null }, false, "clearChoice"),
         setDraft: (source) => set({ draft: source }, false, "setDraft"),
         clearDraft: () => set({ draft: null }, false, "clearDraft"),
 
@@ -111,10 +108,9 @@ export const useEnvironmentsStore = create(
             "forkEnvironment",
           ),
 
-        // Clear only the entry slice (open card + staged draft). The env slices
+        // Clear only the entry slice (the staged draft). The env slices
         // (byEnv, workspaceEnvs) survive, so visiting Home never wipes a workspace.
-        resetEntryState: () =>
-          set({ choice: null, draft: null }, false, "resetEntryState"),
+        resetEntryState: () => set({ draft: null }, false, "resetEntryState"),
 
         reset: () => set(store.getInitialState(), false, "reset"),
       }),
@@ -123,7 +119,7 @@ export const useEnvironmentsStore = create(
         storage: createJSONStorage(() => sessionStorage),
         // The draft and the env slices survive a refresh so a workspace deep
         // link rehydrates and the panel form can be restored after a
-        // back-navigation. `choice` is deliberately not persisted.
+        // back-navigation.
         partialize: (state) => ({
           draft: state.draft,
           byEnv: state.byEnv,

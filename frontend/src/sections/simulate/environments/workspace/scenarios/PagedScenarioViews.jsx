@@ -6,6 +6,7 @@ import Iconify from "src/components/iconify";
 import ScenarioTable from "./ScenarioTable";
 import GroupedScenarioList from "./GroupedScenarioList";
 import { SCENARIOS_COPY } from "./scenarios.constants";
+import SoonChip from "../../components/SoonChip";
 
 /**
  * The Scenarios list body — table or list, one page at a time.
@@ -20,7 +21,7 @@ import { SCENARIOS_COPY } from "./scenarios.constants";
 export default function PagedScenarioViews({
   pageData, selection, env, view, hiddenGroupIds, onHideGroup, onEdit, onRemove,
   page, onPageChange, query, filters, groupBy, showInspector, locked, rowHeight,
-  readout, onOpen,
+  readout, onOpen, suiteTotal,
 }) {
   const [inspect, setInspect] = useState(false);
   const { rows, total, pageCount, limit, pageGroups, pageIds, loading } = pageData;
@@ -109,11 +110,21 @@ export default function PagedScenarioViews({
           its reset, then the page range and pager. Numbered buttons: one
           deterministic request per page. An unfiltered single page needs none
           of it. */}
-      {(pageCount > 1 || readout) && (
+      {(
+
         <Stack
           direction="row" alignItems="center" flexWrap="wrap" gap={1}
           sx={{ px: 2, py: 1, minHeight: 44, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
         >
+          {suiteTotal != null && (
+            <Stack direction="row" alignItems="center" spacing={0.75}>
+              <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+                {`${suiteTotal.toLocaleString()} scenario${suiteTotal === 1 ? "" : "s"}`}
+              </Typography>
+              <SoonChip label="Stale" detail="Scenarios whose proof is out of date after a world or contract change, so their results count for nothing until re-proved." what="Scenarios whose proof is out of date after a change" size="tiny" />
+              <SoonChip label="Archived" what="Scenarios set aside without being deleted" size="tiny" />
+            </Stack>
+          )}
           {readout && <FilterReadout {...readout} />}
           {pageCount > 1 && (
             <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
@@ -168,6 +179,8 @@ export default function PagedScenarioViews({
 }
 
 PagedScenarioViews.propTypes = {
+  // The whole suite's size, for the footer's "N scenarios".
+  suiteTotal: PropTypes.number,
   pageData: PropTypes.object.isRequired,
   selection: PropTypes.object.isRequired,
   env: PropTypes.object,

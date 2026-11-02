@@ -1,91 +1,119 @@
-import { Typography, IconButton } from "@mui/material";
+import { IconButton, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { relativeTime } from "src/utils/format-time";
 import StatusPill from "./StatusPill";
-import { NumberCell, AgentTypeCell } from "./environmentTableCells";
+import {
+  NumberCell,
+  AgentTypeCell,
+  NameCell,
+  AgentCell,
+  LastRunCell,
+  OwnerCell,
+  RunsCell,
+} from "./environmentTableCells";
 
-// Rows arrive pre-flattened (see harnessJobToRow), so column accessors stay
-// simple. Every column now maps to a real field on the §1 list contract
-// (domain, sub_goals_count, runs_count included); a value the backend has not
-// authored yet arrives null and its cell renders a dash.
+// No column sorts: the list API takes no ordering and always returns newest
+// first, so a sort arrow would promise something the server can't do.
+// Rows arrive pre-flattened (see harnessEnvToRow), so column accessors stay
+// simple. Vel's column set: the description is the Name cell's second line.
+// A field the API doesn't send yet draws a "Coming soon" chip; one it sends
+// as null draws a dash.
 export function buildEnvironmentColumns({ onRowActions }) {
   return [
     {
       id: "name",
       accessorKey: "name",
       header: "Name",
-      meta: { flex: 1 },
-      minSize: 180,
-      cell: ({ getValue }) => (
-        <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
-          {getValue()}
-        </Typography>
-      ),
-    },
-    {
-      id: "description",
-      accessorKey: "description",
-      header: "Description",
-      meta: { flex: 1.6 },
-      minSize: 240,
       enableSorting: false,
-      cell: ({ getValue }) => (
-        <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
-          {getValue() || "-"}
-        </Typography>
-      ),
+      meta: { flex: 1 },
+      // Room for a readable name beside its version chip.
+      minSize: 280,
+      cell: NameCell,
     },
     {
       id: "status",
       accessorKey: "status",
       header: "Status",
-      size: 130,
+      enableSorting: false,
+      size: 100,
       cell: ({ getValue, row }) => (
-        <StatusPill status={getValue()} progress={row?.original?.buildProgress} />
+        <StatusPill
+          status={getValue()}
+          progress={row?.original?.buildProgress}
+        />
       ),
     },
     {
       id: "agentType",
       accessorKey: "agentType",
       header: "Agent type",
-      size: 180,
+      enableSorting: false,
+      size: 100,
       cell: AgentTypeCell,
+    },
+    {
+      id: "agent",
+      accessorKey: "agent",
+      header: "Agent",
+      size: 140,
+      enableSorting: false,
+      cell: AgentCell,
+    },
+    {
+      id: "lastRun",
+      accessorKey: "lastRun",
+      header: "Last run",
+      size: 124,
+      enableSorting: false,
+      cell: LastRunCell,
     },
     {
       id: "tools",
       accessorKey: "tools",
       header: "Tools",
-      size: 128,
+      enableSorting: false,
+      size: 58,
       cell: NumberCell,
     },
     {
       id: "scenarios",
       accessorKey: "scenarios",
       header: "Scenarios",
-      size: 150,
+      enableSorting: false,
+      size: 84,
       cell: NumberCell,
     },
     {
       id: "subgoals",
       accessorKey: "subgoals",
       header: "Sub-goals",
-      size: 150,
+      enableSorting: false,
+      size: 84,
       cell: NumberCell,
     },
     {
       id: "runs",
       accessorKey: "runsTotal",
       header: "Runs",
-      size: 128,
-      // §1 `runs_count` as a number (0/1 today; a null — still building or an
-      // older row — renders as a dash, like the other count columns).
-      cell: NumberCell,
+      enableSorting: false,
+      size: 56,
+      cell: RunsCell,
+    },
+    {
+      id: "owner",
+      accessorKey: "owner",
+      header: "Owner",
+      // Wide enough for the Coming soon chip until the API sends owners.
+      size: 130,
+      enableSorting: false,
+      cell: OwnerCell,
     },
     {
       id: "updated",
       accessorKey: "updatedAt",
       header: "Updated",
-      size: 130,
+      enableSorting: false,
+      size: 100,
       cell: ({ getValue }) => (
         <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
           {relativeTime(getValue())}
@@ -98,19 +126,29 @@ export function buildEnvironmentColumns({ onRowActions }) {
       header: "",
       size: 56,
       enableSorting: false,
-      cell: ({ row }) => (
-        <IconButton
-          size="small"
-          aria-label="Row actions"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRowActions?.(row?.original, e.currentTarget);
-          }}
-          sx={{ color: "text.subtitle" }}
-        >
-          <Iconify icon="solar:menu-dots-bold" width={16} />
-        </IconButton>
-      ),
+      cell: ({ row }) => {
+        const env = row?.original;
+        return (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.5}
+            sx={{ width: "100%", justifyContent: "flex-end" }}
+          >
+            <IconButton
+              size="small"
+              aria-label="Row actions"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRowActions?.(env, e.currentTarget);
+              }}
+              sx={{ color: "text.subtitle" }}
+            >
+              <Iconify icon="solar:menu-dots-bold" width={16} />
+            </IconButton>
+          </Stack>
+        );
+      },
     },
   ];
 }

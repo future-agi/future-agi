@@ -103,6 +103,10 @@ export const paths = {
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}?tab=${tab}`,
         execution: (envId, testId, executionId) =>
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}`,
+        compare: (envId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/compare`,
+        widgetEditor: (envId, testId, executionId, widgetId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}/widgets/${widgetId}`,
       },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,
@@ -143,6 +147,7 @@ export const paths = {
       settings: `${ROOTS.DASHBOARD}/gateway/settings`,
     },
     agents: `${ROOTS.DASHBOARD}/agents`,
+    agentsConnect: `${ROOTS.DASHBOARD}/agents/connect`,
     falconAI: `${ROOTS.DASHBOARD}/falcon-ai`,
   },
 };

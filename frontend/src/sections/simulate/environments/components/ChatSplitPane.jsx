@@ -7,13 +7,14 @@ import {
   useState,
 } from "react";
 import PropTypes from "prop-types";
+import { subscribeComposerScaffold } from "../buildEnvironment/console/composerScaffoldBus";
 import { alpha } from "@mui/material/styles";
 import { Box, IconButton, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { BUILD_TONES } from "../buildEnvironment/buildTones";
-import { ENV_TAB_RAIL_HEIGHT } from "../environmentOptions";
+import { WORKSPACE_RAIL_HEIGHT } from "../environmentOptions";
 import {
   CHAT_PANE_COPY as COPY,
   CHAT_PANE_DEFAULT_WIDTH,
@@ -86,7 +87,7 @@ const initialWidth = () => {
  * chat owns its collapse button (attach `collapseRef` to it so focus can move
  * between it and the rail's expand arrow) and knows when it is visible again.
  */
-export default function ChatSplitPane({ chat, children, busy = false }) {
+export default function ChatSplitPane({ chat, children, busy = false, replies = 0 }) {
   const containerRef = useRef(null);
   const dragRef = useRef(null);
   const chatLayerRef = useRef(null);
@@ -105,6 +106,11 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
     () => readStored(CHAT_PANE_STORAGE_KEYS.collapsed) === "true",
   );
   const [dragging, setDragging] = useState(false);
+  // Replies counted as seen while the chat is open; the folded rail badges
+  // what arrived since (Vel's "N new from the builder").
+  const seenReplies = useRef(replies);
+  if (!collapsed) seenReplies.current = replies;
+  const unseen = collapsed ? Math.max(0, replies - seenReplies.current) : 0;
 
   const width = clampWidth(preferredWidth, containerWidth);
 
@@ -163,6 +169,9 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
 
   const collapse = useCallback(() => setOpen(false), [setOpen]);
   const expand = useCallback(() => setOpen(true), [setOpen]);
+
+  // An ask pinned in the composer (Add scenarios → From chat) has to be seen.
+  useEffect(() => subscribeComposerScaffold(() => setOpen(true)), [setOpen]);
 
   const onPointerDown = (event) => {
     // Primary button only: a right-click opens the context menu, which can
@@ -314,7 +323,7 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
             {/* Same height as the tab rail, so the expand arrow lines up with the tabs. */}
             <Box
               sx={{
-                height: ENV_TAB_RAIL_HEIGHT,
+                height: WORKSPACE_RAIL_HEIGHT,
                 boxSizing: "content-box",
                 borderBottom: "1px solid",
                 borderColor: "transparent",
@@ -377,6 +386,23 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
               }}
             >
               <Iconify icon="solar:chat-round-line-linear" width={15} />
+              {!busy && unseen > 0 && (
+                <Box
+                  aria-label={`${unseen} new from the builder`}
+                  role="status"
+                  sx={{
+                    position: "absolute",
+                    top: 3,
+                    right: 3,
+                    width: 7,
+                    height: 7,
+                    borderRadius: 999,
+                    bgcolor: "success.main",
+                    border: "1.5px solid",
+                    borderColor: "background.paper",
+                  }}
+                />
+              )}
               {busy && collapsed && (
                 <Box
                   data-testid="chat-split-busy"
@@ -465,4 +491,6 @@ ChatSplitPane.propTypes = {
   // Shows a dot on the collapsed rail while the builder is working, waiting
   // on an answer from the user, or a nudge waits for one.
   busy: PropTypes.bool,
+  // How many builder replies the chat holds; the folded rail badges new ones.
+  replies: PropTypes.number,
 };

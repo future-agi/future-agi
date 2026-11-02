@@ -1,11 +1,12 @@
 import PropTypes from "prop-types";
 import { useEffect, useReducer, useRef } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
+import { Box, Button, Stack, Typography, TextField, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
-import { ENV_TAB_RAIL_HEIGHT } from "../../environmentOptions";
+// The chat header's height (Vel's: taller than the tab rail, not lined up with it).
+const CHAT_HEADER_HEIGHT = 40;
 import { BUILD_TONES } from "../buildTones";
 import { CONSOLE_COPY } from "../build.constants";
 import { Turn, Working } from "./ConsoleTurn";
@@ -61,6 +62,8 @@ export default function BuilderConsole({
   working = canStop,
   stopping = false,
   preComposer,
+  chips = [],
+  emptyText,
   frozen = false,
   frozenReason,
   onCollapse,
@@ -113,22 +116,21 @@ export default function BuilderConsole({
 
   return (
     <Stack sx={{ height: "100%", minWidth: 0 }}>
-      {/* Same height as the workspace tab rail, so the two headers line up. */}
+      {/* Vel's chat header: 40px, a neutral icon tile, the prompt line. */}
       <Stack
         direction="row" alignItems="center" spacing={1.25}
         sx={{
-          flexShrink: 0, pl: 2, pr: 1, height: ENV_TAB_RAIL_HEIGHT, boxSizing: "content-box",
+          flexShrink: 0, pl: 2, pr: 1, height: CHAT_HEADER_HEIGHT, boxSizing: "content-box",
           borderBottom: "1px solid", borderColor: "divider",
         }}
       >
         <Box
           sx={{
-            width: 24, height: 24, borderRadius: 1, display: "grid", placeItems: "center", flexShrink: 0,
-            bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.16 : 0.1),
-            color: BUILD_TONES.accent,
+            width: 28, height: 28, borderRadius: 1, display: "grid", placeItems: "center", flexShrink: 0,
+            border: "1px solid", borderColor: "divider", color: "text.secondary",
           }}
         >
-          <Iconify icon="solar:chat-round-line-linear" width={13} />
+          <Iconify icon="solar:chat-round-line-linear" width={15} />
         </Box>
         <Box flex={1} minWidth={0}>
           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.2 }}>
@@ -176,7 +178,7 @@ export default function BuilderConsole({
                 <Iconify icon="solar:chat-round-line-linear" width={17} />
               </Box>
               <Typography sx={{ typography: "s2", color: "text.subtitle", textAlign: "center", maxWidth: 320 }}>
-                {CONSOLE_COPY.empty}
+                {emptyText || CONSOLE_COPY.empty}
               </Typography>
             </Stack>
           ) : (
@@ -190,6 +192,36 @@ export default function BuilderConsole({
 
       {/* Slot for anything a caller wants to pin above the composer (the intake
           questionnaire or the selection-context chip drops in here). */}
+      {/* Suggested prompts for the tab in view (Vel's chips); one click sends it. */}
+      {chips.length > 0 && !blocked && (
+        <Stack spacing={0.75} alignItems="flex-start" sx={{ px: 2.5, pb: 1 }}>
+          {chips.map((chip) => (
+            <Button
+              key={chip}
+              size="small"
+              variant="outlined"
+              onClick={() => onSend?.(chip)}
+              sx={{
+                maxWidth: "100%",
+                justifyContent: "flex-start",
+                typography: "s3",
+                fontWeight: 500,
+                color: "text.secondary",
+                borderColor: "divider",
+                py: 0.375,
+                px: 1,
+                minWidth: 0,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                display: "block",
+              }}
+            >
+              {chip}
+            </Button>
+          ))}
+        </Stack>
+      )}
       {preComposer && <Box sx={{ px: 2.5, pb: 1 }}>{preComposer}</Box>}
 
       <Box sx={{ px: 2.5, pb: 2.5, pt: 1 }}>
@@ -321,6 +353,10 @@ BuilderConsole.propTypes = {
   // A Stop is on its way.
   stopping: PropTypes.bool,
   preComposer: PropTypes.node,
+  // Suggested prompts shown above the composer; clicking one sends it.
+  chips: PropTypes.arrayOf(PropTypes.string),
+  // What the empty chat says; defaults to the build screen's intake line.
+  emptyText: PropTypes.string,
   frozen: PropTypes.bool,
   frozenReason: PropTypes.string,
   onCollapse: PropTypes.func,

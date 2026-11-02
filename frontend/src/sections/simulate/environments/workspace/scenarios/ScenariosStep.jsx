@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import { Alert, Box, Typography, Button } from "@mui/material";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Box, Stack, Typography, Button, IconButton } from "@mui/material";
 import { useSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
+import SoonChip from "../../components/SoonChip";
 import CustomTooltip from "src/components/tooltip";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
@@ -18,11 +19,13 @@ import AddScenariosDrawer from "./AddScenariosDrawer";
 import ScenarioEditor from "./ScenarioEditor";
 import ScenarioDrawer from "./ScenarioDrawer";
 import PropTypes from "prop-types";
+import useRunRepeats from "../run/useRunRepeats";
 import {
   publishScenarioSelection,
   clearScenarioSelection,
+  subscribeScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
-import { SCENARIOS_COPY } from "./scenarios.constants";
+import { SCENARIOS_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
 import { DRAFTS_COPY } from "../workspace.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
@@ -32,28 +35,33 @@ import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHook
 import { useDebounce } from "src/hooks/use-debounce";
 import useSelection from "./useSelection";
 import PagedScenarioViews from "./PagedScenarioViews";
+import { injectComposerScaffold } from "src/sections/simulate/environments/buildEnvironment/console/composerScaffoldBus";
+import { UI_ONLY_SAVED } from "../gaps/NeedsInputButton";
+import GroupByMenu, { SUB_GOALS_MODE, groupOptionsOf } from "./GroupByMenu";
+import NeedsReviewMenu from "./NeedsReviewMenu";
+import QualityReviewDrawer from "./QualityReviewDrawer";
+import HistoryDrawer from "./HistoryDrawer";
+import SubGoalsMode from "./SubGoalsMode";
 
 // A seeded-from-template env is read-only until forked; every mutating control
 // carries this on its tooltip while locked.
 const LOCK_TOOLTIP = "Fork this environment to edit.";
 
 // The add CTA. Rendered in two places (the toolbar when the list is populated, and
-// the empty placeholder), so it lives here as one node. Disabled with a
-// coming-soon tooltip for now — the drawer it opens is built and wired, just
-// not surfaced yet. On a locked template the same disabled button reads the
-// fork tooltip instead. Wrapped in a span so the tooltip still fires over the
-// disabled button.
+// the empty placeholder), so it lives here as one node. On a locked template it
+// is disabled behind the fork tooltip, wrapped in a span so the tooltip still
+// fires over the disabled button.
 // `short` is the toolbar form: the list it sits on says what gets added, so the
 // visible label drops the noun and the accessible name keeps it.
 function AddButton({ onClick, contained = false, locked = false, short = false }) {
   return (
-    <CustomTooltip show arrow size="small" title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.addComingSoon}>
+    <CustomTooltip show={locked} arrow size="small" title={LOCK_TOOLTIP}>
       <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
         <Button
           variant={contained ? "contained" : "outlined"}
           color="primary"
           size="small"
-          disabled
+          disabled={locked}
           onClick={onClick}
           aria-label={SCENARIOS_COPY.addLabel}
           startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
@@ -92,18 +100,20 @@ RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 // filter, display, coverage, add) over the list, per-row editing behind the
 // pencil. Two views of the same rows share the toolbar so filters survive a
 // view switch, and coverage reads the same search and filters as the list.
-export default function ScenariosStep({ env, envState, patch, locked = false, onStartRun, canRun = false, runBlockedReason }) {
+export default function ScenariosStep({ env, envState, patch, locked = false, onStartRun, canRun = false, runBlockedReason, noRuns = false }) {
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
-  // re-run. Lives here (the selection bar is presentational) and rides the run
-  // URL as ?trials=k. Default single-shot.
-  const [trials, setTrials] = useState(1);
+  // re-run. Shared with the header's Run and the Runs tab's baseline.
+  const [trials, setTrials] = useRunRepeats(envState, patch);
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({});
   const [adding, setAdding] = useState(false);
+  const [mode, setMode] = useState(null);
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   // The row opened in full from the table (the scenario drawer).
   const [openRow, setOpenRow] = useState(null);
@@ -155,6 +165,12 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   });
   // The grouping the server actually applied (its default until the user picks).
   const activeGroupBy = groupBy ?? pageData.groupBy;
+  // The server answers with the grouping it applied; when that isn't the one
+  // asked for, say so instead of silently showing another.
+  const groupOptions = groupOptionsOf(pageData.groupings);
+  const labelOfGroup = (v) => groupOptions.find((g) => g.value === v)?.label || "None";
+  const groupFellBack =
+    groupBy !== undefined && !pageData.loading && pageData.groupBy !== undefined && pageData.groupBy !== groupBy;
   const sel = useSelection(pageData.total);
   // The unfiltered suite size. The heading, the empty-state gate and the
   // toolbar's "N of M" want the whole suite — the filtered list `total` shrinks
@@ -308,6 +324,18 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // Clear the bus on unmount so navigating off the tab doesn't leave a stale
   // "N selected" chip hanging in the chat.
   useEffect(() => () => clearScenarioSelection(), []);
+  // The chat's selection chip clears through the bus; follow it here.
+  const selCount = useRef(sel.count);
+  selCount.current = sel.count;
+  const clearSel = useRef(sel.clear);
+  clearSel.current = sel.clear;
+  useEffect(
+    () =>
+      subscribeScenarioSelection((next) => {
+        if (next.count === 0 && selCount.current > 0) clearSel.current?.();
+      }),
+    [],
+  );
 
   // Escape clears the selection, unless it is closing something on top
   // (drawer, editor, confirm) or the user is typing in a field.
@@ -367,14 +395,6 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         onError: () => enqueueSnackbar("Couldn't delete. Try again", { variant: "error" }),
       },
     );
-  };
-
-  // Adds dedupe against what is already on the environment, so re-adding a row
-  // the drawer still had selected is a no-op rather than a duplicate.
-  const addScenarios = (rows) => {
-    const existing = new Set(selected.map((s) => s.id));
-    const fresh = (rows || []).filter((r) => !existing.has(r.id));
-    if (fresh.length) patch({ scenarios: [...selected, ...fresh] });
   };
 
   // Edits route through the amend route as set_field / set_persona ops (the
@@ -442,9 +462,24 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                   filters={filters}
                   onApplyFilters={applyFilters}
                   filterCount={filterCount}
+                  leading={(
+                    <GroupByMenu
+                      groupings={pageData.groupings}
+                      value={activeGroupBy}
+                      onChange={setGroupBy}
+                      mode={mode}
+                      onModeChange={setMode}
+                    />
+                  )}
                   actions={(
                     <>
-                      <CoverageMatrix jobId={env?.id} search={debouncedQuery} filters={filters} />
+                      <CustomTooltip show arrow size="small" title="History">
+                        <IconButton aria-label="History" onClick={() => setHistoryOpen(true)} sx={{ ...scenarioToolbarButtonSx, minWidth: 32, px: 0.75 }}>
+                          <Iconify icon="solar:history-linear" width={16} />
+                        </IconButton>
+                      </CustomTooltip>
+                      <CoverageMatrix jobId={env?.id} search={debouncedQuery} filters={filters} rules={env?.rules || []} />
+                      <NeedsReviewMenu onOpenQualityReview={() => setQualityOpen(true)} />
                       <AddButton onClick={() => setAdding(true)} contained locked={locked} short />
                     </>
                   )}
@@ -465,6 +500,8 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                       count={sel.count}
                       onDelete={bulkDelete}
                       onClear={sel.clear}
+                      onEditInChat={() => injectComposerScaffold(`Edit ${sel.count} scenario${sel.count === 1 ? "" : "s"}`)}
+                      onMustPass={() => enqueueSnackbar(UI_ONLY_SAVED, { variant: "info" })}
                       onRun={canRun && onStartRun ? handleRunSelected : undefined}
                       runBlockedReason={onStartRun && !canRun ? runBlockedReason : undefined}
                       trials={trials}
@@ -481,6 +518,50 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               )}
             </Box>
 
+            {noRuns && (
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={1.5}
+                sx={{ mb: 1.5, px: 2, py: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1, flexShrink: 0 }}
+              >
+                <Iconify icon="solar:flag-linear" width={18} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+                <Box flex={1} minWidth={0}>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>No baseline yet</Typography>
+                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                    Run every scenario once. Improvements are measured against that run.
+                  </Typography>
+                </Box>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={!canRun || !onStartRun}
+                  onClick={() => onStartRun?.(undefined, trials)}
+                  sx={{ flexShrink: 0, color: "text.primary", borderColor: "divider" }}
+                >
+                  Run baseline
+                </Button>
+              </Stack>
+            )}
+            {/* Vel's protection line: how much of the set an improvement may
+                not break. Must-pass and regression memory aren't in the API. */}
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 0.25, mb: 1.25, flexShrink: 0 }}>
+              <Iconify icon="solar:shield-check-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                What improvements can&apos;t break
+              </Typography>
+              <SoonChip
+                label="Protection"
+                detail="How many scenarios an improvement may not break: the ones marked must-pass, remembered as past regressions, or passing every repeat in the latest run."
+                what="Must-pass and regression protection"
+                size="tiny"
+              />
+            </Stack>
+            {groupFellBack && (
+              <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1, flexShrink: 0 }}>
+                {`Grouping by ${labelOfGroup(groupBy)} isn't available yet. Showing ${labelOfGroup(pageData.groupBy)}.`}
+              </Typography>
+            )}
             {/* The table's own bordered box, its edges on the toolbar's. */}
             <Box
               sx={{
@@ -488,7 +569,11 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                 border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden",
               }}
             >
+              {mode === SUB_GOALS_MODE ? (
+                <SubGoalsMode subGoals={env?.subGoals} rows={selected} />
+              ) : (
               <PagedScenarioViews
+                suiteTotal={suiteTotal}
                 pageData={pageData}
                 selection={sel}
                 env={env}
@@ -513,25 +598,24 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                   onClear: clearFilters,
                 } : undefined}
               />
+              )}
             </Box>
           </Box>
         </>
       )}
 
-      <AddScenariosDrawer
-        open={adding}
-        onClose={() => setAdding(false)}
-        env={env}
-        selected={selected}
-        onAdd={addScenarios}
-      />
+      <AddScenariosDrawer open={adding} onClose={() => setAdding(false)} env={env} envState={envState} />
+      <QualityReviewDrawer open={qualityOpen} onClose={() => setQualityOpen(false)} />
+      <HistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} env={env} envState={envState} />
       <ScenarioDrawer
         row={openRow}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => { setOpenRow(null); setEditing(row); }}
+        onRemove={(id) => { setOpenRow(null); removeScenario(id); }}
         locked={locked}
       />
       <ScenarioEditor
+        env={env}
         open={!!editing}
         onClose={() => setEditing(null)}
         row={editing}
@@ -572,4 +656,6 @@ ScenariosStep.propTypes = {
   canRun: PropTypes.bool,
   // Why it can't run yet; Run shows disabled with this instead of hiding.
   runBlockedReason: PropTypes.string,
+  // No run yet: the No baseline yet banner leads the list.
+  noRuns: PropTypes.bool,
 };

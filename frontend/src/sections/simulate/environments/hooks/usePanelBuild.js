@@ -12,10 +12,11 @@ import { clampParallelism } from "../parallelism.constants";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 
 /**
- * The inline build machine shared by every source panel. A panel calls:
+ * The inline build machine shared by every Build environment drawer form. A
+ * form calls:
  *   - `runPreflight(source)` when the user clicks "Run preflight" — POSTs hosted
  *     preflight with the source's credential values (write-only); the
- *     credential report feeds <RuntimePreflight>.
+ *     credential report feeds the form's preflight result.
  *   - `resetPreflight()` on any form edit — a green result for one source must
  *     never build a different one.
  *   - `commitBuild()` on "Build environment" (only enabled once `readyToSubmit`)

@@ -10,6 +10,7 @@ import CustomTooltip from "src/components/tooltip";
 import SideDrawer from "../../components/SideDrawer";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { useScenarioCoverage } from "src/api/simulate-environments/scenariosHooks";
+import SoonChip from "../../components/SoonChip";
 import { scenarioToolbarButtonSx } from "./scenarios.constants";
 
 const RED = BUILD_TONES.red;
@@ -42,7 +43,7 @@ const humanize = (s) =>
 // height: hover names the three summary numbers (Axes / Pairs / Forced), and a
 // click opens the per-axis table, the forced overlays and the pairwise heatmap
 // in a right-side drawer.
-export default function CoverageMatrix({ jobId, search, filters, defaultOpen = false }) {
+export default function CoverageMatrix({ jobId, search, filters, rules = [], defaultOpen = false }) {
   // Left undefined until the user picks, so the server default (task × overlay)
   // drives the initial grid.
   const [rowAxis, setRowAxis] = useState(undefined);
@@ -405,6 +406,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
                 </Box>
               </Box>
             </Box>
+            <GuardrailCoverage rules={rules} />
           </Stack>
         )}
       </SideDrawer>
@@ -412,7 +414,37 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
   );
 }
 
+// Vel's Guardrail coverage: every declared rule and whether a scenario tests
+// it. The rules are real; which scenarios test each isn't in the API yet.
+function GuardrailCoverage({ rules }) {
+  return (
+    <Box sx={{ px: 2.5, py: 1.5, borderTop: "1px solid", borderColor: "divider" }}>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>Guardrail coverage</Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Every declared rule and whether any scenario tests it</Typography>
+        <Box flex={1} />
+        <SoonChip label="Coverage" what="Which scenarios test each rule" size="tiny" />
+      </Stack>
+      {rules.length === 0 ? (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>No rules read from this agent.</Typography>
+      ) : (
+        <Stack spacing={0.5}>
+          {rules.map((r, i) => (
+            <Stack key={`${i}:${r}`} direction="row" spacing={1.25} alignItems="baseline">
+              <Typography sx={{ typography: "s3", fontWeight: 600, color: "text.subtitle", width: 28, flexShrink: 0 }}>{`R${i + 1}`}</Typography>
+              <Typography sx={{ typography: "s3" }}>{r}</Typography>
+            </Stack>
+          ))}
+        </Stack>
+      )}
+    </Box>
+  );
+}
+GuardrailCoverage.propTypes = { rules: PropTypes.arrayOf(PropTypes.string) };
+
 CoverageMatrix.propTypes = {
+  // The contract's rules, for the Guardrail coverage section.
+  rules: PropTypes.arrayOf(PropTypes.string),
   // The harness job id — coverage reads the filtered suite for this job.
   jobId: PropTypes.string,
   // The same search + object-style filters the list sends; the grid changes with

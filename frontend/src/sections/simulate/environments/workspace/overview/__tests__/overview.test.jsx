@@ -31,19 +31,13 @@ const renderPanel = (props = {}) =>
   );
 
 describe("OverviewPanel", () => {
-  it("shows the description and the two facts (Channel, Connector)", () => {
+  it("shows the description and Vel's four facts", () => {
     renderPanel();
-
     expect(screen.getByText(MOCK_WORLD.description)).toBeInTheDocument();
-    expect(screen.getByText("Channel")).toBeInTheDocument();
-    expect(screen.getByText("Connector")).toBeInTheDocument();
-    // The invented Transports + Scenario-packs facts are gone, and so is
-    // Domain: it read a fixture lookup table, not anything the backend sends.
-    expect(screen.queryByText("Transports")).toBeNull();
-    expect(screen.queryByText("Scenario packs")).toBeNull();
-    expect(screen.queryByText("Domain")).toBeNull();
-    expect(screen.queryByText("E-commerce")).toBeNull();
-    // fact values: channel from the surface, connector from agent.typeId.
+    for (const label of ["Channel", "Domain", "Transports", "Scenario packs"])
+      expect(screen.getByText(label)).toBeInTheDocument();
+    // Connector moved to Settings → Build details; it reads as a transport here.
+    expect(screen.queryByText("Connector")).toBeNull();
     expect(screen.getByText("Voice")).toBeInTheDocument();
     expect(screen.getByText("LiveKit")).toBeInTheDocument();
   });
@@ -87,7 +81,8 @@ describe("OverviewPanel", () => {
     // read-out went with SourceToSandboxMap, whose origins and sandbox targets
     // were derived by position and keyword rather than reported by ALK.
     expect(screen.getByText(/No amendments/)).toBeInTheDocument();
-    expect(screen.queryByText(/No stores seeded/)).toBeNull();
+    // The map lists the real stores; none came back, so it says so.
+    expect(screen.getByText(/No stores seeded/)).toBeInTheDocument();
     // "What it depends on" populates from real contract.dependencies.
     expect(screen.getByText("postgres")).toBeInTheDocument();
     expect(screen.getByText("Stores rider rows")).toBeInTheDocument();
@@ -97,7 +92,7 @@ describe("OverviewPanel", () => {
 
   const BACKED_WORLD = { stores: [], amendments: [], dependencies: [] };
 
-  it("adds the real domain, direction, source and mode to the facts of a backed voice env", () => {
+  it("states the real domain and the transport with its direction for a backed voice env", () => {
     renderPanel({
       env: {
         ...MOCK_WORLD,
@@ -110,12 +105,13 @@ describe("OverviewPanel", () => {
       backedWorld: BACKED_WORLD,
     });
     expect(screen.getByText("Logistics")).toBeInTheDocument();
-    expect(screen.getByText("Inbound")).toBeInTheDocument();
-    expect(screen.getByText("acme/ride-agent@main")).toBeInTheDocument();
-    expect(screen.getByText("Connect only")).toBeInTheDocument();
+    expect(screen.getByText("LiveKit · Inbound")).toBeInTheDocument();
+    // Source and mode moved to Settings → Build details.
+    expect(screen.queryByText("acme/ride-agent@main")).toBeNull();
+    expect(screen.queryByText("Connect only")).toBeNull();
   });
 
-  it("leaves out direction for a chat env and empty facts entirely", () => {
+  it("leaves the direction out of a chat env's transport and dashes a missing domain", () => {
     renderPanel({
       env: {
         ...MOCK_WORLD,
@@ -127,10 +123,9 @@ describe("OverviewPanel", () => {
       },
       backedWorld: BACKED_WORLD,
     });
-    expect(screen.queryByText("Direction")).toBeNull();
-    expect(screen.queryByText("Domain")).toBeNull();
-    expect(screen.queryByText("Mode")).toBeNull();
-    expect(screen.getByText("Hosted platform")).toBeInTheDocument();
+    expect(screen.getByText("LiveKit")).toBeInTheDocument();
+    expect(screen.queryByText(/Inbound/)).toBeNull();
+    expect(screen.getAllByText("-").length).toBeGreaterThan(0);
   });
 
   it("shows the seeded tables under The world for a backed env", () => {
@@ -196,10 +191,12 @@ describe("OverviewPanel", () => {
       },
       backedWorld: BACKED_WORLD,
     });
-    expect(screen.getByText("LiveKit · 1 version")).toBeInTheDocument();
+    expect(
+      screen.getByText((_, el) => el?.tagName === "P" && /^Tests Ride bot v1 · LiveKit/.test(el.textContent)),
+    ).toBeInTheDocument();
   });
 
-  it("names the agent's provider and versions, with a link to the agent", () => {
+  it("names the agent's provider, with a link to the agent", () => {
     renderPanel({
       env: {
         ...MOCK_WORLD,
@@ -213,13 +210,14 @@ describe("OverviewPanel", () => {
       },
       backedWorld: BACKED_WORLD,
     });
-    expect(screen.getByText("Single Prompt Agent v2")).toBeInTheDocument();
-    expect(screen.getByText("Retell · 2 versions")).toBeInTheDocument();
+    expect(
+      screen.getByText((_, el) => el?.tagName === "P" && /^Tests Single Prompt Agent v2 · Retell/.test(el.textContent)),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /View agent/ })).toHaveAttribute(
       "href",
-      // The Connected agent page, which every org can open; the old Agent
-      // Definition page is hidden from orgs restricted to Environments.
-      "/dashboard/agents/connected/agent-1",
+      // The Connected agent page, which every org can open, on its
+      // environments tab with this environment, as in Vel's prototype.
+      expect.stringMatching(/^\/dashboard\/agents\/connected\/agent-1\?tab=environments&env=/),
     );
   });
 

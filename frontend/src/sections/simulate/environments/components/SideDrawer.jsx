@@ -18,7 +18,7 @@ import Iconify from "src/components/iconify";
  * `background.paper`, keeping the theme's side borders and the reference
  * drawer's shadow.
  */
-export default function SideDrawer({ open, onClose, width = 480, keepMounted = false, children }) {
+export default function SideDrawer({ open, onClose, width = 480, keepMounted = false, hideClose = false, children }) {
   return (
     <Drawer
       anchor="right"
@@ -45,6 +45,7 @@ export default function SideDrawer({ open, onClose, width = 480, keepMounted = f
       {/* The single close affordance for every drawer built on this shell — the
           plain line X. Drawer contents must NOT add their own close button, or
           the two stack up in the same corner. */}
+      {!hideClose && (
       <IconButton
         aria-label="Close"
         onClick={onClose}
@@ -53,6 +54,7 @@ export default function SideDrawer({ open, onClose, width = 480, keepMounted = f
       >
         <Iconify icon="mingcute:close-line" width={18} />
       </IconButton>
+      )}
       {children}
     </Drawer>
   );
@@ -63,5 +65,7 @@ SideDrawer.propTypes = {
   onClose: PropTypes.func,
   width: PropTypes.oneOfType([PropTypes.number, PropTypes.string, PropTypes.object]),
   keepMounted: PropTypes.bool,
+  // For a drawer whose header places its own close button.
+  hideClose: PropTypes.bool,
   children: PropTypes.node,
 };

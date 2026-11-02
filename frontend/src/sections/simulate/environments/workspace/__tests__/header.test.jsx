@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { SnackbarProvider } from "notistack";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import WorkspaceHeader from "../WorkspaceHeader";
@@ -440,7 +441,9 @@ describe("SystemBanners", () => {
         env={{ ...ENV, buildStatus: "building", buildProgress: { done: 5, total: 7 } }}
       />
     );
-    expect(screen.getByText("Environment is still being built")).toBeInTheDocument();
+    expect(
+      screen.getByText("Environment is still being built"),
+    ).toBeInTheDocument();
     expect(screen.getByText(/5 of 7 steps done/)).toBeInTheDocument();
   });
 
@@ -463,6 +466,42 @@ describe("WorkspaceHeader", () => {
     onFork: vi.fn(),
   };
 
+  it("shows the tagline in the name's tooltip, not as a second line", async () => {
+    const user = userEvent.setup();
+    render(withRouter(<WorkspaceHeader {...baseProps} />));
+    expect(screen.queryByText("Handles refund conversations")).toBeNull();
+    await user.hover(screen.getByText("Refund Copilot"));
+    expect(
+      await screen.findByText("Handles refund conversations"),
+    ).toBeInTheDocument();
+  });
+
+  it("reads Runs: Live for an agent connected where it runs (connect_only)", async () => {
+    const user = userEvent.setup();
+    render(
+      withRouter(
+        <WorkspaceHeader
+          {...baseProps}
+          env={{ ...ENV, agentMode: "connect_only" }}
+        />,
+      ),
+    );
+    const chip = screen.getByText("Live");
+    expect(screen.getByText("Runs:")).toBeInTheDocument();
+    await user.hover(chip);
+    const tip = await screen.findByText(/its tools reach your real systems/);
+    expect(tip.textContent).not.toMatch(/\u2014/);
+  });
+
+  it("shows no run mode chip for an agent built from code", () => {
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} env={{ ...ENV, agentMode: null }} />,
+      ),
+    );
+    expect(screen.queryByText("Runs:")).toBeNull();
+  });
+
   it("hides the overflow menu when locked", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} locked />));
     expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
@@ -474,10 +513,17 @@ describe("WorkspaceHeader", () => {
 
     render(
       withRouter(
-        <WorkspaceHeader {...baseProps} env={{ ...ENV, buildStatus: "building" }} canRun={false} locked />,
+        <WorkspaceHeader
+          {...baseProps}
+          env={{ ...ENV, buildStatus: "building" }}
+          canRun={false}
+          locked
+        />,
       ),
     );
-    expect(screen.getByRole("button", { name: /Cancel build/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Cancel build/ }),
+    ).toBeInTheDocument();
   });
 
   it("hides Cancel build once a cancel is in flight", () => {
@@ -518,12 +564,16 @@ describe("WorkspaceHeader", () => {
 
   it("hides the rename pencil for a non-backed env (no §8 row to PATCH)", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} />));
-    expect(screen.queryByRole("button", { name: "Rename environment" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Rename environment" }),
+    ).toBeNull();
   });
 
   it("hides the rename pencil when locked", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} backed locked />));
-    expect(screen.queryByRole("button", { name: "Rename environment" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Rename environment" }),
+    ).toBeNull();
   });
 
   it("offers Delete in the overflow for a backend-backed env and opens the confirm", async () => {
@@ -531,7 +581,9 @@ describe("WorkspaceHeader", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} backed />));
 
     await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: /Delete environment/ }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Delete environment/ }),
+    );
     expect(screen.getByText("Delete environment?")).toBeInTheDocument();
   });
 
@@ -546,47 +598,75 @@ describe("WorkspaceHeader", () => {
   it.skip("forks from the overflow menu when unlocked", async () => {
     const user = userEvent.setup();
     const onFork = vi.fn();
-    render(withRouter(<WorkspaceHeader {...baseProps} onFork={onFork} locked={false} />));
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} onFork={onFork} locked={false} />,
+      ),
+    );
 
     await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: /Fork environment/ }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Fork environment/ }),
+    );
     expect(onFork).toHaveBeenCalledTimes(1);
   });
 
   it("starts a run-all (no ids) directly on Run, with no config dialog", async () => {
     const user = userEvent.setup();
     const onStartRun = vi.fn();
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />));
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />,
+      ),
+    );
 
     await user.click(screen.getByRole("button", { name: "Run simulation" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(onStartRun).toHaveBeenCalledWith(undefined, 1);
+    // Three repeats by default: the fewest where a scenario can be flaky.
+    expect(onStartRun).toHaveBeenCalledWith(undefined, 3);
   });
 
-  it("runs with the repeats picked in the header dropdown", async () => {
+  it("keeps the repeats picked in the header dropdown in the environment's state", async () => {
+    const user = userEvent.setup();
+    const patch = vi.fn();
+    render(withRouter(<WorkspaceHeader {...baseProps} patch={patch} canRun />));
+
+    await user.click(screen.getByRole("button", { name: "Repeats: 3" }));
+    await user.click(screen.getByText("5×"));
+    expect(patch).toHaveBeenCalledWith({ runRepeats: 5 });
+  });
+
+  it("runs with the environment's repeats", async () => {
     const user = userEvent.setup();
     const onStartRun = vi.fn();
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />));
-
-    await user.click(screen.getByText(/^Repeats:/));
-    await user.click(screen.getByText("3×"));
+    render(
+      withRouter(
+        <WorkspaceHeader
+          {...baseProps}
+          envState={{ ...baseProps.envState, runRepeats: 5 }}
+          canRun
+          onStartRun={onStartRun}
+        />,
+      ),
+    );
     await user.click(screen.getByRole("button", { name: "Run simulation" }));
-    expect(onStartRun).toHaveBeenCalledWith(undefined, 3);
+    expect(onStartRun).toHaveBeenCalledWith(undefined, 5);
   });
 
   it("counts scenarios from the server count, not the seeded client list", async () => {
     const user = userEvent.setup();
     render(withRouter(<WorkspaceHeader {...baseProps} canRun scenarioCount={7} />));
 
-    await user.click(screen.getByText(/^Repeats:/));
-    expect(screen.getByText(/7 scenarios × 1 repeat = 7 runs/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Repeats: 3" }));
+    expect(screen.getAllByText(/7 scenarios × 3 repeats/).length).toBeGreaterThan(0);
   });
 
   it("hides the header Run + Repeats while a scenario selection is active", () => {
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun selectionActive />));
+    render(
+      withRouter(<WorkspaceHeader {...baseProps} canRun selectionActive />),
+    );
     expect(screen.queryByRole("button", { name: "Run simulation" })).toBeNull();
-    // The Repeats button's accessible name is its tooltip, so match its text.
-    expect(screen.queryByText(/^Repeats:/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Repeats:/ })).toBeNull();
   });
 
   it("disables Run simulation with a reason tooltip when the env cannot run", async () => {
@@ -594,8 +674,12 @@ describe("WorkspaceHeader", () => {
     const reason = "Add scenarios on the Scenarios tab";
     render(
       withRouter(
-        <WorkspaceHeader {...baseProps} canRun={false} runBlockedReason={reason} />
-      )
+        <WorkspaceHeader
+          {...baseProps}
+          canRun={false}
+          runBlockedReason={reason}
+        />,
+      ),
     );
 
     const btn = screen.getByRole("button", { name: "Run simulation" });
@@ -605,15 +689,22 @@ describe("WorkspaceHeader", () => {
   });
 });
 
+const inRouter = (ui) => (
+  <SnackbarProvider>
+    <MemoryRouter>{ui}</MemoryRouter>
+  </SnackbarProvider>
+);
+
 describe("VersionBar", () => {
   afterEach(() => {
     versionsResponse.current = undefined;
   });
 
-  it("states only the scenario count while versioning is off", () => {
+  it("states only the agent and scenario count while versioning is off", () => {
     render(<VersionBar env={ENV} envState={{ scenarios: [1, 2, 3, 4] }} />);
-    expect(screen.getByText("4 scenarios, shared across agent versions")).toBeInTheDocument();
-    expect(screen.queryByText("Default")).toBeNull();
+    expect(screen.getByText(/· 4 scenarios/)).toBeInTheDocument();
+    expect(screen.queryByText(/Default agent/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
   });
 
   it("follows agent checks while mounted, the drawer open or not", () => {
@@ -631,14 +722,14 @@ describe("VersionBar", () => {
     expect(screen.getByText("v4")).toBeInTheDocument();
     expect(screen.getByText("v3")).toBeInTheDocument();
     // The count is the default suite's, not the client store's.
-    expect(screen.getByText("12 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.getByText(/· 12 scenarios/)).toBeInTheDocument();
   });
 
   it("says before versioning when the environment has no versions yet", () => {
     versionsResponse.current = { agent: [], environment: [], suite: [] };
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
     expect(screen.getAllByText("before versioning")).toHaveLength(1);
-    expect(screen.getByText("1 scenario, shared across agent versions")).toBeInTheDocument();
+    expect(screen.getByText(/· 1 scenario$/)).toBeInTheDocument();
   });
 
   it("says none, not before versioning, when there is no default agent", () => {
@@ -646,7 +737,7 @@ describe("VersionBar", () => {
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
     expect(screen.getByText("none")).toBeInTheDocument();
     expect(screen.queryByText("before versioning")).toBeNull();
-    expect(screen.getByText("Default")).toBeInTheDocument();
+    expect(screen.getByText(/Default agent/)).toBeInTheDocument();
   });
 
   it("names an unnumbered default instead of printing null", () => {
@@ -662,8 +753,8 @@ describe("VersionBar", () => {
   it("drops the pairing when the server has switched versioning off", () => {
     versionsResponse.current = "disabled";
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
-    expect(screen.queryByText("Default")).toBeNull();
-    expect(screen.getByText("2 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.queryByText(/Default agent/)).toBeNull();
+    expect(screen.getByText(/· 2 scenarios/)).toBeInTheDocument();
   });
 
   it("calls the agent the environment's default, not the one runs test", async () => {
@@ -699,7 +790,7 @@ describe("VersionBar", () => {
   it("keeps the pairing when a refresh fails after an answer", () => {
     versionsResponse.current = { refreshFailed: VERSIONS };
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
-    expect(screen.getByText("Default")).toBeInTheDocument();
+    expect(screen.getByText(/Default agent/)).toBeInTheDocument();
     expect(screen.getByText("v4")).toBeInTheDocument();
   });
 
@@ -707,8 +798,23 @@ describe("VersionBar", () => {
     versionsResponse.current = answer;
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
     expect(screen.queryByText("before versioning")).toBeNull();
-    expect(screen.queryByText("Default")).toBeNull();
-    expect(screen.getByText("2 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.queryByText(/Default agent/)).toBeNull();
+    expect(screen.getByText(/· 2 scenarios/)).toBeInTheDocument();
+  });
+
+  it("opens the Versions tab from History while versioning is on", async () => {
+    const user = userEvent.setup();
+    const onOpenVersions = vi.fn();
+    versionsResponse.current = VERSIONS;
+    render(
+      <VersionBar
+        env={VERSIONED_ENV}
+        envState={{ scenarios: [1, 2] }}
+        onOpenVersions={onOpenVersions}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "History" }));
+    expect(onOpenVersions).toHaveBeenCalledTimes(1);
   });
 
   const SUBJECT = {
@@ -719,44 +825,57 @@ describe("VersionBar", () => {
     active_version: "v1",
   };
 
-  it("names the agent under test and its active version from the API", () => {
+  it("names the agent's active version from the API", () => {
     render(
-      <VersionBar
-        env={{ ...ENV, testSubject: SUBJECT, counts: { scenarios: 3 } }}
-        envState={{ scenarios: [1] }}
-      />,
+      inRouter(
+        <VersionBar
+          env={{ ...ENV, testSubject: SUBJECT, counts: { scenarios: 3 } }}
+          envState={{ scenarios: [1] }}
+        />,
+      ),
     );
-    expect(screen.getByText("Single Prompt Agent")).toBeInTheDocument();
     expect(screen.getByText("v1")).toBeInTheDocument();
     expect(screen.queryByText(/^env$/)).toBeNull();
   });
 
-  it("calls an agent with no name on record \"Agent\", as the Overview card does", () => {
+  it("falls back to the agent's name when it has no version on record", () => {
     render(
-      <VersionBar
-        env={{ ...ENV, testSubject: { ...SUBJECT, name: null }, counts: { scenarios: 3 } }}
-        envState={{ scenarios: [1] }}
-      />,
+      inRouter(
+        <VersionBar
+          env={{
+            ...ENV,
+            testSubject: { ...SUBJECT, active_version: null },
+            counts: { scenarios: 3 },
+          }}
+          envState={{ scenarios: [1] }}
+        />,
+      ),
     );
-    expect(screen.getByText("Agent")).toBeInTheDocument();
-    expect(screen.getByText("v1")).toBeInTheDocument();
+    expect(screen.getByText("Single Prompt Agent")).toBeInTheDocument();
   });
 
   it("counts every scenario the environment has, not just the loaded page", () => {
     render(
-      <VersionBar
-        env={{ ...ENV, testSubject: SUBJECT, counts: { scenarios: 42 } }}
-        envState={{ scenarios: [1, 2, 3, 4] }}
-      />,
+      inRouter(
+        <VersionBar
+          env={{ ...ENV, testSubject: SUBJECT, counts: { scenarios: 42 } }}
+          envState={{ scenarios: [1, 2, 3, 4] }}
+        />,
+      ),
     );
-    expect(screen.getByText("42 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.getByText(/· 42 scenarios/)).toBeInTheDocument();
   });
 
   it("leaves the agent out when no agent is connected yet", () => {
     render(
-      <VersionBar env={{ ...ENV, testSubject: null, counts: { scenarios: 0 } }} envState={{}} />,
+      inRouter(
+        <VersionBar
+          env={{ ...ENV, testSubject: null, counts: { scenarios: 0 } }}
+          envState={{}}
+        />,
+      ),
     );
-    expect(screen.queryByText("Test subject")).toBeNull();
-    expect(screen.getByText("0 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.getByText(/No agent yet/)).toBeInTheDocument();
+    expect(screen.getByText(/· 0 scenarios/)).toBeInTheDocument();
   });
 });
