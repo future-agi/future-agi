@@ -8,6 +8,9 @@ import SectionCard from "../../components/SectionCard";
 import CopyField from "../../components/CopyField";
 import { validateEnvName, MAX_ENV_NAME } from "../renameEnvironment";
 import { envVarGroups } from "./envVarGroups";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace.constants";
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
@@ -40,6 +43,7 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
   // the input follows the detail until then (§6 may resolve after first render).
   const currentName = detail?.overview?.name ?? env?.name ?? "";
   const rename = useRenameEnvironment();
+  const { canEdit } = useSimulationAccess();
   const [nameDraft, setNameDraft] = useState(null);
   const [nameError, setNameError] = useState(null);
   const displayName = nameDraft ?? currentName;
@@ -103,18 +107,25 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
                         inputProps={{ maxLength: MAX_ENV_NAME + 1 }}
                         sx={{ flex: 1, maxWidth: 460, "& .MuiInputBase-root": { typography: "s2" } }}
                       />
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        onClick={saveName}
-                        disabled={!nameChanged || rename.isPending}
-                        sx={{
-                          color: "text.primary", borderColor: "divider",
-                          typography: "s2", fontWeight: 600, mt: { sm: 0.25 },
-                        }}
+                      <ViewerLock
+                        locked={!canEdit}
+                        title={WORKSPACE_COPY.viewer.rename}
                       >
-                        {rename.isPending ? "Renaming…" : "Rename"}
-                      </Button>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={saveName}
+                          disabled={
+                            !canEdit || !nameChanged || rename.isPending
+                          }
+                          sx={{
+                            color: "text.primary", borderColor: "divider",
+                            typography: "s2", fontWeight: 600, mt: { sm: 0.25 },
+                          }}
+                        >
+                          {rename.isPending ? "Renaming…" : "Rename"}
+                        </Button>
+                      </ViewerLock>
                     </Stack>
                     <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.625 }}>
                       Renaming changes the identifier used by runs and SDK clients.

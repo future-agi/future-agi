@@ -27,6 +27,9 @@ import {
 } from "src/api/simulate-environments/runEvals";
 import SideDrawer from "../../../components/SideDrawer";
 import EmptyState from "../../../components/EmptyState";
+import ViewerLock from "../../../components/ViewerLock";
+import useSimulationAccess from "../../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace.constants";
 import { refusalText } from "../../evals/refusalText";
 import {
   EVALS_LOAD_FAILED_TOOLTIP,
@@ -68,6 +71,7 @@ export default function AllEvaluationsDrawer({
   onAddEvaluations,
 }) {
   const queryClient = useQueryClient();
+  const access = useSimulationAccess();
   const [ticked, setTicked] = useState(() => new Set());
 
   // The run page keeps this drawer mounted while it's closed, so ticks would
@@ -174,14 +178,22 @@ export default function AllEvaluationsDrawer({
               }
               label={`Evals (${configs.length})`}
             />
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-              onClick={() => onAddEvaluations?.()}
+            <ViewerLock
+              locked={!access.canEdit}
+              title={WORKSPACE_COPY.viewer.evals}
             >
-              Add Evaluations
-            </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={
+                  <Iconify icon="solar:add-circle-linear" width={16} />
+                }
+                disabled={!access.canEdit}
+                onClick={() => onAddEvaluations?.()}
+              >
+                Add Evaluations
+              </Button>
+            </ViewerLock>
           </Stack>
         </Box>
 
@@ -220,18 +232,22 @@ export default function AllEvaluationsDrawer({
               {configs.map((config) => {
                 const runnable = config.regradable === true;
                 const editable = config.editable === true;
-                const editTooltip = !editable
-                  ? NOT_EDITABLE_TOOLTIP
-                  : grading
-                    ? GRADING_TOOLTIP
+                const editTooltip = !access.canEdit
+                  ? WORKSPACE_COPY.viewer.evals
+                  : !editable
+                    ? NOT_EDITABLE_TOOLTIP
+                    : grading
+                      ? GRADING_TOOLTIP
+                      : !canRun
+                        ? NOT_COMPLETED_TOOLTIP
+                        : "";
+                const runTooltip = !access.canRun
+                  ? WORKSPACE_COPY.viewer.runEvals
+                  : !runnable
+                    ? HARNESS_ONLY_TOOLTIP
                     : !canRun
-                      ? NOT_COMPLETED_TOOLTIP
+                      ? cannotRunTooltip
                       : "";
-                const runTooltip = !runnable
-                  ? HARNESS_ONLY_TOOLTIP
-                  : !canRun
-                    ? cannotRunTooltip
-                    : "";
                 return (
                   <Stack
                     key={config.id}
@@ -268,7 +284,12 @@ export default function AllEvaluationsDrawer({
                       <span>
                         <IconButton
                           aria-label={`Run ${config.name}`}
-                          disabled={!runnable || !canRun || rerunPending}
+                          disabled={
+                            !access.canRun ||
+                            !runnable ||
+                            !canRun ||
+                            rerunPending
+                          }
                           onClick={() => requestRerun([config])}
                         >
                           <Iconify icon="solar:play-circle-linear" width={18} />
@@ -280,6 +301,7 @@ export default function AllEvaluationsDrawer({
                         <IconButton
                           aria-label={`Edit ${config.name}`}
                           disabled={
+                            !access.canEdit ||
                             !editable ||
                             grading ||
                             !canRun ||
@@ -297,11 +319,22 @@ export default function AllEvaluationsDrawer({
                     {/* The grader copes with a removal mid-run (it drops the
                         pending cell), but the column would vanish from a table
                         that is polling for its scores. Removal waits. */}
-                    <Tooltip arrow title={grading ? GRADING_TOOLTIP : ""}>
+                    <Tooltip
+                      arrow
+                      title={
+                        !access.canEdit
+                          ? WORKSPACE_COPY.viewer.evals
+                          : grading
+                            ? GRADING_TOOLTIP
+                            : ""
+                      }
+                    >
                       <span>
                         <IconButton
                           aria-label={`Remove ${config.name}`}
-                          disabled={grading || removeEval.isPending}
+                          disabled={
+                            !access.canEdit || grading || removeEval.isPending
+                          }
                           onClick={() => handleRemove(config)}
                         >
                           <Iconify
@@ -319,13 +352,27 @@ export default function AllEvaluationsDrawer({
         </Box>
 
         <Box sx={{ p: 3, borderTop: "1px solid", borderColor: "divider" }}>
-          <Tooltip arrow title={!canRun ? cannotRunTooltip : ""}>
+          <Tooltip
+            arrow
+            title={
+              !access.canRun
+                ? WORKSPACE_COPY.viewer.runEvals
+                : !canRun
+                  ? cannotRunTooltip
+                  : ""
+            }
+          >
             <span style={{ display: "block" }}>
               <Button
                 fullWidth
                 variant="contained"
                 startIcon={<Iconify icon="solar:play-bold" width={16} />}
-                disabled={selectedIds.length === 0 || !canRun || rerunPending}
+                disabled={
+                  !access.canRun ||
+                  selectedIds.length === 0 ||
+                  !canRun ||
+                  rerunPending
+                }
                 onClick={() => requestRerun(selectedConfigs)}
               >
                 {allTicked && runnableIds.length > 0

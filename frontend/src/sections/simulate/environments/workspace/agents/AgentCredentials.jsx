@@ -16,7 +16,9 @@ import {
 } from "src/api/simulate-environments/versions";
 import { useUploadSecretFile } from "src/api/simulate-environments/environments";
 import { VersionBadge } from "../EnvVersionPin";
-import { AGENT_VERSIONS_COPY } from "../workspace.constants";
+import { AGENT_VERSIONS_COPY, WORKSPACE_COPY } from "../workspace.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { refusalText } from "../evals/refusalText";
 import { PreflightBadge, PreflightReport } from "./PreflightStatus";
 import { activationText, named } from "./agentVersionStatus";
@@ -73,6 +75,7 @@ const changeErrorText = (error) => {
 // that saves new values as the agent's next version, then follows its check.
 export default function AgentCredentials({ envId, defaultVersion, versions }) {
   const change = useChangeCredentials(envId);
+  const { canEdit } = useSimulationAccess();
   // Dropped from the cache on reset, so the picked File doesn't linger.
   const upload = useUploadSecretFile({ gcTime: 0 });
   const [rows, setRows] = useState(null);
@@ -181,26 +184,28 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
           )}
         </Box>
         {defaultVersion && !open && (
-          <Tooltip arrow title={checking ? COPY.checkRunning : ""}>
-            <Box
-              component="span"
-              sx={{ display: "inline-flex", flexShrink: 0 }}
-            >
-              <Button
-                size="small"
-                variant="outlined"
-                color="inherit"
-                disabled={checking}
-                onClick={() => {
-                  setFormError(null);
-                  setRows(rowsFor(defaultVersion));
-                }}
-                sx={{ textTransform: "none" }}
+          <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.secrets}>
+            <Tooltip arrow title={checking ? COPY.checkRunning : ""}>
+              <Box
+                component="span"
+                sx={{ display: "inline-flex", flexShrink: 0 }}
               >
-                {COPY.change}
-              </Button>
-            </Box>
-          </Tooltip>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  disabled={!canEdit || checking}
+                  onClick={() => {
+                    setFormError(null);
+                    setRows(rowsFor(defaultVersion));
+                  }}
+                  sx={{ textTransform: "none" }}
+                >
+                  {COPY.change}
+                </Button>
+              </Box>
+            </Tooltip>
+          </ViewerLock>
         )}
       </Stack>
 
@@ -410,14 +415,16 @@ export default function AgentCredentials({ envId, defaultVersion, versions }) {
             >
               {COPY.cancel}
             </Button>
-            <Button
-              size="small"
-              variant="contained"
-              type="submit"
-              disabled={change.isPending || upload.isPending}
-            >
-              {change.isPending ? COPY.saving : COPY.save}
-            </Button>
+            <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.secrets}>
+              <Button
+                size="small"
+                variant="contained"
+                type="submit"
+                disabled={!canEdit || change.isPending || upload.isPending}
+              >
+                {change.isPending ? COPY.saving : COPY.save}
+              </Button>
+            </ViewerLock>
           </Stack>
         </Box>
       )}

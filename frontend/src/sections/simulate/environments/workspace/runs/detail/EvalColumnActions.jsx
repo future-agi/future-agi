@@ -10,6 +10,8 @@ import {
   NOT_COMPLETED_TOOLTIP,
   NOT_EDITABLE_TOOLTIP,
 } from "./allEvaluationsDrawer.constants";
+import useSimulationAccess from "../../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace.constants";
 
 // Set on the item, not the icon: MenuItem's own 36px icon slot outranks an
 // icon-level sx. 16px matches the Columns picker's checkbox-to-label gap.
@@ -38,6 +40,7 @@ export default function EvalColumnActions({
   menuFor = null,
   onClose,
 }) {
+  const access = useSimulationAccess();
   const {
     data: configs,
     isPending: configsPending,
@@ -56,7 +59,9 @@ export default function EvalColumnActions({
 
   const rerunReason = !known
     ? null
-    : unread
+    : !access.canRun
+      ? WORKSPACE_COPY.viewer.runEvals
+      : unread
       ? EVALS_LOAD_FAILED_TOOLTIP
       : gone
         ? EVAL_GONE_TOOLTIP
@@ -71,7 +76,9 @@ export default function EvalColumnActions({
 
   const editReason = !known
     ? null
-    : unread
+    : !access.canEdit
+      ? WORKSPACE_COPY.viewer.evals
+      : unread
       ? EVALS_LOAD_FAILED_TOOLTIP
       : gone
         ? EVAL_GONE_TOOLTIP

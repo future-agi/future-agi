@@ -6,6 +6,9 @@ import { useUploadSecretFile } from "src/api/simulate-environments/environments"
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import Label from "../components/Label";
 import Field from "../components/Field";
+import ViewerLock from "../components/ViewerLock";
+import useSimulationAccess from "../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace/workspace.constants";
 
 // `secret_ref` is an object and cannot key a list; alias and name cover older drafts.
 const secretFileKey = (f) => f?.secret_ref?.key || f?.environment_name || f?.name;
@@ -21,6 +24,7 @@ export default function EnvironmentValues({
   const [open, setOpen] = useState(false);
   const fileRef = useRef(null);
   const upload = useUploadSecretFile();
+  const { canEdit } = useSimulationAccess();
 
   // Never read the file's bytes into the browser — the raw File goes to the upload
   // endpoint and only the returned reference is kept; contents are mounted per run.
@@ -58,15 +62,17 @@ export default function EnvironmentValues({
         >
           {open ? "Hide environment values" : "Environment values (optional)"}
         </Button>
-        <Button
-          size="small"
-          disabled={upload.isPending}
-          onClick={() => fileRef.current?.click()}
-          startIcon={<Iconify icon="solar:upload-linear" width={12} />}
-          sx={{ typography: "s3", fontWeight: "fontWeightSemiBold", color: "text.secondary", px: 0.5, flexShrink: 0 }}
-        >
-          Upload credential file
-        </Button>
+        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.secrets}>
+          <Button
+            size="small"
+            disabled={!canEdit || upload.isPending}
+            onClick={() => fileRef.current?.click()}
+            startIcon={<Iconify icon="solar:upload-linear" width={12} />}
+            sx={{ typography: "s3", fontWeight: "fontWeightSemiBold", color: "text.secondary", px: 0.5, flexShrink: 0 }}
+          >
+            Upload credential file
+          </Button>
+        </ViewerLock>
         <input
           ref={fileRef}
           type="file"

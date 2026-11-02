@@ -34,6 +34,9 @@ import {
   noiseValue,
   withServedLabels,
 } from "src/sections/simulate/environments/workspace/scenarios/scenarioEditor.constants";
+import ViewerLock from "src/sections/simulate/environments/components/ViewerLock";
+import useSimulationAccess from "src/sections/simulate/environments/hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "src/sections/simulate/environments/workspace/workspace.constants";
 import ScenarioEditForm from "./ScenarioEditForm";
 
 const selectableCheckboxSx = {
@@ -120,6 +123,11 @@ export default function ScenarioSuite({
   onChanged,
 }) {
   const { enqueueSnackbar } = useSnackbar();
+  const { canEdit } = useSimulationAccess();
+  const canChange = editable && canEdit;
+  const changeLockedReason = canEdit
+    ? lockedReason
+    : WORKSPACE_COPY.viewer.scenarios;
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [typed, setTyped] = useState("");
@@ -450,18 +458,20 @@ export default function ScenarioSuite({
       {selected.size > 0 && (
         <Stack direction="row" spacing={1} alignItems="center">
           <Typography variant="body2">{selected.size} selected</Typography>
-          <Button
-            size="small"
-            color="error"
-            variant="outlined"
-            disabled={busy}
-            startIcon={
-              <Iconify icon="solar:trash-bin-trash-linear" width={16} />
-            }
-            onClick={deleteSelected}
-          >
-            Delete
-          </Button>
+          <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.scenarios}>
+            <Button
+              size="small"
+              color="error"
+              variant="outlined"
+              disabled={!canEdit || busy}
+              startIcon={
+                <Iconify icon="solar:trash-bin-trash-linear" width={16} />
+              }
+              onClick={deleteSelected}
+            >
+              Delete
+            </Button>
+          </ViewerLock>
           <Button
             size="small"
             disabled={busy}
@@ -642,8 +652,8 @@ export default function ScenarioSuite({
                     <TableRow
                       hover
                       key={`${scenario.group}:${scenario.name}`}
-                      onClick={() => setEditing(scenario)}
-                      sx={{ cursor: "pointer" }}
+                      onClick={canEdit ? () => setEditing(scenario) : undefined}
+                      sx={{ cursor: canEdit ? "pointer" : "default" }}
                     >
                       <TableCell
                         padding="checkbox"
@@ -741,13 +751,15 @@ export default function ScenarioSuite({
                       >
                         <Tooltip
                           arrow
-                          title={editable ? "Edit scenario" : lockedReason}
+                          title={
+                            canChange ? "Edit scenario" : changeLockedReason
+                          }
                         >
                           <span>
                             <IconButton
                               size="small"
                               aria-label="Edit scenario"
-                              disabled={!editable}
+                              disabled={!canChange}
                               onClick={() => setEditing(scenario)}
                             >
                               <Iconify
@@ -761,14 +773,16 @@ export default function ScenarioSuite({
                         <Tooltip
                           arrow
                           title={
-                            editable ? "Remove from this suite" : lockedReason
+                            canChange
+                              ? "Remove from this suite"
+                              : changeLockedReason
                           }
                         >
                           <span>
                             <IconButton
                               size="small"
                               aria-label="Remove from this suite"
-                              disabled={!editable || busy}
+                              disabled={!canChange || busy}
                               onClick={() => dropOne(scenario.name)}
                             >
                               <Iconify

@@ -14,6 +14,8 @@ import { BUILD_TONES } from "../buildEnvironment/buildTones";
 import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
 import { refusalText } from "./evals/refusalText";
 import MakeDefaultConfirm from "./versions/MakeDefaultConfirm";
+import ViewerLock from "../components/ViewerLock";
+import useSimulationAccess from "../hooks/useSimulationAccess";
 
 const ACCENT = BUILD_TONES.accent;
 
@@ -27,6 +29,7 @@ export default function EnvVersionPin({ env }) {
   // The version waiting on the user's confirmation.
   const [confirming, setConfirming] = useState(null);
   const move = useMoveDefault(env?.id);
+  const { canEdit } = useSimulationAccess();
   const enabled = Boolean(env?.versioning?.enabled);
   const { data, error } = useEnvironmentVersions(env?.id, {
     enabled,
@@ -212,16 +215,21 @@ export default function EnvVersionPin({ env }) {
                   .join(" · ")}
               </Typography>
               {canMakeDefault("environment", v) && (
-                <Button
-                  size="small"
-                  variant="outlined"
-                  color="inherit"
-                  disabled={move.isPending}
-                  onClick={() => setConfirming(v)}
-                  sx={{ mt: 0.75, height: 24, textTransform: "none" }}
+                <ViewerLock
+                  locked={!canEdit}
+                  title={WORKSPACE_COPY.viewer.versions}
                 >
-                  {actionLabel(v, index)}
-                </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
+                    disabled={!canEdit || move.isPending}
+                    onClick={() => setConfirming(v)}
+                    sx={{ mt: 0.75, height: 24, textTransform: "none" }}
+                  >
+                    {actionLabel(v, index)}
+                  </Button>
+                </ViewerLock>
               )}
             </Box>
           ))}

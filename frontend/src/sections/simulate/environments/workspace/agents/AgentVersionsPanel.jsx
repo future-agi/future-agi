@@ -22,7 +22,10 @@ import { useNudgeActions } from "src/api/simulate-environments/nudgeActions";
 import {
   AGENT_VERSIONS_COPY as COPY,
   VERSIONS_COPY,
+  WORKSPACE_COPY,
 } from "../workspace.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { NudgeStateLine } from "../../buildEnvironment/console/NudgeCard";
 import { refusalText } from "../evals/refusalText";
 import MakeDefaultConfirm from "../versions/MakeDefaultConfirm";
@@ -101,6 +104,7 @@ const errorFor = (mutation, version, fallback) =>
 function AgentVersionRow({
   version,
   busy,
+  canEdit = true,
   retrying,
   onMakeDefault,
   onDiscard,
@@ -132,43 +136,58 @@ function AgentVersionRow({
         </Box>
         <Stack direction="row" spacing={1} flexShrink={0}>
           {canRetry(version) && (
-            <Button
-              size="small"
-              variant="outlined"
-              color="inherit"
-              disabled={busy}
-              onClick={onRetry}
-              aria-label={retrying ? undefined : COPY.retry.actionFor(label)}
-              sx={{ textTransform: "none" }}
+            <ViewerLock
+              locked={!canEdit}
+              title={WORKSPACE_COPY.viewer.versions}
             >
-              {retrying ? COPY.retry.pending : COPY.retry.action}
-            </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                disabled={!canEdit || busy}
+                onClick={onRetry}
+                aria-label={retrying ? undefined : COPY.retry.actionFor(label)}
+                sx={{ textTransform: "none" }}
+              >
+                {retrying ? COPY.retry.pending : COPY.retry.action}
+              </Button>
+            </ViewerLock>
           )}
           {canDiscard(version) && (
-            <Button
-              size="small"
-              variant="outlined"
-              color="inherit"
-              disabled={busy}
-              onClick={onDiscard}
-              aria-label={COPY.discard.actionFor(label)}
-              sx={{ textTransform: "none" }}
+            <ViewerLock
+              locked={!canEdit}
+              title={WORKSPACE_COPY.viewer.versions}
             >
-              {COPY.discard.action}
-            </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                disabled={!canEdit || busy}
+                onClick={onDiscard}
+                aria-label={COPY.discard.actionFor(label)}
+                sx={{ textTransform: "none" }}
+              >
+                {COPY.discard.action}
+              </Button>
+            </ViewerLock>
           )}
           {canMakeDefault("agent", version) && (
-            <Button
-              size="small"
-              variant="outlined"
-              color="inherit"
-              disabled={busy}
-              onClick={onMakeDefault}
-              aria-label={VERSIONS_COPY.makeDefault.actionFor(label)}
-              sx={{ textTransform: "none" }}
+            <ViewerLock
+              locked={!canEdit}
+              title={WORKSPACE_COPY.viewer.versions}
             >
-              {VERSIONS_COPY.makeDefault.action}
-            </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                disabled={!canEdit || busy}
+                onClick={onMakeDefault}
+                aria-label={VERSIONS_COPY.makeDefault.actionFor(label)}
+                sx={{ textTransform: "none" }}
+              >
+                {VERSIONS_COPY.makeDefault.action}
+              </Button>
+            </ViewerLock>
           )}
         </Stack>
       </Stack>
@@ -178,6 +197,7 @@ function AgentVersionRow({
 AgentVersionRow.propTypes = {
   version: PropTypes.object.isRequired,
   busy: PropTypes.bool,
+  canEdit: PropTypes.bool,
   retrying: PropTypes.bool,
   onMakeDefault: PropTypes.func.isRequired,
   onDiscard: PropTypes.func.isRequired,
@@ -236,6 +256,7 @@ export default function AgentVersionsPanel({ env }) {
   const retry = useRetryAgentVersion(envId);
   const { data: nudges } = useNudges(envId, { enabled });
   const nudgeActions = useNudgeActions(envId);
+  const { canEdit } = useSimulationAccess();
   const [confirming, setConfirming] = useState(null);
   const announcement = useCheckAnnouncement(data?.agent);
 
@@ -321,6 +342,7 @@ export default function AgentVersionsPanel({ env }) {
                   <AgentVersionRow
                     version={version}
                     busy={busy}
+                    canEdit={canEdit}
                     retrying={
                       retry.isPending &&
                       retry.variables?.versionId === version.id

@@ -8,6 +8,9 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { ENV_TAB_RAIL_HEIGHT } from "../../environmentOptions";
 import { BUILD_TONES } from "../buildTones";
 import { CONSOLE_COPY } from "../build.constants";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import ViewerLock from "../../components/ViewerLock";
+import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
 import { Turn, Working } from "./ConsoleTurn";
 // Voice input is temporarily disabled (Web Speech is blocked in Brave); re-enable
 // with a server-side transcription path. Kept for that follow-up.
@@ -68,6 +71,7 @@ export default function BuilderConsole({
   active = true,
 }) {
   const [state, dispatch] = useReducer(composerReducer, INITIAL);
+  const { canEdit } = useSimulationAccess();
   const { draft, scaffolds } = state;
   const listRef = useRef(null);
 
@@ -91,8 +95,11 @@ export default function BuilderConsole({
 
   // Frozen === the env is not Live yet, so the builder can't accept edits. It
   // blocks the composer exactly like `running`, but persists across turns.
-  const blocked = running || frozen;
-  const reason = frozenReason || CONSOLE_COPY.frozen;
+  const locked = frozen || !canEdit;
+  const blocked = running || locked;
+  const reason = !canEdit
+    ? WORKSPACE_COPY.viewer.chat
+    : frozenReason || CONSOLE_COPY.frozen;
 
   const hasContent = draft.trim() || scaffolds.length > 0;
 
@@ -132,7 +139,7 @@ export default function BuilderConsole({
         </Box>
         <Box flex={1} minWidth={0}>
           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.2 }}>
-            {frozen ? reason : busy ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
+            {locked ? reason : busy ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
           </Typography>
         </Box>
         {onCollapse && (
@@ -250,7 +257,7 @@ export default function BuilderConsole({
             multiline
             maxRows={8}
             variant="standard"
-            placeholder={frozen ? reason : CONSOLE_COPY.placeholder}
+            placeholder={locked ? reason : CONSOLE_COPY.placeholder}
             value={draft}
             disabled={blocked}
             onChange={(e) => dispatch({ type: "draft", value: e.target.value })}
@@ -270,7 +277,7 @@ export default function BuilderConsole({
 
             <Box flex={1} />
 
-            {onStop && canStop && !frozen && (
+            {onStop && canStop && !locked && (
               <IconButton
                 aria-label="Stop"
                 title={CONSOLE_COPY.stop}
@@ -287,23 +294,25 @@ export default function BuilderConsole({
               </IconButton>
             )}
 
-            <IconButton
-              aria-label="Send"
-              disabled={!hasContent || blocked}
-              onClick={send}
-              sx={{
-                width: 30, height: 30, borderRadius: 1,
-                bgcolor: hasContent && !blocked ? BUILD_TONES.accent : undefined,
-                color: hasContent && !blocked ? "common.white" : undefined,
-                "&:hover": { bgcolor: hasContent && !blocked ? BUILD_TONES.accentHover : undefined },
-                "&.Mui-disabled": {
-                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
-                  color: "text.disabled",
-                },
-              }}
-            >
-              <Iconify icon="solar:arrow-up-bold" width={15} />
-            </IconButton>
+            <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.chat}>
+              <IconButton
+                aria-label="Send"
+                disabled={!hasContent || blocked}
+                onClick={send}
+                sx={{
+                  width: 30, height: 30, borderRadius: 1,
+                  bgcolor: hasContent && !blocked ? BUILD_TONES.accent : undefined,
+                  color: hasContent && !blocked ? "common.white" : undefined,
+                  "&:hover": { bgcolor: hasContent && !blocked ? BUILD_TONES.accentHover : undefined },
+                  "&.Mui-disabled": {
+                    bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
+                    color: "text.disabled",
+                  },
+                }}
+              >
+                <Iconify icon="solar:arrow-up-bold" width={15} />
+              </IconButton>
+            </ViewerLock>
           </Stack>
         </Box>
       </Box>

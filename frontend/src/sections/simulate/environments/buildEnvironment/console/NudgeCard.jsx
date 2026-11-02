@@ -9,6 +9,9 @@ import { changeCount } from "../../workspace/drafts/changeCount";
 import VersionDiff from "../../workspace/versions/VersionDiff";
 import { isEmptyDiff } from "../../workspace/versions/isEmptyDiff";
 import { NUDGE_COPY as COPY } from "../build.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
 const FILES_SHOWN = 8;
@@ -175,6 +178,8 @@ export function NudgeActions({
   onStopNudge,
 }) {
   const reasonId = useId();
+  const { canEdit } = useSimulationAccess();
+  const viewerTitle = WORKSPACE_COPY.viewer.rebuild;
   const state = nudge?.state || "pending";
   const pending = state === "pending";
   const again = Boolean(nudge) && canRebuildAgain(nudge);
@@ -188,45 +193,51 @@ export function NudgeActions({
     <Stack spacing={0.75}>
       <Stack direction="row" spacing={1}>
         {(pending || again) && (
-          <Button
-            size="small"
-            variant="contained"
-            disabled={Boolean(blocked) || answering || !onRebuild}
-            onClick={onRebuild}
-            aria-label={
-              answering ? undefined : COPY.rebuildFor(rebuildText, subject)
-            }
-            aria-describedby={blocked ? reasonId : undefined}
-            sx={{ textTransform: "none" }}
-          >
-            {rebuildText}
-          </Button>
+          <ViewerLock locked={!canEdit} title={viewerTitle}>
+            <Button
+              size="small"
+              variant="contained"
+              disabled={!canEdit || Boolean(blocked) || answering || !onRebuild}
+              onClick={onRebuild}
+              aria-label={
+                answering ? undefined : COPY.rebuildFor(rebuildText, subject)
+              }
+              aria-describedby={blocked ? reasonId : undefined}
+              sx={{ textTransform: "none" }}
+            >
+              {rebuildText}
+            </Button>
+          </ViewerLock>
         )}
         {pending && (
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            disabled={answering || !onSkipNudge}
-            onClick={onSkipNudge}
-            aria-label={answering ? undefined : COPY.skipFor(subject)}
-            sx={{ textTransform: "none" }}
-          >
-            {answering && !rebuilding ? COPY.skipping : COPY.skip}
-          </Button>
+          <ViewerLock locked={!canEdit} title={viewerTitle}>
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              disabled={!canEdit || answering || !onSkipNudge}
+              onClick={onSkipNudge}
+              aria-label={answering ? undefined : COPY.skipFor(subject)}
+              sx={{ textTransform: "none" }}
+            >
+              {answering && !rebuilding ? COPY.skipping : COPY.skip}
+            </Button>
+          </ViewerLock>
         )}
         {NUDGE_ACTIVE_STATES.has(state) && nudge?.canStop !== false && (
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            disabled={stopping || !onStopNudge}
-            onClick={onStopNudge}
-            aria-label={stopping ? undefined : COPY.stopFor(subject)}
-            sx={{ textTransform: "none" }}
-          >
-            {stopping ? COPY.stopping : COPY.stop}
-          </Button>
+          <ViewerLock locked={!canEdit} title={viewerTitle}>
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              disabled={!canEdit || stopping || !onStopNudge}
+              onClick={onStopNudge}
+              aria-label={stopping ? undefined : COPY.stopFor(subject)}
+              sx={{ textTransform: "none" }}
+            >
+              {stopping ? COPY.stopping : COPY.stop}
+            </Button>
+          </ViewerLock>
         )}
       </Stack>
       {blocked && (
