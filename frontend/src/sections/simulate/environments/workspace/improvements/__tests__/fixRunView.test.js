@@ -198,6 +198,21 @@ describe("step rows", () => {
 });
 
 describe("held to", () => {
+  it("shows what a running fix has spent against its budget", () => {
+    const rows = heldToRows(byId("fix-search"));
+    const budget = rows.findIndex((r) => r.label === "Budget");
+    expect(rows[budget + 1]).toEqual({
+      label: "Spent",
+      value: "412 of 1,500 credits",
+    });
+  });
+
+  it("leaves spend to the Cost tab once the fix has finished", () => {
+    expect(
+      heldToRows(byId("fix-ready-archive")).some((r) => r.label === "Spent"),
+    ).toBe(false);
+  });
+
   it("lists what the search is held to", () => {
     expect(heldToRows(byId("fix-ready-archive"))).toEqual([
       { label: "Allowed changes", value: "Instructions" },

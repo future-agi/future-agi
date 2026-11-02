@@ -1,3 +1,5 @@
+import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
+
 // What the fix page says about a fix, derived from one contract read
 // (GET /simulate/api/agent-fix-runs/{id}/). Only simple differences are
 // computed here; every number comes from the platform or the engine.
@@ -197,6 +199,15 @@ export function heldToRows(fix) {
     },
     { label: "Time cap", value: formatMinutes(request.max_minutes) },
     { label: "Budget", value: formatCredits(request.budget_credits) },
+    // While it runs, what it has spent so far; the Cost tab has it after.
+    ...(FIX_LIVE_STATES.has(fix.state)
+      ? [
+          {
+            label: "Spent",
+            value: `${Number(fix.spent_credits ?? 0).toLocaleString("en-US")} of ${formatCredits(request.budget_credits)}`,
+          },
+        ]
+      : []),
     {
       label: "Protected cases",
       value: `${request.protected_scenario_keys.length} protected`,
