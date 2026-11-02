@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1092,
+  endpointCount: 1093,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -32562,6 +32562,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/v3/call-executions/{call_execution_id}/workers/": {
+      get: {
+        operationId: "simulate_v3_call_execution_workers",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/CallWorkersResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/v3/test-executions/{test_execution_id}/analytics/": {
       get: {
         operationId: "simulate_v3_test_execution_analytics",
@@ -54417,6 +54434,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           title: "Result",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    CallWorkersResponse: {
+      required: ["workers", "events", "collected_at"],
+      type: "object",
+      properties: {
+        workers: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CallWorker",
+          },
+        },
+        events: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CallWorkerEvent",
+          },
+        },
+        collected_at: {
+          title: "Collected at",
           type: "string",
           minLength: 1,
         },
@@ -88760,6 +88800,114 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    CallWorker: {
+      required: [
+        "worker_id",
+        "id",
+        "name",
+        "observed",
+        "undeclared",
+        "instance_ids",
+      ],
+      type: "object",
+      properties: {
+        worker_id: {
+          title: "Worker id",
+          type: "string",
+          minLength: 1,
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        observed: {
+          title: "Observed",
+          type: "boolean",
+        },
+        undeclared: {
+          title: "Undeclared",
+          type: "boolean",
+        },
+        instance_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    CallWorkerEvent: {
+      required: ["seq", "type", "worker_id", "at", "attribution"],
+      type: "object",
+      properties: {
+        seq: {
+          title: "Seq",
+          type: "integer",
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["delegated", "tool_call", "returned"],
+        },
+        worker_id: {
+          title: "Worker id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        by: {
+          title: "By",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        delegation_id: {
+          title: "Delegation id",
+          type: "string",
+          minLength: 1,
+        },
+        task: {
+          title: "Task",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        at: {
+          title: "At",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        attribution: {
+          title: "Attribution",
+          type: "string",
+          enum: ["reported", "bound", "conflict"],
         },
       },
     },

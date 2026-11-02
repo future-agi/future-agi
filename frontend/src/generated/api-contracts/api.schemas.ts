@@ -23816,6 +23816,65 @@ export interface CallExecutionV3DetailResponseApi {
   csat_reason: string;
 }
 
+export interface CallWorkerApi {
+  /** @minLength 1 */
+  worker_id: string;
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  observed: boolean;
+  undeclared: boolean;
+  instance_ids: string[];
+}
+
+export type CallWorkerEventApiType =
+  (typeof CallWorkerEventApiType)[keyof typeof CallWorkerEventApiType];
+
+export const CallWorkerEventApiType = {
+  delegated: "delegated",
+  tool_call: "tool_call",
+  returned: "returned",
+} as const;
+
+export type CallWorkerEventApiAttribution =
+  (typeof CallWorkerEventApiAttribution)[keyof typeof CallWorkerEventApiAttribution];
+
+export const CallWorkerEventApiAttribution = {
+  reported: "reported",
+  bound: "bound",
+  conflict: "conflict",
+} as const;
+
+export interface CallWorkerEventApi {
+  seq: number;
+  type: CallWorkerEventApiType;
+  /** @minLength 1 */
+  worker_id: string;
+  /** @minLength 1 */
+  by?: string;
+  /** @minLength 1 */
+  delegation_id?: string;
+  /** @minLength 1 */
+  task?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  tool?: string;
+  /** @minLength 1 */
+  status?: string;
+  /** @minLength 1 */
+  at: string;
+  attribution: CallWorkerEventApiAttribution;
+}
+
+export interface CallWorkersResponseApi {
+  workers: CallWorkerApi[];
+  events: CallWorkerEventApi[];
+  /** @minLength 1 */
+  collected_at: string;
+}
+
 export type RunDashboardMetricApiUnit =
   (typeof RunDashboardMetricApiUnit)[keyof typeof RunDashboardMetricApiUnit];
 

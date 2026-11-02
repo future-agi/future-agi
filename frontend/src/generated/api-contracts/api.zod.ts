@@ -50092,6 +50092,42 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
   csat_reason: zod.string().min(1),
 });
 
+/**
+ * Which of a multi-agent app's workers did what in this trial, read from the spans the app exported.
+ */
+export const SimulateV3CallExecutionWorkersParams = zod.object({
+  call_execution_id: zod.string(),
+});
+
+export const SimulateV3CallExecutionWorkersResponse = zod.object({
+  workers: zod.array(
+    zod.object({
+      worker_id: zod.string().min(1),
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+      observed: zod.boolean(),
+      undeclared: zod.boolean(),
+      instance_ids: zod.array(zod.string().min(1)),
+    }),
+  ),
+  events: zod.array(
+    zod.object({
+      seq: zod.number(),
+      type: zod.enum(["delegated", "tool_call", "returned"]),
+      worker_id: zod.string().min(1),
+      by: zod.string().min(1).optional(),
+      delegation_id: zod.string().min(1).optional(),
+      task: zod.string().min(1).optional(),
+      result: zod.string().min(1).optional(),
+      tool: zod.string().min(1).optional(),
+      status: zod.string().min(1).optional(),
+      at: zod.string().min(1),
+      attribution: zod.enum(["reported", "bound", "conflict"]),
+    }),
+  ),
+  collected_at: zod.string().min(1),
+});
+
 export const SimulateV3TestExecutionAnalyticsParams = zod.object({
   test_execution_id: zod.string(),
 });
