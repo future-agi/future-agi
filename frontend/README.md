@@ -49,6 +49,7 @@ frontend/
 - **Pages vs. sections vs. components:** a *page* is a route entry point, a *section* is a feature-scoped composition, a *component* is reusable across features.
 - **State:** server state goes in TanStack Query, client state in Zustand. Don't mix them.
 - **Imports:** absolute imports via the `src/` alias are preferred over deep relative paths.
+- **UI:** build every screen with the [Future AGI Design System](https://cuddly-disco-y9y51ke.pages.github.io/design-system/) and use its shared components. If you use Claude Code, the `building-ui` skill (`.claude/skills/building-ui/SKILL.md`) applies it for you. Before opening a PR, run `npx eslint -c .eslintrc.ds.cjs <changed files>` from `frontend/` and fix every `[DS]` message.
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) — see [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 - **Pre-commit hooks** auto-run ESLint + Prettier on staged `frontend/src/**` files. Make sure they're set up by running `yarn install` from the repo root.
 
