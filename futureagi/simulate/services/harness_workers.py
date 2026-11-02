@@ -190,11 +190,13 @@ def worker_timeline(
         # The runtime's stable worker id, else its label for the worker.
         return str(row.get("worker_id") or row.get("worker_label") or "").strip()
 
-    # The agent that hands work out and is never handed any is the coordinator, as a top-level agent span is; so is
-    # the one agent of an app that hands nothing out.
+    # The agent that hands work out and is never handed any is the coordinator, as a top-level agent span is, unless
+    # it is a declared worker (one may run others as tools after the root passed it control); so is the one agent of
+    # an app that hands nothing out.
     handed = {_slug(str(row["delegated_to"])) for row in rows if row.get("delegated_to")}
     named = {_slug(by_of(row)) for row in rows if by_of(row)}
-    coordinators = {_slug(by_of(row)) for row in rows if row.get("delegated_to") and _slug(by_of(row)) not in handed}
+    top = named - handed - set(declared_by_key)
+    coordinators = {_slug(by_of(row)) for row in rows if row.get("delegated_to") and _slug(by_of(row)) in top}
     if not handed and len(named) == 1 and not workers and not any(name in declared_by_key for name in named):
         coordinators = named
 

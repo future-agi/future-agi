@@ -381,3 +381,27 @@ def test_the_one_agent_of_an_app_that_hands_nothing_out_is_not_a_worker():
     timeline = worker_timeline([], [], run_key=RUN, traced_calls=traced)
     assert timeline["workers"] == []
     assert [(one["worker_id"], one["tool"]) for one in timeline["events"]] == [(None, "lookup")]
+
+
+def test_a_declared_worker_that_hands_work_out_stays_a_worker():
+    # The root passes control with a tool, not a nested hand-off; the declared worker then runs another agent as a tool.
+    traced = [
+        {"name": "transfer_to_agent", "ok": True, "at": 1730454600.0, "worker_label": "root_agent",
+         "arguments": {"agent_name": "researcher"}},
+        {"name": "find_sources", "ok": True, "at": 1730454601.0, "ended_at": 1730454603.0, "worker_label": "researcher",
+         "delegated_to": "source_finder", "arguments": {"request": "tides"}, "result": "three sources"},
+    ]
+    declared = [{"id": "researcher", "name": "researcher"}, {"id": "writer", "name": "writer"}]
+    timeline = worker_timeline([], declared, run_key=RUN, traced_calls=traced)
+
+    workers = {one["id"]: (one["observed"], one["undeclared"]) for one in timeline["workers"]}
+    # The root that passed control is shown as the undeclared agent it is: with no hand-off on record, it cannot be
+    # told apart from an undeclared worker, and hiding a worker would be worse.
+    assert workers == {
+        "researcher": (True, False), "writer": (False, False), "source_finder": (True, True), "root_agent": (True, True)
+    }
+    assert [(one["type"], one["worker_id"], one.get("by")) for one in timeline["events"]] == [
+        ("tool_call", "run-1/root_agent", None),
+        ("delegated", "run-1/source_finder", "run-1/researcher"),
+        ("returned", "run-1/source_finder", None),
+    ]
