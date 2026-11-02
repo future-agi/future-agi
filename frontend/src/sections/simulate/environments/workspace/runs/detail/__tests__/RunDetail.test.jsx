@@ -65,6 +65,16 @@ vi.mock("notistack", async (importOriginal) => {
 
 // Self-improvement is in beta; the launch-flow tests below open it explicitly.
 const useSelfImprovementOpen = vi.fn();
+// Fix my agent is a beta capability; each test sets whether the org has it.
+const fixMyAgentAllowed = vi.fn();
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useFeatureAllowed: (feature) => ({
+    allowed: feature === "fix_my_agent" ? fixMyAgentAllowed() : true,
+    isLoading: false,
+    isError: false,
+  }),
+}));
 vi.mock("../fixmyagent/selfImprovement", async (importOriginal) => ({
   ...(await importOriginal()),
   useSelfImprovementOpen: () => useSelfImprovementOpen(),
@@ -445,6 +455,7 @@ const navArgs = () => callListNavigation.mock.calls.at(-1)[0];
 
 beforeEach(() => {
   useSelfImprovementOpen.mockReturnValue(true);
+  fixMyAgentAllowed.mockReturnValue(true);
   enqueueSnackbar.mockReset();
   runEvaluationsAgain.mockReset();
   runEvaluationsAgain.mockReturnValue(new Promise(() => {}));
@@ -1222,6 +1233,15 @@ describe("RunDetail", () => {
     await user.click(screen.getByRole("button", { name: "Improve" }));
     expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
     expect(screen.queryByText("optimizer-form")).toBeNull();
+  });
+
+  it("hides Improve when the org does not have Fix my agent", async () => {
+    fixMyAgentAllowed.mockReturnValue(false);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+    expect(screen.queryByRole("button", { name: "Improve" })).toBeNull();
   });
 
   it("shows the Imagine tab as coming soon (no backend)", async () => {

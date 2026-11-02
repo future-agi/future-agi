@@ -4,6 +4,7 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import SideDrawer from "../../../../components/SideDrawer";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import {
@@ -118,8 +119,10 @@ export default function FixMyAgentDrawer({
     view.summary?.measuredCalls ?? stats?.measured ?? stats?.total ?? 0;
 
   // The primary path out of the diagnosis: start a fix from this run. Shown once
-  // the diagnosis has finished.
+  // the diagnosis has finished, to orgs that have Fix my agent switched on.
+  const { allowed: fixAllowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
   const canLaunch =
+    fixAllowed &&
     tab === "diagnosis" &&
     view.status === "completed" &&
     view.goals.length + view.oneOffs.length > 0;

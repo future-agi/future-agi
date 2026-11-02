@@ -10,6 +10,7 @@ import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
+import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import {
   useRunDetail,
   useOptimizationRuns,
@@ -116,6 +117,7 @@ export default function RunDetail({
     useOptimizationRuns(executionId);
   const hasTrials = optimizationRuns.length > 0;
   const selfImprovementOpen = useSelfImprovementOpen();
+  const { allowed: fixAllowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
   // Keep the client bound: `useQueryClient().invalidateQueries` detached from
   // the client throws on `this.#queryCache` in react-query v5.
   const queryClient = useQueryClient();
@@ -568,12 +570,14 @@ export default function RunDetail({
         }}
       />
 
-      <LaunchFixDialog
-        open={fixLaunching}
-        onClose={() => setFixLaunching(false)}
-        envId={env.id}
-        sourceRunId={executionId}
-      />
+      {fixAllowed && (
+        <LaunchFixDialog
+          open={fixLaunching}
+          onClose={() => setFixLaunching(false)}
+          envId={env.id}
+          sourceRunId={executionId}
+        />
+      )}
 
       <LaunchOptimizationDrawer
         open={launching}
