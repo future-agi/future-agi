@@ -31,7 +31,6 @@ import {
   createHarnessJob,
   listHarnessJobs,
   preflightHarnessJob,
-  storeHarnessSecretValues,
   uploadHarnessSecretFile,
   uploadHarnessSource,
 } from "src/api/harness/harness";
@@ -435,8 +434,8 @@ export default function HarnessCreate() {
     },
   });
 
-  // Preflight verifies the typed values against the provider before Run stores them;
-  // the create payload never carries raw values, only the stored refs.
+  // Preflight verifies the typed values against the provider; Run sends them once as
+  // write-only credential_values, which the server stores. Refs are names-only.
   const preflightPayload = () => ({
     ...hostedPayload(pendingEnvironmentRefs()),
     ...(Object.keys(targetCredentialValues()).length
@@ -474,12 +473,12 @@ export default function HarnessCreate() {
         return;
       }
       const valuesToStore = targetCredentialValues();
-      const stored = Object.keys(valuesToStore).length
-        ? await storeHarnessSecretValues(valuesToStore)
-        : { secret_refs: {} };
-      const value = await createHarnessJob(
-        hostedPayload(stored.secret_refs || {}),
-      );
+      const value = await createHarnessJob({
+        ...hostedPayload(),
+        ...(Object.keys(valuesToStore).length
+          ? { credential_values: valuesToStore }
+          : {}),
+      });
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
       navigate(paths.dashboard.simulate.harness.detail(value.job.job_id));
     } catch (requestError) {

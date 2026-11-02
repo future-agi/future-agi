@@ -1070,6 +1070,8 @@ class TestExecutionUtils:
         select_clause = ", ".join(select_fields)
         group_by_clause = ", ".join(group_by_fields)
 
+        # TODO: the call_executions queryset is ignored, so this groups every
+        # non-deleted CallExecution in the table, not just the ones passed in.
         # Add group_keys filtering if provided
         where_conditions = ["simulate_call_execution.deleted = false"]
         if group_keys:

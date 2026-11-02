@@ -101,13 +101,13 @@ func TestCheckUsageNoAuthContext(t *testing.T) {
 func TestEmitUsageNilUsage(t *testing.T) {
 	s := &Server{usage: nil}
 	// Must not panic
-	s.emitUsage(context.Background(), ptrace.NewTraces(), 1024)
+	s.emitUsage(context.Background(), ptrace.NewTraces())
 }
 
 func TestEmitUsageNoAuthContext(t *testing.T) {
 	s := &Server{usage: &auth.UsageEmitter{}}
 	// Must not panic — no auth result in context
-	s.emitUsage(context.Background(), ptrace.NewTraces(), 1024)
+	s.emitUsage(context.Background(), ptrace.NewTraces())
 }
 
 func TestCountDistinctTracesMultipleScopeSpans(t *testing.T) {

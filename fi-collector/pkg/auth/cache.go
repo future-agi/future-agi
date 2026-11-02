@@ -30,9 +30,10 @@ func (e *cacheEntry) isWarm(warmTTL time.Duration) bool {
 // — they always hit PG (deduplicated by singleflight). This prevents
 // unbounded memory growth from scanners sending random keys.
 type cache struct {
-	m       sync.Map
-	ttl     time.Duration
-	warmTTL time.Duration
+	m           sync.Map
+	ttl         time.Duration
+	warmTTL     time.Duration
+	generations [64]keyGeneration
 }
 
 func newCache(ttl, warmTTL time.Duration) *cache {
@@ -56,7 +57,25 @@ func (c *cache) get(key string) (*cacheEntry, string) {
 	if e.isWarm(c.warmTTL) {
 		return e, "warm"
 	}
-	c.m.Delete(key)
+	// An expired observation must not evict a concurrent fresh replacement.
+	c.m.CompareAndDelete(key, e)
+	return nil, "miss"
+}
+
+// peek is get without side effects: an expired entry is reported as a miss
+// but left for get to remove.
+func (c *cache) peek(key string) (*cacheEntry, string) {
+	val, ok := c.m.Load(key)
+	if !ok {
+		return nil, "miss"
+	}
+	e := val.(*cacheEntry)
+	switch {
+	case e.isFresh(c.ttl):
+		return e, "fresh"
+	case e.isWarm(c.warmTTL):
+		return e, "warm"
+	}
 	return nil, "miss"
 }
 
@@ -79,43 +98,41 @@ func (c *cache) addProjects(key string, projects map[string]string) {
 	e.result.SetProjects(projects)
 }
 
-// addProjectsScoped is the only project-cache merge used by live resolution.
-// It refuses a cache entry whose authentication scope changed while the
-// PostgreSQL lookup was in flight.
-func (c *cache) addProjectsScoped(
-	key, organizationID, workspaceID string, projects map[string]string,
-) bool {
-	if c == nil || key == "" || organizationID == "" || workspaceID == "" {
+// projectEntry requires the exact authenticated result and a live cache entry.
+// Expiry is lazy, so loading sync.Map directly would accept an expired result
+// whenever no other request happened to evict it during project persistence.
+func (c *cache) projectEntry(key string, expected *ResolveResult) *cacheEntry {
+	if c == nil || key == "" || expected == nil || expected.OrgID == "" || expected.WorkspaceID == "" {
+		return nil
+	}
+	e, _ := c.get(key)
+	if e == nil || e.result != expected {
+		return nil
+	}
+	return e
+}
+
+// addProjectsScoped merges only into the exact result this request authenticated
+// with. Even a same-scope refresh must be retried: a stale lookup may not update
+// a replacement authentication result or resurrect an invalidated cache entry.
+func (c *cache) addProjectsScoped(key string, expected *ResolveResult, projects map[string]string) bool {
+	e := c.projectEntry(key, expected)
+	if e == nil || !expected.SetProjectsInWorkspace(expected.WorkspaceID, projects) {
 		return false
 	}
-	val, ok := c.m.Load(key)
-	if !ok {
-		return false
-	}
-	e, ok := val.(*cacheEntry)
-	if !ok || e.result == nil || e.result.OrgID != organizationID || e.result.WorkspaceID != workspaceID {
-		return false
-	}
-	return e.result.SetProjectsInWorkspace(workspaceID, projects)
+	// Confirm that the same live entry survived the merge. Never store it back:
+	// revocation, expiry or refresh may have happened during the merge.
+	return c.projectEntry(key, expected) == e
 }
 
 // addProjectTypesScoped mirrors project trace_types into a cache entry under
 // the same scope check as addProjectsScoped.
-func (c *cache) addProjectTypesScoped(
-	key, organizationID, workspaceID string, types map[string]string,
-) bool {
-	if c == nil || key == "" || organizationID == "" || workspaceID == "" {
+func (c *cache) addProjectTypesScoped(key string, expected *ResolveResult, types map[string]string) bool {
+	e := c.projectEntry(key, expected)
+	if e == nil || !expected.SetProjectTypesInWorkspace(expected.WorkspaceID, types) {
 		return false
 	}
-	val, ok := c.m.Load(key)
-	if !ok {
-		return false
-	}
-	e, ok := val.(*cacheEntry)
-	if !ok || e.result == nil || e.result.OrgID != organizationID || e.result.WorkspaceID != workspaceID {
-		return false
-	}
-	return e.result.SetProjectTypesInWorkspace(workspaceID, types)
+	return c.projectEntry(key, expected) == e
 }
 
 // evictProjectID drops every name mapped to projectID from all cached entries

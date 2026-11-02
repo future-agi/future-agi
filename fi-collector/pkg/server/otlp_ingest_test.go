@@ -227,13 +227,13 @@ func TestOTLPHTTPGzipBombIs413AndStopsAtTheCap(t *testing.T) {
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status %d, want 413 (%s)", rec.Code, rec.Body.String())
 	}
-	// The body is reserved during the count pass; an over-cap bomb releases
-	// the reservation before returning.
-	if p := s.inflate.peak.Load(); p != maxOTLPHTTPBodyBytes {
-		t.Errorf("over-cap body reserved %d bytes, want %d", p, maxOTLPHTTPBodyBytes)
+	// The lease from before the count pass is all it holds; an over-cap
+	// bomb releases it before returning.
+	if p, want := s.wire.peak.Load(), gzipWireLease(int64(len(compressed)), s.limits.maxBody); p != want {
+		t.Errorf("over-cap body leased %d bytes, want %d", p, want)
 	}
-	if u := s.inflate.inUse.Load(); u != 0 {
-		t.Errorf("%d budget bytes still leased after the request returned", u)
+	if u := s.wire.inUse.Load(); u != 0 {
+		t.Errorf("%d wire bytes still leased after the request returned", u)
 	}
 }
 
@@ -247,17 +247,17 @@ func postGzipDirect(t *testing.T, body []byte) *httptest.ResponseRecorder {
 	return rec
 }
 
-// The cap is inclusive: exactly maxOTLPHTTPBodyBytes inflated bytes pass the
+// The cap is inclusive: exactly defaultMaxBodyBytes inflated bytes pass the
 // size check (and then fail decoding, since zeros are not a valid protobuf);
 // one more byte is a 413.
 func TestOTLPHTTPGzipAtCapIsNot413(t *testing.T) {
 	mib := gzipBytes(t, make([]byte, 1<<20))
 	var atCap bytes.Buffer
-	for i := 0; i < maxOTLPHTTPBodyBytes>>20; i++ {
+	for i := 0; i < defaultMaxBodyBytes>>20; i++ {
 		atCap.Write(mib)
 	}
 	if rec := postGzipDirect(t, atCap.Bytes()); rec.Code == http.StatusRequestEntityTooLarge {
-		t.Fatalf("a body of exactly %d inflated bytes must not be 413", maxOTLPHTTPBodyBytes)
+		t.Fatalf("a body of exactly %d inflated bytes must not be 413", defaultMaxBodyBytes)
 	}
 
 	atCap.Write(gzipBytes(t, []byte{0}))
@@ -268,7 +268,7 @@ func TestOTLPHTTPGzipAtCapIsNot413(t *testing.T) {
 
 // The uncompressed body cap maps to 413.
 func TestOTLPHTTPUncompressedOverCapIs413(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewReader(make([]byte, maxOTLPHTTPBodyBytes+1)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewReader(make([]byte, defaultMaxBodyBytes+1)))
 	req.Header.Set("Content-Type", "application/x-protobuf")
 	rec := httptest.NewRecorder()
 	directServer().handleHTTPTraces(rec, req)

@@ -10,8 +10,18 @@ import Iconify from "src/components/iconify";
 import DraggableColResizer from "src/components/draggable-col-resizer";
 import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
-import { ClampCell, SubTasksCell, TruncTooltip } from "./ScenarioTableCells";
-import { ROW_HEIGHTS, SCENARIOS_COPY } from "./scenarios.constants";
+import {
+  ClampCell,
+  SubTasksCell,
+  TruncTooltip,
+  UnsavedMark,
+} from "./ScenarioTableCells";
+import {
+  ROW_HEIGHTS,
+  SCENARIOS_COPY,
+  isUnsavedAddition,
+  unsavedCheckboxProps,
+} from "./scenarios.constants";
 import { personaSubline } from "./personaLabels";
 import { GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
 
@@ -329,7 +339,8 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                       <TableCell padding="checkbox" sx={pinnedSelectCellSx} onClick={stopRowClick}>
                         <Checkbox
                           size="small"
-                          checked={rowChecked(row.id)}
+                          checked={!isUnsavedAddition(row) && rowChecked(row.id)}
+                          {...unsavedCheckboxProps(row)}
                           onChange={() => toggle(row.id)}
                           sx={selectableCheckboxSx}
                         />
@@ -351,6 +362,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                             </Box>
                           </Tooltip>
                         )}
+                        <UnsavedMark row={row} />
                       </Stack>
                       <TruncTooltip title={row.summary || row.title}>
                         <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{row.summary || row.title}</Typography>
