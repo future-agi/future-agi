@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SnackbarProvider } from "notistack";
 
 import {
+  fixtureFixRun,
   resetFixRunFixtures,
   updateFixtureFixRun,
 } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
@@ -17,106 +18,224 @@ vi.mock("src/utils/axios", async (importOriginal) => {
   return withFakeFixRunsApi(await importOriginal());
 });
 
-let shipOverride = null;
+const navigate = vi.fn();
+vi.mock("react-router-dom", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useNavigate: () => navigate,
+}));
+
+// The real ship hook over the fake API unless a test makes it fail.
+const hooks = vi.hoisted(() => ({ ship: null }));
 vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    useShipCandidate: (fix) =>
-      shipOverride ? shipOverride : actual.useShipCandidate(fix),
+    useShipCandidate: (fix) => hooks.ship ?? actual.useShipCandidate(fix),
   };
 });
 
+const axios = (await import("src/utils/axios")).default;
+const { listResult } = await import("../fixRunView");
 const { default: FixRunPage } = await import("../FixRunPage");
+const { default: FixFinishedView, FinishedActions } = await import(
+  "../FixFinishedView"
+);
+const { default: FixVerdict } = await import("../FixVerdict");
+const { default: FixDecisionDrawer } = await import("../FixDecisionDrawer");
 
-function renderPage(fixId) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  const utils = render(
-    <QueryClientProvider client={client}>
-      <SnackbarProvider>
-        <MemoryRouter>
-          <FixRunPage envId="env-1" fixId={fixId} />
-        </MemoryRouter>
-      </SnackbarProvider>
-    </QueryClientProvider>,
+const fixOf = (id, extra = {}) => ({
+  ...structuredClone(fixtureFixRun(id)),
+  environment_id: "env-1",
+  ...extra,
+});
+
+const wrap = (ui) => (
+  <QueryClientProvider
+    client={
+      new QueryClient({
+        defaultOptions: {
+          queries: { retry: false },
+          mutations: { retry: false },
+        },
+      })
+    }
+  >
+    <SnackbarProvider>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </SnackbarProvider>
+  </QueryClientProvider>
+);
+const renderUi = (ui) => render(wrap(ui));
+const renderPage = (fixId) =>
+  renderUi(<FixRunPage envId="env-1" fixId={fixId} />);
+
+const shipPosts = () =>
+  axios.post.mock.calls.filter(([url]) =>
+    /make-default|pull-request/.test(url),
   );
-  return { ...utils, client };
+
+async function confirmShip(user, button) {
+  await user.click(await screen.findByRole("button", { name: "Ship" }));
+  const dialog = await screen.findByRole("dialog");
+  return { dialog, confirm: within(dialog).getByRole("button", { name: button }) };
 }
 
-describe("finished fix", () => {
-  beforeEach(() => {
-    resetFixRunFixtures();
-    shipOverride = null;
-  });
+beforeEach(() => {
+  resetFixRunFixtures();
+  hooks.ship = null;
+  navigate.mockReset();
+  axios.post.mockClear();
+});
 
-  it("leads with the held-back headline and the three cards", async () => {
-    renderPage("fix-ready-archive");
-    expect(
-      await screen.findByText("Held-back pass rate 17% → 83%, broke 1."),
-    ).toBeInTheDocument();
-    const cards = within(screen.getByTestId("verdict-cards"));
-    expect(cards.getByText("Held back")).toBeInTheDocument();
-    expect(cards.getByText("17% → 83%")).toBeInTheDocument();
-    expect(cards.getByText("▲ 66 pts")).toBeInTheDocument();
-    expect(cards.getByText("Target")).toBeInTheDocument();
-    expect(cards.getByText("Overfit gap")).toBeInTheDocument();
-    expect(cards.getByText("17 pts")).toBeInTheDocument();
-  });
-
-  it("says it was proven on the targets only when nothing was held back", async () => {
-    renderPage("fix-ready-no-held");
-    expect(
-      await screen.findByText("Proven on the targets only"),
-    ).toBeInTheDocument();
+describe("FixVerdict", () => {
+  it("says it was proven on the targets only when nothing was held back", () => {
+    renderUi(<FixVerdict fix={fixOf("fix-ready-no-held")} />);
+    expect(screen.getByText("Proven on the targets only")).toBeInTheDocument();
     expect(screen.queryByText("Held back")).toBeNull();
     expect(screen.queryByText("Overfit gap")).toBeNull();
+    expect(screen.queryByText("Limited validation")).toBeNull();
   });
 
-  it("shows the checks line and every tier on demand", async () => {
-    const user = userEvent.setup();
-    renderPage("fix-ready-archive");
-    expect(
-      await screen.findByText("Checks · 5 of 5 passed"),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Show all" }));
-    expect(screen.getByText("3 repeats agree")).toBeInTheDocument();
-  });
-
-  it("lists must-pass breaks, noting what was within noise", async () => {
-    renderPage("fix-ready-archive");
-    const breaks = within(await screen.findByTestId("must-pass-breaks"));
+  it("lists must-pass breaks, noting what was within noise", () => {
+    renderUi(<FixVerdict fix={fixOf("fix-ready-archive")} />);
+    const breaks = within(screen.getByTestId("must-pass-breaks"));
     expect(breaks.getByText("on-time-cancel")).toBeInTheDocument();
     expect(breaks.getByText(/refund-window/)).toBeInTheDocument();
-    expect(
-      breaks.getByText(/within normal noise, not counted/),
-    ).toBeInTheDocument();
+    expect(breaks.getByText(/within normal noise, not counted/)).toBeInTheDocument();
   });
 
-  it("makes an uploaded agent's winner the default", async () => {
+  it("renders a verdict without tiers, here and in the decision drawer", () => {
+    const fix = fixOf("fix-ready-archive");
+    fix.candidates.forEach((c) => delete c.verdict.tiers);
+    const { unmount } = renderUi(<FixVerdict fix={fix} />);
+    expect(screen.getByText(/Held-back pass rate/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Checks ·/)).toBeNull();
+    unmount();
+    renderUi(<FixDecisionDrawer fix={fix} open onClose={vi.fn()} />);
+    expect(screen.getByText("How it was decided")).toBeInTheDocument();
+  });
+
+  it("labels limited validation, with the held-back tally only when cases were held back", async () => {
+    const { unmount } = renderUi(
+      <FixVerdict fix={fixOf("fix-ready-archive", { limited_validation: true })} />,
+    );
+    expect(screen.getByText("Limited validation")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "Too few to tell · Fixed 1 of 2 failing scenarios it never saw",
+      ),
+    ).toBeInTheDocument();
+    unmount();
+    renderUi(
+      <FixVerdict fix={fixOf("fix-ready-no-held", { limited_validation: true })} />,
+    );
+    expect(screen.getByText("Limited validation")).toBeInTheDocument();
+    expect(screen.queryByText(/Too few to tell/)).toBeNull();
+    expect(screen.queryByText("Proven on the targets only")).toBeNull();
+    expect(
+      listResult(fixOf("fix-ready-archive", { limited_validation: true })).note,
+    ).toMatch(/^Limited validation · /);
+  });
+
+  it("warns with each platform eval's rate pair, and says nothing when the field is absent", () => {
+    const { unmount } = renderUi(
+      <FixVerdict
+        fix={fixOf("fix-ready-archive", {
+          eval_warnings: [
+            { name: "Politeness", pass_rate: 0.6, base_pass_rate: 0.85, trials: 6, base_trials: 6 },
+            { name: "Tone", pass_rate: 0.5, base_pass_rate: 0.75, trials: 4, base_trials: 8 },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText("Politeness")).toBeInTheDocument();
+    expect(screen.getByText("60% vs 85% · 6 trials vs 6")).toBeInTheDocument();
+    expect(screen.getByText("50% vs 75% · 4 trials vs 8")).toBeInTheDocument();
+    unmount();
+    renderUi(<FixVerdict fix={fixOf("fix-ready-archive", { eval_warnings: undefined })} />);
+    expect(screen.queryByText(/platform eval/)).toBeNull();
+  });
+});
+
+describe("FixFinishedView", () => {
+  it("leads a failed fix with why it failed and offers no Ship", () => {
+    const fix = fixOf("fix-failed", {
+      report: { ending: "failed", summary: "The fix did not finish." },
+      failure: {
+        code: "engine_exited",
+        message: "The engine stopped: the model provider refused the key.",
+      },
+    });
+    renderUi(
+      <FixFinishedView fix={fix} tab="trials" onTab={vi.fn()} renderTab={() => null} />,
+    );
+    expect(
+      screen.getByText("The engine stopped: the model provider refused the key."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("The fix did not finish.")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Ship$/ })).toBeNull();
+  });
+
+  it("offers Retry on a retryable failed fix and opens the new fix", async () => {
     const user = userEvent.setup();
-    renderPage("fix-ready-archive");
-    await user.click(await screen.findByRole("button", { name: "Ship" }));
-    await user.click(await screen.findByRole("button", { name: "Make default" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Default" })).toBeDisabled(),
+    const { unmount } = renderUi(
+      <FinishedActions fix={fixOf("fix-failed", { retryable: false })} onReview={vi.fn()} />,
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    unmount();
+    renderUi(<FinishedActions fix={fixOf("fix-failed")} onReview={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(navigate).toHaveBeenCalled());
+    expect(navigate.mock.calls[0][0]).toMatch(
+      /^\/dashboard\/simulate\/environments\/env-1\/improvements\/fix-new-\d+$/,
     );
   });
+});
 
-  it("opens a pull request for a GitHub agent's winner", async () => {
+describe("Ship", () => {
+  it("asks before it acts: where a pull request goes and what it changes, or which version becomes the default", async () => {
     const user = userEvent.setup();
-    renderPage("fix-ready-github");
-    await user.click(await screen.findByRole("button", { name: "Ship" }));
-    await user.click(await screen.findByRole("button", { name: "Open pull request" }));
+    const github = renderPage("fix-ready-github");
+    let { dialog, confirm } = await confirmShip(user, "Open pull request");
+    expect(within(dialog).getByText("main @ 0487e25")).toBeInTheDocument();
+    expect(await within(dialog).findByText("instructions.md")).toBeInTheDocument();
+    expect(within(dialog).getByText("+3 −1")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Repo")).toBeNull();
+    expect(shipPosts()).toHaveLength(0);
+    await user.click(confirm);
     expect(
       await screen.findByRole("link", { name: "View pull request" }),
     ).toHaveAttribute("href", "https://github.com/acme/dispatch-agent/pull/42");
+    expect(shipPosts()).toHaveLength(1);
+    github.unmount();
+
+    resetFixRunFixtures();
+    updateFixtureFixRun("fix-ready-github", (f) => ({
+      ...f,
+      agent: { ...f.agent, repository: "acme/dispatch-agent" },
+    }));
+    const repo = renderPage("fix-ready-github");
+    ({ dialog } = await confirmShip(user, "Open pull request"));
+    expect(within(dialog).getByText("acme/dispatch-agent")).toBeInTheDocument();
+    expect(within(dialog).getByText("Repo")).toBeInTheDocument();
+    repo.unmount();
+
+    axios.post.mockClear();
+    renderPage("fix-ready-archive");
+    ({ dialog, confirm } = await confirmShip(user, "Make default"));
+    expect(
+      within(dialog).getByText("Make Trial 3's version the default?"),
+    ).toBeInTheDocument();
+    expect(shipPosts()).toHaveLength(0);
+    await user.click(confirm);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Default" })).toBeDisabled(),
+    );
+    expect(shipPosts()[0][0]).toMatch(/make-default\/$/);
   });
 
   it("shows the server's message when the version cannot be activated", async () => {
-    const user = userEvent.setup();
-    shipOverride = {
+    hooks.ship = {
       isPending: false,
       mutateAsync: vi.fn().mockRejectedValue({
         statusCode: 409,
@@ -124,19 +243,15 @@ describe("finished fix", () => {
         message: "Could not activate v11",
       }),
     };
+    const user = userEvent.setup();
     renderPage("fix-ready-archive");
-    await user.click(await screen.findByRole("button", { name: "Ship" }));
-    await user.click(await screen.findByRole("button", { name: "Make default" }));
-    expect(
-      await screen.findByText("Could not activate v11"),
-    ).toBeInTheDocument();
-    // The confirmation closes on the error; Ship is there to try again.
+    await user.click((await confirmShip(user, "Make default")).confirm);
+    expect(await screen.findByText("Could not activate v11")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Ship" })).toBeEnabled();
   });
 
   it("offers the patch when the repository cannot take a pull request", async () => {
-    const user = userEvent.setup();
-    shipOverride = {
+    hooks.ship = {
       isPending: false,
       mutateAsync: vi.fn().mockRejectedValue({
         statusCode: 422,
@@ -144,79 +259,11 @@ describe("finished fix", () => {
         message: "Not connected through the GitHub App",
       }),
     };
+    const user = userEvent.setup();
     renderPage("fix-ready-github");
-    await user.click(await screen.findByRole("button", { name: "Ship" }));
-    await user.click(await screen.findByRole("button", { name: "Open pull request" }));
+    await user.click((await confirmShip(user, "Open pull request")).confirm);
     expect(
       await screen.findByRole("button", { name: "Download patch" }),
     ).toBeInTheDocument();
-  });
-
-  it("says what Ship does before it is clicked", async () => {
-    const user = userEvent.setup();
-    renderPage("fix-ready-github");
-    await user.hover(await screen.findByRole("button", { name: "Ship" }));
-    expect(
-      await screen.findByText(
-        "Opens a pull request with Trial 3's change on the agent's repository",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("groups how it was decided into evidence, finalists and checks", async () => {
-    const user = userEvent.setup();
-    renderPage("fix-ready-archive");
-    await user.click(
-      await screen.findByRole("button", { name: "How it was decided" }),
-    );
-    const drawer = within(await screen.findByTestId("fix-decision"));
-    expect(
-      drawer.getByText("Improvement 10 · Trial 3 kept"),
-    ).toBeInTheDocument();
-    expect(drawer.getByText("Evidence")).toBeInTheDocument();
-    expect(drawer.getByText("Held-back scenarios")).toBeInTheDocument();
-    expect(drawer.getByText("Finalists")).toBeInTheDocument();
-    expect(
-      within(drawer.getByTestId("finalist-3")).getByText("Kept"),
-    ).toBeInTheDocument();
-    expect(
-      within(drawer.getByTestId("finalist-2")).getByText("Passed"),
-    ).toBeInTheDocument();
-    expect(drawer.getByText("Checks")).toBeInTheDocument();
-  });
-
-  it("shows why a failed fix ended and offers no Ship", async () => {
-    renderPage("fix-failed");
-    expect(
-      await screen.findByText(
-        "The engine could not start the agent's sandbox.",
-      ),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Ship$/ })).toBeNull();
-  });
-
-  it("heads the trial chart with the winner and its gain", async () => {
-    renderPage("fix-ready-archive");
-    expect(
-      await screen.findByText(
-        "pass rate on the target scenarios · Trial 3 · winner ▲ 67 pts vs the agent before the change, on the same scenarios",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("switches to the finished view when a running fix ends", async () => {
-    const { client } = renderPage("fix-verify");
-    expect(await screen.findByTestId("fix-running-view")).toBeInTheDocument();
-    updateFixtureFixRun("fix-verify", (f) => ({
-      ...f,
-      state: "ready",
-      step: "done",
-      candidates: f.candidates.map((c) =>
-        c.outcome === "pending" ? { ...c, outcome: "winner" } : c,
-      ),
-    }));
-    await client.refetchQueries();
-    expect(await screen.findByTestId("fix-finished-view")).toBeInTheDocument();
-    expect(screen.queryByTestId("fix-running-view")).toBeNull();
   });
 });

@@ -402,7 +402,7 @@ const BY_ATTEMPT = {
   },
 };
 
-export function fixtureRunTasks(testExecutionId) {
+function fixtureRunTasks(testExecutionId) {
   const attempt = Number(/-c(\d+)$/.exec(testExecutionId || "")?.[1]);
   const statuses = BY_ATTEMPT[attempt] || BASELINE;
   return SCENARIOS.flatMap((s) =>

@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import PropTypes from "prop-types";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -39,6 +39,19 @@ vi.mock("../evals/EvalsStep", () => ({
 }));
 vi.mock("../runs/summary/RunsSummary", () => ({ default: () => <div>runs-body</div> }));
 vi.mock("../versions/VersionsPanel", () => ({ default: () => <div>versions-body</div> }));
+vi.mock("../improvements/ImprovementsPanel", () => ({
+  default: () => <div>improvements-body</div>,
+}));
+
+// No fixes unless an Improvements case says otherwise.
+const NO_FIXES = { fixes: [], count: 0, isLoading: false };
+const fixRuns = vi.hoisted(() => ({ value: null }));
+vi.mock("src/api/simulate-environments/fixRuns", () => ({
+  useEnvironmentFixRuns: () => fixRuns.value,
+}));
+beforeEach(() => {
+  fixRuns.value = NO_FIXES;
+});
 
 // The real runs hook by default; the loading cases override it.
 vi.mock("src/api/simulate-environments/runs", async (importOriginal) => {
@@ -406,6 +419,32 @@ describe("Versions tab", () => {
     renderPanels({ tab: "versions" });
     expect(screen.queryByText("versions-body")).toBeNull();
     expect(screen.getByText(/overview-body/)).toBeInTheDocument();
+  });
+});
+
+describe("Improvements tab", () => {
+  it("is hidden until the environment has a fix", () => {
+    renderPanels({ tab: "improvements" });
+    expect(screen.queryByRole("tab", { name: /Improvements/ })).toBeNull();
+    expect(screen.queryByText("improvements-body")).toBeNull();
+  });
+
+  it("shows with its count and renders its panel once there are fixes", () => {
+    fixRuns.value = { fixes: [{}, {}, {}], count: 3, isLoading: false };
+    renderPanels({ tab: "improvements", counts: { scenarios: 0, evals: 0 } });
+    const tab = screen.getByRole("tab", { name: /Improvements/ });
+    expect(within(tab).getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("improvements-body")).toBeInTheDocument();
+  });
+
+  it("keeps the tab for ?tab=improvements while the list loads", () => {
+    fixRuns.value = { ...NO_FIXES, isLoading: true };
+    renderPanels({ tab: "improvements" });
+    expect(screen.getByRole("tab", { name: /Improvements/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("improvements-body")).toBeInTheDocument();
   });
 });
 

@@ -878,8 +878,6 @@ describe("RunDetail", () => {
     });
     const invalidateSpy = vi.spyOn(client, "invalidateQueries");
     const user = userEvent.setup();
-    
-
     useOptimizationRuns.mockReturnValue({ runs: [OPT_RUN], isLoading: false });
     renderDetail({ client });
     await user.click(screen.getByRole("tab", { name: /Trials/ }));

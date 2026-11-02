@@ -1,15 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import PropTypes from "prop-types";
 import { render, screen, fireEvent, within } from "src/utils/test-utils";
+import userEvent from "@testing-library/user-event";
 
 import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
-
-vi.mock("src/utils/axios", async (importOriginal) => {
-  const { withFakeFixRunsApi } = await import(
-    "src/api/simulate-environments/__tests__/fixtures/fixRunsApi"
-  );
-  return withFakeFixRunsApi(await importOriginal());
-});
 
 const navigate = vi.fn();
 vi.mock("react-router-dom", async (importOriginal) => ({
@@ -49,12 +43,15 @@ vi.mock("src/components/data-table", () => {
   return { DataTable };
 });
 
-const fixtures = (envId) =>
-  FIX_RUN_FIXTURES.map((f) => ({ ...f, environment_id: envId }));
-let hookValue;
+// One server page of the fixtures for the 0-based page the panel asks for.
+let allFixes;
 vi.mock("src/api/simulate-environments/fixRuns", () => ({
   FIX_RUNS_PAGE_SIZE: 25,
-  useEnvironmentFixRuns: () => hookValue,
+  useEnvironmentFixRuns: (_envId, { page, pageSize }) => ({
+    fixes: allFixes.slice(page * pageSize, (page + 1) * pageSize),
+    count: allFixes.length,
+    isLoading: false,
+  }),
 }));
 
 const { default: ImprovementsPanel } = await import("../ImprovementsPanel");
@@ -64,35 +61,22 @@ const env = { id: "env-1", name: "new env" };
 describe("ImprovementsPanel", () => {
   beforeEach(() => {
     navigate.mockReset();
-    hookValue = {
-      fixes: fixtures("env-1"),
-      count: FIX_RUN_FIXTURES.length,
-      isLoading: false,
-    };
+    allFixes = FIX_RUN_FIXTURES.map((f) => ({ ...f, environment_id: "env-1" }));
   });
 
-  it("shows one row per fix", () => {
-    render(<ImprovementsPanel env={env} />);
-    expect(screen.getAllByRole("row")).toHaveLength(FIX_RUN_FIXTURES.length);
-  });
-
-  it("names the fix and its agent", () => {
+  it("shows a fix's name, agent, state, held-back result and cost", () => {
     render(<ImprovementsPanel env={env} />);
     const row = within(screen.getByTestId("row-fix-ready-archive"));
     expect(row.getByText("Improvement 10")).toBeInTheDocument();
     expect(row.getByText("Pickup dispatch agent · v8")).toBeInTheDocument();
     expect(row.getByText("Ready for review")).toBeInTheDocument();
-  });
-
-  it("shows the held-back result the way the design does", () => {
-    render(<ImprovementsPanel env={env} />);
-    const row = within(screen.getByTestId("row-fix-ready-archive"));
     expect(row.getByText("Held back 17% → 83%")).toBeInTheDocument();
     expect(row.getByText("broke 1 held back")).toBeInTheDocument();
+    expect(row.getByText("412 credits")).toBeInTheDocument();
   });
 
   it("shows the hand-off: default when shipped, a pull request link when opened", () => {
-    hookValue.fixes = hookValue.fixes.map((f) =>
+    allFixes = allFixes.map((f) =>
       f.id === "fix-ready-github"
         ? {
             ...f,
@@ -119,15 +103,6 @@ describe("ImprovementsPanel", () => {
     ).toHaveAttribute("href", "https://github.com/acme/dispatch-agent/pull/42");
   });
 
-  it("shows the cost in credits", () => {
-    render(<ImprovementsPanel env={env} />);
-    expect(
-      within(screen.getByTestId("row-fix-ready-archive")).getByText(
-        "412 credits",
-      ),
-    ).toBeInTheDocument();
-  });
-
   it("never prints null or undefined for unknown identity", () => {
     render(<ImprovementsPanel env={env} />);
     const row = screen.getByTestId("row-fix-unknown-identity");
@@ -141,5 +116,20 @@ describe("ImprovementsPanel", () => {
     expect(navigate).toHaveBeenCalledWith(
       "/dashboard/simulate/environments/env-1/improvements/fix-ready-archive",
     );
+  });
+
+  it("walks the server's pages with the shared pager", async () => {
+    const user = userEvent.setup();
+    render(<ImprovementsPanel env={env} />);
+    expect(screen.getByText("1–15 of 15")).toBeInTheDocument();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Rows per page" }),
+      "10",
+    );
+    expect(screen.getByText("1–10 of 15")).toBeInTheDocument();
+    expect(screen.getAllByTestId(/^row-/)).toHaveLength(10);
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByText("11–15 of 15")).toBeInTheDocument();
+    expect(screen.getAllByTestId(/^row-/)).toHaveLength(5);
   });
 });

@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 
+import { mapCallRow } from "src/api/simulate-environments/runCalls";
+
 import { heldBackTally, scenarioOutcomes } from "../scenarioOutcomes";
 
 const task = (key, status, name = key) => ({
@@ -73,6 +75,23 @@ describe("scenarioOutcomes", () => {
       "still-failing",
       "same",
     ]);
+  });
+
+  it("reads the judge's outcome, so a call a platform eval made inconclusive still counts", () => {
+    const row = (outcome, harness) =>
+      mapCallRow({
+        id: `late-cancel-${outcome}`,
+        source_scenario_key: "late-cancel",
+        trial_index: 1,
+        outcome,
+        harness_outcome_status: harness,
+      });
+    expect(
+      scenarioOutcomes(
+        [row("failed", "failed")],
+        [row("inconclusive", "passed")],
+      ).map((r) => [r.key, r.outcome]),
+    ).toEqual([["late-cancel", "fixed"]]);
   });
 
   it("counts a held-back scenario the winner never measured as not fixed", () => {

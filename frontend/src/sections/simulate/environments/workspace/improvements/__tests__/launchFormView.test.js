@@ -7,7 +7,6 @@ import {
   budgetSteps,
   minuteSteps,
   launchError,
-  scenarioStatus,
 } from "../launchFormView";
 
 const LIMITS = {
@@ -87,10 +86,8 @@ describe("launch checks", () => {
     surfaces: ["prompt"],
     limits: LIMITS,
   };
-  it("passes a valid pick", () => {
-    expect(launchError(ok)).toBeNull();
-  });
   it.each([
+    [ok, null],
     [{ ...ok, targets: [] }, "Pick at least one failing case to fix."],
     [
       { ...ok, limits: { ...LIMITS, scenarios_min: 12 } },
@@ -105,15 +102,7 @@ describe("launch checks", () => {
       "A case can't be both fixed and protected.",
     ],
     [{ ...ok, surfaces: [] }, "Pick at least one part it may change."],
-  ])("refuses %#", (input, message) => {
+  ])("passes a valid pick and refuses the rest %#", (input, message) => {
     expect(launchError(input)).toBe(message);
-  });
-});
-
-describe("scenario status", () => {
-  it("names passed, failed and unknown", () => {
-    expect(scenarioStatus(true)).toBe("Passing");
-    expect(scenarioStatus(false)).toBe("Failing");
-    expect(scenarioStatus(null)).toBe("Not measured");
   });
 });

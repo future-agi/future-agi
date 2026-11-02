@@ -12,31 +12,14 @@ import {
   updateFixtureFixRun,
 } from "./fixRuns";
 
-// Test-only stand-in for the agent-fix-runs backend. It answers the contract's
-// paths from the in-memory fixture store, so component tests exercise the same
-// request code the app runs against the real API.
-const BASE = "/simulate/api/agent-fix-runs/";
-
-export const FIX_RUN_ENDPOINTS = {
-  list: () => BASE,
-  launchOptions: () => `${BASE}launch-options/`,
-  detail: (id) => `${BASE}${id}/`,
-  stop: (id) => `${BASE}${id}/stop/`,
-  retry: (id) => `${BASE}${id}/retry/`,
-  makeDefault: (id, cid) => `${BASE}${id}/candidates/${cid}/make-default/`,
-  pullRequest: (id, cid) => `${BASE}${id}/candidates/${cid}/pull-request/`,
-  patch: (id, cid) => `${BASE}${id}/candidates/${cid}/patch/`,
-};
-
+// Test-only stand-in for the agent-fix-runs backend. It answers the real
+// registry's paths from the in-memory fixture store, so a wrong URL in product
+// code falls through to the real axios and fails the test.
 const ok = (data) => Promise.resolve({ data });
 // The app's axios rejects with the body spread plus statusCode.
 const fail = (statusCode, body) => Promise.reject({ ...body, statusCode });
 
-const CANDIDATE = new RegExp(
-  `^${BASE}([^/]+)/candidates/([^/]+)/(make-default|pull-request|patch)/$`,
-);
-const FIX = new RegExp(`^${BASE}([^/]+)/(stop/)?$`);
-const RETRY = new RegExp(`^${BASE}([^/]+)/retry/$`);
+const escape = (path) => path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function readFix(fixId) {
   const fix = fixtureFixRun(fixId);
@@ -82,15 +65,22 @@ function openPullRequest(fixId, candidateId) {
 }
 
 export function createFixRunsAxios(actual) {
+  const fixRuns = actual.endpoints.agentFixRuns;
+  const base = escape(fixRuns.list());
+  const CANDIDATE = new RegExp(
+    `^${base}([^/]+)/candidates/([^/]+)/(make-default|pull-request|patch)/$`,
+  );
+  const FIX = new RegExp(`^${base}([^/]+)/(stop/)?$`);
+  const RETRY = new RegExp(`^${base}([^/]+)/retry/$`);
   const callsPath = new RegExp(
-    `^${actual.endpoints.runResultsV3
-      .calls("__ID__")
-      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-      .replace("__ID__", "([^/]+)")}$`,
+    `^${escape(actual.endpoints.runResultsV3.calls("__ID__")).replace(
+      "__ID__",
+      "([^/]+)",
+    )}$`,
   );
   const get = vi.fn((url, config = {}) => {
     const params = config.params || {};
-    if (url === FIX_RUN_ENDPOINTS.list()) {
+    if (url === fixRuns.list()) {
       const all = fixtureFixRuns(params.environment_id);
       const page = params.page ?? 1;
       const limit = params.limit ?? 25;
@@ -99,7 +89,7 @@ export function createFixRunsAxios(actual) {
         results: all.slice((page - 1) * limit, page * limit),
       });
     }
-    if (url === FIX_RUN_ENDPOINTS.launchOptions()) {
+    if (url === fixRuns.launchOptions()) {
       return ok(fixtureLaunchOptions(params.source_run_id));
     }
     const calls = callsPath.exec(url);
@@ -111,7 +101,7 @@ export function createFixRunsAxios(actual) {
     return actual.default.get(url, config);
   });
   const post = vi.fn((url, body, config) => {
-    if (url === FIX_RUN_ENDPOINTS.list()) {
+    if (url === fixRuns.list()) {
       return ok(fixtureLaunch(null, body));
     }
     const retry = RETRY.exec(url);
@@ -136,12 +126,7 @@ export function createFixRunsAxios(actual) {
   return { get, post };
 }
 
-// For vi.mock("src/utils/axios", ...): the real module with the fix-run paths
-// spelled out (they are not in the generated contract yet) and the fake server.
+// For vi.mock("src/utils/axios", ...): the real module with the fake server.
 export function withFakeFixRunsApi(actual) {
-  return {
-    ...actual,
-    default: createFixRunsAxios(actual),
-    endpoints: { ...actual.endpoints, agentFixRuns: FIX_RUN_ENDPOINTS },
-  };
+  return { ...actual, default: createFixRunsAxios(actual) };
 }

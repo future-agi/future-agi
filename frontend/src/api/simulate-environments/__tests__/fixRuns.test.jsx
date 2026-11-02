@@ -11,11 +11,17 @@ vi.mock("src/utils/axios", async (importOriginal) => {
 });
 
 const axios = (await import("src/utils/axios")).default;
-const { FIX_RUN_FIXTURES, resetFixRunFixtures } = await import(
+const { FIX_RUN_FIXTURES, fixtureFixRun, resetFixRunFixtures } = await import(
   "./fixtures/fixRuns"
 );
-const { useEnvironmentFixRuns, useFixRun, fixPollInterval, FIX_POLL_MS } =
-  await import("../fixRuns");
+const {
+  useEnvironmentFixRuns,
+  fixPollInterval,
+  FIX_POLL_MS,
+  fixErrorOf,
+  collectAllCalls,
+  checkRunsForScenarios,
+} = await import("../fixRuns");
 
 const makeWrapper = () => {
   const queryClient = new QueryClient({
@@ -28,27 +34,13 @@ const makeWrapper = () => {
   return Wrapper;
 };
 
-describe("fix-run reads", () => {
+describe("fix-run list", () => {
   beforeEach(() => {
     axios.get.mockClear();
     resetFixRunFixtures();
   });
 
-  it("lists the environment's fixes newest first", async () => {
-    const { result } = renderHook(() => useEnvironmentFixRuns("env-1"), {
-      wrapper: makeWrapper(),
-    });
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-    const created = result.current.fixes.map((f) => f.created_at);
-    expect(created.length).toBe(FIX_RUN_FIXTURES.length);
-    expect(created).toEqual([...created].sort().reverse());
-    expect(result.current.count).toBe(result.current.fixes.length);
-    expect(axios.get).toHaveBeenCalledWith("/simulate/api/agent-fix-runs/", {
-      params: { environment_id: "env-1", page: 1, limit: 25 },
-    });
-  });
-
-  it("asks for one page and reports the server's total", async () => {
+  it("asks for one 1-based page and reports the server's total", async () => {
     const { result } = renderHook(
       () => useEnvironmentFixRuns("env-1", { page: 1, pageSize: 10 }),
       { wrapper: makeWrapper() },
@@ -61,53 +53,102 @@ describe("fix-run reads", () => {
     expect(result.current.count).toBe(FIX_RUN_FIXTURES.length);
   });
 
-  it("stamps the asked environment on every fixture fix", async () => {
-    const { result } = renderHook(() => useEnvironmentFixRuns("env-1"), {
-      wrapper: makeWrapper(),
-    });
-    await waitFor(() => expect(result.current.isLoading).toBe(false));
-    expect(
-      result.current.fixes.every((f) => f.environment_id === "env-1"),
-    ).toBe(true);
-  });
-
-  it("reads one fix by id", async () => {
-    const id = FIX_RUN_FIXTURES[0].id;
-    const { result } = renderHook(() => useFixRun(id), {
-      wrapper: makeWrapper(),
-    });
-    await waitFor(() => expect(result.current.fix).toBeDefined());
-    expect(result.current.fix.id).toBe(id);
-  });
-
-  it.each(["queued", "running", "stopping"])("polls while %s", (state) => {
-    expect(fixPollInterval({ state })).toBe(FIX_POLL_MS);
+  it("polls only while the fix is live", () => {
+    ["queued", "running", "stopping"].forEach((state) =>
+      expect(fixPollInterval({ state })).toBe(FIX_POLL_MS),
+    );
     expect(FIX_POLL_MS).toBe(5000);
-  });
-
-  it.each([
-    "ready",
-    "no_improvement",
-    "not_reproduced",
-    "out_of_budget",
-    "stopped",
-    "failed",
-  ])("stops polling when %s", (state) => {
-    expect(fixPollInterval({ state })).toBe(false);
-  });
-
-  it("covers every state the contract lists", () => {
-    const states = new Set(FIX_RUN_FIXTURES.map((f) => f.state));
     [
-      "queued",
-      "running",
-      "stopping",
       "ready",
       "no_improvement",
       "not_reproduced",
       "out_of_budget",
       "stopped",
       "failed",
-    ].forEach((s) => expect(states.has(s)).toBe(true));
+    ].forEach((state) => expect(fixPollInterval({ state })).toBe(false));
+  });
+});
+
+describe("fixErrorOf", () => {
+  it("reads the code and message from the app's or axios's error shape", () => {
+    expect(
+      fixErrorOf({
+        statusCode: 409,
+        error: "fix_candidate_not_activated",
+        message: "Could not activate v9",
+      }),
+    ).toEqual({
+      code: "fix_candidate_not_activated",
+      message: "Could not activate v9",
+      offerPatch: false,
+    });
+    expect(
+      fixErrorOf({
+        response: {
+          status: 422,
+          data: { error: "fix_candidate_not_proven", message: "m" },
+        },
+      }).code,
+    ).toBe("fix_candidate_not_proven");
+  });
+
+  it.each([
+    "fix_github_not_connected",
+    "fix_github_commit_unknown",
+    "github_repository_invalid",
+  ])("offers the patch on %s", (code) => {
+    expect(
+      fixErrorOf({ statusCode: 422, error: code, message: "m" }).offerPatch,
+    ).toBe(true);
+  });
+
+  it("tells an entitlement 402 from a usage 402", () => {
+    expect(
+      fixErrorOf({
+        statusCode: 402,
+        upgrade_required: true,
+        error: { code: "x", message: "Fix my agent is not on your plan" },
+      }),
+    ).toEqual({
+      code: "entitlement",
+      message: "Fix my agent is not on your plan",
+      offerPatch: false,
+    });
+    expect(
+      fixErrorOf({
+        statusCode: 402,
+        error_code: "usage_limit",
+        message: "Credit limit reached",
+      }),
+    ).toEqual({
+      code: "usage",
+      message: "Credit limit reached",
+      offerPatch: false,
+    });
+  });
+});
+
+describe("Per scenario data", () => {
+  it("counts every fix-level check run as baseline and reads every page of calls", async () => {
+    const fix = structuredClone(fixtureFixRun("fix-ready-archive"));
+    fix.check_runs = [
+      { run_id: "rt", test_execution_id: "te-b1", label: "baseline-r1" },
+      { run_id: "rt", test_execution_id: "te-b2", label: "base-2" },
+    ];
+    expect(
+      checkRunsForScenarios(fix, "fix-ready-archive-c3").before.map(
+        (r) => r.test_execution_id,
+      ),
+    ).toEqual(["te-b1", "te-b2"]);
+
+    const pages = { 1: 200, 2: 200, 3: 37 };
+    const fetchPage = vi.fn(async (page) => ({
+      count: 437,
+      results: Array.from({ length: pages[page] || 0 }, (_, i) => ({
+        id: `${page}-${i}`,
+      })),
+    }));
+    expect(await collectAllCalls(fetchPage, 200)).toHaveLength(437);
+    expect(fetchPage).toHaveBeenCalledTimes(3);
   });
 });

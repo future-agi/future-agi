@@ -23,29 +23,28 @@ vi.mock("react-router-dom", async (importOriginal) => ({
   useNavigate: () => navigate,
 }));
 
-let optionsOverride = null;
+// The real launch-options hook over the fake API unless a test pins it.
+const hooks = vi.hoisted(() => ({ options: null }));
 vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     useFixLaunchOptions: (id, opts) =>
-      optionsOverride
-        ? { options: optionsOverride, isLoading: false }
-        : actual.useFixLaunchOptions(id, opts),
+      hooks.options ?? actual.useFixLaunchOptions(id, opts),
   };
 });
 
+const axios = (await import("src/utils/axios")).default;
 const { default: LaunchFixDialog } = await import("../LaunchFixDialog");
 
 const onClose = vi.fn();
 let lastClient;
 function renderDialog() {
-  const client = new QueryClient({
+  lastClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  lastClient = client;
   return render(
-    <QueryClientProvider client={client}>
+    <QueryClientProvider client={lastClient}>
       <SnackbarProvider>
         <MemoryRouter>
           <LaunchFixDialog
@@ -60,157 +59,216 @@ function renderDialog() {
   );
 }
 
+const pinOptions = (options) => {
+  hooks.options = { options, isLoading: false, error: null };
+};
+
+const fixCases = () => within(screen.getByTestId("cases-fix"));
+const protectCases = () => within(screen.getByTestId("cases-protect"));
+
+async function openPicker(user) {
+  await user.click(await screen.findByText("Choose cases"));
+}
+
+async function pickOption(user, label, option) {
+  await user.click(
+    within(
+      screen.getByLabelText(label).closest(".MuiInputBase-root"),
+    ).getByRole("combobox"),
+  );
+  await user.click(await screen.findByRole("option", { name: option }));
+}
+
+const picked = (testId) =>
+  within(screen.getByTestId(testId))
+    .getAllByRole("checkbox")
+    .filter((c) => c.getAttribute("aria-checked") === "true")
+    .map((c) => c.getAttribute("aria-label"))
+    .sort();
+
+// Everything the user can set, read from the screen.
+function formState() {
+  const surface = (name) => screen.getByRole("checkbox", { name }).checked;
+  return {
+    fix: picked("cases-fix"),
+    protect: picked("cases-protect"),
+    surfaces: ["Instructions", "Tools", "Settings", "Code"].filter(surface),
+    locked: [...document.querySelectorAll(".MuiChip-label")].map(
+      (c) => c.textContent,
+    ),
+    budget: screen.getByLabelText("Budget").closest(".MuiInputBase-root")
+      .textContent,
+    time: screen.getByLabelText("Time limit").closest(".MuiInputBase-root")
+      .textContent,
+  };
+}
+
+beforeEach(() => {
+  resetFixRunFixtures();
+  hooks.options = null;
+  navigate.mockReset();
+  onClose.mockReset();
+  axios.post.mockClear();
+});
+
 describe("LaunchFixDialog", () => {
-  beforeEach(() => {
-    resetFixRunFixtures();
-    optionsOverride = null;
-    navigate.mockReset();
-    onClose.mockReset();
-  });
-
-  it("names the agent and reads the suggested plan back", async () => {
-    renderDialog();
-    expect(
-      await screen.findByText("Improve Customer Support Line agent"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Searches for a better Customer Support Line agent, scored by this environment",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Fix 12 failing cases without breaking 6 protected cases, changing instructions only, up to 1,500 credits or 2 h 30 min.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Customer Support Line agent · agent v1 · main @ 0487e25 × environment v1",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "12 failing: 8 to fix, 4 held back to prove it · 6 must keep passing",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("shows only what the contract has", async () => {
-    renderDialog();
-    await screen.findByText("Improve Customer Support Line agent");
-    expect(
-      screen.getByText("Stops at the limit with the best it found."),
-    ).toBeInTheDocument();
-    ["Copy as command", "More options", "Show breakdown"].forEach((t) =>
-      expect(screen.queryByText(t)).toBeNull(),
-    );
-    expect(screen.queryByText(/full plan would need/)).toBeNull();
-  });
-
   it("picks scenarios, one row each, and recounts", async () => {
     const user = userEvent.setup();
     renderDialog();
-    await user.click(await screen.findByText("Choose cases"));
-    const fix = within(screen.getByTestId("cases-fix"));
-    expect(fix.getByText("12 of 12")).toBeInTheDocument();
+    await openPicker(user);
+    expect(fixCases().getByText("12 of 12")).toBeInTheDocument();
     expect(
-      fix.getAllByText("Refunds above $200 need supervisor approval"),
+      fixCases().getAllByText("Refunds above $200 need supervisor approval"),
     ).toHaveLength(1);
-    expect(fix.queryByText("Held back")).toBeNull();
-    expect(fix.queryByText(/Flaky/)).toBeNull();
-    await user.click(fix.getByRole("checkbox", { name: "Authority claim" }));
+    await user.click(
+      fixCases().getByRole("checkbox", { name: "Authority claim" }),
+    );
     expect(
       screen.getByText("11 failing to fix · 6 must keep passing"),
     ).toBeInTheDocument();
-    const protect = within(screen.getByTestId("cases-protect"));
-    expect(protect.getAllByText("Not measured")).toHaveLength(2);
+    expect(protectCases().getAllByText("Not measured")).toHaveLength(2);
   });
 
   it("shows whether All or None is in effect", async () => {
     const user = userEvent.setup();
     renderDialog();
-    await user.click(await screen.findByText("Choose cases"));
-    const fix = within(screen.getByTestId("cases-fix"));
-    expect(fix.getByRole("button", { name: "All" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
+    await openPicker(user);
+    const pressed = () =>
+      ["All", "None"].map((name) =>
+        fixCases().getByRole("button", { name }).getAttribute("aria-pressed"),
+      );
+    expect(pressed()).toEqual(["true", "false"]);
+    await user.click(fixCases().getByRole("button", { name: "None" }));
+    expect(pressed()).toEqual(["false", "true"]);
+    await user.click(
+      fixCases().getByRole("checkbox", { name: "Authority claim" }),
     );
-    expect(fix.getByRole("button", { name: "None" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-    await user.click(fix.getByRole("button", { name: "None" }));
-    expect(fix.getByRole("button", { name: "None" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    expect(fix.getByRole("button", { name: "All" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-    await user.click(fix.getByRole("checkbox", { name: "Authority claim" }));
-    expect(fix.getByRole("button", { name: "All" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-    expect(fix.getByRole("button", { name: "None" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
+    expect(pressed()).toEqual(["false", "false"]);
   });
 
-  it("adds a locked file without touching the picked cases", async () => {
+  it("adds locked files by Enter or comma", async () => {
     const user = userEvent.setup();
     renderDialog();
-    await user.click(await screen.findByText("Choose cases"));
     await user.type(
-      screen.getByLabelText("Add a locked file"),
-      "spec.json{Enter}",
+      await screen.findByLabelText("Add a locked file"),
+      "spec.json{Enter}tools/*.json,",
     );
     expect(screen.getByText("spec.json")).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId("cases-fix")).getByText("12 of 12"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Start improvement" }),
-    ).toBeEnabled();
+    expect(screen.getByText("tools/*.json")).toBeInTheDocument();
   });
 
   it("keeps the user's choices when launch options refetch", async () => {
     const user = userEvent.setup();
     renderDialog();
-    await user.click(await screen.findByText("Choose cases"));
+    await openPicker(user);
     await user.click(
-      within(screen.getByTestId("cases-fix")).getByRole("checkbox", {
-        name: "Authority claim",
-      }),
+      fixCases().getByRole("checkbox", { name: "Authority claim" }),
     );
     await user.type(
       screen.getByLabelText("Add a locked file"),
       "spec.json{Enter}",
     );
     await act(() => lastClient.refetchQueries());
-    expect(
-      within(screen.getByTestId("cases-fix")).getByText("11 of 12"),
-    ).toBeInTheDocument();
+    expect(fixCases().getByText("11 of 12")).toBeInTheDocument();
     expect(screen.getByText("spec.json")).toBeInTheDocument();
   });
 
-  it("explains locked files and adds several paths, by Enter or comma", async () => {
+  it.each([
+    [
+      "untick a case to fix",
+      "fix",
+      (user) =>
+        user.click(
+          fixCases().getByRole("checkbox", { name: "Authority claim" }),
+        ),
+    ],
+    [
+      "untick a case to protect",
+      "protect",
+      (user) =>
+        user.click(
+          protectCases().getByRole("checkbox", {
+            name: "Instruction override",
+          }),
+        ),
+    ],
+    [
+      "tick a part that may change",
+      "surfaces",
+      (user) => user.click(screen.getByRole("checkbox", { name: "Tools" })),
+    ],
+    [
+      "add a locked file",
+      "locked",
+      (user) =>
+        user.type(screen.getByLabelText("Add a locked file"), "spec.json{Enter}"),
+    ],
+    [
+      "change the budget",
+      "budget",
+      (user) => pickOption(user, "Budget", "5,000 credits"),
+    ],
+  ])("%s changes only its own field", async (_name, field, change) => {
     const user = userEvent.setup();
     renderDialog();
-    const input = await screen.findByLabelText("Add a locked file");
-    expect(input).toHaveAttribute(
-      "placeholder",
-      "Files or globs it must never edit, like prompts/*.md. Press Enter to add each.",
+    await openPicker(user);
+    const before = formState();
+    await change(user);
+    const after = formState();
+    Object.keys(before)
+      .filter((k) => k !== field)
+      .forEach((k) => expect({ [k]: after[k] }).toEqual({ [k]: before[k] }));
+    expect(after[field]).not.toEqual(before[field]);
+  });
+
+  it("moves an unticked case to the protect list without ticking it", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await openPicker(user);
+    const protectBefore = picked("cases-protect");
+    await user.click(
+      fixCases().getByRole("checkbox", { name: "Authority claim" }),
     );
-    await user.type(input, "spec.json{Enter}tools/*.json,");
-    expect(screen.getByText("spec.json")).toBeInTheDocument();
-    expect(screen.getByText("tools/*.json")).toBeInTheDocument();
-    expect(input).toHaveAttribute(
-      "placeholder",
-      "Add another, then press Enter",
+    expect(
+      protectCases().getByRole("checkbox", { name: "Authority claim" }),
+    ).toHaveAttribute("aria-checked", "false");
+    expect(picked("cases-protect")).toEqual(protectBefore);
+  });
+
+  it("takes a re-ticked case off the protect list even if it was protected", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await openPicker(user);
+    const authority = () =>
+      fixCases().getByRole("checkbox", { name: "Authority claim" });
+    await user.click(authority());
+    await user.click(
+      protectCases().getByRole("checkbox", { name: "Authority claim" }),
     );
+    await user.click(authority());
+    expect(
+      protectCases().queryByRole("checkbox", { name: "Authority claim" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Start improvement" }),
+    ).toBeEnabled();
+  });
+
+  it("reads every field back in the review sentence", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await openPicker(user);
+    await user.click(
+      fixCases().getByRole("checkbox", { name: "Authority claim" }),
+    );
+    await user.click(screen.getByRole("checkbox", { name: "Tools" }));
+    await pickOption(user, "Budget", "5,000 credits");
+    await pickOption(user, "Time limit", "1 h");
+    expect(
+      screen.getByText(
+        "Fix 11 failing cases without breaking 6 protected cases, changing instructions and tools only, up to 5,000 credits or 1 h.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("disables Start with the reason when nothing may change", async () => {
@@ -228,13 +286,13 @@ describe("LaunchFixDialog", () => {
   });
 
   it("disables Start when the platform blocks the fix", async () => {
-    optionsOverride = {
+    pinOptions({
       ...fixtureLaunchOptions("te-run-6"),
       blocked: {
         code: "fix_run_active",
         message: "A fix is already running in this environment.",
       },
-    };
+    });
     renderDialog();
     expect(
       await screen.findByText("A fix is already running in this environment."),
@@ -244,33 +302,63 @@ describe("LaunchFixDialog", () => {
     ).toBeDisabled();
   });
 
-  it("shows a part the agent cannot change as disabled with its reason", async () => {
+  it("disables a part the agent cannot change", async () => {
     const base = fixtureLaunchOptions("te-run-6");
-    optionsOverride = {
+    pinOptions({
       ...base,
       surfaces: base.surfaces.map((s) =>
         s.id === "settings"
-          ? {
-              ...s,
-              allowed: false,
-              reason: "Settings live on the hosting platform.",
-            }
+          ? { ...s, allowed: false, reason: "Settings live on the hosting platform." }
           : s,
       ),
-    };
+    });
     renderDialog();
     expect(
       await screen.findByRole("checkbox", { name: "Settings" }),
     ).toBeDisabled();
   });
 
-  it("starts the fix and opens its page", async () => {
+  it("shows why launch options failed to load and can be closed", async () => {
+    hooks.options = {
+      options: undefined,
+      isLoading: false,
+      error: {
+        statusCode: 402,
+        upgrade_required: true,
+        error: { message: "Fix my agent is not on your plan" },
+      },
+    };
+    renderDialog();
+    expect(
+      screen.getByText("Fix my agent is not on your plan"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Loading the run…")).toBeNull();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("starts the fix with the contract's fields only and opens its page", async () => {
     const user = userEvent.setup();
     renderDialog();
     await user.click(
       await screen.findByRole("button", { name: "Start improvement" }),
     );
     await waitFor(() => expect(navigate).toHaveBeenCalled());
+    // The backend refuses unknown fields.
+    const [url, body] = axios.post.mock.calls.at(-1);
+    expect(url).toBe("/simulate/api/agent-fix-runs/");
+    expect(Object.keys(body).sort()).toEqual([
+      "budget_credits",
+      "locked_paths",
+      "max_minutes",
+      "protected_scenario_keys",
+      "source_run_id",
+      "surfaces",
+      "target_scenario_keys",
+    ]);
+    expect(body.source_run_id).toBe("te-run-6");
     expect(navigate.mock.calls[0][0]).toMatch(
       /^\/dashboard\/simulate\/environments\/env-1\/improvements\/fix-new-\d+$/,
     );

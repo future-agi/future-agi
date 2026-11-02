@@ -28,9 +28,6 @@ describe("parseDiff", () => {
     expect(types(files[0])).toEqual(["ctx", "remove", "add", "add"]);
     expect(types(files[1])).toEqual(["remove", "add"]);
     expect(files[0].lines[2]).toEqual({ type: "add", text: "add this" });
-  });
-
-  it("returns nothing for an empty patch", () => {
     expect(parseDiff("")).toEqual([]);
   });
 });
