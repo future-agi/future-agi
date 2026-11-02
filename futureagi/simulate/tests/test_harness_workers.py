@@ -330,3 +330,40 @@ def test_tool_calls_a_runtime_attributes_to_a_worker_join_the_timeline_without_r
     # The same call seen in the worker's spans is shown once.
     both = worker_timeline(SPANS, DECLARED, run_key=RUN, traced_calls=[{"name": "get_order", "worker_label": "Order-lookup worker"}])
     assert [one.get("tool") for one in both["events"]].count("get_order") == 1
+
+
+def test_hand_offs_in_the_sealed_trace_give_each_worker_a_delegation_and_a_return_without_spans():
+    # The sandbox reads any framework's spans and seals who made each call and which call handed work out.
+    traced = [
+        {"name": "order_lookup", "ok": True, "at": 1730454600.0, "ended_at": 1730454602.0, "worker_label": "Returns coordinator",
+         "delegated_to": "Order-lookup worker", "arguments": {"input": "order 1043"}, "result": "delivered 3 days ago",
+         "runtime_ids": {"event_id": "t1"}},
+        {"name": "get_order", "ok": True, "at": 1730454601.0, "worker_label": "Order-lookup worker"},
+        {"name": "refund_worker", "ok": False, "at": 1730454603.0, "ended_at": 1730454604.0, "worker_label": "Returns coordinator",
+         "delegated_to": "Refund worker", "arguments": {"input": "refund 1043"}},
+        {"name": "issue_refund", "ok": False, "at": 1730454603.5, "worker_label": "Refund worker"},
+        {"name": "send_reply", "ok": True, "at": 1730454605.0, "worker_label": "Returns coordinator"},
+    ]
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=traced)
+
+    assert sorted(one["id"] for one in timeline["workers"] if one["observed"]) == ["order_lookup", "refund"]
+    events = [(one["type"], one["worker_id"], one.get("tool") or one.get("task") or one.get("result"), one.get("status"))
+              for one in timeline["events"]]
+    assert events == [
+        ("delegated", "run-1/order_lookup", "order 1043", None),
+        ("tool_call", "run-1/order_lookup", "get_order", "ok"),
+        ("returned", "run-1/order_lookup", "delivered 3 days ago", "ok"),
+        ("delegated", "run-1/refund", "refund 1043", None),
+        ("tool_call", "run-1/refund", "issue_refund", "error"),
+        ("returned", "run-1/refund", None, "error"),
+        ("tool_call", None, "send_reply", "ok"),
+    ]
+    first, back = timeline["events"][0], timeline["events"][2]
+    assert first["by"] is None and first["delegation_id"] == back["delegation_id"] == "t1"
+
+
+def test_the_one_agent_of_an_app_that_hands_nothing_out_is_not_a_worker():
+    traced = [{"name": "lookup", "ok": True, "at": 1730454600.0, "worker_label": "Support agent"}]
+    timeline = worker_timeline([], [], run_key=RUN, traced_calls=traced)
+    assert timeline["workers"] == []
+    assert [(one["worker_id"], one["tool"]) for one in timeline["events"]] == [(None, "lookup")]

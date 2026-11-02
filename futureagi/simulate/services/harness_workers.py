@@ -180,12 +180,25 @@ def worker_timeline(
             }
         )
     shown = Counter((one["worker_id"], one["tool"]) for one in events if one["type"] == "tool_call")
-    for call in traced_calls:
+    shown_delegations = Counter(one["worker_id"] for one in events if one["type"] == "delegated")
+    rows = [call for call in traced_calls if isinstance(call, Mapping)]
+
+    def by_of(row: Mapping[str, Any]) -> str:
         # The runtime's stable worker id, else its label for the worker.
-        by = str(call.get("worker_id") or call.get("worker_label") or "").strip()
-        if not by:
-            continue
-        match = declared_by_key.get(_slug(by))
+        return str(row.get("worker_id") or row.get("worker_label") or "").strip()
+
+    # The agent that hands work out and is never handed any is the coordinator, as a top-level agent span is; so is
+    # the one agent of an app that hands nothing out.
+    handed = {_slug(str(row["delegated_to"])) for row in rows if row.get("delegated_to")}
+    named = {_slug(by_of(row)) for row in rows if by_of(row)}
+    coordinators = {_slug(by_of(row)) for row in rows if row.get("delegated_to") and _slug(by_of(row)) not in handed}
+    if not handed and len(named) == 1 and not workers and not any(name in declared_by_key for name in named):
+        coordinators = named
+
+    def traced_worker(by: str, label: str) -> str | None:
+        if _slug(by) in coordinators:
+            return None
+        match = declared_by_key.get(_slug(by)) or declared_by_key.get(_slug(label))
         local = str(match["id"]) if match is not None else _slug(by)
         worker_id = f"{run_key}/{local}"
         entry = workers.setdefault(
@@ -193,7 +206,7 @@ def worker_timeline(
             {
                 "worker_id": worker_id,
                 "id": local,
-                "name": str(match.get("name") or by) if match is not None else str(call.get("worker_label") or by),
+                "name": str(match.get("name") or label) if match is not None else label,
                 "observed": True,
                 "undeclared": match is None,
                 "instance_ids": [],
@@ -201,21 +214,64 @@ def worker_timeline(
         )
         if by not in entry["instance_ids"]:
             entry["instance_ids"].append(by)
+        return worker_id
+
+    def when(value: Any) -> str | None:
+        if isinstance(value, (int, float)) and value > 0:
+            return datetime.fromtimestamp(value, tz=UTC).replace(tzinfo=None).isoformat()
+        return None
+
+    for index, call in enumerate(rows):
+        by = by_of(call)
+        if not by:
+            continue
+        worker_id = traced_worker(by, str(call.get("worker_label") or by))
+        runtime_ids = call.get("runtime_ids") or {}
+        status = "error" if call.get("ok") is False or call.get("refused") else "ok"
+        target = str(call.get("delegated_to") or "").strip()
+        if target:
+            # A hand-off: the call that gave the work, and its result when the worker returned.
+            handed_to = traced_worker(target, target)
+            if shown_delegations[handed_to]:
+                shown_delegations[handed_to] -= 1
+                continue
+            delegation_id = str(runtime_ids.get("event_id") or f"traced-{index}")
+            arguments = call.get("arguments")
+            events.append(
+                {
+                    "type": "delegated",
+                    "worker_id": handed_to,
+                    "by": worker_id,
+                    "delegation_id": delegation_id,
+                    "task": _summary(json.dumps(arguments) if isinstance(arguments, dict) else arguments, argument=True),
+                    "at": when(call.get("at")),
+                    "attribution": "reported",
+                }
+            )
+            if when(call.get("ended_at")):
+                events.append(
+                    {
+                        "type": "returned",
+                        "worker_id": handed_to,
+                        "delegation_id": delegation_id,
+                        "result": _summary(call.get("result")),
+                        "status": status,
+                        "at": when(call.get("ended_at")),
+                        "attribution": "reported",
+                    }
+                )
+            continue
         tool = str(call.get("name") or "")
         if shown[(worker_id, tool)]:
             shown[(worker_id, tool)] -= 1
             continue
-        at = call.get("at")
-        runtime_ids = call.get("runtime_ids") or {}
         events.append(
             {
                 "type": "tool_call",
                 "worker_id": worker_id,
                 "tool": tool,
-                "status": "error" if call.get("ok") is False or call.get("refused") else "ok",
-                "at": datetime.fromtimestamp(at, tz=UTC).replace(tzinfo=None).isoformat()
-                if isinstance(at, (int, float)) and at > 0
-                else None,
+                "status": status,
+                "at": when(call.get("at")),
                 "attribution": "reported",
                 **({"task": str(call.get("task_label") or call["task_id"])} if call.get("task_label") or call.get("task_id") else {}),
                 **({"runtime_event_id": str(runtime_ids["event_id"])} if runtime_ids.get("event_id") else {}),
