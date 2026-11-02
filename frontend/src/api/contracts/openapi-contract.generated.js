@@ -57910,6 +57910,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+      additionalProperties: false,
     },
     DatasetBehaviorRequest: {
       type: "object",
@@ -63339,6 +63340,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "object",
             additionalProperties: {
               type: "object",
+              "x-json-value": true,
+              description: "Any valid JSON value.",
             },
           },
         },
@@ -63388,6 +63391,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -63400,6 +63405,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         routing: {
@@ -63407,6 +63414,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         cache: {
@@ -63414,6 +63423,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         rate_limiting: {
@@ -63421,6 +63432,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         budgets: {
@@ -63428,6 +63441,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         cost_tracking: {
@@ -63435,6 +63450,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         ip_acl: {
@@ -63442,6 +63459,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         alerting: {
@@ -63449,6 +63468,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         privacy: {
@@ -63456,6 +63477,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         tool_policy: {
@@ -63463,6 +63486,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         mcp: {
@@ -63470,6 +63495,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         a2a: {
@@ -63477,6 +63504,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         audit: {
@@ -63484,6 +63513,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         model_database: {
@@ -63498,6 +63529,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -63566,6 +63599,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -63595,6 +63630,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -63626,6 +63663,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           default: {},
         },
@@ -91604,6 +91643,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
         },
+        order: {
+          title: "Order",
+          description:
+            "Legacy input accepted for compatibility; rows are appended in request order.",
+          type: "integer",
+        },
         cells: {
           type: "array",
           items: {
@@ -91612,6 +91657,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           default: [],
         },
       },
+      additionalProperties: false,
     },
     DatasetCellValue: {
       type: "object",
@@ -111231,6 +111277,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "Any valid JSON value.",
         },
       },
+      additionalProperties: false,
     },
     DatasetCellMetadata: {
       type: "object",
@@ -120345,6 +120392,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         avg_score: {
           title: "Avg score",
           type: "number",
+          "x-nullable": true,
         },
         p50_latency: {
           title: "P50 latency",
@@ -120357,6 +120405,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         avg_turns: {
           title: "Avg turns",
           type: "number",
+          "x-nullable": true,
         },
       },
     },

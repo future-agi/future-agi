@@ -83,7 +83,7 @@ export default function OverviewPanel({
 
   const hasDerivedWorld =
     (env.rules?.length || 0) > 0 ||
-    (envState?.scenarios?.length || 0) > 0 ||
+    (counts?.scenarios ?? (envState?.scenarios?.length || 0)) > 0 ||
     (env.tools?.length || 0) > 0;
 
   return (
@@ -208,7 +208,7 @@ export default function OverviewPanel({
           scratch env arrives carrying a derived world, so the same checklist
           would render every step pre-complete — skip it there. */}
       {!agentConnected && !hasDerivedWorld && (
-        <NextStepsChecklist env={env} envState={envState} onGo={onGo} />
+        <NextStepsChecklist env={env} envState={envState} onGo={onGo} scenarioCount={counts?.scenarios} />
       )}
 
       {/* CapabilityGraph moved to the Contract tab — that's where the shape of

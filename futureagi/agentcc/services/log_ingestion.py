@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -318,11 +319,15 @@ def ingest_request_logs(logs):
     if not logs:
         return 0
 
-    org = _resolve_org(logs)
-    if not org:
-        logger.warning("log_ingestion_skipped_no_org", log_count=len(logs))
-        return 0
+    # One gateway batch holds the requests of every org the gateway served,
+    # so each entry is stored, metered and alerted on under its own org.
+    batches, unresolved = _group_by_org(logs)
+    if unresolved:
+        logger.warning("log_ingestion_skipped_no_org", log_count=unresolved)
+    return sum(_ingest_org_logs(org, entries) for org, entries in batches)
 
+
+def _ingest_org_logs(org, logs):
     objects = []
     entries = []
     for entry in logs:
@@ -502,30 +507,59 @@ def _ensure_sessions_exist(org, logs):
     )
 
 
-def _resolve_org(logs):
+def _group_by_org(logs):
+    """
+    Split a batch into (org, entries) groups in first-seen order. An entry's
+    org is its API key's org, else the org the gateway stamped in its
+    metadata. Returns the groups and the number of entries with no org.
+    """
     from accounts.models import Organization
 
-    for entry in logs:
-        if not isinstance(entry, dict):
-            continue
-        key_id = entry.get("auth_key_id") or entry.get("api_key_id")
-        if key_id:
-            api_key = (
-                AgentccAPIKey.no_workspace_objects.filter(
-                    gateway_key_id=key_id,
-                )
-                .select_related("organization")
-                .first()
-            )
-            if api_key and api_key.organization:
-                return api_key.organization
+    entries = [entry for entry in logs if isinstance(entry, dict)]
+    key_ids = {
+        entry.get("auth_key_id") or entry.get("api_key_id") for entry in entries
+    } - {None, ""}
+    key_orgs = {}
+    # Default ordering (newest first), so a reissued key id resolves to the
+    # same key that .first() picked.
+    for api_key in AgentccAPIKey.no_workspace_objects.filter(
+        gateway_key_id__in=key_ids
+    ).select_related("organization"):
+        if api_key.organization and api_key.gateway_key_id not in key_orgs:
+            key_orgs[api_key.gateway_key_id] = api_key.organization
 
-        metadata = entry.get("metadata") or {}
-        org_id = metadata.get("org_id")
-        if org_id:
+    metadata_org_ids = {
+        _metadata_org_id(entry)
+        for entry in entries
+        if not key_orgs.get(entry.get("auth_key_id") or entry.get("api_key_id"))
+    } - {""}
+    metadata_orgs = {}
+    if metadata_org_ids:
+        valid_ids = []
+        for org_id in metadata_org_ids:
             try:
-                return Organization.objects.get(id=org_id)
-            except Organization.DoesNotExist:
-                pass
+                valid_ids.append(str(uuid.UUID(org_id)))
+            except ValueError:
+                continue
+        metadata_orgs = {
+            str(org.id): org for org in Organization.objects.filter(id__in=valid_ids)
+        }
 
-    return None
+    groups = {}
+    unresolved = len(logs) - len(entries)
+    for entry in entries:
+        org = key_orgs.get(entry.get("auth_key_id") or entry.get("api_key_id"))
+        if org is None:
+            org = metadata_orgs.get(_metadata_org_id(entry))
+        if org is None:
+            unresolved += 1
+            continue
+        groups.setdefault(org.id, (org, []))[1].append(entry)
+    return list(groups.values()), unresolved
+
+
+def _metadata_org_id(entry):
+    metadata = entry.get("metadata")
+    if not isinstance(metadata, dict):
+        return ""
+    return str(metadata.get("org_id") or "")

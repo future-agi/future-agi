@@ -122,12 +122,13 @@ export default function WorkspacePanels({
             backed={backed}
             grading={grading}
             onFork={onFork}
+            scenarioCount={counts?.scenarios}
           />
         );
       case "runs":
         // The summary's eval columns come from the runs' own scores, so it
         // only needs the store for its scenario count.
-        return <RunsSummary key={env.id} env={env} envState={envState} onOpenRun={openRun} onGo={go} />;
+        return <RunsSummary key={env.id} env={env} envState={envState} scenarioCount={counts?.scenarios} onOpenRun={openRun} onGo={go} />;
       case "versions":
         return <VersionsPanel env={env} />;
       case "settings":
