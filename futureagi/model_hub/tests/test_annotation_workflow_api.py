@@ -636,7 +636,7 @@ class TestSubmitAnnotations:
             format="json",
         )
         assert create_resp.status_code == status.HTTP_403_FORBIDDEN
-        assert "Write access denied to this workspace" in str(create_resp.data)
+        assert create_resp.data["code"] == "viewer_read_only"
 
     def test_submit_rejects_items_waiting_for_review(
         self, auth_client, queue_with_items

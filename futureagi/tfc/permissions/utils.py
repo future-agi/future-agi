@@ -6,7 +6,35 @@ All permission checks should go through these functions.
 """
 
 from tfc.constants.levels import Level
-from tfc.middleware.workspace_context import get_current_organization
+from tfc.middleware.workspace_context import (
+    get_current_organization,
+    get_current_user,
+    get_current_workspace,
+)
+
+VIEWER_READ_ONLY_CODE = "viewer_read_only"
+
+
+def viewer_denied_message(action=None):
+    action = action or "make changes in this workspace"
+    return f"Viewers can't {action}. Ask a workspace admin for the Member role."
+
+
+def is_read_only_user(user=None, workspace=None):
+    user = user or get_current_user()
+    if not user or not user.is_authenticated:
+        return False
+    workspace = workspace or get_current_workspace()
+    if workspace is not None:
+        return not user.can_write_to_workspace(workspace)
+    membership = get_org_membership(user)
+    return membership is None or membership.level_or_legacy < Level.MEMBER
+
+
+def cached_is_read_only_user(context):
+    if "read_only_user" not in context:
+        context["read_only_user"] = is_read_only_user()
+    return context["read_only_user"]
 
 
 def get_org_membership(user):
