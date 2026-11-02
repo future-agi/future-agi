@@ -151,11 +151,12 @@ class ModelServingClient:
         # Ensure text is in the right format
         if isinstance(text, str):
             text_list = [text]
-        else:
+        elif isinstance(text, (list, tuple)):
             text_list = text
-
-        if not all(isinstance(t, str) for t in text_list):
-            raise ValueError("All text inputs must be strings")
+            if not all(isinstance(t, str) for t in text_list):
+                raise ValueError("All text inputs must be strings")
+        else:
+            text_list = [str(text)]
 
         data = {
             "text": text_list,
