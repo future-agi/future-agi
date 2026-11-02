@@ -816,6 +816,36 @@ def record_hubspot_login(user):
         return None
 
 
+def _dispatch_demo_seeding(organization_id):
+    """Hand seeding to its own activity so seeder retries never re-run the
+    notifications in ``_run_post_registration``. The seeder raises on
+    transient failures by design and the post-registration activity retries;
+    sharing that retry boundary would resend the welcome email, HubSpot
+    request and Slack notification on every seeding failure. A failed
+    dispatch stays safe to swallow here: the DemoSeedRequest row committed by
+    the caller is re-dispatched by the recover-demo-seeding schedule."""
+    from temporalio.common import WorkflowIDConflictPolicy
+
+    import tfc.temporal.background_tasks.activities  # noqa: F401
+    from tfc.temporal.drop_in import start_activity
+
+    try:
+        start_activity(
+            "seed_demo_data_activity",
+            args=(str(organization_id),),
+            queue="default",
+            task_id=f"seed-demo-data-{organization_id}",
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            dispatch_timeout_seconds=2,
+        )
+    except Exception:
+        logger.warning(
+            "demo_seed_dispatch_deferred_to_recovery",
+            organization_id=str(organization_id),
+            exc_info=True,
+        )
+
+
 def _run_post_registration(user_id, generated_password, organization_id=None):
     """Process post-registration steps in a separate thread"""
     user = User.objects.get(id=user_id)
@@ -834,14 +864,13 @@ def _run_post_registration(user_id, generated_password, organization_id=None):
         org_id = organization_id or (org.id if org else None)
         if org_id is None:
             return
-        from accounts.demo_seeding import seed_pending_demo_data
         from accounts.models.demo_seed import DemoSeedRequest
 
         # Also accept workflows dispatched by older app versions.
         DemoSeedRequest.objects.get_or_create(
             organization_id=org_id, defaults={"user": user}
         )
-        seed_pending_demo_data(org_id)
+        _dispatch_demo_seeding(org_id)
 
 
 def existing_member_access_will_change(

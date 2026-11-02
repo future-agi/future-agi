@@ -18,6 +18,8 @@ def run_post_registration_activity(
     - Sends signup email
     - Sends HubSpot notification
     - Sends Slack notification
+    - Dispatches demo seeding to seed_demo_data_activity (its own retry
+      boundary, so seeding retries never resend the notifications above)
     """
     from accounts.utils import _run_post_registration
 

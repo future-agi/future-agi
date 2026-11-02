@@ -68,12 +68,54 @@ class TestRunPostRegistration:
             patch("accounts.utils.User.objects.get", return_value=user),
             patch("accounts.utils.get_user_organization", return_value=org),
             patch("accounts.utils.send_signup_email") as email,
-            patch("accounts.demo_seeding.seed_pending_demo_data") as seed,
+            patch("accounts.demo_seeding.seed_pending_demo_data") as inline_seed,
             patch("accounts.models.demo_seed.DemoSeedRequest.objects.get_or_create"),
+            patch("tfc.temporal.drop_in.start_activity") as dispatch,
         ):
             _run_post_registration(user.id, None)
         email.assert_not_called()
-        seed.assert_called_once_with(org.id)
+        inline_seed.assert_not_called()
+        dispatch.assert_called_once()
+        assert dispatch.call_args.kwargs["task_id"] == f"seed-demo-data-{org.id}"
+        assert dispatch.call_args.args[0] == "seed_demo_data_activity"
+
+    @patch.dict("os.environ", {"ENV_TYPE": "staging"})
+    def test_failed_seed_dispatch_never_reruns_notifications(self):
+        """Regression: seeding runs in its own activity, so a seeding failure
+        must not resend the welcome email, HubSpot request, or Slack
+        notification. When the dispatch itself fails, the persisted
+        DemoSeedRequest is picked up later by the recover-demo-seeding
+        schedule (covered in test_demo_seed_recovery.py) — the notifications
+        here still run exactly once and the activity does not raise."""
+        from accounts.utils import _run_post_registration
+
+        user = MagicMock(id="user-123", email="t@example.com", name="T")
+        org = MagicMock(id="org-123")
+        with (
+            patch("accounts.utils.User.objects.get", return_value=user),
+            patch("accounts.utils.get_user_organization", return_value=org),
+            patch("accounts.utils.send_signup_email") as email,
+            patch(
+                "accounts.utils.send_hubspot_notification", return_value=(True, None)
+            ) as hubspot,
+            patch("accounts.utils.send_slack_notification") as slack,
+            patch("accounts.demo_seeding.seed_pending_demo_data") as inline_seed,
+            patch(
+                "accounts.models.demo_seed.DemoSeedRequest.objects.get_or_create"
+            ) as intent,
+            patch(
+                "tfc.temporal.drop_in.start_activity",
+                side_effect=RuntimeError("temporal unavailable"),
+            ) as dispatch,
+        ):
+            _run_post_registration("user-123", "password123")
+
+        email.assert_called_once()
+        hubspot.assert_called_once()
+        slack.assert_called_once()
+        inline_seed.assert_not_called()
+        intent.assert_called_once()
+        dispatch.assert_called_once()
 
     @patch("accounts.utils.get_user_organization", return_value=None)
     @patch("accounts.utils.send_slack_notification")
