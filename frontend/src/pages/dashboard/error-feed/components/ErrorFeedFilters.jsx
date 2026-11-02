@@ -276,9 +276,10 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
         direction="row"
         alignItems="center"
         justifyContent="space-between"
+        flexWrap="wrap"
         gap={1.5}
       >
-        <Stack direction="row" alignItems="center" gap={1}>
+        <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1}>
           {/* Search */}
           <OutlinedInput
             value={searchQuery}
@@ -386,7 +387,12 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
         </Stack>
 
         {/* Right: bulk actions */}
-        <Stack direction="row" alignItems="center" gap={1}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          gap={1}
+          sx={{ flexShrink: 0 }}
+        >
           {selected.length > 0 && (
             <BulkActionMenu
               count={selected.length}
