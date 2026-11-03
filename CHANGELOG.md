@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.58.0](https://github.com/future-agi/future-agi/compare/v1.57.0...v1.58.0) (2026-11-03)
+
+
+### Features
+
+* **error-feed:** send the agent's prompt and tool calls with each simulation call ([bb3162d](https://github.com/future-agi/future-agi/commit/bb3162d89cb81b27b0b04754300d9e2cb7e72abf))
+* **simulate:** fix my agent improvements tab, fix page and launch form [TH-8955] [agent] ([f28588d](https://github.com/future-agi/future-agi/commit/f28588d24b917b278f2d716923c71ba5b515c59b))
+* **simulate:** let a fix protect cases that must still pass ([2747c4b](https://github.com/future-agi/future-agi/commit/2747c4b824e683765c14f78ab419c78332c2fcf4))
+* **simulate:** prove a fix for a failing run and open its pull request ([4a4f226](https://github.com/future-agi/future-agi/commit/4a4f2263776d1e3a200741a1707869b9212c31e2))
+* **simulate:** ship a candidate the must-pass check vetoed, with a reason ([fec9b17](https://github.com/future-agi/future-agi/commit/fec9b17e3b5b0f7a5eeca7dfd9de3785100067e0))
+
+
+### Bug Fixes
+
+* **agentic_eval:** keep empty few-shot inputs skipped ([a51310b](https://github.com/future-agi/future-agi/commit/a51310b99a2782b26d24fb808f4984b5f08dcd93))
+* **agentic_eval:** keep zero and false few-shot inputs, skip empty ones by the eval rule ([8102cea](https://github.com/future-agi/future-agi/commit/8102cea943cb3a895e5ba6dd6e762a788571c1ea))
+* **agentic_eval:** match few-shot text inputs as strings so structured inputs find feedback ([47c94b3](https://github.com/future-agi/future-agi/commit/47c94b3d877c2f60eb80dc1ab878d48796031770))
+* **agentic_eval:** send JSON eval inputs to the embedder as text, not objects ([214b225](https://github.com/future-agi/future-agi/commit/214b225a26c2346bba7511a04031736abc1241a7))
+* **agentic_eval:** send JSON eval inputs to the embedder as text, not objects [TH-8996] [agent] ([61923d5](https://github.com/future-agi/future-agi/commit/61923d5563a988cb516cddca83dee109e81127e9))
+* **error-feed:** keep a tool-heavy call under the evidence page limit ([25f1cb2](https://github.com/future-agi/future-agi/commit/25f1cb20c8d06e19ffd32528dcede03470090c55))
+* **gateway:** give every Gemini tool call its own id ([88e8397](https://github.com/future-agi/future-agi/commit/88e8397f0d443ff0d976340ddbab46c3e58db066))
+* **gateway:** give every Gemini tool call its own id ([7a2c1be](https://github.com/future-agi/future-agi/commit/7a2c1be3357d1df33d3a066dae6d0d93be4c671f))
+* **simulate:** group accepted findings and revisit deferred batches ([478e11a](https://github.com/future-agi/future-agi/commit/478e11a4dfb7e7801e8ff07bff8a36cd1d8d64b4))
+* **simulate:** offer only passing cases to protect [TH-8955] ([0cbc866](https://github.com/future-agi/future-agi/commit/0cbc86604d9b964de62b3b5b639540922d746907))
+* **simulate:** protect only cases that passed and were scored ([5277fd7](https://github.com/future-agi/future-agi/commit/5277fd702f68f1aac93f5f3086f443ac22e7e281))
+* **simulate:** read the frozen plan for a refused candidate's held-back tier ([aed84c6](https://github.com/future-agi/future-agi/commit/aed84c6bdd6ff2ace9671f40586fba43e8994568))
+* **simulate:** remove hover tooltips from the environment workspace tabs ([bd36504](https://github.com/future-agi/future-agi/commit/bd3650419648a98fe8f0794b7849a63ba22709e4))
+* **simulate:** remove hover tooltips from the environment workspace tabs [TH-8994] [agent] ([0071539](https://github.com/future-agi/future-agi/commit/007153995f2cc7ef263348521817a49cf9712f22))
+* **simulate:** ship a must-pass refusal only on a whole final check ([d54614a](https://github.com/future-agi/future-agi/commit/d54614a790eb013759a71dca7770deadefe904b5))
+* **simulate:** ship exactly the accepted candidate's files ([773a190](https://github.com/future-agi/future-agi/commit/773a1900dc2c09e9ce0904f522d2ccda9311b0e5))
+* **simulate:** skip the fix list when the org lacks fix my agent [TH-8955] ([cb13120](https://github.com/future-agi/future-agi/commit/cb13120a3ea6a2f180321153425ba18db501fe88))
+
 ## [1.57.0](https://github.com/future-agi/future-agi/compare/v1.56.1...v1.57.0) (2026-11-02)
 
 
