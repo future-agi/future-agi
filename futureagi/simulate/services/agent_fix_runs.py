@@ -22,9 +22,9 @@ from simulate.pydantic_schemas.agent_fix import (
 )
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
-    failing_sub_goals_by_scenario,
     is_retryable,
     launch_blocker,
+    scenario_results,
 )
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.harness_agent_versions import discard_agent_version
@@ -95,11 +95,7 @@ def launch_fix_run(
             status_code=422,
         )
     base_version_id = kind.base_version_id(source_run)
-    ran = set(
-        source_run.scenario_executions.values_list(
-            "source_scenario__scenario_key", flat=True
-        )
-    )
+    ran = {one.key: one for one in scenario_results(source_run)}
     chosen = [*target_scenario_keys, *protected_scenario_keys]
     if unknown := [key for key in chosen if key not in ran]:
         raise HostedHarnessError(
@@ -113,7 +109,15 @@ def launch_fix_run(
             f"a scenario to fix cannot also be protected: {', '.join(both)}",
             status_code=400,
         )
-    by_scenario = failing_sub_goals_by_scenario(source_run, target_scenario_keys)
+    # A protected case is the behavior to keep, so it must have been judged and held.
+    if unproven := [key for key in protected_scenario_keys if not ran[key].passed]:
+        raise HostedHarnessError(
+            "fix_protected_not_passed",
+            "only a scenario that passed in the run can be protected: "
+            f"{', '.join(unproven)}",
+            status_code=400,
+        )
+    by_scenario = {key: ran[key].failing_sub_goals for key in target_scenario_keys}
     failing = list(
         dict.fromkeys(name for names in by_scenario.values() for name in names)
     )

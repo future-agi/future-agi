@@ -326,23 +326,6 @@ def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
     return list(results.values())
 
 
-def failing_sub_goals_by_scenario(
-    source_run: HostedHarnessJob, scenario_keys: list[str]
-) -> dict[str, list[str]]:
-    """The sub-goals that did not hold on each of the given scenarios of a finished run, in
-    the order the scenarios are given; a scenario where everything held maps to []."""
-    found = {one.key: one.failing_sub_goals for one in scenario_results(source_run)}
-    return {key: found.get(key, []) for key in scenario_keys}
-
-
-def failing_sub_goals(
-    source_run: HostedHarnessJob, scenario_keys: list[str]
-) -> list[str]:
-    """The sub-goals that did not hold on the given scenarios of a finished run."""
-    by_scenario = failing_sub_goals_by_scenario(source_run, scenario_keys)
-    return list(dict.fromkeys(name for names in by_scenario.values() for name in names))
-
-
 def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls
     plus every check run whose usage is sealed. ``committed_usd`` also holds a worst case for
