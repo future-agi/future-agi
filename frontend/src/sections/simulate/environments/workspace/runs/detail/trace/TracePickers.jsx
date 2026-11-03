@@ -37,7 +37,7 @@ export function TraceGroupByPicker({ value, onChange }) {
           <Iconify
             icon={current.icon}
             width={15}
-            sx={{ color: "primary.main" }}
+            sx={{ color: "text.subtitle" }}
           />
         }
         endIcon={
@@ -60,7 +60,7 @@ export function TraceGroupByPicker({ value, onChange }) {
         >
           ·
         </Box>
-        <Box component="span" sx={{ color: "primary.main" }}>
+        <Box component="span" sx={{ color: "text.subtitle" }}>
           {current.label}
         </Box>
       </Button>
@@ -216,10 +216,8 @@ export function TraceColumnsPicker({
             key={`h-${section.name}`}
             sx={{
               typography: "s3",
-              fontWeight: "fontWeightBold",
+              fontWeight: 500,
               color: "text.subtitle",
-              textTransform: "uppercase",
-              letterSpacing: 0.4,
               px: 2,
               py: 0.5,
               mt: i === 0 ? 0.5 : 0,

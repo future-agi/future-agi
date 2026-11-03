@@ -19,7 +19,6 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import { useWatch } from "react-hook-form";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { readQuery, endpoints } from "src/utils/axios";
@@ -85,6 +84,7 @@ import {
   parseVoiceCallDetailResponse,
   parseVoiceCallListResponse,
 } from "src/api/project/observe-contracts";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // One form row → one wire entry. No cross-row merging: it would collapse
 // "not_contains A AND not_contains B" into "in [A, B]" (inverting intent) and
@@ -964,8 +964,6 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                 label={ROW_TYPE_LABELS[rowType] || rowType}
                 size="small"
                 sx={{
-                  height: 18,
-                  fontSize: "10px",
                   bgcolor: "background.neutral",
                   color: "text.secondary",
                   "& .MuiChip-label": { px: 0.75 },
@@ -981,7 +979,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ fontSize: "11px", display: "block" }}
+          sx={{ fontSize: "12px", display: "block" }}
         >
           {projectId
             ? samplingPolicy
@@ -1038,7 +1036,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
               height: 160,
             }}
           >
-            <CircularProgress size={20} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : retryableListContinuationError ? (
           <Box
@@ -1058,7 +1056,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
               Your saved position is retained. Retry to continue from it.
             </Typography>
@@ -1116,7 +1114,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px" }}
+              sx={{ fontSize: "12px" }}
             >
               Continue from the saved position to load the next bounded batch.
             </Typography>
@@ -1154,7 +1152,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Row {Math.min(currentRowIndex + 1, rows.length)} of{" "}
                 {rows.length}
@@ -1162,7 +1160,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                   <Typography
                     component="span"
                     sx={{
-                      fontSize: "11px",
+                      fontSize: "12px",
                       color: "text.disabled",
                       ml: 0.5,
                     }}
@@ -1178,9 +1176,9 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                   size="small"
                   disabled={listFetching || currentRowIndex === 0}
                   onClick={() => setCurrentRowIndex((i) => Math.max(0, i - 1))}
-                  sx={{ width: 24, height: 24 }}
+                  sx={{ width: 24 }}
                 >
-                  <Iconify icon="mdi:chevron-left" width={16} />
+                  <Iconify icon="solar:alt-arrow-left-linear" width={16} />
                 </IconButton>
                 <IconButton
                   aria-label="Next row"
@@ -1191,9 +1189,9 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                       (!isCursorPreview || !pendingListContinuation))
                   }
                   onClick={handleNextRow}
-                  sx={{ width: 24, height: 24 }}
+                  sx={{ width: 24 }}
                 >
-                  <Iconify icon="mdi:chevron-right" width={16} />
+                  <Iconify icon="solar:alt-arrow-right-linear" width={16} />
                 </IconButton>
               </Box>
             </Box>
@@ -1316,7 +1314,7 @@ const RowDetailTable = ({
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify
-                  icon="mdi:magnify"
+                  icon="solar:magnifier-linear"
                   width={14}
                   sx={{ color: "text.disabled" }}
                 />
@@ -1333,10 +1331,7 @@ const RowDetailTable = ({
           display: "flex",
           px: 1.5,
           py: 0.5,
-          backgroundColor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(255,255,255,0.03)"
-              : "background.default",
+          backgroundColor: "background.default",
           borderBottom: "1px solid",
           borderColor: "divider",
         }}
@@ -1516,14 +1511,14 @@ const VariableMappingView = ({
         <Typography
           variant="caption"
           fontWeight={600}
-          sx={{ display: "block", fontSize: "11px" }}
+          sx={{ display: "block", fontSize: "12px" }}
         >
           Variable Mapping
         </Typography>
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ display: "block", fontSize: "10px" }}
+          sx={{ display: "block", fontSize: "12px" }}
         >
           Configured mapping for each eval against the current row&apos;s fields
         </Typography>
@@ -1589,8 +1584,6 @@ const VariableMappingView = ({
                     }
                     size="small"
                     sx={{
-                      height: 16,
-                      fontSize: "9px",
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.5 },
@@ -1603,8 +1596,6 @@ const VariableMappingView = ({
                     label={model}
                     size="small"
                     sx={{
-                      height: 16,
-                      fontSize: "9px",
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.5 },
@@ -1617,7 +1608,7 @@ const VariableMappingView = ({
                 <Typography
                   variant="caption"
                   color="text.disabled"
-                  sx={{ fontSize: "10px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   No variables mapped
                 </Typography>
@@ -1649,20 +1640,20 @@ const VariableMappingView = ({
                         }}
                       >
                         <Iconify
-                          icon="mdi:code-braces"
-                          width={11}
+                          icon="solar:code-linear"
+                          width={12}
                           sx={{ color: "text.disabled" }}
                         />
                         <Typography
                           variant="caption"
                           fontWeight={600}
-                          sx={{ fontSize: "11px" }}
+                          sx={{ fontSize: "12px" }}
                         >
                           {variable}
                         </Typography>
                         <Iconify
-                          icon="mdi:arrow-right"
-                          width={11}
+                          icon="solar:arrow-right-linear"
+                          width={12}
                           sx={{ color: "text.disabled" }}
                         />
                         <CustomTooltip
@@ -1676,7 +1667,7 @@ const VariableMappingView = ({
                           <Typography
                             variant="caption"
                             sx={{
-                              fontSize: "11px",
+                              fontSize: "12px",
                               fontFamily: "monospace",
                               color: showWarn ? "warning.main" : "primary.main",
                               overflow: "hidden",
@@ -1691,7 +1682,7 @@ const VariableMappingView = ({
                           <Typography
                             variant="caption"
                             color="warning.main"
-                            sx={{ fontSize: "10px", ml: 0.25 }}
+                            sx={{ fontSize: "12px", ml: 0.25 }}
                           >
                             (not in row)
                           </Typography>
@@ -1724,7 +1715,7 @@ const VariableMappingView = ({
                       <Typography
                         variant="caption"
                         color="text.secondary"
-                        sx={{ fontSize: "11px" }}
+                        sx={{ fontSize: "12px" }}
                       >
                         Running eval…
                       </Typography>
@@ -1735,21 +1726,16 @@ const VariableMappingView = ({
                   )}
                   {testResults[idx].status === "error" && (
                     <Box
-                      sx={(theme) => ({
+                      sx={{
                         display: "flex",
                         alignItems: "flex-start",
                         gap: 0.5,
                         p: 0.75,
                         borderRadius: "4px",
-                        // error.lighter is a fixed light pink (#F8D5D5)
-                        // that clashes with dark mode — derive from main.
-                        bgcolor: alpha(
-                          theme.palette.error.main,
-                          theme.palette.mode === "dark" ? 0.16 : 0.08,
-                        ),
+                        bgcolor: "status.danger.bg",
                         border: "1px solid",
-                        borderColor: alpha(theme.palette.error.main, 0.4),
-                      })}
+                        borderColor: "status.danger.border",
+                      }}
                     >
                       <Iconify
                         icon="solar:danger-triangle-linear"
@@ -1759,7 +1745,7 @@ const VariableMappingView = ({
                       <Typography
                         variant="caption"
                         color="error.main"
-                        sx={{ fontSize: "11px" }}
+                        sx={{ fontSize: "12px" }}
                       >
                         {testResults[idx].error}
                       </Typography>
@@ -1801,7 +1787,7 @@ const EmptyState = ({ icon, text, subtext }) => (
       <Typography
         variant="caption"
         color="text.disabled"
-        sx={{ fontSize: "11px" }}
+        sx={{ fontSize: "12px" }}
       >
         {subtext}
       </Typography>

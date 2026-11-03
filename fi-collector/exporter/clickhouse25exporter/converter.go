@@ -75,6 +75,66 @@ var knownObservationTypes = map[string]struct{}{
 // (cost falls back to the user-provided value or 0).
 type Pricer interface {
 	TokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32) (float64, bool)
+	// OpenRouterTokenCost prices a span that came through OpenRouter, whose
+	// model is an OpenRouter slug: like TokenCost, but OpenRouter's own rate
+	// for the slug (the price table's "openrouter/<slug>" entry) is tried
+	// before the bare provider entry.
+	OpenRouterTokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32) (float64, bool)
+}
+
+// OpenRouter Broadcast detection. OpenRouter's OTLP export names its resource
+// service.name "openrouter" and namespaces its own attributes under
+// trace.metadata.openrouter* (root) and span.metadata.openrouter*
+// (generation). Its provider attempt spans, and a generation exported without
+// cost metadata, carry none of those keys, so the signal is per resource.
+const (
+	openRouterName = "openrouter"
+
+	// openRouterUntypedSpanType is the observation type of an OpenRouter span
+	// that names no kind: the root (one per request), the span_name grouping
+	// span, and the provider attempt and timing spans. Each wraps or serves
+	// the one generation span (gen_ai.operation.name "chat" → "llm"). They
+	// must not be "llm": LLM-call counts and monitors count that type, and an
+	// attempt is a retry of the same call.
+	openRouterUntypedSpanType = "chain"
+)
+
+var openRouterAttrPrefixes = []string{
+	"trace.metadata.openrouter", // root span: openrouter.*, openrouter_generation.*, openrouter_cost_allocation.*
+	"span.metadata.openrouter",  // generation span
+}
+
+// isOpenRouterResource reports whether a ResourceSpans is an OpenRouter
+// Broadcast export: its service.name is "openrouter", or any of its spans
+// carries an OpenRouter-namespaced attribute.
+func isOpenRouterResource(rs ptrace.ResourceSpans, serviceName string) bool {
+	if strings.EqualFold(serviceName, openRouterName) {
+		return true
+	}
+	sss := rs.ScopeSpans()
+	for j := 0; j < sss.Len(); j++ {
+		ss := sss.At(j).Spans()
+		for k := 0; k < ss.Len(); k++ {
+			found := false
+			ss.At(k).Attributes().Range(func(key string, _ pcommon.Value) bool {
+				found = hasOpenRouterAttrPrefix(key)
+				return !found
+			})
+			if found {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasOpenRouterAttrPrefix(key string) bool {
+	for _, p := range openRouterAttrPrefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // spanKindAttrKeys mirrors AttributeAliases.SPAN_KIND: attribute keys a span
@@ -187,6 +247,7 @@ func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pri
 		// "observe"` gate (create_otel_span.py). Empty when the producer
 		// didn't tag it (legacy SDKs) — see the gating note in spanToRow.
 		projectType := stringAttr(rs.Resource().Attributes(), resAttrProjectTy, "")
+		fromOpenRouter := isOpenRouterResource(rs, serviceName)
 
 		sss := rs.ScopeSpans()
 		for j := 0; j < sss.Len(); j++ {
@@ -194,7 +255,7 @@ func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pri
 			ss := scope.Spans()
 			for k := 0; k < ss.Len(); k++ {
 				span := ss.At(k)
-				row, identity, err := spanToRow(ctx, span, projectID, orgID, serviceName, semconv, projectType, resourceAttrs, pricer)
+				row, identity, err := spanToRow(ctx, span, projectID, orgID, serviceName, semconv, projectType, resourceAttrs, fromOpenRouter, pricer)
 				if err != nil {
 					return nil, nil, fmt.Errorf("span %s: %w", span.SpanID().String(), err)
 				}
@@ -273,6 +334,7 @@ func spanToRow(
 	span ptrace.Span,
 	projectID, orgID, serviceName, semconv, projectType string,
 	resourceAttrs map[string]any,
+	fromOpenRouter bool,
 	pricer Pricer,
 ) (map[string]any, spanIdentity, error) {
 	// Pre-allocate destination maps. Sizing is a heuristic — typical LLM
@@ -288,10 +350,24 @@ func spanToRow(
 	// Cost — Django _convert_single_span parity: a user-supplied
 	// gen_ai.cost.*/llm.cost.* value (already promoted onto hot.Cost, even an
 	// explicit 0) wins; otherwise price from tokens (litellm table → per-org
-	// CustomAIModel via the injected Pricer).
+	// CustomAIModel via the injected Pricer). A sender's billed
+	// gen_ai.usage.*_cost (OpenRouter Broadcast) counts as user-supplied when
+	// no gen_ai.cost.*/llm.cost.* key is present. Each span is priced on its
+	// own attributes only, so a root that carries no cost or usage keys adds
+	// nothing to the trace total. OpenRouter traffic (a Broadcast export, or
+	// any span whose provider is "openrouter", such as traceAI calling
+	// OpenRouter) is priced with OpenRouter's own rate for its model slug
+	// when that slug has no exact key.
 	cost := hot.Cost
 	if !hot.CostUserSet && pricer != nil {
-		if c, ok := pricer.TokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens); ok {
+		var c float64
+		var ok bool
+		if fromOpenRouter || adapter.ProviderIs(attrsStr, openRouterName) {
+			c, ok = pricer.OpenRouterTokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens)
+		} else {
+			c, ok = pricer.TokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens)
+		}
+		if ok {
 			cost = c
 		}
 	}
@@ -333,18 +409,21 @@ func spanToRow(
 	}
 
 	// observation_type: resolved across SDK conventions, lowercased + validated
-	// (the read layer filters lowercase, so uppercasing would hide spans).
+	// (the read layer filters lowercase, so uppercasing would hide spans). An
+	// OpenRouter Broadcast span that names no kind is a "chain"; any other
+	// sender's stays "unknown".
 	observationType := resolveObservationType(attrsStr)
+	if observationType == observationTypeUnknown && fromOpenRouter {
+		observationType = openRouterUntypedSpanType
+	}
 
-	// Inputs/outputs: extracted from openinference convention if present.
-	// `input.value` / `output.value` route to the overflow tier (per
-	// adapter.overflowKeyPrefixes — they're often nested objects whose
-	// shape varies row-to-row), so we lift them from `overflow` rather
-	// than `attrsStr`. The hot string columns are populated with the
-	// serialized form when the value is a plain string; nested values
-	// stay in attributes_extra and dashboards query them from there.
-	input := overflowAsString(overflow, "input.value")
-	output := overflowAsString(overflow, "output.value")
+	// Inputs/outputs: the first non-empty content key in inputContentKeys /
+	// outputContentKeys. OpenInference `input.value` / `output.value` still
+	// win; the GenAI keys after them fill spans that only carry those
+	// (OpenRouter Broadcast, plain OTel GenAI). The source attribute stays
+	// where adapter.Split put it; this only fills the hot column.
+	input := contentValue(attrsStr, overflow, inputContentKeys)
+	output := contentValue(attrsStr, overflow, outputContentKeys)
 
 	// CH-derived dimensions (P3b step2): stamp the DETERMINISTIC end_user_id /
 	// trace_session_id so collector-written spans unify with the read-side
@@ -407,8 +486,8 @@ func spanToRow(
 		"tags":              "[]",
 		"span_events":       spanEventsJSON(span.Events()),
 		"semconv_source":    semconv,
-		"_version":   versionNanos,
-		"is_deleted": uint8(0),
+		"_version":          versionNanos,
+		"is_deleted":        uint8(0),
 	}
 	return row, identity, nil
 }
@@ -728,6 +807,53 @@ func stringAttr(m pcommon.Map, key, def string) string {
 func stringFromMap(m map[string]string, key string) string {
 	if v, ok := m[key]; ok {
 		return v
+	}
+	return ""
+}
+
+// inputContentKeys / outputContentKeys list, in precedence order, the
+// attributes a span's prompt / completion content can arrive under. The first
+// one with a non-empty value fills the CH `input` / `output` column.
+//
+//   - input.value / output.value: OpenInference and traceAI. Always first, so
+//     spans that set it are stored exactly as before.
+//   - span.input / span.output: OpenRouter Broadcast's generation span.
+//   - gen_ai.prompt / gen_ai.completion: the older OTel GenAI content keys,
+//     which OpenRouter Broadcast also sets.
+//   - gen_ai.input.messages / gen_ai.output.messages: current OTel GenAI, a
+//     JSON string of the messages.
+//
+// Only these exact keys are read. Indexed keys such as gen_ai.prompt.0.content
+// (OpenLLMetry) and gen_ai.input.messages.0.message.role (traceAI's flattened
+// messages) don't match.
+var (
+	inputContentKeys = []string{
+		"input.value",
+		"span.input",
+		"gen_ai.prompt",
+		"gen_ai.input.messages",
+	}
+	outputContentKeys = []string{
+		"output.value",
+		"span.output",
+		"gen_ai.completion",
+		"gen_ai.output.messages",
+	}
+)
+
+// contentValue returns the first non-empty value among keys. A key can be in
+// either tier, depending on adapter.Split: input.value / output.value always
+// go to overflow, and the GenAI keys go to attrs_string when they arrive as
+// strings and to overflow when they arrive as maps or arrays (which are
+// JSON-encoded here).
+func contentValue(attrsStr map[string]string, overflow map[string]any, keys []string) string {
+	for _, k := range keys {
+		if s, ok := attrsStr[k]; ok && s != "" {
+			return s
+		}
+		if s := overflowAsString(overflow, k); s != "" {
+			return s
+		}
 	}
 	return ""
 }

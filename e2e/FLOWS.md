@@ -235,6 +235,26 @@
 - Continue routes to /auth/jwt/login, not /auth/jwt/register
 - signing in as the owner returns a token pair from POST /accounts/token/ and moves on to organization setup
 
+### AUTH-E2E-004 — fresh signup seeds demo traces visible in Observe
+
+**Goal:** A new user signs up with their own password and can inspect the seeded demo trace in Observe  
+**Spec:** `flows/auth/signup-demo-traces.spec.ts:28`  
+**Tags:** —
+
+**User steps:**
+
+1. complete first-run checks if required
+2. sign up with a unique email and a user-supplied password
+3. complete role and organization onboarding
+4. see both demo datasets
+5. open the Observe demo project
+6. open its single demo trace and inspect the span tree
+
+**Backend state verified:**
+
+- the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
+- ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
+
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session  
@@ -784,6 +804,55 @@
 - successful reconnect preserves the same workspace connection ID
 - disconnect removes the connection from the scoped integrations API
 
+### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV
+
+**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)  
+**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`  
+**Tags:** —
+
+**User steps:**
+
+1. open the issue page
+2. click Export
+3. save the downloaded CSV
+4. upload the downloaded CSV using the Add Dataset form
+
+**Backend state verified:**
+
+- the imported dataset has exactly the 12 export columns
+- each exported trace becomes one dataset row, with its quoted multiline input and leading-symbol output stored unchanged
+
+**Browser observations:**
+
+- the export requests the issue overview once, with rep_limit=200
+- the file is named error-feed-<issue>-traces.csv and its header is exactly the 12 export columns
+- the file has exactly one row per stubbed trace, with quoted cells intact and no formula prefix
+- the snackbar reports exactly the exported trace count
+- the uploaded dataset's grid shows exactly the exported trace ids
+
+### ERR-E2E-005 — a shared issue opens read-only for someone who is not signed in
+
+**Goal:** Someone who is not signed in opens a shared Error Feed issue and reads it without being able to change it  
+**Spec:** `flows/error-feed/shared-issue.spec.ts:28`  
+**Tags:** —
+
+**User steps:**
+
+1. open the issue's public share link while signed out
+2. read the issue on Overview
+3. pick another trace in Traces affected
+4. open a trace from the Traces tab
+5. open the Trends and Fix tabs
+6. open a restricted share link while signed out
+
+**Browser observations:**
+
+- the page shows the issue title and View only, with no Resolve, Acknowledge, Ignore, Share, Debug or Create Linear issue action
+- the browser never calls the signed-in Error Feed endpoints (/tracer/feed/issues/)
+- picking a trace reads the sidebar through the share token for exactly that trace
+- opening a trace reads it through the share token and shows its spans
+- a restricted link shows Sign in required, with no error toast, and stays on the shared URL
+
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
 **Goal:** A saved link to a retired issue opens its surviving issue  
@@ -910,6 +979,28 @@
 - UI POST and stored task retain the custom predicate
 - completed task has exactly the matching span in PG and CH, with mock verdict and usage
 
+### EVAL-E2E-006 — a task run opens its trace in a drawer from the Usage tab
+
+**Goal:** Open the trace behind an eval task result without leaving the task Usage tab  
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:25`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a trace and run an eval task over it through the mock judge
+2. open the task Usage tab and click its run
+3. read the run panel Trace ID and Span ID
+4. click Open trace and read the drawer
+5. press Esc to close the drawer, then Esc again to close the run panel
+
+**Backend state verified:**
+
+- the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored
+- the Usage runs response carries only the completed run, with the seeded trace and span IDs
+- the run panel shows the seeded trace and span IDs
+- the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open
+- the first Esc closes only the drawer and the second closes the run panel
+
 ### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
 
 **Goal:** Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance  
@@ -939,7 +1030,7 @@
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
 
 **Goal:** A platform engineer finds the gateway requests one application made, out of everything the org sent  
-**Spec:** `flows/gateway/request-log-tags.spec.ts:44`  
+**Spec:** `flows/gateway/request-log-tags.spec.ts:43`  
 **Tags:** —
 
 **User steps:**
@@ -1810,6 +1901,27 @@
 - the completed SQL API result equals the two seeded names and counts shown in the UI
 - the saved project query and dashboard widget persist the same scoped query reference
 - the dashboard starts a new personal execution of the saved query and shows the same exact rows
+
+### OBS-E2E-054 — OpenRouter-shaped traces keep coherent usage through filters, sorting and details
+
+**Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details  
+**Spec:** `flows/observe/openrouter-usage.spec.ts:43`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest empty-root generation/attempt trees, tiny/zero costs, nested summaries, parent-only and independent-call controls
+2. select Total Tokens greater than 20 in the real Filter panel and cross a real page boundary
+3. scroll to Tokens and Total Cost, sort each ascending and descending, and compare complete UI/API pages with the independent oracle
+4. inspect tiny-cost and usage-control trace details
+5. inspect first-generation session messages and exact Users identities
+
+**Backend state verified:**
+
+- A: exact latest source hierarchy, usage, project type and user linkage retain the scoped fixture identities
+- B: actual filter/sort requests and two complete pages equal the canonical usage oracle with exact total, stable ties and no duplicates
+- C: trace/span/session API precision and UI displays retain positive subprecision costs, nested 18, equal independent calls and parent-only usage
+- D: session first-generation messages and Users UI/API identities equal the scoped storage facts
 
 ## prompts
 

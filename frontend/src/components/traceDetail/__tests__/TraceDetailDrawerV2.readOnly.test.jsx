@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
       ],
     },
   })),
+  sharedIssueTrace: vi.fn(() => ({ isLoading: false, data: undefined })),
   toolbarProps: vi.fn(),
   headerProps: vi.fn(),
   spanPaneProps: vi.fn(),
@@ -48,6 +49,11 @@ vi.mock("../TraceDisplayPanel", async (importOriginal) => ({
 
 vi.mock("src/api/project/trace-detail", () => ({
   useGetTraceDetail: (...args) => mocks.getTraceDetail(...args),
+}));
+
+vi.mock("src/api/shared-links", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useSharedIssueTrace: (...args) => mocks.sharedIssueTrace(...args),
 }));
 
 vi.mock("../DrawerToolbar", () => ({
@@ -91,6 +97,7 @@ describe("TraceDetailDrawerV2 read-only", () => {
     Element.prototype.scrollIntoView = vi.fn();
     mocks.getSavedViews.mockClear();
     mocks.getTraceDetail.mockClear();
+    mocks.sharedIssueTrace.mockClear();
     mocks.toolbarProps.mockClear();
     mocks.headerProps.mockClear();
     mocks.spanPaneProps.mockClear();
@@ -142,5 +149,20 @@ describe("TraceDetailDrawerV2 read-only", () => {
 
     expect(mocks.toolbarProps.mock.lastCall[0].hideFilter).toBe(false);
     expect(mocks.displayProps.mock.lastCall[0].hideSetDefault).toBe(false);
+  });
+
+  it("reads the trace through a share token instead of the signed-in read", () => {
+    const sharedTrace = mocks.getTraceDetail();
+    mocks.getTraceDetail.mockClear();
+    mocks.sharedIssueTrace.mockReturnValue(sharedTrace);
+
+    renderDrawer({ readOnly: true, sharedToken: "tok" });
+
+    expect(mocks.sharedIssueTrace).toHaveBeenCalledWith("tok", "trace-1");
+    for (const [traceId] of mocks.getTraceDetail.mock.calls) {
+      expect(traceId).toBeFalsy();
+    }
+    expect(mocks.spanPaneProps).toHaveBeenCalled();
+    expect(mocks.spanPaneProps.mock.lastCall[0].readOnly).toBe(true);
   });
 });

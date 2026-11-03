@@ -748,6 +748,15 @@ _TRACE_PROJECT_SCOPE = filed(
 # Every entry is decided: a reader is filed under the category whose claim holds,
 # with a reason, and a reader nobody filed fails the case that reads this table.
 _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
+    "accounts.user_onboard": {
+        "_write_demo_trace_to_clickhouse": filed(
+            BY_ID_ALONE,
+            why=(
+                "demo publication reads the span ids of the one demo trace it is "
+                "given before inserting, so a retried publication cannot double them"
+            ),
+        ),
+    },
     "agentic_eval.core.database.ch_vector": {
         "ClickHouseVectorDB.fetch_all_vectors": _EMBEDDING_STORE,
         "ClickHouseVectorDB.fetch_vector_by_id": _EMBEDDING_STORE,
@@ -1591,6 +1600,24 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             row="tracer.EndUser",
         ),
     },
+    "tracer.services.clickhouse.v2.query_builders.observe_usage": {
+        "ObserveUsageFilterBuilderV2._build_system_metric_condition": filed(
+            BY_ID_ALONE,
+            why=(
+                "Observe usage residual requires the authorized project's finite "
+                "candidate trace IDs; project/trace tuple membership isolates "
+                "same-ID traces across an authorized project set"
+            ),
+        ),
+        "ObserveTraceListQueryBuilderV2.build_usage_sorted_query": filed(
+            PROJECT_SET,
+            why=(
+                "exact usage sorting of the Observe list requires its one "
+                "authorized project and finite root time window; the view's "
+                "memory, read-byte and wall budgets remain fail-closed"
+            ),
+        ),
+    },
     "tracer.services.clickhouse.v2.query_builders.session_detail": {
         "_LIVE_SESSION_SPANS": filed(BY_ID_ALONE, why="session detail by session id"),
     },
@@ -1633,6 +1660,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "_TraceListQueryBuilderV2Core.build_span_attributes_query": _STATEMENT_BY_IDS,
         "_TraceListQueryBuilderV2Core.build_user_id_query": _STATEMENT_BY_IDS,
         "_TraceRootReplayV2._root_replay_query": _STATEMENT_BY_IDS,
+        "_TraceRootReplayV2._trace_rollup_join_sql": _STATEMENT_BY_IDS,
     },
     "tracer.services.clickhouse.v2.query_builders.user_time_series": {
         "UserDetailTimeSeriesQueryBuilderV2.build": _SESSION_OR_USER,
@@ -2019,6 +2047,9 @@ SCOPE_IDS = {
 BY_ID_WITHOUT_AN_ID = {
     "tracer.services.clickhouse.v2.span_reader:_dedup_sql": (
         "wraps reads that name their ids in the where clause the caller passes"
+    ),
+    "accounts.user_onboard:_write_demo_trace_to_clickhouse": (
+        "takes the one demo Trace object it publishes and reads by that trace's id"
     ),
 }
 

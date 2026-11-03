@@ -5,7 +5,10 @@ import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { ConfirmDialog } from "src/components/custom-dialog";
-import { resolveScenarioSelection } from "src/api/simulate-environments/scenarioSelection";
+import {
+  resolveScenarioSelection,
+  runnableScenarioKey,
+} from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
 import EmptyState from "../../components/EmptyState";
 import ScenarioToolbar from "./ScenarioToolbar";
@@ -20,6 +23,7 @@ import {
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
 import { SCENARIOS_COPY } from "./scenarios.constants";
+import { DRAFTS_COPY } from "../workspace.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
@@ -53,8 +57,6 @@ function AddButton({ onClick, contained = false, locked = false, short = false }
           onClick={onClick}
           aria-label={SCENARIOS_COPY.addLabel}
           startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-          // In the toolbar it matches the 32px row and Coverage's padding beside it.
-          sx={{ typography: "s2", fontWeight: "fontWeightBold", ...(short && { height: 32, px: 1.75 }) }}
         >
           {short ? SCENARIOS_COPY.addShortLabel : SCENARIOS_COPY.addLabel}
         </Button>
@@ -244,7 +246,10 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
       });
       return;
     }
-    enqueueSnackbar(successLabel, { variant: "success", autoHideDuration: 4000 });
+    // With versioning on the edit waits in the unsaved changes; a null draft
+    // means the edit undid them.
+    const label = data?.draft ? DRAFTS_COPY.addedToDraft : successLabel;
+    enqueueSnackbar(label, { variant: "success", autoHideDuration: 4000 });
   };
 
   // Row trash → confirm, then drop that one scenario by name.
@@ -270,12 +275,17 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   const handleRunSelected = async (k) => {
     let keys;
     try {
-      keys = await resolveSelection((r) => r.scenario_key);
+      // Rows only the unsaved changes add have nothing saved to run.
+      keys = (await resolveSelection(runnableScenarioKey)).filter(Boolean);
     } catch {
       enqueueSnackbar("Couldn't start the run. Try again", { variant: "error" });
       return;
     }
-    if (keys.length) onStartRun?.(keys, k || trials);
+    if (!keys.length) {
+      enqueueSnackbar(DRAFTS_COPY.saveToRunSelected, { variant: "info" });
+      return;
+    }
+    onStartRun?.(keys, k || trials);
   };
 
   // Mirror the predicate selection into the workspace builder chat. include-mode
@@ -398,7 +408,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
           {loadFailed && (
             <Alert
               severity="error"
-              sx={{ mb: 2, typography: "s3", flexShrink: 0 }}
+              sx={{ mb: 2, flexShrink: 0 }}
               action={(
                 <Button color="inherit" size="small" onClick={retryLoad}>
                   Retry
@@ -473,7 +483,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
             <Box
               sx={{
                 flex: 1, minHeight: 0, display: "flex", flexDirection: "column",
-                border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden",
+                border: "1px solid", borderColor: "divider", borderRadius: "8px", overflow: "hidden",
               }}
             >
               <PagedScenarioViews
@@ -533,7 +543,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         onClose={() => setPendingDelete(null)}
         title="Delete scenarios?"
         content={
-          <Typography component="span" sx={{ typography: "s2" }}>
+          <Typography component="span" sx={{ typography: "m3" }}>
             {pendingDelete?.count === 1
               ? "This scenario will be permanently removed. This can't be undone."
               : `${pendingDelete?.count ?? 0} scenarios will be permanently removed. This can't be undone.`}

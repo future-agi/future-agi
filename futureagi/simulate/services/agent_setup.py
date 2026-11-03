@@ -115,23 +115,23 @@ def agent_summary(
         raise AgentNotFound("agent definition not found")
     versions = AgentVersion.no_workspace_objects.filter(agent_definition=agent)
     active = versions.filter(status="active").order_by("-version_number").first()
-    version = (
+    requested = (
         versions.filter(id=agent_version_id).first()
         if agent_version_id is not None
         else None
     )
-    if version is None:
-        version = active or versions.order_by("-version_number").first()
+    version = requested or active or versions.order_by("-version_number").first()
     rows = AgentVersionSetup.no_workspace_objects.filter(
         agent_version__agent_definition=agent,
         status=AgentVersionSetup.Status.STORED,
         agent_version__deleted=False,
     )
+    # A version asked for answers only from its own row, never another version's.
     setup = (
-        rows.filter(agent_version=version).first()
-        if agent_version_id is not None and version
-        else None
-    ) or rows.order_by("-agent_version__version_number").first()
+        rows.filter(agent_version=requested).first()
+        if requested is not None
+        else rows.order_by("-agent_version__version_number").first()
+    )
     column_provider = (agent.provider or "").strip()
     column_agent_id = (agent.assistant_id or "").strip()
     stale = setup is not None and _setup_is_stale(setup, agent)

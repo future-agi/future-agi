@@ -326,11 +326,14 @@ test(
 
 ### Fixtures (`lib/fixtures.ts`)
 
-- **`actor`** — _worker-scoped_. Signs up a brand-new user on a brand-new org
+- **`actor`** — _worker-scoped_. Provisions a clean account through the test-image-only
+  `/accounts/e2e/clean-signup/` endpoint (no demo rows or pending seed request).
+  The public `/accounts/signup/` still seeds demos and is exercised by AUTH-E2E-004.
+  Creates a brand-new user on a brand-new org
   (`e2e-w<workerIndex>-<runId>@futureagi.com`), logs in, resolves the organization and default
-  workspace, and mints the org API/secret key pair. The `futureagi.com` domain is deliberate: it is
-  the signup path's reCAPTCHA special case, the belt to the `localhost` Host suspenders. One org per
-  worker is what makes full parallelism safe without truncating anything. It carries
+  workspace, and mints the org API/secret key pair. The `futureagi.com` domain keeps
+  organization naming consistent. One org per worker makes full parallelism safe
+  without truncating anything. It carries
   `actor.api` — an `ApiClient` already sending `Authorization`, `X-Organization-Id` and
   `X-Workspace-Id`. Both stacks set `RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF` to
   2026-10-01T00:00:00Z, so once the Simulate restriction (#3502) is in, this org is a new
@@ -566,6 +569,16 @@ released `:latest` — so a frontend-only PR does not rebuild the backend. The j
 catalog, boots the stack with `bin/e2e up`, runs `bin/e2e test`, and always uploads the Playwright
 HTML report (7-day retention); on failure it dumps `bin/e2e ps` and the last 200 log lines. The
 `E2E Tests Pass` gate fails closed unless every dependency succeeded or was legitimately skipped.
+
+After the Playwright suite, the same job runs the SDK live suites from
+[futureagi-sdk](https://github.com/future-agi/futureagi-sdk) against the stack it booted, on every
+PR and push: `python/tests/platform` calls every operation of the generated Python client and
+`src/platform/__tests__/live.test.ts` covers the TypeScript transport, so a backend change that
+breaks the SDKs fails here before it ships. The SDK checkout is the branch named like the PR's
+branch when the SDK repository has one, else the base branch (`dev` or `main`); a manual run can
+name any ref with the `sdk-ref` input. The account comes from `sdkgen/local_api_key.py --signup`
+(signup, token, user-info, keys — the same calls as `lib/provisioning.ts`). The suites take about a
+minute; they are skipped only when the stack never booted.
 
 The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
 the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`

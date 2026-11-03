@@ -83,6 +83,7 @@ import {
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
 import RequiredMark from "src/components/RequiredMark";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const ERROR_LOCALIZER_LOCKED_TOOLTIP =
   "Error Localization isn't enabled for this workspace.";
@@ -1196,7 +1197,7 @@ const EvalPickerConfigFull = ({
           py: 8,
         }}
       >
-        <CircularProgress size={32} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
@@ -1215,7 +1216,7 @@ const EvalPickerConfigFull = ({
         }}
       >
         <Iconify
-          icon="mdi:alert-circle-outline"
+          icon="solar:danger-circle-linear"
           width={40}
           sx={{ color: "text.disabled" }}
         />
@@ -1229,7 +1230,6 @@ const EvalPickerConfigFull = ({
           variant="outlined"
           onClick={onBack}
           startIcon={<Iconify icon="solar:arrow-left-linear" width={16} />}
-          sx={{ textTransform: "none" }}
         >
           Back to list
         </Button>
@@ -1260,7 +1260,7 @@ const EvalPickerConfigFull = ({
           sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}
         >
           <IconButton size="small" onClick={onBack} sx={{ p: 0.5 }}>
-            <Iconify icon="solar:arrow-left-linear" width={18} />
+            <Iconify icon="solar:arrow-left-linear" width={20} />
           </IconButton>
           <Typography variant="subtitle1" fontWeight={600} noWrap>
             {fullEval?.name || evalData?.name}
@@ -1275,7 +1275,6 @@ const EvalPickerConfigFull = ({
               size="small"
               color="warning"
               variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
             />
           )}
         </Box>
@@ -1298,12 +1297,6 @@ const EvalPickerConfigFull = ({
               disabled={updateEval.isPending || createVersion.isPending}
               onClick={handleSaveVersion}
               startIcon={<Iconify icon="solar:diskette-bold" width={14} />}
-              sx={{
-                textTransform: "none",
-                fontSize: "12px",
-                height: 30,
-                px: 1.25,
-              }}
             >
               Save version
             </LoadingButton>
@@ -1316,11 +1309,9 @@ const EvalPickerConfigFull = ({
               displayEmpty
               sx={{ fontSize: "12px", minWidth: 130, height: 30 }}
             >
-              <MenuItem value="" sx={{ fontSize: "12px" }}>
-                Default version
-              </MenuItem>
+              <MenuItem value="">Default version</MenuItem>
               {versions.map((v) => (
-                <MenuItem key={v.id} value={v.id} sx={{ fontSize: "12px" }}>
+                <MenuItem key={v.id} value={v.id}>
                   V{v.version_number}
                   {v.is_default ? " (default)" : ""}
                 </MenuItem>
@@ -1329,7 +1320,7 @@ const EvalPickerConfigFull = ({
           )}
           {showClose && (
             <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
-              <Iconify icon="mingcute:close-line" width={20} />
+              <Iconify icon="solar:close-linear" width={16} />
             </IconButton>
           )}
         </Box>
@@ -1364,8 +1355,8 @@ const EvalPickerConfigFull = ({
                 ? "Name can't be longer than 50 characters"
                 : `Lowercase letters, numbers, hyphens and underscores only · ${evalName.length}/50`
           }
-          FormHelperTextProps={{ sx: { fontSize: "11px", mt: 0.25, mx: 0 } }}
-          sx={{ "& .MuiInputBase-root": { fontSize: "13px", height: 34 } }}
+          FormHelperTextProps={{ sx: { fontSize: "12px", mt: 0.25, mx: 0 } }}
+          sx={{ "& .MuiInputBase-root": { fontSize: "13px", height: 32 } }}
         />
       </Box>
 
@@ -1405,10 +1396,7 @@ const EvalPickerConfigFull = ({
                       borderRadius: 1,
                       border: "1px solid",
                       borderColor: "divider",
-                      backgroundColor: (t) =>
-                        t.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.02)"
-                          : "rgba(0,0,0,0.01)",
+                      backgroundColor: "background.neutral",
                     }}
                   >
                     <Typography
@@ -1491,7 +1479,7 @@ const EvalPickerConfigFull = ({
                               <Typography
                                 variant="caption"
                                 color="text.secondary"
-                                sx={{ fontSize: "11px" }}
+                                sx={{ fontSize: "12px" }}
                               >
                                 Weight
                               </Typography>
@@ -1517,8 +1505,7 @@ const EvalPickerConfigFull = ({
                                   padding: "2px 6px",
                                   fontSize: "12px",
                                   borderRadius: 4,
-                                  border:
-                                    "1px solid var(--mui-palette-divider, #444)",
+                                  border: "1px solid var(--border-default)",
                                   background: "transparent",
                                   color: "inherit",
                                   textAlign: "center",
@@ -1551,13 +1538,13 @@ const EvalPickerConfigFull = ({
                     }}
                   >
                     <Iconify
-                      icon="eva:info-outline"
+                      icon="solar:info-circle-linear"
                       width={14}
                       sx={{ flexShrink: 0 }}
                     />
                     <Typography
                       variant="caption"
-                      sx={{ fontSize: "11px", lineHeight: 1.4 }}
+                      sx={{ fontSize: "12px", lineHeight: 1.4 }}
                     >
                       Built-in evaluation: prompt is pre-configured and shown
                       for reference only.
@@ -1843,8 +1830,6 @@ const EvalPickerConfigFull = ({
                     label={ROW_TYPE_LABELS[sourceRowType]}
                     size="small"
                     sx={{
-                      height: 18,
-                      fontSize: "10px",
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.75 },
@@ -2096,7 +2081,7 @@ const EvalPickerConfigFull = ({
             sx={{ display: "flex", alignItems: "center", gap: 0.5, mr: "auto" }}
           >
             <Iconify
-              icon="mdi:check-circle"
+              icon="solar:check-circle-bold"
               width={16}
               sx={{ color: "success.main" }}
             />
@@ -2121,7 +2106,7 @@ const EvalPickerConfigFull = ({
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ mr: "auto", fontSize: "11px" }}
+              sx={{ mr: "auto", fontSize: "12px" }}
             >
               {source === "task" && sourceBlocker
                 ? sourceBlocker
@@ -2132,7 +2117,7 @@ const EvalPickerConfigFull = ({
           <Typography
             variant="caption"
             color="warning.main"
-            sx={{ mr: "auto", fontSize: "11px" }}
+            sx={{ mr: "auto", fontSize: "12px" }}
           >
             Unsaved changes
           </Typography>
@@ -2224,10 +2209,9 @@ const EvalPickerConfigFull = ({
                         isTesting ? (
                           <CircularProgress size={14} />
                         ) : (
-                          <Iconify icon="mdi:play-circle-outline" width={16} />
+                          <Iconify icon="solar:play-circle-linear" width={16} />
                         )
                       }
-                      sx={{ textTransform: "none" }}
                     >
                       {isTesting ? "Testing..." : "Test Evaluation"}
                     </Button>
@@ -2336,7 +2320,6 @@ const EvalPickerConfigFull = ({
                   loading={isSaving}
                   onClick={handleAdd}
                   disabled={addDisabled}
-                  sx={{ textTransform: "none" }}
                 >
                   {primaryLabel ||
                     (source === "composite"

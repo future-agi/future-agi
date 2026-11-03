@@ -17,8 +17,9 @@ import {
   useNavUpgradeData,
   useWorkspaceSettingsNav,
 } from "./config-navigation";
-import { Divider, IconButton, Typography } from "@mui/material";
+import { IconButton, Typography } from "@mui/material";
 import SvgColor from "src/components/svg-color";
+import Logo from "src/components/logo";
 import { useSettingsContext } from "src/components/settings";
 import WorkspaceSwitcher from "./WorkspaceSwitcher/WorkspaceSwitcher";
 import { useSettingsOpen } from "./states";
@@ -58,12 +59,12 @@ export default function NavMini() {
       sx={{
         flexShrink: { xs: 0 },
         width: { xs: NAV.W_MINI },
-        backgroundColor: "background.paper",
+        backgroundColor: "background.default",
+        borderRight: (theme) => `1px solid ${theme.palette.divider}`,
         paddingBottom: "16px",
         position: "relative", // important for settings panel overlay
         height: "100vh",
         overflow: "hidden",
-        borderRight: (theme) => `solid 1px ${theme.palette.divider}`,
       }}
     >
       <Stack
@@ -79,76 +80,69 @@ export default function NavMini() {
         alignItems={"center"}
         height={"100%"}
       >
-        <Box sx={{ pt: "12px", pb: "6px" }}>
-          <Stack
-            display={"flex"}
-            flexDirection={"column"}
-            gap={"6px"}
-            justifyContent={"center"}
-            alignItems={"center"}
-          >
-            <IconButton
-              onClick={() =>
-                settings.onUpdate(
-                  "themeLayout",
-                  settings.themeLayout === "vertical" ? "mini" : "vertical",
-                )
-              }
-              sx={{ color: "text.primary" }}
-            >
-              <SvgColor
-                sx={{ height: "25px", width: "25px" }}
-                src="/assets/icons/navbar/ic_nav_close_toggle.svg"
-              />
-            </IconButton>
-            <WorkspaceSwitcher collapsed />
-            <NavSectionMini
-              data={navDashboardData}
-              slotProps={{
-                currentRole: user?.role,
-                gap: 2,
-              }}
-            />
-          </Stack>
-          <Divider
-            orientation="horizontal"
+        {/* Design system: same rhythm as the open sidebar — 8px top,
+            4px between header rows, 24px rows, a hairline in place of each
+            group label, and the bottom block under a subtle top border. */}
+        <Stack
+          sx={{ pt: "8px", width: 1 }}
+          gap="4px"
+          alignItems="center"
+        >
+          <Logo collapsed />
+          <IconButton
+            onClick={() =>
+              settings.onUpdate(
+                "themeLayout",
+                settings.themeLayout === "vertical" ? "mini" : "vertical",
+              )
+            }
+            size="small"
             sx={{
-              width: "20px",
-              height: "1px",
-              mt: "24px",
-              backgroundColor: "action.hover",
-              opacity: 1,
-              mb: 0.5,
-              mx: "auto",
+              color: "text.secondary",
+              width: 36,
+              p: 0,
+              "&:hover": { bgcolor: "action.hover" },
+            }}
+          >
+            <SvgColor
+              sx={{ height: "14px", width: "14px" }}
+              src="/assets/icons/navbar/ic_nav_close_toggle.svg"
+            />
+          </IconButton>
+          <WorkspaceSwitcher collapsed />
+          <NavSectionMini
+            data={navDashboardData}
+            slotProps={{
+              currentRole: user?.role,
+              gap: 0,
             }}
           />
-        </Box>
+        </Stack>
 
         <NavSectionMini
           data={navData}
           slotProps={{
             currentRole: user?.role,
-            gap: 2,
+            gap: 0,
           }}
         />
         <Box sx={{ flexGrow: 1 }} />
 
-        <Stack marginTop={3} direction={"column"} alignItems={"center"}>
-          <Divider
-            orientation="horizontal"
-            sx={{
-              width: "20px",
-              height: "1px",
-              backgroundColor: "action.hover",
-              opacity: 1,
-              mb: 1,
-            }}
-          />
+        <Stack
+          alignItems="center"
+          sx={{
+            width: 1,
+            mt: 1,
+            pt: 1,
+            pb: 1,
+            borderTop: (theme) => `1px solid ${theme.palette.border.subtle}`,
+          }}
+        >
           <NavSectionMini
             data={navUpgradeData}
             slotProps={{
               currentRole: user?.role,
-              gap: 2,
+              gap: 0,
             }}
           />
         </Stack>
@@ -163,7 +157,7 @@ export default function NavMini() {
           height: "100%",
           display: "flex",
           flexDirection: "column",
-          bgcolor: "background.paper",
+          bgcolor: "background.default",
           transform: settingOpen ? "translateX(0)" : "translateX(100%)",
           transition: (theme) =>
             theme.transitions.create("transform", {
@@ -186,15 +180,14 @@ export default function NavMini() {
                 }}
               >
                 <IconButton
+                  size="small"
                   onClick={() =>
                     navigate("/dashboard/settings/profile-settings")
                   }
                   sx={{
                     p: 0,
                     width: 20,
-                    height: 20,
                     minWidth: "auto",
-                    minHeight: "auto",
                   }}
                 >
                   <SvgColor
@@ -239,6 +232,7 @@ export default function NavMini() {
                 }}
               >
                 <IconButton
+                  size="small"
                   onClick={() => {
                     const appRedirectUrl = localStorage.getItem(
                       "redirect-url-from-settings",
@@ -250,9 +244,7 @@ export default function NavMini() {
                   sx={{
                     p: 0,
                     width: 20,
-                    height: 20,
                     minWidth: "auto",
-                    minHeight: "auto",
                   }}
                 >
                   <SvgColor

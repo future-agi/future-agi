@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Box, Card, Select, Typography } from "@mui/material";
+import { Box, Select, Typography } from "@mui/material";
+import Section from "src/components/section";
 import React, { useEffect, useState } from "react";
 import { Panel, PanelGroup } from "react-resizable-panels";
 import HorizontalResizeHandle from "src/components/resize/horizontal-resize-handler";
@@ -90,7 +91,7 @@ export default function EmbeddingExplorer({ isDimensionVisible }) {
   }, []);
 
   return (
-    <Card>
+    <Section variant="panel">
       <Box
         sx={{
           p: 2,
@@ -125,7 +126,7 @@ export default function EmbeddingExplorer({ isDimensionVisible }) {
           </Panel>
         </PanelGroup>
       </Box>
-    </Card>
+    </Section>
   );
 }
 

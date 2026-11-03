@@ -299,7 +299,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                 width={16}
                 height={16}
                 style={{
-                  color: theme.palette.green[400],
+                  color: theme.palette.status.success.fg,
                   marginRight: "2px",
                   marginLeft: "0px",
                 }}
@@ -366,7 +366,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                   width={16}
                   height={16}
                   style={{
-                    color: theme.palette.green[400],
+                    color: theme.palette.status.success.fg,
                     marginRight: "2px",
                     marginLeft: "0px",
                   }}
