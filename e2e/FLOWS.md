@@ -1001,6 +1001,26 @@
 - the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open
 - the first Esc closes only the drawer and the second closes the run panel
 
+### EVAL-E2E-011 — custom evaluation tags survive draft reopening and repeated version saves
+
+**Goal:** Keep preset and custom evaluation labels when reopening a draft and repeatedly saving a version  
+**Spec:** `flows/evals/custom-tags.spec.ts:10`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a draft with preset and custom tags through the API
+2. reopen the draft, add a trimmed custom tag, reject its duplicate and leave another pending
+3. publish through Save Evaluation and reopen the saved default version
+4. remove a tag, save pending text as a version, then remove that tag and save again
+5. reload the saved version and inspect the remaining labels
+
+**Backend state verified:**
+
+- draft detail returns the exact seeded tags
+- publishing retains existing tags and includes confirmed and pending entries exactly once
+- repeated version saves retain the exact remaining tags without resurrecting removed pending input
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it

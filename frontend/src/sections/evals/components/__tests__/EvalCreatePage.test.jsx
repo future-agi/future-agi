@@ -144,12 +144,13 @@ vi.mock("src/components/resizablePanels/ResizablePanels", () => ({
 describe("Unit: EvalCreatePage custom tags", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.updateMutateAsync.mockReset().mockResolvedValue({});
     mocks.axiosGet.mockResolvedValue({
       data: {
         result: {
           id: "draft-1",
           eval_type: "agent",
-          eval_tags: [],
+          tags: [],
           config: {},
         },
       },
@@ -201,7 +202,7 @@ describe("Unit: EvalCreatePage custom tags", () => {
         result: {
           id: "draft-1",
           eval_type: "agent",
-          eval_tags: ["client-demo"],
+          tags: ["client-demo"],
           config: {},
         },
       },
@@ -209,6 +210,67 @@ describe("Unit: EvalCreatePage custom tags", () => {
     render(<EvalCreatePage />);
 
     expect(await screen.findByText("client-demo")).toBeInTheDocument();
+  });
+
+  it("keeps draft preset and custom tags when publishing and removes a custom tag", async () => {
+    const user = userEvent.setup();
+    mocks.axiosGet.mockResolvedValueOnce({
+      data: {
+        result: {
+          id: "draft-1",
+          eval_type: "code",
+          tags: ["output_validation", "client-demo", "remove-me"],
+          config: {},
+        },
+      },
+    });
+    render(<EvalCreatePage />);
+    const chip = await screen.findByRole("button", { name: "remove-me" });
+    chip.focus();
+    await user.keyboard("{Backspace}");
+    expect(screen.queryByText("remove-me")).not.toBeInTheDocument();
+    await user.type(
+      screen.getByPlaceholderText("Eg: Hallucination detector"),
+      "tagroundtrip",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Add custom tag" }),
+      "  client-demo  ",
+    );
+    await user.click(screen.getByRole("button", { name: "Save Evaluation" }));
+    await waitFor(() =>
+      expect(mocks.updateMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tags: ["output_validation", "client-demo"],
+          publish: true,
+        }),
+      ),
+    );
+  });
+
+  it("retains pending text after a failed save and retries without duplication", async () => {
+    const user = userEvent.setup();
+    mocks.updateMutateAsync
+      .mockRejectedValueOnce(new Error("Save failed"))
+      .mockResolvedValueOnce({});
+    render(<EvalCreatePage />);
+    await user.type(
+      screen.getByPlaceholderText("Eg: Hallucination detector"),
+      "retrytags",
+    );
+    await user.click(screen.getByRole("tab", { name: "Code" }));
+    const input = screen.getByRole("textbox", { name: "Add custom tag" });
+    await user.type(input, "  retry-tag  ");
+    await user.click(screen.getByRole("button", { name: "Save Evaluation" }));
+    await waitFor(() =>
+      expect(mocks.updateMutateAsync).toHaveBeenCalledTimes(1),
+    );
+    expect(input).toHaveValue("  retry-tag  ");
+    await user.click(screen.getByRole("button", { name: "Save Evaluation" }));
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(mocks.updateMutateAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tags: ["retry-tag"] }),
+    );
   });
 
   it("does not add a tag when Enter confirms IME composition", async () => {

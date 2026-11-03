@@ -396,7 +396,7 @@ const EvalDetailPage = () => {
               config.error_localizer_enabled ??
               false,
           );
-          setTags(evalData.tags || evalData.eval_tags || []);
+          setTags(evalData.tags);
           if (config.messages && config.messages.length > 0) {
             setMessages(config.messages);
           } else if (evalData.eval_type === "llm" && promptText) {
@@ -418,6 +418,8 @@ const EvalDetailPage = () => {
       // Load version config into the form
       isPopulatingRef.current = true;
       setViewingVersion(versionToLoad);
+      setTags(evalData.tags);
+      setCustomTagInput("");
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -653,7 +655,7 @@ const EvalDetailPage = () => {
             config.error_localizer_enabled ??
             false,
         );
-        setTags(evalData.tags || evalData.eval_tags || []);
+        setTags(evalData.tags);
         if (config.messages && config.messages.length > 0) {
           setMessages(config.messages);
         } else if (evalData.eval_type === "llm" && promptText) {
@@ -839,6 +841,8 @@ const EvalDetailPage = () => {
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
       };
       await updateEval.mutateAsync(payload);
+      setTags(tagsToSave);
+      setCustomTagInput("");
 
       // Build a config snapshot for the version so it captures the full state
       const configSnapshot = {

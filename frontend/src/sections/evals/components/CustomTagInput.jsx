@@ -9,7 +9,7 @@ export default function CustomTagInput({ value, onChange, onAdd, sx }) {
     <TextField
       size="small"
       placeholder="Add custom tag..."
-      helperText="Press Enter to add"
+      helperText="Press Enter to add, or save to include this tag"
       inputProps={{ "aria-label": "Add custom tag" }}
       value={value}
       onChange={(event) => onChange(event.target.value)}

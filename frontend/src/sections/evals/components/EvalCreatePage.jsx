@@ -340,7 +340,7 @@ const EvalCreatePage = () => {
                 config.error_localizer_enabled ||
                 false,
             );
-            setTags(d.eval_tags || []);
+            setTags(d.tags);
             setTemplateFormat(
               d.template_format || config.template_format || "mustache",
             );
