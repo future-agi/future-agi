@@ -890,27 +890,37 @@ func statusString(c ptrace.StatusCode) string {
 	}
 }
 
-// spanEventsJSON serialises events as a JSON array. We hand back a JSON
-// string (not []any) because the CH `span_events String` column stores it
-// verbatim — saves a re-serialise on the writer side.
+// spanEventsJSON serialises events as a JSON array string for the verbatim
+// CH span_events String column: name, flat attributes map, ISO timestamp —
+// the same shape the Django ingest path stores for the same OTLP payload
+// (Python _convert_attributes); HTML stays literal (SetEscapeHTML(false)).
 func spanEventsJSON(events ptrace.SpanEventSlice) string {
 	if events.Len() == 0 {
 		return "[]"
 	}
-	var b strings.Builder
-	b.WriteByte('[')
-	for i := 0; i < events.Len(); i++ {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		ev := events.At(i)
-		b.WriteByte('{')
-		fmt.Fprintf(&b, `"name":%q,"timestamp":%q`,
-			ev.Name(), formatDateTime64(ev.Timestamp().AsTime()))
-		b.WriteByte('}')
+	type spanEvent struct { // field order = emitted key order, as Django stores
+		Name       string         `json:"name"`
+		Attributes map[string]any `json:"attributes"`
+		Timestamp  string         `json:"timestamp"`
 	}
-	b.WriteByte(']')
-	return b.String()
+	out := make([]spanEvent, 0, events.Len())
+	for i := 0; i < events.Len(); i++ {
+		e := events.At(i)
+		attrs := make(map[string]any, e.Attributes().Len())
+		e.Attributes().Range(func(k string, v pcommon.Value) bool { // AsRaw unwraps oneofs
+			attrs[k] = v.AsRaw()
+			return true
+		})
+		out = append(out, spanEvent{Name: e.Name(), Attributes: attrs,
+			Timestamp: e.Timestamp().AsTime().Format("2006-01-02T15:04:05.000000")})
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(out); err != nil {
+		return "[]"
+	}
+	return strings.TrimRight(buf.String(), "\n")
 }
 
 // formatDateTime64 emits CH's DateTime64(6) text form: "YYYY-MM-DD HH:MM:SS.ffffff".
