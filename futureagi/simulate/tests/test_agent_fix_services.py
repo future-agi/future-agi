@@ -603,6 +603,31 @@ class TestRetry:
         assert again.id != first.id
         assert again.seed == first.seed
 
+    def test_a_retry_reads_a_check_the_failed_fix_asked_for_again(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks
+    ):
+        failed = _fix_run(source_run, token_hash=hash_secret("t"))
+        lost = _check(failed, label="baseline-r1")
+        again = _check(failed, label="baseline-r1-again")
+        HostedHarnessJob.no_workspace_objects.filter(id=lost.id).update(state="failed")
+        HostedHarnessJob.no_workspace_objects.filter(id=again.id).update(
+            state="completed"
+        )
+        close_fix_run(failed.id, State.FAILED, failure={"code": "x", "message": "m"})
+        with django_capture_on_commit_callbacks(execute=True):
+            retried = retry_fix_run(
+                AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
+            )
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=State.RUNNING
+        )
+        retried.refresh_from_db()
+
+        assert _check(retried, label="baseline-r1").id == again.id
+        assert not HostedHarnessJob.no_workspace_objects.filter(
+            fix_run=retried
+        ).exists()
+
 
 class TestAddCandidate:
     def test_stores_a_checked_version_that_never_becomes_the_default(
@@ -1231,6 +1256,64 @@ class TestCheckRunStatus:
     ):
         assert check_failure({**failure, "message": "m"}).owner == owner
         assert check_failure(None) is None
+
+    @pytest.mark.parametrize(
+        ("cause", "owner"),
+        [
+            (
+                "chat_target_failed: HTTPCallFailure: The read operation timed out",
+                FailureOwner.OURS,
+            ),
+            ("chat_target_failed: ReadTimeout: ", FailureOwner.OURS),
+            (
+                "depends_on/depends_on_timeout (agent): agent: started_check did not "
+                "pass within 180.0s; last output",
+                FailureOwner.OURS,
+            ),
+            (
+                "chat_target_failed: HTTPCallFailure: Completed tool evidence "
+                "collection failed: invalid or duplicate tool event identity",
+                FailureOwner.USER,
+            ),
+            (
+                "chat_target_failed: HTTPCallFailure: Error code: 400 - Function call "
+                "is missing a thought_signature in functionCall parts.",
+                FailureOwner.USER,
+            ),
+            (
+                "chat_target_failed: HTTPCallFailure: [Errno 111] Connection refused",
+                FailureOwner.USER,
+            ),
+            (
+                "BundleAuthorError: target_runtime_configuration_missing: "
+                "environment:LIVEKIT_URL",
+                FailureOwner.USER,
+            ),
+        ],
+        ids=[
+            "chat-timed-out",
+            "chat-timeout-error",
+            "agent-slow-to-start",
+            "duplicate-tool-ids",
+            "agent-model-refused",
+            "agent-gone",
+            "setup-missing",
+        ],
+    )
+    def test_a_certification_that_ran_out_of_time_is_ours(self, cause, owner):
+        failure = {
+            "domain": "environment",
+            "code": "authoring_runtime_validation_failed",
+            "message": "Generated environment failed real-runtime validation after "
+            f"bounded repair: {cause}",
+        }
+
+        assert check_failure(failure).owner == owner
+        # The same words on another of the environment's failures stay the user's.
+        assert (
+            check_failure({**failure, "code": "provider_credentials_invalid"}).owner
+            == FailureOwner.USER
+        )
 
     def test_a_failed_run_and_its_errored_trials_say_who_can_fix_them(self, source_run):
         fix_run = _fix_run(source_run)

@@ -1096,8 +1096,8 @@ AGENT_FIX_ENGINE_COMMAND = os.getenv(
 # for each check run side by side). Two claims can race past a cap by a few fixes.
 AGENT_FIX_MAX_RUNNING = int(os.getenv("AGENT_FIX_MAX_RUNNING", "10"))
 AGENT_FIX_MAX_RUNNING_PER_ORG = int(os.getenv("AGENT_FIX_MAX_RUNNING_PER_ORG", "3"))
-# How long a fix may wait for room before it fails, free to retry; a fix with a longer time
-# limit waits that long instead.
+# How long a fix may wait for room before it fails, free to retry; a fix whose time limit
+# plus AGENT_FIX_TOKEN_GRACE_SECONDS is longer waits that long instead.
 AGENT_FIX_MAX_QUEUED_SECONDS = int(os.getenv("AGENT_FIX_MAX_QUEUED_SECONDS", "3600"))
 # Sandboxes one fix may use in all; an engine that dies is started again after a pause.
 AGENT_FIX_MAX_SANDBOX_ATTEMPTS = int(os.getenv("AGENT_FIX_MAX_SANDBOX_ATTEMPTS", "3"))

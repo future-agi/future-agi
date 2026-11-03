@@ -472,16 +472,14 @@ def test_a_queued_fix_waits_as_long_as_its_own_time_limit(
     _running(_new_fix(user, workspace))
     fix_run = _new_fix(user, workspace, max_minutes=300)
 
-    _queued_for(fix_run, minutes=61)
-    waiting = launch(str(fix_run.id))
-    _queued_for(fix_run, minutes=301)
-    late = launch(str(fix_run.id))
+    seen = []
+    # A fix ahead with the same limit can end up to the 10-minute grace past its deadline.
+    for minutes in (61, 309, 311):
+        _queued_for(fix_run, minutes=minutes)
+        seen.append(launch(str(fix_run.id)).observation)
 
     fix_run.refresh_from_db()
-    assert (waiting.observation, late.observation) == (
-        Observation.WAITING,
-        Observation.ENDED,
-    )
+    assert seen == [Observation.WAITING, Observation.WAITING, Observation.ENDED]
     assert fix_run.failure["code"] == "fix_queue_timeout"
     assert provider.specs == []
 

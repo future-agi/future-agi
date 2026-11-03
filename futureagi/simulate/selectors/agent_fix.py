@@ -1,5 +1,6 @@
 """Reads for "Fix my agent": the engine's brief, a check run's results, the run list."""
 
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
@@ -134,6 +135,18 @@ def fix_deadline(fix_run: AgentFixRun) -> datetime:
     return (fix_run.started_at or fix_run.created_at) + timedelta(minutes=minutes)
 
 
+def queue_deadline(fix_run: AgentFixRun) -> datetime:
+    """When a fix still waiting for room fails. A fix ahead may run its whole limit and end
+    up to the grace after it, so a fix waits its own limit and the grace, or the queue
+    setting when that is longer."""
+    minutes = FixRequest.model_validate(fix_run.request).max_minutes
+    wait = max(
+        settings.AGENT_FIX_MAX_QUEUED_SECONDS,
+        minutes * 60 + settings.AGENT_FIX_TOKEN_GRACE_SECONDS,
+    )
+    return fix_run.created_at + timedelta(seconds=wait)
+
+
 def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
     if fix_run.source_run is None:
         raise HostedHarnessError(
@@ -217,6 +230,15 @@ def ran_at(run: HostedHarnessJob, trials: int | None = None) -> int:
 
 # A plan's limit, met mid-run, is the user's to lift even though the platform reports it.
 _USER_FAILURE_CODES = frozenset({"usage_exhausted"})
+# Certification reports every failure as the environment's. A chat that timed out waiting
+# for the agent's reply, or an agent slower to come up than the wait (infrastructure on any
+# other run), says nothing about the agent. A reply that failed, or a refused connection
+# to the agent's own process, stays the user's.
+_CERTIFY_FAILED = "authoring_runtime_validation_failed"
+_CERTIFY_TIMED_OUT = re.compile(
+    r"chat_target_failed: (?:\w*Timeout\w*|\w+: [^;\n]*\btimed out\b)"
+    r"|depends_on/depends_on_timeout"
+)
 
 
 def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
@@ -225,11 +247,14 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
     if not isinstance(failure, Mapping):
         return None
     code = str(failure.get("code") or "unknown")
+    message = str(failure.get("message") or "")
     user = failure.get("domain") == "environment" or code in _USER_FAILURE_CODES
+    if code == _CERTIFY_FAILED and _CERTIFY_TIMED_OUT.search(message):
+        user = False
     return CheckFailure(
         owner=FailureOwner.USER if user else FailureOwner.OURS,
         code=code,
-        message=str(failure.get("message") or "")[:500],
+        message=message[:500],
     )
 
 
