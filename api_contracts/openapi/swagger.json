@@ -143675,7 +143675,8 @@
                 "passed",
                 "failed",
                 "error",
-                "inconclusive"
+                "inconclusive",
+                "no_score"
             ],
             "type": "object",
             "properties": {
@@ -143701,6 +143702,10 @@
                 },
                 "inconclusive": {
                     "title": "Inconclusive",
+                    "type": "integer"
+                },
+                "no_score": {
+                    "title": "No score",
                     "type": "integer"
                 }
             }
@@ -143961,6 +143966,7 @@
                 "failed",
                 "error",
                 "inconclusive",
+                "no_score",
                 "scenario",
                 "scenario_key",
                 "runs",
@@ -143993,6 +143999,10 @@
                 },
                 "inconclusive": {
                     "title": "Inconclusive",
+                    "type": "integer"
+                },
+                "no_score": {
+                    "title": "No score",
                     "type": "integer"
                 },
                 "scenario": {
@@ -144147,6 +144157,7 @@
                 "failed",
                 "error",
                 "inconclusive",
+                "no_score",
                 "turn_count"
             ],
             "type": "object",
@@ -144173,6 +144184,10 @@
                 },
                 "inconclusive": {
                     "title": "Inconclusive",
+                    "type": "integer"
+                },
+                "no_score": {
+                    "title": "No score",
                     "type": "integer"
                 },
                 "turn_count": {

@@ -24665,6 +24665,7 @@ export interface OutcomeCountsApi {
   failed: number;
   error: number;
   inconclusive: number;
+  no_score: number;
 }
 
 export interface MetricStatsApi {
@@ -24742,6 +24743,7 @@ export interface ReliabilityRowApi {
   failed: number;
   error: number;
   inconclusive: number;
+  no_score: number;
   /** @minLength 1 */
   scenario: string;
   /** @minLength 1 */
@@ -24781,6 +24783,7 @@ export interface TurnDistributionApi {
   failed: number;
   error: number;
   inconclusive: number;
+  no_score: number;
   turn_count: number;
 }
 
