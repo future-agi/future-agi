@@ -186,6 +186,8 @@ class RehearsalDriverTests(unittest.TestCase):
         from scripts.build_update_compatibility_proof import implementation_inventory
         inventory=implementation_inventory()
         self.assertEqual(inventory['scripts/update_rehearsal_shipping.py'],hashlib.sha256(Path(shipping.__file__).read_bytes()).hexdigest())
+        from scripts import update_rehearsal_trace_reference as trace_reference
+        self.assertEqual(inventory['scripts/update_rehearsal_trace_reference.py'],hashlib.sha256(Path(trace_reference.__file__).read_bytes()).hexdigest())
 
     def test_failure_counts_are_only_completed_assertions_not_an_adapter_verdict(self):
         class IncompleteExecutor:

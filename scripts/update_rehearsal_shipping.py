@@ -27,6 +27,8 @@ import time
 from types import SimpleNamespace
 import uuid
 
+from scripts.update_rehearsal_trace_reference import TRACE_REFERENCE_MODELS, seed_trace_reference_family
+
 REHEARSAL_CONTRACT = 'standalone-disposable-rehearsal-v1'
 # Explicit incompleteness, not an admission flag. Do not flip this constant to
 # qualify: the complete Updater transaction, registry workloads and all six
@@ -1128,6 +1130,11 @@ class ShippingRehearsal:
     def seed_reference_table(self,entry,rows):
         p=producer()
         key=(entry.get('app_label'),entry.get('model'))
+        if key in TRACE_REFERENCE_MODELS or entry.get('table') in TRACE_REFERENCE_MODELS.values():
+            if (entry.get('database')=='postgres' and key in TRACE_REFERENCE_MODELS
+                    and entry.get('table')==TRACE_REFERENCE_MODELS[key]):
+                return self.seed_trace_reference_family(rows)
+            raise p.ManualRelease('high_volume_reference_unavailable')
         if key in ERROR_FEED_REFERENCE_MODELS or entry.get('table') in ERROR_FEED_REFERENCE_MODELS.values():
             if (entry.get('database')=='postgres' and key in ERROR_FEED_REFERENCE_MODELS
                     and entry.get('table')==ERROR_FEED_REFERENCE_MODELS[key]):
@@ -1138,6 +1145,9 @@ class ShippingRehearsal:
             # Never create a generic all-default row or silently skip a table.
             raise p.ManualRelease('high_volume_reference_unavailable')
         self.app_python(REFERENCE_SEED,dict(entry,rows=rows))
+
+    def seed_trace_reference_family(self, rows):
+        return seed_trace_reference_family(self, rows, prefix=DJANGO_PREFIX, producer=producer())
 
     def seed_error_feed_reference_family(self, rows):
         """Build the whole graph once; later callbacks can only re-verify it.
