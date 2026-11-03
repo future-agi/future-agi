@@ -402,10 +402,7 @@ class TestE2EOrgSwitchScenarios:
         assert org_ws_map.get(str(org_a.id)) == str(ws_a_staging.id)
 
     def test_removed_user_cannot_switch_to_org(self, auth_client, multi_user, org_b):
-        """
-        Scenario: User's membership in Beta is deactivated.
-        Switch to Beta should fail.
-        """
+        """A deactivated membership cannot switch into that org."""
         membership = OrganizationMembership.no_workspace_objects.get(
             user=multi_user, organization=org_b
         )
@@ -421,3 +418,60 @@ class TestE2EOrgSwitchScenarios:
             status.HTTP_400_BAD_REQUEST,
             status.HTTP_403_FORBIDDEN,
         ]
+
+
+@pytest.mark.django_db
+def test_open_session_org_list_accepts_pending_invite(auth_client, multi_user):
+    """An already-open session accepts a pending invite when it loads orgs.
+
+    GuestGuard sends that user away from the login page, so they never
+    post /accounts/token/ again. GET /accounts/organizations/ is the
+    request that session already makes.
+    """
+    from accounts.models.organization_invite import InviteStatus, OrganizationInvite
+
+    other = Organization.objects.create(name="Pending Org")
+    other_ws = Workspace.objects.create(
+        name="Pending Default",
+        organization=other,
+        is_default=True,
+        is_active=True,
+        created_by=multi_user,
+    )
+    membership = OrganizationMembership.no_workspace_objects.create(
+        user=multi_user,
+        organization=other,
+        role=OrganizationRoles.MEMBER,
+        level=Level.MEMBER,
+        is_active=False,
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        user=multi_user,
+        workspace=other_ws,
+        role=OrganizationRoles.WORKSPACE_MEMBER,
+        level=Level.WORKSPACE_MEMBER,
+        is_active=False,
+    )
+    invite = OrganizationInvite.objects.create(
+        organization=other,
+        target_email=multi_user.email,
+        status=InviteStatus.PENDING,
+        level=Level.MEMBER,
+        workspace_access=[
+            {"workspace_id": str(other_ws.id), "level": Level.WORKSPACE_MEMBER}
+        ],
+    )
+
+    response = auth_client.get("/accounts/organizations/")
+    assert response.status_code == status.HTTP_200_OK
+    result = response.json().get("result", response.json())
+    assert str(other.id) in {org["id"] for org in result["organizations"]}
+
+    membership.refresh_from_db()
+    invite.refresh_from_db()
+    workspace_membership = WorkspaceMembership.no_workspace_objects.get(
+        user=multi_user, workspace=other_ws
+    )
+    assert membership.is_active is True
+    assert workspace_membership.is_active is True
+    assert invite.status == InviteStatus.ACCEPTED
