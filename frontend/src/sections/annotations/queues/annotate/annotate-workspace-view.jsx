@@ -38,6 +38,7 @@ import {
   useItemDiscussion,
 } from "src/api/annotation-queues/annotation-queues";
 import AnnotateHeader from "./annotate-header";
+import AnnotateItemError from "./annotate-item-error";
 import AnnotateFooter from "./annotate-footer";
 import ContentPanel from "./content-panel";
 import LabelPanel from "./label-panel";
@@ -454,6 +455,8 @@ export default function AnnotateWorkspaceView() {
       !isReviewWorkspaceMode && requiresReview ? "pending_review" : undefined,
     reserve: !isReviewWorkspaceMode && queueDetail?.annotations_required === 1,
     enabled: detailEnabled,
+    // Persistent workspace error states own these failures, not a transient toast.
+    meta: { errorHandled: true },
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
@@ -494,7 +497,8 @@ export default function AnnotateWorkspaceView() {
     currentScopeKey: detailNavigationScopeKey,
   });
   const { data: liveDiscussion } = useItemDiscussion(queueId, currentItemId, {
-    enabled: detailEnabled,
+    // Wait for this item's detail before polling a discussion we may not access.
+    enabled: detailEnabled && detail?.item?.id === currentItemId && !detailError,
     refetchInterval: commentsOpen ? 3000 : 10000,
     refetchIntervalInBackground: false,
   });
@@ -1451,6 +1455,16 @@ export default function AnnotateWorkspaceView() {
         </Button>
         <Button onClick={handleBack}>Back to Queue</Button>
       </Box>
+    );
+  }
+
+  if (detailError) {
+    return (
+      <AnnotateItemError
+        statusCode={detailError.statusCode}
+        onBack={handleBack}
+        onRetry={refetchAnnotateDetail}
+      />
     );
   }
 

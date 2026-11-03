@@ -172,6 +172,28 @@
 - public soft deletion excludes retained predicates without changing source spans
 - sibling project, owner B organization and owner A explicit other workspace cannot read target Scores/catalog/results
 
+### ANNOT-E2E-005 — queue members drill into disagreements and recover from unavailable items
+
+**Goal:** A queue member opens the exact disagreed item in the appropriate workspace and can recover when that item is unavailable  
+**Spec:** `flows/annotations/agreement-drilldown.spec.ts:53`  
+**Tags:** —
+
+**User steps:**
+
+1. seed synthetic dataset rows, numeric labels and four non-admin queue roles through public APIs
+2. read zero, three and twenty-five disagreements; open the exact capped list with five more
+3. use keyboard open, traversal, Escape and Enter to inspect the exact item in each role
+4. read a long label in light and dark without horizontal overflow
+5. open an unassigned and a deleted item, read a persistent explanation and return to the queue
+6. resolve and remove an open label, reconnect after the real stale interval and see the popup close
+
+**Backend state verified:**
+
+- four non-admin viewer_roles and real agreement responses match the seeded 0/3/25 conflicts and capped item sets
+- each role opens the exact source row and permitted score authors in review or annotate mode
+- unassigned and deleted item navigation returns real 403 and 404 while the UI offers persistent queue recovery
+- public score corrections and label removal change agreement results and close the already-open popup on refetch
+
 ## auth
 
 ### AUTH-E2E-001 — user signs in with email and password

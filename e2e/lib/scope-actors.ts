@@ -156,6 +156,11 @@ export class ScopeActors {
     this.viewer = await this.invite('viewer', 1, [this.ownerA.workspaceId]);
   }
 
+  /** Additional non-admin members in owner A's default workspace. */
+  async inviteMember(label: string): Promise<ScopeActor> {
+    return this.invite(label, 3, [this.ownerA.workspaceId]);
+  }
+
   async openContext(browser: Browser, actor: ScopeActor): Promise<BrowserContext> {
     const context = await browser.newContext({ baseURL: E2E.appUrl });
     this.contexts.add(context);

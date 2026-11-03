@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Box,
@@ -41,20 +41,30 @@ export default function QueueAgreementTab({
 }) {
   const navigate = useNavigate();
   const { data: agreement, isLoading } = useQueueAgreement(queueId);
-  const [anchorEl, setAnchorEl] = useState(null);
-  const [selectedLabelId, setSelectedLabelId] = useState(null);
+  const [selection, setSelection] = useState(null);
+  const resultsRef = useRef(null);
+  const selectedLabel =
+    selection?.queueId === queueId
+      ? agreement?.labels?.[selection.labelId]
+      : null;
+  const hasSelectedItems =
+    selectedLabel?.disagreement_count > 0 &&
+    selectedLabel?.disagreement_items?.length > 0;
+  const popoverOpen = Boolean(selection && hasSelectedItems);
+
+  useEffect(() => {
+    if (selection && !hasSelectedItems) {
+      setSelection(null);
+      // The count button may have disappeared; return focus to surviving results.
+      resultsRef.current?.focus();
+    }
+  }, [selection, hasSelectedItems]);
 
   const handleOpenPopover = (event, labelId) => {
-    setAnchorEl(event.currentTarget);
-    setSelectedLabelId(labelId);
+    setSelection({ anchorEl: event.currentTarget, labelId, queueId });
   };
 
-  const handleClosePopover = () => {
-    setAnchorEl(null);
-    setSelectedLabelId(null);
-  };
-
-  const popoverOpen = Boolean(anchorEl);
+  const handleClosePopover = () => setSelection(null);
 
   if (isLoading) {
     return (
@@ -68,10 +78,9 @@ export default function QueueAgreementTab({
   const overallAgreement = overall_agreement;
   const labelEntries = Object.entries(labels || {});
   const pairs = annotator_pairs || [];
-  const selectedLabel = selectedLabelId ? labels?.[selectedLabelId] : null;
 
   return (
-    <Box sx={{ p: 3 }}>
+    <Box ref={resultsRef} role="region" aria-label="Agreement results" tabIndex={-1} sx={{ p: 3 }}>
       {/* Overall Agreement */}
       <Card sx={{ mb: 3 }}>
         <CardContent sx={{ textAlign: "center" }}>
@@ -96,10 +105,10 @@ export default function QueueAgreementTab({
             Per-Label Agreement
           </Typography>
           <TableContainer>
-            <Table size="small">
+            <Table size="small" sx={{ tableLayout: "fixed" }}>
               <TableHead>
                 <TableRow>
-                  <TableCell>Label</TableCell>
+                  <TableCell sx={{ width: "32%" }}>Label</TableCell>
                   <TableCell>Type</TableCell>
                   <TableCell align="right">Agreement</TableCell>
                   <TableCell align="right">Cohen&apos;s Kappa</TableCell>
@@ -109,7 +118,9 @@ export default function QueueAgreementTab({
               <TableBody>
                 {labelEntries.map(([id, label]) => (
                   <TableRow key={id}>
-                    <TableCell>{label.label_name}</TableCell>
+                    <TableCell title={label.label_name} sx={{ overflowWrap: "anywhere" }}>
+                      {label.label_name}
+                    </TableCell>
                     <TableCell>
                       <Typography variant="caption">
                         {label.label_type}
@@ -135,14 +146,15 @@ export default function QueueAgreementTab({
                           component="button"
                           variant="body2"
                           onClick={(e) => handleOpenPopover(e, id)}
-                          aria-haspopup="true"
+                          aria-label={`${label.disagreement_count} disagreements for ${label.label_name}`}
+                          aria-haspopup="dialog"
                           aria-expanded={
-                            popoverOpen && selectedLabelId === id
+                            popoverOpen && selection.labelId === id
                               ? "true"
                               : "false"
                           }
                           aria-controls={
-                            popoverOpen && selectedLabelId === id
+                            popoverOpen && selection.labelId === id
                               ? "disagreement-popover"
                               : undefined
                           }
@@ -210,12 +222,9 @@ export default function QueueAgreementTab({
       )}
 
       <Popover
-        id="disagreement-popover"
-        aria-labelledby={
-          selectedLabelId ? `disagreement-trigger-${selectedLabelId}` : undefined
-        }
         open={popoverOpen}
-        anchorEl={anchorEl}
+        anchorEl={popoverOpen ? selection.anchorEl : null}
+        disableRestoreFocus={Boolean(selection && !hasSelectedItems)}
         onClose={handleClosePopover}
         anchorOrigin={{
           vertical: "bottom",
@@ -226,6 +235,10 @@ export default function QueueAgreementTab({
           horizontal: "right",
         }}
         PaperProps={{
+          id: "disagreement-popover",
+          role: "dialog",
+          "aria-modal": true,
+          "aria-labelledby": "disagreement-popover-title",
           sx: {
             p: 2,
             width: 240,
@@ -239,8 +252,19 @@ export default function QueueAgreementTab({
         {selectedLabel && (
           <>
             <Typography
+              id="disagreement-popover-title"
               variant="subtitle2"
-              sx={{ mb: 1.5, fontWeight: "fontWeightSemiBold" }}
+              title={selectedLabel.label_name}
+              sx={{
+                mb: 1.5,
+                fontWeight: "fontWeightSemiBold",
+                overflowWrap: "anywhere",
+                flexShrink: 0,
+                display: "-webkit-box",
+                WebkitBoxOrient: "vertical",
+                WebkitLineClamp: 3,
+                overflow: "hidden",
+              }}
             >
               Disagreed Items: {selectedLabel.label_name}
             </Typography>
