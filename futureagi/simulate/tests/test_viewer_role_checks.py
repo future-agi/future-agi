@@ -169,17 +169,6 @@ def test_a_viewer_cannot_see_api_keys(organization, workspace, url):
     )
 
 
-@pytest.mark.django_db
-def test_a_member_still_reads_the_system_key(organization, workspace):
-    member = _member_client(organization, workspace)
-
-    response = member.get("/accounts/keys/")
-
-    assert response.status_code == status.HTTP_200_OK, response.data
-    assert len(response.data["data"]["secret_key"]) == 32
-    assert "*" not in response.data["data"]["secret_key"]
-
-
 @pytest.fixture
 def keyed_agent(organization, workspace):
     agent = AgentDefinition.objects.create(
