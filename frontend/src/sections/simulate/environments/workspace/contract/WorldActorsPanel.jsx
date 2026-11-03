@@ -298,6 +298,9 @@ function ActorRow({ envId, actor, locked, onEdit, onRemove }) {
             {summary(actor)}
           </Typography>
         </Box>
+        <Button size="small" onClick={() => setOpen((o) => !o)}>
+          {open ? C.hideView : C.showView}
+        </Button>
         {!locked && (
           <>
             <Button size="small" onClick={onEdit}>

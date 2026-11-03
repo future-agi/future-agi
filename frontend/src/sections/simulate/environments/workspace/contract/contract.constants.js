@@ -132,6 +132,8 @@ export const CONTRACT_COPY = {
     wants: "Wants",
     mayDo: "May do",
     nothing: "Nothing in the world",
+    showView: "What they see",
+    hideView: "Hide what they see",
     sees: "Sees",
     neverSees: "Never sees",
     comesIn: "Comes in",

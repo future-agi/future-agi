@@ -115,8 +115,8 @@ describe("WorldActorsPanel", () => {
   });
 
   it("shows what an actor sees and never sees in plain words", () => {
-    render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText(/Priya Raman/));
+    render(<WorldActorsPanel envId="env-1" locked />);
+    fireEvent.click(screen.getByText("What they see"));
     expect(
       screen.getByText("What they want: Approve fast"),
     ).toBeInTheDocument();
@@ -131,6 +131,8 @@ describe("WorldActorsPanel", () => {
     expect(
       screen.getByText("Grader material: solution, sub goals, sub_goals.json"),
     ).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Hide what they see"));
+    expect(screen.getByText("What they see")).toBeInTheDocument();
   });
 
   it("adds someone in the world with every field, picking actions from the environment's own list", () => {
