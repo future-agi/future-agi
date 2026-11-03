@@ -743,3 +743,25 @@ def test_a_sub_actor_never_takes_the_name_of_a_caller_it_is_with():
     assert problems == [
         "colleague's name is the caller's in one (Mei Lin); choose another."
     ]
+
+
+def test_world_actions_keep_only_routes_an_actor_can_send_to_when_the_rules_say_how():
+    from simulate.services.harness_actors import world_actions
+
+    contract = {
+        "tool_entrypoints": [
+            {"tool": "approve", "endpoint": "crm/approve"},
+            {"tool": "read", "endpoint": "crm/read", "method": "get"},
+            {"tool": "cancel", "endpoint": "orders/{order_id}/cancel"},
+        ]
+    }
+    files = {"contract.json": json.dumps(contract).encode()}
+    naming = {"from": "tool_entrypoints", "route": "endpoint", "tool": "tool", "separator": "."}
+    sealed = {**naming, "method": "method", "methods": ["POST"], "placeholder": "{"}
+
+    def names(rules):
+        return [one["action"] for one in world_actions(files, {"world_actions": rules})]
+
+    assert names(sealed) == ["crm.approve"]
+    # Rules sealed before methods and placeholders were named keep every route.
+    assert names(naming) == ["crm.approve", "crm.read", "orders.{order_id}.cancel"]

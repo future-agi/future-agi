@@ -118,7 +118,13 @@ def world_actions(
     actions = {}
     for entry in contract.get(naming.get("from", "tool_entrypoints")) or []:
         route = str(entry.get(naming.get("route", "endpoint")) or "").strip("/")
-        if not route:
+        method = str(entry.get(naming.get("method", "method")) or "POST").upper()
+        # Rules that name the methods and path placeholders keep only routes an actor's action can be sent to.
+        if (
+            not route
+            or ("methods" in naming and method not in naming["methods"])
+            or ("placeholder" in naming and naming["placeholder"] in route)
+        ):
             continue
         tool = str(entry.get(naming.get("tool", "tool")) or "")
         actions[route.replace("/", naming.get("separator", "."))] = {
