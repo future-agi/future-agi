@@ -1,9 +1,15 @@
 import PropTypes from "prop-types";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MenuItem, Select, Stack, Typography } from "@mui/material";
 import { EmptyState } from "../components/primitives";
 import { envOf } from "../_mock/runGroup";
 import { compatibilityOf } from "../_mock/compatibility";
+import {
+  CHECKS,
+  connectionSpecOf,
+  runConnectionCheck,
+} from "../_mock/connectionCheck";
+import { foundValuesOf } from "../agents/foundFacts";
 import { familyOf } from "../_mock/testedVersions";
 import { sourceKindOf } from "../_mock/agentRegistry";
 import { SectionCard } from "../components/primitives";
@@ -14,8 +20,10 @@ import SandboxCertification from "./SandboxCertification";
 /**
  * Agent → Compatibility (roadmap release.md): the report for this agent on
  * one of the environments testing it — picked here, the main one first.
- * Repair and Test again go to the Connections tab, where the check runs.
+ * Run the check and Test again run the connection check here, in place;
+ * Repair and Add the tools go to the tab where that is fixed.
  */
+const STEP_MS = 450;
 export default function AgentCompatibilityTab({
   agent,
   state,
@@ -23,7 +31,35 @@ export default function AgentCompatibilityTab({
   mainEnvId,
   onPickEnv,
   onRepair,
+  onSaveValues,
 }) {
+  /* The connection check, run here: the rows that need it read Checking… */
+  const [testing, setTesting] = useState(false);
+  const timer = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const runCheck = () => {
+    if (testing || !onSaveValues) return;
+    setTesting(true);
+    timer.current = setTimeout(
+      () => {
+        const found = foundValuesOf(agent);
+        const out = runConnectionCheck(
+          agent,
+          connectionSpecOf(agent, found),
+          found.tools,
+        );
+        const failed = out.results.filter((r) => r.state === "failed").length;
+        setTesting(false);
+        onSaveValues(
+          { connectionTest: { at: new Date().toISOString(), ...out } },
+          out.passed
+            ? "Connection ready — every check passed."
+            : `${failed} check${failed === 1 ? "" : "s"} failed — Repair is next to each.`,
+        );
+      },
+      STEP_MS * (CHECKS.length + 1),
+    );
+  };
   const envs = useMemo(
     () =>
       (agent?.usedIn || [])
@@ -94,7 +130,8 @@ export default function AgentCompatibilityTab({
         env={env}
         titles={titles}
         onRepair={onRepair}
-        onRetest={onRepair}
+        onRetest={onSaveValues ? runCheck : onRepair}
+        testing={testing}
       />
       <SectionCard
         title="Tested versions"
@@ -126,4 +163,6 @@ AgentCompatibilityTab.propTypes = {
   mainEnvId: PropTypes.string,
   onPickEnv: PropTypes.func.isRequired,
   onRepair: PropTypes.func.isRequired,
+  /* Saves the agent's values — the check result lands here and every row re-reads it. */
+  onSaveValues: PropTypes.func,
 };

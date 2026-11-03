@@ -22,7 +22,7 @@ const when = (iso) =>
     : null;
 
 /* One capability: status, what we found, the cases it touches, the way forward. */
-function CapabilityRow({ row, titles, onRepair, onRetest }) {
+function CapabilityRow({ row, titles, onRepair, onRetest, testing }) {
   const [open, setOpen] = useState(false);
   const meta = COMPAT_STATUS[row.status];
   const n = row.affected.length;
@@ -82,11 +82,17 @@ function CapabilityRow({ row, titles, onRepair, onRetest }) {
           {row.repair === "connection" && onRepair && (
             <TextLink onClick={() => onRepair(row)}>Repair</TextLink>
           )}
-          {row.repair === "test" && onRetest && (
-            <TextLink onClick={() => onRetest(row)}>
-              {row.status === "untested" ? "Run the check" : "Test again"}
-            </TextLink>
-          )}
+          {row.repair === "test" &&
+            onRetest &&
+            (testing ? (
+              <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+                Checking…
+              </Typography>
+            ) : (
+              <TextLink onClick={() => onRetest(row)}>
+                {row.status === "untested" ? "Run the check" : "Test again"}
+              </TextLink>
+            ))}
         </Box>
       </Box>
       <Collapse in={open} unmountOnExit>
@@ -113,6 +119,8 @@ CapabilityRow.propTypes = {
   titles: PropTypes.object,
   onRepair: PropTypes.func,
   onRetest: PropTypes.func,
+  /* The connection check is running: test rows read Checking… */
+  testing: PropTypes.bool,
 };
 
 /**
@@ -129,6 +137,7 @@ export default function CompatibilityReport({
   titles = {},
   onRepair,
   onRetest,
+  testing = false,
 }) {
   const { identity: id, scope } = report;
   return (
@@ -257,6 +266,7 @@ export default function CompatibilityReport({
               titles={titles}
               onRepair={onRepair}
               onRetest={onRetest}
+              testing={testing}
             />
           ))}
         </Box>
@@ -282,4 +292,6 @@ CompatibilityReport.propTypes = {
   titles: PropTypes.object,
   onRepair: PropTypes.func,
   onRetest: PropTypes.func,
+  /* The connection check is running: test rows read Checking… */
+  testing: PropTypes.bool,
 };

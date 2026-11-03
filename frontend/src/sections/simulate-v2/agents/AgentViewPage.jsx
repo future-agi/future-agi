@@ -1294,6 +1294,7 @@ export default function AgentViewPage() {
           envId={params.get("env")}
           mainEnvId={mainEnv?.envId}
           onPickEnv={(id) => setQuery({ env: id })}
+          onSaveValues={saveValues}
           onRepair={(row) =>
             setQuery({
               tab: row?.repair === "agent" ? "definition" : "connections",
