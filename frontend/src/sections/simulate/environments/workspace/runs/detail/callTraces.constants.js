@@ -37,6 +37,8 @@ export const CALL_WORKERS_COPY = {
   response: "Coordinator's reply",
   delegated: (name) => `Delegated to ${name}`,
   transferred: (name) => `Control passed to ${name}`,
+  sandboxOnly:
+    "Built from the sandbox's record of this call; the app sent no traces, so the Traces tab is empty.",
   returned: (name) => `${name} returned`,
   failed: "error",
   input: "Input",

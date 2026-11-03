@@ -654,6 +654,11 @@ export default function CallWorkersPanel({ callExecutionId }) {
       <Typography sx={{ typography: "s2", color: "text.secondary" }}>
         {C.intro}
       </Typography>
+      {data.spans_received === false ? (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {C.sandboxOnly}
+        </Typography>
+      ) : null}
       {hasHandOffs ? (
         <Turn title={C.request} turn={data.request} start={start} />
       ) : !data.workers.length ? (

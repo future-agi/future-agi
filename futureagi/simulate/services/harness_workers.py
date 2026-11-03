@@ -451,6 +451,8 @@ def worker_timeline(
         "events": shown,
         "events_omitted": omitted,
         "coordinator": {"name": coordinator} if coordinator else None,
+        # Whether the app's own spans reached us, or the record was built from the sandbox's record of the call alone.
+        "spans_received": bool(by_id),
         "request": _turn(turns, "user", before=min(handed_at)) if handed_at else None,
         "response": _turn(turns, "agent", after=max(closed_at)) if handed_at else None,
         "started_at": started_at,

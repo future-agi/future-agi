@@ -50153,6 +50153,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
     })
     .optional(),
   started_at: zod.string().min(1).optional(),
+  spans_received: zod.boolean().optional(),
   collected_at: zod.string().min(1),
 });
 

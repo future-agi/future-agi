@@ -464,6 +464,11 @@ def test_background_jobs_launched_by_an_unnamed_agent_are_its_hand_offs_and_over
     ]
 
 
+def test_a_record_says_whether_the_app_s_spans_were_received():
+    assert worker_timeline(SPANS, DECLARED, run_key=RUN)["spans_received"] is True
+    assert worker_timeline([], DECLARED, run_key=RUN, traced_calls=_hand_offs())["spans_received"] is False
+
+
 def test_a_control_pass_named_by_the_tool_itself_is_found_too():
     traced = [
         {"name": "transfer_to_billing_agent", "ok": True, "at": 1730454600.0, "worker_label": "triage"},

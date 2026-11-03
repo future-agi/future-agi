@@ -23900,6 +23900,7 @@ export interface CallWorkersResponseApi {
   response?: CallWorkerTurnApi;
   /** @minLength 1 */
   started_at?: string;
+  spans_received?: boolean;
   /** @minLength 1 */
   collected_at: string;
 }

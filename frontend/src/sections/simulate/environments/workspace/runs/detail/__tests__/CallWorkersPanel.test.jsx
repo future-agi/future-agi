@@ -116,6 +116,25 @@ describe("CallWorkersPanel", () => {
       );
   });
 
+  it("says when the record was built without the app's traces, and not otherwise", () => {
+    const note = /the app sent no traces, so the Traces tab is empty/;
+    result = {
+      data: { ...TIMELINE, spans_received: false },
+      isLoading: false,
+      isError: false,
+    };
+    const { unmount } = render(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.getByText(note)).toBeInTheDocument();
+    unmount();
+    result = {
+      data: { ...TIMELINE, spans_received: true },
+      isLoading: false,
+      isError: false,
+    };
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    expect(screen.queryByText(note)).toBeNull();
+  });
+
   it("opens with what the tab shows, and names only the tool inside its worker's hand-off", () => {
     render(<CallWorkersPanel callExecutionId="c1" />);
     expect(

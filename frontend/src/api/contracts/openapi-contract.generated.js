@@ -54474,6 +54474,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        spans_received: {
+          title: "Spans received",
+          type: "boolean",
+        },
         collected_at: {
           title: "Collected at",
           type: "string",

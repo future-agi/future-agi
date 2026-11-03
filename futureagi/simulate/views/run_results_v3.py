@@ -601,6 +601,7 @@ class CallWorkersResponseSerializer(serializers.Serializer):
     request = CallWorkerTurnSerializer(allow_null=True, required=False)
     response = CallWorkerTurnSerializer(allow_null=True, required=False)
     started_at = serializers.CharField(allow_null=True, required=False)
+    spans_received = serializers.BooleanField(required=False)
     collected_at = serializers.CharField()
 
 
