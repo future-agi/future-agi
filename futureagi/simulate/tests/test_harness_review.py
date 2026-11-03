@@ -71,12 +71,13 @@ def test_every_kind_of_item_is_found_added_removed_or_changed_in_review_order():
         ("contract_field", "changed"),
         ("sub_goal", "removed"),
         ("actor", "added"),
+        ("world_state", "changed"),
         ("source", "added"),
         ("scenario", "changed"),
-        ("file", "changed"),
     ]
-    world = changes[-1]
-    assert (world["key"], world["patch"]) == ("world.sqlite", [])
+    world = changes[5]
+    # Not a database it can open, so no row summary rather than a wrong one.
+    assert (world["key"], world["patch"], world["rows"]) == ("world.sqlite", [], None)
     assert world["base_digest"] != world["draft_digest"]
     assert changes[4]["patch"] == [{"op": "add", "path": "", "value": {"id": "auditor", "role": "reads"}}]
     assert changes[3]["patch"] == [{"op": "test", "path": "", "value": {"name": "one_refund", "check": "a"}}]

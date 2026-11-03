@@ -96,10 +96,18 @@ def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[st
         .values_list("proofs", flat=True)
         .first()
     ) or {}
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    # A change names a scenario by its folder, the suite by its key: the same scenario either way once normalised.
+    tokens = {_scenario_token(key) for key in touched}
     return sorted(
         key
-        for key in touched & members
-        if not (isinstance(proofs.get(key), dict) and proofs[key].get("holds") is True)
+        for key in members
+        if _scenario_token(key) in tokens
+        and not any(
+            isinstance(proof, dict) and proof.get("holds") is True and _scenario_token(name) == _scenario_token(key)
+            for name, proof in proofs.items()
+        )
     )
 
 

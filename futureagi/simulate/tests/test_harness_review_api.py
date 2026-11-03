@@ -17,6 +17,18 @@ def versioning_on(settings):
     settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
 
 
+def _with_world(user, workspace, key, storage):
+    """A versioned environment whose world has the CRM actions an actor can be given."""
+    from simulate.services.harness_versioning.versions import record_authoring
+    from simulate.tests.test_harness_actors import CRM_CONTRACT, NAMES
+    from simulate.tests.test_harness_versioning_record import _authoring
+
+    environment = _versioned(user, workspace, key, storage)
+    record_authoring(environment, _authoring(names=NAMES[:1], contract=CRM_CONTRACT), origin="manual", user=user)
+    environment.refresh_from_db()
+    return environment
+
+
 def _review(auth_client, environment):
     response = auth_client.get(f"{BASE}/{environment.id}/drafts/review/")
     assert response.status_code == 200, response.content
@@ -34,8 +46,9 @@ def _decide(auth_client, environment, decisions, revisions):
 def test_an_added_actor_is_one_change_decided_once_and_undecided_again_when_it_changes(
     user, workspace, storage, auth_client
 ):
-    environment = _versioned(user, workspace, "review-actor", storage)
-    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+    environment = _with_world(user, workspace, "review-actor", storage)
+    added = _add(auth_client, environment, MANAGER, revision=0)
+    assert added.status_code == 200, added.content
 
     review = _review(auth_client, environment)
     [change] = [one for one in review["changes"] if one["kind"] == "actor"]
@@ -81,8 +94,9 @@ def test_an_added_actor_is_one_change_decided_once_and_undecided_again_when_it_c
 
 
 def test_a_decision_on_a_draft_that_moved_or_on_an_unknown_change_is_refused(user, workspace, storage, auth_client):
-    environment = _versioned(user, workspace, "review-refusals", storage)
-    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+    environment = _with_world(user, workspace, "review-refusals", storage)
+    added = _add(auth_client, environment, MANAGER, revision=0)
+    assert added.status_code == 200, added.content
     revision = _review(auth_client, environment)["drafts"]["environment"]["revision"]
 
     stale = _decide(auth_client, environment, [{"remaining": True, "decision": "accepted"}],
@@ -129,7 +143,8 @@ def _save(auth_client, environment, digest=None, name=None):
 
 
 def _two_actors(auth_client, environment):
-    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+    added = _add(auth_client, environment, MANAGER, revision=0)
+    assert added.status_code == 200, added.content
     revision = _review(auth_client, environment)["drafts"]["environment"]["revision"]
     assert _add(auth_client, environment, AUDITOR, revision=revision).status_code == 200
     return _review(auth_client, environment)["drafts"]["environment"]["revision"]
@@ -140,7 +155,7 @@ def test_save_makes_only_the_accepted_changes_live_and_keeps_the_review_on_the_v
 ):
     from simulate.tests.test_harness_actors import _saved_actors
 
-    environment = _versioned(user, workspace, "review-partial-save", storage)
+    environment = _with_world(user, workspace, "review-partial-save", storage)
     revision = _two_actors(auth_client, environment)
     decided = _decide(auth_client, environment, [
         {"id": "actor:manager", "decision": "accepted"},
@@ -172,7 +187,7 @@ def test_save_makes_only_the_accepted_changes_live_and_keeps_the_review_on_the_v
 def test_save_refuses_a_review_that_moved_or_a_rejection_with_changes_still_undecided(
     user, workspace, storage, auth_client, settings
 ):
-    environment = _versioned(user, workspace, "review-save-refusals", storage)
+    environment = _with_world(user, workspace, "review-save-refusals", storage)
     revision = _two_actors(auth_client, environment)
     before = _review(auth_client, environment)["review_digest"]
     _decide(auth_client, environment, [{"id": "actor:auditor", "decision": "rejected"}], {"environment": revision})
@@ -195,7 +210,7 @@ def test_a_reviewed_save_keeps_proofs_for_scenarios_no_accepted_change_touched(
     from simulate.models import HarnessSuiteValidation
     from simulate.services.harness_versioning.review import carry_untouched_proofs
 
-    environment = _versioned(user, workspace, "review-proofs", storage)
+    environment = _with_world(user, workspace, "review-proofs", storage)
     parent, suite = environment.environment_version, environment.suite_version
     HarnessSuiteValidation.no_workspace_objects.update_or_create(
         suite_version=suite, environment_version=parent,
@@ -234,8 +249,9 @@ def test_a_chat_rule_and_a_direct_actor_edit_are_both_cited_and_only_the_accepte
     from simulate.services.harness_versioning.run_warnings import _needs_revalidation
     from simulate.tests.test_harness_actors import _saved_actors
 
-    environment = _versioned(user, workspace, "review-done-when", storage)
-    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+    environment = _with_world(user, workspace, "review-done-when", storage)
+    added = _add(auth_client, environment, MANAGER, revision=0)
+    assert added.status_code == 200, added.content
 
     rule = "Never refund more than the order total"
     sides = drafts.edit_sides(environment)
@@ -247,7 +263,7 @@ def test_a_chat_rule_and_a_direct_actor_edit_are_both_cited_and_only_the_accepte
     draft = drafts.open_draft(environment, "environment")
     drafts.record_draft(
         environment, archives.pack_archive(tree), origin="chat", user=user, pieces={"environment"},
-        expected={"environment": drafts.DraftRef(str(draft.parent_id), draft.revision)},
+        expected={"environment": drafts.DraftRef(str(draft.id), draft.revision)},
     )
 
     review = _review(auth_client, environment)
@@ -257,7 +273,10 @@ def test_a_chat_rule_and_a_direct_actor_edit_are_both_cited_and_only_the_accepte
     assert changes[rule_id]["sources"][0]["used"] == [{"kind": "message", "id": "msg-7"}]
     members = sorted(HarnessSuiteMember.no_workspace_objects.filter(
         suite_version=environment.suite_version).values_list("scenario_key", flat=True))
-    assert changes[rule_id]["graded"] and changes[rule_id]["revalidate"] == members
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    assert changes[rule_id]["graded"]
+    assert sorted(map(_scenario_token, changes[rule_id]["revalidate"])) == sorted(map(_scenario_token, members))
 
     decided = _decide(auth_client, environment, [
         {"id": rule_id, "decision": "accepted"}, {"id": "actor:manager", "decision": "rejected"},
