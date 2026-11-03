@@ -37,6 +37,19 @@ const SHORTCUT_ROWS = [
   { keys: ["?"], desc: "Toggle this help" },
 ];
 
+// The app's axios rejects with { ...body, statusCode, transportCode }.
+const TIMEOUT_CODES = new Set(["ECONNABORTED", "ETIMEDOUT"]);
+const queueLoadErrorDetail = (error) => {
+  const code = error?.transportCode || error?.code;
+  if (TIMEOUT_CODES.has(code) || /timeout/i.test(error?.message || "")) {
+    return "The server took too long to answer. Try again in a moment.";
+  }
+  if (error?.statusCode >= 500) {
+    return "The server ran into a problem. Try again in a moment.";
+  }
+  return "Something went wrong. Try again.";
+};
+
 const Kbd = ({ children }) => (
   <Box
     component="kbd"
@@ -166,6 +179,7 @@ export default function AnnotationSidebarContent({
     data: queueItems,
     isLoading,
     isError,
+    error,
     isFetching,
     refetch,
   } = useQueueItemsForSource(validSources, { projectId });
@@ -197,7 +211,7 @@ export default function AnnotationSidebarContent({
           Couldn&apos;t load annotation queues
         </Typography>
         <Typography sx={{ typography: "s1", color: "text.secondary", mb: 2 }}>
-          The server took too long to answer. Try again in a moment.
+          {queueLoadErrorDetail(error)}
         </Typography>
         <Button size="small" variant="outlined" onClick={() => refetch()}>
           Retry
