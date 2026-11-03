@@ -22,7 +22,7 @@ on:
         type: boolean
         default: false
       sdk-ref:
-        description: "futureagi-sdk branch, tag or SHA for the SDK live suites. Default: the branch named like this one, else the base branch"
+        description: "futureagi-sdk branch, tag or full 40-character SHA. Automatic selection requires live-test prerequisites; explicit overrides fail closed."
         required: false
         type: string
 
@@ -87,6 +87,8 @@ jobs:
               - 'bin/uninstall'
               - 'scripts/reclaim-runner-disk.sh'
               - '.github/workflows/e2e-ci.yml'
+              - '.github/scripts/resolve-sdk-test-ref.py'
+              - '.github/scripts/test_resolve_sdk_test_ref.py'
       - id: always
         if: github.event_name != 'pull_request'
         run: |
