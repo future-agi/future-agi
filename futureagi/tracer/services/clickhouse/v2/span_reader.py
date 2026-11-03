@@ -514,7 +514,8 @@ def _row_to_chspan(row: tuple) -> CHSpan:
 _UNKNOWN_COST = (
     "attrs_string['fi.cost.kind'] = 'unknown' "
     "AND attrs_string['fi.usage.contribution'] != 'none' "
-    "AND (total_tokens > 0 OR observation_type = 'llm' "
+    "AND (total_tokens > 0 OR prompt_tokens > 0 OR completion_tokens > 0 "
+    "OR observation_type = 'llm' "
     "OR attrs_string['fi.usage.scope'] = 'turn')"
 )
 _COMPLETE_COST_SUM = f"if(countIf({_UNKNOWN_COST}) > 0, NULL, sum(cost))"
@@ -3043,11 +3044,13 @@ class CHSpanReader:
         """Computes the same aggregate the eval runner needs for trace-level
         evals: total tokens, total cost, span count, max end_time.
         """
+        # Do not shadow token columns inside _UNKNOWN_COST's countIf: ClickHouse
+        # resolves same-SELECT aliases before columns by default.
         rows = self._client.query(
             "SELECT count() AS span_count, "
-            "sum(prompt_tokens) AS prompt_tokens, "
-            "sum(completion_tokens) AS completion_tokens, "
-            "sum(total_tokens) AS total_tokens, "
+            "sum(prompt_tokens) AS pt, "
+            "sum(completion_tokens) AS ct, "
+            "sum(total_tokens) AS tt, "
             f"{_COMPLETE_COST_SUM} AS cost, "
             "max(end_time) AS last_end "
             "FROM spans FINAL WHERE trace_id = %(trace_id)s AND is_deleted = 0",

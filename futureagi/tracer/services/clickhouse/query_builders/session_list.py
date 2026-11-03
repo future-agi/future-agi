@@ -3277,7 +3277,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 latest_cost,
                 latest_total_tokens,
                 (latest_cost_attrs['fi.cost.kind'] = 'unknown' AND
-                 latest_cost_attrs['fi.usage.contribution'] != 'none') AS latest_cost_unknown,
+                 latest_cost_attrs['fi.usage.contribution'] != 'none' AND
+                 (latest_total_tokens > 0 OR latest_prompt_tokens > 0 OR
+                  latest_completion_tokens > 0 OR latest_observation_type = 'llm' OR
+                  latest_cost_attrs['fi.usage.scope'] = 'turn')) AS latest_cost_unknown,
                 (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
                     AS latest_is_root,
                 multiIf(

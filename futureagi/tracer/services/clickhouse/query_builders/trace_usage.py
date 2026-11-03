@@ -38,18 +38,41 @@ def is_repeated_usage_summary(
     )
 
 
-def usage_aggregate_sql(*, prefix: str = "") -> str:
+def usage_coverage_sql(*, attrs: str, prefix: str = "") -> str:
+    """Two light flags from the same physical winner as its usage vector.
+
+    Explicit nonadditive summaries contribute neither usage nor uncertainty.
+    Unknown tokenless TOOL/CHAIN activity is not a billable request. Unmarked
+    legacy spans retain their numeric accounting, including verified zeroes.
+    Pass qualified source expressions when the SELECT also aliases usage.
+    """
+    billable = " OR ".join(
+        f"{prefix}{column} > 0"
+        for column in ("total_tokens", "prompt_tokens", "completion_tokens")
+    )
+    return (
+        f"tuple({attrs}['fi.usage.contribution'] = 'none', "
+        f"{attrs}['fi.cost.kind'] = 'unknown' AND "
+        f"({billable} OR {prefix}observation_type = 'llm' "
+        f"OR {attrs}['fi.usage.scope'] = 'turn'))"
+    )
+
+
+def usage_aggregate_sql(*, prefix: str = "", coverage: str | None = None) -> str:
     """Aggregate light, latest-live span rows of ONE (project, trace) group.
 
     Callers must project id, parent_span_id, name, observation_type and all four
-    usage columns, optionally prefixed (e.g. latest_cost). Physical replacement
-    and tenant/membership scoping belong to the caller. No content/attribute
-    payload is retained. The array is shared by the four reducers in CH.
+    usage columns, optionally prefixed (e.g. latest_cost). Coverage is an
+    explicitly projected usage_coverage_sql tuple; callers without that column
+    keep the legacy numeric behavior. Physical replacement and tenant/membership
+    scoping belong to the caller. No content/attribute payload is retained. The
+    array is shared by the four reducers in CH, with two additional flags only.
     """
     fields = ["id", "parent_span_id", "name", "observation_type", *USAGE_COLUMNS]
     values = ", ".join(f"{prefix}{field}" for field in fields)
-    # The fixed tuple layout is shared by each reducer: identity, parent, name,
-    # kind, cost, total, prompt, completion. Siblings are never deduplicated.
+    values += f", {coverage or 'tuple(0, 0)'}"
+    # Fixed layout: identity, parent, name, kind, cost, total, prompt, completion,
+    # (nonadditive, unknown billable cost). Siblings are never deduplicated.
     same_children = " AND ".join(
         (
             f"abs(s.{index} - arraySum(c -> c.{index}, arrayFilter(c -> c.2 = s.1, usage_spans))) "
@@ -69,10 +92,13 @@ def usage_aggregate_sql(*, prefix: str = "") -> str:
     projections = [
         f"groupArray(tuple({values})) AS usage_spans",
         f"arrayMap(s -> s.1, arrayFilter(s -> {repeated}, {candidates})) AS repeated_usage_ids",
-        "arrayFilter(s -> NOT has(repeated_usage_ids, s.1), usage_spans) AS billable_usage_spans",
+        "arrayFilter(s -> NOT tupleElement(s.9, 1) AND NOT has(repeated_usage_ids, s.1), usage_spans) AS billable_usage_spans",
+        "arrayExists(s -> tupleElement(s.9, 2), billable_usage_spans) AS usage_cost_unknown",
+        "if(usage_cost_unknown, CAST(NULL, 'Nullable(Float64)'), "
+        "arraySum(s -> s.5, billable_usage_spans)) AS usage_cost",
     ]
     projections.extend(
         f"arraySum(s -> s.{index}, billable_usage_spans) AS usage_{column}"
-        for index, column in enumerate(USAGE_COLUMNS, 5)
+        for index, column in enumerate(USAGE_COLUMNS[1:], 6)
     )
     return ",\n".join(projections)

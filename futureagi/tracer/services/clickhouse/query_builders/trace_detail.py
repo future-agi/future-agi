@@ -107,6 +107,13 @@ def compute_trace_summary_and_graph(
             if (
                 attrs.get("fi.usage.contribution") != "none"
                 and attrs.get("fi.cost.kind") == "unknown"
+                and (
+                    (sp.get("total_tokens") or 0) > 0
+                    or (sp.get("prompt_tokens") or 0) > 0
+                    or (sp.get("completion_tokens") or 0) > 0
+                    or sp.get("observation_type") == "llm"
+                    or attrs.get("fi.usage.scope") == "turn"
+                )
             ):
                 # A partial sum is not a verified charge. Legacy rows without
                 # this marker retain their existing zero-cost behavior.

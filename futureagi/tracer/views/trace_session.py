@@ -1210,7 +1210,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         session_metadata = {
             "session_id": str(trace_session_id),
             "duration": duration,
-            "total_cost": agg.get("total_cost", 0) or 0,
+            "total_cost": agg.get("total_cost", 0),
             "total_traces": agg.get("total_traces", 0),
             "start_time": format_datetime_to_iso(session_start),
             "end_time": format_datetime_to_iso(session_end),
