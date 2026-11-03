@@ -463,7 +463,7 @@ function HandOff({ block, workers, nameOf, start }) {
             </Box>
           ) : (
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {`${C.returned(name)}: ${C.unknown}`}
+              {C.noReturn(name)}
             </Typography>
           )}
         </Stack>

@@ -265,6 +265,13 @@ def worker_timeline(
     shown = Counter((one["worker_id"], one["tool"]) for one in events if one["type"] == "tool_call")
     shown_delegations = Counter(one["worker_id"] for one in events if one["type"] == "delegated")
     rows = [call for call in traced_calls if isinstance(call, Mapping)]
+    # A job is recorded when it starts and again when it ends; the later record carries its return.
+    ended_jobs = {str(row["event_id"]) for row in rows if row.get("delegated_to") and row.get("ended_at") and row.get("event_id")}
+    rows = [
+        row
+        for row in rows
+        if not (row.get("delegated_to") and not row.get("ended_at") and str(row.get("event_id")) in ended_jobs)
+    ]
 
     def by_of(row: Mapping[str, Any]) -> str:
         # The runtime's stable worker id, else its label for the worker.

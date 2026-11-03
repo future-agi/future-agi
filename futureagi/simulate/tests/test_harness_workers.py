@@ -740,3 +740,21 @@ def test_a_worker_returning_its_whole_conversation_is_summarised_by_its_last_mes
     assert _summary(returned) == "Done: limiter.py with tests"
     assert _summary("Refund RF-8 issued") == "Refund RF-8 issued"
 
+
+def test_a_job_recorded_at_start_and_end_is_one_hand_off_and_one_still_running_has_no_return():
+    from simulate.services.harness_workers import worker_timeline
+
+    started = {"name": "start_async_task", "delegated_to": "coder", "arguments": "build", "at": 10.0,
+               "event_id": "e1", "worker_label": "agent"}
+    finished = {**started, "ended_at": 40.0, "result": "done"}
+    running = {"name": "start_async_task", "delegated_to": "researcher", "arguments": "read", "at": 11.0,
+               "event_id": "e2", "worker_label": "agent"}
+    tool = {"name": "analyze_topic", "worker_label": "researcher", "at": 20.0, "ended_at": 20.5}
+
+    timeline = worker_timeline([], [], run_key="run-1", traced_calls=[started, finished, running, tool])
+
+    kinds = [(e["type"], e["worker_id"].split("/")[-1]) for e in timeline["events"]]
+    assert kinds.count(("delegated", "coder")) == 1
+    assert ("returned", "coder") in kinds
+    assert ("delegated", "researcher") in kinds and ("returned", "researcher") not in kinds
+

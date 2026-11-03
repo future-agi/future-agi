@@ -40,6 +40,7 @@ export const CALL_WORKERS_COPY = {
   sandboxOnly:
     "Built from the sandbox's record of this call; the app sent no traces, so the Traces tab is empty.",
   returned: (name) => `${name} returned`,
+  noReturn: (name) => `No return from ${name} before the call ended`,
   failed: "error",
   input: "Input",
   output: "Output",

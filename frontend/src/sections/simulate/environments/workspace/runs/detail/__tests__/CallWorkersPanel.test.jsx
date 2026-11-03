@@ -237,7 +237,7 @@ describe("CallWorkersPanel", () => {
     expect(screen.getByText("Coordinator · Unknown")).toBeInTheDocument();
     expect(screen.getAllByText("Unknown")).toHaveLength(2);
     expect(
-      screen.getByText("Order-lookup worker returned: Unknown"),
+      screen.getByText("No return from Order-lookup worker before the call ended"),
     ).toBeInTheDocument();
   });
 
