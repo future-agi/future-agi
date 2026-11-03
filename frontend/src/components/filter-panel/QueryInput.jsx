@@ -533,6 +533,9 @@ const isCompleteNumericInput = (v) => {
 
 const QUERY_PAGINATION_THRESHOLD_PX = 40;
 
+// Category chips read "Scenario", not "scenario"; the chip itself can't restyle text.
+const sentenceCase = (str) => str.charAt(0).toUpperCase() + str.slice(1);
+
 const QueryInput = forwardRef(function QueryInput(
   {
     filterFields,
@@ -1441,7 +1444,7 @@ const QueryInput = forwardRef(function QueryInput(
             </Box>
             {isField && (
               <Chip
-                label={fieldDef?.category || fieldDef?.type || "text"}
+                label={sentenceCase(fieldDef?.category || fieldDef?.type || "text")}
                 size="small"
                 variant="outlined"
                 sx={{
