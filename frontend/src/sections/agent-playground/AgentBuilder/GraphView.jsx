@@ -352,17 +352,37 @@ export default function GraphView() {
       }
 
       positionDebounceRef.current[debounceKey] = setTimeout(async () => {
-        const { currentAgent, _isDraftCreating } =
-          useAgentPlaygroundStore.getState();
+        // The node's new position is already applied optimistically by ReactFlow.
+        // Ensure a draft version exists — this promotes an active (saved) agent
+        // to a draft and saves the position, exactly like connecting two nodes.
+        // If a draft creation is already in-flight, ensureDraft waits and either
+        // resolves "created" (this move was folded into the POST) or "true"
+        // (the draft is ready, persist this move individually).
+        const draftResult = await ensureDraft();
 
-        // Don't persist positions if not a draft, or if a draft creation is
-        // in-flight (the version ID hasn't switched to the new draft yet).
-        if (!currentAgent?.is_draft || _isDraftCreating) {
+        if (draftResult === false) {
+          // Draft creation failed — put the node back where it started
+          onNodesChange(
+            nodes.map((n) => ({
+              type: "position",
+              id: n.id,
+              position: dragStartPositionRef.current[n.id],
+            })),
+          );
+          enqueueSnackbar("Failed to save positions", { variant: "error" });
           delete positionDebounceRef.current[debounceKey];
           return;
         }
 
-        // Already a draft — fire individual PATCH for each node position
+        if (draftResult === "created") {
+          // The new position was included in the draft POST payload. Done!
+          delete positionDebounceRef.current[debounceKey];
+          return;
+        }
+
+        // Already a draft — fire an individual PATCH for each node position.
+        // Re-read the agent so we use the current (possibly new draft's) ids.
+        const { currentAgent } = useAgentPlaygroundStore.getState();
         Promise.all(
           nodes.map((n) =>
             updateNodeApi({
@@ -386,7 +406,7 @@ export default function GraphView() {
         delete positionDebounceRef.current[debounceKey];
       }, 500);
     },
-    [onNodesChange],
+    [onNodesChange, ensureDraft],
   );
 
   const onDragOver = useCallback((event) => {
