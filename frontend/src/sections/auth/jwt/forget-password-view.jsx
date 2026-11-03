@@ -117,7 +117,7 @@ export default function ForgotPasswordView() {
 
   const renderForm = (
     <Stack
-      spacing={2.5}
+      spacing={2}
       display={"flex"}
       alignItems="center"
       maxWidth={"440px"}
@@ -130,7 +130,7 @@ export default function ForgotPasswordView() {
         We will email you a link to reset your password
       </Typography>
       <FormTextFieldV2
-        size="small"
+        size="medium"
         placeholder="Email"
         label="Email"
         control={control}

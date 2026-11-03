@@ -111,13 +111,13 @@ export default function OrgRemovedPage() {
             </Alert>
 
             <form onSubmit={handleSubmit}>
-              <Stack spacing={2.5} sx={{ maxWidth: "440px" }}>
+              <Stack spacing={2} sx={{ maxWidth: "440px" }}>
                 <TextField
                   label="Organization Name"
                   placeholder="Enter your new organization name"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
-                  size="small"
+                  size="medium"
                   fullWidth
                   helperText="Leave blank to auto-generate from your email domain"
                   sx={{

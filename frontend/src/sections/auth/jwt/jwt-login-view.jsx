@@ -488,7 +488,7 @@ export default function JwtLoginView() {
   );
 
   const renderForm = (
-    <Stack spacing={2.5} sx={{ maxWidth: "440px" }}>
+    <Stack spacing={2} sx={{ maxWidth: "440px" }}>
       <RegionSelect />
       <RHFTextField
         name="email"
@@ -496,7 +496,7 @@ export default function JwtLoginView() {
         placeholder="Enter email ID"
         autoComplete="email"
         sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
-        size="small"
+        size="medium"
       />
 
       <RHFTextField
@@ -519,7 +519,7 @@ export default function JwtLoginView() {
             </InputAdornment>
           ),
         }}
-        size="small"
+        size="medium"
       />
       {!!errorMsg && (
         <Alert

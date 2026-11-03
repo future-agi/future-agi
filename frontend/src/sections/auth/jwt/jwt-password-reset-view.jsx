@@ -130,7 +130,7 @@ export default function ResetPasswordView() {
   );
 
   const renderForm = (
-    <Stack spacing={3} maxWidth={"440px"}>
+    <Stack spacing={2} maxWidth={"440px"}>
       <Typography
         variant="m3"
         fontWeight={"fontWeightMedium"}
@@ -141,7 +141,7 @@ export default function ResetPasswordView() {
         characters with at least 1 letter and 1 number or special character
       </Typography>
       <FormTextFieldV2
-        size="small"
+        size="medium"
         fullWidth
         control={control}
         placeholder="Enter your password"
@@ -170,7 +170,7 @@ export default function ResetPasswordView() {
       />
       <FormTextFieldV2
         fullWidth
-        size="small"
+        size="medium"
         control={control}
         fieldName="repeatPassword"
         placeholder="Confirm your password"

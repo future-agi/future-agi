@@ -307,7 +307,7 @@ export default function TwoFactorVerifyView() {
 
   const renderTotpForm = () => (
     <form onSubmit={handleTotpSubmit}>
-      <Stack spacing={2.5} sx={{ maxWidth: "440px" }}>
+      <Stack spacing={2} sx={{ maxWidth: "440px" }}>
         {renderHead(
           "Two-factor authentication",
           "Enter the 6-digit code from your authenticator app.",
@@ -322,7 +322,7 @@ export default function TwoFactorVerifyView() {
           autoComplete="one-time-code"
           inputProps={{ maxLength: 6 }}
           sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
-          size="small"
+          size="medium"
           autoFocus
         />
 
@@ -377,7 +377,7 @@ export default function TwoFactorVerifyView() {
 
   const renderRecoveryForm = () => (
     <form onSubmit={handleRecoverySubmit}>
-      <Stack spacing={2.5} sx={{ maxWidth: "440px" }}>
+      <Stack spacing={2} sx={{ maxWidth: "440px" }}>
         {renderHead(
           "Use a recovery code",
           "Enter one of your recovery codes. Each code can only be used once.",
@@ -391,7 +391,7 @@ export default function TwoFactorVerifyView() {
           onChange={(e) => setCode(e.target.value)}
           autoComplete="off"
           sx={{ "& .MuiOutlinedInput-root": { borderRadius: "4px" } }}
-          size="small"
+          size="medium"
           autoFocus
         />
 
@@ -445,7 +445,7 @@ export default function TwoFactorVerifyView() {
   // --------------- Passkey mode ---------------
 
   const renderPasskeyForm = () => (
-    <Stack spacing={2.5} sx={{ maxWidth: "440px" }}>
+    <Stack spacing={2} sx={{ maxWidth: "440px" }}>
       {renderHead(
         "Verify with passkey",
         "Use your passkey to complete sign in.",

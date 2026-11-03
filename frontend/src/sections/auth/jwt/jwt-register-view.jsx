@@ -434,17 +434,17 @@ export default function JwtRegisterView() {
   );
 
   const renderForm = (
-    <Stack spacing={2.5} maxWidth={"440px"}>
+    <Stack spacing={2} maxWidth={"440px"}>
       <RegionSelect />
       <RHFTextField
         placeholder="Enter fullname"
-        size="small"
+        size="medium"
         name="fullName"
         label="Full Name"
       />
       <RHFTextField
         placeholder="Enter Email address"
-        size="small"
+        size="medium"
         name="email"
         label={requireWorkEmail ? "Business Email ID" : "Email ID"}
       />
@@ -452,7 +452,7 @@ export default function JwtRegisterView() {
         <>
           <RHFTextField
             placeholder="Enter password"
-            size="small"
+            size="medium"
             name="password"
             label="Set Password"
             type={password.value ? "text" : "password"}
@@ -476,7 +476,7 @@ export default function JwtRegisterView() {
           />
           <RHFTextField
             placeholder="Re-enter password"
-            size="small"
+            size="medium"
             name="confirmPassword"
             label="Confirm Password"
             type={confirmPassword.value ? "text" : "password"}
