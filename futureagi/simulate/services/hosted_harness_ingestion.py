@@ -1191,17 +1191,23 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
 
 def receipt_outcome_status(body: dict[str, Any]) -> str:
     """The receipt's status, or no_score for a call that ran and has no pass or fail at all: every
-    sub-goal not applicable, inconclusive, or a mix of the two. An execution error stays an error.
+    sub-goal not applicable, inconclusive, or a mix of the two, and no evaluation decided. An execution
+    error stays an error.
     """
     results = {
         sub_goal_result(one)
         for one in body.get("sub_goals") or []
         if isinstance(one, dict)
     }
+    decided = any(
+        isinstance(one, dict) and isinstance(one.get("passed"), bool) and not one.get("grading_error")
+        for one in body.get("evaluations") or []
+    )
     if (
         body["status"] == "passed"
         and results & {"not_applicable", "inconclusive"}
         and not results & {"pass", "fail"}
+        and not decided
     ):
         return "no_score"
     return body["status"]
