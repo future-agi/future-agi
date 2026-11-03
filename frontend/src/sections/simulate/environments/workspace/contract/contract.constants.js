@@ -166,13 +166,14 @@ export const CONTRACT_COPY = {
       id: "Id",
       idHelp:
         "Made from the name; change it now if you like. 1 to 64 lowercase letters, digits or underscores. It never changes once saved.",
+      idTaken: (name) => `Already used by ${name}; choose another id`,
       idFixed:
         "Fixed once saved, so scenarios and past runs keep pointing at this actor.",
       name: "Name",
       nameHelp: "What others call them, such as Priya Raman",
       role: "Role (optional)",
       roleHelp:
-        "Who they are to the others, such as the store manager who approves refunds",
+        "Who they are, in a few words, such as a manager or a family member",
       kind: "Kind (optional)",
       kinds: { person: "A person", agent: "Another agent", system: "A system" },
       parent: "Brought in by (optional)",

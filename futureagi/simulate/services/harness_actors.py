@@ -352,7 +352,7 @@ def write_actor_edit(
         if index is not None:
             raise _error(
                 "actor_exists",
-                f"{actor_id} is already an actor; replace it instead",
+                f"The id {actor_id!r} is already used by {actors[index].get('name') or actor_id}; choose another id",
                 409,
             )
         actors.append(_stamped({**(body or {}), "id": actor_id}, user))

@@ -442,6 +442,10 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
   const madeId = existing
     ? actor.id
     : idFrom(value("name", ""), new Set(context.others.map((one) => one.id)));
+  const typedId = value("id", madeId);
+  const takenBy = existing
+    ? null
+    : context.others.find((one) => one.id === typedId);
   const save = () => {
     const base = {
       ...actor,
@@ -551,7 +555,12 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
           {error && <Alert severity="error">{error}</Alert>}
           {text("name", F.name, actor.name || "", { helperText: F.nameHelp })}
           {text("id", F.id, madeId, {
-            helperText: existing ? F.idFixed : F.idHelp,
+            helperText: existing
+              ? F.idFixed
+              : takenBy
+                ? F.idTaken(takenBy.name)
+                : F.idHelp,
+            error: Boolean(takenBy),
             disabled: existing,
           })}
           {text("role", F.role, actor.role || "", { helperText: F.roleHelp })}
@@ -594,21 +603,23 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
                   </MenuItem>
                 ))}
               </TextField>
-              <TextField
-                select
-                size="small"
-                label={F.parent}
-                value={value("parent", actor.parent || "")}
-                onChange={set("parent")}
-                helperText={F.parentHelp}
-              >
-                <MenuItem value="">{F.nobody}</MenuItem>
-                {others.map((one) => (
-                  <MenuItem key={one.id} value={one.id}>
-                    {one.name}
-                  </MenuItem>
-                ))}
-              </TextField>
+              {others.length > 0 && (
+                <TextField
+                  select
+                  size="small"
+                  label={F.parent}
+                  value={value("parent", actor.parent || "")}
+                  onChange={set("parent")}
+                  helperText={F.parentHelp}
+                >
+                  <MenuItem value="">{F.nobody}</MenuItem>
+                  {others.map((one) => (
+                    <MenuItem key={one.id} value={one.id}>
+                      {one.name}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              )}
               {text("goal", F.goal, actor.goal || "", {
                 multiline: true,
                 minRows: 2,
@@ -725,7 +736,11 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
           )}
           <Stack direction="row" spacing={1} justifyContent="flex-end">
             <Button onClick={close}>{F.cancel}</Button>
-            <Button variant="contained" disabled={busy} onClick={save}>
+            <Button
+              variant="contained"
+              disabled={busy || Boolean(takenBy)}
+              onClick={save}
+            >
               {F.save}
             </Button>
           </Stack>

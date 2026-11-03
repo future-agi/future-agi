@@ -175,6 +175,7 @@ def test_edits_are_refused_when_stale_repeated_or_structurally_wrong(
 
     assert (stale.status_code, stale.json()["error"]) == (409, "draft_changed")
     assert (again.status_code, again.json()["error"]) == (409, "actor_exists")
+    assert "is already used by" in again.json()["message"]
     assert (orphan.status_code, orphan.json()["error"]) == (400, "actor_invalid")
     assert "not another listed actor" in orphan.json()["message"]
     assert (agent.status_code, agent.json()["error"]) == (400, "actor_invalid")

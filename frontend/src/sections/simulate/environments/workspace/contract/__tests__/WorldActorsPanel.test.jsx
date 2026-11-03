@@ -142,7 +142,6 @@ describe("WorldActorsPanel", () => {
       "Name",
       "Role (optional)",
       "Kind (optional)",
-      "Brought in by (optional)",
       "What they want (optional)",
       "May agree to (optional, one per line)",
       "Keeps to themselves (optional, one per line)",
@@ -264,6 +263,22 @@ describe("WorldActorsPanel", () => {
     expect(
       screen.getByText(/Automatic: each call picks between 33% and 67%/),
     ).toBeInTheDocument();
+  });
+
+  it("says who already has a typed id and will not save it, and offers no one to be brought in by when the world is empty", () => {
+    actorsData = cast([
+      { id: "colleague", name: "Jordan Taylor", channel: "audio_mix" },
+    ]);
+    render(<WorldActorsPanel envId="env-1" callerSide />);
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    expect(screen.queryByLabelText("Brought in by (optional)")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Id"), {
+      target: { value: "colleague" },
+    });
+    expect(
+      screen.getByText("Already used by Jordan Taylor; choose another id"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Save to draft").closest("button")).toBeDisabled();
   });
 
   it("opens a fresh form for the next actor after a save", () => {
