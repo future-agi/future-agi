@@ -607,3 +607,36 @@ def test_release_deletes_the_sandbox_once(fix_run, provider):
     fix_run.refresh_from_db()
     assert provider.deleted == ["sandbox-1"]
     assert fix_run.sandbox_ref == ""
+
+
+def test_an_engine_that_stopped_every_launch_names_its_last_error(fix_run, provider):
+    _running(
+        fix_run,
+        sandbox_attempt=2,
+        engine_notes={
+            "lost_models": [],
+            "last_error": "the planner's model never answered",
+        },
+    )
+
+    launch(str(fix_run.id))
+
+    fix_run.refresh_from_db()
+    assert fix_run.failure == {
+        "code": "fix_engine_died",
+        "message": "the improvement engine stopped 2 times before it finished; "
+        "last error: the planner's model never answered",
+    }
+
+
+def test_an_engine_that_stopped_without_an_error_keeps_the_plain_message(
+    fix_run, provider
+):
+    _running(fix_run, sandbox_attempt=2)
+
+    launch(str(fix_run.id))
+
+    fix_run.refresh_from_db()
+    assert fix_run.failure["message"] == (
+        "the improvement engine stopped 2 times before it finished"
+    )

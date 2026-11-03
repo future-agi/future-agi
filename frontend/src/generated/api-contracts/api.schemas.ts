@@ -17006,6 +17006,9 @@ export interface AgentFixEngineReportApi {
   summary?: string;
   failure?: AgentFixEngineFailureApi;
   winner_candidate_id?: string;
+  /** @maxItems 50 */
+  lost_models?: string[];
+  last_error?: string;
 }
 
 export interface AgentFixEngineStateApi {

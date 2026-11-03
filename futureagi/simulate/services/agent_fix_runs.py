@@ -175,12 +175,18 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
     if blocked := launch_blocker(source_run, usage=False):
         raise blocked
     require_agent_fix_usage(str(failed.organization_id))
+    # The models the failed fix lost: the retry's first launch starts without them. Its
+    # last error stays with it.
+    lost_models = (failed.engine_notes or {}).get("lost_models") or []
     return _create_fix_run(
         source_run,
         base_version_id=failed.base_agent_version_id,
         request=failed.request,
         user=user,
         retried_from=failed,
+        engine_notes={"lost_models": lost_models, "last_error": None}
+        if lost_models
+        else None,
     )
 
 
@@ -191,6 +197,7 @@ def _create_fix_run(
     request: dict[str, Any],
     user: Any,
     retried_from: AgentFixRun | None = None,
+    engine_notes: dict[str, Any] | None = None,
 ) -> AgentFixRun:
     """The new fix, its workflow started once it is committed; one active fix per environment."""
     environment = source_run.environment
@@ -205,6 +212,7 @@ def _create_fix_run(
                 retried_from=retried_from,
                 created_by=user,
                 request=request,
+                engine_notes=engine_notes,
             )
             transaction.on_commit(lambda: _start_workflow(fix_run.id))
     except IntegrityError as exc:

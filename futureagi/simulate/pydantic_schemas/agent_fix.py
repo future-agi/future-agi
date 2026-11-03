@@ -84,6 +84,9 @@ class EngineBrief(BaseModel):
     base_commit: str
     request: FixRequest
     inventory: list[InventoryScenario]
+    # The models earlier launches stopped using because their calls were lost: a relaunch
+    # starts without them.
+    lost_models: list[str] = Field(default_factory=list)
     # Where a relaunched engine picks up: its attempts are numbered after the last candidate
     # an earlier launch sent, and its budget starts from what the fix has committed.
     last_attempt: int
@@ -216,6 +219,10 @@ class EngineReport(BaseModel):
     # With the failed ending: what failed and who can fix it.
     failure: CheckFailure | None = None
     winner_candidate_id: UUID | None = None
+    # The models this launch stopped using because their calls were lost, and the last
+    # error it could not recover from. The fix keeps both across launches.
+    lost_models: list[str] = Field(default_factory=list)
+    last_error: str | None = None
 
 
 class EngineModels(BaseModel):

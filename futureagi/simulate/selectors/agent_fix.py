@@ -150,6 +150,7 @@ def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
         base_commit=str(source.get("commit_sha") or ""),
         request=request,
         inventory=inventory(fix_run),
+        lost_models=(fix_run.engine_notes or {}).get("lost_models") or [],
         last_attempt=fix_run.candidates.aggregate(last=Max("attempt"))["last"] or 0,
         committed_usd=float(committed_usd(fix_run)),
         deadline_at=fix_deadline(fix_run).isoformat(),

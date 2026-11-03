@@ -49363,6 +49363,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           "x-nullable": true,
         },
+        lost_models: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 200,
+            minLength: 1,
+          },
+          default: [],
+          maxItems: 50,
+        },
+        last_error: {
+          title: "Last error",
+          type: "string",
+          "x-nullable": true,
+        },
       },
     },
     AgentFixEngineState: {

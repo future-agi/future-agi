@@ -28,7 +28,7 @@ from simulate.models import TestExecution as Execution
 from simulate.pydantic_schemas.agent_fix import Surface
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_agents import VersionedSourceAgent
-from simulate.services.agent_fix_runs import close_fix_run
+from simulate.services.agent_fix_runs import close_fix_run, retry_fix_run
 from simulate.services.harness_environment import (
     annotate_for_list,
     environment_row,
@@ -2142,3 +2142,126 @@ def _revision_state(**kwargs):
     uncommitted rows can sit past the snapshot's xmax, so their visibility means nothing."""
     _parent_visible, physical_count, _all_visible = _read_revision_state(**kwargs)
     return True, physical_count, True
+
+
+class TestEngineMemory:
+    """What a fix keeps from its engines' reports across launches. It lives in the fix's
+    engine notes: ``report`` stays the engine's final report, null until it comes."""
+
+    def _report(self, api_client, fix_run, **body):
+        response = _engine(
+            api_client,
+            "post",
+            fix_run,
+            "report/",
+            data={"stage": "Search", **body},
+            format="json",
+        )
+        assert response.status_code == 200, response.content
+
+    def test_the_user_reads_a_running_fix_that_keeps_engine_notes(
+        self, api_client, auth_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(
+            api_client, fix_run, lost_models=["deepseek/flash"], last_error="hung"
+        )
+
+        read = auth_client.get(f"{BASE}/{fix_run.id}/")
+        listed = auth_client.get(
+            f"{BASE}/", {"environment_id": str(source_run.environment_id)}
+        )
+
+        assert read.status_code == 200, read.content
+        assert read.json()["report"] is None
+        assert listed.status_code == 200, listed.content
+
+    def test_the_report_stays_null_until_the_final_report(self, api_client, source_run):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(
+            api_client, fix_run, lost_models=["deepseek/flash"], last_error="hung"
+        )
+        fix_run.refresh_from_db()
+        assert fix_run.report is None
+
+        self._report(
+            api_client, fix_run, ending="no_improvement", summary="nothing held up"
+        )
+
+        fix_run.refresh_from_db()
+        assert fix_run.report == {
+            "stage": "Search",
+            "ending": "no_improvement",
+            "summary": "nothing held up",
+            "failure": None,
+            "winner_candidate_id": None,
+        }
+        assert fix_run.engine_notes == {
+            "lost_models": ["deepseek/flash"],
+            "last_error": "hung",
+        }
+
+    def test_a_relaunch_s_brief_names_every_model_an_earlier_launch_lost(
+        self, api_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(api_client, fix_run, lost_models=["deepseek/flash"])
+        # The next launch gets a new token and loses another model.
+        _armed(fix_run)
+        self._report(api_client, fix_run, lost_models=["luna/coder", "deepseek/flash"])
+        self._report(api_client, fix_run)
+
+        brief = _engine(api_client, "get", fix_run, "brief/").json()
+
+        assert brief["lost_models"] == ["deepseek/flash", "luna/coder"]
+        fix_run.refresh_from_db()
+        assert fix_run.engine_notes["lost_models"] == ["deepseek/flash", "luna/coder"]
+
+    def test_a_first_launch_s_brief_has_no_lost_models(self, api_client, source_run):
+        fix_run = _armed(_fix_run(source_run))
+
+        brief = _engine(api_client, "get", fix_run, "brief/").json()
+
+        assert brief["lost_models"] == []
+
+    def test_the_last_error_is_kept_cut_to_500_characters(self, api_client, source_run):
+        fix_run = _armed(_fix_run(source_run))
+        self._report(api_client, fix_run, last_error="first")
+        self._report(api_client, fix_run, last_error="x" * 600)
+        self._report(api_client, fix_run, last_error=None)
+
+        fix_run.refresh_from_db()
+        assert fix_run.engine_notes == {"lost_models": [], "last_error": "x" * 500}
+
+    def test_a_retry_s_first_brief_names_what_the_failed_fix_lost(
+        self, api_client, source_run, user, temporal
+    ):
+        failed = _armed(_fix_run(source_run))
+        self._report(
+            api_client,
+            failed,
+            lost_models=["deepseek/flash"],
+            last_error="the coder's model never answered",
+        )
+        close_fix_run(
+            failed.id,
+            AgentFixRun.State.FAILED,
+            failure={"code": "fix_engine_died", "message": "m"},
+        )
+        retried = retry_fix_run(
+            AgentFixRun.no_workspace_objects.get(id=failed.id), user=user
+        )
+        AgentFixRun.no_workspace_objects.filter(id=retried.id).update(
+            state=AgentFixRun.State.RUNNING
+        )
+
+        brief = _engine(api_client, "get", _armed(retried), "brief/").json()
+
+        assert brief["lost_models"] == ["deepseek/flash"]
+        # The failed fix's error is its own: the retry's failure must not name it.
+        retried.refresh_from_db()
+        assert retried.report is None
+        assert retried.engine_notes == {
+            "lost_models": ["deepseek/flash"],
+            "last_error": None,
+        }
