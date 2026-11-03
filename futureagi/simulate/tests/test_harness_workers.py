@@ -721,3 +721,22 @@ def test_a_recorded_timeline_places_the_call_s_messages_on_the_tool_calls_clock(
     assert timeline["started_at"] == "2024-11-01T09:49:54.100000"
     assert timeline["request"] == {"text": "Refund order 1043", "at": "2024-11-01T09:49:58.400000"}
     assert timeline["response"] == {"text": "Refund issued", "at": "2024-11-01T09:50:11.200000"}
+
+
+def test_a_worker_returning_its_whole_conversation_is_summarised_by_its_last_message():
+    from simulate.services.harness_workers import _summary
+
+    returned = json.dumps(
+        {
+            "messages": [
+                "content='Implement a token bucket rate limiter' additional_kwargs={}",
+                "content='' additional_kwargs={'refusal': None}",
+                "content='Done: limiter.py with tests' additional_kwargs={}",
+                {"content": "", "type": "ai"},
+            ]
+        }
+    )
+
+    assert _summary(returned) == "Done: limiter.py with tests"
+    assert _summary("Refund RF-8 issued") == "Refund RF-8 issued"
+

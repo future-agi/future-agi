@@ -39,6 +39,14 @@ def _kind(span: Mapping[str, Any]) -> str:
     return str(span.get("observation_type") or "").strip().lower()
 
 
+def _said(message: Any) -> str:
+    """What one message of a conversation says: a message object's `content`, else its `content='...'` text."""
+    if isinstance(message, dict):
+        return str(message.get("content") or "").strip()
+    found = re.match(r"\s*content=(['\"])(.*?)(?<!\\)\1(?:\s|$)", str(message), re.S)
+    return (found.group(2) if found else str(message)).strip()
+
+
 def _summary(value: Any, *, argument: bool = False) -> str | None:
     text = str(value or "").strip()
     try:
@@ -51,6 +59,10 @@ def _summary(value: Any, *, argument: bool = False) -> str | None:
         return None
     if argument and isinstance(parsed, dict) and len(parsed) == 1:
         text = str(next(iter(parsed.values()))).strip()
+    if isinstance(parsed, dict) and isinstance(parsed.get("messages"), list):
+        # A worker that returns its whole conversation answers with its last message that says something.
+        said = [_said(one) for one in parsed["messages"]]
+        text = next((one for one in reversed(said) if one), text)
     if len(text) > _SUMMARY_CHARS:
         # Say the text goes on, so a cut-off answer is not read as the whole of it.
         text = text[:_SUMMARY_CHARS].rstrip() + "…"
