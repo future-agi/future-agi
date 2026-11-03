@@ -410,8 +410,7 @@ def _sqlite_metric_sql(sql):
     query = (
         "WITH graph_monetary_spans AS ("
         "SELECT latest_spans.*, 1 AS graph_cost_known, "
-        "0 AS graph_cost_unknown, 1 AS graph_output_match FROM latest_spans)\n"
-        + tail
+        "0 AS graph_cost_unknown, 1 AS graph_output_match FROM latest_spans)\n" + tail
     )
     return (
         query.replace(" FINAL", "")
