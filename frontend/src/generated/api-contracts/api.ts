@@ -79,10 +79,24 @@ import type {
   AgentDefinitionCreateRequestApi,
   AgentDefinitionCreateResponseApi,
   AgentDefinitionDeleteResponseApi,
+  AgentDefinitionDetailResponseApi,
   AgentDefinitionEditRequestApi,
   AgentDefinitionEditResponseApi,
   AgentDefinitionListResponseApi,
   AgentDefinitionResponseApi,
+  AgentFixCandidateCreatedApi,
+  AgentFixCheckRunCreatedApi,
+  AgentFixCheckRunRequestApi,
+  AgentFixEngineReportApi,
+  AgentFixEngineStateApi,
+  AgentFixLaunchApi,
+  AgentFixLaunchOptionsApi,
+  AgentFixMakeDefaultApi,
+  AgentFixPullRequestApi,
+  AgentFixRunApi,
+  AgentFixRunDetailApi,
+  AgentFixRunListApi,
+  AgentFixShipApi,
   AgentPlaygroundErrorResponseApi,
   AgentPlaygroundGraphsExecutionsListParams,
   AgentPlaygroundGraphsList200,
@@ -102,6 +116,7 @@ import type {
   AgentPromptOptimiserTrialEvaluationsResponseApi,
   AgentPromptOptimiserTrialPromptResponseApi,
   AgentPromptOptimiserTrialScenariosResponseApi,
+  AgentRunsResponseApi,
   AgentVersionActivateResponseApi,
   AgentVersionCreateRequestApi,
   AgentVersionCreateResponseApi,
@@ -191,6 +206,13 @@ import type {
   AgentccWebhookEventsListParams,
   AgentccWebhooksList200,
   AgentccWebhooksListParams,
+  AlertDeletedResponseApi,
+  AlertItemResponseApi,
+  AlertListResponseApi,
+  AlertOptionsResponseApi,
+  AlertTestRequestApi,
+  AlertTestResponseApi,
+  AlertWriteRequestApi,
   AllActiveTestsApi,
   AnnotationActionMessageResponseApi,
   AnnotationLabelCreateResponseApi,
@@ -575,7 +597,10 @@ import type {
   GroupingOutboxRequestApi,
   GroupingOutboxResponseApi,
   HarnessAcceptedResponseApi,
+  HarnessAgentCredentialsResponseApi,
+  HarnessAgentVersionCreateApi,
   HarnessArtifactUploadResponseApi,
+  HarnessCompareApi,
   HarnessConversationAdjustmentApi,
   HarnessConversationAdjustmentResponseApi,
   HarnessConversationEventAckApi,
@@ -593,6 +618,10 @@ import type {
   HarnessConversationTranscriptAppendApi,
   HarnessConversationTranscriptAppendResponseApi,
   HarnessConversationWorkspaceResponseApi,
+  HarnessDefaultMoveApi,
+  HarnessDraftSaveApi,
+  HarnessDraftSaveResponseApi,
+  HarnessDraftsApi,
   HarnessEnvironmentAddEvaluationApi,
   HarnessEnvironmentAvailableEvalsApi,
   HarnessEnvironmentDetailApi,
@@ -614,19 +643,25 @@ import type {
   HarnessJobExtendApi,
   HarnessJobReadApi,
   HarnessManifestApi,
+  HarnessNudgeAnswerApi,
+  HarnessNudgeApi,
   HarnessPreflightApi,
   HarnessPreflightResponseApi,
   HarnessResultReceiptApi,
   HarnessRunCreateApi,
   HarnessRunCreateResponseApi,
+  HarnessRunPlanApi,
   HarnessScenarioAmendApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
   HarnessSecretFileUploadResponseApi,
   HarnessSecretValuesApi,
   HarnessSourceUploadResponseApi,
+  HarnessSuiteMemberApi,
   HarnessUsageRequestApi,
   HarnessUsageResponseApi,
+  HarnessVersionDiffApi,
+  HarnessVersionsApi,
   HealthCheckResponseApi,
   HeartbeatApi,
   HuggingFaceAddRowsRequestApi,
@@ -649,6 +684,7 @@ import type {
   IntegrationMessageResponseApi,
   IntegrationValidationResponseApi,
   IntegrationsConnectionsListParams,
+  IntegrationsConnectionsSlackChannelsListParams,
   IntegrationsSyncLogsListParams,
   InvestigationControlErrorApi,
   InviteCancelApi,
@@ -1011,6 +1047,7 @@ import type {
   RecoveryCodesRegenerateResponseApi,
   RecoveryCodesRemainingResponseApi,
   RedisKeyRequestApi,
+  ReliabilityApi,
   RenewGroupingFeatureApi,
   ReplaySessionApi,
   ReplaySessionListApi,
@@ -1049,6 +1086,7 @@ import type {
   RunTestNameResponseApi,
   RunTestResponseApi,
   RunTestScenarioItemResponseApi,
+  RunTracesV3ResponseApi,
   SAMLErrorResponseApi,
   SAMLIDPUploadDetailResponseApi,
   SAMLIDPUploadListResponseApi,
@@ -1131,15 +1169,25 @@ import type {
   SignupRequestApi,
   SignupResponseApi,
   SimulateAgentDefinitionsListParams,
+  SimulateAgentDefinitionsRunsListParams,
   SimulateApiAgentDefinitionOperationsList200,
   SimulateApiAgentDefinitionOperationsListParams,
+  SimulateApiAgentFixEngineCandidatesBodyOne,
+  SimulateApiAgentFixEngineCandidatesBodyTwo,
+  SimulateApiAgentFixEngineV1ChatCompletionsCreateBody,
+  SimulateApiAgentFixRunsLaunchOptionsParams,
+  SimulateApiAgentFixRunsListParams,
   SimulateApiAgentPromptOptimiserList200,
   SimulateApiAgentPromptOptimiserListParams,
   SimulateApiAlkSimulateCallExecutionsRecordingUploadBody,
   SimulateApiCallExecutionsListParams,
   SimulateApiHarnessConversationsCommandsParams,
   SimulateApiHarnessConversationsSessionStoreParams,
+  SimulateApiHarnessEnvironmentsCompareParams,
   SimulateApiHarnessEnvironmentsListParams,
+  SimulateApiHarnessEnvironmentsNudgesParams,
+  SimulateApiHarnessEnvironmentsRunPlanParams,
+  SimulateApiHarnessEnvironmentsVersionsVersionDiffParams,
   SimulateApiHarnessJobsSecretFileUploadBody,
   SimulateApiHarnessJobsSourceUploadBody,
   SimulateApiLivekitWebhookCreateBody,
@@ -1165,6 +1213,7 @@ import type {
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
   SimulateV3TestExecutionCallsParams,
+  SimulateV3TestExecutionTracesParams,
   SimulationEvidenceRequestApi,
   SimulationPreviewErrorApi,
   SimulationPreviewPageApi,
@@ -1178,6 +1227,9 @@ import type {
   SkillDetailResponseApi,
   SkillListResponseApi,
   SkillUpdateRequestApi,
+  SlackChannelsResponseApi,
+  SlackInstallApi,
+  SlackInstallResponseApi,
   SpanAttributeDetailResponseApi,
   SpanAttributeKeysResponseApi,
   SpanAttributeValuesResponseApi,
@@ -1190,6 +1242,7 @@ import type {
   SpendSummaryResponseApi,
   StartEvalsProcessRequestApi,
   StopUserEvalRequestApi,
+  StoredAgentResponseApi,
   StreamStatusResponseApi,
   StripeWebhookRequestApi,
   StripeWebhookResponseApi,
@@ -1214,6 +1267,7 @@ import type {
   TOTPDisableResponseApi,
   TOTPSetupResponseApi,
   TTSVoiceApi,
+  TeamCreateErrorResponseApi,
   TeamCreateRequestApi,
   TeamCreateResponseApi,
   TeamRemoveResponseApi,
@@ -1269,6 +1323,8 @@ import type {
   TraceVoiceCallDetailResponseApi,
   TraceVoiceCallListQueryApi,
   TraceVoiceCallListResponseApi,
+  TracerAlertsListParams,
+  TracerAlertsOptionsListParams,
   TracerChartsFetchGraphParams,
   TracerCustomEvalConfigList200,
   TracerCustomEvalConfigListCustomEvalConfigs200,
@@ -1347,6 +1403,7 @@ import type {
   TracerSavedViewsListParams,
   TracerSharedLinksList200,
   TracerSharedLinksListParams,
+  TracerSharedSidebarListParams,
   TracerTraceAgentGraphParams,
   TracerTraceAnnotationGetAnnotationValuesParams,
   TracerTraceGetEvalNames200,
@@ -6854,7 +6911,7 @@ export type accountsTeamUsersCreateResponse201 = {
 };
 
 export type accountsTeamUsersCreateResponse400 = {
-  data: AccountsErrorResponseApi;
+  data: TeamCreateErrorResponseApi;
   status: 400;
 };
 
@@ -15747,7 +15804,8 @@ export const getAgentccOrgConfigsBulkListUrl = () => {
 
 /**
  * Bulk endpoint for gateway startup sync.
-Returns all active org configs keyed by org ID.
+Returns all active org configs keyed by org ID, plus the ids of orgs whose
+payload could not be built, so the gateway keeps their last good config.
 Authenticated by admin token (not user JWT).
  */
 export const agentccOrgConfigsBulkList = async (
@@ -21338,6 +21396,66 @@ export const integrationsConnectionsValidateCredentials = async (
   );
 };
 
+export type integrationsConnectionsSlackChannelsListResponse200 = {
+  data: SlackChannelsResponseApi;
+  status: 200;
+};
+
+export type integrationsConnectionsSlackChannelsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type integrationsConnectionsSlackChannelsListResponseSuccess =
+  integrationsConnectionsSlackChannelsListResponse200 & {
+    headers: Headers;
+  };
+export type integrationsConnectionsSlackChannelsListResponseError =
+  integrationsConnectionsSlackChannelsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type integrationsConnectionsSlackChannelsListResponse =
+  | integrationsConnectionsSlackChannelsListResponseSuccess
+  | integrationsConnectionsSlackChannelsListResponseError;
+
+export const getIntegrationsConnectionsSlackChannelsListUrl = (
+  connectionId: string,
+  params?: IntegrationsConnectionsSlackChannelsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/integrations/connections/${connectionId}/slack/channels/?${stringifiedParams}`
+    : `/integrations/connections/${connectionId}/slack/channels/`;
+};
+
+export const integrationsConnectionsSlackChannelsList = async (
+  connectionId: string,
+  params?: IntegrationsConnectionsSlackChannelsListParams,
+  options?: RequestInit,
+): Promise<integrationsConnectionsSlackChannelsListResponse> => {
+  return apiMutator<integrationsConnectionsSlackChannelsListResponse>(
+    getIntegrationsConnectionsSlackChannelsListUrl(connectionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type integrationsConnectionsReadResponse200 = {
   data: IntegrationConnectionDetailApi;
   status: 200;
@@ -21789,6 +21907,48 @@ export const integrationsConnectionsSyncNow = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(integrationEmptyRequestApi),
+    },
+  );
+};
+
+export type integrationsSlackInstallCreateResponse200 = {
+  data: SlackInstallResponseApi;
+  status: 200;
+};
+
+export type integrationsSlackInstallCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type integrationsSlackInstallCreateResponseSuccess =
+  integrationsSlackInstallCreateResponse200 & {
+    headers: Headers;
+  };
+export type integrationsSlackInstallCreateResponseError =
+  integrationsSlackInstallCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type integrationsSlackInstallCreateResponse =
+  | integrationsSlackInstallCreateResponseSuccess
+  | integrationsSlackInstallCreateResponseError;
+
+export const getIntegrationsSlackInstallCreateUrl = () => {
+  return `/integrations/slack/install/`;
+};
+
+export const integrationsSlackInstallCreate = async (
+  slackInstallApi: SlackInstallApi,
+  options?: RequestInit,
+): Promise<integrationsSlackInstallCreateResponse> => {
+  return apiMutator<integrationsSlackInstallCreateResponse>(
+    getIntegrationsSlackInstallCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(slackInstallApi),
     },
   );
 };
@@ -56164,7 +56324,7 @@ export const simulateAgentDefinitionsCreateCreate = async (
 };
 
 export type simulateAgentDefinitionsReadResponse200 = {
-  data: AgentDefinitionResponseApi;
+  data: AgentDefinitionDetailResponseApi;
   status: 200;
 };
 
@@ -56336,6 +56496,73 @@ export const simulateAgentDefinitionsEditUpdate = async (
       method: "PUT",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(agentDefinitionEditRequestApi),
+    },
+  );
+};
+
+export type simulateAgentDefinitionsRunsListResponse200 = {
+  data: AgentRunsResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsRunsListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsRunsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateAgentDefinitionsRunsListResponseSuccess =
+  simulateAgentDefinitionsRunsListResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsRunsListResponseError = (
+  | simulateAgentDefinitionsRunsListResponse404
+  | simulateAgentDefinitionsRunsListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsRunsListResponse =
+  | simulateAgentDefinitionsRunsListResponseSuccess
+  | simulateAgentDefinitionsRunsListResponseError;
+
+export const getSimulateAgentDefinitionsRunsListUrl = (
+  agentId: string,
+  params?: SimulateAgentDefinitionsRunsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/runs/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/runs/`;
+};
+
+export const simulateAgentDefinitionsRunsList = async (
+  agentId: string,
+  params?: SimulateAgentDefinitionsRunsListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsRunsListResponse> => {
+  return apiMutator<simulateAgentDefinitionsRunsListResponse>(
+    getSimulateAgentDefinitionsRunsListUrl(agentId, params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -56582,6 +56809,63 @@ export const simulateAgentDefinitionsVersionsActivateCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponse200 = {
+  data: StoredAgentResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponse500 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 500;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponseSuccess =
+  simulateAgentDefinitionsVersionsAgentListResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsVersionsAgentListResponseError = (
+  | simulateAgentDefinitionsVersionsAgentListResponse404
+  | simulateAgentDefinitionsVersionsAgentListResponse500
+  | simulateAgentDefinitionsVersionsAgentListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponse =
+  | simulateAgentDefinitionsVersionsAgentListResponseSuccess
+  | simulateAgentDefinitionsVersionsAgentListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsAgentListUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/agent/`;
+};
+
+export const simulateAgentDefinitionsVersionsAgentList = async (
+  agentId: string,
+  versionId: string,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsAgentListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsAgentListResponse>(
+    getSimulateAgentDefinitionsVersionsAgentListUrl(agentId, versionId),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -57277,6 +57561,798 @@ export const simulateApiAgentDefinitionOperationsDelete = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineBriefResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineBriefResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineBriefResponseSuccess =
+  simulateApiAgentFixEngineBriefResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineBriefResponseError =
+  simulateApiAgentFixEngineBriefResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineBriefResponse =
+  | simulateApiAgentFixEngineBriefResponseSuccess
+  | simulateApiAgentFixEngineBriefResponseError;
+
+export const getSimulateApiAgentFixEngineBriefUrl = (id: string) => {
+  return `/simulate/api/agent-fix-engine/${id}/brief/`;
+};
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const simulateApiAgentFixEngineBrief = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineBriefResponse> => {
+  return apiMutator<simulateApiAgentFixEngineBriefResponse>(
+    getSimulateApiAgentFixEngineBriefUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineCandidatesResponse201 = {
+  data: AgentFixCandidateCreatedApi;
+  status: 201;
+};
+
+export type simulateApiAgentFixEngineCandidatesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiAgentFixEngineCandidatesResponseSuccess =
+  simulateApiAgentFixEngineCandidatesResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineCandidatesResponseError =
+  simulateApiAgentFixEngineCandidatesResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineCandidatesResponse =
+  | simulateApiAgentFixEngineCandidatesResponseSuccess
+  | simulateApiAgentFixEngineCandidatesResponseError;
+
+export const getSimulateApiAgentFixEngineCandidatesUrl = (id: string) => {
+  return `/simulate/api/agent-fix-engine/${id}/candidates/`;
+};
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const simulateApiAgentFixEngineCandidates = async (
+  id: string,
+  simulateApiAgentFixEngineCandidatesBody?:
+    | SimulateApiAgentFixEngineCandidatesBodyOne
+    | SimulateApiAgentFixEngineCandidatesBodyTwo,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineCandidatesResponse> => {
+  return apiMutator<simulateApiAgentFixEngineCandidatesResponse>(
+    getSimulateApiAgentFixEngineCandidatesUrl(id),
+    {
+      ...options,
+      method: "POST",
+      body: JSON.stringify(simulateApiAgentFixEngineCandidatesBody),
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineCheckRunsResponse202 = {
+  data: AgentFixCheckRunCreatedApi;
+  status: 202;
+};
+
+export type simulateApiAgentFixEngineCheckRunsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiAgentFixEngineCheckRunsResponseSuccess =
+  simulateApiAgentFixEngineCheckRunsResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineCheckRunsResponseError =
+  simulateApiAgentFixEngineCheckRunsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineCheckRunsResponse =
+  | simulateApiAgentFixEngineCheckRunsResponseSuccess
+  | simulateApiAgentFixEngineCheckRunsResponseError;
+
+export const getSimulateApiAgentFixEngineCheckRunsUrl = (id: string) => {
+  return `/simulate/api/agent-fix-engine/${id}/check-runs/`;
+};
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const simulateApiAgentFixEngineCheckRuns = async (
+  id: string,
+  agentFixCheckRunRequestApi: AgentFixCheckRunRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineCheckRunsResponse> => {
+  return apiMutator<simulateApiAgentFixEngineCheckRunsResponse>(
+    getSimulateApiAgentFixEngineCheckRunsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentFixCheckRunRequestApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineCheckRunResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineCheckRunResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineCheckRunResponseSuccess =
+  simulateApiAgentFixEngineCheckRunResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineCheckRunResponseError =
+  simulateApiAgentFixEngineCheckRunResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineCheckRunResponse =
+  | simulateApiAgentFixEngineCheckRunResponseSuccess
+  | simulateApiAgentFixEngineCheckRunResponseError;
+
+export const getSimulateApiAgentFixEngineCheckRunUrl = (
+  id: string,
+  runId: string,
+) => {
+  return `/simulate/api/agent-fix-engine/${id}/check-runs/${runId}/`;
+};
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const simulateApiAgentFixEngineCheckRun = async (
+  id: string,
+  runId: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineCheckRunResponse> => {
+  return apiMutator<simulateApiAgentFixEngineCheckRunResponse>(
+    getSimulateApiAgentFixEngineCheckRunUrl(id, runId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineReportResponse200 = {
+  data: AgentFixEngineStateApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineReportResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineReportResponseSuccess =
+  simulateApiAgentFixEngineReportResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineReportResponseError =
+  simulateApiAgentFixEngineReportResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineReportResponse =
+  | simulateApiAgentFixEngineReportResponseSuccess
+  | simulateApiAgentFixEngineReportResponseError;
+
+export const getSimulateApiAgentFixEngineReportUrl = (id: string) => {
+  return `/simulate/api/agent-fix-engine/${id}/report/`;
+};
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const simulateApiAgentFixEngineReport = async (
+  id: string,
+  agentFixEngineReportApi: AgentFixEngineReportApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineReportResponse> => {
+  return apiMutator<simulateApiAgentFixEngineReportResponse>(
+    getSimulateApiAgentFixEngineReportUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentFixEngineReportApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineSourceResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineSourceResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineSourceResponseSuccess =
+  simulateApiAgentFixEngineSourceResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineSourceResponseError =
+  simulateApiAgentFixEngineSourceResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineSourceResponse =
+  | simulateApiAgentFixEngineSourceResponseSuccess
+  | simulateApiAgentFixEngineSourceResponseError;
+
+export const getSimulateApiAgentFixEngineSourceUrl = (id: string) => {
+  return `/simulate/api/agent-fix-engine/${id}/source/`;
+};
+
+/**
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
+ */
+export const simulateApiAgentFixEngineSource = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineSourceResponse> => {
+  return apiMutator<simulateApiAgentFixEngineSourceResponse>(
+    getSimulateApiAgentFixEngineSourceUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponseSuccess =
+  simulateApiAgentFixEngineV1ChatCompletionsCreateResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponseError =
+  simulateApiAgentFixEngineV1ChatCompletionsCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponse =
+  | simulateApiAgentFixEngineV1ChatCompletionsCreateResponseSuccess
+  | simulateApiAgentFixEngineV1ChatCompletionsCreateResponseError;
+
+export const getSimulateApiAgentFixEngineV1ChatCompletionsCreateUrl = (
+  id: string,
+) => {
+  return `/simulate/api/agent-fix-engine/${id}/v1/chat/completions`;
+};
+
+/**
+ * The engine's model calls, at the path an OpenAI-compatible client builds from its
+base URL: no trailing slash, so it is routed on its own, not by the router.
+ */
+export const simulateApiAgentFixEngineV1ChatCompletionsCreate = async (
+  id: string,
+  simulateApiAgentFixEngineV1ChatCompletionsCreateBody: SimulateApiAgentFixEngineV1ChatCompletionsCreateBody,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineV1ChatCompletionsCreateResponse> => {
+  return apiMutator<simulateApiAgentFixEngineV1ChatCompletionsCreateResponse>(
+    getSimulateApiAgentFixEngineV1ChatCompletionsCreateUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(
+        simulateApiAgentFixEngineV1ChatCompletionsCreateBody,
+      ),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsListResponse200 = {
+  data: AgentFixRunListApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsListResponseSuccess =
+  simulateApiAgentFixRunsListResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsListResponseError =
+  simulateApiAgentFixRunsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsListResponse =
+  | simulateApiAgentFixRunsListResponseSuccess
+  | simulateApiAgentFixRunsListResponseError;
+
+export const getSimulateApiAgentFixRunsListUrl = (
+  params: SimulateApiAgentFixRunsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/agent-fix-runs/?${stringifiedParams}`
+    : `/simulate/api/agent-fix-runs/`;
+};
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const simulateApiAgentFixRunsList = async (
+  params: SimulateApiAgentFixRunsListParams,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsListResponse> => {
+  return apiMutator<simulateApiAgentFixRunsListResponse>(
+    getSimulateApiAgentFixRunsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsCreateResponse201 = {
+  data: AgentFixRunApi;
+  status: 201;
+};
+
+export type simulateApiAgentFixRunsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiAgentFixRunsCreateResponseSuccess =
+  simulateApiAgentFixRunsCreateResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsCreateResponseError =
+  simulateApiAgentFixRunsCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsCreateResponse =
+  | simulateApiAgentFixRunsCreateResponseSuccess
+  | simulateApiAgentFixRunsCreateResponseError;
+
+export const getSimulateApiAgentFixRunsCreateUrl = () => {
+  return `/simulate/api/agent-fix-runs/`;
+};
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const simulateApiAgentFixRunsCreate = async (
+  agentFixLaunchApi: AgentFixLaunchApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsCreateResponse> => {
+  return apiMutator<simulateApiAgentFixRunsCreateResponse>(
+    getSimulateApiAgentFixRunsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentFixLaunchApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsLaunchOptionsResponse200 = {
+  data: AgentFixLaunchOptionsApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsLaunchOptionsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsLaunchOptionsResponseSuccess =
+  simulateApiAgentFixRunsLaunchOptionsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsLaunchOptionsResponseError =
+  simulateApiAgentFixRunsLaunchOptionsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsLaunchOptionsResponse =
+  | simulateApiAgentFixRunsLaunchOptionsResponseSuccess
+  | simulateApiAgentFixRunsLaunchOptionsResponseError;
+
+export const getSimulateApiAgentFixRunsLaunchOptionsUrl = (
+  params: SimulateApiAgentFixRunsLaunchOptionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/agent-fix-runs/launch-options/?${stringifiedParams}`
+    : `/simulate/api/agent-fix-runs/launch-options/`;
+};
+
+/**
+ * What the launch form shows and prefills for a finished run, and what would
+refuse the launch now.
+ */
+export const simulateApiAgentFixRunsLaunchOptions = async (
+  params: SimulateApiAgentFixRunsLaunchOptionsParams,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsLaunchOptionsResponse> => {
+  return apiMutator<simulateApiAgentFixRunsLaunchOptionsResponse>(
+    getSimulateApiAgentFixRunsLaunchOptionsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsReadResponse200 = {
+  data: AgentFixRunDetailApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsReadResponseSuccess =
+  simulateApiAgentFixRunsReadResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsReadResponseError =
+  simulateApiAgentFixRunsReadResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsReadResponse =
+  | simulateApiAgentFixRunsReadResponseSuccess
+  | simulateApiAgentFixRunsReadResponseError;
+
+export const getSimulateApiAgentFixRunsReadUrl = (id: string) => {
+  return `/simulate/api/agent-fix-runs/${id}/`;
+};
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const simulateApiAgentFixRunsRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsReadResponse> => {
+  return apiMutator<simulateApiAgentFixRunsReadResponse>(
+    getSimulateApiAgentFixRunsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsCandidatesMakeDefaultResponse200 = {
+  data: AgentFixMakeDefaultApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsCandidatesMakeDefaultResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsCandidatesMakeDefaultResponseSuccess =
+  simulateApiAgentFixRunsCandidatesMakeDefaultResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsCandidatesMakeDefaultResponseError =
+  simulateApiAgentFixRunsCandidatesMakeDefaultResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsCandidatesMakeDefaultResponse =
+  | simulateApiAgentFixRunsCandidatesMakeDefaultResponseSuccess
+  | simulateApiAgentFixRunsCandidatesMakeDefaultResponseError;
+
+export const getSimulateApiAgentFixRunsCandidatesMakeDefaultUrl = (
+  id: string,
+  candidateId: string,
+) => {
+  return `/simulate/api/agent-fix-runs/${id}/candidates/${candidateId}/make-default/`;
+};
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const simulateApiAgentFixRunsCandidatesMakeDefault = async (
+  id: string,
+  candidateId: string,
+  agentFixShipApi: AgentFixShipApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsCandidatesMakeDefaultResponse> => {
+  return apiMutator<simulateApiAgentFixRunsCandidatesMakeDefaultResponse>(
+    getSimulateApiAgentFixRunsCandidatesMakeDefaultUrl(id, candidateId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentFixShipApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponse200 = {
+  data: string;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponseSuccess =
+  simulateApiAgentFixRunsCandidatesCandidatePatchResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponseError =
+  simulateApiAgentFixRunsCandidatesCandidatePatchResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponse =
+  | simulateApiAgentFixRunsCandidatesCandidatePatchResponseSuccess
+  | simulateApiAgentFixRunsCandidatesCandidatePatchResponseError;
+
+export const getSimulateApiAgentFixRunsCandidatesCandidatePatchUrl = (
+  id: string,
+  candidateId: string,
+) => {
+  return `/simulate/api/agent-fix-runs/${id}/candidates/${candidateId}/patch/`;
+};
+
+/**
+ * The candidate's change as a git patch on the base version, to apply by hand.
+ */
+export const simulateApiAgentFixRunsCandidatesCandidatePatch = async (
+  id: string,
+  candidateId: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsCandidatesCandidatePatchResponse> => {
+  return apiMutator<simulateApiAgentFixRunsCandidatesCandidatePatchResponse>(
+    getSimulateApiAgentFixRunsCandidatesCandidatePatchUrl(id, candidateId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsCandidatesPullRequestResponse200 = {
+  data: AgentFixPullRequestApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsCandidatesPullRequestResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsCandidatesPullRequestResponseSuccess =
+  simulateApiAgentFixRunsCandidatesPullRequestResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsCandidatesPullRequestResponseError =
+  simulateApiAgentFixRunsCandidatesPullRequestResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsCandidatesPullRequestResponse =
+  | simulateApiAgentFixRunsCandidatesPullRequestResponseSuccess
+  | simulateApiAgentFixRunsCandidatesPullRequestResponseError;
+
+export const getSimulateApiAgentFixRunsCandidatesPullRequestUrl = (
+  id: string,
+  candidateId: string,
+) => {
+  return `/simulate/api/agent-fix-runs/${id}/candidates/${candidateId}/pull-request/`;
+};
+
+/**
+ * A GitHub agent's winner, or a candidate only its must-pass check refused with
+the user's reason, opened once as a pull request on its repository.
+ */
+export const simulateApiAgentFixRunsCandidatesPullRequest = async (
+  id: string,
+  candidateId: string,
+  agentFixShipApi: AgentFixShipApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsCandidatesPullRequestResponse> => {
+  return apiMutator<simulateApiAgentFixRunsCandidatesPullRequestResponse>(
+    getSimulateApiAgentFixRunsCandidatesPullRequestUrl(id, candidateId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentFixShipApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsRetryResponse201 = {
+  data: AgentFixRunApi;
+  status: 201;
+};
+
+export type simulateApiAgentFixRunsRetryResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiAgentFixRunsRetryResponseSuccess =
+  simulateApiAgentFixRunsRetryResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsRetryResponseError =
+  simulateApiAgentFixRunsRetryResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsRetryResponse =
+  | simulateApiAgentFixRunsRetryResponseSuccess
+  | simulateApiAgentFixRunsRetryResponseError;
+
+export const getSimulateApiAgentFixRunsRetryUrl = (id: string) => {
+  return `/simulate/api/agent-fix-runs/${id}/retry/`;
+};
+
+/**
+ * Start a failed fix again: a new fix with the same request. The check runs the
+failed one finished are reused, so the user does not pay for them twice.
+ */
+export const simulateApiAgentFixRunsRetry = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsRetryResponse> => {
+  return apiMutator<simulateApiAgentFixRunsRetryResponse>(
+    getSimulateApiAgentFixRunsRetryUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsStopResponse200 = {
+  data: AgentFixRunApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsStopResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsStopResponseSuccess =
+  simulateApiAgentFixRunsStopResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsStopResponseError =
+  simulateApiAgentFixRunsStopResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsStopResponse =
+  | simulateApiAgentFixRunsStopResponseSuccess
+  | simulateApiAgentFixRunsStopResponseError;
+
+export const getSimulateApiAgentFixRunsStopUrl = (id: string) => {
+  return `/simulate/api/agent-fix-runs/${id}/stop/`;
+};
+
+/**
+ * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+and ship its winner: the environment's default, or a GitHub pull request.
+ */
+export const simulateApiAgentFixRunsStop = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsStopResponse> => {
+  return apiMutator<simulateApiAgentFixRunsStopResponse>(
+    getSimulateApiAgentFixRunsStopUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
     },
   );
 };
@@ -58733,6 +59809,210 @@ export const simulateApiHarnessEnvironmentsDelete = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsCompareResponse200 = {
+  data: HarnessCompareApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsCompareResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsCompareResponseSuccess =
+  simulateApiHarnessEnvironmentsCompareResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsCompareResponseError =
+  simulateApiHarnessEnvironmentsCompareResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsCompareResponse =
+  | simulateApiHarnessEnvironmentsCompareResponseSuccess
+  | simulateApiHarnessEnvironmentsCompareResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCompareUrl = (
+  id: string,
+  params: SimulateApiHarnessEnvironmentsCompareParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/compare/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/compare/`;
+};
+
+/**
+ * Two runs of this environment, scenario by scenario; against defaults to
+the previous completed run. Not gated on versioning: a run from before
+versioning compares too, with null versions.
+ */
+export const simulateApiHarnessEnvironmentsCompare = async (
+  id: string,
+  params: SimulateApiHarnessEnvironmentsCompareParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsCompareResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCompareResponse>(
+    getSimulateApiHarnessEnvironmentsCompareUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDraftsResponse200 = {
+  data: HarnessDraftsApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsDraftsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsDraftsResponseSuccess =
+  simulateApiHarnessEnvironmentsDraftsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsDraftsResponseError =
+  simulateApiHarnessEnvironmentsDraftsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsDraftsResponse =
+  | simulateApiHarnessEnvironmentsDraftsResponseSuccess
+  | simulateApiHarnessEnvironmentsDraftsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDraftsUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/drafts/`;
+};
+
+/**
+ * The environment's unsaved changes, for the Save bar.
+ */
+export const simulateApiHarnessEnvironmentsDrafts = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDraftsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDraftsResponse>(
+    getSimulateApiHarnessEnvironmentsDraftsUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse200 = {
+  data: HarnessDraftSaveResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSuccess =
+  simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseError =
+  simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
+  | simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSuccess
+  | simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDraftsSaveDraftsUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/drafts/save/`;
+};
+
+/**
+ * Make every named draft live together; returns the new defaults and every
+version.
+ */
+export const simulateApiHarnessEnvironmentsDraftsSaveDrafts = async (
+  id: string,
+  harnessDraftSaveApi: HarnessDraftSaveApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse>(
+    getSimulateApiHarnessEnvironmentsDraftsSaveDraftsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessDraftSaveApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDiscardDraftResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateApiHarnessEnvironmentsDiscardDraftResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type simulateApiHarnessEnvironmentsDiscardDraftResponseSuccess =
+  simulateApiHarnessEnvironmentsDiscardDraftResponse204 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsDiscardDraftResponseError =
+  simulateApiHarnessEnvironmentsDiscardDraftResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsDiscardDraftResponse =
+  | simulateApiHarnessEnvironmentsDiscardDraftResponseSuccess
+  | simulateApiHarnessEnvironmentsDiscardDraftResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDiscardDraftUrl = (
+  id: string,
+  piece: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/drafts/${piece}/`;
+};
+
+/**
+ * Set one piece's unsaved changes aside; discarding none is not an error.
+ */
+export const simulateApiHarnessEnvironmentsDiscardDraft = async (
+  id: string,
+  piece: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDiscardDraftResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDiscardDraftResponse>(
+    getSimulateApiHarnessEnvironmentsDiscardDraftUrl(id, piece),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsAddEvaluationResponse201 = {
   data: HarnessEnvironmentDetailApi;
   status: 201;
@@ -58991,6 +60271,233 @@ export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsNudgesResponse200 = {
+  data: HarnessNudgeApi[];
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsNudgesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsNudgesResponseSuccess =
+  simulateApiHarnessEnvironmentsNudgesResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsNudgesResponseError =
+  simulateApiHarnessEnvironmentsNudgesResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsNudgesResponse =
+  | simulateApiHarnessEnvironmentsNudgesResponseSuccess
+  | simulateApiHarnessEnvironmentsNudgesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsNudgesUrl = (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsNudgesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/nudges/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/nudges/`;
+};
+
+/**
+ * This environment's offers to rebuild after a change, newest first.
+ */
+export const simulateApiHarnessEnvironmentsNudges = async (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsNudgesParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsNudgesResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsNudgesResponse>(
+    getSimulateApiHarnessEnvironmentsNudgesUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse200 = {
+  data: HarnessNudgeApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseSuccess =
+  simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseError =
+  simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse =
+  | simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseSuccess
+  | simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponseError;
+
+export const getSimulateApiHarnessEnvironmentsNudgesAnswerNudgeUrl = (
+  id: string,
+  nudgeId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/nudges/${nudgeId}/answer/`;
+};
+
+/**
+ * Skip ("no") or Rebuild ("yes") a pending nudge; returns the nudge.
+ */
+export const simulateApiHarnessEnvironmentsNudgesAnswerNudge = async (
+  id: string,
+  nudgeId: string,
+  harnessNudgeAnswerApi: HarnessNudgeAnswerApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse>(
+    getSimulateApiHarnessEnvironmentsNudgesAnswerNudgeUrl(id, nudgeId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessNudgeAnswerApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponse200 = {
+  data: HarnessNudgeApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseSuccess =
+  simulateApiHarnessEnvironmentsNudgesStopNudgeResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponseError =
+  simulateApiHarnessEnvironmentsNudgesStopNudgeResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsNudgesStopNudgeResponse =
+  | simulateApiHarnessEnvironmentsNudgesStopNudgeResponseSuccess
+  | simulateApiHarnessEnvironmentsNudgesStopNudgeResponseError;
+
+export const getSimulateApiHarnessEnvironmentsNudgesStopNudgeUrl = (
+  id: string,
+  nudgeId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/nudges/${nudgeId}/stop/`;
+};
+
+/**
+ * Stop a queued or running rebuild; it can be run again. Returns the nudge.
+ */
+export const simulateApiHarnessEnvironmentsNudgesStopNudge = async (
+  id: string,
+  nudgeId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsNudgesStopNudgeResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsNudgesStopNudgeResponse>(
+    getSimulateApiHarnessEnvironmentsNudgesStopNudgeUrl(id, nudgeId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsRunPlanResponse200 = {
+  data: HarnessRunPlanApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsRunPlanResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsRunPlanResponseSuccess =
+  simulateApiHarnessEnvironmentsRunPlanResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsRunPlanResponseError =
+  simulateApiHarnessEnvironmentsRunPlanResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsRunPlanResponse =
+  | simulateApiHarnessEnvironmentsRunPlanResponseSuccess
+  | simulateApiHarnessEnvironmentsRunPlanResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRunPlanUrl = (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsRunPlanParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/run-plan/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/run-plan/`;
+};
+
+/**
+ * The versions a run of these picks would use and what to warn about; no
+writes. An absent pick is the environment's default.
+ */
+export const simulateApiHarnessEnvironmentsRunPlan = async (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsRunPlanParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRunPlanResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRunPlanResponse>(
+    getSimulateApiHarnessEnvironmentsRunPlanUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsRunResponse202 = {
   data: HarnessRunCreateResponseApi;
   status: 202;
@@ -59142,6 +60649,391 @@ export const simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluations =
       },
     );
   };
+
+export type simulateApiHarnessEnvironmentsVersionsResponse200 = {
+  data: HarnessVersionsApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsVersionsResponseError =
+  simulateApiHarnessEnvironmentsVersionsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsResponse =
+  | simulateApiHarnessEnvironmentsVersionsResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/versions/`;
+};
+
+/**
+ * Every agent, environment and suite version of this environment, read-only.
+ */
+export const simulateApiHarnessEnvironmentsVersions = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse202 =
+  {
+    data: HarnessAgentCredentialsResponseApi;
+    status: 202;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseError =
+  simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse =
+  | simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsCreateAgentVersionUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/versions/agent/`;
+};
+
+/**
+ * A new agent version from an upload, a prompt edit or a settings edit; it is
+checked next, then made this environment's default.
+ */
+export const simulateApiHarnessEnvironmentsVersionsCreateAgentVersion = async (
+  id: string,
+  harnessAgentVersionCreateApi: HarnessAgentVersionCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsCreateAgentVersionResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsCreateAgentVersionUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessAgentVersionCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse200 =
+  {
+    data: HarnessVersionsApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseError =
+  simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse =
+
+    | simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseSuccess
+    | simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionUrl =
+  (id: string, versionId: string) => {
+    return `/simulate/api/harness-environments/${id}/versions/agent/${versionId}/discard/`;
+  };
+
+/**
+ * Set an agent version aside; returns every version.
+ */
+export const simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersion =
+  async (
+    id: string,
+    versionId: string,
+    emptyRequestApi: EmptyRequestApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse>(
+      getSimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionUrl(
+        id,
+        versionId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(emptyRequestApi),
+      },
+    );
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse202 =
+  {
+    data: HarnessVersionsApi;
+    status: 202;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseError =
+  simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse =
+
+    | simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseSuccess
+    | simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionUrl =
+  (id: string, versionId: string) => {
+    return `/simulate/api/harness-environments/${id}/versions/agent/${versionId}/retry/`;
+  };
+
+/**
+ * Check an agent version whose check failed again; returns every version.
+ */
+export const simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersion =
+  async (
+    id: string,
+    versionId: string,
+    emptyRequestApi: EmptyRequestApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionResponse>(
+      getSimulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionUrl(
+        id,
+        versionId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(emptyRequestApi),
+      },
+    );
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse200 =
+  {
+    data: HarnessSuiteMemberApi[];
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponseError =
+  simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse =
+  | simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersUrl = (
+  id: string,
+  versionId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/versions/suite/${versionId}/members/`;
+};
+
+/**
+ * The scenarios in one suite version, by number.
+ */
+export const simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembers = async (
+  id: string,
+  versionId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersUrl(
+      id,
+      versionId,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 = {
+  data: HarnessVersionsApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseError =
+  simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
+  | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsMoveDefaultUrl = (
+  id: string,
+  piece: string,
+  versionId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/versions/${piece}/${versionId}/default/`;
+};
+
+/**
+ * Make an agent, environment or suite version the default; returns every
+version.
+ */
+export const simulateApiHarnessEnvironmentsVersionsMoveDefault = async (
+  id: string,
+  piece: string,
+  versionId: string,
+  harnessDefaultMoveApi: HarnessDefaultMoveApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsMoveDefaultUrl(
+      id,
+      piece,
+      versionId,
+    ),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessDefaultMoveApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsVersionsVersionDiffResponse200 = {
+  data: HarnessVersionDiffApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsVersionDiffResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsVersionDiffResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsVersionDiffResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsVersionsVersionDiffResponseError =
+  simulateApiHarnessEnvironmentsVersionsVersionDiffResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsVersionDiffResponse =
+  | simulateApiHarnessEnvironmentsVersionsVersionDiffResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsVersionDiffResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsVersionDiffUrl = (
+  id: string,
+  piece: string,
+  versionId: string,
+  params?: SimulateApiHarnessEnvironmentsVersionsVersionDiffParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/versions/${piece}/${versionId}/diff/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/versions/${piece}/${versionId}/diff/`;
+};
+
+/**
+ * What one version changed, against its parent or the ``against`` version.
+ */
+export const simulateApiHarnessEnvironmentsVersionsVersionDiff = async (
+  id: string,
+  piece: string,
+  versionId: string,
+  params?: SimulateApiHarnessEnvironmentsVersionsVersionDiffParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsVersionDiffResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsVersionDiffResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsVersionDiffUrl(
+      id,
+      piece,
+      versionId,
+      params,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
 
 export type simulateApiHarnessJobsListResponse200 = {
   data: HarnessJobReadApi[];
@@ -59389,18 +61281,18 @@ export const simulateApiHarnessJobsSecretFileUpload = async (
   );
 };
 
-export type simulateApiHarnessJobsSecretValuesResponse201 = {
-  data: HarnessSecretValuesApi;
-  status: 201;
+export type simulateApiHarnessJobsSecretValuesResponse202 = {
+  data: HarnessAgentCredentialsResponseApi;
+  status: 202;
 };
 
 export type simulateApiHarnessJobsSecretValuesResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 202>;
 };
 
 export type simulateApiHarnessJobsSecretValuesResponseSuccess =
-  simulateApiHarnessJobsSecretValuesResponse201 & {
+  simulateApiHarnessJobsSecretValuesResponse202 & {
     headers: Headers;
   };
 export type simulateApiHarnessJobsSecretValuesResponseError =
@@ -59417,9 +61309,9 @@ export const getSimulateApiHarnessJobsSecretValuesUrl = () => {
 };
 
 /**
- * Values are intentionally separate from platform/model-provider settings. They are scoped
-to the submitting organization and only resolved inside the selected hosted job.
- * @summary Persist uploaded agent values encrypted and return opaque hosted refs.
+ * The values (and staged ``files``) are stored encrypted on the new version, which
+is checked next and returned with 202.
+ * @summary Make an environment's next agent version from new credential values.
  */
 export const simulateApiHarnessJobsSecretValues = async (
   harnessSecretValuesApi: HarnessSecretValuesApi,
@@ -60858,6 +62750,55 @@ export const simulateApiHarnessConversationsWorkspace = async (
     {
       ...options,
       method: "PUT",
+    },
+  );
+};
+
+export type simulateApiHarnessGithubWebhookCreateResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateApiHarnessGithubWebhookCreateResponse429 = {
+  data: void;
+  status: 429;
+};
+
+export type simulateApiHarnessGithubWebhookCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204 | 429>;
+};
+
+export type simulateApiHarnessGithubWebhookCreateResponseSuccess =
+  simulateApiHarnessGithubWebhookCreateResponse204 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessGithubWebhookCreateResponseError = (
+  | simulateApiHarnessGithubWebhookCreateResponse429
+  | simulateApiHarnessGithubWebhookCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessGithubWebhookCreateResponse =
+  | simulateApiHarnessGithubWebhookCreateResponseSuccess
+  | simulateApiHarnessGithubWebhookCreateResponseError;
+
+export const getSimulateApiHarnessGithubWebhookCreateUrl = () => {
+  return `/simulate/api/harness/github/webhook/`;
+};
+
+/**
+ * GitHub App push webhook, signed with X-Hub-Signature-256. Answers 204, or 429 when throttled.
+ */
+export const simulateApiHarnessGithubWebhookCreate = async (
+  options?: RequestInit,
+): Promise<simulateApiHarnessGithubWebhookCreateResponse> => {
+  return apiMutator<simulateApiHarnessGithubWebhookCreateResponse>(
+    getSimulateApiHarnessGithubWebhookCreateUrl(),
+    {
+      ...options,
+      method: "POST",
     },
   );
 };
@@ -65033,6 +66974,8 @@ Query Parameters:
 - status: filter by execution status
 - limit: number of items per page (default: 10)
 - page: page number (default: 1)
+- summary: when true, each item carries only id, status and the pinned
+  versions, without reading the calls; search does not apply
  */
 export const simulateRunTestsExecutionsList = async (
   runTestId: string,
@@ -67314,14 +69257,24 @@ export type simulateTestExecutionsRerunCallsCreateResponse404 = {
   status: 404;
 };
 
+export type simulateTestExecutionsRerunCallsCreateResponse409 = {
+  data: ErrorResponseApi;
+  status: 409;
+};
+
 export type simulateTestExecutionsRerunCallsCreateResponse500 = {
   data: ErrorResponseApi;
   status: 500;
 };
 
+export type simulateTestExecutionsRerunCallsCreateResponse503 = {
+  data: ErrorResponseApi;
+  status: 503;
+};
+
 export type simulateTestExecutionsRerunCallsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 202 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 202 | 400 | 404 | 409 | 500 | 503>;
 };
 
 export type simulateTestExecutionsRerunCallsCreateResponseSuccess = (
@@ -67333,7 +69286,9 @@ export type simulateTestExecutionsRerunCallsCreateResponseSuccess = (
 export type simulateTestExecutionsRerunCallsCreateResponseError = (
   | simulateTestExecutionsRerunCallsCreateResponse400
   | simulateTestExecutionsRerunCallsCreateResponse404
+  | simulateTestExecutionsRerunCallsCreateResponse409
   | simulateTestExecutionsRerunCallsCreateResponse500
+  | simulateTestExecutionsRerunCallsCreateResponse503
   | simulateTestExecutionsRerunCallsCreateResponseDefault
 ) & {
   headers: Headers;
@@ -67615,6 +69570,118 @@ export const simulateV3TestExecutionExport = async (
   );
 };
 
+export type simulateV3TestExecutionReliabilityResponse200 = {
+  data: ReliabilityApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionReliabilityResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3TestExecutionReliabilityResponseSuccess =
+  simulateV3TestExecutionReliabilityResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionReliabilityResponseError =
+  simulateV3TestExecutionReliabilityResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateV3TestExecutionReliabilityResponse =
+  | simulateV3TestExecutionReliabilityResponseSuccess
+  | simulateV3TestExecutionReliabilityResponseError;
+
+export const getSimulateV3TestExecutionReliabilityUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/v3/test-executions/${testExecutionId}/reliability/`;
+};
+
+/**
+ * The reliability block alone, for the run header.
+ */
+export const simulateV3TestExecutionReliability = async (
+  testExecutionId: string,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionReliabilityResponse> => {
+  return apiMutator<simulateV3TestExecutionReliabilityResponse>(
+    getSimulateV3TestExecutionReliabilityUrl(testExecutionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionTracesResponse200 = {
+  data: RunTracesV3ResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionTracesResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type simulateV3TestExecutionTracesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 503>;
+};
+
+export type simulateV3TestExecutionTracesResponseSuccess =
+  simulateV3TestExecutionTracesResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionTracesResponseError = (
+  | simulateV3TestExecutionTracesResponse503
+  | simulateV3TestExecutionTracesResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateV3TestExecutionTracesResponse =
+  | simulateV3TestExecutionTracesResponseSuccess
+  | simulateV3TestExecutionTracesResponseError;
+
+export const getSimulateV3TestExecutionTracesUrl = (
+  testExecutionId: string,
+  params: SimulateV3TestExecutionTracesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/test-executions/${testExecutionId}/traces/?${stringifiedParams}`
+    : `/simulate/v3/test-executions/${testExecutionId}/traces/`;
+};
+
+export const simulateV3TestExecutionTraces = async (
+  testExecutionId: string,
+  params: SimulateV3TestExecutionTracesParams,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionTracesResponse> => {
+  return apiMutator<simulateV3TestExecutionTracesResponse>(
+    getSimulateV3TestExecutionTracesUrl(testExecutionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type telemetryHeartbeatCreateResponse200 = {
   data: DeploymentHeartbeatResponseApi;
   status: 200;
@@ -67695,6 +69762,324 @@ export const telemetryRegisterCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(deploymentRegistrationApi),
+    },
+  );
+};
+
+export type tracerAlertsListResponse200 = {
+  data: AlertListResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsListResponseSuccess = tracerAlertsListResponse200 & {
+  headers: Headers;
+};
+export type tracerAlertsListResponseError = tracerAlertsListResponseDefault & {
+  headers: Headers;
+};
+
+export type tracerAlertsListResponse =
+  | tracerAlertsListResponseSuccess
+  | tracerAlertsListResponseError;
+
+export const getTracerAlertsListUrl = (params?: TracerAlertsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/alerts/?${stringifiedParams}`
+    : `/tracer/alerts/`;
+};
+
+export const tracerAlertsList = async (
+  params?: TracerAlertsListParams,
+  options?: RequestInit,
+): Promise<tracerAlertsListResponse> => {
+  return apiMutator<tracerAlertsListResponse>(getTracerAlertsListUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export type tracerAlertsCreateResponse201 = {
+  data: AlertItemResponseApi;
+  status: 201;
+};
+
+export type tracerAlertsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type tracerAlertsCreateResponseSuccess =
+  tracerAlertsCreateResponse201 & {
+    headers: Headers;
+  };
+export type tracerAlertsCreateResponseError =
+  tracerAlertsCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsCreateResponse =
+  | tracerAlertsCreateResponseSuccess
+  | tracerAlertsCreateResponseError;
+
+export const getTracerAlertsCreateUrl = () => {
+  return `/tracer/alerts/`;
+};
+
+export const tracerAlertsCreate = async (
+  alertWriteRequestApi: AlertWriteRequestApi,
+  options?: RequestInit,
+): Promise<tracerAlertsCreateResponse> => {
+  return apiMutator<tracerAlertsCreateResponse>(getTracerAlertsCreateUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(alertWriteRequestApi),
+  });
+};
+
+export type tracerAlertsErrorFeedTestCreateResponse200 = {
+  data: AlertTestResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsErrorFeedTestCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsErrorFeedTestCreateResponseSuccess =
+  tracerAlertsErrorFeedTestCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsErrorFeedTestCreateResponseError =
+  tracerAlertsErrorFeedTestCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsErrorFeedTestCreateResponse =
+  | tracerAlertsErrorFeedTestCreateResponseSuccess
+  | tracerAlertsErrorFeedTestCreateResponseError;
+
+export const getTracerAlertsErrorFeedTestCreateUrl = (alertId: string) => {
+  return `/tracer/alerts/error_feed/${alertId}/test/`;
+};
+
+export const tracerAlertsErrorFeedTestCreate = async (
+  alertId: string,
+  alertTestRequestApi: AlertTestRequestApi,
+  options?: RequestInit,
+): Promise<tracerAlertsErrorFeedTestCreateResponse> => {
+  return apiMutator<tracerAlertsErrorFeedTestCreateResponse>(
+    getTracerAlertsErrorFeedTestCreateUrl(alertId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(alertTestRequestApi),
+    },
+  );
+};
+
+export type tracerAlertsOptionsListResponse200 = {
+  data: AlertOptionsResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsOptionsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsOptionsListResponseSuccess =
+  tracerAlertsOptionsListResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsOptionsListResponseError =
+  tracerAlertsOptionsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsOptionsListResponse =
+  | tracerAlertsOptionsListResponseSuccess
+  | tracerAlertsOptionsListResponseError;
+
+export const getTracerAlertsOptionsListUrl = (
+  params?: TracerAlertsOptionsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/alerts/options/?${stringifiedParams}`
+    : `/tracer/alerts/options/`;
+};
+
+export const tracerAlertsOptionsList = async (
+  params?: TracerAlertsOptionsListParams,
+  options?: RequestInit,
+): Promise<tracerAlertsOptionsListResponse> => {
+  return apiMutator<tracerAlertsOptionsListResponse>(
+    getTracerAlertsOptionsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerAlertsReadResponse200 = {
+  data: AlertItemResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsReadResponseSuccess = tracerAlertsReadResponse200 & {
+  headers: Headers;
+};
+export type tracerAlertsReadResponseError = tracerAlertsReadResponseDefault & {
+  headers: Headers;
+};
+
+export type tracerAlertsReadResponse =
+  | tracerAlertsReadResponseSuccess
+  | tracerAlertsReadResponseError;
+
+export const getTracerAlertsReadUrl = (kind: string, alertId: string) => {
+  return `/tracer/alerts/${kind}/${alertId}/`;
+};
+
+export const tracerAlertsRead = async (
+  kind: string,
+  alertId: string,
+  options?: RequestInit,
+): Promise<tracerAlertsReadResponse> => {
+  return apiMutator<tracerAlertsReadResponse>(
+    getTracerAlertsReadUrl(kind, alertId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerAlertsPartialUpdateResponse200 = {
+  data: AlertItemResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsPartialUpdateResponseSuccess =
+  tracerAlertsPartialUpdateResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsPartialUpdateResponseError =
+  tracerAlertsPartialUpdateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsPartialUpdateResponse =
+  | tracerAlertsPartialUpdateResponseSuccess
+  | tracerAlertsPartialUpdateResponseError;
+
+export const getTracerAlertsPartialUpdateUrl = (
+  kind: string,
+  alertId: string,
+) => {
+  return `/tracer/alerts/${kind}/${alertId}/`;
+};
+
+export const tracerAlertsPartialUpdate = async (
+  kind: string,
+  alertId: string,
+  alertWriteRequestApi: AlertWriteRequestApi,
+  options?: RequestInit,
+): Promise<tracerAlertsPartialUpdateResponse> => {
+  return apiMutator<tracerAlertsPartialUpdateResponse>(
+    getTracerAlertsPartialUpdateUrl(kind, alertId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(alertWriteRequestApi),
+    },
+  );
+};
+
+export type tracerAlertsDeleteResponse200 = {
+  data: AlertDeletedResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsDeleteResponseSuccess =
+  tracerAlertsDeleteResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsDeleteResponseError =
+  tracerAlertsDeleteResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsDeleteResponse =
+  | tracerAlertsDeleteResponseSuccess
+  | tracerAlertsDeleteResponseError;
+
+export const getTracerAlertsDeleteUrl = (kind: string, alertId: string) => {
+  return `/tracer/alerts/${kind}/${alertId}/`;
+};
+
+export const tracerAlertsDelete = async (
+  kind: string,
+  alertId: string,
+  options?: RequestInit,
+): Promise<tracerAlertsDeleteResponse> => {
+  return apiMutator<tracerAlertsDeleteResponse>(
+    getTracerAlertsDeleteUrl(kind, alertId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };
@@ -78405,6 +80790,169 @@ export const tracerSharedRead = async (
   });
 };
 
+export type tracerSharedSidebarListResponse200 = {
+  data: FeedSidebarApiResponseApi;
+  status: 200;
+};
+
+export type tracerSharedSidebarListResponse401 = {
+  data: SharedLinkResolveErrorApi;
+  status: 401;
+};
+
+export type tracerSharedSidebarListResponse403 = {
+  data: SharedLinkResolveErrorApi;
+  status: 403;
+};
+
+export type tracerSharedSidebarListResponse404 = {
+  data: SharedLinkResolveErrorApi;
+  status: 404;
+};
+
+export type tracerSharedSidebarListResponse410 = {
+  data: SharedLinkResolveErrorApi;
+  status: 410;
+};
+
+export type tracerSharedSidebarListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 401 | 403 | 404 | 410>;
+};
+
+export type tracerSharedSidebarListResponseSuccess =
+  tracerSharedSidebarListResponse200 & {
+    headers: Headers;
+  };
+export type tracerSharedSidebarListResponseError = (
+  | tracerSharedSidebarListResponse401
+  | tracerSharedSidebarListResponse403
+  | tracerSharedSidebarListResponse404
+  | tracerSharedSidebarListResponse410
+  | tracerSharedSidebarListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerSharedSidebarListResponse =
+  | tracerSharedSidebarListResponseSuccess
+  | tracerSharedSidebarListResponseError;
+
+export const getTracerSharedSidebarListUrl = (
+  token: string,
+  params?: TracerSharedSidebarListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/shared/${token}/sidebar/?${stringifiedParams}`
+    : `/tracer/shared/${token}/sidebar/`;
+};
+
+/**
+ * Mirrors the issue page: AI metadata and evaluations follow the trace
+picked in Traces affected (``?trace_id=``).
+ * @summary A shared Error Feed issue's sidebar, scoped to one of its traces.
+ */
+export const tracerSharedSidebarList = async (
+  token: string,
+  params?: TracerSharedSidebarListParams,
+  options?: RequestInit,
+): Promise<tracerSharedSidebarListResponse> => {
+  return apiMutator<tracerSharedSidebarListResponse>(
+    getTracerSharedSidebarListUrl(token, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSharedTracesReadResponse200 = {
+  data: TraceDetailResponseApi;
+  status: 200;
+};
+
+export type tracerSharedTracesReadResponse401 = {
+  data: SharedLinkResolveErrorApi;
+  status: 401;
+};
+
+export type tracerSharedTracesReadResponse403 = {
+  data: SharedLinkResolveErrorApi;
+  status: 403;
+};
+
+export type tracerSharedTracesReadResponse404 = {
+  data: SharedLinkResolveErrorApi;
+  status: 404;
+};
+
+export type tracerSharedTracesReadResponse410 = {
+  data: SharedLinkResolveErrorApi;
+  status: 410;
+};
+
+export type tracerSharedTracesReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 401 | 403 | 404 | 410>;
+};
+
+export type tracerSharedTracesReadResponseSuccess =
+  tracerSharedTracesReadResponse200 & {
+    headers: Headers;
+  };
+export type tracerSharedTracesReadResponseError = (
+  | tracerSharedTracesReadResponse401
+  | tracerSharedTracesReadResponse403
+  | tracerSharedTracesReadResponse404
+  | tracerSharedTracesReadResponse410
+  | tracerSharedTracesReadResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerSharedTracesReadResponse =
+  | tracerSharedTracesReadResponseSuccess
+  | tracerSharedTracesReadResponseError;
+
+export const getTracerSharedTracesReadUrl = (
+  token: string,
+  traceId: string,
+) => {
+  return `/tracer/shared/${token}/traces/${traceId}/`;
+};
+
+/**
+ * Only traces linked to the shared issue are readable through its token.
+ * @summary One trace of a shared Error Feed issue, under the issue link's rules.
+ */
+export const tracerSharedTracesRead = async (
+  token: string,
+  traceId: string,
+  options?: RequestInit,
+): Promise<tracerSharedTracesReadResponse> => {
+  return apiMutator<tracerSharedTracesReadResponse>(
+    getTracerSharedTracesReadUrl(token, traceId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type tracerTraceAnnotationGetAnnotationValuesResponse200 = {
   data: GetTraceAnnotationValuesResponseApi;
   status: 200;
@@ -80932,6 +83480,9 @@ export const getTracerTraceVoiceCallDetailUrl = (
  * Query params:
 - trace_id or legacy traceId (required) — UUID of the voice call trace.
 - project_id (optional) — the project the call was opened from.
+- test_execution_id or call_execution_id (optional) — a run the caller
+  can read; the hidden simulation project of that run's agent is read
+  in place of the caller's projects.
  * @summary Return the heavy / detail-only fields for a single voice call.
  */
 export const tracerTraceVoiceCallDetail = async (
@@ -81014,6 +83565,9 @@ export const getTracerTraceReadUrl = (
 /**
  * Query params:
 - project_id (optional) — the project the trace was opened from.
+- test_execution_id or call_execution_id (optional) — a run the caller
+  can read; the hidden simulation project of that run's agent is read
+  in place of the caller's projects.
  * @summary Retrieve a trace by its ID.
  */
 export const tracerTraceRead = async (

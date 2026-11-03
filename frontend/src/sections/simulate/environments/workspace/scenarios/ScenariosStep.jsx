@@ -5,7 +5,10 @@ import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { ConfirmDialog } from "src/components/custom-dialog";
-import { resolveScenarioSelection } from "src/api/simulate-environments/scenarioSelection";
+import {
+  resolveScenarioSelection,
+  runnableScenarioKey,
+} from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
 import EmptyState from "../../components/EmptyState";
 import ScenarioToolbar from "./ScenarioToolbar";
@@ -13,12 +16,14 @@ import SelectionBar from "./SelectionBar";
 import CoverageMatrix from "./CoverageMatrix";
 import AddScenariosDrawer from "./AddScenariosDrawer";
 import ScenarioEditor from "./ScenarioEditor";
+import ScenarioDrawer from "./ScenarioDrawer";
 import PropTypes from "prop-types";
 import {
   publishScenarioSelection,
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
 import { SCENARIOS_COPY } from "./scenarios.constants";
+import { DRAFTS_COPY } from "../workspace.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
@@ -52,8 +57,6 @@ function AddButton({ onClick, contained = false, locked = false, short = false }
           onClick={onClick}
           aria-label={SCENARIOS_COPY.addLabel}
           startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-          // In the toolbar it matches the 32px row and Coverage's padding beside it.
-          sx={{ typography: "s2", fontWeight: "fontWeightBold", ...(short && { height: 32, px: 1.75 }) }}
         >
           {short ? SCENARIOS_COPY.addShortLabel : SCENARIOS_COPY.addLabel}
         </Button>
@@ -87,7 +90,7 @@ RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 // filter, display, coverage, add) over the list, per-row editing behind the
 // pencil. Two views of the same rows share the toolbar so filters survive a
 // view switch, and coverage reads the same search and filters as the list.
-export default function ScenariosStep({ env, envState, patch, locked = false, onStartRun, canRun = false }) {
+export default function ScenariosStep({ env, envState, patch, locked = false, onStartRun, canRun = false, runBlockedReason }) {
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
   const [view, setView] = useState("table");
@@ -100,6 +103,8 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   const [filters, setFilters] = useState({});
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
+  // The row opened in full from the table (the scenario drawer).
+  const [openRow, setOpenRow] = useState(null);
   // A pending delete awaiting confirmation. Server deletes have no undo (there is
   // no create route to restore from), so a drop is confirmed first, then run.
   // { count, resolve: () => Promise<string[]> } — resolve yields the names to drop.
@@ -114,7 +119,11 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // Hidden groups — click-to-hide directly on the group header. IDs are
   // dimension-specific, so switching the axis clears the hidden set.
   const [hiddenGroupIds, setHiddenGroupIds] = useState([]);
-  const setGroupBy = (next) => { setGroupByRaw(next); setHiddenGroupIds([]); resetView(); };
+  const setGroupBy = (next) => {
+    setGroupByRaw(next);
+    setHiddenGroupIds([]);
+    resetView();
+  };
   const handleQueryChange = (next) => { setQuery(next); resetView(); };
   const toggleGroupHidden = (id) => setHiddenGroupIds((prev) => (
     prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]
@@ -161,6 +170,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
     if (suiteQuery.isError) suiteQuery.refetch();
   };
   const hasScenarios = suiteTotal > 0;
+
   // A change to the search, the filters or the grouping moves the matching set,
   // so the page position and the selection predicate are reset in each change
   // handler below (resetView) — not in an effect, which needed an exhaustive-deps
@@ -236,7 +246,10 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
       });
       return;
     }
-    enqueueSnackbar(successLabel, { variant: "success", autoHideDuration: 4000 });
+    // With versioning on the edit waits in the unsaved changes; a null draft
+    // means the edit undid them.
+    const label = data?.draft ? DRAFTS_COPY.addedToDraft : successLabel;
+    enqueueSnackbar(label, { variant: "success", autoHideDuration: 4000 });
   };
 
   // Row trash → confirm, then drop that one scenario by name.
@@ -262,12 +275,17 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   const handleRunSelected = async (k) => {
     let keys;
     try {
-      keys = await resolveSelection((r) => r.scenario_key);
+      // Rows only the unsaved changes add have nothing saved to run.
+      keys = (await resolveSelection(runnableScenarioKey)).filter(Boolean);
     } catch {
       enqueueSnackbar("Couldn't start the run. Try again", { variant: "error" });
       return;
     }
-    if (keys.length) onStartRun?.(keys, k || trials);
+    if (!keys.length) {
+      enqueueSnackbar(DRAFTS_COPY.saveToRunSelected, { variant: "info" });
+      return;
+    }
+    onStartRun?.(keys, k || trials);
   };
 
   // Mirror the predicate selection into the workspace builder chat. include-mode
@@ -288,6 +306,28 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // Clear the bus on unmount so navigating off the tab doesn't leave a stale
   // "N selected" chip hanging in the chat.
   useEffect(() => () => clearScenarioSelection(), []);
+
+  // Escape clears the selection, unless it is closing something on top
+  // (drawer, editor, confirm) or the user is typing in a field.
+  const overlayOpen = !!openRow || !!editing || !!pendingDelete || adding;
+  const clearSelection = sel.clear;
+  const hasSelection = sel.count > 0;
+  useEffect(() => {
+    if (!hasSelection || overlayOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      const el = e.target;
+      // Typing fields keep Escape; a just-ticked checkbox (which holds focus)
+      // or radio does not.
+      const typing = el?.isContentEditable
+        || ["TEXTAREA", "SELECT"].includes(el?.tagName)
+        || (el?.tagName === "INPUT" && !["checkbox", "radio"].includes(el.type));
+      if (typing) return;
+      clearSelection();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [hasSelection, overlayOpen, clearSelection]);
 
   // The scenario names a bulk delete targets. Names — not ids — because the
   // amend route resolves drops by name.
@@ -368,7 +408,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
           {loadFailed && (
             <Alert
               severity="error"
-              sx={{ mb: 2, typography: "s3", flexShrink: 0 }}
+              sx={{ mb: 2, flexShrink: 0 }}
               action={(
                 <Button color="inherit" size="small" onClick={retryLoad}>
                   Retry
@@ -424,6 +464,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                       onDelete={bulkDelete}
                       onClear={sel.clear}
                       onRun={canRun && onStartRun ? handleRunSelected : undefined}
+                      runBlockedReason={onStartRun && !canRun ? runBlockedReason : undefined}
                       trials={trials}
                       onTrialsChange={setTrials}
                       matching={{
@@ -442,7 +483,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
             <Box
               sx={{
                 flex: 1, minHeight: 0, display: "flex", flexDirection: "column",
-                border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden",
+                border: "1px solid", borderColor: "divider", borderRadius: "8px", overflow: "hidden",
               }}
             >
               <PagedScenarioViews
@@ -454,6 +495,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                 onHideGroup={toggleGroupHidden}
                 onEdit={setEditing}
                 onRemove={removeScenario}
+                onOpen={setOpenRow}
                 page={page}
                 onPageChange={setPage}
                 query={query}
@@ -481,6 +523,12 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         selected={selected}
         onAdd={addScenarios}
       />
+      <ScenarioDrawer
+        row={openRow}
+        onClose={() => setOpenRow(null)}
+        onEdit={(row) => { setOpenRow(null); setEditing(row); }}
+        locked={locked}
+      />
       <ScenarioEditor
         open={!!editing}
         onClose={() => setEditing(null)}
@@ -495,7 +543,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         onClose={() => setPendingDelete(null)}
         title="Delete scenarios?"
         content={
-          <Typography component="span" sx={{ typography: "s2" }}>
+          <Typography component="span" sx={{ typography: "m3" }}>
             {pendingDelete?.count === 1
               ? "This scenario will be permanently removed. This can't be undone."
               : `${pendingDelete?.count ?? 0} scenarios will be permanently removed. This can't be undone.`}
@@ -520,4 +568,6 @@ ScenariosStep.propTypes = {
   onStartRun: PropTypes.func,
   // Whether the env is runnable; gates the selection bar's Run button.
   canRun: PropTypes.bool,
+  // Why it can't run yet; Run shows disabled with this instead of hiding.
+  runBlockedReason: PropTypes.string,
 };

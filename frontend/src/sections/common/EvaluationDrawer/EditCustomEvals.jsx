@@ -14,6 +14,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { extractVariables } from "src/utils/utils";
 import { LoadingButton } from "@mui/lab";
 import { ConfirmDialog } from "src/components/custom-dialog";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const defaultValues = {
   templateType: "Futureagi",
@@ -337,12 +338,11 @@ const EditCustomEvalsChild = ({ onClose, evalId }) => {
                 sx={{
                   padding: 0,
                   paddingY: 0,
-                  height: "32px",
                 }}
               >
                 <Iconify
                   // @ts-ignore
-                  icon="line-md:close"
+                  icon="solar:close-linear"
                   sx={{
                     width: (theme) => theme.spacing(4),
                     height: (theme) => theme.spacing(2),
@@ -365,17 +365,19 @@ EditCustomEvalsChild.propTypes = {
 };
 
 const EditCustomEvals = ({ open, onClose, evaluation, ...rest }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}

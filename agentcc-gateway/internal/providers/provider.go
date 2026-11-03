@@ -5,8 +5,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 )
 
 // Provider is the interface for calling LLM providers.
@@ -26,6 +28,31 @@ type Provider interface {
 
 	// Close releases resources held by this provider.
 	Close() error
+}
+
+// ClientTimeoutReporter is implemented by providers that state the client
+// timeout they enforce. That timeout bounds the whole exchange, the streamed
+// body included, so it caps the request's own deadline: the gateway reports
+// whichever of the two is shorter as x-agentcc-timeout-ms.
+type ClientTimeoutReporter interface {
+	ClientTimeout() time.Duration
+}
+
+// PriceTableNamer is implemented by providers whose models the price table
+// keys under a name the provider's ID need not match: the table lists new
+// Gemini models only as "vertex_ai/gemini-4-argon" and "gemini/gemini-4-argon",
+// so a Gemini provider named "vertex_ai_global" states "vertex_ai".
+type PriceTableNamer interface {
+	PriceTableName() string
+}
+
+// PriceTableName returns the name the price table keys p's models under, or
+// "" when p states none.
+func PriceTableName(p Provider) string {
+	if n, ok := p.(PriceTableNamer); ok {
+		return n.PriceTableName()
+	}
+	return ""
 }
 
 // EmbeddingProvider is implemented by providers that support embedding generation.
@@ -63,6 +90,17 @@ type ResponsesProvider interface {
 	// StreamResponse sends a streaming Responses API request.
 	// Returns a reader for the SSE stream and the response status.
 	StreamResponse(ctx context.Context, reqBody []byte) (io.ReadCloser, int, error)
+}
+
+// ChatViaResponsesProvider is implemented by providers that can carry a chat
+// request over the Responses API, for a model that refuses it on chat
+// completions. Routes that translate their own dialect into a chat request use
+// it; /v1/chat/completions forwards the caller's request as sent.
+type ChatViaResponsesProvider interface {
+	// ChatNeedsResponses reports whether req must go to the Responses API.
+	ChatNeedsResponses(req *models.ChatCompletionRequest) bool
+	ChatCompletionViaResponses(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error)
+	StreamChatCompletionViaResponses(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error)
 }
 
 // TranslationProvider is implemented by providers that support audio translation.
@@ -137,6 +175,15 @@ type RealtimeProvider interface {
 	RealtimeURL(model string) (string, error)
 	RealtimeHeaders(model string) (http.Header, error)
 	RealtimeSubprotocols() []string
+}
+
+// SpeechRelayProvider is implemented by speech vendors reached over their own streaming
+// WebSocket APIs, which the gateway relays with the platform's credential.
+type SpeechRelayProvider interface {
+	// Vendor names the vendor whose API is served, at /{vendor}/...
+	Vendor() string
+	// Open prepares the upstream connection and meter for one vendor path, query and headers.
+	Open(path string, query url.Values, header http.Header) (*speech.Session, error)
 }
 
 // VectorStoresProvider is implemented by providers that support the OpenAI Vector Stores API.

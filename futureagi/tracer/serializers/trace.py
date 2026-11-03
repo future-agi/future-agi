@@ -209,6 +209,7 @@ class TraceListQuerySerializer(StrictInputSerializer):
 
 
 class TraceObserveListQuerySerializer(StrictInputSerializer):
+    sort_params = SortParamListQueryParamField(required=False, default=list)
     project_id = serializers.UUIDField(required=False)
     project_version_id = serializers.UUIDField(required=False)
     session_id = serializers.UUIDField(required=False)
@@ -265,6 +266,37 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
                 }
             )
         attrs["attribute_keys"] = list(attribute_keys)
+        if attrs.get("sort_params"):
+            from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+            from tracer.services.clickhouse.query_builders.trace_usage import (
+                USAGE_COLUMNS,
+            )
+            from tracer.services.clickhouse.v2.query_builders.observe_usage import (
+                usage_column,
+            )
+
+            if (
+                not attrs.get("project_id")
+                or attrs.get("project_version_id")
+                or attrs.get("session_id")
+                or attrs.get("cursor")
+                or attrs.get("cursor_mode")
+                or len(attrs["sort_params"]) > len(USAGE_COLUMNS)
+                or any(
+                    item["column_id"] not in USAGE_COLUMNS
+                    for item in attrs["sort_params"]
+                )
+                or any(
+                    not BaseQueryBuilder.is_datetime_filter(item)
+                    and not usage_column(item)
+                    for item in attrs["filters"]
+                )
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "sort_params": "Usage sorting requires a project, numbered pages, and only date or usage filters. Clear the sort to use other filters."
+                    }
+                )
         return validate_cursor_exclusivity(self, attrs, page_field="page_number")
 
 
@@ -577,19 +609,55 @@ _DETAIL_PROJECT_ID_HELP = (
 )
 
 
-class TraceDetailQuerySerializer(serializers.Serializer):
-    """Optional project pin for the trace-detail identity.
+_RUN_SCOPE_HELP = (
+    "A run the caller can read; opens the hidden simulation project of that "
+    "run's agent."
+)
+
+RUN_SCOPE_KEYS = frozenset({"test_execution_id", "call_execution_id"})
+
+
+class RunScopeQueryMixin(serializers.Serializer):
+    """The two optional run parameters of the by-id reads.
+
+    It subclasses ``Serializer`` because DRF collects declared fields only from
+    bases that carry them; a plain mixin would drop both fields.
+    """
+
+    test_execution_id = serializers.UUIDField(required=False, help_text=_RUN_SCOPE_HELP)
+    call_execution_id = serializers.UUIDField(required=False, help_text=_RUN_SCOPE_HELP)
+
+    @staticmethod
+    def reject_both(attrs):
+        if RUN_SCOPE_KEYS <= attrs.keys():
+            raise serializers.ValidationError(
+                {
+                    "call_execution_id": (
+                        "Send test_execution_id or call_execution_id, not both."
+                    )
+                }
+            )
+
+
+class TraceDetailQuerySerializer(RunScopeQueryMixin):
+    """Optional project pin and run for the trace-detail identity.
 
     Not strict: trace detail read no query params before the pin, so callers'
-    extra params (DRF's ``?format=json`` included) keep being ignored.
+    extra params (DRF's ``?format=json`` included) keep being ignored. The run
+    parameters are declared, so a malformed value or both at once is a 400.
     """
 
     project_id = serializers.UUIDField(
         required=False, help_text=_DETAIL_PROJECT_ID_HELP
     )
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        self.reject_both(attrs)
+        return attrs
 
-class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
+
+class TraceVoiceCallDetailQuerySerializer(RunScopeQueryMixin, StrictInputSerializer):
     """Strict compatibility contract for the voice-call detail identity."""
 
     trace_id = serializers.UUIDField(
@@ -606,6 +674,7 @@ class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        self.reject_both(attrs)
         trace_id = attrs.get("trace_id")
         legacy_trace_id = attrs.get("traceId")
         if trace_id is None and legacy_trace_id is None:

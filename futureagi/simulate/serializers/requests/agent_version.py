@@ -69,7 +69,7 @@ class AgentVersionCreateRequestSerializer(serializers.Serializer):
 
     # Version-specific fields
     commit_message = serializers.CharField(required=False, allow_blank=True, default="")
-    observability_enabled = serializers.BooleanField(required=False, default=False)
+    observability_enabled = serializers.BooleanField(required=False)
 
     # -- Field-level validators --
 

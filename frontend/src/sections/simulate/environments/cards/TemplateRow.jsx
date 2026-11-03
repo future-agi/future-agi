@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { useMemo } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { activateOnKey } from "../helpers/activateOnKey";
@@ -8,6 +7,8 @@ import { packStats } from "../helpers/packStats";
 import { formatCount } from "../helpers/formatCount";
 import { BROWSE_COPY, SURFACE_ICON } from "../prebuiltEnvironments.constants";
 import { TEMPLATE_SHAPE } from "../useTemplate.constants";
+
+const sentenceCase = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 /**
  * Compact, selectable master row for the templates browse.
@@ -39,19 +40,13 @@ export default function TemplateRow({ template, popular = false, selected = fals
       onKeyDown={activateOnKey((e) => onClick?.(e))}
       spacing={0.75}
       sx={{
-        p: 1.5, borderRadius: 1.25, cursor: "pointer",
+        p: 1.5, borderRadius: "8px", cursor: "pointer",
         border: "1px solid",
-        borderColor: (th) => (selected
-          ? (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.5) : th.palette.primary.main)
-          : th.palette.divider),
-        bgcolor: (th) => (selected
-          ? (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.06) : alpha(th.palette.primary.main, 0.04))
-          : "background.paper"),
+        borderColor: selected ? "text.primary" : "divider",
+        bgcolor: selected ? "action.selected" : "background.paper",
         transition: "border-color .12s ease, background-color .12s ease",
         "&:hover": {
-          borderColor: (th) => (selected
-            ? undefined
-            : (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.35) : th.palette.text.primary)),
+          borderColor: selected ? undefined : "text.disabled",
         },
       }}
     >
@@ -61,33 +56,23 @@ export default function TemplateRow({ template, popular = false, selected = fals
           width={11}
           sx={{ color: "text.subtitle" }}
         />
-        <Typography
-          sx={{
-            typography: "s3", color: "text.subtitle", fontWeight: "fontWeightBold",
-            letterSpacing: 0.5, textTransform: "uppercase",
-          }}
-        >
-          {template?.surface}
+        <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 500 }}>
+          {sentenceCase(template?.surface)}
         </Typography>
         {popular && (
           <>
-            <Box sx={{ color: "text.disabled", fontSize: 10, lineHeight: 1 }}>·</Box>
-            <Typography
-              sx={{
-                typography: "s3", color: "text.subtitle", fontWeight: "fontWeightBold",
-                letterSpacing: 0.5, textTransform: "uppercase",
-              }}
-            >
+            <Box sx={{ color: "text.disabled", fontSize: 11, lineHeight: 1 }}>·</Box>
+            <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 500 }}>
               {BROWSE_COPY.popular}
             </Typography>
           </>
         )}
       </Stack>
 
-      <Typography noWrap sx={{ typography: "s1", fontWeight: "fontWeightBold", lineHeight: 1.2 }}>
+      <Typography noWrap sx={{ typography: "s1_2", fontWeight: 500, lineHeight: 1.2 }}>
         {template?.name}
       </Typography>
-      <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
+      <Typography noWrap sx={{ typography: "s1", color: "text.secondary" }}>
         {template?.tagline}
       </Typography>
 
@@ -95,7 +80,7 @@ export default function TemplateRow({ template, popular = false, selected = fals
         <Typography
           noWrap
           sx={{
-            typography: "s3", color: "text.subtitle", fontWeight: "fontWeightSemiBold",
+            typography: "s3", color: "text.subtitle", fontWeight: 500,
             fontVariantNumeric: "tabular-nums", pt: 0.25,
           }}
         >

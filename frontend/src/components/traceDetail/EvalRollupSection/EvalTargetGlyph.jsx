@@ -17,11 +17,11 @@ const EvalTargetGlyph = ({ targetType }) => {
         justifyContent: "center",
         minWidth: 16,
         height: 16,
-        borderRadius: 0.5,
+        borderRadius: "4px",
         bgcolor: "action.selected",
         color: "text.secondary",
-        fontSize: 10,
-        fontWeight: 700,
+        typography: "s2",
+        fontWeight: 500,
         lineHeight: 1,
       }}
     >

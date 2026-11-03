@@ -24,6 +24,7 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 │    postgres · clickhouse · redis · minio · temporal                              │
 │    backend · worker (ALL_QUEUES) · frontend · fi-collector · observation consumer                       │
 │    agentcc-gateway ──► mock-llm (OpenAI-compatible, deterministic, no host port) │
+│    backend / worker ─► mock-slack (OAuth and chat, host :28081)                  │
 │    peerdb (catalog · temporal · flow-api · flow-workers · server · minio · init) │
 │      └── CDC mirrors PG→CH: tracer_eval_logger, model_hub_score, datasets,       │
 │          prompts, simulate, usage_apicalllog …                                   │
@@ -34,6 +35,13 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 
 Because code-executor is not started, `e2e/stack/e2e.env` sets `CODE_EXECUTOR_LOCAL_FALLBACK=true` so
 code evals run in the worker instead of failing with "Code executor unavailable".
+
+Error Feed flows use the local mock Slack OAuth/API service and inspect its captured messages at
+`http://localhost:28081/messages`. They seed issue transitions through the authenticated
+`POST /tracer/e2e/feed-issue/` route, which exists only in the distributed E2E backend image.
+That image also supplies its own Error Feed entitlement in E2E-only settings; neither fixture is
+present in the product image. The E2E API and worker share a test-only integration encryption key
+so the worker can decrypt the connection created during OAuth.
 
 Eval results, annotation scores and the dataset/simulation dashboards reach ClickHouse **only**
 through the PeerDB mirrors — Django writes those rows to Postgres alone. That is why PeerDB is part
@@ -49,17 +57,21 @@ yarn install
 npx playwright install chromium
 
 # from the repo root
+bin/e2e build backend        # include the E2E-only issue seeder and entitlement in a local image
 bin/e2e up                   # boot the isolated futureagi-e2e stack
 bin/e2e test                 # run the whole suite against it
 bin/e2e test flows/observe/  # or one area
 bin/e2e test --grep @smoke   # or one tag
+bin/e2e test flows/error-feed/  # Slack alert creation, delivery, and management
+E2E_RECORD_VIDEO=1 bin/e2e test flows/error-feed/  # save browser recordings in test-results
 ```
 
 `bin/e2e up` composes `docker-compose.distributed.yml` (the distributed topology) with `e2e/stack/docker-compose.e2e.yml`, using
-`e2e/stack/e2e.env` and the Compose project name `futureagi-e2e`. It starts an explicit service
+`e2e/stack/e2e.env` and the Compose project name `futureagi-e2e` (override with
+`E2E_COMPOSE_PROJECT` to keep a separate test volume). It starts an explicit service
 list — kept in `SERVICES` in `bin/e2e` so the trimmed set is visible in one place, with
 `COMPOSE_PROFILES=peerdb` in the env file making the profile-gated PeerDB services startable by
-name. The overlay itself is thin: it adds the `mock-llm` service, caps ClickHouse at 3 GB (it is the
+name. The overlay itself is thin: it adds the `mock-llm` and `mock-slack` services, caps ClickHouse at 3 GB (it is the
 first thing an out-of-memory runner kills), sets `restart: "no"` on backend and worker so a crash
 loop fails the run loudly instead of hiding, and gives collector and observation consumer the same image tag. `up` returns
 only after this readiness sequence passes:
@@ -152,6 +164,11 @@ bin/e2e test flows/observe/trace-ingestion.spec.ts
 Any flow with storage-lane assertions needs `E2E_CH_URL` and `E2E_PG_URL` as well — pointed at the
 attached stack's stores. If you omit them the probe hits the managed stack's ports and the spec
 fails at the probe, by design: there is no silent skip.
+
+The existing-customer `test` (see Fixtures below) dates its org through `E2E_PG_URL`, so any flow on
+it needs `E2E_PG_URL` too. Once the Simulate restriction (#3502) is in, the attached backend must also
+set `RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=2026-10-01T00:00:00Z`, as both overlays and the root
+`docker-compose.dev.yml` do, or SIM-E2E-001 and `harness/provisioning.spec.ts` fail.
 
 For split-store attachments, set `E2E_CATALOG_CH_URL` and/or `E2E_CATALOG_CH_DB`
 for catalog assertions (`probe.catalogCh()`). Source assertions (`probe.ch()`)
@@ -309,13 +326,24 @@ test(
 
 ### Fixtures (`lib/fixtures.ts`)
 
-- **`actor`** — _worker-scoped_. Signs up a brand-new user on a brand-new org
+- **`actor`** — _worker-scoped_. Provisions a clean account through the test-image-only
+  `/accounts/e2e/clean-signup/` endpoint (no demo rows or pending seed request).
+  The public `/accounts/signup/` still seeds demos and is exercised by AUTH-E2E-004.
+  Creates a brand-new user on a brand-new org
   (`e2e-w<workerIndex>-<runId>@futureagi.com`), logs in, resolves the organization and default
-  workspace, and mints the org API/secret key pair. The `futureagi.com` domain is deliberate: it is
-  the signup path's reCAPTCHA special case, the belt to the `localhost` Host suspenders. One org per
-  worker is what makes full parallelism safe without truncating anything. It carries
+  workspace, and mints the org API/secret key pair. The `futureagi.com` domain keeps
+  organization naming consistent. One org per worker makes full parallelism safe
+  without truncating anything. It carries
   `actor.api` — an `ApiClient` already sending `Authorization`, `X-Organization-Id` and
-  `X-Workspace-Id`.
+  `X-Workspace-Id`. Both stacks set `RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF` to
+  2026-10-01T00:00:00Z, so once the Simulate restriction (#3502) is in, this org is a new
+  customer's: in Simulate it sees only Environments.
+- **The existing-customer `test`** (`lib/existing-customer.ts`) — the same fixtures, but `actor`'s org
+  is dated 2026-09-30, before the cutoff, so it keeps every Simulate page. Import `test` and `expect`
+  from it instead of `lib/fixtures` only for a flow that needs something new orgs lose (Agent
+  Definition, Scenarios, Run Simulation, a prompt's Simulation tab, Observe's Replay actions), in a
+  spec file of its own: `flows/observe/agent-call-log-pager.spec.ts` is the example.
+  `harness/existing-customer.spec.ts` pins it.
 - **`page`** — the built-in fixture, but its `context` is overridden to run `authInitScript` before
   any app code: it seeds `localStorage.accessToken/refreshToken/rememberMe` and
   `sessionStorage.organizationId/workspaceId`, so specs start already signed in. A spec that tests
@@ -541,6 +569,16 @@ released `:latest` — so a frontend-only PR does not rebuild the backend. The j
 catalog, boots the stack with `bin/e2e up`, runs `bin/e2e test`, and always uploads the Playwright
 HTML report (7-day retention); on failure it dumps `bin/e2e ps` and the last 200 log lines. The
 `E2E Tests Pass` gate fails closed unless every dependency succeeded or was legitimately skipped.
+
+After the Playwright suite, the same job runs the SDK live suites from
+[futureagi-sdk](https://github.com/future-agi/futureagi-sdk) against the stack it booted, on every
+PR and push: `python/tests/platform` calls every operation of the generated Python client and
+`src/platform/__tests__/live.test.ts` covers the TypeScript transport, so a backend change that
+breaks the SDKs fails here before it ships. The SDK checkout is the branch named like the PR's
+branch when the SDK repository has one, else the base branch (`dev` or `main`); a manual run can
+name any ref with the `sdk-ref` input. The account comes from `sdkgen/local_api_key.py --signup`
+(signup, token, user-info, keys — the same calls as `lib/provisioning.ts`). The suites take about a
+minute; they are skipped only when the stack never booted.
 
 The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
 the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`

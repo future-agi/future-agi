@@ -52,18 +52,25 @@ def _builder(cls, days=7):
 def test_page_hydration_carries_the_union_of_the_three_payloads(cls):
     sql, params = _builder(cls).build_page_hydration_query([SESSION])
 
-    # Aggregates.
+    # Aggregates. Cost and tokens sum the session's member spans (as the
+    # session detail does), with the root sums kept as the fallback.
     for projection in (
         "min(start_time) AS session_start",
         "max(end_time) AS session_end",
-        "sum(cost) AS total_cost",
-        "sum(total_tokens) AS total_tokens",
+        "sum(cost) AS root_total_cost",
+        "sum(total_tokens) AS root_total_tokens",
+        "sum(trace_cost) AS member_total_cost",
+        "sum(trace_tokens) AS member_total_tokens",
         "uniqExact(trace_id) AS traces_count",
+        ") AS total_cost",
+        ") AS total_tokens",
     ):
         assert projection in sql
-    # Messages.
-    assert "argMin(input, start_time) AS first_message" in sql
-    assert "argMax(input, start_time) AS last_message" in sql
+    # Messages: the root input of the first/last trace, else that trace's
+    # first LLM span input, read by exact key.
+    assert "argMin(input, start_time) AS root_first_message" in sql
+    assert "argMax(input, start_time) AS root_last_message" in sql
+    assert ") AS first_message" in sql and ") AS last_message" in sql
     # Root attributes, one array per payload the merge reads back.
     for array_column, _key in cls.PAGE_ATTRIBUTE_ARRAY_COLUMNS:
         assert f"has_span_attributes) AS {array_column}" in sql
@@ -79,6 +86,12 @@ def test_page_hydration_reads_the_page_roots_once(cls):
     assert sql.count("candidate_root_identities AS (") == 1
     assert sql.count("latest_roots AS (") == 1
     assert sql.count("GROUP BY session_id") == 1
+    # The member pass is acquired once and materialized once as a scalar, so
+    # its two consumers never repeat the member scan.
+    assert sql.count("candidate_member_identities AS (") == 1
+    assert sql.count(") AS member_rollup_rows") == 1
+    # The only content the member pass reads is the page's message inputs.
+    assert sql.count("argMax(tuple(input),") == 2
     # The hydrations this replaces are gone, not merely unused.
     for removed in (
         "build_page_metrics_query",

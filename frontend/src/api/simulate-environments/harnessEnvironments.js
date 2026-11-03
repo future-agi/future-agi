@@ -1,5 +1,6 @@
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
+import { versionPickFields } from "./versions";
 
 /**
  * The dedicated environments resource, mirroring `src/api/harness/harness.js`.
@@ -27,10 +28,15 @@ const environmentEvaluationPath = (id, evalConfigId) =>
     { id, eval_config_id: evalConfigId },
   );
 
-export const listHarnessEnvironments = async ({ page, limit } = {}) => {
+export const listHarnessEnvironments = async ({
+  page,
+  limit,
+  agentDefinitionId,
+} = {}) => {
   const params = {};
   if (page != null) params.page = page;
   if (limit != null) params.limit = limit;
+  if (agentDefinitionId) params.agent_definition_id = agentDefinitionId;
   return (await axios.get(environmentsPath(), { params })).data;
 };
 
@@ -43,16 +49,19 @@ export const deleteHarnessEnvironment = async (id) =>
 export const getHarnessEnvironment = async (id) =>
   (await axios.get(environmentPath(id))).data;
 
+// `picks` ({agent, environment, suite} → version id) carries only the pieces
+// the user changed; the rest run the environment's defaults.
 export const runHarnessEnvironment = async (
   id,
   scenarioIds,
   trials,
   idempotencyKey,
+  picks,
 ) =>
   (
     await axios.post(
       environmentRunPath(id),
-      { scenario_ids: scenarioIds, trials },
+      { scenario_ids: scenarioIds, trials, ...versionPickFields(picks) },
       { headers: { "Idempotency-Key": idempotencyKey } },
     )
   ).data;

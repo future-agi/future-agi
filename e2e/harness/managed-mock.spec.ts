@@ -96,9 +96,26 @@ const backgroundEnvironment = {
   AGENTCC_GATEWAY_INTERNAL_URL: 'http://agentcc-gateway:8080', MODEL_SERVING_URL: 'http://mock-llm:8080',
   ENV_TYPE: 'local', EE_LICENSE_KEY: '', NO_STARTUP_DB_MUTATIONS: 'true', OTEL_ENABLED: 'false',
   FUTURE_AGI_TELEMETRY_DISABLED: 'true', TEMPORAL_HOST: 'temporal:7233', TEMPORAL_NAMESPACE: 'default',
-  DJANGO_SETTINGS_MODULE: 'tfc.settings.settings', MAILGUN_API_KEY: '',
+  DJANGO_SETTINGS_MODULE: 'tfc.settings.e2e', MAILGUN_API_KEY: '',
   TEMPORAL_ALL_QUEUES: 'true', TEMPORAL_EXCLUDED_QUEUES: 'simulation_runner',
 };
+
+test('managed mock allows only exact local Slack fixtures on application services', () => {
+  const slack = {
+    SLACK_CLIENT_ID: 'e2e-client', SLACK_CLIENT_SECRET: 'e2e-secret',
+    SLACK_OAUTH_AUTHORIZE_URL: 'http://localhost:28081/oauth/v2/authorize',
+    SLACK_REDIRECT_URI: 'http://localhost:8100/integrations/slack/callback/',
+    SLACK_API_URL: 'http://mock-slack:8080/api',
+  };
+  validateMockEnvironment('backend', { ...backgroundEnvironment, ...slack }, true);
+  validateMockEnvironment('worker', { ...backgroundEnvironment, SLACK_API_URL: slack.SLACK_API_URL }, true);
+  expect(() => validateMockEnvironment('backend', { ...backgroundEnvironment, ...slack,
+    SLACK_API_URL: 'https://slack.com/api' }, true)).toThrow('SLACK_CLIENT_ID');
+  expect(() => validateMockEnvironment('backend', { ...backgroundEnvironment, ...slack,
+    SLACK_CLIENT_SECRET: 'private' }, true)).toThrow('SLACK_CLIENT_SECRET');
+  expect(() => validateMockEnvironment('app', { ...backgroundEnvironment, ...slack }, true))
+    .toThrow('SLACK_CLIENT_ID');
+});
 
 for (const evalBackground of [false, true]) {
   test(`managed mock accepts only the optional E2E webhook secret (background=${evalBackground})`, async () => {
@@ -271,7 +288,9 @@ function composedStandaloneEnvironment(): Record<string, string> {
     .split('\n').filter(line => /^[A-Z_][A-Z0-9_]*=/.test(line))
     .map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
   const compose = parse(readFileSync(new URL('../../docker-compose.yml', import.meta.url), 'utf8'));
-  return Object.fromEntries(Object.entries(compose.services.app.environment as Record<string, unknown>)
+  const overlay = parse(readFileSync(new URL('../stack/docker-compose.standalone-e2e.yml', import.meta.url), 'utf8'));
+  const environment = { ...compose.services.app.environment, ...overlay.services.app.environment };
+  return Object.fromEntries(Object.entries(environment as Record<string, unknown>)
     .map(([key, value]) => [key, String(value ?? '').replace(/\$\{([A-Z0-9_]+)(?::?-([^}]*))?\}/g,
       (_, name: string, fallback?: string) => vars[name] || fallback || '')]));
 }
@@ -341,15 +360,22 @@ function fakeStack(stack: 'standalone' | 'distributed') {
   const gatewayConfig = repoFile('stack/gateway.e2e.yaml');
   const mock: FakeContainer = { service: 'mock-llm', cmd: ['node', '/srv/server.mjs'], entrypoint: ['docker-entrypoint.sh'],
     mounts: [[repoFile('stack/mock-llm/server.mjs'), '/srv/server.mjs']] };
+  const mockSlack: FakeContainer = { service: 'mock-slack', cmd: ['node', '/srv/server.mjs'], entrypoint: ['docker-entrypoint.sh'],
+    ports: { '8080/tcp': port(E2E.slackMockUrl) },
+    mounts: [[repoFile('stack/mock-slack/server.mjs'), '/srv/server.mjs']] };
   const stores: FakeContainer[] = [{ service: 'postgres', ports: { '5432/tcp': port(E2E.pgUrl) } },
     { service: 'clickhouse', ports: { '8123/tcp': port(E2E.chUrl) } }];
   const services: FakeContainer[] = stack === 'standalone' ? [{ service: 'app', env: composedStandaloneEnvironment(),
     ports: { '3000/tcp': port(E2E.appUrl), '8000/tcp': port(E2E.apiUrl), '8080/tcp': port(E2E.gatewayUrl) },
     extraHosts: ['code-executor:127.0.0.1', 'agentcc-gateway:127.0.0.1'],
-    mounts: [[gatewayConfig, '/etc/futureagi/secrets/agentcc.yaml'], ['/dev/null', '/etc/futureagi/secrets/vertex.json']],
+    mounts: [[gatewayConfig, '/etc/futureagi/secrets/agentcc.yaml'], ['/dev/null', '/etc/futureagi/secrets/vertex.json'],
+      [repoFile('stack/backend/settings_e2e.py'), '/app/backend/tfc/settings/e2e.py'],
+      [repoFile('stack/backend/urls_e2e.py'), '/app/backend/tfc/urls_e2e.py'],
+      [repoFile('stack/backend/e2e_clean_signup.py'), '/app/backend/accounts/views/e2e_clean_signup.py'],
+      [repoFile('stack/backend/e2e_feed_issue.py'), '/app/backend/tracer/views/e2e_feed_issue.py']],
   }, mock, ...stores] : [{ service: 'agentcc-gateway', cmd: ['--config', '/app/config.yaml'],
     entrypoint: ['/app/agentcc-gateway'], ports: { '8080/tcp': port(E2E.gatewayUrl) },
-    mounts: [[gatewayConfig, '/app/config.yaml']] }, mock,
+    mounts: [[gatewayConfig, '/app/config.yaml']] }, mock, mockSlack,
   { service: 'backend', ports: { '80/tcp': port(E2E.apiUrl) }, env: { OPENAI_API_KEY: 'e2e-mock' } },
   { service: 'worker' }, { service: 'frontend', ports: { '80/tcp': port(E2E.appUrl) } }, ...stores];
   const containers = services.map((c, i) => ({
@@ -390,7 +416,7 @@ function withFakeDocker<T>(dir: string, stack: 'standalone' | 'distributed', fil
   }
 }
 
-const offlineEndpoints = () => [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl]
+const offlineEndpoints = () => [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl, E2E.slackMockUrl]
   .every(url => new URL(url).hostname === 'localhost');
 
 for (const stack of ['standalone', 'distributed'] as const) {
@@ -399,7 +425,7 @@ for (const stack of ['standalone', 'distributed'] as const) {
     const receipt = withFakeDocker(testInfo.outputPath('docker'), stack, fakeStack(stack), () => inspectManagedMock());
     expect(receipt.services.map(s => s.service)).toEqual(stack === 'standalone'
       ? ['app', 'mock-llm', 'postgres', 'clickhouse']
-      : ['agentcc-gateway', 'mock-llm', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
+      : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
   });
 
   test(`managed mock refuses a ${stack} network the project does not own`, ({}, testInfo) => {
@@ -423,7 +449,7 @@ test('managed stack routing has runtime labels, network and read-only source pro
   // (lib/managed-mock-standalone.ts).
   expect(receipt.services.map(s => s.service)).toEqual(process.env.E2E_STACK === 'standalone'
     ? ['app', 'mock-llm', 'postgres', 'clickhouse']
-    : ['agentcc-gateway', 'mock-llm', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
+    : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
   expect(receipt.gatewaySha).toMatch(/^[a-f0-9]{64}$/);
   expect(receipt.mockSha).toMatch(/^[a-f0-9]{64}$/);
   await testInfo.attach('verified-managed-mock', { contentType: 'application/json', body: JSON.stringify(receipt) });
