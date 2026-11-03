@@ -144,7 +144,8 @@ export const CONTRACT_COPY = {
     whenCalled: (action) => `When the agent calls ${action}`,
     ifNoAnswer: "If they do not answer",
     graderMaterial: "Grader material",
-    othersPrivate: (id) => `${id}'s`,
+    othersPrivate: (fields, count) =>
+      `What the ${count === 1 ? "other actor keeps" : `${count} other actors each keep`} to themselves: ${fields}`,
     // What the view's inputs are called on screen; an input a newer release adds shows by its own name.
     inputs: {
       "actor.name": "Name",

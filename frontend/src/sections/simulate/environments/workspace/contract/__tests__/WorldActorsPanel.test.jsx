@@ -23,6 +23,12 @@ vi.mock("src/api/simulate-environments/versions", () => ({
         "scenario.solution",
         "scenario.sub_goals",
         "file.sub_goals.json",
+        "colleague.goal",
+        "colleague.prompt",
+        "colleague_2.goal",
+        "colleague_2.prompt",
+        "colleague_3.goal",
+        "colleague_3.prompt",
       ],
     },
   }),
@@ -130,6 +136,11 @@ describe("WorldActorsPanel", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText("Grader material: solution, sub goals, sub_goals.json"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "What the 3 other actors each keep to themselves: goal, prompt",
+      ),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByText("Hide what they see"));
     expect(screen.getByText("What they see")).toBeInTheDocument();

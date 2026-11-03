@@ -60,7 +60,13 @@ const hidden = (names) => {
     else if (head === "scenario") grader.push(words(field));
     else (others[head] ||= []).push(words(field));
   }
-  return { grader, others };
+  // Every other actor keeps the same fields to itself, so one line per field set, not one per actor.
+  const groups = {};
+  for (const fields of Object.values(others)) {
+    const key = fields.join(", ");
+    groups[key] = (groups[key] || 0) + 1;
+  }
+  return { grader, others: Object.entries(groups) };
 };
 // An id made from a name: lowercase letters, digits and underscores, unique in the cast (`sam_lee`, `sam_lee_2`).
 const idFrom = (name, taken) => {
@@ -339,11 +345,10 @@ function ActorRow({ envId, actor, locked, onEdit, onRemove }) {
                 sx={quiet}
               >{`${C.graderMaterial}: ${shown.grader.join(", ")}`}</Typography>
             )}
-            {Object.entries(shown.others).map(([id, fields]) => (
-              <Typography
-                key={id}
-                sx={quiet}
-              >{`${C.othersPrivate(id)} ${fields.join(", ")}`}</Typography>
+            {shown.others.map(([fields, count]) => (
+              <Typography key={fields} sx={quiet}>
+                {C.othersPrivate(fields, count)}
+              </Typography>
             ))}
           </Stack>
         )}
