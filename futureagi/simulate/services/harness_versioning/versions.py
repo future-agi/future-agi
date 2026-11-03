@@ -479,6 +479,24 @@ def _add_members(
     )
 
 
+def with_actor_digests(
+    version: HarnessEnvironmentVersion, documents: Mapping[str, Any]
+) -> dict[str, Any]:
+    """A version's documents with its actor digests. A version saved before they were recorded has its cast read
+    from its own files, so an actor it already had never reads as added."""
+    documents = dict(documents or {})
+    if "actor_digests" not in documents and version.archive_object_key:
+        try:
+            files = archives.read_archive(
+                archives.get_archive(version.archive_object_key)
+            )
+        except S3Error:
+            # Its files are gone: its cast is unknown, as before.
+            return documents
+        documents["actor_digests"] = hashing.actor_digests(files)
+    return documents
+
+
 def environment_change(
     base: HarnessEnvironmentVersion | None,
     contract: Any,
@@ -487,7 +505,7 @@ def environment_change(
     """The environment documents' diff against ``base``, and its summary."""
     diff = None
     if base is not None:
-        previous = base.documents or {}
+        previous = with_actor_digests(base, base.documents)
         diff = diffs.environment_diff(
             previous_contract=previous.get("contract"),
             contract=contract,

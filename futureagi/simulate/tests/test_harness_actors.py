@@ -664,3 +664,44 @@ def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is
         "colleague's channel 'smoke_signal' is not one of: audio_mix, audio_handoff, ivr."
         in bad_channel.json()["message"]
     )
+
+
+def test_an_actor_a_version_saved_before_actor_digests_already_had_reads_as_changed_not_added(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_versioning.drafts import fresh_draft
+
+    colleague = {"id": "colleague", "name": "Jordan", "channel": "audio_mix"}
+    environment = record_tests._environment(user, workspace, "actors-old-version")
+    record_authoring(
+        environment,
+        _authoring(
+            contract=CRM_CONTRACT,
+            **{"sub_actors.json": json.dumps({"sub_actors": [colleague]})},
+        ),
+        origin="authoring",
+    )
+    environment.refresh_from_db()
+    # As every version saved before actor digests were recorded.
+    version = environment.environment_version
+    version.documents = {
+        key: value
+        for key, value in (version.documents or {}).items()
+        if key != "actor_digests"
+    }
+    version.save(update_fields=["documents"])
+
+    edited = auth_client.put(
+        f"{BASE}/{environment.id}/actors/colleague/",
+        {"actor": {**colleague, "side": "caller", "role": "the caller's colleague"}},
+        format="json",
+    )
+
+    assert edited.status_code == 200, edited.content
+    draft = fresh_draft(environment, "environment")
+    assert draft.diff["actors"] == {
+        "added": [],
+        "changed": ["colleague"],
+        "removed": [],
+    }
+    assert draft.summary == "1 actor changed"
