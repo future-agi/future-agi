@@ -7,12 +7,10 @@ import FormControlLabel from "@mui/material/FormControlLabel";
 
 import DataTablePagination from "src/components/data-table/DataTablePagination";
 
-// ----------------------------------------------------------------------
 // Adapter for screens that still speak MUI's TablePagination props
 // (count / page / rowsPerPage / onPageChange(event, page) / ...). It renders
 // the one DS footer, DataTablePagination ("Rows per page"), so every table
 // pages the same way.
-// ----------------------------------------------------------------------
 
 export default function TablePaginationCustom({
   dense,

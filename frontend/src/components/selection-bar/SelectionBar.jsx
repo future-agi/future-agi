@@ -11,12 +11,10 @@ import {
 
 import Iconify from "src/components/iconify";
 
-// ----------------------------------------------------------------------
 // Future AGI Design System · Selection bar. Replaces the per-screen
 // "N selected · actions · Cancel" bars. One look everywhere: the count in
 // text, neutral ghost actions with 16px icons, Cancel last. Destructive
 // actions are neutral here; red belongs to the confirm dialog they open.
-// ----------------------------------------------------------------------
 
 export default function SelectionBar({
   count,

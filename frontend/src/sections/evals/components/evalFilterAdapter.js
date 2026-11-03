@@ -1,8 +1,6 @@
-// ---------------------------------------------------------------------------
 // Eval library filter: the shared Filter panel over the eval list's fields.
 // State stays the API-shaped object EvalsListView and EvalPickerList read:
 //   { search, owner, template_type, eval_type[], output_type[], tags[] }
-// ---------------------------------------------------------------------------
 export const EVAL_FILTER_FIELDS = [
   {
     id: "name",

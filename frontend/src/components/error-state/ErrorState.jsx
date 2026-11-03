@@ -7,7 +7,6 @@ import EmptyContent from "src/components/empty-content";
 import Iconify from "src/components/iconify";
 import { statusColors } from "src/utils/runStatus";
 
-// ----------------------------------------------------------------------
 // Design System error state: the empty-state layout with the icon square in
 // status.danger, a plain-language title, the detail in tertiary text and a
 // Retry action when a retry function exists.

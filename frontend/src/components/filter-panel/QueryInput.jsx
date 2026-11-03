@@ -35,9 +35,6 @@ import React, {
 } from "react";
 import Iconify from "src/components/iconify";
 
-// ---------------------------------------------------------------------------
-// Operators
-// ---------------------------------------------------------------------------
 const STRING_OPERATORS = [
   { value: "contains", label: "Contains" },
   { value: "equals", label: "Equals" },
@@ -61,9 +58,7 @@ function getOperators(fieldDef) {
   return allowed ? base.filter((op) => allowed.includes(op.value)) : base;
 }
 
-// ---------------------------------------------------------------------------
-// EnumValuePicker — checkbox multi-select popover (matches trace filter design)
-// ---------------------------------------------------------------------------
+// Checkbox multi-select popover (matches trace filter design).
 function EnumValuePicker({
   choices,
   value = [],
@@ -381,9 +376,6 @@ function EnumValuePicker({
   );
 }
 
-// ---------------------------------------------------------------------------
-// FilterRow — single row: field → operator → value
-// ---------------------------------------------------------------------------
 function FilterRow({
   filter,
   index,
@@ -484,9 +476,6 @@ FilterRow.propTypes = {
   onRemove: PropTypes.func.isRequired,
 };
 
-// ---------------------------------------------------------------------------
-// QueryInput — inline token builder (field → operator → value)
-// ---------------------------------------------------------------------------
 /**
  * @param {Array} filterFields — field definitions
  * @param {Object} fieldMap — { fieldValue: fieldDef }

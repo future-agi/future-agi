@@ -5,12 +5,10 @@ import { keyframes, useTheme } from "@mui/material/styles";
 
 import { runStatusOf, statusColors, STATUS_ROLES } from "src/utils/runStatus";
 
-// ----------------------------------------------------------------------
 // Future AGI Design System · Badge and status. Two ways to show state:
 // a tinted badge where status is the point of the cell, or a dot + label
 // where the row has lots going on and for every neutral state. Never
 // outlined in colour, never colour alone. Colours come from theme.palette.status via the one status map.
-// ----------------------------------------------------------------------
 
 const pulse = keyframes`
   0%, 100% { opacity: 1; }

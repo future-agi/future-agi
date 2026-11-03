@@ -4,13 +4,11 @@ import { Box, Stack, Tooltip, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 
-// ----------------------------------------------------------------------
 // Future AGI Design System · Page header. One header for every page: a 16px
 // title (with an optional status badge next to it), one line of description
 // in fg.tertiary, actions on the right — at most one primary button. No icon
 // tiles, no coloured titles. `info` puts the description in a tooltip instead.
 // Page rhythm: header → tabs 12px, tabs → toolbar 12px, toolbar → table 8px.
-// ----------------------------------------------------------------------
 
 export default function PageHeader({ title, badge, description, info, actions, back, sx }) {
   return (

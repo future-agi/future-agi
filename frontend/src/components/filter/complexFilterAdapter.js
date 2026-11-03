@@ -76,9 +76,7 @@ const optionList = (options = []) =>
       : { value: option, label: String(option) },
   );
 
-// ---------------------------------------------------------------------------
 // Definition tree -> leaves
-// ---------------------------------------------------------------------------
 
 const isPreset = (def) =>
   Boolean(def?.hideValueSelector) && !def?.dependents?.length;
@@ -377,9 +375,7 @@ export const leavesToFields = (leaves = []) =>
     };
   });
 
-// ---------------------------------------------------------------------------
 // ComplexFilter state -> panel rows
-// ---------------------------------------------------------------------------
 
 const panelRowBase = (leaf, field) => ({
   field: leaf.id,
@@ -547,9 +543,7 @@ export const toPanelValue = (filters = [], leaves = []) => {
   return rows;
 };
 
-// ---------------------------------------------------------------------------
 // Panel rows -> ComplexFilter state
-// ---------------------------------------------------------------------------
 
 const metaFor = (chain) => {
   const meta = { parentProperty: selectionOf(chain[0]) };

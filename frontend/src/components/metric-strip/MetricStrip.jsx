@@ -4,13 +4,11 @@ import { Box, ButtonBase, Tooltip, Typography } from "@mui/material";
 
 import { STATUS_ROLES } from "src/utils/runStatus";
 
-// ----------------------------------------------------------------------
 // Future AGI Design System · Metric strip. A page's few headline numbers in
 // one bordered strip divided by hairlines — not a row of separate cards.
 // Label in caption/fg.tertiary, value 20px/600 in fg.default with tabular
 // figures, optional change. Colour goes only on the change or a verdict hint
 // (role), never on the number itself.
-// ----------------------------------------------------------------------
 
 const DELTA = { better: "status.success.fg", worse: "status.danger.fg", flat: "text.tertiary" };
 

@@ -14,7 +14,6 @@ import {
 
 import Iconify from "src/components/iconify";
 
-// ----------------------------------------------------------------------
 // Design System empty state. One component for every "nothing here" screen.
 //
 //   variant="first-run"  – nothing exists yet. Rendered in the content area

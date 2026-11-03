@@ -2,14 +2,12 @@ import React from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 
-// ----------------------------------------------------------------------
 // Future AGI Design System · Section. A titled block of a page: 14px/600
 // title, optional one-line description and actions, then the content.
 // `variant="plain"` (default) sits on the page with no box; `"panel"` adds
 // the one panel style (1px border.default, radius 8, no shadow). Never nest
 // a panel inside a panel — use plain inside. Pass `onClick` for a whole-panel
 // click target (hover tint, keyboard activation).
-// ----------------------------------------------------------------------
 
 export default function Section({
   title,
