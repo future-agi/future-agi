@@ -51583,6 +51583,30 @@
                         "required": false,
                         "type": "string",
                         "format": "uuid"
+                    },
+                    {
+                        "name": "environment_version_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "suite_version_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "keys",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
                     }
                 ],
                 "responses": {
@@ -51590,6 +51614,49 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/HarnessCapabilityReport"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/capabilities/recheck/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_capabilities_recheck_capabilities",
+                "description": "Check the agent again (its preflight, when it failed or never finished) so the report reads it anew; the\nworld is checked again only by a new build for now. Starts no run.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessCapabilityRecheck"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessCapabilityRecheckResponse"
                         }
                     },
                     "default": {
@@ -128973,6 +129040,86 @@
                 }
             }
         },
+        "HarnessCapabilityFixRecheck": {
+            "required": [
+                "scope",
+                "check",
+                "available"
+            ],
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "title": "Scope",
+                    "type": "string",
+                    "enum": [
+                        "agent",
+                        "world"
+                    ]
+                },
+                "check": {
+                    "title": "Check",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "available": {
+                    "title": "Available",
+                    "description": "False for the world: a rebuild reads it again until a check-only job exists.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessCapabilityFix": {
+            "required": [
+                "type",
+                "text",
+                "target",
+                "repair",
+                "flips_when",
+                "recheck",
+                "available"
+            ],
+            "type": "object",
+            "properties": {
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "string"
+                },
+                "target": {
+                    "description": "The tools, fields or checks it names.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "repair": {
+                    "title": "Repair",
+                    "description": "The screen that repairs it: agent.tools, agent.source...",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "flips_when": {
+                    "title": "Flips when",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "recheck": {
+                    "$ref": "#/definitions/HarnessCapabilityFixRecheck"
+                },
+                "available": {
+                    "title": "Available",
+                    "type": "boolean"
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessCapabilityRow": {
             "required": [
                 "id",
@@ -129055,10 +129202,7 @@
                     "x-nullable": true
                 },
                 "fix": {
-                    "title": "Fix",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
+                    "$ref": "#/definitions/HarnessCapabilityFix"
                 },
                 "fix_type": {
                     "title": "Fix type",
@@ -129089,7 +129233,8 @@
                 "eligible",
                 "blocked",
                 "untested",
-                "requirements_recorded"
+                "requirements_recorded",
+                "dropped"
             ],
             "type": "object",
             "properties": {
@@ -129112,11 +129257,23 @@
                 "requirements_recorded": {
                     "title": "Requirements recorded",
                     "type": "boolean"
+                },
+                "dropped": {
+                    "description": "Scenarios no longer in the suite; counted in none of the others.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
                 }
             }
         },
         "HarnessCapabilityReport": {
             "required": [
+                "evidence_unreadable",
                 "environment_version_id",
                 "agent_version_id",
                 "catalog_version",
@@ -129128,6 +129285,11 @@
             ],
             "type": "object",
             "properties": {
+                "evidence_unreadable": {
+                    "title": "Evidence unreadable",
+                    "description": "The build's evidence could not be read; all is Untested.",
+                    "type": "boolean"
+                },
                 "environment_version_id": {
                     "title": "Environment version id",
                     "type": "string",
@@ -129168,6 +129330,56 @@
                 },
                 "computed_at": {
                     "title": "Computed at",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessCapabilityRecheck": {
+            "required": [
+                "scope"
+            ],
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "title": "Scope",
+                    "type": "string",
+                    "enum": [
+                        "agent",
+                        "world",
+                        "all"
+                    ]
+                },
+                "check": {
+                    "title": "Check",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessCapabilityRecheckResponse": {
+            "required": [
+                "scope",
+                "agent_version_id",
+                "state"
+            ],
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "title": "Scope",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "state": {
+                    "title": "State",
+                    "description": "started, or not_needed when the last check passed",
                     "type": "string",
                     "minLength": 1
                 }

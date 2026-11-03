@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1108,
+  endpointCount: 1109,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28585,10 +28585,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
               format: "uuid",
             },
           },
+          environment_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          suite_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          keys: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                minLength: 1,
+              },
+            },
+          },
         },
         responses: {
           200: {
             $ref: "#/definitions/HarnessCapabilityReport",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/capabilities/recheck/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_capabilities_recheck_capabilities",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessCapabilityRecheck",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessCapabilityRecheckResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -64787,8 +64831,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessCapabilityRecheck: {
+      required: ["scope"],
+      type: "object",
+      properties: {
+        scope: {
+          title: "Scope",
+          type: "string",
+          enum: ["agent", "world", "all"],
+        },
+        check: {
+          title: "Check",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessCapabilityRecheckResponse: {
+      required: ["scope", "agent_version_id", "state"],
+      type: "object",
+      properties: {
+        scope: {
+          title: "Scope",
+          type: "string",
+          minLength: 1,
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        state: {
+          title: "State",
+          description: "started, or not_needed when the last check passed",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessCapabilityReport: {
       required: [
+        "evidence_unreadable",
         "environment_version_id",
         "agent_version_id",
         "catalog_version",
@@ -64800,6 +64885,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        evidence_unreadable: {
+          title: "Evidence unreadable",
+          description:
+            "The build's evidence could not be read; all is Untested.",
+          type: "boolean",
+        },
         environment_version_id: {
           title: "Environment version id",
           type: "string",
@@ -96441,10 +96532,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         fix: {
-          title: "Fix",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
+          $ref: "#/definitions/HarnessCapabilityFix",
         },
         fix_type: {
           title: "Fix type",
@@ -96476,6 +96564,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "blocked",
         "untested",
         "requirements_recorded",
+        "dropped",
       ],
       type: "object",
       properties: {
@@ -96498,6 +96587,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requirements_recorded: {
           title: "Requirements recorded",
           type: "boolean",
+        },
+        dropped: {
+          description:
+            "Scenarios no longer in the suite; counted in none of the others.",
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
         },
       },
     },
@@ -115409,6 +115510,59 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessCapabilityFix: {
+      required: [
+        "type",
+        "text",
+        "target",
+        "repair",
+        "flips_when",
+        "recheck",
+        "available",
+      ],
+      type: "object",
+      properties: {
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+        },
+        target: {
+          description: "The tools, fields or checks it names.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        repair: {
+          title: "Repair",
+          description:
+            "The screen that repairs it: agent.tools, agent.source...",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        flips_when: {
+          title: "Flips when",
+          type: "string",
+          minLength: 1,
+        },
+        recheck: {
+          $ref: "#/definitions/HarnessCapabilityFixRecheck",
+        },
+        available: {
+          title: "Available",
+          type: "boolean",
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessCompareInterval: {
       description: "Newcombe 95% interval of the difference.",
       required: ["low", "high"],
@@ -123494,6 +123648,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
+        },
+      },
+    },
+    HarnessCapabilityFixRecheck: {
+      required: ["scope", "check", "available"],
+      type: "object",
+      properties: {
+        scope: {
+          title: "Scope",
+          type: "string",
+          enum: ["agent", "world"],
+        },
+        check: {
+          title: "Check",
+          type: "string",
+          minLength: 1,
+        },
+        available: {
+          title: "Available",
+          description:
+            "False for the world: a rebuild reads it again until a check-only job exists.",
+          type: "boolean",
         },
       },
     },
