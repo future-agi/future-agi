@@ -76,22 +76,41 @@ export const RUN_STATUS = {
   dead_letter: { role: "neutral", label: "Dead letter" },
 };
 
+// camelCase, kebab-case and spaces all become snake_case: "NotStarted",
+// "not-started" and "Not started" are the same key.
 const key = (v) =>
   v
     ?.toString?.()
     .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .toLowerCase()
     .replace(/[\s-]+/g, "_") || "";
 
 // Free-form values (API strings, labels) fall back to the closest role.
+// Negated and partial forms are checked before success, so "unhealthy",
+// "incomplete" or "not_connected" never read as green. They land where the
+// map puts their nearest entry: unreachable is danger, partial and open are
+// warning, not_run and disconnected are neutral.
 function inferRole(k) {
   if (!k) return "neutral";
-  if (/fail|error|broken|reject|denied|invalid/.test(k)) return "danger";
+  if (/fail|error|broken|reject|denied|invalid|unsuccess|unhealth/.test(k))
+    return "danger";
+  if (/partial|(^|_)(in|un|not_)(complet|resolv|finish)/.test(k))
+    return "warning";
+  if (
+    /(^|_)(not|non|no)_|(^|_)(un|dis)(connect|start|run)/.test(k) ||
+    /(^|_)(un|in|non|dis)(pass|success|ok|complete|resolved|healthy|connected)/.test(
+      k,
+    )
+  )
+    return "neutral";
   if (/pass|success|ok\b|^ok|complete|resolved|healthy|connected/.test(k))
     return "success";
-  if (/warn|flaky|review|attention|degraded|partial|expir/.test(k))
-    return "warning";
-  if (/run|progress|process|sync|build|start/.test(k)) return "info";
+  if (/warn|flaky|review|attention|degraded|expir/.test(k)) return "warning";
+  if (
+    /run|progress|process|sync|build|start|(evaluat|edit|finali[sz])ing/.test(k)
+  )
+    return "info";
   if (/suggest|ai_|new\b/.test(k)) return "discovery";
   return "neutral";
 }
