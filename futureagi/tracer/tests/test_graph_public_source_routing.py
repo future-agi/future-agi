@@ -426,7 +426,8 @@ def test_exact_trace_reader_preserves_raw_date_in_real_identity_classifier(
     # Raw membership is classified, not reapplied to contributions. SQL keys
     # are bound placeholders, so inspect the exact bound key rather than only
     # looking for a literal map expression in the rendered query.
-    assert key not in params.values()
+    assert f"attrs_string['{key}']" not in query
+    assert key not in {value for name, value in params.items() if "filter_key_" in name}
     assert "attrs_number" not in query and "attributes_extra" not in query
 
 

@@ -5601,7 +5601,8 @@ def test_exact_trace_graph_merges_all_contribution_batches_before_averages(
     # Compact attrs_string monetary flags remain a legitimate projection.
     membership_keys = {"final_status", "confidence"}
     assert all(
-        not any(
+        not any(f"attrs_string['{key}']" in call[0] for key in membership_keys)
+        and not any(
             value in membership_keys
             for name, value in call[1].items()
             if "filter_key_" in name
@@ -5795,6 +5796,7 @@ def test_exact_trace_graph_delegates_scalar_array_map_and_json_membership(
     assert "trace_id IN %(graph_candidate_trace_ids)s" in query
     assert "AS graph_cost_flags" in query
     membership_keys = {"final_status", "tags", "profile", "legacy_payload"}
+    assert not any(f"attrs_string['{key}']" in query for key in membership_keys)
     assert not any(
         value in membership_keys
         for name, value in params.items()
@@ -6254,6 +6256,7 @@ def test_exact_graph_budget_failure_does_not_publish_or_split_contribution_batch
     assert (params["start_date"], params["end_date"]) == (start, end)
     assert "AS graph_cost_flags" in query
     membership_keys = {"final_status", "confidence"}
+    assert not any(f"attrs_string['{key}']" in query for key in membership_keys)
     assert not any(
         value in membership_keys
         for name, value in params.items()
