@@ -347,6 +347,95 @@ def _goals_payload(scenario) -> dict | None:
     }
 
 
+_CALLER_SETTINGS = (
+    "initial_message",
+    "initial_message_delay",
+    "language",
+    "voice_name",
+    "conversation_speed",
+    "interrupt_sensitivity",
+    "finished_speaking_sensitivity",
+    "max_call_duration_in_minutes",
+)
+_CALL_METRICS = (
+    "duration_seconds",
+    "message_count",
+    "avg_agent_latency_ms",
+    "user_interruption_count",
+    "user_interruption_rate",
+    "ai_interruption_count",
+    "ai_interruption_rate",
+    "avg_stop_time_after_interruption_ms",
+    "user_wpm",
+    "bot_wpm",
+    "talk_ratio",
+)
+# Harness artifact -> the track Omega asks its audio model for.
+_RECORDING_TRACKS = {
+    "recording_combined": "combined",
+    "recording_stereo": "stereo",
+    "recording_assistant": "assistant",
+    "recording_customer": "customer",
+}
+_RECORDING_FORMATS = {"audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3"}
+
+
+def _present(values: dict) -> dict:
+    return {key: value for key, value in values.items() if value is not None}
+
+
+def _call_context(call: CallExecution) -> dict:
+    """What the agent and our caller were told, and how the call ran.
+
+    Verdicts stay out: they reach Omega only as `evaluations`.
+    """
+    metadata = call.call_metadata or {}
+    version = call.agent_version
+    agent = (version.configuration_snapshot if version else None) or {}
+    harness_call = (metadata.get("hosted_harness_receipt") or {}).get("call") or {}
+    return {
+        "agent": _present(
+            {
+                "prompt": metadata.get("agent_prompt"),
+                "name": agent.get("agent_name"),
+                "inbound": agent.get("inbound"),
+                "speaks_first": agent.get("target_speaks_first"),
+                "languages": agent.get("languages"),
+            }
+        ),
+        # `dynamic_prompt` is the caller's rendered script; `system_prompt` holds
+        # the same text and is the caller's too, never the agent's.
+        "simulated_caller": _present(
+            {
+                "prompt": metadata.get("dynamic_prompt"),
+                **{key: metadata.get(key) for key in _CALLER_SETTINGS},
+            }
+        ),
+        "call": _present(
+            {
+                "channel": metadata.get("call_channel"),
+                "started_at": call.started_at.isoformat() if call.started_at else None,
+                "stop_reason": harness_call.get("stop_reason"),
+                **{field: getattr(call, field) for field in _CALL_METRICS},
+            }
+        ),
+    }
+
+
+def _recordings(call: CallExecution) -> list[dict]:
+    """The call's recordings Omega's audio model can fetch, one per track."""
+    artifacts = (call.call_metadata or {}).get("hosted_harness_artifacts") or {}
+    recordings = []
+    for name, track in _RECORDING_TRACKS.items():
+        artifact = artifacts.get(name) or {}
+        audio_format = _RECORDING_FORMATS.get(artifact.get("content_type") or "")
+        url = artifact.get("url") or ""
+        # The audio model fetches the link itself, so only a public https link works.
+        if audio_format and url.startswith("https://") and len(url) <= 2048:
+            recordings.append({"track": track, "url": url, "format": audio_format})
+    return recordings
+
+
 def simulation_evidence_page(
     *, attempt_id: uuid.UUID, lease_token: str, cursor: int
 ) -> dict:
@@ -394,7 +483,7 @@ def simulation_evidence_page(
             status__in=_TERMINAL_CALL_STATUSES,
             deleted=False,
         )
-        .select_related("scenario")
+        .select_related("scenario", "agent_version")
         .prefetch_related(
             Prefetch(
                 "transcripts",
@@ -428,6 +517,10 @@ def simulation_evidence_page(
                 "call_summary": call.call_summary,
                 "error_message": call.error_message,
                 "ended_reason": call.ended_reason,
+                # Omega reads a call top to bottom: what it was for and what both
+                # sides were told come before what was said.
+                "goals": authored.get(call.id),
+                "context": _call_context(call),
                 "transcript": [
                     {
                         "id": str(entry.id),
@@ -438,7 +531,6 @@ def simulation_evidence_page(
                     }
                     for entry in call.transcripts.all()
                 ],
-                "goals": authored.get(call.id),
                 # The run's own verdicts: Omega explains how a goal broke, the
                 # evals decide whether it did.
                 "evaluations": [
@@ -450,6 +542,7 @@ def simulation_evidence_page(
                     }
                     for row in eval_rows(call, live_eval_configs)
                 ],
+                "recordings": _recordings(call),
             }
         )
     payload = {"calls": calls, "next_cursor": cursor + len(calls), "total_calls": total}
