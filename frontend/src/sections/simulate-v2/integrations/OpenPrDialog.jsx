@@ -76,7 +76,9 @@ export default function OpenPrDialog({
   meta,
   proof,
   patchText,
+  validation,
 }) {
+  const limited = ["likely", "few"].includes(validation?.key);
   const integrations = useIntegrations();
   const [installOpen, setInstallOpen] = useState(false);
   const { setAgentValues } = useConnectedAgents();
@@ -131,9 +133,11 @@ export default function OpenPrDialog({
     setBase(def.ref || "main");
     setTitle(
       draft?.title ||
-        (summary?.headline
-          ? `Fix: ${summary.headline}`
-          : `Fix ${files.length} issue${files.length === 1 ? "" : "s"} found in simulation`),
+        `${limited ? "[Limited validation] " : ""}${
+          summary?.headline
+            ? `Fix: ${summary.headline}`
+            : `Fix ${files.length} issue${files.length === 1 ? "" : "s"} found in simulation`
+        }`,
     );
     setStep(known && !canWrite(known) ? "access" : "form");
     setAfter(null);
@@ -145,6 +149,20 @@ export default function OpenPrDialog({
     () =>
       draft?.body ||
       [
+        /* The validation label travels with the change (RSI PRD: the user
+           approves the diff, destination and validation label). */
+        ...(validation
+          ? [
+              "## Validation",
+              `**${validation.label}** — ${validation.note}.`,
+              ...(limited
+                ? [
+                    "Not Verified: too few untouched held-back scenarios, or no re-run after the pick, to call it proven. Review it as a suggestion.",
+                  ]
+                : []),
+              "",
+            ]
+          : []),
         "## What this fixes",
         summary?.fixes
           ? `${summary.fixes} failing scenario${summary.fixes === 1 ? "" : "s"} in ${env?.name} now pass in simulation (${summary.before}% → ${summary.after}%).`
@@ -163,7 +181,7 @@ export default function OpenPrDialog({
             ]),
         "_Opened by Future AGI as a draft. Nothing changes in your agent until you merge._",
       ].join("\n"),
-    [files, summary, env, draft, proof],
+    [files, summary, env, draft, proof, validation, limited],
   );
 
   const pr = {
@@ -187,6 +205,7 @@ export default function OpenPrDialog({
     agentName,
     kind,
     host,
+    ...(validation ? { validation: validation.label } : {}),
     ...(draft?.meta || {}),
     ...(meta || {}),
   };
@@ -518,6 +537,20 @@ export default function OpenPrDialog({
               : ""}
           </Typography>
 
+          {validation && (
+            <Box>
+              <Label>Validation</Label>
+              <Typography sx={{ typography: "s2", color: "text.primary" }}>
+                {validation.label}
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                {limited
+                  ? "Opens as a draft labelled Limited validation, never Verified. The title and description say so."
+                  : `${validation.note}.`}
+              </Typography>
+            </Box>
+          )}
+
           <Box>
             <Label>Title</Label>
             <TextField
@@ -736,6 +769,8 @@ export default function OpenPrDialog({
 
 OpenPrDialog.propTypes = {
   proof: PropTypes.string,
+  /* The candidate's verdict ({ key, label, note }): Verified or Limited validation. */
+  validation: PropTypes.object,
   patchText: PropTypes.string,
   open: PropTypes.bool,
   onClose: PropTypes.func,

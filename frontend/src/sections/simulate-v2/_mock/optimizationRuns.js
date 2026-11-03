@@ -1647,7 +1647,8 @@ export const suggestedFixOf = (record) => {
 };
 
 /*
-  How much the held-back result is worth: proven, likely, or too few to tell.
+  How much the held-back result is worth: Verified, or Limited validation
+  (likely, or too few held back to tell).
   "Fixed 3 of 4" reads as proof whatever the size of the set; this says what
   it's worth. Read off the winner's re-run after the pick (new improvements).
 */
@@ -1658,7 +1659,7 @@ export const proofStrength = (r, issue, held) => {
   if (r.split?.thin)
     return {
       key: "few",
-      label: "Too few to tell",
+      label: "Limited validation",
       note: "nothing could be held back, so this rests on scenarios the search saw",
     };
   /* What it had to fix where it never looked: the issue's held-back scenarios
@@ -1682,7 +1683,7 @@ export const proofStrength = (r, issue, held) => {
   if (n < TELL_MIN)
     return {
       key: "few",
-      label: "Too few to tell",
+      label: "Limited validation",
       note: `${of} — it takes ${TELL_MIN} or more to tell`,
     };
   /* Scored on an evaluation that agrees with people at chance: whatever it

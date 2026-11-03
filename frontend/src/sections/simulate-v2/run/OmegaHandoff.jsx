@@ -147,6 +147,7 @@ export default function OmegaHandoff({
   brief,
   briefTarget,
   proof,
+  validation,
   suggestion = false,
   steps = true,
 }) {
@@ -1288,6 +1289,7 @@ export default function OmegaHandoff({
           }}
           meta={{ handoffKey, applied: included, ...(provenance || {}) }}
           proof={proof || undefined}
+          validation={validation || undefined}
           patchText={patchOf(mixed && codePart.length ? codePart : included)}
         />
       )}
@@ -1312,6 +1314,7 @@ OmegaHandoff.propTypes = {
   brief: PropTypes.func,
   briefTarget: PropTypes.object,
   proof: PropTypes.string,
+  validation: PropTypes.object,
   suggestion: PropTypes.bool,
   /* The hand-over as numbered next steps (the default); false keeps the older paragraph. */
   steps: PropTypes.bool,

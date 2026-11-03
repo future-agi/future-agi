@@ -40,6 +40,7 @@ import {
 import { subTasksFor } from "../_mock/contract";
 import ScenarioDetail from "../components/ScenarioDetail";
 import CoverageMatrix from "./scenarios/CoverageMatrix";
+import { missingRecordsOf } from "../_mock/orgData";
 import AddScenariosDrawer from "./scenarios/AddScenariosDrawer";
 import ScenarioEditor from "./scenarios/ScenarioEditor";
 import {
@@ -2319,6 +2320,7 @@ export default function ScenariosStep({
         <CoverageMatrix
           scenarios={live}
           env={env}
+          missingRecords={missingRecordsOf(envState)}
           onClose={() => setCoverageOpen(false)}
         />
       </SideDrawer>

@@ -39,6 +39,7 @@ import { useSimStore } from "../store";
 const CHANGE_ICON = {
   instructions: "solar:document-text-linear",
   tool: "solar:widget-add-linear",
+  toolSignature: "solar:widget-5-linear",
   model: "solar:cpu-bolt-linear",
   voice: "solar:soundwave-linear",
   knowledge: "solar:library-linear",

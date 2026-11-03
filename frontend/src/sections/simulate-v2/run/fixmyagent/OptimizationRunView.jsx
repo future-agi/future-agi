@@ -492,6 +492,9 @@ export default function OptimizationRunView({
       onRerun={handoff?.onRerun}
       brief={handBrief}
       briefTarget={briefTarget}
+      validation={
+        outcome.strength?.key === "none" ? undefined : outcome.strength
+      }
       proof={proofMarkdown({
         record,
         outcome,

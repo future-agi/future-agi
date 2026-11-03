@@ -98,10 +98,33 @@ export const toolFit = (env, envState, { agent, envVersion } = {}) => {
   const agentLabel = agent || currentAgentVersion(envState)?.label;
   const envLabel = envVersion || currentEnvVersion(env, envState)?.label;
   const world = worldToolsFor(env, envState, envLabel);
-  const answers = new Set(world.map((t) => t.name));
+  const answers = new Map(world.map((t) => [t.name, t]));
   const calls = agentToolsFor(env, envState, agentLabel);
-  const missing = calls.filter((t) => !answers.has(t.name));
-  return { agent: agentLabel, envVersion: envLabel, fits: !missing.length, missing, calls, world };
+  /* A tool the world answers by name but with other arguments — the agent
+     version changed its signature. Its calls can't be measured either, so it
+     joins `missing` (marked `changed`) and everything that warns about, skips
+     or rebuilds for a missing tool covers it too. */
+  const changed = calls
+    .filter((t) => {
+      const w = answers.get(t.name);
+      return w && signatureOf(t) && signatureOf(t) !== signatureOf(w);
+    })
+    .map((t) => ({ ...t, changed: true, was: answers.get(t.name).params || t.was || null }));
+  const missing = [...calls.filter((t) => !answers.has(t.name)), ...changed];
+  return { agent: agentLabel, envVersion: envLabel, fits: !missing.length, missing, changed, calls, world };
+};
+
+/* A tool's arguments, when the version says what they are. */
+const signatureOf = (t) => (Array.isArray(t?.params) ? t.params.join(",") : null);
+
+/** Scenarios that call any of these tools — what a changed or missing tool blocks. */
+export const scenariosCalling = (env, envState, names = []) => {
+  if (!names.length) return [];
+  const want = new Set(names);
+  const known = knownToolsFor(env, envState);
+  return (envState?.scenarios || []).filter(
+    (row) => !row.proposed && !row.archived && requiredToolsOf(row, known).some((n) => want.has(n)),
+  );
 };
 
 /** The newest environment version, and whether a given agent fits it. */
@@ -147,7 +170,12 @@ export const rebuildForAgent = (env, envState, agentLabel) => {
   const list = envState?.envVersions?.length
     ? envState.envVersions
     : [...environmentVersions(env, envState)].reverse();
-  const tools = [...world, ...missing.map(pick)];
+  /* A changed tool replaces the world's old one; a new tool is added. */
+  const reshaped = new Map(missing.filter((t) => t.changed).map((t) => [t.name, t]));
+  const tools = [
+    ...world.map((t) => (reshaped.has(t.name) ? { ...pick(reshaped.get(t.name)), changed: undefined, was: undefined } : t)),
+    ...missing.filter((t) => !t.changed).map(pick),
+  ];
   const names = missing.map((t) => t.name);
   const version = {
     ...nextEnvVersion(env, envState, {
@@ -168,7 +196,7 @@ export const rebuildForAgent = (env, envState, agentLabel) => {
      in Needs input until someone adds them. */
   const covered = new Set((envState?.scenarios || []).map((sc) => sc.newTool).filter(Boolean));
   const now = new Date().toISOString();
-  const added = missing.filter((tool) => !covered.has(tool.name))
+  const added = missing.filter((tool) => !tool.changed && !covered.has(tool.name))
     .flatMap((tool) => getRows(`${env.id}::core`, { ...env, tools: [tool] })
       .map((row) => ({
         ...row,

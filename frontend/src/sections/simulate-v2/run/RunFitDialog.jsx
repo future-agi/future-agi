@@ -1,8 +1,8 @@
 import PropTypes from "prop-types";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { latestEnvVersion, toolFit } from "../_mock/toolFit";
-import { ToolList } from "../workspace/toolFitParts";
+import { latestEnvVersion, scenariosCalling, toolFit } from "../_mock/toolFit";
+import { ChangedToolsNote, ToolList } from "../workspace/toolFitParts";
 import { useRebuildForAgent } from "../workspace/useRebuildForAgent";
 import { nextSnapshotLabel } from "../_mock/envSnapshot";
 import { envLabelOf } from "../_mock/envVersionKinds";
@@ -48,6 +48,13 @@ export default function RunFitDialog({
     latest.label !== fit.envVersion &&
     toolFit(env, envState, { agent, envVersion: latest.label }).fits;
   const n = fit.missing.length;
+  /* Tools the world knows by name but the agent now calls with other arguments. */
+  const absent = fit.missing.filter((t) => !t.changed);
+  const blocked = scenariosCalling(
+    env,
+    envState,
+    fit.changed.map((t) => t.name),
+  );
   /* Environment versions as people read them (snapshots of world, scenarios, evals). */
   const nextLabel = nextSnapshotLabel(env, envState);
   const latestShown = latest ? envLabelOf(env, envState, latest.label) : null;
@@ -220,19 +227,28 @@ export default function RunFitDialog({
         <Iconify icon="solar:plug-circle-linear" width={20} />
       </Box>
       <Typography sx={{ typography: "m3", fontWeight: 600 }}>
-        Agent {agent} calls {n === 1 ? "a tool" : `${n} tools`} environment{" "}
-        {fitShown} can&apos;t answer
+        {absent.length
+          ? `Agent ${agent} calls ${n === 1 ? "a tool" : `${n} tools`} environment ${fitShown} can't answer`
+          : `Agent ${agent} changed ${n === 1 ? "a tool" : `${n} tools`} environment ${fitShown} answers`}
       </Typography>
-      <Typography
-        component="div"
-        sx={{ typography: "s2", color: "text.secondary", mt: 1 }}
-      >
-        It calls <ToolList tools={fit.missing} />, which this world doesn&apos;t
-        know how to answer. Scenarios where it calls {n === 1 ? "it" : "them"}{" "}
-        come back <b>not measured</b>.
-        {gap.missing.length > 0 &&
-          ` Add ${gapNames.join(", ")} on the World tab.`}
-      </Typography>
+      {absent.length > 0 && (
+        <Typography
+          component="div"
+          sx={{ typography: "s2", color: "text.secondary", mt: 1 }}
+        >
+          It calls <ToolList tools={absent} />, which this world doesn&apos;t
+          know how to answer. Scenarios where it calls{" "}
+          {absent.length === 1 ? "it" : "them"} come back <b>not measured</b>.
+          {gap.missing.length > 0 &&
+            ` Add ${gapNames.join(", ")} on the World tab.`}
+        </Typography>
+      )}
+      <ChangedToolsNote
+        changed={fit.changed}
+        blocked={blocked}
+        agent={agent}
+        sx={{ mt: 1 }}
+      />
 
       <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: "action.hover" }}>
         <Typography sx={{ typography: "s3", color: "text.tertiary" }}>

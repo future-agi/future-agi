@@ -1,7 +1,8 @@
 import PropTypes from "prop-types";
 import { Alert, Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { toolFit } from "../_mock/toolFit";
+import { scenariosCalling, toolFit } from "../_mock/toolFit";
+import { ChangedToolsNote } from "../workspace/toolFitParts";
 import { envVersionNameOf } from "../_mock/codeRefs";
 import {
   agentVersions,
@@ -34,6 +35,13 @@ export default function SwitchVersionDialog({
   const nm = (l) => (l ? envVersionNameOf(envState, l, env?.id).main : l);
   const name = nm(label);
   const fit = toolFit(env, envState, { agent: label });
+  /* Tools the world doesn't know at all; a changed signature is said apart. */
+  const absent = fit.missing.filter((t) => !t.changed);
+  const blocked = scenariosCalling(
+    env,
+    envState,
+    fit.changed.map((t) => t.name),
+  );
   /* Production as the default moves with it; any other version is held until the default is production again. */
   const follows = label === productionAgentVersion(envState)?.label;
   /* Credentials are versioned with the agent, so an older version runs with
@@ -79,17 +87,30 @@ export default function SwitchVersionDialog({
             {`${name} runs with the credentials it had — from before ${newerKeys.map((v) => nm(v.label)).join(", ")}. If that key was revoked, its runs won't reach the agent.`}
           </Typography>
         )}
-        {!fit.fits && (
+        {fit.changed.length > 0 && (
           <Alert
             severity="warning"
             icon={<Iconify icon="solar:danger-triangle-linear" width={16} />}
             sx={{ mt: 1.75 }}
           >
-            {`${name} calls ${fit.missing.length === 1 ? "a tool" : "tools"} this environment's world doesn't answer: `}
+            <ChangedToolsNote
+              changed={fit.changed}
+              blocked={blocked}
+              agent={name}
+            />
+          </Alert>
+        )}
+        {absent.length > 0 && (
+          <Alert
+            severity="warning"
+            icon={<Iconify icon="solar:danger-triangle-linear" width={16} />}
+            sx={{ mt: 1.75 }}
+          >
+            {`${name} calls ${absent.length === 1 ? "a tool" : "tools"} this environment's world doesn't answer: `}
             <Box component="span" sx={{ fontFamily: MONO }}>
-              {fit.missing.map((t) => t.name).join(", ")}
+              {absent.map((t) => t.name).join(", ")}
             </Box>
-            {`. Scenarios that need ${fit.missing.length === 1 ? "it" : "them"} come back Not measured until the World tab adds ${fit.missing.length === 1 ? "it" : "them"}.`}
+            {`. Scenarios that need ${absent.length === 1 ? "it" : "them"} come back Not measured until the World tab adds ${absent.length === 1 ? "it" : "them"}.`}
           </Alert>
         )}
       </Box>

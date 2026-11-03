@@ -1,18 +1,40 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
-import { Box, Collapse, Stack, Typography } from "@mui/material";
+import { useEffect, useRef, useState } from "react";
+import { Box, Button, Collapse, Stack, Typography } from "@mui/material";
 import { StatusDot } from "../components/primitives";
 import { clickable, focusRing } from "../components/clickable";
 import { CAPABILITIES, COMPAT_STATUS } from "../_mock/compatibility";
 import {
   FAMILY_CATEGORIES,
+  QUAL_CHECKS,
   TESTED_VERSIONS,
   diagnosticOf,
+  qualificationMs,
+  qualificationOf,
 } from "../_mock/testedVersions";
 
 const MONO = "ui-monospace, Menlo, monospace";
 const COLS =
-  "minmax(170px, 1.2fr) minmax(150px, 1.1fr) 104px minmax(0, 1.6fr) 120px";
+  "minmax(170px, 1.2fr) minmax(150px, 1.1fr) 104px minmax(0, 1.6fr) 150px 120px";
+const capLabel = (id) => CAPABILITIES.find((c) => c.id === id)?.label || id;
+/* A family's qualification result, as its row shows it. */
+const QUAL_SHOWN = {
+  running: { dot: "running", text: () => "Running…" },
+  passed: {
+    dot: "passed",
+    text: () => `Passed ${QUAL_CHECKS.length}/${QUAL_CHECKS.length}`,
+  },
+  limited: {
+    dot: "flaky",
+    text: (q) =>
+      `Passed · limits: ${q.limited.map(capLabel).join(", ").toLowerCase()}`,
+  },
+  failed: {
+    dot: "failed",
+    text: (q) => `Failed: ${q.failed.map(capLabel).join(", ").toLowerCase()}`,
+  },
+  "not-run": { dot: "queued", text: () => "Not run · no reference agent" },
+};
 const STATUS_KEY = {
   Supported: "supported",
   Partial: "partial",
@@ -22,7 +44,7 @@ const when = (iso) =>
   new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
 /* One family: its tested versions and limits; its diagnostic one click away. */
-function FamilyRow({ row, mine }) {
+function FamilyRow({ row, mine, qual }) {
   const [open, setOpen] = useState(mine);
   const diag = diagnosticOf(row);
   const status = STATUS_KEY[row.status] || "untested";
@@ -78,6 +100,24 @@ function FamilyRow({ row, mine }) {
             .filter(Boolean)
             .join(". ")}
         </Typography>
+        {qual ? (
+          <Stack direction="row" alignItems="flex-start" spacing={0.5}>
+            <Box sx={{ pt: "5px", display: "flex" }}>
+              <StatusDot
+                status={QUAL_SHOWN[qual.outcome].dot}
+                size={6}
+                live={qual.outcome === "running"}
+              />
+            </Box>
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {QUAL_SHOWN[qual.outcome].text(qual)}
+            </Typography>
+          </Stack>
+        ) : (
+          <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+            —
+          </Typography>
+        )}
         {diag.id ? (
           <Box
             {...clickable(() => setOpen((o) => !o), { expanded: open })}
@@ -144,6 +184,8 @@ function FamilyRow({ row, mine }) {
 FamilyRow.propTypes = {
   row: PropTypes.object.isRequired,
   mine: PropTypes.bool,
+  /* This family's qualification: { outcome, failed, limited } or running. */
+  qual: PropTypes.object,
 };
 
 /**
@@ -153,80 +195,127 @@ FamilyRow.propTypes = {
  * supported, and a family not listed may still connect, uncertified.
  */
 export default function TestedVersionsMatrix({ highlight = null }) {
+  /* Qualification: every family starts together and finishes on its own. */
+  const [qual, setQual] = useState({});
+  const [ranAt, setRanAt] = useState(null);
+  const timers = useRef([]);
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  const running = Object.values(qual).some((q) => q.outcome === "running");
+  const runQualification = () => {
+    timers.current.forEach(clearTimeout);
+    setRanAt(new Date());
+    setQual(
+      Object.fromEntries(
+        TESTED_VERSIONS.map((r) => [r.family, { outcome: "running" }]),
+      ),
+    );
+    timers.current = TESTED_VERSIONS.map((r) =>
+      setTimeout(
+        () => setQual((cur) => ({ ...cur, [r.family]: qualificationOf(r) })),
+        qualificationMs(r),
+      ),
+    );
+  };
+  const done = Object.values(qual).filter((q) => q.outcome !== "running");
+  const failedN = done.filter((q) => q.outcome === "failed").length;
+  const notRunN = done.filter((q) => q.outcome === "not-run").length;
+  const passedN = done.length - failedN - notRunN;
   return (
-    <Box
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "8px",
-        overflowX: "auto",
-      }}
-    >
-      <Box sx={{ minWidth: 760 }}>
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: COLS,
-            columnGap: 2,
-            px: 1.5,
-            py: 0.75,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
+    <Stack spacing={1}>
+      <Stack direction="row" alignItems="center" spacing={1.5}>
+        <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
+          {ranAt
+            ? running
+              ? `Qualifying ${TESTED_VERSIONS.length} families at once · ${done.length} done`
+              : `Qualified ${when(ranAt.toISOString())} · ${passedN} passed${failedN ? ` · ${failedN} failed, each on its own row` : ""}${notRunN ? ` · ${notRunN} not run` : ""}`
+            : `Qualification runs the same ${QUAL_CHECKS.length} checks for every family, all at once. A family that fails is reported on its own row and doesn't stop the others.`}
+        </Typography>
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={running}
+          onClick={runQualification}
+          sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
         >
-          {[
-            "Family",
-            "Tested versions",
-            "Status",
-            "Evidence",
-            "Diagnostic",
-          ].map((h, i) => (
-            <Typography
-              key={h}
-              sx={{
-                typography: "s3",
-                color: "text.tertiary",
-                textAlign: i === 4 ? "right" : "left",
-              }}
-            >
-              {h}
-            </Typography>
-          ))}
-        </Box>
-        {FAMILY_CATEGORIES.map((cat) => {
-          const rows = TESTED_VERSIONS.filter((r) => r.category === cat.id);
-          if (!rows.length) return null;
-          return (
-            <Box
-              key={cat.id}
-              sx={{
-                "& + &": { borderTop: "1px solid", borderColor: "divider" },
-              }}
-            >
+          {ranAt ? "Run again" : "Run qualification"}
+        </Button>
+      </Stack>
+      <Box
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "8px",
+          overflowX: "auto",
+        }}
+      >
+        <Box sx={{ minWidth: 900 }}>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: COLS,
+              columnGap: 2,
+              px: 1.5,
+              py: 0.75,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            {[
+              "Family",
+              "Tested versions",
+              "Status",
+              "Evidence",
+              "Qualification",
+              "Diagnostic",
+            ].map((h, i) => (
               <Typography
+                key={h}
                 sx={{
-                  px: 1.5,
-                  pt: 1,
-                  pb: 0.25,
                   typography: "s3",
-                  fontWeight: 600,
                   color: "text.tertiary",
+                  textAlign: i === 5 ? "right" : "left",
                 }}
               >
-                {cat.label}
+                {h}
               </Typography>
-              {rows.map((r) => (
-                <FamilyRow
-                  key={r.family}
-                  row={r}
-                  mine={highlight === r.family}
-                />
-              ))}
-            </Box>
-          );
-        })}
+            ))}
+          </Box>
+          {FAMILY_CATEGORIES.map((cat) => {
+            const rows = TESTED_VERSIONS.filter((r) => r.category === cat.id);
+            if (!rows.length) return null;
+            return (
+              <Box
+                key={cat.id}
+                sx={{
+                  "& + &": { borderTop: "1px solid", borderColor: "divider" },
+                }}
+              >
+                <Typography
+                  sx={{
+                    px: 1.5,
+                    pt: 1,
+                    pb: 0.25,
+                    typography: "s3",
+                    fontWeight: 600,
+                    color: "text.tertiary",
+                  }}
+                >
+                  {cat.label}
+                </Typography>
+                {rows.map((r) => (
+                  <FamilyRow
+                    key={r.family}
+                    row={r}
+                    mine={highlight === r.family}
+                    qual={qual[r.family]}
+                  />
+                ))}
+              </Box>
+            );
+          })}
+        </Box>
       </Box>
-    </Box>
+    </Stack>
   );
 }
 TestedVersionsMatrix.propTypes = {

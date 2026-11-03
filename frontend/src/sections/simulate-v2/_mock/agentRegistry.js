@@ -1918,6 +1918,16 @@ const readBaseOf = (versions) =>
     .find((v) => v.status !== "draft" && !v.pendingDraft) ||
   versions[versions.length - 1];
 
+/* The arguments a tool takes today, for the tools the seeded agents call —
+   only needed to say what a changed signature replaced. */
+const SIGNATURES = {
+  verify_identity: ["customer_id", "last_four"],
+  lookup_order: ["order_id"],
+  issue_refund: ["order_id", "amount"],
+  refund_order: ["order_id", "amount"],
+  check_status: ["order_id"],
+};
+
 export const changesSince = ({ agent, versions, env, source }) => {
   const latest = readBaseOf(versions);
   const n = Math.max(0, ...versions.map((v) => majorOf(v.label))) + 1;
@@ -1944,6 +1954,19 @@ export const changesSince = ({ agent, versions, env, source }) => {
       detail: tool.desc,
       tool,
     });
+  /* Another in three changes what an existing tool takes — a new required
+     argument. The world still answers the old signature, so scenarios that
+     call it can't be measured on this version until the world is rebuilt. */
+  const reshaped = [...(latest?.tools || env?.tools || [])][seed % 2];
+  if (reshaped && seed % 3 === 1 && !reshaped.params) {
+    const params = [...(SIGNATURES[reshaped.name] || ["id"]), "reason"];
+    changes.push({
+      kind: "toolSignature",
+      title: `Tool changed · ${reshaped.name}`,
+      detail: "Now requires `reason`.",
+      tool: { ...reshaped, params, was: SIGNATURES[reshaped.name] || ["id"] },
+    });
+  }
   if (source.kind === "platform" && agent?.typeId === "voice_platform") {
     changes.push({
       kind: "voice",
@@ -2015,6 +2038,12 @@ export const syncedVersion = ({
   now = new Date().toISOString(),
 }) => {
   const tool = result.changes.find((c) => c.kind === "tool")?.tool;
+  /* A changed signature replaces the tool of the same name. */
+  const reshaped = result.changes
+    .filter((c) => c.kind === "toolSignature")
+    .map((c) => c.tool);
+  const withReshaped = (list) =>
+    list.map((t) => reshaped.find((r) => r.name === t.name) || t);
   return {
     id: `agent-${result.label}`,
     label: result.label,
@@ -2027,6 +2056,8 @@ export const syncedVersion = ({
     outsideChange: true,
     basedOnVersion: result.basedOn,
     changes: result.changes,
-    ...(tool && { tools: [...(baseTools || []), tool] }),
+    ...((tool || reshaped.length) && {
+      tools: [...withReshaped(baseTools || []), ...(tool ? [tool] : [])],
+    }),
   };
 };

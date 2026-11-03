@@ -37,7 +37,12 @@ import {
  *   - No prose helper lines like "these need at least one scenario each";
  *     the empty state is the fraction "0/5" and the item's own hollow dot.
  */
-export default function CoverageMatrix({ scenarios, env, onClose }) {
+export default function CoverageMatrix({
+  scenarios,
+  env,
+  onClose,
+  missingRecords = [],
+}) {
   const [rowAxis, setRowAxis] = useState("task");
   const [colAxis, setColAxis] = useState("attack");
   const m = useMemo(
@@ -255,6 +260,36 @@ export default function CoverageMatrix({ scenarios, env, onClose }) {
           </IconButton>
         )}
       </Stack>
+      {missingRecords.length > 0 && (
+        <Box
+          sx={{
+            px: 2.5,
+            py: 1.25,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
+          <Stack direction="row" spacing={0.75} alignItems="center">
+            <Iconify
+              icon="solar:danger-triangle-linear"
+              width={14}
+              sx={{ color: "status.warning.fg" }}
+            />
+            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+              Coverage isn&apos;t complete
+            </Typography>
+          </Stack>
+          {missingRecords.map((m) => (
+            <Typography
+              key={`${m.sourceId}:${m.field}`}
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+            >
+              {`${m.present ? `${m.missing} ${m.table} ${m.missing === 1 ? "row points" : "rows point"} at ${m.to} that ${m.missing === 1 ? "isn't" : "aren't"} in the data` : `${m.table} needs ${m.to}, which isn't attached`}${m.scenarios.length ? ` — ${m.scenarios.length} ${m.scenarios.length === 1 ? "scenario uses" : "scenarios use"} ${m.present ? "them" : "it"}` : ""}.`}
+            </Typography>
+          ))}
+        </Box>
+      )}
 
       <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         {/* ── AXES TABLE ─────────────────────────────────────────────────── */}
@@ -644,6 +679,8 @@ export default function CoverageMatrix({ scenarios, env, onClose }) {
 
 CoverageMatrix.propTypes = {
   env: PropTypes.object,
+  /* orgData.missingRecordsOf: rows pointing at records the data lacks. */
+  missingRecords: PropTypes.array,
   scenarios: PropTypes.array.isRequired,
   onClose: PropTypes.func,
 };

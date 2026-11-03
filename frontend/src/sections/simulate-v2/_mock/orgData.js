@@ -347,6 +347,59 @@ export const joinsOf = (source, sources) => {
     });
 };
 
+/*
+  Rows that point at a record the data doesn't have (an order whose customer
+  isn't in customers), and the scenarios that use those rows. The draft keeps
+  them out rather than failing: they're flagged here, the scenarios that need
+  them are named, and coverage never reads as complete while any remain
+  (data.md DA-3).
+*/
+const recordIdsOf = (table, row) => {
+  const ids = String(row.reason || "").match(/\b[A-Z]{1,3}-\d+\b/g) || [];
+  /* The row's own key, when the table's keys read like O-104. */
+  const key = table.columns.find((c) => c.key)?.name;
+  const prefix = String(table.sample?.[key] || "").match(
+    /^([A-Z]{1,3})-\d+$/,
+  )?.[1];
+  return [...new Set([...(prefix ? [`${prefix}-${row.row}`] : []), ...ids])];
+};
+
+export const missingRecordsOf = (envState) => {
+  const sources = envState?.sources || [];
+  const scenarios = (envState?.scenarios || []).filter(
+    (r) => !r.proposed && !r.archived,
+  );
+  return sources
+    .filter((s) => s.parsed?.kind === "table")
+    .flatMap((s) =>
+      joinsOf(s, sources)
+        .filter((j) => j.blocking)
+        .map((j) => {
+          const rows = j.rows.map((r) => ({
+            ...r,
+            ids: recordIdsOf(s.parsed, r),
+          }));
+          const ids = rows.flatMap((r) => r.ids);
+          const affected = ids.length
+            ? scenarios.filter((sc) => {
+                const text = JSON.stringify(sc);
+                return ids.some((id) => text.includes(id));
+              })
+            : [];
+          return {
+            sourceId: s.id,
+            table: s.parsed.table,
+            field: j.field,
+            to: j.to.split(".")[0],
+            present: j.present,
+            missing: j.missing,
+            rows,
+            scenarios: affected,
+          };
+        }),
+    );
+};
+
 /* ── who sees what ──────────────────────────────────────────────────────── */
 
 /** Each participant's effective view of the sources: { agent, caller, evaluator } → [{ source, how }]. */
@@ -381,8 +434,17 @@ export const participantViewsOf = (sources) => {
  *   { items: [{ id, kind, title, detail, cite, inferred?, blocking?, rule?, table?, scenario? }] }
  * kind: rule | table | scenario | missing | hidden | conflict | unreadable.
  */
-export const dataProposalOf = (sources, { cast = [], tools = [] } = {}) => {
+export const dataProposalOf = (
+  sources,
+  { cast = [], tools = [], scenarios = [] } = {},
+) => {
   const items = [];
+  const affectedBy = Object.fromEntries(
+    missingRecordsOf({ sources, scenarios }).map((m) => [
+      `${m.sourceId}:${m.field}`,
+      m.scenarios,
+    ]),
+  );
   const policies = sources.filter(
     (s) => s.role === "policy" && s.status === "ready",
   );
@@ -455,9 +517,14 @@ export const dataProposalOf = (sources, { cast = [], tools = [] } = {}) => {
           detail: j.present
             ? j.rows.map((r) => `row ${r.row}: ${r.reason}`).join(" · ")
             : `${t.table}.${j.field} refers to ${j.to}, which isn't attached — every row needs it.`,
+          /* Named in the card: the scenarios that use these rows. */
+          affects: (affectedBy[`${s.id}:${j.field}`] || []).map(
+            (sc) => sc.name || sc.title || sc.id,
+          ),
           cite: { sourceId: s.id, ref: `${s.name} · ${j.field}` },
           sourceId: s.id,
           field: j.field,
+          present: j.present,
           blocking: true,
         }),
       );

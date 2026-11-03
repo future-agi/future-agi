@@ -185,3 +185,33 @@ export const familyOf = (agent, kind) => {
     return find(v.language === "TypeScript" || /node|express/.test(f) ? "Node service" : "Python service");
   return null;
 };
+
+/*
+  The qualification matrix (connect.md CN-4): every family gets the same
+  checks, all at once. A failure is that family's result — it never stops or
+  hides the others. Outcomes come from each family's reference diagnostic:
+  supported passes, partial passes with a limit, unavailable fails. A family
+  with no reference agent yet isn't run.
+*/
+export const QUAL_CHECKS = ["start", "message", "toolRouting", "state", "cancel", "reset"];
+
+export const qualificationOf = (row) => {
+  if (row.status === "Untested") return { outcome: "not-run", checks: [], failed: [], limited: [] };
+  const results = DIAG[row.family] || {};
+  const checks = QUAL_CHECKS.map((id) => ({ id, result: results[id] || T }));
+  const failed = checks.filter((c) => c.result === U || c.result === T).map((c) => c.id);
+  const limited = checks.filter((c) => c.result === P).map((c) => c.id);
+  return {
+    outcome: failed.length ? "failed" : limited.length ? "limited" : "passed",
+    checks,
+    failed,
+    limited,
+  };
+};
+
+/* How long a family's checks take in the prototype — they finish at different times. */
+export const qualificationMs = (row) => {
+  let h = 0;
+  for (const c of row.family) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return 1200 + (h % 9) * 350;
+};

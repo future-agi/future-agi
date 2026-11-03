@@ -68,8 +68,9 @@ export default function DataProposalCard({ env, sourceIds, onOpenSource }) {
       dataProposalOf(sources, {
         cast,
         tools: (env.tools || []).map((t) => t.name),
+        scenarios: envState.scenarios || [],
       }),
-    [sources, cast, env.tools],
+    [sources, cast, env.tools, envState.scenarios],
   );
   /* An item's text changed before accepting: a rule's wording, an approval scope. */
   const [edits, setEdits] = useState({});
@@ -203,6 +204,15 @@ export default function DataProposalCard({ env, sourceIds, onOpenSource }) {
               sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
             >
               {i.detail}
+            </Typography>
+          )}
+          {i.kind === "missing" && i.present !== false && (
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+            >
+              {i.affects?.length
+                ? `Flagged, not dropped: ${i.affects.length} ${i.affects.length === 1 ? "scenario uses" : "scenarios use"} these rows (${i.affects.slice(0, 3).join(", ")}${i.affects.length > 3 ? ", …" : ""}). The draft stays open, and coverage won't read as complete until they're resolved.`
+                : "Flagged, not dropped: the draft stays open, and coverage won't read as complete until these rows are resolved."}
             </Typography>
           )}
           {i.editable && edits[i.id] != null && editing !== i.id && (
