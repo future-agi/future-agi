@@ -362,18 +362,21 @@ jobs:
       # python/tests/platform calls every operation of the generated client,
       # src/platform/__tests__/live.test.ts covers the TypeScript transport.
       # The SDK ref is the branch of this PR's name when the SDK repo has one,
-      # else the base branch (dev or main). They run after the Playwright
-      # suite whatever its result, on a stack that booted.
+      # else the SDK_E2E_REF repository variable when set (a rollout pin: the
+      # SDK branch to pair dev/main pushes with while the suites are not on
+      # the SDK's own dev yet), else the base branch (dev or main). They run
+      # after the Playwright suite whatever its result, on a stack that booted.
       - name: Resolve the futureagi-sdk ref
         id: sdk-ref
         if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
         env:
           SDK_REF_INPUT: ${{ inputs.sdk-ref }}
           HEAD_REF: ${{ github.head_ref || github.ref_name }}
+          PINNED_REF: ${{ vars.SDK_E2E_REF }}
           BASE_REF: ${{ github.base_ref || github.ref_name }}
         run: |
           repo=https://github.com/future-agi/futureagi-sdk.git
-          for candidate in "$SDK_REF_INPUT" "$HEAD_REF" "$BASE_REF" dev main; do
+          for candidate in "$SDK_REF_INPUT" "$HEAD_REF" "$PINNED_REF" "$BASE_REF" dev main; do
             [ -n "$candidate" ] || continue
             if git ls-remote --exit-code --heads --tags "$repo" "$candidate" >/dev/null 2>&1 \
                || echo "$candidate" | grep -Eq '^[0-9a-fA-F]{7,40}$'; then
@@ -382,7 +385,7 @@ jobs:
               exit 0
             fi
           done
-          echo "::error::no futureagi-sdk ref among: $SDK_REF_INPUT $HEAD_REF $BASE_REF dev main"
+          echo "::error::no futureagi-sdk ref among: $SDK_REF_INPUT $HEAD_REF $PINNED_REF $BASE_REF dev main"
           exit 1
 
       - name: Check out futureagi-sdk
@@ -394,13 +397,31 @@ jobs:
           path: futureagi-sdk
           fetch-depth: 1
 
-      - uses: actions/setup-python@v5
+      - name: The SDK ref has the live suites
+        # A ref from before the generated SDK (futureagi-sdk#35) has no
+        # sdkgen/local_api_key.py and no python/tests/platform: nothing to
+        # run, which is a rollout gap to report, not a backend failure. Pin
+        # SDK_E2E_REF (repository variable) to the branch that has them.
+        id: sdk-suites
         if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        env:
+          REF: ${{ steps.sdk-ref.outputs.ref }}
+        run: |
+          if [ -f futureagi-sdk/sdkgen/local_api_key.py ] && [ -d futureagi-sdk/python/tests/platform ] \
+             && grep -q '"test:live"' futureagi-sdk/typescript/futureagi/package.json; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=SDK live suites skipped::futureagi-sdk ref '$REF' does not carry the live suites (sdkgen/local_api_key.py, python/tests/platform, test:live); set the SDK_E2E_REF repository variable to the SDK branch that does"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: ${{ !cancelled() && steps.sdk-suites.outputs.present == 'true' }}
         with:
           python-version: "3.12"
 
       - name: Install the Python SDK and sign up an account on the stack
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.sdk-suites.outputs.present == 'true' }}
         working-directory: futureagi-sdk
         run: |
           python -m pip install --quiet --upgrade pip
@@ -410,14 +431,14 @@ jobs:
           python sdkgen/local_api_key.py --signup --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
 
       - name: Python SDK live suite
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.sdk-suites.outputs.present == 'true' }}
         working-directory: futureagi-sdk
         env:
           FI_E2E_REQUIRED: "1"
         run: PYTHONPATH=python pytest -q python/tests/platform
 
       - name: TypeScript SDK live suite
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.sdk-suites.outputs.present == 'true' }}
         working-directory: futureagi-sdk/typescript/futureagi
         env:
           FI_E2E_REQUIRED: "1"
@@ -435,7 +456,7 @@ jobs:
         # (futureagi-sdk: sdkgen/check_mcp_parity.py). A tool this tree gained
         # since that release shows up here first, as the reminder to add its
         # catalog entry.
-        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.sdk-suites.outputs.present == 'true' }}
         run: |
           python3 -m pip install --quiet pyyaml
           python3 - <<'EOF'
