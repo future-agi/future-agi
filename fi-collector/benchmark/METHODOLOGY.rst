@@ -6,8 +6,10 @@ how it is measured, and which comparisons it does not support. It describes
 the tool, result schema ``fi.otlpbench.v4`` and publication schema
 ``fi.otlpbench.publication.v2``. It is not a capacity claim: the TH-8687
 acceptance profiles (15,000 spans/s for 24 hours, 60,000 spans/s for 60 seconds)
-have **not** been run. The evidence section at the end lists only small runs,
-each labelled with where it ran.
+have **not** been run. This is a tooling release, not completed live capacity,
+endurance or overload qualification against production-like infrastructure.
+The evidence section at the end lists only small runs, each labelled with where
+it ran.
 
 Units: every count is **spans** unless it says requests. A trace is several
 spans (8 by default). Latencies are milliseconds; offsets are seconds from the
@@ -443,7 +445,9 @@ load also exits 1 for a profile that did not complete without errors (except
 an explicitly declared, completed recovery case). A written diagnostic result
 may therefore accompany a nonzero exit. ``go run`` and shell wrappers may add
 their own diagnostics/status handling; ``run-profile.sh`` uses ``set -e`` and
-returns 2 for its own unknown-profile error.
+returns 2 for its own unknown-profile error. ``report`` validates the receipt
+before writing output and propagates write/flush errors; a nonzero exit may
+leave partial stdout, which must not be treated as a complete report.
 
 For historical row collectors, ``collector-budget`` uses the same bounds as root
 load planning: rate

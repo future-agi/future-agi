@@ -9,8 +9,10 @@ The acceptance target is **15,000 spans/second for 24 hours** with no missing
 acknowledged span IDs, followed by a separately measured **60,000 spans/second
 burst for 60 seconds**. Those are 1,296,000,000 and 3,600,000 spans respectively,
 NOT traces. A 24-hour rate extrapolation from a short run is not a soak test.
-**Neither profile has been run.** Everything below describes what the harness
-does and what its tests prove, not a measured capacity.
+**Neither profile has been run.** This release delivers tooling; no completed
+live capacity, endurance or overload qualification against production-like
+infrastructure is claimed. Everything below describes what the harness does
+and what its tests prove, not a measured capacity.
 
 Shipped:
 
@@ -69,8 +71,9 @@ Deliberately pending, not completed by merging the harness:
   measurements; no real customer prompts or confidential trace data are included.
 * Measure storage/index/rollup amplification and per-shard sustainable capacity,
   fill the sizing worksheet and publish hardware-specific sizing numbers.
-* Durable pre-ack span queuing and byte-level/process memory admission control are
-  not implemented in the collector. A row cap does not establish either guarantee.
+* Durable pre-ack span queuing and a hard process-memory guarantee are not
+  implemented in the collector. Current wire/work byte leases account for
+  ingestion ownership; they establish neither durability nor a hard RSS bound.
 
 Build and deterministic tests
 -----------------------------
@@ -670,10 +673,13 @@ limitations and warnings. Its headline is a pass at the offered rate, not a
 capacity figure: it states that the offered spans/s was sustained (verified), and
 the measured acknowledged spans/s over the actual load window (load start to the
 completion of the last export). It is withheld, with every reason, unless the run
-is executed, at least ``--min-sustained`` long (default 1 hour), completely
-verified with nothing missing or unexpected and no stored span of a refused
-request, started and acknowledged all offered load, saw every sentinel and had
-no fault. A telemetry stream of another run is refused. Each progress line's
+is executed with clean ``measured-profile-complete`` status, at least
+``--min-sustained`` long (default 1 hour), completely verified with nothing
+missing or unexpected, zero visible duplicate rows and no stored span of a
+refused request, started and acknowledged all offered load, saw every sentinel
+and had no fault. It also requires a positive measured load window and no
+accounting error, including identity violations in any supplied telemetry.
+A telemetry stream of another run is refused. Each progress line's
 accounting identity is checked against in-flight spans and requests that the
 generator counts on their own (added when a request starts, removed when it
 finishes), not derived from the outcome classes, so a finished request missing
@@ -769,8 +775,9 @@ measurement scope, not capabilities established by a completed capacity run.
    queries kept as lower bounds.
 5. A machine-readable record of the command, generator, hardware, database
    topology, collector limits and system-under-test revision for every result.
-6. The same seeded workload over OTLP/HTTP protobuf, JSON and gRPC, with and
-   without gzip.
+6. The same seeded workload over OTLP/HTTP protobuf and JSON, with or without
+   gzip, and uncompressed OTLP/gRPC. Current fi-collector refuses gRPC gzip;
+   older gRPC gzip observations are historical, not current receiver support.
 
 Reproducible evidence needs recorded hardware, units, failure counts and workload
 definitions. An unrun target is not a measured result, and an acknowledgement is
