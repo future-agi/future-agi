@@ -6,8 +6,8 @@ import Iconify from "src/components/iconify";
 
 /**
  * One goal the run's evals say broke: how often, what the eval expected, and
- * the ways it broke. Every number is a count of calls, so each matches what its
- * View link opens and the rows add up to the card's.
+ * the ways it broke that have findings. Every number is a count of calls,
+ * and each View link opens the calls included in its count.
  */
 
 const VISIBLE_WAYS = 3;
@@ -109,7 +109,7 @@ export default function GoalCard({ goal, onViewCalls }) {
         </Typography>
       )}
 
-      {(goal.ways.length > 0 || goal.unexplainedCallIds.length > 0) && (
+      {goal.ways.length > 0 && (
         <Box sx={{ mt: 1.5 }}>
           <Typography
             sx={{
@@ -144,13 +144,6 @@ export default function GoalCard({ goal, onViewCalls }) {
               onView={() => onViewCalls?.(foldedCallIds)}
             />
           )}
-          {goal.unexplainedCallIds.length > 0 && (
-            <CountRow
-              count={goal.unexplainedCallIds.length}
-              text="Not explained yet"
-              onView={() => onViewCalls?.(goal.unexplainedCallIds)}
-            />
-          )}
         </Box>
       )}
 
@@ -177,7 +170,6 @@ GoalCard.propTypes = {
     brokenCallIds: PropTypes.arrayOf(PropTypes.string),
     testedCalls: PropTypes.number,
     ways: PropTypes.arrayOf(wayShape),
-    unexplainedCallIds: PropTypes.arrayOf(PropTypes.string),
   }).isRequired,
   onViewCalls: PropTypes.func,
 };
