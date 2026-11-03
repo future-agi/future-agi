@@ -6337,6 +6337,9 @@ export default function WidgetEditorView() {
                   <Tooltip
                     classes={{ tooltip: "ds-hovercard" }}
                     placement="left"
+                    // An illustration only: it opens over the property picker,
+                    // so let clicks through and close as soon as you move on.
+                    disableInteractive
                     arrow
                     componentsProps={{
                       tooltip: {
@@ -6912,6 +6915,9 @@ export default function WidgetEditorView() {
                   <Tooltip
                     classes={{ tooltip: "ds-hovercard" }}
                     placement="left"
+                    // An illustration only: it opens over the property picker,
+                    // so let clicks through and close as soon as you move on.
+                    disableInteractive
                     arrow
                     componentsProps={{
                       tooltip: {
@@ -7371,6 +7377,9 @@ export default function WidgetEditorView() {
                   <Tooltip
                     classes={{ tooltip: "ds-hovercard" }}
                     placement="left"
+                    // An illustration only: it opens over the property picker,
+                    // so let clicks through and close as soon as you move on.
+                    disableInteractive
                     arrow
                     componentsProps={{
                       tooltip: {
