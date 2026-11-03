@@ -522,12 +522,39 @@ WarningGroupCard.propTypes = {
   defaultExpanded: PropTypes.bool,
 };
 
+// Logs currently carry free-text samples, not provider error codes. Recognize
+// only this explicit SDK constructor failure; unrelated api_key mentions keep
+// the existing classifier's diagnosis. Preserve normalized/raw examples.
+const withCredentialRemedy = (group) => {
+  const message = (group.raw || group.normalized)
+    .replace(/^Error during evaluation:\s*/i, "")
+    .trim();
+  if (
+    !/^The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable\.?$/i.test(
+      message,
+    )
+  )
+    return group;
+  return {
+    ...group,
+    category: "missing_provider_credential",
+    title: "Missing model provider credential",
+    icon: "solar:key-square-linear",
+    hints: [
+      "Ask a workspace admin or owner to configure the evaluator's model provider credential in Settings → AI providers. For a self-hosted provider, ask the deployment owner to check the evaluator service configuration.",
+      "After configuration is fixed, Pause the running task, then start a fresh Re-run. If the task is already stopped, use Re-run; if it is pending, wait until Pause or Re-run becomes available. A task editor must perform these actions.",
+      'In the Re-run dialog, choose "Delete Past Data & Start Fresh". This removes previous evaluations and starts a new run; it is not an in-place retry of failed entries.',
+      "Refreshing logs does not retry evaluations. Use the fresh Re-run after correcting configuration, rather than expecting a log refresh to recover failed runs.",
+    ],
+  };
+};
+
 // ── Main Component ──
 
 const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   const theme = useTheme();
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: ["eval-task-logs", evalTaskId],
     queryFn: ({ signal }) =>
       readEvalTaskLogs(
@@ -560,7 +587,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   // on the groups array reference so the poll interval (every 5s while
   // the task is running) doesn't re-enrich unnecessarily.
   const errorGroups = useMemo(
-    () => enrichErrorGroups(data?.error_groups || []),
+    () => enrichErrorGroups(data?.error_groups || []).map(withCredentialRemedy),
     [data?.error_groups],
   );
   // Some response paths (older DRF camelCase middleware) emit camelCase;
@@ -620,6 +647,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   // removed, so we alias locally to keep the rest of the component
   // readable.
   const {
+    // COMPLETED executions, including valid false outcomes; not evaluator passes.
     success_count: successCount = 0,
     errors_count: errorsCount = 0,
     skipped_count: skippedCount = 0,
@@ -656,7 +684,8 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   // auto-expand the largest one that actually has something behind it.
   const firstExpandableWarningGroup = warningGroups.find(
     (group) =>
-      (group.empty_keys || []).length > 0 || (group.filled_keys || []).length > 0,
+      (group.empty_keys || []).length > 0 ||
+      (group.filled_keys || []).length > 0,
   );
   const processedCount = successCount + errorsCount + skippedCount;
   const isDrained = totalCount > 0 && processedCount >= totalCount;
@@ -698,7 +727,9 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
                     : "No data"}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            {totalCount > 0 ? `${successCount} / ${totalCount} passed` : "—"}
+            {totalCount > 0
+              ? `${successCount} / ${totalCount} evaluation runs completed without errors`
+              : "—"}
           </Typography>
         </Box>
         <LinearProgress
@@ -735,7 +766,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
       <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap" }}>
         <StatCard
           icon="solar:check-circle-linear"
-          label="Successful"
+          label="Completed runs"
           value={successCount ?? 0}
           color="success.main"
           bgColor={alpha(theme.palette.success.main, 0.1)}
@@ -871,8 +902,8 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               color="text.disabled"
               sx={{ fontSize: "11px" }}
             >
-              {warningsCount} run{warningsCount !== 1 ? "s" : ""} with
-              warnings, grouped by type below
+              {warningsCount} run{warningsCount !== 1 ? "s" : ""} with warnings,
+              grouped by type below
             </Typography>
           </Box>
           {warningGroupsTruncated && (
@@ -998,6 +1029,28 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           </Box>
         </Box>
       )}
+
+      {String(effectiveStatus).toLowerCase() === "failed" &&
+        !isFetching &&
+        !isError &&
+        // Defaults used for the counters are not evidence of an empty log.
+        // These counts exclude archived entries; they cannot describe history.
+        [
+          data.total_count,
+          data.success_count,
+          data.errors_count,
+          data.skipped_count,
+          data.warnings_count ?? data.warningsCount,
+        ].every((count) => count === 0) &&
+        totalCount === 0 &&
+        processedCount === 0 &&
+        !hasErrors &&
+        !hasWarnings && (
+          <Alert severity="error">
+            This task failed. No evaluation runs are available in this log, and
+            the failure reason is unavailable.
+          </Alert>
+        )}
 
       {/* Empty state for no errors */}
       {!hasErrors && !hasWarnings && isDrained && (

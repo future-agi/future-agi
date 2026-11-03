@@ -531,6 +531,7 @@ describe("EvalUsageTab exact read states", () => {
     expect(screen.getByText(/Runs: 3/i)).toBeInTheDocument();
     expect(screen.queryByText(/Success:/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Errors:/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Task Completion Rate/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Pass rate/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Average score/i)).not.toBeInTheDocument();
   });
 });
