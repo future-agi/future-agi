@@ -404,8 +404,14 @@ export default function RunTraceTable({
               label: "Sub-actor",
               type: "enum",
               choices: subActorFacet.map((item) => item.value),
+              // Each choice says how many of the run's calls it entered.
               choiceLabels: Object.fromEntries(
-                subActorFacet.map((item) => [item.value, item.label]),
+                subActorFacet.map((item) => [
+                  item.value,
+                  item.count != null
+                    ? `${item.label} (${item.count})`
+                    : item.label,
+                ]),
               ),
             },
           ]
