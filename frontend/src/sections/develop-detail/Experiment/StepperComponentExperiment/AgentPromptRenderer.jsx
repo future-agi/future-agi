@@ -15,6 +15,7 @@ import SvgColor from "src/components/svg-color";
 import NewModelRenderWithParamsTool from "./NewModelRenderWithParamsTool";
 import CustomTooltip from "src/components/tooltip";
 import ChipForVariables from "./chipForVariables.jsx";
+import FieldSelection from "src/sections/develop-detail/Common/FieldSelection";
 import CustomModelDropdownControl from "src/components/custom-model-dropdown/CustomModelDropdownControl";
 import { getOutputOptions, PROMPT_CONFIG_TYPE } from "../common";
 import { useGetAgentVersions } from "../../../../api/experiment/use-get-agents.js";
@@ -94,68 +95,80 @@ const AgentPromptRenderer = ({
     name: `${fieldPrefix}.agentVersion`,
   });
 
-  // Memoize column headers to prevent unnecessary re-renders
-  const columnHeaders = useMemo(() => {
-    return allColumns?.map((col) => col.headerName ?? col?.name) || [];
-  }, [allColumns]);
-
-  // Derive variablesInfo from data and store unmapped count in form
-  const prevNotMappedRef = useRef(null);
-  const variablesInfo = useMemo(() => {
-    let result;
-    let selectedVersion;
+  // The variables the selected version declares, in declaration order.
+  const variableNames = useMemo(() => {
     if (type === "prompt") {
-      selectedVersion = versionsOptions?.find(
+      const selectedVersion = versionsOptions?.find(
         (v) => v.id === watchedPromptVersion,
       );
-      if (!selectedVersion?.variable_names) {
-        result = { total: 0, notMapped: 0 };
-      } else {
-        const versionVariables = Object.keys(selectedVersion.variable_names);
-        const missingCount = versionVariables.filter(
-          (variable) => !columnHeaders.includes(variable),
-        ).length;
-        result = { total: versionVariables.length, notMapped: missingCount };
-      }
-    } else if (type === "agent") {
-      selectedVersion = agentVersionsOptions?.find(
+      return selectedVersion?.variable_names
+        ? Object.keys(selectedVersion.variable_names)
+        : [];
+    }
+    if (type === "agent") {
+      const selectedVersion = agentVersionsOptions?.find(
         (v) => v.id === watchedAgentVersion,
       );
-      if (
-        !selectedVersion?.global_variables ||
-        selectedVersion.global_variables.length === 0
-      ) {
-        result = { total: 0, notMapped: 0 };
-      } else {
-        const missingCount = selectedVersion.global_variables.filter(
-          (variable) => !columnHeaders.includes(variable),
-        ).length;
-        result = {
-          total: selectedVersion.global_variables.length,
-          notMapped: missingCount,
-        };
-      }
-    } else {
-      result = { total: 0, notMapped: 0 };
+      return selectedVersion?.global_variables || [];
     }
-
-    if (prevNotMappedRef.current !== result.notMapped) {
-      prevNotMappedRef.current = result.notMapped;
-      setValue(`${fieldPrefix}.unmappedVariables`, result.notMapped, {
-        shouldValidate: false,
-      });
-    }
-    return result;
+    return [];
   }, [
+    type,
     versionsOptions,
     agentVersionsOptions,
     watchedPromptVersion,
     watchedAgentVersion,
-    columnHeaders,
-    type,
-    setValue,
-    fieldPrefix,
   ]);
+
+  const variableMapping = useWatch({
+    control,
+    name: `${fieldPrefix}.configuration.variableMapping`,
+  });
+
+  // Seed the mapping with the exact-name match, so a dataset whose columns
+  // already line up with the variables keeps working without any picking.
+  useEffect(() => {
+    if (!variableNames.length) return;
+    const current = getValues(`${fieldPrefix}.configuration.variableMapping`) || {};
+    const next = { ...current };
+    let changed = false;
+    variableNames.forEach((name) => {
+      if (next[name]) return;
+      const match = allColumns?.find(
+        (col) => (col.headerName ?? col?.name) === name,
+      );
+      if (match?.field) {
+        next[name] = match.field;
+        changed = true;
+      }
+    });
+    if (changed) {
+      setValue(`${fieldPrefix}.configuration.variableMapping`, next, {
+        shouldValidate: false,
+      });
+    }
+  }, [variableNames, allColumns, fieldPrefix, getValues, setValue]);
+
+  // Derive variablesInfo from the mapping
+  const variablesInfo = useMemo(() => {
+    const total = variableNames.length;
+    const notMapped = variableNames.filter(
+      (name) => !variableMapping?.[name],
+    ).length;
+    return { total, notMapped };
+  }, [variableNames, variableMapping]);
+
+  // Mirror the unmapped count into the form, which is what gates the run.
+  // Kept in an effect rather than in the memo above: writing to the form
+  // while rendering warns about updating a component mid-render.
+  const prevNotMappedRef = useRef(null);
+  useEffect(() => {
+    if (prevNotMappedRef.current === variablesInfo.notMapped) return;
+    prevNotMappedRef.current = variablesInfo.notMapped;
+    setValue(`${fieldPrefix}.unmappedVariables`, variablesInfo.notMapped, {
+      shouldValidate: false,
+    });
+  }, [variablesInfo.notMapped, setValue, fieldPrefix]);
 
   // Set initial prompt version
   useEffect(() => {
@@ -450,97 +463,76 @@ const AgentPromptRenderer = ({
               backgroundColor: "background.paper",
             }}
           >
-            <ShowComponent condition={variablesInfo.notMapped === 0}>
-              <Box
-                sx={{
-                  display: "flex",
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 1,
-                }}
-              >
-                <Typography typography="s2" fontWeight={"fontWeightMedium"}>
-                  {`${`${variablesInfo?.total}/${variablesInfo?.total} variables mapped to dataset columns`}`}
-                </Typography>
-                <ChipForVariables status="all" />
-              </Box>
-            </ShowComponent>
-            <ShowComponent condition={variablesInfo.notMapped > 0}>
-              <Box
-                sx={{
-                  display: "flex",
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 1,
-                }}
-              >
-                <Typography typography="s2" fontWeight={"fontWeightMedium"}>
-                  {`${variablesInfo?.total - variablesInfo?.notMapped}/${variablesInfo?.total} variables mapped to dataset columns`}
-                </Typography>
-                <ChipForVariables
-                  status={
-                    variablesInfo?.total === variablesInfo?.notMapped
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 1,
+              }}
+            >
+              <Typography typography="s2" fontWeight={"fontWeightMedium"}>
+                <Box
+                  component="span"
+                  sx={{
+                    color:
+                      variablesInfo.notMapped === 0
+                        ? "green.700"
+                        : variablesInfo.notMapped === variablesInfo.total
+                          ? "red.700"
+                          : "orange.700",
+                  }}
+                >
+                  {variablesInfo.total - variablesInfo.notMapped}
+                </Box>
+                {`/${variablesInfo.total} variables mapped to dataset columns`}
+              </Typography>
+              <ChipForVariables
+                status={
+                  variablesInfo.notMapped === 0
+                    ? "all"
+                    : variablesInfo.notMapped === variablesInfo.total
                       ? "none"
                       : "partial"
-                  }
-                />
-                <Button
-                  size="small"
-                  sx={{ color: "blue.500", bgcolor: "background.paper" }}
-                  startIcon={
-                    <SvgColor
-                      sx={{
-                        height: 16,
-                        width: 16,
-                      }}
-                      src="/assets/icons/ic_reload.svg"
-                    />
-                  }
-                  onClick={() => {
-                    refetchVersions();
-                    pickupLatestVersion.current = true;
-                  }}
-                >
-                  Refresh
-                </Button>
-              </Box>
-              <Box
-                sx={{
-                  display: "flex",
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 1,
-                  mt: 1,
+                }
+              />
+              <Button
+                size="small"
+                sx={{ color: "blue.500", bgcolor: "background.paper" }}
+                startIcon={
+                  <SvgColor
+                    sx={{
+                      height: 16,
+                      width: 16,
+                    }}
+                    src="/assets/icons/ic_reload.svg"
+                  />
+                }
+                onClick={() => {
+                  refetchVersions();
+                  pickupLatestVersion.current = true;
                 }}
               >
-                <Typography typography="s2" fontWeight={"fontWeightMedium"}>
-                  {type === "prompt"
-                    ? "Update variable names in workbench to match dataset columns."
-                    : "Update global variables in agent to match dataset columns."}
-                </Typography>
-                <Button
-                  variant="outlined"
-                  sx={{
-                    bgcolor: "background.paper",
-                    px: 1.5,
-                    borderColor: "border.light",
-                  }}
-                  onClick={() => {
-                    const url =
-                      type === "prompt"
-                        ? `/dashboard/workbench/create/${prompt?.promptId}`
-                        : `/dashboard/agents/playground/${prompt?.agentId}`;
-                    window.open(url, "_blank");
-                  }}
-                  startIcon={
-                    <SvgColor src="/assets/icons/ic_arrow_top_right.svg" />
-                  }
-                >
-                  {type === "prompt"
-                    ? "Go to Workbench"
-                    : "Go to Agent Playground"}
-                </Button>
-              </Box>
+                Refresh
+              </Button>
+            </Box>
+            <Stack spacing={1} sx={{ mt: 1.5 }}>
+              {variableNames.map((name) => (
+                <FieldSelection
+                  key={name}
+                  field={name}
+                  allColumns={allColumns || []}
+                  control={control}
+                  fieldName={`${fieldPrefix}.configuration.variableMapping.${name}`}
+                  placeholder="Map to column"
+                  fullWidth
+                />
+              ))}
+            </Stack>
+            <ShowComponent condition={variablesInfo.notMapped > 0}>
+              <Typography typography="s2" color="error.main" sx={{ mt: 1.5 }}>
+                Please map the unmapped variables to your dataset columns
+              </Typography>
             </ShowComponent>
           </Box>
         </ShowComponent>
