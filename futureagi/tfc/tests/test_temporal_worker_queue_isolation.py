@@ -1,14 +1,18 @@
 import asyncio
 import sys
+import time
 from pathlib import Path
 
 import pytest
+from asgiref.sync import sync_to_async
 
 from tfc.management.commands.start_temporal_worker import (
+    _activity_thread_kwargs,
     _generic_all_queues,
     _workflow_cache_kwargs,
     disable_litellm_logging_worker,
 )
+from tfc.temporal.common.activity_thread import OwnThreadActivityInterceptor
 
 _LOGGING_WORKER = "litellm.litellm_core_utils.logging_worker"
 _PATCHED = ("start", "enqueue", "ensure_initialized_and_enqueue")
@@ -35,6 +39,35 @@ def test_generic_all_queue_worker_preserves_other_queue_order():
     registered = ["agent_compass", "tasks_s", "tasks_l"]
 
     assert _generic_all_queues(registered) == registered
+
+
+@pytest.mark.unit
+def test_runner_activities_get_their_own_thread():
+    interceptors = _activity_thread_kwargs("simulation_runner")["interceptors"]
+
+    assert [type(one) for one in interceptors] == [OwnThreadActivityInterceptor]
+
+
+@pytest.mark.unit
+def test_other_queues_keep_their_shared_thread():
+    assert _activity_thread_kwargs("tasks_s") == {}
+
+
+@pytest.mark.unit
+def test_a_slow_runner_activity_does_not_hold_up_the_others():
+    class _Next:
+        async def execute_activity(self, _input):
+            await sync_to_async(time.sleep, thread_sensitive=True)(0.2)
+
+    inbound = OwnThreadActivityInterceptor().intercept_activity(_Next())
+
+    async def run():
+        started = time.perf_counter()
+        await asyncio.gather(*(inbound.execute_activity(None) for _ in range(4)))
+        return time.perf_counter() - started
+
+    # On one shared thread these four take 0.8 s.
+    assert asyncio.run(run()) < 0.6
 
 
 @pytest.mark.unit

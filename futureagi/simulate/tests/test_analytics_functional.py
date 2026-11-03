@@ -1332,7 +1332,7 @@ class TestRunResultsV3Views:
                         "held": True,
                         "judged": True,
                         "verdict": "not_applicable",
-                        "reason": "Not applicable: Rowan's trigger never fired in this call.",
+                        "reason": "Not applicable: the caller never asked to cancel in this call.",
                     }
                 ],
             },
@@ -1354,7 +1354,7 @@ class TestRunResultsV3Views:
                 "name": "noticed",
                 "passed": None,
                 "result": "not_applicable",
-                "reason": "Not applicable: Rowan's trigger never fired in this call.",
+                "reason": "Not applicable: the caller never asked to cancel in this call.",
             }
         ]
 
