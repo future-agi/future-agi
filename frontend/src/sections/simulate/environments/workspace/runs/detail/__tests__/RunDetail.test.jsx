@@ -596,6 +596,33 @@ describe("RunDetail", () => {
     ).toBeNull();
   });
 
+  it("heads a fix's check run with its fix, not a run number, and offers no Stop", () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        runState: "running",
+        status: "running",
+        stoppable: true,
+        fixRun: { id: "fix-1", label: "c2-target" },
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText(/^Check run c2-target for/)).toHaveTextContent(
+      "Check run c2-target for this fix · agent v2",
+    );
+    expect(screen.getByRole("link", { name: "this fix" })).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/improvements/fix-1",
+    );
+    expect(screen.queryByText(/^Run 3/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Stop simulation" }),
+    ).toBeNull();
+  });
+
   it("shows Cancelling in the header while a stopped run winds down", () => {
     useRunDetail.mockReturnValue({
       identity: {

@@ -144126,6 +144126,25 @@
                 }
             }
         },
+        "RunFixRun": {
+            "required": [
+                "id",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string"
+                }
+            },
+            "x-nullable": true
+        },
         "RunExecution": {
             "required": [
                 "id",
@@ -144219,6 +144238,9 @@
                 },
                 "summary": {
                     "$ref": "#/definitions/RunSummary"
+                },
+                "fix_run": {
+                    "$ref": "#/definitions/RunFixRun"
                 }
             }
         },

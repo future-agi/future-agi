@@ -24762,6 +24762,11 @@ export interface RunSummaryApi {
   cost_cents: TotalMetricStatsApi;
 }
 
+export interface RunFixRunApi {
+  id: string;
+  label: string;
+}
+
 export interface RunExecutionApi {
   id: string;
   run_test_id: string;
@@ -24784,6 +24789,7 @@ export interface RunExecutionApi {
   /** @minLength 1 */
   agent_type: string;
   summary: RunSummaryApi;
+  fix_run?: RunFixRunApi;
 }
 
 export interface SimulateRunV3ScoringCountsApi {

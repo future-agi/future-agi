@@ -52030,6 +52030,12 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         total_value: zod.number(),
       }),
     }),
+    fix_run: zod
+      .object({
+        id: zod.string().uuid(),
+        label: zod.string(),
+      })
+      .optional(),
   }),
   summary: zod.object({
     total: zod.number(),

@@ -870,6 +870,29 @@ describe("useRunDetail", () => {
     expect(result.current.stats.failed).toBe(4);
   });
 
+  it("names the fix a check run belongs to, and none for a user's run", async () => {
+    const identityOf = async (execution) => {
+      axios.get.mockResolvedValueOnce({
+        data: { execution: { status: "completed", summary: {}, ...execution } },
+      });
+      const { result } = renderHook(() => useRunDetail("rt1", execution.id), {
+        wrapper: makeWrapper(),
+      });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      return result.current.identity;
+    };
+
+    expect(
+      (
+        await identityOf({
+          id: "ex-check",
+          fix_run: { id: "fix-1", label: "baseline" },
+        })
+      ).fixRun,
+    ).toEqual({ id: "fix-1", label: "baseline" });
+    expect((await identityOf({ id: "ex-user" })).fixRun).toBeNull();
+  });
+
   it("marks a running Run stoppable and a cancelling or grading one not", async () => {
     const identityFor = async (status) => {
       axios.get.mockResolvedValueOnce({
@@ -1505,7 +1528,9 @@ describe("useCallTraces", () => {
       wrapper: makeWrapper(),
     });
 
-    await waitFor(() => expect(result.current.projectId).toBe("hidden-project"));
+    await waitFor(() =>
+      expect(result.current.projectId).toBe("hidden-project"),
+    );
     expect(axios.get).toHaveBeenCalledWith(
       endpoints.runResultsV3.traces("exec-1"),
       { params: { call_execution_id: "call-1" } },

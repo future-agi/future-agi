@@ -28,8 +28,8 @@ from simulate.selectors.runs import user_executions
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
-from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_evals import runnable_eval_config_ids
+from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -52,9 +52,9 @@ from simulate.services.run_results_v3_queries import (
     run_call_rows_queryset,
     run_calls_queryset,
 )
-from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
 from simulate.services.run_results_v3_scan import scan_call_values
 from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
+from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
 from simulate.services.scoring_status import (
     CSAT_STATUSES,
     EVAL_STATUSES,
@@ -230,6 +230,14 @@ class RunCallsSummarySerializer(RunSummarySerializer):
         ref_name = "SimulateRunV3CallsSummary"
 
 
+class RunFixRunSerializer(serializers.Serializer):
+    """The fix that started a check run."""
+
+    id = serializers.UUIDField()
+    # The engine's name for the run ("baseline", "c2-target").
+    label = serializers.CharField(allow_blank=True)
+
+
 class RunExecutionSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     run_test_id = serializers.UUIDField()
@@ -250,6 +258,8 @@ class RunExecutionSerializer(serializers.Serializer):
     trials = serializers.IntegerField(required=False, min_value=1, default=1)
     agent_type = serializers.CharField(allow_null=True)
     summary = RunSummarySerializer()
+    # Set on a fix's check run, which is not one of the user's runs; null otherwise.
+    fix_run = RunFixRunSerializer(allow_null=True, required=False)
 
 
 class PersonaDetailsSerializer(serializers.Serializer):
@@ -586,7 +596,11 @@ def _execution_for_request(request, execution_id) -> TestExecution:
     )
     return get_object_or_404(
         TestExecution.objects.select_related(
-            "run_test", "agent_definition", "agent_version", "run_test__agent_version"
+            "run_test",
+            "agent_definition",
+            "agent_version",
+            "run_test__agent_version",
+            "hosted_harness_job",
         ),
         run_test_workspace_filter(request, "run_test"),
         id=execution_id,
@@ -604,6 +618,13 @@ def _execution_payload(
         user_executions()
         .filter(run_test=execution.run_test, created_at__lte=execution.created_at)
         .count()
+    )
+    # A check run is not counted among the user's runs, so it names its fix instead.
+    job = getattr(execution, "hosted_harness_job", None)
+    fix_run = (
+        {"id": str(job.fix_run_id), "label": job.fix_label}
+        if job is not None and job.fix_run_id
+        else None
     )
     return {
         "id": str(execution.id),
@@ -628,6 +649,7 @@ def _execution_payload(
         ),
         "trials": execution.trials or 1,
         "summary": summary,
+        "fix_run": fix_run,
     }
 
 

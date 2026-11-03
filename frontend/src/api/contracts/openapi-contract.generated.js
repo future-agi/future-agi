@@ -104949,6 +104949,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         summary: {
           $ref: "#/definitions/RunSummary",
         },
+        fix_run: {
+          $ref: "#/definitions/RunFixRun",
+        },
       },
     },
     RunFacets: {
@@ -119078,6 +119081,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+    },
+    RunFixRun: {
+      required: ["id", "label"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
     },
     RunSummary: {
       required: [

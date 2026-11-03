@@ -2039,6 +2039,24 @@ class TestCheckRunsStayOutOfTheUsersRuns:
         assert _execution_payload(latest, {})["ordinal"] == 2
         assert run_summaries([latest])[latest.id]["run_number"] == 2
 
+    def test_the_run_page_names_a_check_runs_fix(self, auth_client, runs):
+        HostedHarnessJob.no_workspace_objects.filter(id=runs.check.id).update(
+            fix_label="c2-target"
+        )
+
+        def execution_of(run):
+            response = auth_client.get(
+                f"/simulate/v3/test-executions/{run.test_execution_id}/calls/"
+            )
+            assert response.status_code == 200, response.content
+            return response.json()["execution"]
+
+        assert execution_of(runs.check)["fix_run"] == {
+            "id": str(runs.check.fix_run_id),
+            "label": "c2-target",
+        }
+        assert execution_of(runs.latest)["fix_run"] is None
+
     def test_the_run_preview(self, auth_client, environment, runs):
         with (
             patch(

@@ -4,10 +4,19 @@ import { enqueueSnackbar } from "notistack";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, IconButton, Tab } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  IconButton,
+  Link,
+  Tab,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
+import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
@@ -147,6 +156,9 @@ export default function RunDetail({
     );
 
   const status = identity?.runState;
+  // A fix's check run is not one of the user's runs: it has no run number, and
+  // the fix, not the user, stops it.
+  const fixRun = identity?.fixRun ?? null;
   // A live run has no final results yet, so its header actions wait for it to
   // finish. Stop simulation is the exception and stays in its own control.
   const live =
@@ -228,7 +240,7 @@ export default function RunDetail({
 
         <Box flex={1} minWidth={0}>
           <Stack direction="row" alignItems="center" spacing={1}>
-            {identity && (
+            {identity && !fixRun && (
               <Box
                 sx={{
                   width: 24,
@@ -251,9 +263,27 @@ export default function RunDetail({
               </Box>
             )}
             <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>
-              {identity
-                ? `Run ${identity.ordinal} · agent ${agentLabel}${pinnedLabels}`
-                : "Run complete"}
+              {fixRun ? (
+                <>
+                  {`Check run ${fixRun.label} for `}
+                  <Link
+                    component={RouterLink}
+                    href={paths.dashboard.simulate.environments.improvement(
+                      env.id,
+                      fixRun.id,
+                    )}
+                    color="inherit"
+                    underline="always"
+                  >
+                    this fix
+                  </Link>
+                  {` · agent ${agentLabel}${pinnedLabels}`}
+                </>
+              ) : identity ? (
+                `Run ${identity.ordinal} · agent ${agentLabel}${pinnedLabels}`
+              ) : (
+                "Run complete"
+              )}
             </Typography>
             {identity?.agentDiffers && (
               <AgentDiffersTag
@@ -262,11 +292,13 @@ export default function RunDetail({
               />
             )}
             {status && <StatusChip status={status} />}
-            <StopRunControl
-              executionId={executionId}
-              stoppable={!!identity?.stoppable}
-              label="Stop simulation"
-            />
+            {!fixRun && (
+              <StopRunControl
+                executionId={executionId}
+                stoppable={!!identity?.stoppable}
+                label="Stop simulation"
+              />
+            )}
           </Stack>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
             {env.name} · {stats.total} tasks
