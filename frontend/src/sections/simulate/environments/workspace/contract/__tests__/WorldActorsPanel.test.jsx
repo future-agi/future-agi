@@ -140,20 +140,20 @@ describe("WorldActorsPanel", () => {
     for (const label of [
       "Id",
       "Name",
-      "Role",
-      "Kind",
-      "Brought in by",
-      "What they want",
-      "May agree to (one per line)",
-      "Keeps to themselves (one per line)",
-      "Hands over when (one per line)",
-      "Is done when (one per line)",
-      "What they know (one per line)",
-      "How they behave",
+      "Role (optional)",
+      "Kind (optional)",
+      "Brought in by (optional)",
+      "What they want (optional)",
+      "May agree to (optional, one per line)",
+      "Keeps to themselves (optional, one per line)",
+      "Hands over when (optional, one per line)",
+      "Is done when (optional, one per line)",
+      "What they know (optional, one per line)",
+      "How they behave (optional)",
       "Answers",
-      "World actions they may take",
+      "World actions they may take (optional)",
       "Comes in",
-      "Waits (seconds)",
+      "Waits, in seconds (optional)",
       "If they do not answer",
     ])
       expect(screen.getByLabelText(label)).toBeInTheDocument();
@@ -163,17 +163,25 @@ describe("WorldActorsPanel", () => {
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Priya" },
     });
-    fireEvent.change(screen.getByLabelText("Is done when (one per line)"), {
-      target: { value: "She has decided" },
-    });
-    fireEvent.change(screen.getByLabelText("What they know (one per line)"), {
-      target: { value: "The limit is 25%" },
-    });
+    fireEvent.change(
+      screen.getByLabelText("Is done when (optional, one per line)"),
+      {
+        target: { value: "She has decided" },
+      },
+    );
+    fireEvent.change(
+      screen.getByLabelText("What they know (optional, one per line)"),
+      {
+        target: { value: "The limit is 25%" },
+      },
+    );
     choose("Answers", "After a delay");
     fireEvent.change(screen.getByLabelText("Seconds"), {
       target: { value: "5" },
     });
-    fireEvent.mouseDown(screen.getByLabelText("World actions they may take"));
+    fireEvent.mouseDown(
+      screen.getByLabelText("World actions they may take (optional)"),
+    );
     expect(screen.getByText("Approve a pending discount")).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("option", { name: /crm.approve_discount/ }),
@@ -214,16 +222,23 @@ describe("WorldActorsPanel", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" callerSide />);
     fireEvent.click(screen.getByText("Add someone on the caller's side"));
-    expect(screen.queryByLabelText("World actions they may take")).toBeNull();
+    expect(
+      screen.queryByLabelText("World actions they may take (optional)"),
+    ).toBeNull();
     fireEvent.change(screen.getByLabelText("Id"), {
       target: { value: "colleague" },
     });
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Jordan" },
     });
-    fireEvent.change(screen.getByLabelText("How loud, next to the caller"), {
-      target: { value: "0.5" },
+    // Automatic by default; switching it off fixes a share, set on a slider.
+    const automatic = screen.getByRole("checkbox", {
+      name: /Automatic: each call picks between 33% and 67%/,
     });
+    expect(automatic).toBeChecked();
+    fireEvent.click(automatic);
+    expect(screen.getByRole("slider")).toHaveValue("0.5");
+    expect(screen.getByText("50% of the caller's voice")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Save to draft"));
     expect(mutate.mock.calls[0][0].actor).toMatchObject({
       id: "colleague",
@@ -247,9 +262,7 @@ describe("WorldActorsPanel", () => {
     fireEvent.click(screen.getByText("Cancel"));
     fireEvent.click(screen.getByText("Add someone on the caller's side"));
     expect(
-      screen.getByText(
-        /Empty is automatic: each call picks between 33% and 67%/,
-      ),
+      screen.getByText(/Automatic: each call picks between 33% and 67%/),
     ).toBeInTheDocument();
   });
 
@@ -258,12 +271,12 @@ describe("WorldActorsPanel", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByText("Add someone in the world"));
-    fireEvent.change(screen.getByLabelText("Role"), {
+    fireEvent.change(screen.getByLabelText("Role (optional)"), {
       target: { value: "store manager" },
     });
     fireEvent.click(screen.getByText("Save to draft"));
     fireEvent.click(screen.getByText("Add someone in the world"));
-    expect(screen.getByLabelText("Role")).toHaveValue("");
+    expect(screen.getByLabelText("Role (optional)")).toHaveValue("");
   });
 
   it("keeps an actor's trigger when only another field is edited", () => {

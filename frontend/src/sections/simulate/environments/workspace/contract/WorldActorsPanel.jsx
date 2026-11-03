@@ -6,8 +6,11 @@ import {
   Box,
   Button,
   Collapse,
+  FormControlLabel,
   MenuItem,
+  Slider,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from "@mui/material";
@@ -354,6 +357,59 @@ ActorRow.propTypes = {
   onRemove: PropTypes.func,
 };
 
+// How loud a voice beside the caller is: automatic (each call picks within the release's range) or a fixed share.
+function Loudness({ value, automatic, onChange }) {
+  const F = C.form;
+  const fixed = typeof value === "number";
+  const [low, high] = automatic?.length === 2 ? automatic : [0.33, 0.67];
+  const percent = (ratio) => `${Math.round(ratio * 100)}%`;
+  return (
+    <Box>
+      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+        {F.loudness}
+      </Typography>
+      <FormControlLabel
+        control={
+          <Switch
+            checked={!fixed}
+            onChange={(event) =>
+              onChange(
+                event.target.checked
+                  ? null
+                  : Math.round(((low + high) / 2) * 20) / 20,
+              )
+            }
+          />
+        }
+        label={F.loudnessAutomatic(percent(low), percent(high))}
+      />
+      {fixed && (
+        <Stack direction="row" spacing={2} alignItems="center" sx={{ px: 1 }}>
+          <Slider
+            aria-label={F.loudness}
+            value={value}
+            min={0.05}
+            max={1}
+            step={0.05}
+            valueLabelDisplay="auto"
+            valueLabelFormat={percent}
+            onChange={(_, next) => onChange(next)}
+          />
+          <Typography sx={{ typography: "s2", minWidth: 120 }}>
+            {F.loudnessFixed(percent(value))}
+          </Typography>
+        </Stack>
+      )}
+    </Box>
+  );
+}
+
+Loudness.propTypes = {
+  value: PropTypes.number,
+  automatic: PropTypes.arrayOf(PropTypes.number),
+  onChange: PropTypes.func,
+};
+
 const CONSTRAINTS = ["may_agree", "private", "escalate_when", "stop_when"];
 
 function ActorForm({ actor, context, busy, error, onClose, onSave }) {
@@ -395,13 +451,12 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
     };
     if (callerSide) {
       const channel = value("channel", actor.channel);
-      const loudness = value("loudness_ratio", actor.loudness_ratio ?? "");
+      const loudness = value("loudness_ratio", actor.loudness_ratio ?? null);
       onSave({
         ...base,
         side: "caller",
         channel,
-        loudness_ratio:
-          channel === "audio_mix" && loudness !== "" ? Number(loudness) : null,
+        loudness_ratio: channel === "audio_mix" ? loudness : null,
       });
       return;
     }
@@ -516,13 +571,13 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
                   </MenuItem>
                 ))}
               </TextField>
-              {channel === "audio_mix" &&
-                text("loudness_ratio", F.loudness, actor.loudness_ratio ?? "", {
-                  type: "number",
-                  placeholder: F.automatic,
-                  helperText: F.loudnessHelp(context.loudness.automatic),
-                  inputProps: { min: 0.05, max: 1, step: 0.05 },
-                })}
+              {channel === "audio_mix" && (
+                <Loudness
+                  value={value("loudness_ratio", actor.loudness_ratio ?? null)}
+                  automatic={context.loudness.automatic}
+                  onChange={(next) => put("loudness_ratio", next)}
+                />
+              )}
             </>
           ) : (
             <>
