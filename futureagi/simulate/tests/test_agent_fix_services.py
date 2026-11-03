@@ -1418,6 +1418,52 @@ class TestBrief:
 
         assert (brief.last_attempt, brief.committed_usd) == (103, 1.25)
 
+    def test_carries_the_source_runs_failed_trials_with_their_transcripts(
+        self, source_run
+    ):
+        failed = _executions(source_run).get(source_scenario__scenario_key=KEYS[0])
+        for at, role, text in ((2, "assistant", "no refund"), (1, "user", "refund?")):
+            CallTranscript.objects.create(
+                call_execution=failed.call_execution,
+                speaker_role=role,
+                content=text,
+                start_time_ms=at,
+            )
+
+        [record] = engine_brief(_fix_run(source_run)).source_failures
+
+        assert (record.scenario_key, record.trial) == (KEYS[0], failed.trial_index)
+        assert record.sub_goals == {"refunded": False, "greeted": True}
+        assert record.reasons["refunded"] == "refunded?"
+        assert record.transcript == "user: refund?\nassistant: no refund"
+
+    def test_never_carries_a_held_back_target(self, source_run):
+        _receipts(
+            source_run, {KEYS[0]: {"refunded": False}, KEYS[1]: {"greeted": False}}
+        )
+        fix_run = _fix_run(source_run)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={
+                **fix_run.request,
+                "target_scenario_keys": KEYS,
+                "held_back_scenario_keys": [KEYS[0]],
+            }
+        )
+        fix_run.refresh_from_db()
+
+        brief = engine_brief(fix_run)
+
+        assert [one.scenario_key for one in brief.source_failures] == [KEYS[1]]
+
+    def test_a_fix_with_no_failed_searched_trial_carries_none(self, source_run):
+        fix_run = _fix_run(source_run)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={**fix_run.request, "target_scenario_keys": [KEYS[1]]}
+        )
+        fix_run.refresh_from_db()
+
+        assert engine_brief(fix_run).source_failures == []
+
 
 class TestReport:
     def test_a_report_leaves_the_metered_spend_alone(self, source_run):

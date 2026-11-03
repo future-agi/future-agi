@@ -166,7 +166,39 @@ def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
         last_attempt=fix_run.candidates.aggregate(last=Max("attempt"))["last"] or 0,
         committed_usd=float(committed_usd(fix_run)),
         deadline_at=fix_deadline(fix_run).isoformat(),
+        source_failures=source_failures(fix_run.source_run, request),
     )
+
+
+def source_failures(
+    source_run: HostedHarnessJob, request: FixRequest
+) -> list[CheckRecord]:
+    """The source run's trials that failed a sub-goal on the targets the engine searches, as
+    check records. The held-back targets stay out, as they do from everything it reads."""
+    searched = set(request.target_scenario_keys) - set(request.held_back_scenario_keys)
+    failed = []
+    for execution in (
+        HostedHarnessExecution.no_workspace_objects.filter(
+            job=source_run, source_scenario__scenario_key__in=searched
+        )
+        .select_related("source_scenario", "call_execution")
+        .order_by("execution_key")
+    ):
+        receipt = (execution.call_execution.call_metadata or {}).get(
+            "hosted_harness_receipt"
+        )
+        if isinstance(receipt, Mapping) and False in judged_sub_goals(receipt).values():
+            failed.append((execution, receipt))
+    transcripts = _transcripts(execution.call_execution_id for execution, _ in failed)
+    return [
+        _record(
+            execution.source_scenario.scenario_key,
+            execution.trial_index,
+            receipt,
+            transcripts.get(execution.call_execution_id, ""),
+        )
+        for execution, receipt in failed
+    ]
 
 
 def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
