@@ -45,7 +45,9 @@ class CostCoverageSerializer(serializers.Serializer):
         expected = (
             "complete"
             if attrs["unknown_fact_count"] == 0
-            else "partial" if attrs["known_fact_count"] > 0 else "unknown"
+            else "partial"
+            if attrs["known_fact_count"] > 0
+            else "unknown"
         )
         if attrs["status"] != expected:
             raise serializers.ValidationError(

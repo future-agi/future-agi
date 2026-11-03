@@ -14,8 +14,8 @@ import model_hub.tasks  # noqa: F401 -- break the existing eval/task import cycl
 from tracer.models.trace import Trace
 from tracer.serializers.usage_coverage import CostCoverageSerializer
 from tracer.services.clickhouse.v2.span_reader import (
-    CHSpanReader,
     _DATA_KEYS,
+    CHSpanReader,
     _row_to_chspan,
 )
 from tracer.utils.eval import build_session_context, build_span_context
@@ -36,14 +36,32 @@ def _span(**overrides):
     # then becomes None at this exact boundary. No fake monetary coercion.
     row = dict.fromkeys(_DATA_KEYS, "")
     row.update(
-        id=str(uuid4()), project_id="project-1", trace_id="trace-1",
-        trace_session_id="session-1", name="chat", observation_type="llm",
-        start_time=START, end_time=START + timedelta(seconds=1), latency_ms=1000,
-        total_tokens=120, prompt_tokens=100, completion_tokens=20, cost=0.0,
-        attrs_string={}, attrs_number={}, attrs_bool={}, is_deleted=0,
-        streaming=None, temperature=None, top_p=None, max_tokens=None,
-        metadata="{}", resource_attrs="{}", attributes_extra="{}",
-        tags="[]", span_events="[]",
+        id=str(uuid4()),
+        project_id="project-1",
+        trace_id="trace-1",
+        trace_session_id="session-1",
+        name="chat",
+        observation_type="llm",
+        start_time=START,
+        end_time=START + timedelta(seconds=1),
+        latency_ms=1000,
+        total_tokens=120,
+        prompt_tokens=100,
+        completion_tokens=20,
+        cost=0.0,
+        attrs_string={},
+        attrs_number={},
+        attrs_bool={},
+        is_deleted=0,
+        streaming=None,
+        temperature=None,
+        top_p=None,
+        max_tokens=None,
+        metadata="{}",
+        resource_attrs="{}",
+        attributes_extra="{}",
+        tags="[]",
+        span_events="[]",
     )
     row.update(overrides)
     return _row_to_chspan(tuple(row[key] for key in _DATA_KEYS))
@@ -74,7 +92,9 @@ def _context(monkeypatch, spans):
 
     def scoped_traces(**kwargs):
         assert kwargs == {
-            "project_id": "project-1", "id__in": trace_ids, "deleted": False,
+            "project_id": "project-1",
+            "id__in": trace_ids,
+            "deleted": False,
         }
         return _TraceQuery(
             SimpleNamespace(id=tid, name=tid, created_at=START, error=False)
@@ -82,10 +102,15 @@ def _context(monkeypatch, spans):
         )
 
     monkeypatch.setattr(Trace.objects, "filter", scoped_traces)
-    result = build_session_context(SimpleNamespace(
-        id="session-1", project_id="project-1", name="session",
-        bookmarked=False, created_at=START,
-    ))
+    result = build_session_context(
+        SimpleNamespace(
+            id="session-1",
+            project_id="project-1",
+            name="session",
+            bookmarked=False,
+            created_at=START,
+        )
+    )
     assert result is not None
     reader.session_trace_ids.assert_called_once_with("project-1", "session-1")
     reader.list_by_session.assert_called_once_with("session-1", project_id="project-1")
@@ -94,8 +119,10 @@ def _context(monkeypatch, spans):
 
 def _assert_coverage(context, status, subtotal, known, unknown):
     assert context["cost_coverage"] == {
-        "status": status, "known_subtotal": subtotal,
-        "known_fact_count": known, "unknown_fact_count": unknown,
+        "status": status,
+        "known_subtotal": subtotal,
+        "known_fact_count": known,
+        "unknown_fact_count": unknown,
     }
     # Pin the shared typed contract, including numeric/non-null fields.
     serializer = CostCoverageSerializer(data=context["cost_coverage"])
@@ -107,10 +134,14 @@ def _assert_coverage(context, status, subtotal, known, unknown):
 def test_mixed_native_costs_across_traces_are_not_a_complete_total(monkeypatch):
     unknown = _span(trace_id="trace-2", attrs_string=UNKNOWN)
     assert unknown.cost is None
-    context = _context(monkeypatch, [
-        _span(cost=1.25, attrs_string=KNOWN), unknown,
-        _span(trace_id="trace-2", attrs_string=UNKNOWN),
-    ])
+    context = _context(
+        monkeypatch,
+        [
+            _span(cost=1.25, attrs_string=KNOWN),
+            unknown,
+            _span(trace_id="trace-2", attrs_string=UNKNOWN),
+        ],
+    )
     assert context["total_cost"] == 1.25  # numeric compatibility amount
     _assert_coverage(context, "partial", 1.25, 1, 2)
     _assert_coverage(context["traces"][0], "complete", 1.25, 1, 0)
@@ -129,9 +160,13 @@ def test_session_explorer_summary_keeps_incomplete_price_warning(monkeypatch):
         load_context_data,
     )
 
-    context = _context(monkeypatch, [
-        _span(cost=1.25, attrs_string=KNOWN), _span(attrs_string=UNKNOWN),
-    ])
+    context = _context(
+        monkeypatch,
+        [
+            _span(cost=1.25, attrs_string=KNOWN),
+            _span(attrs_string=UNKNOWN),
+        ],
+    )
     eval_id = str(uuid4())
     load_context_data(eval_id, "session", context)
     try:
@@ -147,14 +182,19 @@ def test_session_explorer_summary_keeps_incomplete_price_warning(monkeypatch):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("attrs,cost,status,known,unknown", [
-    (UNKNOWN, 0.0, "unknown", 0, 1),
-    (ZERO, 0.0, "complete", 1, 0),
-    ({}, 0.0, "complete", 1, 0),
-    ({}, None, "complete", 1, 0),  # legacy None retains its old numeric meaning
-    ({}, 1.25, "complete", 1, 0),
-])
-def test_native_and_plain_legacy_prices(monkeypatch, attrs, cost, status, known, unknown):
+@pytest.mark.parametrize(
+    "attrs,cost,status,known,unknown",
+    [
+        (UNKNOWN, 0.0, "unknown", 0, 1),
+        (ZERO, 0.0, "complete", 1, 0),
+        ({}, 0.0, "complete", 1, 0),
+        ({}, None, "complete", 1, 0),  # legacy None retains its old numeric meaning
+        ({}, 1.25, "complete", 1, 0),
+    ],
+)
+def test_native_and_plain_legacy_prices(
+    monkeypatch, attrs, cost, status, known, unknown
+):
     context = _context(monkeypatch, [_span(attrs_string=attrs, cost=cost)])
     assert context["total_cost"] == (cost or 0.0)
     _assert_coverage(context, status, cost or 0.0, known, unknown)
@@ -163,63 +203,106 @@ def test_native_and_plain_legacy_prices(monkeypatch, attrs, cost, status, known,
 @pytest.mark.unit
 @pytest.mark.parametrize("attrs", [ZERO, {}], ids=["explicit-zero", "legacy-zero"])
 def test_zero_plus_unknown_is_partial_not_free(monkeypatch, attrs):
-    context = _context(monkeypatch, [_span(attrs_string=attrs), _span(attrs_string=UNKNOWN)])
+    context = _context(
+        monkeypatch, [_span(attrs_string=attrs), _span(attrs_string=UNKNOWN)]
+    )
     assert context["total_cost"] == 0
     _assert_coverage(context, "partial", 0.0, 1, 1)
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("overrides,known,unknown", [
-    ({"observation_type": "tool"}, 0, 0),
-    ({"observation_type": "chain"}, 0, 0),
-    ({"observation_type": "agent"}, 0, 0),
-    ({"observation_type": "llm"}, 0, 1),
-    ({"observation_type": "tool", "prompt_tokens": 100}, 0, 1),
-    ({"observation_type": "chain", "completion_tokens": 20}, 0, 1),
-    ({"observation_type": "agent", "total_tokens": 120}, 0, 1),
-    ({"observation_type": "tool", "attrs_string": {**UNKNOWN, "fi.usage.scope": "turn"}}, 0, 1),
-    ({"observation_type": "tool", "attrs_string": ZERO}, 1, 0),
-    ({"observation_type": "tool", "attrs_string": {}, "cost": 0.25}, 1, 0),
-])
+@pytest.mark.parametrize(
+    "overrides,known,unknown",
+    [
+        ({"observation_type": "tool"}, 0, 0),
+        ({"observation_type": "chain"}, 0, 0),
+        ({"observation_type": "agent"}, 0, 0),
+        ({"observation_type": "llm"}, 0, 1),
+        ({"observation_type": "tool", "prompt_tokens": 100}, 0, 1),
+        ({"observation_type": "chain", "completion_tokens": 20}, 0, 1),
+        ({"observation_type": "agent", "total_tokens": 120}, 0, 1),
+        (
+            {
+                "observation_type": "tool",
+                "attrs_string": {**UNKNOWN, "fi.usage.scope": "turn"},
+            },
+            0,
+            1,
+        ),
+        ({"observation_type": "tool", "attrs_string": ZERO}, 1, 0),
+        ({"observation_type": "tool", "attrs_string": {}, "cost": 0.25}, 1, 0),
+    ],
+)
 def test_only_additive_monetary_activity_counts(monkeypatch, overrides, known, unknown):
-    span = _span(**{
-        "total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0,
-        "attrs_string": UNKNOWN, **overrides,
-    })
+    span = _span(
+        **{
+            "total_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "attrs_string": UNKNOWN,
+            **overrides,
+        }
+    )
     context = _context(monkeypatch, [span])
-    _assert_coverage(context, "unknown" if unknown else "complete", span.cost or 0.0, known, unknown)
+    _assert_coverage(
+        context, "unknown" if unknown else "complete", span.cost or 0.0, known, unknown
+    )
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("with_child", [False, True])
 @pytest.mark.parametrize("cost_kind", ["provider_reported", "unknown"])
-def test_parent_summary_never_becomes_observed_usage(monkeypatch, with_child, cost_kind):
-    spans = [_span(
-        id="parent", name="invoke_agent", observation_type="agent", cost=17,
-        total_tokens=43071, attrs_string={
-            "fi.usage.contribution": "none", "fi.cost.kind": cost_kind,
-            "fi.usage.scope": "turn", "fi.source.summary.gen_ai.cost.total": "17",
-        },
-    )]
+def test_parent_summary_never_becomes_observed_usage(
+    monkeypatch, with_child, cost_kind
+):
+    spans = [
+        _span(
+            id="parent",
+            name="invoke_agent",
+            observation_type="agent",
+            cost=17,
+            total_tokens=43071,
+            attrs_string={
+                "fi.usage.contribution": "none",
+                "fi.cost.kind": cost_kind,
+                "fi.usage.scope": "turn",
+                "fi.source.summary.gen_ai.cost.total": "17",
+            },
+        )
+    ]
     if with_child:
         spans.append(_span(parent_span_id="parent", cost=1.25, attrs_string=KNOWN))
     context = _context(monkeypatch, spans)
-    _assert_coverage(context, "complete", 1.25 if with_child else 0.0, int(with_child), 0)
+    _assert_coverage(
+        context, "complete", 1.25 if with_child else 0.0, int(with_child), 0
+    )
     assert context["total_tokens"] == (120 if with_child else 0)
     assert context["total_spans"] == len(spans)
-    assert "monetary coverage does not prove capture completeness" in context["cost_note"]
+    assert (
+        "monetary coverage does not prove capture completeness" in context["cost_note"]
+    )
 
 
 @pytest.mark.unit
 def test_repeated_pydantic_parent_is_excluded_not_equal_valued_siblings(monkeypatch):
-    context = _context(monkeypatch, [
-        _span(id="parent", name="pydantic_ai.agent.run", observation_type="agent",
-              cost=2.5, total_tokens=240, prompt_tokens=200, completion_tokens=40),
-        _span(parent_span_id="parent", cost=1.25),
-        _span(parent_span_id="parent", cost=1.25),
-        # Same parent id in another trace must NOT affect summary detection.
-        _span(trace_id="trace-2", parent_span_id="parent", attrs_string=UNKNOWN),
-    ])
+    context = _context(
+        monkeypatch,
+        [
+            _span(
+                id="parent",
+                name="pydantic_ai.agent.run",
+                observation_type="agent",
+                cost=2.5,
+                total_tokens=240,
+                prompt_tokens=200,
+                completion_tokens=40,
+            ),
+            _span(parent_span_id="parent", cost=1.25),
+            _span(parent_span_id="parent", cost=1.25),
+            # Same parent id in another trace must NOT affect summary detection.
+            _span(trace_id="trace-2", parent_span_id="parent", attrs_string=UNKNOWN),
+        ],
+    )
     assert context["total_cost"] == 2.5
     assert context["total_tokens"] == 360
     _assert_coverage(context, "partial", 2.5, 2, 1)
@@ -253,7 +336,10 @@ def test_failed_span_read_omits_context_not_complete_zero(monkeypatch):
     reader.list_by_session.side_effect = TimeoutError("synthetic timeout")
     monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: reader)
     monkeypatch.setattr(Trace.objects, "filter", lambda **_kwargs: _TraceQuery())
-    assert build_session_context(SimpleNamespace(id="session-1", project_id="project-1")) is None
+    assert (
+        build_session_context(SimpleNamespace(id="session-1", project_id="project-1"))
+        is None
+    )
     assert build_session_context(None) is None
 
 
@@ -266,15 +352,22 @@ def test_empty_context_and_compatibility_rounding(monkeypatch):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("cost,expected", [(0.0, 0.0), (Decimal("0"), 0.0), (None, None), (Decimal("1.25"), 1.25)])
+@pytest.mark.parametrize(
+    "cost,expected",
+    [(0.0, 0.0), (Decimal("0"), 0.0), (None, None), (Decimal("1.25"), 1.25)],
+)
 def test_span_context_preserves_explicit_zero_baseline_bug(cost, expected):
     assert build_span_context(SimpleNamespace(cost=cost))["cost"] == expected
 
 
 @pytest.mark.django_db
 def test_active_session_pipeline_forwards_coverage_without_a_model_call(
-    monkeypatch, trace_session, session_trace, custom_eval_config,
-    stub_run_eval, stub_cost_log,
+    monkeypatch,
+    trace_session,
+    session_trace,
+    custom_eval_config,
+    stub_run_eval,
+    stub_cost_log,
 ):
     from tracer.utils.eval import _execute_evaluation_for_session
 
@@ -287,10 +380,14 @@ def test_active_session_pipeline_forwards_coverage_without_a_model_call(
     ]
     monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: reader)
     monkeypatch.setattr("tracer.utils.eval._emit_eval_billing", lambda **_kwargs: None)
-    custom_eval_config.config = {"run_config": {"data_injection": {"session_context": True}}}
+    custom_eval_config.config = {
+        "run_config": {"data_injection": {"session_context": True}}
+    }
     _execute_evaluation_for_session(
-        trace_session=trace_session, custom_eval_config=custom_eval_config,
-        eval_task_id=None, run_params={"input": "synthetic input", "output": "synthetic output"},
+        trace_session=trace_session,
+        custom_eval_config=custom_eval_config,
+        eval_task_id=None,
+        run_params={"input": "synthetic input", "output": "synthetic output"},
     )
     assert len(stub_run_eval.requests) == 1
     request = stub_run_eval.requests[0]
@@ -315,7 +412,10 @@ def _ensure_test_score_tenant_column():
 @pytest.fixture
 def eval_cost_client():
     from conftest import _ch_test_owned_database, _open_ch_test_http_client
-    from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import _REMAP_DDL, _SPANS_DDL
+    from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import (
+        _REMAP_DDL,
+        _SPANS_DDL,
+    )
 
     with _ch_test_owned_database("test_eval_cost_coverage_") as database:
         client = _open_ch_test_http_client(database=database)
@@ -325,14 +425,24 @@ def eval_cost_client():
             # The existing reduced DDL lacks fields projected by list_by_session.
             # Add actual column types, not a patched SELECT/row decoder.
             columns = {
-                "operation_name": "String", "status_message": "String",
-                "org_id": "Nullable(UUID)", "prompt_version_id": "Nullable(UUID)",
-                "prompt_label_id": "Nullable(UUID)", "custom_eval_config_id": "Nullable(UUID)",
-                "tags": "String", "span_events": "String", "resource_attrs": "JSON",
-                "llm_request_model": "String", "llm_response_model": "String",
-                "embedding_model": "String", "streaming": "Nullable(UInt8)",
-                "temperature": "Nullable(Float64)", "top_p": "Nullable(Float64)",
-                "max_tokens": "Nullable(Int32)", "eval_status": "String", "semconv_source": "String",
+                "operation_name": "String",
+                "status_message": "String",
+                "org_id": "Nullable(UUID)",
+                "prompt_version_id": "Nullable(UUID)",
+                "prompt_label_id": "Nullable(UUID)",
+                "custom_eval_config_id": "Nullable(UUID)",
+                "tags": "String",
+                "span_events": "String",
+                "resource_attrs": "JSON",
+                "llm_request_model": "String",
+                "llm_response_model": "String",
+                "embedding_model": "String",
+                "streaming": "Nullable(UInt8)",
+                "temperature": "Nullable(Float64)",
+                "top_p": "Nullable(Float64)",
+                "max_tokens": "Nullable(Int32)",
+                "eval_status": "String",
+                "semconv_source": "String",
             }
             for column, kind in columns.items():
                 client.command(f"ALTER TABLE spans ADD COLUMN {column} {kind}")
@@ -344,27 +454,42 @@ def eval_cost_client():
 @pytest.mark.integration
 @pytest.mark.django_db
 def test_real_session_reader_remap_scope_and_latest_cost_coverage(
-    monkeypatch, eval_cost_client, observe_project,
+    monkeypatch,
+    eval_cost_client,
+    observe_project,
 ):
     from tracer.models.trace_session import TraceSession
 
     client = eval_cost_client
     old, new = uuid4(), uuid4()
-    traces = [Trace.objects.create(project=observe_project, name=f"cost-{i}") for i in range(2)]
+    traces = [
+        Trace.objects.create(project=observe_project, name=f"cost-{i}")
+        for i in range(2)
+    ]
     session = TraceSession(id=old, project=observe_project, name="synthetic session")
-    client.insert("trace_session_id_remap", [[old, new, START]], column_names=["old_id", "new_id", "version"])
+    client.insert(
+        "trace_session_id_remap",
+        [[old, new, START]],
+        column_names=["old_id", "new_id", "version"],
+    )
 
     def insert(*, index, cost, attrs, version=1, deleted=0, project=None):
         row = {
             "project_id": project or observe_project.id,
             "trace_session_id": old if index == 0 else new,
-            "trace_id": str(traces[index].id), "id": f"request-{index}",
-            "observation_type": "llm", "name": "chat",
+            "trace_id": str(traces[index].id),
+            "id": f"request-{index}",
+            "observation_type": "llm",
+            "name": "chat",
             "start_time": START + timedelta(days=index),
             "end_time": START + timedelta(days=index, seconds=1),
-            "prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120,
-            "cost": cost, "attrs_string": {str(k): str(v) for k, v in attrs.items()},
-            "_version": version, "is_deleted": deleted,
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "total_tokens": 120,
+            "cost": cost,
+            "attrs_string": {str(k): str(v) for k, v in attrs.items()},
+            "_version": version,
+            "is_deleted": deleted,
         }
         client.insert("spans", [list(row.values())], column_names=list(row))
 
@@ -382,7 +507,9 @@ def test_real_session_reader_remap_scope_and_latest_cost_coverage(
     _assert_coverage(context, "partial", 1.25, 1, 1)
     assert context["total_spans"] == 2
     assert context["total_tokens"] == 240
-    assert {trace["id"] for trace in context["traces"]} == {str(trace.id) for trace in traces}
+    assert {trace["id"] for trace in context["traces"]} == {
+        str(trace.id) for trace in traces
+    }
 
     insert(index=1, cost=0, attrs=ZERO, version=2)
     _assert_coverage(build_session_context(session), "complete", 1.25, 2, 0)

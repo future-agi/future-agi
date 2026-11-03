@@ -114,7 +114,13 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             "status",
             "is_deleted",
         ]
-        expressions.extend(("toInt64(prompt_tokens)", "toInt64(completion_tokens)", graph_cost_flags_sql()))
+        expressions.extend(
+            (
+                "toInt64(prompt_tokens)",
+                "toInt64(completion_tokens)",
+                graph_cost_flags_sql(),
+            )
+        )
         aliases.extend(("prompt_tokens", "completion_tokens", "graph_cost_flags"))
         for index, predicate in enumerate(row_predicates):
             expressions.append(f"toUInt8(ifNull(({predicate}), 0))")
@@ -229,13 +235,27 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             )
 
         monetary_rows = graph_monetary_rows_sql(
-            source="graph_latest_spans", child_condition=output_window,
+            source="graph_latest_spans",
+            child_condition=output_window,
             columns=(
-                "id", "parent_span_id", "name", "observation_type", "start_time", "end_time",
-                "latency_ms", "total_tokens", "cost", "status", "prompt_tokens", "completion_tokens",
+                "id",
+                "parent_span_id",
+                "name",
+                "observation_type",
+                "start_time",
+                "end_time",
+                "latency_ms",
+                "total_tokens",
+                "cost",
+                "status",
+                "prompt_tokens",
+                "completion_tokens",
                 "graph_cost_flags",
                 *(f"graph_row_match_{index}" for index in range(len(plan.predicates))),
-                *(f"graph_contribution_match_{index}" for index in range(len(plan.contribution_predicates))),
+                *(
+                    f"graph_contribution_match_{index}"
+                    for index in range(len(plan.contribution_predicates))
+                ),
             ),
         )
         span_tuple = self._span_tuple("")
@@ -632,12 +652,16 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             target_endpoint_exact = bool(value(row, "target_endpoint_exact", 15, True))
 
             cost_coverage = {}
-            if (isinstance(row, dict) and "known_cost_fact_count" in row) or "known_cost_fact_count" in names:
-                cost_coverage = {"cost_coverage": graph_cost_coverage(
-                    subtotal=float(value(row, "cost_known_subtotal", 16, 0)),
-                    known=int(value(row, "known_cost_fact_count", 17, 0)),
-                    unknown=int(value(row, "unknown_cost_fact_count", 18, 0)),
-                )}
+            if (
+                isinstance(row, dict) and "known_cost_fact_count" in row
+            ) or "known_cost_fact_count" in names:
+                cost_coverage = {
+                    "cost_coverage": graph_cost_coverage(
+                        subtotal=float(value(row, "cost_known_subtotal", 16, 0)),
+                        known=int(value(row, "known_cost_fact_count", 17, 0)),
+                        unknown=int(value(row, "unknown_cost_fact_count", 18, 0)),
+                    )
+                }
             source_id = (
                 self._make_node_id(source_name, source_type)
                 if source_endpoint_exact

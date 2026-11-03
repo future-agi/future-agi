@@ -5663,9 +5663,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             }
 
             if row.get("capture_coverage") is not None:
-                trace_capture_coverage.setdefault(entry["project_id"], {})[
-                    trace_id
-                ] = row["capture_coverage"]
+                trace_capture_coverage.setdefault(entry["project_id"], {})[trace_id] = (
+                    row["capture_coverage"]
+                )
 
             # Add eval metrics
             trace_evals = eval_map.get(trace_id, {})
@@ -5886,7 +5886,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "config": column_config,
             **(
                 {"trace_capture_coverage": trace_capture_coverage}
-                if trace_capture_coverage else {}
+                if trace_capture_coverage
+                else {}
             ),
         }
 

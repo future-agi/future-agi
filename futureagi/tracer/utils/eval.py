@@ -406,9 +406,7 @@ def build_span_context(span, *, anchor_span_id: str | None = None) -> dict:
         "model": getattr(span, "model", None),
         "latency_ms": getattr(span, "latency_ms", None),
         "total_tokens": getattr(span, "total_tokens", None),
-        "cost": (
-            float(span.cost) if getattr(span, "cost", None) is not None else None
-        ),
+        "cost": (float(span.cost) if getattr(span, "cost", None) is not None else None),
     }
 
 
@@ -497,9 +495,7 @@ def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
     return payload
 
 
-def _context_cost_coverage(
-    subtotal: float, known: int, unknown: int
-) -> "CostCoverage":
+def _context_cost_coverage(subtotal: float, known: int, unknown: int) -> "CostCoverage":
     return {
         "status": "complete" if not unknown else "partial" if known else "unknown",
         "known_subtotal": subtotal,
@@ -639,10 +635,14 @@ def build_session_context(session) -> dict | None:
             unknown_cost = (
                 additive and has_usage and attrs.get("fi.cost.kind") == "unknown"
             )
-            known_cost = additive and not unknown_cost and (
-                has_usage
-                or s.cost not in (None, 0)
-                or attrs.get("fi.cost.kind") in ("provider_reported", "estimated")
+            known_cost = (
+                additive
+                and not unknown_cost
+                and (
+                    has_usage
+                    or s.cost not in (None, 0)
+                    or attrs.get("fi.cost.kind") in ("provider_reported", "estimated")
+                )
             )
             tokens = (s.total_tokens or 0) if additive else 0
             cost = float(s.cost or 0.0) if known_cost else 0.0
@@ -768,7 +768,8 @@ def build_session_context(session) -> dict | None:
                     "Incomplete cost: total_cost is NOT a complete total. "
                     "It is a numeric compatibility amount (rounded known subtotal). "
                     "Unknown price is not free. "
-                    if _unknown_cost_facts else ""
+                    if _unknown_cost_facts
+                    else ""
                 )
                 + "Costs describe observed additive usage only, excluding source "
                 "summaries; monetary coverage does not prove capture completeness. "

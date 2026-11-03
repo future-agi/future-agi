@@ -935,14 +935,22 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             cost_points = response_data.get("cost", [])
             cost_coverage = [
                 {"timestamp": point["timestamp"], **point["cost_coverage"]}
-                for point in cost_points if "cost_coverage" in point
+                for point in cost_points
+                if "cost_coverage" in point
             ]
             # The typed companion lives beside the legacy JSON bundle, not in it.
             if cost_coverage:
-                response_data = {**response_data, "cost": [
-                    {key: value for key, value in point.items() if key != "cost_coverage"}
-                    for point in cost_points
-                ]}
+                response_data = {
+                    **response_data,
+                    "cost": [
+                        {
+                            key: value
+                            for key, value in point.items()
+                            if key != "cost_coverage"
+                        }
+                        for point in cost_points
+                    ],
+                }
             graph_data = {
                 **({"cost_coverage": cost_coverage} if cost_coverage else {}),
                 "system_metrics": response_data,
@@ -1391,13 +1399,21 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     )
 
                 cost_coverage = graph_cost_coverage_series(
-                    builder=builder, rows=rows, columns=list(result.columns or []),
-                    interval=interval, start_date=start_date, end_date=end_date,
+                    builder=builder,
+                    rows=rows,
+                    columns=list(result.columns or []),
+                    interval=interval,
+                    start_date=start_date,
+                    end_date=end_date,
                 )
                 return finish(
                     self._gm.success_response(
                         {
-                            **({"cost_coverage": cost_coverage} if cost_coverage else {}),
+                            **(
+                                {"cost_coverage": cost_coverage}
+                                if cost_coverage
+                                else {}
+                            ),
                             "session": _series("session_count", "session"),
                             "trace": _series("trace_count", "trace"),
                             "cost": _series("cost", "cost"),

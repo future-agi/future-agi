@@ -25,7 +25,8 @@ def test_session_detail_metadata_preserves_sql_cost(monkeypatch, cost):
     session = "11111111-1111-4111-8111-111111111111"
     project = "22222222-2222-4222-8222-222222222222"
     monkeypatch.setattr(
-        trace_session, "_resolve_session_ids_to_canonical",
+        trace_session,
+        "_resolve_session_ids_to_canonical",
         lambda *args, **kwargs: {session: session},
     )
     monkeypatch.setattr(
@@ -36,10 +37,17 @@ def test_session_detail_metadata_preserves_sql_cost(monkeypatch, cost):
     )
     analytics = Mock()
     analytics.execute_ch_query.side_effect = [
-        SimpleNamespace(data=[{
-            "session_start": None, "session_end": None,
-            "total_cost": cost, "total_tokens": 240, "total_traces": 2,
-        }]),
+        SimpleNamespace(
+            data=[
+                {
+                    "session_start": None,
+                    "session_end": None,
+                    "total_cost": cost,
+                    "total_tokens": 240,
+                    "total_traces": 2,
+                }
+            ]
+        ),
         SimpleNamespace(data=[]),
     ]
     view = trace_session.TraceSessionView()
@@ -64,10 +72,13 @@ def test_observe_response_keeps_rollup_coverage(cost):
     view = harness._make_view()
     request = harness._make_request(page_size=1)
     project = "22222222-2222-4222-8222-222222222222"
-    roots = [{
-        "trace_id": "11111111-1111-4111-8111-111111111111",
-        "project_id": project, "cost": 0.5,
-    }]
+    roots = [
+        {
+            "trace_id": "11111111-1111-4111-8111-111111111111",
+            "project_id": project,
+            "cost": 0.5,
+        }
+    ]
     analytics = harness._routing_analytics(trace_rows=roots)
     original = analytics.execute_ch_query.side_effect
 
@@ -76,7 +87,8 @@ def test_observe_response_keeps_rollup_coverage(cost):
         if params and params.get("content_trace_ids"):
             for row in result.data:
                 row.update(
-                    trace_rollup_present=1, trace_rollup_cost=cost,
+                    trace_rollup_present=1,
+                    trace_rollup_cost=cost,
                     trace_rollup_cost_unknown=int(cost is None),
                     trace_rollup_total_tokens=120,
                 )
@@ -94,11 +106,17 @@ def test_observe_response_keeps_rollup_coverage(cost):
     ):
         configs.objects.filter.return_value.select_related.return_value = []
         status, payload = view._list_traces_of_session_clickhouse(
-            request, project_id=project,
+            request,
+            project_id=project,
             validated_data={
-                "filters": [], "page_number": 0, "page_size": 1, "allow_sampled": True,
+                "filters": [],
+                "page_number": 0,
+                "page_size": 1,
+                "allow_sampled": True,
             },
-            analytics=analytics, org_project_ids=None, org=request.organization,
+            analytics=analytics,
+            org_project_ids=None,
+            org=request.organization,
         )
     assert status == "ok"
     assert len(payload["table"]) == 1

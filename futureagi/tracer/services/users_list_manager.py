@@ -2654,7 +2654,9 @@ class UsersListManager:
             for _, field in USERS_EXPORT_COLUMNS:
                 if field.startswith("cost_coverage."):
                     value = (
-                        coverage[field.split(".", 1)[1]] if coverage is not None else None
+                        coverage[field.split(".", 1)[1]]
+                        if coverage is not None
+                        else None
                     )
                 elif (
                     field == "total_cost"

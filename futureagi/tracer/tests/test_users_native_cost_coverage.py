@@ -15,9 +15,14 @@ import pytest
 from conftest import _ch_test_owned_database, _open_ch_test_http_client
 from tracer.serializers.trace import UsersTableRowSerializer
 from tracer.services.clickhouse.query_builders.user_list import UserListQueryBuilder
-from tracer.services.clickhouse.v2.query_builders.user_list import UserListQueryBuilderV2
+from tracer.services.clickhouse.v2.query_builders.user_list import (
+    UserListQueryBuilderV2,
+)
 from tracer.services.users_list_manager import UserCursorRead, UsersListManager
-from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import _REMAP_DDL, _SPANS_DDL
+from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import (
+    _REMAP_DDL,
+    _SPANS_DDL,
+)
 
 START = datetime(2026, 10, 20, 12, tzinfo=UTC)
 UNKNOWN = {"fi.cost.kind": "unknown"}
@@ -26,7 +31,9 @@ NONE = {**UNKNOWN, "fi.usage.contribution": "none", "fi.usage.scope": "turn"}
 _DATE_FILTER = {
     "column_id": "start_time",
     "filter_config": {
-        "col_type": "SYSTEM_METRIC", "filter_type": "datetime", "filter_op": "between",
+        "col_type": "SYSTEM_METRIC",
+        "filter_type": "datetime",
+        "filter_op": "between",
         "filter_value": [START.isoformat(), (START + timedelta(days=3)).isoformat()],
     },
 }
@@ -40,46 +47,79 @@ CREATE TABLE end_users (
 
 
 def _coverage(status, subtotal, known, unknown):
-    return {"status": status, "known_subtotal": subtotal,
-            "known_fact_count": known, "unknown_fact_count": unknown}
+    return {
+        "status": status,
+        "known_subtotal": subtotal,
+        "known_fact_count": known,
+        "unknown_fact_count": unknown,
+    }
 
 
 def _manager(project, *, filters=()):
     return UsersListManager(
-        organization_id=str(uuid4()), allowed_project_ids=[str(project)],
+        organization_id=str(uuid4()),
+        allowed_project_ids=[str(project)],
         project_names={str(project): "Scoped project"},
-        requested_columns=[], filters=list(filters),
+        requested_columns=[],
+        filters=list(filters),
     )
 
 
 def _cursor(rows):
     return UserCursorRead(
-        payload={"table": rows, "query_exact": True, "query_complete": True,
-                 "ordering_exact": True, "has_more": False},
-        window_start=START, window_end=START + timedelta(days=3),
-        checkpoint_order=None, seen_rows=len(rows), has_more=False,
+        payload={
+            "table": rows,
+            "query_exact": True,
+            "query_complete": True,
+            "ordering_exact": True,
+            "has_more": False,
+        },
+        window_start=START,
+        window_end=START + timedelta(days=3),
+        checkpoint_order=None,
+        seen_rows=len(rows),
+        has_more=False,
         unseen_row_proven=False,
     )
 
 
 def _filter(op, value=0, column="total_cost"):
-    return {"column_id": column, "filter_config": {
-        "col_type": "SYSTEM_METRIC", "filter_type": "number",
-        "filter_op": op, "filter_value": value,
-    }}
+    return {
+        "column_id": column,
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "number",
+            "filter_op": op,
+            "filter_value": value,
+        },
+    }
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("known,unknown,subtotal,status", [
-    (1, 0, 1.25, "complete"), (1, 0, 0, "complete"),
-    (1, 1, 1.25, "partial"), (0, 1, 0, "unknown"),
-    (1, 1, 0, "partial"), (0, 0, 0, "complete"),
-])
-def test_format_rows_keeps_numeric_compatibility_and_typed_companion(known, unknown, subtotal, status):
-    row = UserListQueryBuilder.format_rows([{
-        "user_id": "customer", "total_cost": subtotal,
-        "known_cost_fact_count": known, "unknown_cost_fact_count": unknown,
-    }])["table"][0]
+@pytest.mark.parametrize(
+    "known,unknown,subtotal,status",
+    [
+        (1, 0, 1.25, "complete"),
+        (1, 0, 0, "complete"),
+        (1, 1, 1.25, "partial"),
+        (0, 1, 0, "unknown"),
+        (1, 1, 0, "partial"),
+        (0, 0, 0, "complete"),
+    ],
+)
+def test_format_rows_keeps_numeric_compatibility_and_typed_companion(
+    known, unknown, subtotal, status
+):
+    row = UserListQueryBuilder.format_rows(
+        [
+            {
+                "user_id": "customer",
+                "total_cost": subtotal,
+                "known_cost_fact_count": known,
+                "unknown_cost_fact_count": unknown,
+            }
+        ]
+    )["table"][0]
     assert row["total_cost"] == subtotal
     assert isinstance(row["total_cost"], (float, int))
     assert row["cost_coverage"] == _coverage(status, subtotal, known, unknown)
@@ -101,20 +141,39 @@ def test_legacy_unqualified_row_still_parses_without_companion(subtotal):
 
 @pytest.mark.unit
 @pytest.mark.parametrize("column", ["cost", "total_cost", "avg_cost"])
-@pytest.mark.parametrize("status,subtotal,known,unknown", [
-    ("partial", 1.25, 1, 1), ("unknown", 0, 0, 1), ("partial", 0, 1, 1),
-])
-def test_manager_does_not_compare_unknown_prices_as_zero_or_subtotals(column, status, subtotal, known, unknown):
+@pytest.mark.parametrize(
+    "status,subtotal,known,unknown",
+    [
+        ("partial", 1.25, 1, 1),
+        ("unknown", 0, 0, 1),
+        ("partial", 0, 1, 1),
+    ],
+)
+def test_manager_does_not_compare_unknown_prices_as_zero_or_subtotals(
+    column, status, subtotal, known, unknown
+):
     project = uuid4()
-    row = {"end_user_id": str(uuid4()), "total_cost": subtotal,
-           "cost_coverage": _coverage(status, subtotal, known, unknown)}
+    row = {
+        "end_user_id": str(uuid4()),
+        "total_cost": subtotal,
+        "cost_coverage": _coverage(status, subtotal, known, unknown),
+    }
     for operation, expected, matches in [
-        ("equals", 0, False), ("equals", subtotal, False),
-        ("not_equals", 5, False), ("less_than", 10, False),
-        ("in", [0, 1.25], False), ("not_in", [10], False),
-        ("is_null", None, True), ("is_not_null", None, False),
+        ("equals", 0, False),
+        ("equals", subtotal, False),
+        ("not_equals", 5, False),
+        ("less_than", 10, False),
+        ("in", [0, 1.25], False),
+        ("not_in", [10], False),
+        ("is_null", None, True),
+        ("is_not_null", None, False),
     ]:
-        assert _manager(project, filters=[_filter(operation, expected, column)])._row_matches_filters(row) is matches
+        assert (
+            _manager(
+                project, filters=[_filter(operation, expected, column)]
+            )._row_matches_filters(row)
+            is matches
+        )
 
 
 @pytest.mark.unit
@@ -131,8 +190,11 @@ def test_real_zero_preserves_numeric_filter_behavior(with_coverage):
 @pytest.mark.parametrize("build", ["build", "build_candidate_page_query"])
 def test_sql_uses_one_winner_and_filters_counts_before_limit(build):
     builder = UserListQueryBuilderV2(
-        organization_id=str(uuid4()), project_ids=[str(uuid4())],
-        filters=[_DATE_FILTER, _filter("equals")], limit=20, offset=0,
+        organization_id=str(uuid4()),
+        project_ids=[str(uuid4())],
+        filters=[_DATE_FILTER, _filter("equals")],
+        limit=20,
+        offset=0,
         sort_params=[{"column_id": "total_cost", "direction": "asc"}],
     )
     sql, params = getattr(builder, build)()
@@ -156,8 +218,12 @@ def users_cost_client():
             assert client.query(
                 "SELECT value FROM system.settings WHERE name = 'prefer_column_name_to_alias'"
             ).result_rows == [("0",)]
-            for ddl in (_SPANS_DDL, _END_USERS_DDL, _REMAP_DDL,
-                        _REMAP_DDL.replace("trace_session_id_remap", "end_user_id_remap")):
+            for ddl in (
+                _SPANS_DDL,
+                _END_USERS_DDL,
+                _REMAP_DDL,
+                _REMAP_DDL.replace("trace_session_id_remap", "end_user_id_remap"),
+            ):
                 client.command(ddl)
             yield client
         finally:
@@ -165,31 +231,62 @@ def users_cost_client():
 
 
 def _seed_user(client, project, organization, user, label="customer"):
-    client.insert("end_users", [[project, user, organization, label, START, 1]],
-                  column_names=["project_id", "end_user_id", "organization_id", "user_id", "first_seen", "version"])
+    client.insert(
+        "end_users",
+        [[project, user, organization, label, START, 1]],
+        column_names=[
+            "project_id",
+            "end_user_id",
+            "organization_id",
+            "user_id",
+            "first_seen",
+            "version",
+        ],
+    )
 
 
 def _seed_spans(client, project, user, specs, *, trace=None):
     trace = trace or str(uuid4())
     rows = []
     for index, overrides in enumerate(specs):
-        rows.append({
-            "project_id": project, "end_user_id": user, "trace_id": trace,
-            "id": f"request-{index}", "parent_span_id": "", "name": "request",
-            "observation_type": "llm", "service_name": "native-test",
-            "start_time": START, "end_time": START + timedelta(seconds=1),
-            "cost": 0.0, "total_tokens": 0, "prompt_tokens": 0, "completion_tokens": 0,
-            "attrs_string": KNOWN, "is_deleted": 0, "_version": 1,
-            **overrides,
-        })
+        rows.append(
+            {
+                "project_id": project,
+                "end_user_id": user,
+                "trace_id": trace,
+                "id": f"request-{index}",
+                "parent_span_id": "",
+                "name": "request",
+                "observation_type": "llm",
+                "service_name": "native-test",
+                "start_time": START,
+                "end_time": START + timedelta(seconds=1),
+                "cost": 0.0,
+                "total_tokens": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "attrs_string": KNOWN,
+                "is_deleted": 0,
+                "_version": 1,
+                **overrides,
+            }
+        )
     columns = list(rows[0])
-    client.insert("spans", [[row[key] for key in columns] for row in rows], column_names=columns)
+    client.insert(
+        "spans", [[row[key] for key in columns] for row in rows], column_names=columns
+    )
 
 
-def _read(client, project, organization, *, method="build_candidate_page_query", **kwargs):
+def _read(
+    client, project, organization, *, method="build_candidate_page_query", **kwargs
+):
     builder = UserListQueryBuilderV2(
-        organization_id=str(organization), project_ids=[str(project)],
-        filters=[_DATE_FILTER, *kwargs.pop("filters", [])], limit=20, offset=0, **kwargs,
+        organization_id=str(organization),
+        project_ids=[str(project)],
+        filters=[_DATE_FILTER, *kwargs.pop("filters", [])],
+        limit=20,
+        offset=0,
+        **kwargs,
     )
     sql, params = getattr(builder, method)()
     raw = list(client.query(sql, parameters=params).named_results())
@@ -199,22 +296,99 @@ def _read(client, project, organization, *, method="build_candidate_page_query",
 CASES = [
     pytest.param([{"cost": 1.25}], _coverage("complete", 1.25, 1, 0), id="known"),
     pytest.param([{}], _coverage("complete", 0, 1, 0), id="genuine-zero"),
-    pytest.param([{"cost": 1.25}, {"attrs_string": UNKNOWN}], _coverage("partial", 1.25, 1, 1), id="mixed"),
-    pytest.param([{"attrs_string": UNKNOWN}], _coverage("unknown", 0, 0, 1), id="all-unknown"),
-    pytest.param([{}, {"attrs_string": UNKNOWN}], _coverage("partial", 0, 1, 1), id="zero-plus-unknown"),
-    pytest.param([{"cost": 1.25, "attrs_string": {}}], _coverage("complete", 1.25, 1, 0), id="legacy-known"),
-    pytest.param([{"attrs_string": {}}], _coverage("complete", 0, 1, 0), id="legacy-zero"),
-    pytest.param([{"observation_type": "tool", "attrs_string": UNKNOWN}], _coverage("complete", 0, 0, 0), id="tokenless-tool"),
-    pytest.param([{"observation_type": "agent", "prompt_tokens": 100, "attrs_string": UNKNOWN}], _coverage("unknown", 0, 0, 1), id="prompt-only"),
-    pytest.param([{"observation_type": "chain", "completion_tokens": 20, "attrs_string": UNKNOWN}], _coverage("unknown", 0, 0, 1), id="completion-only"),
-    pytest.param([{"observation_type": "tool", "attrs_string": {**UNKNOWN, "fi.usage.scope": "turn"}}], _coverage("unknown", 0, 0, 1), id="tokenless-turn"),
-    pytest.param([{"observation_type": "tool", "attrs_string": KNOWN}], _coverage("complete", 0, 1, 0), id="tokenless-reported-zero"),
-    pytest.param([{"observation_type": "agent", "cost": 17, "prompt_tokens": 100, "attrs_string": NONE}], _coverage("complete", 0, 0, 0), id="nonadditive-summary"),
-    pytest.param([
-        {"id": "parent", "name": "pydantic_ai.agent.run", "observation_type": "agent", "cost": 1.25, "total_tokens": 10},
-        {"id": "child", "parent_span_id": "parent", "cost": 1.25, "total_tokens": 10},
-    ], _coverage("complete", 1.25, 1, 0), id="repeated-pydantic-summary"),
-    pytest.param([{"cost": 1.25}, {"cost": 1.25}], _coverage("complete", 2.5, 2, 0), id="equal-valued-independent-requests"),
+    pytest.param(
+        [{"cost": 1.25}, {"attrs_string": UNKNOWN}],
+        _coverage("partial", 1.25, 1, 1),
+        id="mixed",
+    ),
+    pytest.param(
+        [{"attrs_string": UNKNOWN}], _coverage("unknown", 0, 0, 1), id="all-unknown"
+    ),
+    pytest.param(
+        [{}, {"attrs_string": UNKNOWN}],
+        _coverage("partial", 0, 1, 1),
+        id="zero-plus-unknown",
+    ),
+    pytest.param(
+        [{"cost": 1.25, "attrs_string": {}}],
+        _coverage("complete", 1.25, 1, 0),
+        id="legacy-known",
+    ),
+    pytest.param(
+        [{"attrs_string": {}}], _coverage("complete", 0, 1, 0), id="legacy-zero"
+    ),
+    pytest.param(
+        [{"observation_type": "tool", "attrs_string": UNKNOWN}],
+        _coverage("complete", 0, 0, 0),
+        id="tokenless-tool",
+    ),
+    pytest.param(
+        [{"observation_type": "agent", "prompt_tokens": 100, "attrs_string": UNKNOWN}],
+        _coverage("unknown", 0, 0, 1),
+        id="prompt-only",
+    ),
+    pytest.param(
+        [
+            {
+                "observation_type": "chain",
+                "completion_tokens": 20,
+                "attrs_string": UNKNOWN,
+            }
+        ],
+        _coverage("unknown", 0, 0, 1),
+        id="completion-only",
+    ),
+    pytest.param(
+        [
+            {
+                "observation_type": "tool",
+                "attrs_string": {**UNKNOWN, "fi.usage.scope": "turn"},
+            }
+        ],
+        _coverage("unknown", 0, 0, 1),
+        id="tokenless-turn",
+    ),
+    pytest.param(
+        [{"observation_type": "tool", "attrs_string": KNOWN}],
+        _coverage("complete", 0, 1, 0),
+        id="tokenless-reported-zero",
+    ),
+    pytest.param(
+        [
+            {
+                "observation_type": "agent",
+                "cost": 17,
+                "prompt_tokens": 100,
+                "attrs_string": NONE,
+            }
+        ],
+        _coverage("complete", 0, 0, 0),
+        id="nonadditive-summary",
+    ),
+    pytest.param(
+        [
+            {
+                "id": "parent",
+                "name": "pydantic_ai.agent.run",
+                "observation_type": "agent",
+                "cost": 1.25,
+                "total_tokens": 10,
+            },
+            {
+                "id": "child",
+                "parent_span_id": "parent",
+                "cost": 1.25,
+                "total_tokens": 10,
+            },
+        ],
+        _coverage("complete", 1.25, 1, 0),
+        id="repeated-pydantic-summary",
+    ),
+    pytest.param(
+        [{"cost": 1.25}, {"cost": 1.25}],
+        _coverage("complete", 2.5, 2, 0),
+        id="equal-valued-independent-requests",
+    ),
 ]
 
 
@@ -231,37 +405,62 @@ def test_actual_user_rows_and_scoped_csv(users_cost_client, method, specs, expec
     _seed_spans(client, outside, user, [{"cost": 999, "attrs_string": UNKNOWN}])
     payload, raw = _read(client, project, organization, method=method)
     assert payload["total_count"] == 1
-    row, = payload["table"]
+    (row,) = payload["table"]
     assert row["cost_coverage"] == expected
     assert row["total_cost"] == expected["known_subtotal"]
     assert row["project_id"] == str(project)
-    assert raw[0]["complete_cost"] == (row["total_cost"] if expected["status"] == "complete" else None)
+    assert raw[0]["complete_cost"] == (
+        row["total_cost"] if expected["status"] == "complete" else None
+    )
     manager = _manager(project)
     # Production hydration carries the exact qualified candidate without a second scan.
     hydrated = manager._read_exact_candidate_rows(
-        candidate_ids=[str(user)], frozen_filters=[_DATE_FILTER],
-        window_start=START, window_end=START + timedelta(days=3), deadline=None,
-        candidate_rows=payload["table"], enrich_rows=False,
+        candidate_ids=[str(user)],
+        frozen_filters=[_DATE_FILTER],
+        window_start=START,
+        window_end=START + timedelta(days=3),
+        deadline=None,
+        candidate_rows=payload["table"],
+        enrich_rows=False,
     )
     manager._label_project_scope(hydrated)
-    output = list(csv.reader(io.StringIO("".join(manager.iter_export_csv(cursor_read=_cursor(hydrated))))))
+    output = list(
+        csv.reader(
+            io.StringIO("".join(manager.iter_export_csv(cursor_read=_cursor(hydrated))))
+        )
+    )
     header, cells = output
     assert header[9] == "Total Cost ($)" and header[16] == "Project"
-    assert header[17:] == ["Cost coverage", "Known cost subtotal ($)", "Known cost fact count", "Unknown cost fact count"]
+    assert header[17:] == [
+        "Cost coverage",
+        "Known cost subtotal ($)",
+        "Known cost fact count",
+        "Unknown cost fact count",
+    ]
     assert cells[16] == "Scoped project"
-    assert cells[9] == (str(row["total_cost"]) if expected["status"] == "complete" else "")
+    assert cells[9] == (
+        str(row["total_cost"]) if expected["status"] == "complete" else ""
+    )
     assert cells[17] == expected["status"]
     assert float(cells[18]) == expected["known_subtotal"]
-    assert [int(value) for value in cells[19:]] == [expected["known_fact_count"], expected["unknown_fact_count"]]
+    assert [int(value) for value in cells[19:]] == [
+        expected["known_fact_count"],
+        expected["unknown_fact_count"],
+    ]
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("old,new,deleted,expected", [
-    (UNKNOWN, KNOWN, 0, _coverage("complete", 1.25, 2, 0)),
-    (KNOWN, UNKNOWN, 0, _coverage("partial", 1.25, 1, 1)),
-    (KNOWN, UNKNOWN, 1, _coverage("complete", 1.25, 1, 0)),
-])
-def test_latest_winner_tombstone_and_partition_merge(users_cost_client, old, new, deleted, expected):
+@pytest.mark.parametrize(
+    "old,new,deleted,expected",
+    [
+        (UNKNOWN, KNOWN, 0, _coverage("complete", 1.25, 2, 0)),
+        (KNOWN, UNKNOWN, 0, _coverage("partial", 1.25, 1, 1)),
+        (KNOWN, UNKNOWN, 1, _coverage("complete", 1.25, 1, 0)),
+    ],
+)
+def test_latest_winner_tombstone_and_partition_merge(
+    users_cost_client, old, new, deleted, expected
+):
     client = users_cost_client
     project, organization, user = uuid4(), uuid4(), uuid4()
     _seed_user(client, project, organization, user)
@@ -270,19 +469,36 @@ def test_latest_winner_tombstone_and_partition_merge(users_cost_client, old, new
     trace = str(uuid4())
     changed = {"id": "changing", "start_time": START + timedelta(days=1)}
     _seed_spans(client, project, user, [{**changed, "attrs_string": old}], trace=trace)
-    _seed_spans(client, project, user, [{**changed, "attrs_string": new, "_version": 2, "is_deleted": deleted}], trace=trace)
-    payload, _ = _read(client, project, organization, include_num_sessions=True,
-                       candidate_end_user_ids=[str(user)])
+    _seed_spans(
+        client,
+        project,
+        user,
+        [{**changed, "attrs_string": new, "_version": 2, "is_deleted": deleted}],
+        trace=trace,
+    )
+    payload, _ = _read(
+        client,
+        project,
+        organization,
+        include_num_sessions=True,
+        candidate_end_user_ids=[str(user)],
+    )
     assert payload["table"][0]["cost_coverage"] == expected
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize("direction", ["asc", "desc"])
-def test_complete_price_filter_count_and_sort_before_paging(users_cost_client, direction):
+def test_complete_price_filter_count_and_sort_before_paging(
+    users_cost_client, direction
+):
     client = users_cost_client
     project, organization = uuid4(), uuid4()
-    cases = {"zero": [{}], "known": [{"cost": 1.25}], "unknown": [{"attrs_string": UNKNOWN}],
-             "partial": [{}, {"attrs_string": UNKNOWN}]}
+    cases = {
+        "zero": [{}],
+        "known": [{"cost": 1.25}],
+        "unknown": [{"attrs_string": UNKNOWN}],
+        "partial": [{}, {"attrs_string": UNKNOWN}],
+    }
     for label, specs in cases.items():
         user = uuid4()
         _seed_user(client, project, organization, user, label)
@@ -293,32 +509,60 @@ def test_complete_price_filter_count_and_sort_before_paging(users_cost_client, d
     nulls, _ = _read(client, project, organization, filters=[_filter("is_null", None)])
     assert nulls["total_count"] == 2
     assert {row["user_id"] for row in nulls["table"]} == {"partial", "unknown"}
-    sorted_rows, _ = _read(client, project, organization,
-                           sort_params=[{"column_id": "total_cost", "direction": direction}])
-    assert [row["user_id"] for row in sorted_rows["table"][:2]] == (["zero", "known"] if direction == "asc" else ["known", "zero"])
+    sorted_rows, _ = _read(
+        client,
+        project,
+        organization,
+        sort_params=[{"column_id": "total_cost", "direction": direction}],
+    )
+    assert [row["user_id"] for row in sorted_rows["table"][:2]] == (
+        ["zero", "known"] if direction == "asc" else ["known", "zero"]
+    )
     incomplete = sorted_rows["table"][2:]
     assert {row["user_id"] for row in incomplete} == {"partial", "unknown"}
-    assert [row["end_user_id"] for row in incomplete] == sorted([row["end_user_id"] for row in incomplete], reverse=True)
+    assert [row["end_user_id"] for row in incomplete] == sorted(
+        [row["end_user_id"] for row in incomplete], reverse=True
+    )
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("coverage", [None, _coverage("complete", 0, 1, 0),
-                                       _coverage("partial", 1.25, 1, 1), _coverage("unknown", 0, 0, 1)])
+@pytest.mark.parametrize(
+    "coverage",
+    [
+        None,
+        _coverage("complete", 0, 1, 0),
+        _coverage("partial", 1.25, 1, 1),
+        _coverage("unknown", 0, 0, 1),
+    ],
+)
 def test_csv_is_bounded_and_legacy_cells_are_unchanged(coverage):
-    row = {"user_id": "=formula", "total_cost": 0 if coverage is None else coverage["known_subtotal"]}
+    row = {
+        "user_id": "=formula",
+        "total_cost": 0 if coverage is None else coverage["known_subtotal"],
+    }
     if coverage is not None:
         row["cost_coverage"] = coverage
     # Export consumes the supplied finite page; it must not query or refill it.
     manager = _manager(uuid4())
-    with patch.object(manager, "list_cursor_payload", side_effect=AssertionError("unexpected read")):
-        header, cells = list(csv.reader(io.StringIO("".join(manager.iter_export_csv(cursor_read=_cursor([row]))))))
+    with patch.object(
+        manager, "list_cursor_payload", side_effect=AssertionError("unexpected read")
+    ):
+        header, cells = list(
+            csv.reader(
+                io.StringIO(
+                    "".join(manager.iter_export_csv(cursor_read=_cursor([row])))
+                )
+            )
+        )
     assert cells[0] == "'=formula"
     assert len(header) == len(cells) == 21
     if coverage is None:
         assert cells[9] == "0"
         assert cells[17:] == ["", "", "", ""]
     else:
-        assert cells[9] == (str(row["total_cost"]) if coverage["status"] == "complete" else "")
+        assert cells[9] == (
+            str(row["total_cost"]) if coverage["status"] == "complete" else ""
+        )
         assert cells[17] == coverage["status"]
 
 
@@ -328,10 +572,18 @@ def test_equal_version_usage_and_coverage_never_mix_winners(users_cost_client, m
     client = users_cost_client
     project, organization, user, trace = uuid4(), uuid4(), uuid4(), str(uuid4())
     _seed_user(client, project, organization, user)
-    _seed_spans(client, project, user, [{"id": "tie", "cost": 1.25, "total_tokens": 10}], trace=trace)
-    _seed_spans(client, project, user, [{"id": "tie", "attrs_string": UNKNOWN}], trace=trace)
+    _seed_spans(
+        client,
+        project,
+        user,
+        [{"id": "tie", "cost": 1.25, "total_tokens": 10}],
+        trace=trace,
+    )
+    _seed_spans(
+        client, project, user, [{"id": "tie", "attrs_string": UNKNOWN}], trace=trace
+    )
     payload, _ = _read(client, project, organization, method=method)
-    row, = payload["table"]
+    (row,) = payload["table"]
     assert (row["total_cost"], row["total_tokens"], row["cost_coverage"]) in [
         (1.25, 10, _coverage("complete", 1.25, 1, 0)),
         (0, 0, _coverage("unknown", 0, 0, 1)),
@@ -341,13 +593,18 @@ def test_equal_version_usage_and_coverage_never_mix_winners(users_cost_client, m
 @pytest.mark.integration
 @pytest.mark.parametrize("method", ["build_candidate_page_query", "build"])
 @pytest.mark.parametrize("correction", ["cleared-owner", "outside-window"])
-def test_newer_owner_and_timestamp_corrections_remove_old_unknown(users_cost_client, method, correction):
+def test_newer_owner_and_timestamp_corrections_remove_old_unknown(
+    users_cost_client, method, correction
+):
     client = users_cost_client
     project, organization, user, trace = uuid4(), uuid4(), uuid4(), str(uuid4())
     _seed_user(client, project, organization, user)
     _seed_spans(client, project, user, [{"cost": 1.25}])
-    changed = {"id": "corrected", "attrs_string": UNKNOWN,
-               "start_time": START + timedelta(days=2, hours=23, minutes=50)}
+    changed = {
+        "id": "corrected",
+        "attrs_string": UNKNOWN,
+        "start_time": START + timedelta(days=2, hours=23, minutes=50),
+    }
     _seed_spans(client, project, user, [changed], trace=trace)
     # The window ends at START + 3 days (12:00); use the lower boundary for
     # an out-of-window correction within the SAME immutable hour instead.
@@ -361,14 +618,31 @@ def test_newer_owner_and_timestamp_corrections_remove_old_unknown(users_cost_cli
         changed["end_user_id"] = None
     _seed_spans(client, project, user, [{**changed, "_version": 2}], trace=trace)
     builder = UserListQueryBuilderV2(
-        organization_id=str(organization), project_ids=[str(project)], limit=20, offset=0,
-        filters=[{**_DATE_FILTER, "filter_config": {
-            **_DATE_FILTER["filter_config"],
-            "filter_value": [START.isoformat(), (START + timedelta(minutes=30) if correction == "outside-window" else START + timedelta(days=3)).isoformat()],
-        }}],
+        organization_id=str(organization),
+        project_ids=[str(project)],
+        limit=20,
+        offset=0,
+        filters=[
+            {
+                **_DATE_FILTER,
+                "filter_config": {
+                    **_DATE_FILTER["filter_config"],
+                    "filter_value": [
+                        START.isoformat(),
+                        (
+                            START + timedelta(minutes=30)
+                            if correction == "outside-window"
+                            else START + timedelta(days=3)
+                        ).isoformat(),
+                    ],
+                },
+            }
+        ],
     )
     sql, params = getattr(builder, method)()
-    result = builder.format_rows(list(client.query(sql, parameters=params).named_results()))
+    result = builder.format_rows(
+        list(client.query(sql, parameters=params).named_results())
+    )
     assert result["table"][0]["cost_coverage"] == _coverage("complete", 1.25, 1, 0)
 
 
@@ -381,13 +655,21 @@ def test_alias_membership_keeps_coverage_and_foreign_org_is_empty(users_cost_cli
     _seed_user(client, project, organization, alias, "alias")
     _seed_spans(client, project, survivor, [{"cost": 1.25}])
     _seed_spans(client, project, alias, [{"attrs_string": UNKNOWN}])
-    client.insert("end_user_id_remap", [[survivor, alias]], column_names=["old_id", "new_id"])
-    payload, _ = _read(
-        client, project, organization, candidate_end_user_ids=[str(survivor)],
-        candidate_scan_end_user_ids=[str(survivor), str(alias)],
-        candidate_end_user_id_map={str(survivor): str(survivor), str(alias): str(survivor)},
+    client.insert(
+        "end_user_id_remap", [[survivor, alias]], column_names=["old_id", "new_id"]
     )
-    row, = payload["table"]
+    payload, _ = _read(
+        client,
+        project,
+        organization,
+        candidate_end_user_ids=[str(survivor)],
+        candidate_scan_end_user_ids=[str(survivor), str(alias)],
+        candidate_end_user_id_map={
+            str(survivor): str(survivor),
+            str(alias): str(survivor),
+        },
+    )
+    (row,) = payload["table"]
     assert row["end_user_id"] == str(survivor)
     assert row["user_id"] == "canonical"
     assert row["cost_coverage"] == _coverage("partial", 1.25, 1, 1)
@@ -396,7 +678,9 @@ def test_alias_membership_keeps_coverage_and_foreign_org_is_empty(users_cost_cli
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("count_field", ["known_cost_fact_count", "unknown_cost_fact_count"])
+@pytest.mark.parametrize(
+    "count_field", ["known_cost_fact_count", "unknown_cost_fact_count"]
+)
 def test_half_present_internal_companion_is_not_treated_as_legacy(count_field):
     with pytest.raises(KeyError):
         UserListQueryBuilder.format_rows([{"total_cost": 0, count_field: 1}])

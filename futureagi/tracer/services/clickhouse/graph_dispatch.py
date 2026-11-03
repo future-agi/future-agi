@@ -662,7 +662,11 @@ def format_system_metric_graph(
                 "timestamp": point.get("timestamp"),
                 "value": _result_metric_value(point, value_fields),
                 "primary_traffic": traffic_by_timestamp.get(point.get("timestamp"), 0),
-                **({"cost_coverage": point["cost_coverage"]} if "cost_coverage" in point else {}),
+                **(
+                    {"cost_coverage": point["cost_coverage"]}
+                    if "cost_coverage" in point
+                    else {}
+                ),
             }
             for point in metric_points
         ],
@@ -912,22 +916,30 @@ def graph_payload_is_publishable(
 _EXACT_REFRESH_TRANSPORT_ERRORS = (ConnectionInterrupted, RedisError, OSError)
 
 
-def _snapshot_has_monetary_coverage(namespace: str, metric_id: str | None, payload: Any) -> bool:
+def _snapshot_has_monetary_coverage(
+    namespace: str, metric_id: str | None, payload: Any
+) -> bool:
     """An old worker must not publish a price-only payload under a new cache key."""
     if not isinstance(payload, dict):
         return False
     if namespace == "observe-agent-graph":
-        points = [point for key in ("nodes", "edges", "path_edges") for point in payload.get(key, [])]
+        points = [
+            point
+            for key in ("nodes", "edges", "path_edges")
+            for point in payload.get(key, [])
+        ]
     elif namespace == "observe-all-system-graphs":
         points = payload.get("cost", [])
-    elif (
-        namespace in {"observe-system-graph", "observe-user-system-graph"}
-        and str(metric_id or "").strip().lower() in {"cost", "total_cost", "avg_cost_per_user"}
-    ):
+    elif namespace in {"observe-system-graph", "observe-user-system-graph"} and str(
+        metric_id or ""
+    ).strip().lower() in {"cost", "total_cost", "avg_cost_per_user"}:
         points = payload.get("data", [])
     else:
         return True
-    return all(isinstance(point, dict) and isinstance(point.get("cost_coverage"), dict) for point in points)
+    return all(
+        isinstance(point, dict) and isinstance(point.get("cost_coverage"), dict)
+        for point in points
+    )
 
 
 def _read_or_refresh_exact_graph(
@@ -965,7 +977,8 @@ def _read_or_refresh_exact_graph(
         # A stale worker's missing companion is a miss, never a free price.
         accept_snapshot=lambda payload: snapshot_names_its_statistic(
             namespace, metric_id, payload
-        ) and _snapshot_has_monetary_coverage(namespace, metric_id, payload),
+        )
+        and _snapshot_has_monetary_coverage(namespace, metric_id, payload),
     )
 
 
@@ -1316,7 +1329,11 @@ def _fetch_trace_system_metrics(
                 )
                 or 0
             )
-            for field in ("cost_known_subtotal", "known_cost_fact_count", "unknown_cost_fact_count"):
+            for field in (
+                "cost_known_subtotal",
+                "known_cost_fact_count",
+                "unknown_cost_fact_count",
+            ):
                 totals[field] += value(row, field, 0) or 0
             totals["cost_count"] += float(value(row, "graph_cost_count", traffic) or 0)
             totals["traffic"] += traffic
@@ -1990,8 +2007,11 @@ def fetch_system_metric_graph_ch(
         raise ValueError("observe_type must be trace or span")
     # Hourly states contain neither current-row cost flags nor a latest winner.
     # Monetary series use the existing bounded/cached path, just like latency.
-    if (not _active_filters(filters) and not publishes_latency("trace", metric_id)
-            and str(metric_id or "").strip().lower() != "cost"):
+    if (
+        not _active_filters(filters)
+        and not publishes_latency("trace", metric_id)
+        and str(metric_id or "").strip().lower() != "cost"
+    ):
         if not bool(getattr(analytics, "supports_per_query_read_settings", True)):
             return degraded_graph_response(
                 str(metric_id or ""),

@@ -59,9 +59,7 @@ def compute_trace_capture_coverage(
         span = entry.get("observation_span") or entry.get("observationSpan") or {}
         attrs = span.get("span_attributes") or {}
         nonadditive = attrs.get("fi.usage.contribution") == "none"
-        source_summary_present |= (
-            nonadditive and attrs.get("fi.usage.scope") == "turn"
-        )
+        source_summary_present |= nonadditive and attrs.get("fi.usage.scope") == "turn"
         if not nonadditive and span.get("observation_type") == "llm":
             request_count += 1
         pending.extend(entry.get("children", []))
@@ -135,15 +133,12 @@ def compute_trace_summary_and_graph(
             total_tokens += sp.get("total_tokens") or 0
             total_prompt += sp.get("prompt_tokens") or 0
             total_completion += sp.get("completion_tokens") or 0
-            if (
-                attrs.get("fi.cost.kind") == "unknown"
-                and (
-                    (sp.get("total_tokens") or 0) > 0
-                    or (sp.get("prompt_tokens") or 0) > 0
-                    or (sp.get("completion_tokens") or 0) > 0
-                    or sp.get("observation_type") == "llm"
-                    or attrs.get("fi.usage.scope") == "turn"
-                )
+            if attrs.get("fi.cost.kind") == "unknown" and (
+                (sp.get("total_tokens") or 0) > 0
+                or (sp.get("prompt_tokens") or 0) > 0
+                or (sp.get("completion_tokens") or 0) > 0
+                or sp.get("observation_type") == "llm"
+                or attrs.get("fi.usage.scope") == "turn"
             ):
                 # A partial sum is not a verified charge. Legacy rows without
                 # this marker retain their existing zero-cost behavior.

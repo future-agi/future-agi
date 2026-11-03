@@ -2614,9 +2614,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             candidate_column="trace_session_id",
         )
         resolved_curated_eu = resolved_id_expr("eu.end_user_id", "eu_remap")
-        resolved_usage_eu = resolved_id_expr(
-            "latest_end_user_id", "usage_eu_remap"
-        )
+        resolved_usage_eu = resolved_id_expr("latest_end_user_id", "usage_eu_remap")
         resolved_latest_eu = resolved_id_expr("latest_end_user_id", "span_eu_remap")
         resolved_latest_session = resolved_id_expr(
             "latest_trace_session_id", "span_ts_remap"
@@ -3218,7 +3216,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 unknown = int(row["unknown_cost_fact_count"])
                 table[-1]["cost_coverage"] = {
                     "status": (
-                        "complete" if unknown == 0 else "partial" if known else "unknown"
+                        "complete"
+                        if unknown == 0
+                        else "partial"
+                        if known
+                        else "unknown"
                     ),
                     "known_subtotal": float(row["total_cost"]),
                     "known_fact_count": known,

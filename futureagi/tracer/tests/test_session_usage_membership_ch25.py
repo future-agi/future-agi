@@ -22,15 +22,11 @@ from tracer.services.clickhouse.schema import SPANS_TABLE, _to_single_node_engin
 from tracer.services.clickhouse.v2.query_builders.session_list import (
     SessionListQueryBuilderV2,
 )
-from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import (  # noqa: F401 -- isolate root fixture mutators
-    _drop_legacy_ch_spans_mvs,
-)
-from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import (  # noqa: F401
-    _ensure_test_score_tenant_column,
-)
-from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import (
+from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import (  # noqa: F401 -- isolate root fixture mutators  # noqa: F401
     _REMAP_DDL,
     _SPANS_DDL,
+    _drop_legacy_ch_spans_mvs,
+    _ensure_test_score_tenant_column,
 )
 
 pytestmark = pytest.mark.integration
@@ -259,10 +255,15 @@ def sessions(request):
                         f"INSERT INTO spans ({', '.join(row)}) VALUES",
                         [tuple(row.values())],
                     )
-                yield client, project, session_ids, (
-                    SessionListQueryBuilder
-                    if request.param == "v1"
-                    else SessionListQueryBuilderV2
+                yield (
+                    client,
+                    project,
+                    session_ids,
+                    (
+                        SessionListQueryBuilder
+                        if request.param == "v1"
+                        else SessionListQueryBuilderV2
+                    ),
                 )
             finally:
                 client.execute("SYSTEM START MERGES spans")
@@ -358,12 +359,13 @@ def test_hydration_uses_identical_live_member_usage(sessions, case):
         # The native hour and CDC created-day implementations share this path.
         # The nonadditive LLM-shaped source is not a second observed request.
         assert formatted["capture_coverage"] == {
-            "scope": "observed_requests", "source_summary_present": True,
-            "request_count": 1, "coverage_unknown": True,
+            "scope": "observed_requests",
+            "source_summary_present": True,
+            "request_count": 1,
+            "coverage_unknown": True,
         }
     else:
         assert "capture_coverage" not in formatted
-
 
 
 @pytest.mark.parametrize("direction", ["asc", "desc"])

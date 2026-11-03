@@ -266,8 +266,12 @@ class TestUsersExportNamesProject:
         header, data = [r for r in csv.reader(io.StringIO(body)) if r]
 
         assert header == [
-            *_PRE_EXISTING_EXPORT_HEADER, "Project", "Cost coverage",
-            "Known cost subtotal ($)", "Known cost fact count", "Unknown cost fact count",
+            *_PRE_EXISTING_EXPORT_HEADER,
+            "Project",
+            "Cost coverage",
+            "Known cost subtotal ($)",
+            "Known cost fact count",
+            "Unknown cost fact count",
         ]
         assert header == [name for name, _ in USERS_EXPORT_COLUMNS]
         assert data[0] == "user_123"

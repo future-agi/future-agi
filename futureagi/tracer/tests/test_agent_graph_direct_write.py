@@ -219,8 +219,13 @@ def test_agent_graph_membership_is_global_but_unfiltered_scan_stays_bounded():
     unfiltered_prewhere = unfiltered_query.split("PREWHERE", 1)[1].split("GROUP BY", 1)[
         0
     ]
-    assert "toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s" in unfiltered_prewhere
-    assert "toStartOfHour(start_time) < toDateTime64(%(end_date)s" in unfiltered_prewhere
+    assert (
+        "toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s"
+        in unfiltered_prewhere
+    )
+    assert (
+        "toStartOfHour(start_time) < toDateTime64(%(end_date)s" in unfiltered_prewhere
+    )
 
 
 @pytest.mark.unit

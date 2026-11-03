@@ -530,7 +530,11 @@ def _system_metric_payload(
                 "timestamp": point.get("timestamp"),
                 "value": point.get("value", point.get(metric_key, 0)),
                 "primary_traffic": traffic.get(point.get("timestamp"), 0),
-                **({"cost_coverage": point["cost_coverage"]} if "cost_coverage" in point else {}),
+                **(
+                    {"cost_coverage": point["cost_coverage"]}
+                    if "cost_coverage" in point
+                    else {}
+                ),
             }
             for point in points
         ],
@@ -1645,10 +1649,20 @@ def _merge_exact_trace_contribution_rows(
     cache publication.
     """
 
-    coverage_fields = ("cost_known_subtotal", "known_cost_fact_count", "unknown_cost_fact_count")
+    coverage_fields = (
+        "cost_known_subtotal",
+        "known_cost_fact_count",
+        "unknown_cost_fact_count",
+    )
     has_coverage = bool(batches) and all(
         all(field in columns for field in coverage_fields)
-        or (bool(rows) and all(isinstance(row, dict) and all(field in row for field in coverage_fields) for row in rows))
+        or (
+            bool(rows)
+            and all(
+                isinstance(row, dict) and all(field in row for field in coverage_fields)
+                for row in rows
+            )
+        )
         for rows, columns in batches
     )
     merged: dict[Any, dict[str, Any]] = {}
@@ -1681,7 +1695,9 @@ def _merge_exact_trace_contribution_rows(
             state["cost_sum"] += Decimal(
                 str(_row_value(row, columns, "cost_sum", 0) or 0)
             )
-            state["cost_known_subtotal"] += Decimal(str(_row_value(row, columns, "cost_known_subtotal", 0) or 0))
+            state["cost_known_subtotal"] += Decimal(
+                str(_row_value(row, columns, "cost_known_subtotal", 0) or 0)
+            )
             for field in ("known_cost_fact_count", "unknown_cost_fact_count"):
                 state[field] += int(_row_value(row, columns, field, 0) or 0)
             state["traffic_count"] += int(
@@ -1711,11 +1727,15 @@ def _merge_exact_trace_contribution_rows(
                 "avg_latency": state["latency_sum"] / denominator,
                 "total_tokens": state["total_tokens"],
                 "avg_cost": float(state["cost_sum"] / denominator),
-                **({
-                    "cost_known_subtotal": float(state["cost_known_subtotal"]),
-                    "known_cost_fact_count": state["known_cost_fact_count"],
-                    "unknown_cost_fact_count": state["unknown_cost_fact_count"],
-                } if has_coverage else {}),
+                **(
+                    {
+                        "cost_known_subtotal": float(state["cost_known_subtotal"]),
+                        "known_cost_fact_count": state["known_cost_fact_count"],
+                        "unknown_cost_fact_count": state["unknown_cost_fact_count"],
+                    }
+                    if has_coverage
+                    else {}
+                ),
                 "traffic_count": count,
                 "prompt_tokens": state["prompt_tokens"],
                 "completion_tokens": state["completion_tokens"],
@@ -4832,7 +4852,11 @@ def read_exact_user_system_graph(
                     "timestamp": point.get("timestamp"),
                     "value": point.get("value", 0),
                     "primary_traffic": traffic.get(point.get("timestamp"), 0),
-                    **({"cost_coverage": point["cost_coverage"]} if "cost_coverage" in point else {}),
+                    **(
+                        {"cost_coverage": point["cost_coverage"]}
+                        if "cost_coverage" in point
+                        else {}
+                    ),
                 }
                 for point in formatted.get(metric_key, [])
             ],

@@ -176,9 +176,7 @@ def test_shared_graph_exact_query_is_not_monetary_completeness():
         "metric_statistic": "mean",
         "query_complete": True,
         "query_exact": True,
-        "data": [
-            {"timestamp": TIMESTAMP, "value": 0.625, "cost_coverage": MIXED}
-        ],
+        "data": [{"timestamp": TIMESTAMP, "value": 0.625, "cost_coverage": MIXED}],
     }
     serializer = ObserveGraphDataResultSerializer(data=payload)
     assert serializer.is_valid(), serializer.errors
@@ -192,7 +190,12 @@ def test_shared_graph_exact_query_is_not_monetary_completeness():
         (TraceSessionTableRowSerializer, {"total_cost": None}),
         (
             TraceDetailResultSerializer,
-            {"trace": {}, "observation_spans": [], "summary": {"total_cost": 0}, "graph": {}},
+            {
+                "trace": {},
+                "observation_spans": [],
+                "summary": {"total_cost": 0},
+                "graph": {},
+            },
         ),
         (
             TraceSessionDetailResultSerializer,
