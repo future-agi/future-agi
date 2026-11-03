@@ -1,0 +1,57 @@
+// Test-only production-shaped snapshot. It contains no customer data or gold labels.
+import {canonicalSnapshotDigest} from './snapshot.mjs';
+
+export function makeGroupingSnapshotFixture() {
+  const body = {
+    contract_version: 'grouping-snapshot/v1',
+    report: {
+      id: '11111111-1111-4111-8111-111111111111',
+      organization_id: '22222222-2222-4222-8222-222222222222',
+      workspace_id: '33333333-3333-4333-8333-333333333333',
+      project_id: '44444444-4444-4444-8444-444444444444',
+      trace_id: '55555555-5555-4555-8555-555555555555',
+      source: 'omega',
+      source_version: null,
+      recorded_at: '2026-09-18T10:11:12.123456Z',
+      is_current: true,
+      has_issues: true,
+      grouping_status: 'pending',
+      job_id: '66666666-6666-4666-8666-666666666666',
+      generation: 7,
+      attempt_id: '77777777-7777-4777-8777-777777777777',
+      engine_version: 'omega-v1',
+      read_cutoff: '2026-09-18T10:10:00.000001Z',
+      memory_snapshot_id: 'memory-7',
+      memory_digest: `sha256:${'a'.repeat(64)}`,
+      idempotency_key: 'synthetic-publication-7',
+      source_contract_version: 'omega-investigation/v1',
+      result_digest: `sha256:${'b'.repeat(64)}`,
+      evidence_digest: `sha256:${'c'.repeat(64)}`,
+      execution_status: 'completed',
+      outcome: 'failure',
+      coverage: {scope: 'available trace at read cutoff', observed_span_count: 2,
+        read_complete: false, future_arrivals_known: true},
+      usage: {model_calls: 2, input_tokens: 1234, output_tokens: 56,
+        cost_usd: '0.010000000', cost_status: 'complete'},
+      requirement_checks: [{requirement_id: 'requirement-1', requirement: 'Refund café customer',
+        status: 'violated', evidence_ids: ['evidence-1']}],
+      evidence_receipts: [{evidence_id: 'evidence-1', span_id: '0123456789abcdef',
+        parent_span_id: null, excerpt: 'requested=100; executed=10',
+        end_time: '2026-09-18T10:09:59.999999Z'}],
+      findings: [{finding_id: 'finding-1', kind: 'outcome',
+        statement: 'Only 10 was refunded instead of 100.', requirement_id: 'requirement-1',
+        evidence_ids: ['evidence-1', 'deleted-evidence'], recovery: 'not_observed',
+        attribution: {
+          origin: null,
+          decisive: {status: 'supported', span_id: '0123456789abcdef', evidence_ids: ['evidence-1']},
+          symptom: {status: 'unknown', span_id: null, evidence_ids: []},
+        }}],
+      verification_receipts: [{receipt_id: 'verification-1', executed: true}],
+      missing_fields: ['evidence_receipts.input', 'evidence_receipts.output',
+        'investigation_history', 'requirement_checks.expected',
+        'requirement_checks.observed', 'terminal_effect_mapping'],
+    },
+    occurrences: [{occurrence_id: '88888888-8888-4888-8888-888888888888', finding_id: 'finding-1'}],
+  };
+  return {...body, snapshot_digest: canonicalSnapshotDigest(body)};
+}

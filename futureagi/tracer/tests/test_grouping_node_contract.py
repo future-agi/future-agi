@@ -1,4 +1,9 @@
-"""Optional cross-repository contract smoke, entirely mocked inference/storage."""
+"""Optional contract smoke against the Node worker, entirely mocked inference/storage.
+
+The worker now lives in this repo at ``ee/workers/error-feed-node``; point
+``OMEGA_GROUPING_WORKER_ROOT`` at ``futureagi/ee`` to run this (still opt-in,
+since it shells out to ``node`` and this suite's own CI job does not install it).
+"""
 
 import json
 import os
@@ -63,7 +68,7 @@ def test_python_claim_node_features_python_completion(
 ):
     worker_root = os.environ.get("OMEGA_GROUPING_WORKER_ROOT")
     if not worker_root:
-        pytest.skip("set OMEGA_GROUPING_WORKER_ROOT to the worker checkout")
+        pytest.skip("set OMEGA_GROUPING_WORKER_ROOT (now in-repo: futureagi/ee)")
     coordinator = Path(worker_root) / "workers/error-feed-node/grouping/coordinator.mjs"
     assert coordinator.is_file()
     if policy_version == SIMULATION_GROUPING_POLICY_VERSION:

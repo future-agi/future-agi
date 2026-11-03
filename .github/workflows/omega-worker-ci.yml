@@ -1,0 +1,88 @@
+name: Omega worker CI
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "futureagi/ee/workers/error-feed-node/**"
+      - "scripts/verify-omega-worker-*"
+      - ".github/workflows/omega-worker-ci.yml"
+      - ".github/workflows/release-images.yml"
+  push:
+    branches: [main, dev]
+    paths:
+      - "futureagi/ee/workers/error-feed-node/**"
+      - "scripts/verify-omega-worker-*"
+      - ".github/workflows/omega-worker-ci.yml"
+      - ".github/workflows/release-images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  test:
+    name: Full worker suite in the release image
+    # Forks cannot fetch the private runtime; never mask a same-repo failure.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Fetch the pinned private runtime
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.OMEGA_PACKAGES_READ_TOKEN || github.token }}
+        run: node futureagi/ee/workers/error-feed-node/fetch-runtime.mjs
+      - name: Prepare the allowlisted Docker build context
+        run: node futureagi/ee/workers/error-feed-node/prepare-image.mjs
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the release image locally
+        run: >-
+          docker buildx build --platform linux/amd64 --load --provenance=false
+          -t omega-worker:ci futureagi/ee/.artifacts/node-worker
+      - name: Verify shipped files, smoke checks and the full worker suite offline
+        run: bash scripts/verify-omega-worker-image.sh omega-worker:ci
+
+  fork-test:
+    name: Public worker tests (fork; private runtime unavailable)
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: futureagi/ee/workers/error-feed-node
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install the locked public telemetry dependencies
+        working-directory: futureagi/ee/workers/error-feed-node/telemetry
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Make the bundled telemetry package resolvable
+        run: |
+          set -euo pipefail
+          tarball=$(cd telemetry && npm pack --ignore-scripts --silent)
+          mkdir -p node_modules/@future-agi/error-feed-telemetry
+          tar -xzf "telemetry/$tarball" --strip-components=1 -C node_modules/@future-agi/error-feed-telemetry
+          rm "telemetry/$tarball"
+      - name: Run tests that do not import the private runtime
+        run: |
+          echo "::notice::Fork PR: four runtime-dependent files require the full image check in a trusted branch before merge"
+          files=()
+          while IFS= read -r f; do files+=("$f"); done < <(find . -name node_modules -prune -o -name '*.test.mjs' \
+            ! -name 'worker.test.mjs' \
+            ! -name 'investigation.test.mjs' \
+            ! -name 'audio-inspection.test.mjs' \
+            ! -name 'gateway-retry.test.mjs' -print)
+          node --test "${files[@]}"
