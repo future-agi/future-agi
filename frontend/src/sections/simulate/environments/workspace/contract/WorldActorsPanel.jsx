@@ -111,7 +111,8 @@ export default function WorldActorsPanel({
   const [editing, setEditing] = useState(null);
   const cast = data?.actors || [];
   const caller = cast.filter(speaks);
-  const world = cast.filter((one) => !speaks(one) && one.side !== "caller");
+  // Without a channel an actor cannot speak on the call, whatever side it is on: it acts in the world.
+  const world = cast.filter((one) => !speaks(one));
   const revision = data?.revision ?? 0;
   const context = {
     records: data?.record_schemas || {},
