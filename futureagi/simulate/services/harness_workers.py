@@ -23,6 +23,8 @@ _WORK_KINDS = {TOOL_KIND, "llm"}
 # What the runtime calls an agent instance, when it names one (OpenInference / traceAI graph node).
 _NODE_ID = "graph.node.id"
 _SUMMARY_CHARS = 500
+# The fields a framework puts a task's or an answer's own text in, when it hands one over as a JSON object.
+_TEXT_KEYS = ("description", "task", "input", "query", "prompt", "content", "output", "result", "answer", "text")
 _PAYLOAD_CHARS = 2000
 # The record is kept on the call and sent whole to the browser, so it stays bounded however large the team or the call:
 # the first steps up to a count, and tool inputs and outputs up to a total size. A step past the size keeps its tool,
@@ -57,12 +59,16 @@ def _summary(value: Any, *, argument: bool = False) -> str | None:
     # task as that tool's one argument.
     if parsed == {}:
         return None
-    if argument and isinstance(parsed, dict) and len(parsed) == 1:
-        text = str(next(iter(parsed.values()))).strip()
     if isinstance(parsed, dict) and isinstance(parsed.get("messages"), list):
         # A worker that returns its whole conversation answers with its last message that says something.
         said = [_said(one) for one in parsed["messages"]]
         text = next((one for one in reversed(said) if one), text)
+    elif argument and isinstance(parsed, dict) and len(parsed) == 1:
+        text = str(next(iter(parsed.values()))).strip()
+    elif isinstance(parsed, dict):
+        text = next((str(parsed[key]).strip() for key in _TEXT_KEYS if str(parsed.get(key) or "").strip()), text)
+    elif parsed is None:
+        text = _said(text)
     if "\\n" in text and "\n" not in text:
         # Text taken from a printed message object keeps its line breaks escaped; show them as breaks.
         text = text.replace("\\n", "\n").replace("\\'", "'")
@@ -102,6 +108,10 @@ def _bounded(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
             else:
                 spent += size
     return kept, len(events) - len(kept)
+
+
+def _status(span: Mapping[str, Any]) -> str:
+    return "error" if str(span.get("status") or "").upper() == "ERROR" else "ok"
 
 
 def _instant(value: Any) -> datetime | None:
@@ -190,13 +200,7 @@ def worker_timeline(
 
     workers: dict[str, dict[str, Any]] = {}
 
-    def worker_of(agent: Mapping[str, Any] | None) -> str | None:
-        # A top-level agent span is the coordinator, not a worker.
-        if agent is None or agent_ancestor(agent) is None:
-            return None
-        name = name_of(agent)
-        match = declared_by_key.get(_slug(name))
-        local = str(match["id"]) if match is not None else _slug(name)
+    def entry_for(local: str, name: str, match: Mapping[str, Any] | None, instance: str) -> str:
         worker_id = f"{run_key}/{local}"
         entry = workers.setdefault(
             worker_id,
@@ -209,9 +213,17 @@ def worker_timeline(
                 "instance_ids": [],
             },
         )
-        if agent["span_id"] not in entry["instance_ids"]:
-            entry["instance_ids"].append(str(agent["span_id"]))
+        if instance not in entry["instance_ids"]:
+            entry["instance_ids"].append(instance)
         return worker_id
+
+    def worker_of(agent: Mapping[str, Any] | None) -> str | None:
+        # A top-level agent span is the coordinator, not a worker.
+        if agent is None or agent_ancestor(agent) is None:
+            return None
+        name = name_of(agent)
+        match = declared_by_key.get(_slug(name))
+        return entry_for(str(match["id"]) if match is not None else _slug(name), name, match, str(agent["span_id"]))
 
     events: list[dict[str, Any]] = []
     delegating = set()
@@ -242,7 +254,7 @@ def worker_timeline(
                     "worker_id": worker_id,
                     "delegation_id": delegation_id,
                     "result": _summary(span.get("output")) or _summary((launcher or {}).get("output")),
-                    "status": "error" if str(span.get("status") or "").upper() == "ERROR" else "ok",
+                    "status": _status(span),
                     "at": span.get("end_time"),
                     "attribution": "reported",
                 }
@@ -257,7 +269,7 @@ def worker_timeline(
                 "worker_id": worker_of(owner),
                 "tool": str(span.get("name") or ""),
                 "span_id": str(span["span_id"]),
-                "status": "error" if str(span.get("status") or "").upper() == "ERROR" else "ok",
+                "status": _status(span),
                 "input": _payload(span.get("input")),
                 "output": _payload(span.get("output")),
                 "at": span.get("start_time"),
@@ -268,13 +280,6 @@ def worker_timeline(
     shown = Counter((one["worker_id"], one["tool"]) for one in events if one["type"] == "tool_call")
     shown_delegations = Counter(one["worker_id"] for one in events if one["type"] == "delegated")
     rows = [call for call in traced_calls if isinstance(call, Mapping)]
-    # A job is recorded when it starts and again when it ends; the later record carries its return.
-    ended_jobs = {str(row["event_id"]) for row in rows if row.get("delegated_to") and row.get("ended_at") and row.get("event_id")}
-    rows = [
-        row
-        for row in rows
-        if not (row.get("delegated_to") and not row.get("ended_at") and str(row.get("event_id")) in ended_jobs)
-    ]
 
     def by_of(row: Mapping[str, Any]) -> str:
         # The runtime's stable worker id, else its label for the worker.
@@ -317,22 +322,7 @@ def worker_timeline(
         if _slug(by) in coordinators:
             return None
         match = declared_by_key.get(_slug(by)) or declared_by_key.get(_slug(label))
-        local = str(match["id"]) if match is not None else _slug(by)
-        worker_id = f"{run_key}/{local}"
-        entry = workers.setdefault(
-            worker_id,
-            {
-                "worker_id": worker_id,
-                "id": local,
-                "name": str(match.get("name") or label) if match is not None else label,
-                "observed": True,
-                "undeclared": match is None,
-                "instance_ids": [],
-            },
-        )
-        if by not in entry["instance_ids"]:
-            entry["instance_ids"].append(by)
-        return worker_id
+        return entry_for(str(match["id"]) if match is not None else _slug(by), label, match, by)
 
     def when(value: Any) -> str | None:
         if isinstance(value, (int, float)) and value > 0:
