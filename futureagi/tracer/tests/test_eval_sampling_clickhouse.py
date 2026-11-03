@@ -1680,3 +1680,142 @@ def test_planned_cell_quotas_preserve_contact_groups_and_match_audit(
         assert row["target"] == row["achieved"] == quotas[row["stratum"]]
         assert row["population_size"] == cells[row["stratum"]]["eligible_units"]
         assert row["inclusion_probability"] == row["achieved"] / row["population_size"]
+
+
+@pytest.mark.parametrize("cross_day", [False, True])
+@pytest.mark.parametrize("row_type", ["traces", "sessions"])
+def test_live_child_change_admits_previously_ineligible_old_root(
+    project, custom_eval_config, ch_seed, cross_day, row_type
+):
+    now = sampling_clock()
+    root_at = (
+        now.replace(hour=0, minute=0, second=0, microsecond=0)
+        - timedelta(days=2)
+        + timedelta(hours=12)
+    )
+    session = TraceSession.objects.create(project=project, name="child-change")
+    root, child = seed_contact(project, session, {"locale": "fr"}, traces=1, seed=False)
+    root.start_time = root_at
+    child.start_time = root_at + timedelta(days=1 if cross_day else 0, seconds=1)
+    root.created_at = root.updated_at = child.created_at = child.updated_at = (
+        now - timedelta(hours=2)
+    )
+    seed_ch_spans([root] if cross_day else [root, child], version_from_created_at=True)
+    task = EvalTask.objects.create(
+        project=project,
+        row_type=row_type,
+        run_type=RunType.CONTINUOUS,
+        filters={
+            "filters": [
+                {
+                    "column_id": "locale",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": ["en"],
+                    },
+                }
+            ]
+        },
+        sampling_policy=make_policy(
+            mode="live",
+            sampling_unit="trace" if row_type == "traces" else "session",
+            window={"start": (root_at - timedelta(hours=1)).isoformat(), "end": None},
+            default={"rate": 100},
+        ),
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+    assert not EvalLogger.objects.filter(eval_task_id=str(task.id)).exists()
+    floor = sampling_clock() - timedelta(minutes=1)
+    EvalTask.objects.filter(pk=task.pk).update(continuous_cursor=floor)
+    child.span_attributes = {"locale": "en"}
+    child.created_at = child.updated_at = sampling_clock() - timedelta(seconds=1)
+    seed_ch_spans([child], version_from_created_at=True)
+    reconcile(task)
+    entries = list(EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False))
+    assert len(entries) == 1
+    assert str(
+        entries[0].trace_id if row_type == "traces" else entries[0].trace_session_id
+    ) == str(root.trace_id if row_type == "traces" else session.id)
+    member = EvalSamplingMember.objects.get(cohort__task=task)
+    assert member.selected and member.inclusion_probability == 1
+    assert (
+        entries[0].output_metadata["_task_selection"]["sampling"]["sampling_unit_id"]
+        == member.unit_id
+    )
+    reconcile(task)
+    assert (
+        EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False).count() == 1
+    )
+
+
+@pytest.mark.parametrize("unit", ["attribute", "user"])
+@pytest.mark.parametrize("later_missing", [False, True])
+def test_live_two_day_session_uses_earliest_root_unit_once(
+    project, custom_eval_config, ch_seed, unit, later_missing
+):
+    now = sampling_clock()
+    first_at = (
+        now.replace(hour=0, minute=0, second=0, microsecond=0)
+        - timedelta(days=2)
+        + timedelta(hours=12)
+    )
+    session = TraceSession.objects.create(
+        project=project, name="canonical-session-unit"
+    )
+    early = seed_contact(project, session, {"contact_id": "A"}, traces=1, seed=False)
+    later = seed_contact(
+        project,
+        session,
+        {} if later_missing else {"contact_id": "B"},
+        traces=1,
+        seed=False,
+    )
+    first_user, second_user = uuid.uuid4(), uuid.uuid4()
+    for spans, event, user in (
+        (early, first_at, first_user),
+        (later, first_at + timedelta(days=1), None if later_missing else second_user),
+    ):
+        for span in spans:
+            span.start_time = event
+            span.end_user_id = user
+    seed_ch_spans([*early, *later])
+    value = make_policy(
+        mode="live",
+        sampling_unit=unit,
+        missing_id="exclude",
+        window={"start": (first_at - timedelta(hours=1)).isoformat(), "end": None},
+        default={"rate": 100},
+    )
+    if unit == "attribute":
+        value["unit_attribute"] = {"key": "contact_id"}
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="sessions",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=value,
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+    expected = "attribute:A" if unit == "attribute" else f"user:{first_user}"
+    assert list(
+        EvalSamplingMember.objects.filter(cohort__task=task).values_list(
+            "unit_id", flat=True
+        )
+    ) == [expected]
+    entry = EvalLogger.objects.get(eval_task_id=str(task.id), deleted=False)
+    assert str(entry.trace_session_id) == str(session.id)
+    assert (
+        entry.output_metadata["_task_selection"]["sampling"]["sampling_unit_id"]
+        == expected
+    )
+    task.refresh_from_db()
+    assert task.continuous_cursor is not None
+    reconcile(task)
+    assert EvalSamplingMember.objects.filter(cohort__task=task).count() == 1
+    assert (
+        EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False).count() == 1
+    )

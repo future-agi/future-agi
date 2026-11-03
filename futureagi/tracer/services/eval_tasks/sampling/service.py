@@ -344,6 +344,34 @@ def _locked_task(task_id) -> EvalTask:
 WriteScope = Callable[[], AbstractContextManager]
 
 
+def _live_row_blocks(
+    task: EvalTask,
+    policy: dict,
+    version: str,
+    now: datetime,
+    floor: datetime | None,
+    windows: list[dict],
+) -> Iterator[list[tuple]]:
+    for window in windows:
+        query = SamplingQuery(task, policy, version, now, scan_window=window)
+        statement = (
+            query.live_session_candidates(floor)
+            if task.row_type == "sessions"
+            else query.rows(arrival_floor=floor)
+        )
+        for block in stream_query(*statement):
+            if task.row_type == "sessions":
+                # Daily rows are only discovery witnesses. Their user/custom
+                # unit can differ from the session's canonical earliest root.
+                yield from stream_query(
+                    *SamplingQuery(task, policy, version, now).live_session_rows(
+                        [str(row[0]) for row in block]
+                    )
+                )
+            else:
+                yield block
+
+
 def prepare_live_members(
     task: EvalTask,
     policy: dict,
@@ -366,50 +394,43 @@ def prepare_live_members(
     from tracer.services.eval_tasks.sampling.unit_scope import unit_batches
 
     windows = list(live_scan_windows(task, policy, now, floor))
-    for window in windows:
-        for block in stream_query(
-            *SamplingQuery(task, policy, version, now, scan_window=window).rows(
-                arrival_floor=floor
+    for block in _live_row_blocks(task, policy, version, now, floor, windows):
+        for units in unit_batches(row[1] for row in block):
+            existing = set(
+                EvalSamplingMember.objects.filter(
+                    cohort=cohort, unit_key__in=[unit_key(unit) for unit in units]
+                ).values_list("unit_id", flat=True)
             )
-        ):
-            for units in unit_batches(row[1] for row in block):
-                existing = set(
-                    EvalSamplingMember.objects.filter(
-                        cohort=cohort, unit_key__in=[unit_key(unit) for unit in units]
-                    ).values_list("unit_id", flat=True)
-                )
-                unseen = [unit for unit in units if unit not in existing]
-                if not unseen:
-                    continue
-                decisions = {}
-                for proof in stream_query(
-                    *SamplingQuery(task, policy, version, now).live_member_decisions(
-                        unseen
-                    )
-                ):
-                    for unit, stratum, probability, selected in proof:
-                        unit = str(unit)
-                        if unit not in unseen or unit in decisions:
-                            raise ValueError(
-                                "Live unit decision escaped or duplicated its candidate scope."
-                            )
-                        decisions[unit] = EvalSamplingMember(
-                            cohort=cohort,
-                            unit_key=unit_key(unit),
-                            unit_id=unit,
-                            stratum=str(stratum),
-                            selected=bool(selected),
-                            inclusion_probability=float(probability),
-                            population_size=None,
+            unseen = [unit for unit in units if unit not in existing]
+            if not unseen:
+                continue
+            decisions = {}
+            for proof in stream_query(
+                *SamplingQuery(task, policy, version, now).live_member_decisions(unseen)
+            ):
+                for unit, stratum, probability, selected in proof:
+                    unit = str(unit)
+                    if unit not in unseen or unit in decisions:
+                        raise ValueError(
+                            "Live unit decision escaped or duplicated its candidate scope."
                         )
-                if set(decisions) != set(unseen):
-                    raise ValueError(
-                        "Live unit snapshot changed during first admission. Retry the bounded proof."
+                    decisions[unit] = EvalSamplingMember(
+                        cohort=cohort,
+                        unit_key=unit_key(unit),
+                        unit_id=unit,
+                        stratum=str(stratum),
+                        selected=bool(selected),
+                        inclusion_probability=float(probability),
+                        population_size=None,
                     )
-                with write():
-                    EvalSamplingMember.objects.bulk_create(
-                        list(decisions.values()), batch_size=1000
-                    )
+            if set(decisions) != set(unseen):
+                raise ValueError(
+                    "Live unit snapshot changed during first admission. Retry the bounded proof."
+                )
+            with write():
+                EvalSamplingMember.objects.bulk_create(
+                    list(decisions.values()), batch_size=1000
+                )
     return windows
 
 
@@ -442,12 +463,9 @@ def iter_selected_row_blocks(
     live_windows: list[dict] | None = None,
 ) -> Iterator[list[tuple]]:
     if policy["mode"] == "live":
-        for window in live_windows or []:
-            yield from stream_query(
-                *SamplingQuery(task, policy, version, now, scan_window=window).rows(
-                    arrival_floor=floor
-                )
-            )
+        yield from _live_row_blocks(
+            task, policy, version, now, floor, live_windows or []
+        )
         return
     # Transfer only selected closed-cohort rows, not the unsampled population,
     # and push each page's unit IDs into the physical read so a page never

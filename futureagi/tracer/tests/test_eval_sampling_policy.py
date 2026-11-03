@@ -422,7 +422,9 @@ def test_live_policy_is_open_ended_and_discovers_future_and_backdated_event_days
 
     value = validate_policy(policy(mode="live", default={"rate": 50}), now=NOW)
     assert value["window"]["end"] is None
-    task = SimpleNamespace(project_id="ba052ed0-921f-4aa9-972d-7bbbc79e5d30")
+    task = SimpleNamespace(
+        project_id="ba052ed0-921f-4aa9-972d-7bbbc79e5d30", row_type="spans"
+    )
     future = NOW + timedelta(days=40)
     with patch(
         "tracer.services.eval_tasks.sampling.query.stream_query",
@@ -1176,3 +1178,56 @@ def test_live_start_interval_compiles_plain_and_wrapped_ranges():
     assert end == int(threshold(15), 16) - 1
     assert f"{end:065X}" in params.values()
     assert " AND concat('0', unit_hash) < " in sql  # [5%, 15%)
+
+
+@pytest.mark.parametrize("row_type", ["traces", "sessions"])
+def test_live_dependency_discovery_uses_root_days_and_all_span_changes(row_type):
+    from tracer.services.eval_tasks.sampling.query import live_scan_windows
+
+    clean = validate_policy(policy(mode="live", default={"rate": 100}), now=NOW)
+    with patch(
+        "tracer.services.eval_tasks.sampling.query.stream_query", return_value=iter([])
+    ) as stream:
+        assert list(live_scan_windows(_spans_task(row_type), clean, NOW, NOW)) == []
+    sql, params = stream.call_args.args
+    assert "parent_span_id = '' AND trace_id IN (" in sql
+    delta = sql.split("SELECT trace_id FROM spans", 1)[1].split(")", 1)[0]
+    assert "_version < %(ceiling_ns)s" in sql
+    assert "_version >= %(floor_ns)s" in sql
+    assert "start_time" not in delta
+    assert params["floor_ns"] == int(NOW.timestamp()) * 1_000_000_000
+
+
+@pytest.mark.parametrize("row_type", ["traces", "sessions"])
+def test_live_row_watermark_includes_children_and_tombstones(row_type):
+    clean = validate_policy(policy(mode="live", default={"rate": 100}), now=NOW)
+    sql, _ = SamplingQuery(_spans_task(row_type), clean, "v", NOW).rows(
+        arrival_floor=NOW
+    )
+    raw = sql.split("), sampling_touched", 1)[0]
+    assert "WHERE is_deleted = 0" not in raw
+    assert "SELECT * FROM dependency_source WHERE is_deleted = 0" in sql
+    assert "max(s.source_arrival) AS arrival" in sql
+    assert "FROM dependency_source AS s GROUP BY row_id" in sql
+    assert "s.id AS span_id, d.arrival AS arrival" in sql
+    assert "r.arrival >= %(sp_floor)s" in sql
+
+
+def test_session_candidate_resolution_is_full_window_bounded_and_watermarked():
+    clean = validate_policy(policy(mode="live", default={"rate": 100}), now=NOW)
+    task = _spans_task("sessions")
+    candidate, _ = SamplingQuery(task, clean, "v", NOW).live_session_candidates(NOW)
+    final = candidate.rsplit(" SELECT DISTINCT", 1)[1]
+    assert "unit_id" not in final
+    assert "eligible" not in final
+    sql, params = SamplingQuery(task, clean, "v", NOW).live_session_rows(["session-a"])
+    assert params["sp_start"].isoformat() == clean["window"]["start"]
+    assert params["sp_current_ids"] == ("session-a",)
+    assert params.proof is True
+    assert params.read_settings["max_rows_to_read"] == 20_000_000
+    assert "source_arrival < %(sp_snapshot)s" in sql
+    assert "argMin(p.unit_id, tuple(p.event_time, p.span_id))" in sql
+    with pytest.raises(ValueError, match="1–1000"):
+        SamplingQuery(task, clean, "v", NOW).live_session_rows(
+            [str(i) for i in range(1001)]
+        )

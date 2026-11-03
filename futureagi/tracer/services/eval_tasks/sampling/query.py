@@ -411,19 +411,32 @@ class SamplingQuery:
             if self.current_state
             else "AND created_at < %(sp_snapshot)s AND source_arrival < %(sp_snapshot)s"
         )
+        # Eligibility can change when only a child changes (including a
+        # tombstone). Root timestamps are not the row's dependency watermark.
+        dependency_arrival = "s.source_arrival" if row_type == "spans" else "d.arrival"
+        dependency_join = (
+            ""
+            if row_type == "spans"
+            else f"INNER JOIN dependency_arrivals AS d ON {row_id} = d.row_id"
+        )
         return f"""WITH raw AS (
             SELECT *, {arrival} AS source_arrival FROM {latest}
-            WHERE is_deleted = 0 {watermark}
-        ), {", ".join(maps)}, sampling_source AS (
+            WHERE 1 {watermark}
+        ), {", ".join(maps)}, dependency_source AS (
             SELECT s.* EXCEPT(trace_session_id, end_user_id),
                    {canonical_session} AS trace_session_id, {canonical_user} AS end_user_id
             FROM raw AS s
             LEFT JOIN session_map AS sm ON s.trace_session_id = sm.any_id
             LEFT JOIN user_map AS um ON s.end_user_id = um.any_id
+        ), sampling_source AS (
+            SELECT * FROM dependency_source WHERE is_deleted = 0
+        ), dependency_arrivals AS (
+            SELECT {row_id} AS row_id, max(s.source_arrival) AS arrival
+            FROM dependency_source AS s GROUP BY row_id
         ), eligible AS ({eligible}), projected AS (
             SELECT {row_id} AS row_id, {unit_id} AS unit_id, {rule_expr} AS rule_index,
-                   {groups_expr} AS groups, s.start_time AS event_time, s.id AS span_id, s.source_arrival AS arrival
-            FROM sampling_source AS s
+                   {groups_expr} AS groups, s.start_time AS event_time, s.id AS span_id, {dependency_arrival} AS arrival
+            FROM sampling_source AS s {dependency_join}
             WHERE {row_id} IN (SELECT {eligible_id} FROM eligible) {root}
               AND s.start_time >= %(sp_start)s AND s.start_time < %(sp_end)s
         ), rows AS (
@@ -580,6 +593,17 @@ class SamplingQuery:
             or len(list(unit_batches(identities))) != 1
         ):
             raise ValueError("Live decisions require one bounded candidate-unit page.")
+        self._live_proof_window()
+        self.proof_unit_ids = identities
+        self.params["sp_new_units"] = tuple(identities)
+        source = self._classified()
+        return (
+            source
+            + " SELECT unit_id, stratum, inclusion_probability, selected FROM classified WHERE unit_id IN %(sp_new_units)s",
+            self.params,
+        )
+
+    def _live_proof_window(self) -> None:
         lookback = self.params["sp_snapshot"] - parse_time(
             self.policy["window"]["start"]
         )
@@ -597,7 +621,6 @@ class SamplingQuery:
                 "Start a new live policy with a later start; no partial decision "
                 "was saved."
             )
-        self.proof_unit_ids = identities
         self.params.proof = True
         self.params.read_settings = live_proof_settings()
         self.live_floor = None
@@ -607,11 +630,52 @@ class SamplingQuery:
         }
         self.params["sp_start"] = parse_time(self.scan_window["start"])
         self.params["sp_end"] = self.params["sp_snapshot"]
-        self.params["sp_new_units"] = tuple(identities)
-        source = self._classified()
+
+    def live_session_candidates(
+        self, arrival_floor: datetime | None
+    ) -> tuple[str, dict]:
+        """Discover sessions before applying day-local eligibility or identity.
+
+        A later root can lack the custom ID, or different roots can satisfy
+        different filters. Only the full-window replay can decide either.
+        """
+        source = self._source()
+        predicate = ""
+        if arrival_floor is not None:
+            self.params["sp_floor"] = arrival_floor
+            predicate = "AND d.arrival >= %(sp_floor)s"
         return (
             source
-            + " SELECT unit_id, stratum, inclusion_probability, selected FROM classified WHERE unit_id IN %(sp_new_units)s",
+            + f""" SELECT DISTINCT toString(s.trace_session_id) AS row_id
+            FROM dependency_source AS s
+            INNER JOIN dependency_arrivals AS d ON toString(s.trace_session_id) = d.row_id
+            WHERE s.parent_span_id = '' AND s.start_time >= %(sp_start)s
+              AND s.start_time < %(sp_end)s
+              AND row_id NOT IN ('', '00000000-0000-0000-0000-000000000000') {predicate}""",
+            self.params,
+        )
+
+    def live_session_rows(self, row_ids: list[str]) -> tuple[str, dict]:
+        """Resolve daily discoveries using the full session's earliest root.
+
+        Admission and expansion use this same bounded replay, so neither can
+        assign a different contact/user merely because a later day was scanned.
+        Unlike pending-row revalidation, this respects the admission watermark.
+        """
+        identities = tuple(dict.fromkeys(str(value) for value in row_ids))
+        if (
+            self.policy["mode"] != "live"
+            or self.task.row_type != "sessions"
+            or not identities
+            or len(identities) > BATCH_SIZE
+        ):
+            raise ValueError("Live session resolution requires 1–1000 session IDs.")
+        self._live_proof_window()
+        self.proof_row_ids = identities
+        source = self._source()
+        return (
+            source
+            + " SELECT r.row_id, r.unit_id, '', 0, 0 FROM rows AS r WHERE r.row_id IN %(sp_current_ids)s AND r.unit_id != ''",
             self.params,
         )
 
@@ -775,8 +839,18 @@ def live_scan_windows(
     if floor is not None:
         params["floor_ns"] = int(floor.timestamp() * 1_000_000) * 1000
         version_floor = "AND _version >= %(floor_ns)s"
+    if task.row_type == "spans":
+        scope = f"_version < %(ceiling_ns)s {version_floor}"
+    else:
+        # A child's event day need not be its root's day (or even fall in
+        # the policy window). Discover root days through all changed spans;
+        # each follow-up replays whole traces under the bounded read budget.
+        scope = f"""parent_span_id = '' AND trace_id IN (
+            SELECT trace_id FROM spans PREWHERE project_id = %(project)s
+            AND _version < %(ceiling_ns)s {version_floor}
+        )"""
     sql = f"""SELECT toDate(start_time, 'UTC') AS day FROM spans
-        PREWHERE project_id = %(project)s AND _version < %(ceiling_ns)s {version_floor}
+        PREWHERE project_id = %(project)s AND {scope}
         WHERE start_time >= %(start)s AND start_time < %(ceiling)s
         GROUP BY day ORDER BY day LIMIT 367"""
     days = []
