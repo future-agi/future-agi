@@ -101,11 +101,11 @@ test('PROMPT-E2E-006: commit availability and retry are clear in both themes', {
     await expect(commit).toBeDisabled({ timeout: UI_READY });
     await expect(setDefault).toBeDisabled({ timeout: UI_READY });
     await expect(commit).toHaveCSS('color', colors.disabled, { timeout: UI_READY });
-    await testInfo.attach(`${mode}-empty`, { body: await dialog.screenshot(), contentType: 'image/png' });
+    await testInfo.attach(`${mode}-empty`, { body: await dialog.screenshot({ animations: 'disabled' }), contentType: 'image/png' });
     await field.fill(message);
     await expect(commit).toBeEnabled({ timeout: UI_READY });
     await expect(setDefault).toBeEnabled({ timeout: UI_READY });
-    await testInfo.attach(`${mode}-entered`, { body: await dialog.screenshot(), contentType: 'image/png' });
+    await testInfo.attach(`${mode}-entered`, { body: await dialog.screenshot({ animations: 'disabled' }), contentType: 'image/png' });
     await expect(commit).toHaveCSS('color', colors.active, { timeout: UI_READY });
     expect(colors.active).not.toBe(colors.disabled);
     await field.clear();
@@ -127,7 +127,7 @@ test('PROMPT-E2E-006: commit availability and retry are clear in both themes', {
       await expect(commit).toBeDisabled({ timeout: UI_READY });
       await expect(setDefault).toBeDisabled({ timeout: UI_READY });
       await expect(dialog.getByRole('progressbar')).toHaveCount(2, { timeout: UI_READY });
-      await testInfo.attach(`${mode}-pending`, { body: await dialog.screenshot(), contentType: 'image/png' });
+      await testInfo.attach(`${mode}-pending`, { body: await dialog.screenshot({ animations: 'disabled' }), contentType: 'image/png' });
     } finally {
       releaseFailure();
     }
