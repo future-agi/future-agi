@@ -39,23 +39,25 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     id: 'EVAL-E2E-020', area: 'evals',
     userGoal: 'Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance',
     steps: ['seed two sessions with two traces and two spans per trace',
-      'choose the project and configure an echo judge through the task editor',
-      'preview a closed session quota of one and create a continuous span task',
+      'choose the project and preview incoming conversation shares',
+      'switch to historical count one, preview, configure an echo judge and create the task',
       'verify the independently hash-ranked contact is the exact evaluated set',
-      'ingest a late trace in each contact and verify only the sampled contact expands',
-      'pause, edit the quota to two, preview and explicitly Delete & rerun',
+      'ingest late traces and Edit & Re-run to expand only the frozen sampled contact',
+      'reload the saved count, edit it to two, preview and explicitly Delete & rerun',
       'verify one new cohort with probability one and the exact expanded span set'],
     backendChecks: [
       'all eight initial spans have two canonical session identities in ClickHouse',
-      'UI preview returns exactly two eligible contacts, one selected contact and four selected spans',
+      'incoming 100 percent share preview selects both contacts and all eight spans with an open-ended live policy',
+      'historical count preview returns exactly two eligible contacts, one selected contact and four selected spans',
       'created task evaluates exactly the independently hash-ranked contact with probability one half',
-      'late ingestion extends only the frozen sampled contact and does not rerank its membership',
+      'historical append rerun admits late rows only for the frozen contact without reranking',
       'edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived',
     ],
   }),
 }, async ({ page, actor, probe, mockModel }, testInfo) => {
-  // 2×SPAN_VISIBLE(30) + 3×EVAL_RESULT(270) + 4×UI_READY(240) + navigation(60).
-  test.setTimeout(600_000);
+  // Two ingestion waits, three entry/status pairs, seven API responses and
+  // two UI budgets for navigation and edit confirmations (1110 seconds total).
+  test.setTimeout(2 * POLL.SPAN_VISIBLE.timeout + 6 * POLL.EVAL_RESULT.timeout + 9 * UI_READY);
   page.setDefaultTimeout(UI_READY);
   const req = await request.newContext();
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
@@ -107,26 +109,37 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
       output_type: 'pass_fail', pass_threshold: 0.5,
     });
     const range = new URLSearchParams({ startDate: new Date(eventMs - 60_000).toISOString(),
-      endDate: new Date(Date.now() + 60_000).toISOString() });
+      endDate: new Date(eventMs + 60_000).toISOString() });
     await page.goto(`/dashboard/tasks/create?${range}`);
     await page.getByPlaceholder('Enter task name').fill(taskName);
-    await page.getByPlaceholder('Select Option', { exact: true }).click();
-    await page.getByRole('menuitem', { name: projectName, exact: true }).click();
-    await page.getByText('New incoming data', { exact: true }).click();
-    await page.getByRole('checkbox', { name: 'Contact-aware sampling policy' }).check();
-    await page.getByRole('combobox', { name: /^Selection(?: |$)/ }).click();
-    await page.getByRole('option', { name: 'Target units', exact: true }).click();
-    await page.getByRole('spinbutton', { name: 'Target units', exact: true }).fill('1');
+    await page.getByRole('combobox', { name: /^Project/ }).click();
+    await page.getByRole('option', { name: projectName, exact: true }).click();
+    await page.getByRole('radio', { name: 'New incoming data', exact: true }).check();
+    await page.getByRole('radio', { name: 'Pick whole groups of spans', exact: true }).check();
+    await page.getByRole('combobox', { name: 'Pick:', exact: true }).click();
+    await page.getByRole('option', { name: 'Conversations', exact: true }).click();
+    await page.getByRole('spinbutton', { name: 'What share of new conversations? (%)', exact: true }).fill('100');
+    const liveResponse = page.waitForResponse(r => r.url().endsWith(PREVIEW) && r.request().method() === 'POST', { timeout: UI_READY });
+    await page.getByRole('button', { name: 'Preview sample', exact: true }).click();
+    const livePreview = await liveResponse;
+    expect(livePreview.ok()).toBe(true);
+    expect(livePreview.request().postDataJSON()).toMatchObject({
+      sampling_policy: { mode: 'live', default: { rate: 100 }, window: { end: null } },
+    });
+    expect((await livePreview.json() as Preview).result.strata[0]).toMatchObject({ eligible_units: 2, selected_units: 2, selected_rows: 8 });
+    await page.getByRole('radio', { name: 'Historical data', exact: true }).check();
+    await page.getByRole('button', { name: 'Use historical counts', exact: true }).click();
+    await page.getByRole('spinbutton', { name: 'How many conversations?', exact: true }).fill('1');
     await testInfo.attach('ui-policy-editor', { contentType: 'image/png', body: await page.screenshot({ fullPage: true }) });
 
     const previewResponse = page.waitForResponse(r => r.url().endsWith(PREVIEW) && r.request().method() === 'POST', { timeout: UI_READY });
-    await page.getByRole('button', { name: 'Preview sampling policy', exact: true }).click();
+    await page.getByRole('button', { name: 'Preview sample', exact: true }).click();
     const response = await previewResponse;
     expect(response.ok()).toBe(true);
     const preview = await response.json() as Preview;
     expect(preview.result.strata).toHaveLength(1);
     expect(preview.result.strata[0]).toMatchObject({ eligible_units: 2, selected_units: 1, selected_rows: 4 });
-    await expect(page.getByRole('table').filter({ has: page.getByRole('columnheader', { name: 'Eligible units' }) })).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByLabel('Sampling preview summary', { exact: true })).toBeVisible({ timeout: UI_READY });
     await testInfo.attach('ui-preview-counts', { contentType: 'image/png', body: await page.screenshot({ fullPage: true }) });
     const ranked = contacts.map(contact => ({ contact,
       hash: createHash('sha256').update(`${preview.result.policy_version}:session:${contact.canonical}`).digest('hex'),
@@ -146,11 +159,11 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     const config = await configResponse.json() as Created;
     await mockModel.assertReady();
     const created = page.waitForResponse(r => r.url().endsWith(TASK) && r.request().method() === 'POST', { timeout: UI_READY });
-    await page.getByRole('button', { name: 'Create Task', exact: true }).click();
+    await page.getByRole('button', { name: 'Create task', exact: true }).click();
     const createResponse = await created;
     expect(createResponse.ok()).toBe(true);
     expect(createResponse.request().postDataJSON()).toMatchObject({ project: projectId, evals: [config.result.id],
-      row_type: 'spans', run_type: 'continuous', sampling_policy: { sampling_unit: 'session', mode: 'closed', default: { target_n: 1 } } });
+      row_type: 'spans', run_type: 'historical', sampling_policy: { sampling_unit: 'session', mode: 'closed', default: { target_n: 1 } } });
     const taskId = (await createResponse.json() as Created).result.id;
     await expect(page).toHaveURL(new RegExp(`/dashboard/tasks/${taskId}`), { timeout: UI_READY });
     await testInfo.attach('ui-created-task', { contentType: 'image/png', body: await page.screenshot({ fullPage: true }) });
@@ -169,6 +182,7 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
       sampling_unit_id: `session:${chosen.canonical}`, inclusion_probability: .5,
     });
 
+    await expect.poll(async () => (await actor.api.get<{ status: string }>(`${TASK}${taskId}/`)).status, POLL.EVAL_RESULT).toBe('completed');
     for (const contact of contacts) {
       const attributes = { 'session.id': contact.label, 'fi.span.kind': 'llm', [INPUT]: 'late-cohort-input' };
       const late = await sendTrace(req, { collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey,
@@ -176,6 +190,19 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
         startTimeUnixNano: BigInt(eventMs + 5000) * 1_000_000n, rootAttributes: attributes, childAttributes: attributes });
       contact.spanIds.push(...late.spanIds); allIds.push(...late.spanIds);
     }
+    const lateIds = allIds.map(id => `'${id}'`).join(',');
+    await expect.poll(async () => (await probe.ch<{ id: string }>(
+      `SELECT id FROM spans FINAL WHERE id IN (${lateIds})`)).map(row => row.id).sort(),
+    POLL.SPAN_VISIBLE).toEqual([...allIds].sort());
+    await page.reload();
+    await page.getByRole('button', { name: 'Re-run', exact: true }).click();
+    const rerunDialog = page.getByRole('dialog');
+    await rerunDialog.getByText('Edit & Re-run Existing Evals', { exact: true }).click();
+    const appended = page.waitForResponse(r => r.url().endsWith(UPDATE) && r.request().method() === 'PATCH', { timeout: UI_READY });
+    await rerunDialog.getByRole('button', { name: 'Re-run', exact: true }).click();
+    const appendedResponse = await appended;
+    expect(appendedResponse.ok()).toBe(true);
+    expect(appendedResponse.request().postDataJSON()).toMatchObject({ edit_type: 'edit_rerun' });
     await expect.poll(async () => {
       entries = await readEntries();
       return entries.filter(entry => entry.status === 'completed').map(entry => entry.observation_span_id).sort();
@@ -187,13 +214,12 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
       'SELECT unit_id,inclusion_probability FROM tracer_eval_sampling_member WHERE cohort_id=$1 AND selected=true', [originalCohort]);
     expect(membership).toEqual([{ unit_id: `session:${chosen.canonical}`, inclusion_probability: .5 }]);
 
-    await page.getByRole('button', { name: 'Pause', exact: true }).click();
-    await expect.poll(async () => (await actor.api.get<{ status: string }>(`${TASK}${taskId}/`)).status, POLL.ASYNC_JOB).toBe('paused');
+    await expect.poll(async () => (await actor.api.get<{ status: string }>(`${TASK}${taskId}/`)).status, POLL.EVAL_RESULT).toBe('completed');
     await page.reload();
-    await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeVisible({ timeout: UI_READY });
-    await page.getByRole('spinbutton', { name: 'Target units', exact: true }).fill('2');
+    await expect(page.getByRole('spinbutton', { name: 'How many conversations?', exact: true })).toHaveValue('1', { timeout: UI_READY });
+    await page.getByRole('spinbutton', { name: 'How many conversations?', exact: true }).fill('2');
     const editedPreview = page.waitForResponse(r => r.url().endsWith(PREVIEW), { timeout: UI_READY });
-    await page.getByRole('button', { name: 'Preview sampling policy', exact: true }).click();
+    await page.getByRole('button', { name: 'Preview sample', exact: true }).click();
     const editedResponse = await editedPreview;
     expect(editedResponse.ok()).toBe(true);
     expect((await editedResponse.json() as Preview).result.strata[0]).toMatchObject({ eligible_units: 2, selected_units: 2, selected_rows: 12 });
@@ -221,6 +247,6 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
       "SELECT output_metadata->'_task_selection'->'sampling' AS sampling FROM tracer_eval_logger WHERE eval_task_id=$1 AND deleted=true", [taskId]);
     expect(archived).toHaveLength(6);
     expect(archived.every(row => row.sampling.cohort_id === originalCohort && row.sampling.inclusion_probability === .5)).toBe(true);
-    await page.getByRole('button', { name: 'Pause', exact: true }).click();
+    await expect.poll(async () => (await actor.api.get<{ status: string }>(`${TASK}${taskId}/`)).status, POLL.EVAL_RESULT).toBe('completed');
   } finally { await req.dispose(); }
 });

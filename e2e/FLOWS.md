@@ -970,7 +970,7 @@
 2. select the project, custom property and value on the task create page
 3. verify the exact matching preview
 4. select and configure an echo judge
-5. click the final Create Task button
+5. click the final Create task button
 6. verify task and result inclusion and exclusion
 
 **Backend state verified:**
@@ -1010,19 +1010,20 @@
 **User steps:**
 
 1. seed two sessions with two traces and two spans per trace
-2. choose the project and configure an echo judge through the task editor
-3. preview a closed session quota of one and create a continuous span task
+2. choose the project and preview incoming conversation shares
+3. switch to historical count one, preview, configure an echo judge and create the task
 4. verify the independently hash-ranked contact is the exact evaluated set
-5. ingest a late trace in each contact and verify only the sampled contact expands
-6. pause, edit the quota to two, preview and explicitly Delete & rerun
+5. ingest late traces and Edit & Re-run to expand only the frozen sampled contact
+6. reload the saved count, edit it to two, preview and explicitly Delete & rerun
 7. verify one new cohort with probability one and the exact expanded span set
 
 **Backend state verified:**
 
 - all eight initial spans have two canonical session identities in ClickHouse
-- UI preview returns exactly two eligible contacts, one selected contact and four selected spans
+- incoming 100 percent share preview selects both contacts and all eight spans with an open-ended live policy
+- historical count preview returns exactly two eligible contacts, one selected contact and four selected spans
 - created task evaluates exactly the independently hash-ranked contact with probability one half
-- late ingestion extends only the frozen sampled contact and does not rerank its membership
+- historical append rerun admits late rows only for the frozen contact without reranking
 - edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
 
 ## gateway
