@@ -5597,11 +5597,15 @@ def test_exact_trace_graph_merges_all_contribution_batches_before_averages(
         for call in analytics.calls
     )
     # final_status and confidence establish trace membership on possibly
-    # different siblings; they are intentionally absent from the all-live-span
-    # contribution scan once that identity membership has been proven.
+    # different siblings; they must not be rebound as per-contribution keys.
+    # Compact attrs_string monetary flags remain a legitimate projection.
+    membership_keys = {"final_status", "confidence"}
     assert all(
-        "final_status" not in call[0]
-        and "confidence" not in call[0]
+        not any(
+            value in membership_keys
+            for name, value in call[1].items()
+            if "filter_key_" in name
+        )
         and "AS graph_cost_flags" in call[0]
         for call in analytics.calls
     )
@@ -5790,8 +5794,12 @@ def test_exact_trace_graph_delegates_scalar_array_map_and_json_membership(
     assert params["graph_candidate_trace_ids"] == ("trace-1",)
     assert "trace_id IN %(graph_candidate_trace_ids)s" in query
     assert "AS graph_cost_flags" in query
-    assert "final_status" not in query and "tags" not in query
-    assert "profile" not in query and "legacy_payload" not in query
+    membership_keys = {"final_status", "tags", "profile", "legacy_payload"}
+    assert not any(
+        value in membership_keys
+        for name, value in params.items()
+        if "filter_key_" in name
+    )
     assert "attrs_number" not in query
     assert "attrs_bool" not in query
     assert "attributes_extra" not in query
@@ -6245,7 +6253,12 @@ def test_exact_graph_budget_failure_does_not_publish_or_split_contribution_batch
     query, params, timeout, settings = analytics.partition_calls[0]
     assert (params["start_date"], params["end_date"]) == (start, end)
     assert "AS graph_cost_flags" in query
-    assert "final_status" not in query and "confidence" not in query
+    membership_keys = {"final_status", "confidence"}
+    assert not any(
+        value in membership_keys
+        for name, value in params.items()
+        if "filter_key_" in name
+    )
     assert "attrs_number" not in query
     assert "trace_id IN %(graph_candidate_trace_ids)s" in query
     assert "snapshot_version_ceiling" not in params
@@ -7978,7 +7991,10 @@ def test_exact_user_graph_uses_one_full_window_current_state_statement():
     assert "additional_table_filters" not in settings
     # The replay is in sort-key order, so this reader gets a thread budget
     # instead of the filter selector's single thread.
-    assert settings["max_threads"] == exact_module.settings.DASHBOARD_TRACE_READ_MAX_THREADS
+    assert (
+        settings["max_threads"]
+        == exact_module.settings.DASHBOARD_TRACE_READ_MAX_THREADS
+    )
     assert settings["max_threads"] > exact_module.settings.FILTER_SELECTOR_MAX_THREADS
     assert settings["optimize_move_to_prewhere_if_final"] == 0
     assert settings["max_bytes_to_read"] == exact_module.EXACT_GRAPH_MAX_BYTES_TO_READ
