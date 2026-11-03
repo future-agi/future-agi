@@ -12,7 +12,7 @@ import { z } from "zod";
 // Zod generator drops `x-nullable`. Extend the generated envelope/result so we
 // keep all generated metadata validation while accepting the null gaps that
 // the backend and chart renderers explicitly support.
-const nullableGraphPoint = z.object({
+const nullableGraphPoint = TracerTraceGetGraphMethodsResponse.shape.result.shape.data.element.extend({
   timestamp: z.string().min(1),
   value: z.number().nullable(),
   primary_traffic: z.number().nullable().optional(),

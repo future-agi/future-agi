@@ -113,7 +113,7 @@ def test_agent_graph_cache_identity_invalidates_retired_path_payloads(monkeypatc
     assert identity == {
         "project_id": PROJECT_ID,
         "filters": [FINAL_STATUS_FILTER],
-        "payload_version": 5,
+        "payload_version": 6,
     }
 
 
@@ -219,8 +219,8 @@ def test_agent_graph_membership_is_global_but_unfiltered_scan_stays_bounded():
     unfiltered_prewhere = unfiltered_query.split("PREWHERE", 1)[1].split("GROUP BY", 1)[
         0
     ]
-    assert "start_time >= %(start_date)s" in unfiltered_prewhere
-    assert "start_time < %(end_date)s" in unfiltered_prewhere
+    assert "toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(start_date)s" in unfiltered_prewhere
+    assert "toStartOfHour(start_time) < toDateTime64(%(end_date)s" in unfiltered_prewhere
 
 
 @pytest.mark.unit

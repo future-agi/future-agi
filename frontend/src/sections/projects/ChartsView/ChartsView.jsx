@@ -25,6 +25,8 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 import { Helmet } from "react-helmet-async";
 import ChartsGenerator from "./ChartsGenerator";
+import { isIncompleteCost } from "../LLMTracing/GraphSection/common";
+import { TracerProjectGetGraphDataResponse } from "src/generated/api-contracts/api.zod";
 import ChartsDateTimeRangePicker from "./ChartsDateTimeRangePicker";
 import EvaluationCharts from "./EvaluationCharts";
 import { useChartsViewContext } from "./ChartsViewProvider/ChartsViewContext";
@@ -300,6 +302,12 @@ const ChartsView = () => {
     enabled: Boolean(observeId) && filters?.length > 0,
   });
 
+  const costCoverage = useMemo(() => {
+    const coverage = TracerProjectGetGraphDataResponse.shape.result.shape.cost_coverage.parse(
+      graphData?.result?.cost_coverage,
+    );
+    return new Map((coverage || []).map((point) => [point.timestamp, point]));
+  }, [graphData]);
   const systemMetrics = graphData?.result?.system_metrics;
   const latencyLabels = useMemo(
     () => latencyChartLabels(graphData?.result?.system_metric_statistics),
@@ -385,7 +393,8 @@ const ChartsView = () => {
                   data:
                     systemMetrics?.cost?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
-                      y: item?.cost,
+                      y: isIncompleteCost(costCoverage.get(item.timestamp)) ? null : item?.cost,
+                      cost_coverage: costCoverage.get(item.timestamp),
                     })) || [],
                 },
               ],
@@ -396,7 +405,7 @@ const ChartsView = () => {
     }
 
     return [];
-  }, [graphReadState, latencyLabels, systemMetrics]);
+  }, [graphReadState, latencyLabels, systemMetrics, costCoverage]);
 
   const refreshGrid = useCallback(() => {
     queryClient.invalidateQueries({

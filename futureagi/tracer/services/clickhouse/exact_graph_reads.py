@@ -62,6 +62,7 @@ from tracer.services.clickhouse.query_builders.session_filters import (
     SESSION_ID_FILTER_COLS,
     build_session_id_filter_clause,
 )
+from tracer.services.clickhouse.query_builders.time_series import graph_cost_flags_sql
 from tracer.services.clickhouse.query_builders.user_list import (
     MembershipTerm,
     UserListQueryBuilder,
@@ -529,6 +530,7 @@ def _system_metric_payload(
                 "timestamp": point.get("timestamp"),
                 "value": point.get("value", point.get(metric_key, 0)),
                 "primary_traffic": traffic.get(point.get("timestamp"), 0),
+                **({"cost_coverage": point["cost_coverage"]} if "cost_coverage" in point else {}),
             }
             for point in points
         ],
@@ -1643,6 +1645,12 @@ def _merge_exact_trace_contribution_rows(
     cache publication.
     """
 
+    coverage_fields = ("cost_known_subtotal", "known_cost_fact_count", "unknown_cost_fact_count")
+    has_coverage = bool(batches) and all(
+        all(field in columns for field in coverage_fields)
+        or (bool(rows) and all(isinstance(row, dict) and all(field in row for field in coverage_fields) for row in rows))
+        for rows, columns in batches
+    )
     merged: dict[Any, dict[str, Any]] = {}
     for rows, columns in batches:
         for row in rows:
@@ -1657,6 +1665,9 @@ def _merge_exact_trace_contribution_rows(
                     "latency_sum": 0,
                     "total_tokens": 0,
                     "cost_sum": Decimal(0),
+                    "cost_known_subtotal": Decimal(0),
+                    "known_cost_fact_count": 0,
+                    "unknown_cost_fact_count": 0,
                     "traffic_count": 0,
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
@@ -1670,6 +1681,9 @@ def _merge_exact_trace_contribution_rows(
             state["cost_sum"] += Decimal(
                 str(_row_value(row, columns, "cost_sum", 0) or 0)
             )
+            state["cost_known_subtotal"] += Decimal(str(_row_value(row, columns, "cost_known_subtotal", 0) or 0))
+            for field in ("known_cost_fact_count", "unknown_cost_fact_count"):
+                state[field] += int(_row_value(row, columns, field, 0) or 0)
             state["traffic_count"] += int(
                 _row_value(row, columns, "traffic_count", 0) or 0
             )
@@ -1697,6 +1711,11 @@ def _merge_exact_trace_contribution_rows(
                 "avg_latency": state["latency_sum"] / denominator,
                 "total_tokens": state["total_tokens"],
                 "avg_cost": float(state["cost_sum"] / denominator),
+                **({
+                    "cost_known_subtotal": float(state["cost_known_subtotal"]),
+                    "known_cost_fact_count": state["known_cost_fact_count"],
+                    "unknown_cost_fact_count": state["unknown_cost_fact_count"],
+                } if has_coverage else {}),
                 "traffic_count": count,
                 "prompt_tokens": state["prompt_tokens"],
                 "completion_tokens": state["completion_tokens"],
@@ -1722,6 +1741,8 @@ def _merge_exact_trace_contribution_rows(
         "completion_tokens",
         "error_rate",
     ]
+    if has_coverage:
+        columns.extend(coverage_fields)
     return rows, columns
 
 
@@ -4419,7 +4440,8 @@ def _user_aggregate_source_sql(
             toString(rs.trace_id) AS trace_id,
             rs.start_time AS start_time,
             rs.end_time AS end_time,
-            rs.cost AS cost,
+            if(rs.attrs_string['fi.usage.contribution'] = 'none', 0, rs.cost) AS cost,
+            {graph_cost_flags_sql(prefix="rs.")} AS graph_cost_flags,
             rs.total_tokens AS total_tokens,
             rs.prompt_tokens AS prompt_tokens,
             rs.completion_tokens AS completion_tokens,
@@ -4477,7 +4499,8 @@ def _user_aggregate_source_sql(
     user_span_metrics AS (
         SELECT
             end_user_id,
-            sum(ifNull(cost, 0)) AS total_cost,
+            if(countIf(graph_cost_flags.2) > 0, CAST(NULL, 'Nullable(Float64)'),
+               sum(ifNull(cost, 0))) AS total_cost,
             sum(toInt64(ifNull(total_tokens, 0))) AS total_tokens,
             sum(toInt64(ifNull(prompt_tokens, 0))) AS input_tokens,
             sum(toInt64(ifNull(completion_tokens, 0))) AS output_tokens,
@@ -4809,6 +4832,7 @@ def read_exact_user_system_graph(
                     "timestamp": point.get("timestamp"),
                     "value": point.get("value", 0),
                     "primary_traffic": traffic.get(point.get("timestamp"), 0),
+                    **({"cost_coverage": point["cost_coverage"]} if "cost_coverage" in point else {}),
                 }
                 for point in formatted.get(metric_key, [])
             ],

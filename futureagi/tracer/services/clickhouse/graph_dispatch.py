@@ -54,10 +54,11 @@ from tracer.services.clickhouse.graph_read_cost import (
     user_graph_scan_fits_wall,
     user_graph_scan_window,
 )
-from tracer.services.clickhouse.query_builders import (
-    TimeSeriesQueryBuilder,
-)
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.time_series import (
+    TimeSeriesQueryBuilder,
+    graph_cost_flags_sql,
+)
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
     ReadDeadlineExceeded,
@@ -79,7 +80,7 @@ GRAPH_RESULT_BYTES = settings.DASHBOARD_ROLLUP_MAX_RESULT_BYTES
 # Part of the cache identity, not a database schema version. Incrementing this
 # prevents a rolling deploy from serving a 30-day cached payload produced by
 # the retired hierarchy-as-path projection.
-AGENT_GRAPH_PAYLOAD_VERSION = 5
+AGENT_GRAPH_PAYLOAD_VERSION = 6
 # The same, for the exact system-metric snapshots (observe-system-graph,
 # observe-session-system-graph, observe-user-system-graph). The version
 # rotates the identity, and with it the cache, alias, refresh-lock and
@@ -88,7 +89,7 @@ AGENT_GRAPH_PAYLOAD_VERSION = 5
 # latency snapshot is served only when marked "mean"
 # (graph_metric_statistic.snapshot_names_its_statistic), which covers an
 # older worker taking a current-version job mid-deploy.
-OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION = 2
+OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION = 3
 # A short-window selector may prove as many as 4,096 trace matches. Decoration
 # fans each trace set into child-span reads, so keep the same finite 40-trace
 # envelope used by the long-window sampler before any decoration query runs.
@@ -661,6 +662,7 @@ def format_system_metric_graph(
                 "timestamp": point.get("timestamp"),
                 "value": _result_metric_value(point, value_fields),
                 "primary_traffic": traffic_by_timestamp.get(point.get("timestamp"), 0),
+                **({"cost_coverage": point["cost_coverage"]} if "cost_coverage" in point else {}),
             }
             for point in metric_points
         ],
@@ -910,6 +912,24 @@ def graph_payload_is_publishable(
 _EXACT_REFRESH_TRANSPORT_ERRORS = (ConnectionInterrupted, RedisError, OSError)
 
 
+def _snapshot_has_monetary_coverage(namespace: str, metric_id: str | None, payload: Any) -> bool:
+    """An old worker must not publish a price-only payload under a new cache key."""
+    if not isinstance(payload, dict):
+        return False
+    if namespace == "observe-agent-graph":
+        points = [point for key in ("nodes", "edges", "path_edges") for point in payload.get(key, [])]
+    elif namespace == "observe-all-system-graphs":
+        points = payload.get("cost", [])
+    elif (
+        namespace in {"observe-system-graph", "observe-user-system-graph"}
+        and str(metric_id or "").strip().lower() in {"cost", "total_cost", "avg_cost_per_user"}
+    ):
+        points = payload.get("data", [])
+    else:
+        return True
+    return all(isinstance(point, dict) and isinstance(point.get("cost_coverage"), dict) for point in points)
+
+
 def _read_or_refresh_exact_graph(
     *,
     namespace: str,
@@ -942,10 +962,10 @@ def _read_or_refresh_exact_graph(
         pending_payload=pending_payload,
         schedule_on_miss=schedule_on_miss,
         revalidate_open_window=revalidate_open_window,
-        # A latency snapshot not marked as the mean is a miss.
+        # A stale worker's missing companion is a miss, never a free price.
         accept_snapshot=lambda payload: snapshot_names_its_statistic(
             namespace, metric_id, payload
-        ),
+        ) and _snapshot_has_monetary_coverage(namespace, metric_id, payload),
     )
 
 
@@ -1121,6 +1141,9 @@ def _trace_system_metric_query(
         count(latest_latency_ms) AS graph_latency_count,
         sum(latest_total_tokens) AS total_tokens,
         sum(latest_cost) AS graph_cost_sum,
+        sumIf(latest_cost, latest_cost_flags.1) AS cost_known_subtotal,
+        countIf(latest_cost_flags.1) AS known_cost_fact_count,
+        countIf(latest_cost_flags.2) AS unknown_cost_fact_count,
         count(latest_cost) AS graph_cost_count,
         count() AS traffic_count,
         sum(latest_prompt_tokens) AS prompt_tokens,
@@ -1133,7 +1156,9 @@ def _trace_system_metric_query(
             trace_id AS grouped_trace_id,
             start_time AS latest_start_time,
             argMax(latency_ms, _version) AS latest_latency_ms,
-            argMax(cost, _version) AS latest_cost,
+            argMax(tuple(if(attrs_string['fi.usage.contribution'] = 'none', 0, cost), {graph_cost_flags_sql()}), _version) AS latest_cost_state,
+            latest_cost_state.1 AS latest_cost,
+            latest_cost_state.2 AS latest_cost_flags,
             argMax(total_tokens, _version) AS latest_total_tokens,
             argMax(prompt_tokens, _version) AS latest_prompt_tokens,
             argMax(completion_tokens, _version) AS latest_completion_tokens,
@@ -1259,6 +1284,9 @@ def _fetch_trace_system_metrics(
                     "total_tokens": 0.0,
                     "cost_sum": 0.0,
                     "cost_count": 0.0,
+                    "cost_known_subtotal": 0.0,
+                    "known_cost_fact_count": 0,
+                    "unknown_cost_fact_count": 0,
                     "traffic": 0.0,
                     "prompt_tokens": 0.0,
                     "completion_tokens": 0.0,
@@ -1288,6 +1316,8 @@ def _fetch_trace_system_metrics(
                 )
                 or 0
             )
+            for field in ("cost_known_subtotal", "known_cost_fact_count", "unknown_cost_fact_count"):
+                totals[field] += value(row, field, 0) or 0
             totals["cost_count"] += float(value(row, "graph_cost_count", traffic) or 0)
             totals["traffic"] += traffic
             totals["prompt_tokens"] += float(value(row, "prompt_tokens", 0) or 0)
@@ -1320,6 +1350,9 @@ def _fetch_trace_system_metrics(
                     if totals["cost_count"]
                     else 0.0
                 ),
+                "cost_known_subtotal": float(totals["cost_known_subtotal"]),
+                "known_cost_fact_count": int(totals["known_cost_fact_count"]),
+                "unknown_cost_fact_count": int(totals["unknown_cost_fact_count"]),
                 "traffic_count": int(traffic),
                 "prompt_tokens": totals["prompt_tokens"],
                 "completion_tokens": totals["completion_tokens"],
@@ -1337,6 +1370,9 @@ def _fetch_trace_system_metrics(
         "prompt_tokens",
         "completion_tokens",
         "error_rate",
+        "cost_known_subtotal",
+        "known_cost_fact_count",
+        "unknown_cost_fact_count",
     ]
     if len(rows) > GRAPH_MAX_POINTS:
         raise BoundedGraphReadError("sample_limit")
@@ -1492,7 +1528,7 @@ def _fetch_direct_raw_system_metric_graph(
     timeout_ms: int,
     seed: tuple[_GraphRawTraceCandidate | None, int] | None = None,
 ) -> dict[str, Any]:
-    """Run one complete append-only filtered graph statement.
+    """Run one complete bounded graph statement (latest-state for cost).
 
     ``seed`` hands over a candidate the caller has already probed, with the
     number of probes it spent. The interactive route probes before it decides
@@ -1541,7 +1577,7 @@ def _fetch_direct_raw_system_metric_graph(
         filters=filters,
         interval=interval,
         exact_snapshot=True,
-        resolve_span_versions=False,
+        resolve_span_versions=str(metric_id or "").strip().lower() == "cost",
         raw_replica_shard_cluster=shard_cluster,
         raw_replica_shard_count=settings.DASHBOARD_TRACE_REPLICA_SHARD_COUNT,
         observe_type=observe_type,
@@ -1609,7 +1645,8 @@ def _fetch_direct_raw_system_metric_graph(
         {
             # The full bounded window is read without sampling, but physical
             # ReplacingMergeTree versions are intentionally not collapsed on
-            # this latency-critical path.
+            # this latency-critical path, except for monetary series. Monetary
+            # coverage is separate from the existing scan-provenance contract.
             "query_provenance": (
                 "exact_snapshot" if empty_window else "bounded_candidates"
             ),
@@ -1941,7 +1978,8 @@ def fetch_system_metric_graph_ch(
     they cannot publish the mean the filtered path publishes. On the exact
     path a chart with no filter equals the same chart with a filter that
     matches every span, and its Traffic bars come from the same statement.
-    Every other metric keeps the rollup (its Traffic series still counts
+    Cost also takes the bounded path: hourly states do not carry monetary
+    coverage or latest winners. Other metrics keep the rollup (Traffic counts
     every physical version, a known over-count of re-versioned rows).
     """
 
@@ -1950,7 +1988,10 @@ def fetch_system_metric_graph_ch(
     normalized_observe_type = str(observe_type or "trace").strip().lower()
     if normalized_observe_type not in {"trace", "span"}:
         raise ValueError("observe_type must be trace or span")
-    if not _active_filters(filters) and not publishes_latency("trace", metric_id):
+    # Hourly states contain neither current-row cost flags nor a latest winner.
+    # Monetary series use the existing bounded/cached path, just like latency.
+    if (not _active_filters(filters) and not publishes_latency("trace", metric_id)
+            and str(metric_id or "").strip().lower() != "cost"):
         if not bool(getattr(analytics, "supports_per_query_read_settings", True)):
             return degraded_graph_response(
                 str(metric_id or ""),

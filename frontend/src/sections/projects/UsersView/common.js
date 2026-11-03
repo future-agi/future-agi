@@ -1,3 +1,5 @@
+import { TracerProjectGetUserGraphDataResponse } from "src/generated/api-contracts/api.zod";
+import { isIncompleteCost, monetaryCostLabel } from "../LLMTracing/GraphSection/common";
 import UserIdCellRenderer from "./UserCellRenderers/UserIdCellRenderer";
 import ProjectCellRenderer from "./UserCellRenderers/ProjectCellRenderer";
 import LastActiveCellRenderer from "./UserCellRenderers/LastActiveCellRenderer";
@@ -119,13 +121,17 @@ export const transformGraphDataToChartData = (response) => {
   if (!response?.result) return [];
 
   const charts = [];
+  const coverage = TracerProjectGetUserGraphDataResponse.shape.result.shape.cost_coverage.parse(
+    response.result.cost_coverage,
+  );
+  const byTimestamp = new Map((coverage || []).map((point) => [point.timestamp, point]));
 
   // canonicalEntries filters out the camelCase aliases the axios
   // response interceptor attaches alongside snake_case metric keys.
   // Without it each metric renders twice (once for `tokens_used` and
   // once for `tokensUsed`, both pointing at the same series).
   for (const [metricKey, metricData] of canonicalEntries(response.result)) {
-    if (!Array.isArray(metricData) || metricData.length === 0) continue;
+    if (metricKey === "cost_coverage" || !Array.isArray(metricData) || metricData.length === 0) continue;
 
     const displayName = toDisplayName(metricKey);
 
@@ -135,18 +141,25 @@ export const transformGraphDataToChartData = (response) => {
       0,
     );
 
+    const incomplete = metricKey === "cost" && coverage?.some(isIncompleteCost);
+    const known = coverage?.reduce((sum, point) => sum + point.known_fact_count, 0) || 0;
+    const subtotal = coverage?.reduce((sum, point) => sum + point.known_subtotal, 0) || 0;
     charts.push({
       id: metricKey,
       label: displayName,
       unit: getUnitForMetric(metricKey),
       total,
+      ...(incomplete ? { totalLabel: monetaryCostLabel(null, {
+        status: known > 0 ? "partial" : "unknown", known_subtotal: subtotal,
+      }) } : {}),
       series: [
         {
           name: displayName,
-          data: metricData.map((item) => [
-            new Date(item.timestamp).getTime(),
-            item[metricKey],
-          ]),
+          data: metricData.map((item) => metricKey === "cost" ? {
+            x: new Date(item.timestamp).getTime(),
+            y: isIncompleteCost(byTimestamp.get(item.timestamp)) ? null : item[metricKey],
+            cost_coverage: byTimestamp.get(item.timestamp),
+          } : [new Date(item.timestamp).getTime(), item[metricKey]]),
         },
       ],
     });

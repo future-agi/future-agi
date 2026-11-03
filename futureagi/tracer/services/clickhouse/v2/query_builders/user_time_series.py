@@ -10,6 +10,10 @@ from tracer.services.clickhouse.query_builders.base import (
     BaseQueryBuilder,
     _unix_microseconds,
 )
+from tracer.services.clickhouse.query_builders.time_series import (
+    graph_cost_coverage_series,
+    graph_cost_flags_sql,
+)
 from tracer.services.clickhouse.query_builders.user_time_series import (
     UserTimeSeriesQueryBuilder,
 )
@@ -114,9 +118,10 @@ def _latest_spans_argmax_cte(
     projection closed, so an attribute filter never widens it to ``SELECT *``.
     """
 
-    projected = (*USER_GRAPH_SPAN_COLUMNS, *member_predicates)
+    projected = (*USER_GRAPH_SPAN_COLUMNS, graph_cost_flags_sql(), *member_predicates)
     aliases = [
         *USER_GRAPH_SPAN_COLUMNS,
+        "graph_cost_flags",
         *(f"user_member_match_{index}" for index in range(len(member_predicates))),
     ]
     reduced = ",\n            ".join(
@@ -440,6 +445,7 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
         eu_map = survivor_map_subquery(self.END_USER_REMAP_TABLE)
         resolved_eu = resolved_id_expr("rs.end_user_id")
 
+        cost_flags = "rs.graph_cost_flags" if closed_projection else graph_cost_flags_sql(prefix="rs.")
         trace_flags = ""
         bucket_flags = ""
         if self.user_membership_plan is not None:
@@ -473,6 +479,9 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                 sum(span_latency_count) AS user_latency_count,
                 sum(span_total_tokens) AS user_total_tokens,
                 sum(span_total_cost) AS user_total_cost,
+                sum(span_cost_known_subtotal) AS user_cost_known_subtotal,
+                sum(span_known_cost_fact_count) AS user_known_cost_fact_count,
+                sum(span_unknown_cost_fact_count) AS user_unknown_cost_fact_count,
                 sum(span_prompt_tokens) AS user_prompt_tokens,
                 sum(span_completion_tokens) AS user_completion_tokens,
                 max(span_has_error) AS user_has_error,
@@ -485,7 +494,10 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                     sum(rs.latency_ms) AS span_latency_sum,
                     count(rs.latency_ms) AS span_latency_count,
                     sum(rs.total_tokens) AS span_total_tokens,
-                    sum(rs.cost) AS span_total_cost,
+                    sumIf(rs.cost, tupleElement({cost_flags}, 1) OR tupleElement({cost_flags}, 2)) AS span_total_cost,
+                    sumIf(rs.cost, tupleElement({cost_flags}, 1)) AS span_cost_known_subtotal,
+                    countIf(tupleElement({cost_flags}, 1)) AS span_known_cost_fact_count,
+                    countIf(tupleElement({cost_flags}, 2)) AS span_unknown_cost_fact_count,
                     sum(rs.prompt_tokens) AS span_prompt_tokens,
                     sum(rs.completion_tokens) AS span_completion_tokens,
                     max(if(rs.status = 'ERROR', 1, 0)) AS span_has_error{trace_flags}
@@ -541,12 +553,32 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
             sum(user_total_cost) AS total_cost_sum,
             avg(user_total_cost) AS avg_cost_per_user,
             avg(user_traces) AS avg_traces_per_user,
-            sum(user_total_tokens) AS total_tokens_sum
+            sum(user_total_tokens) AS total_tokens_sum,
+            sum(user_cost_known_subtotal) AS cost_known_subtotal,
+            sum(user_known_cost_fact_count) AS known_cost_fact_count,
+            sum(user_unknown_cost_fact_count) AS unknown_cost_fact_count
         FROM ({user_bucket_rows})
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
         return query, self.params
+
+    def format_result(self, rows: list, columns: list[str]) -> dict[str, list[dict[str, Any]]]:
+        # The inherited formatter expects dict rows for its user-specific keys.
+        rows = [row if isinstance(row, dict) else dict(zip(columns, row, strict=True)) for row in rows]
+        formatted = super().format_result(rows, columns)
+        assert self.start_date is not None and self.end_date is not None
+        coverage = graph_cost_coverage_series(
+            builder=self, rows=rows, columns=columns, interval=self.interval,
+            start_date=self.start_date, end_date=self.end_date,
+        )
+        if coverage:
+            for metric in ("cost", "total_cost", "avg_cost_per_user"):
+                for point, companion in zip(formatted[metric], coverage, strict=True):
+                    point["cost_coverage"] = {
+                        key: value for key, value in companion.items() if key != "timestamp"
+                    }
+        return formatted
 
 
 class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
@@ -693,6 +725,9 @@ class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
             ) AS session_count,
             uniqExact(trace_id) AS trace_count,
             sum(ifNull(cost, 0)) AS cost,
+            sumIf(cost, graph_cost_flags.1) AS cost_known_subtotal,
+            countIf(graph_cost_flags.1) AS known_cost_fact_count,
+            countIf(graph_cost_flags.2) AS unknown_cost_fact_count,
             sum(ifNull(prompt_tokens, 0)) AS input_tokens,
             sum(ifNull(completion_tokens, 0)) AS output_tokens
         FROM (
@@ -701,7 +736,8 @@ class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
                 rs.trace_id AS trace_id,
                 {ts_resolved} AS trace_session_id,
                 rs.start_time AS start_time,
-                rs.cost AS cost,
+                if(rs.attrs_string['fi.usage.contribution'] = 'none', 0, rs.cost) AS cost,
+                {graph_cost_flags_sql(prefix="rs.")} AS graph_cost_flags,
                 rs.prompt_tokens AS prompt_tokens,
                 rs.completion_tokens AS completion_tokens
             FROM latest_spans AS rs

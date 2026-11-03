@@ -20,17 +20,95 @@ answered "All" at a multiple of the sum of its own filtered parts; see
 ``hourly_aggregate_states`` for the mechanism and the measurements.
 """
 
+import math
 import re
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.hourly_aggregate_states import (
     ERROR_RATE_MERGE_EXPRESSION,
     hourly_aggregate_state_source,
 )
+from tracer.services.clickhouse.query_builders.trace_usage import usage_coverage_sql
 
 _SAFE_CLUSTER_NAME_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")
+
+
+class GraphCostCoverage(TypedDict):
+    status: Literal["complete", "partial", "unknown"]
+    known_subtotal: float
+    known_fact_count: int
+    unknown_fact_count: int
+
+
+class GraphCostCoverageBucket(GraphCostCoverage):
+    timestamp: str
+
+
+def graph_cost_flags_sql(*, prefix: str = "") -> str:
+    """Two bounded monetary counters, evaluated on the usage scalar winner.
+
+    Keep the shared classifier's nonadditive and unknown rules. A zero-cost
+    tokenless tool is not a monetary fact; an explicit provider zero is.
+    """
+    attrs = f"{prefix}attrs_string"
+    coverage = usage_coverage_sql(attrs=attrs, prefix=prefix)
+    eligible = " OR ".join(
+        f"{prefix}{column} > 0"
+        for column in ("total_tokens", "prompt_tokens", "completion_tokens")
+    )
+    eligible += (
+        f" OR {prefix}observation_type = 'llm' OR {prefix}cost != 0"
+        f" OR {attrs}['fi.usage.scope'] = 'turn'"
+        f" OR {attrs}['fi.cost.kind'] IN ('provider_reported', 'estimated')"
+    )
+    return (
+        f"tuple(toUInt8(NOT tupleElement({coverage}, 1) AND "
+        f"NOT tupleElement({coverage}, 2) AND ({eligible})), "
+        f"toUInt8(NOT tupleElement({coverage}, 1) AND tupleElement({coverage}, 2)))"
+    )
+
+
+def graph_cost_coverage(*, subtotal: float, known: int, unknown: int) -> GraphCostCoverage:
+    """Money coverage is independent of query exactness and traffic counts."""
+    if not math.isfinite(subtotal) or subtotal < 0 or known < 0 or unknown < 0:
+        raise ValueError("Invalid monetary coverage counters")
+    return {
+        "status": "partial" if unknown and known else "unknown" if unknown else "complete",
+        "known_subtotal": float(subtotal),
+        "known_fact_count": int(known),
+        "unknown_fact_count": int(unknown),
+    }
+
+
+def graph_cost_coverage_series(
+    *, builder: BaseQueryBuilder, rows: list, columns: list[str], interval: str,
+    start_date: datetime, end_date: datetime,
+) -> list[GraphCostCoverageBucket]:
+    """Zero-fill bounded bucket counters using the metric's own bucket alignment."""
+    names = ("cost_known_subtotal", "known_cost_fact_count", "unknown_cost_fact_count")
+    # Older legacy-only query shapes may omit the optional companion entirely.
+    if not all(name in columns for name in names) and not (
+        rows and isinstance(rows[0], dict) and all(name in rows[0] for name in names)
+    ):
+        return []
+
+    def value(row, name):
+        return row[name] if isinstance(row, dict) else row[columns.index(name)]
+
+    buckets = builder.format_time_series(
+        rows=[(value(row, "time_bucket"), *(value(row, name) for name in names)) for row in rows],
+        columns=["time_bucket", *names], interval=interval,
+        start_date=start_date, end_date=end_date, value_keys=list(names),
+    )
+    return [
+        {"timestamp": bucket["timestamp"], **graph_cost_coverage(
+            subtotal=bucket["cost_known_subtotal"], known=bucket["known_cost_fact_count"],
+            unknown=bucket["unknown_cost_fact_count"],
+        )}
+        for bucket in buckets
+    ]
 
 
 class TimeSeriesQueryBuilder(BaseQueryBuilder):
@@ -313,6 +391,16 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             value_keys=["value"],
         )
 
+        coverage = graph_cost_coverage_series(
+            builder=self, rows=rows, columns=columns, interval=self.interval,
+            start_date=self.start_date, end_date=self.end_date,
+        )
+        if coverage:
+            for point, companion in zip(cost_data, coverage, strict=True):
+                point["cost_coverage"] = {
+                    key: value for key, value in companion.items() if key != "timestamp"
+                }
+
         return {
             "latency": latency_data,
             "tokens": tokens_data,
@@ -455,7 +543,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "start_time",
             "toInt64(latency_ms)",
             "toInt64(total_tokens)",
-            "cost",
+            "if(attrs_string['fi.usage.contribution'] = 'none', 0, cost)",
             "toInt64(prompt_tokens)",
             "toInt64(completion_tokens)",
             "status",
@@ -471,6 +559,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "status",
             "is_deleted",
         ]
+        scalar_expressions.append(graph_cost_flags_sql())
+        scalar_aliases.append("graph_cost_flags")
         if with_version:
             scalar_expressions.append("_version")
             scalar_aliases.append("_version")
@@ -495,6 +585,17 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             if candidate_trace_ids_param
             else ""
         )
+        if self.raw_trace_candidate_predicate and not candidate_trace_ids_param:
+            self.params.update(self.raw_trace_candidate_params)
+            candidate_trace_fragment = f"""
+                  AND trace_id IN (
+                      SELECT trace_id FROM {self.RAW_TABLE}
+                      PREWHERE {self.project_filter_sql()}
+                        AND start_time >= %({scan_start_param})s
+                        AND start_time < %({scan_end_param})s
+                      WHERE is_deleted = 0 AND ({self.raw_trace_candidate_predicate})
+                      GROUP BY trace_id
+                  )"""
         candidate_span_fragment = ""
         if candidate_span_predicate:
             # Only the immutable full key crosses this boundary. Replay every
@@ -559,11 +660,12 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "start_time",
             "toInt64(latency_ms) AS latency_ms",
             "toInt64(total_tokens) AS total_tokens",
-            "cost",
+            "if(attrs_string['fi.usage.contribution'] = 'none', 0, cost) AS cost",
             "toInt64(prompt_tokens) AS prompt_tokens",
             "toInt64(completion_tokens) AS completion_tokens",
             "status",
         ]
+        scalar_columns.append(f"{graph_cost_flags_sql()} AS graph_cost_flags")
         if with_version:
             scalar_columns.append("_version")
         scalar_columns.extend(
@@ -643,11 +745,20 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         with_version: bool = False,
     ) -> str:
         if self.resolve_span_versions:
+            # Replay the complete replacement-key hours before applying mutable
+            # output timestamps. Cost and coverage must not select an old poll.
+            for source, target, upper in (
+                (scan_start_param, "graph_scalar_scan_start", False),
+                (scan_end_param, "graph_scalar_scan_end", True),
+            ):
+                boundary = self.params[source]
+                rounded = boundary.replace(minute=0, second=0, microsecond=0)
+                self.params[target] = rounded + timedelta(hours=1) if upper and rounded < boundary else rounded
             return self._exact_latest_scalar_source(
                 row_predicates=row_predicates,
                 contribution_predicates=contribution_predicates,
-                scan_start_param=scan_start_param,
-                scan_end_param=scan_end_param,
+                scan_start_param="graph_scalar_scan_start",
+                scan_end_param="graph_scalar_scan_end",
                 with_version=with_version,
             )
         return self._raw_scalar_source(
@@ -754,6 +865,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 toDecimal128(toString(ifNull(cost, 0.0)), 18),
                 {contribution_condition}
             ) AS cost_sum,
+            sumIf(cost, ({contribution_condition}) AND graph_cost_flags.1) AS cost_known_subtotal,
+            countIf(({contribution_condition}) AND graph_cost_flags.1) AS known_cost_fact_count,
+            countIf(({contribution_condition}) AND graph_cost_flags.2) AS unknown_cost_fact_count,
             countIf({contribution_condition}) AS traffic_count,
             sumIf(toInt64(prompt_tokens), {contribution_condition})
                 AS prompt_tokens,
@@ -889,6 +1003,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             sum(toInt64(latency_ms)) AS latency_sum,
             sum(toInt64(total_tokens)) AS total_tokens,
             sum(cost) AS cost_sum,
+            sumIf(cost, graph_cost_flags.1) AS cost_known_subtotal,
+            countIf(graph_cost_flags.1) AS known_cost_fact_count,
+            countIf(graph_cost_flags.2) AS unknown_cost_fact_count,
             count() AS traffic_count,
             sum(toInt64(prompt_tokens)) AS prompt_tokens,
             sum(toInt64(completion_tokens)) AS completion_tokens,
@@ -1043,7 +1160,10 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                             graph_row_count,
                             graph_prompt_tokens_sum,
                             graph_completion_tokens_sum,
-                            graph_error_count
+                            graph_error_count,
+                            graph_cost_known_subtotal,
+                            graph_known_cost_fact_count,
+                            graph_unknown_cost_fact_count
                         ),
                         graph_in_output_window = 1 AND graph_row_count > 0
                     ) AS graph_output_buckets
@@ -1068,6 +1188,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                         {contributed("toInt64(completion_tokens)")}
                             AS graph_completion_tokens_sum,
                         {error_count} AS graph_error_count,
+                        {contributed("if(graph_cost_flags.1, cost, 0)")} AS graph_cost_known_subtotal,
+                        {contributed("toUInt64(graph_cost_flags.1)")} AS graph_known_cost_fact_count,
+                        {contributed("toUInt64(graph_cost_flags.2)")} AS graph_unknown_cost_fact_count,
 {local_match_columns}
                     FROM {latest_source}
                     GROUP BY trace_id, graph_bucket, graph_in_output_window
@@ -1092,7 +1215,10 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             sum(tupleElement(graph_output_bucket, 7)) AS completion_tokens,
             sum(tupleElement(graph_output_bucket, 8)) * 100.0
                 / greatest(sum(tupleElement(graph_output_bucket, 5)), 1)
-                AS error_rate
+                AS error_rate,
+            sum(tupleElement(graph_output_bucket, 9)) AS cost_known_subtotal,
+            sum(tupleElement(graph_output_bucket, 10)) AS known_cost_fact_count,
+            sum(tupleElement(graph_output_bucket, 11)) AS unknown_cost_fact_count
         FROM {source}
         GROUP BY time_bucket
         ORDER BY time_bucket
@@ -1132,7 +1258,10 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             sum(prompt_tokens) AS prompt_tokens,
             sum(completion_tokens) AS completion_tokens,
             countIf(upper(status) IN ('ERROR', 'ERRORED', 'FAILED'))
-                * 100.0 / greatest(count(), 1) AS error_rate
+                * 100.0 / greatest(count(), 1) AS error_rate,
+            sumIf(cost, graph_cost_flags.1) AS cost_known_subtotal,
+            countIf(graph_cost_flags.1) AS known_cost_fact_count,
+            countIf(graph_cost_flags.2) AS unknown_cost_fact_count
         FROM {latest_source}
         WHERE {exact_row_filter}
         GROUP BY time_bucket
