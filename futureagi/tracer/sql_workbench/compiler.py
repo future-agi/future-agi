@@ -19,7 +19,8 @@ from collections import Counter
 import sqlglot
 from sqlglot import exp
 from sqlglot.errors import ErrorLevel, SqlglotError
-from sqlglot.optimizer.scope import Scope as QueryScope, traverse_scope
+from sqlglot.optimizer.scope import Scope as QueryScope
+from sqlglot.optimizer.scope import traverse_scope
 
 from .catalog import COLUMNS, SOURCE_CTES, CatalogUnavailable, Scope, sources
 
@@ -207,12 +208,10 @@ def _function_name(node):
         node.name
         if isinstance(
             node,
-            (
-                exp.Anonymous,
-                exp.AnonymousAggFunc,
-                exp.CombinedAggFunc,
-                exp.ParameterizedAgg,
-            ),
+            exp.Anonymous
+            | exp.AnonymousAggFunc
+            | exp.CombinedAggFunc
+            | exp.ParameterizedAgg,
         )
         else node.sql_name()
     )
@@ -346,7 +345,7 @@ def _check_window(node):
         raise UnsafeQuery("DISTINCT is not supported inside a window aggregate.")
     if any(isinstance(child, exp.Window) for child in node.walk() if child is not node):
         raise UnsafeQuery("A window cannot contain another window function.")
-    if isinstance(function, (exp.PercentRank, exp.CumeDist)) and function.expressions:
+    if isinstance(function, exp.PercentRank | exp.CumeDist) and function.expressions:
         raise UnsafeQuery("percent_rank() and cume_dist() take no arguments.")
     if isinstance(function, exp.Ntile) and not (
         _small_integer(function.this) and int(function.this.this) > 0
@@ -407,7 +406,7 @@ def _check_node(node, *, approved_functions=True):
     if approved_functions:
         # Input rules only: verification re-parses SQLGlot's own rendering,
         # which spells lag/lead as lagInFrame/leadInFrame with a frame.
-        if isinstance(node, (exp.AggFunc, exp.ParameterizedAgg)):
+        if isinstance(node, exp.AggFunc | exp.ParameterizedAgg):
             _check_aggregate_parameters(node)
         if isinstance(node, exp.Window):
             _check_window(node)
@@ -424,8 +423,8 @@ def _check_node(node, *, approved_functions=True):
     if isinstance(node, exp.Subquery) and not isinstance(node.this, QUERY_TYPES):
         # ``FROM (spans)`` or a parenthesized name: only real subqueries.
         raise UnsafeQuery("A subquery must be a SELECT; use FROM dataset directly.")
-    if isinstance(node, (exp.From, exp.Join)) and not isinstance(
-        node.this, (exp.Table, exp.Subquery)
+    if isinstance(node, exp.From | exp.Join) and not isinstance(
+        node.this, exp.Table | exp.Subquery
     ):
         raise UnsafeQuery("Unsupported table source.")
     if isinstance(node, exp.Select) and any(
@@ -444,7 +443,7 @@ def _check_node(node, *, approved_functions=True):
             "Settings, output formats, sampling and statement modifiers are not allowed."
         )
     if isinstance(node, exp.CTE) and (
-        node.args.get("scalar") or not isinstance(node.this, (exp.Select, exp.Union))
+        node.args.get("scalar") or not isinstance(node.this, exp.Select | exp.Union)
     ):
         raise UnsafeQuery(
             "Only SELECT/UNION relation CTEs are supported; scalar WITH aliases are not allowed."
@@ -502,7 +501,7 @@ def _analyze(sql: str):
         statements = sqlglot.parse(sql, read="clickhouse", error_level=ErrorLevel.RAISE)
     except (SqlglotError, RecursionError) as exc:
         raise UnsafeQuery("Invalid ClickHouse SELECT syntax.") from exc
-    if len(statements) != 1 or not isinstance(statements[0], (exp.Select, exp.Union)):
+    if len(statements) != 1 or not isinstance(statements[0], exp.Select | exp.Union):
         raise UnsafeQuery("Only a single SELECT or UNION query is allowed.")
     tree = statements[0]
     nodes = list(tree.walk())
@@ -739,7 +738,12 @@ def _verify_compiled(compiled: str, canonical_sources):
 
 def compile_query(sql: str, scope: Scope) -> str:
     tree, references, cte_links = _analyze(sql)
-    scoped_sources = sources(scope)
+    # Conservatively retain enrichment for locale references and projected stars
+    # anywhere (including CTEs/subqueries). COUNT(*) does not read locale.
+    session_locale = any(
+        column.name == "locale" for column in tree.find_all(exp.Column)
+    ) or any(not isinstance(star.parent, exp.Count) for star in tree.find_all(exp.Star))
+    scoped_sources = sources(scope, session_locale=session_locale)
     for table in references:
         if table.name not in scoped_sources:
             raise CatalogUnavailable(

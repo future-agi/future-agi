@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 CATALOG_VERSION = 1
@@ -183,9 +183,9 @@ COLUMNS["derived_metrics"] = {
 DESCRIPTIONS = {
     "spans": "One live span in the selected start-time window; no prompt or output payloads.",
     "traces": "One live trace created in the selected window.",
-    "sessions": "Sessions first seen in the window; locale is the latest present span locale in that window.",
-    "users": "Users first seen in the window (not active-user counts).",
-    "eval_results": "Live scores created in the window with project-owned config and target; run_id is null until real execution provenance exists; eval_task_id is the task key. Sampling metadata is nullable for legacy results. Results of configurations deleted later are kept with config_deleted = 1 (Observe hides them); projects with more than 1,000 configurations cannot use this dataset.",
+    "sessions": "Sessions first seen in the window; locale is the latest present span locale in that window. Identity history is not time-ordered, so a narrow window can still reach the 10M-row read limit.",
+    "users": "Users first seen in the window (not active-user counts). Identity history is not time-ordered, so a narrow window can still reach the 10M-row read limit.",
+    "eval_results": "Live scores created in the window with project-owned config and target; run_id is null until real execution provenance exists; eval_task_id is the task key. Sampling metadata is nullable for legacy results. Results of configurations deleted later are kept with config_deleted = 1 (Observe hides them); projects with more than 1,000 configurations cannot use this dataset. Target ownership may scan retained history, including old targets of recent backfills: shortening the eval window may not avoid the fixed 10M-row read ceiling. Over-budget queries fail; no partial aggregates are returned.",
     "derived_metrics": "Committed derived-metric attempts; windows fully contained in the selected window. Requires the derived metrics schema and reader grants.",
     "annotations": "Unified scores with explicit organization, workspace and tracer-project ownership; legacy null ownership is excluded.",
 }
@@ -341,15 +341,14 @@ def additional_table_filters(scope: Scope) -> str:
     )
 
 
-def sources(scope: Scope) -> dict[str, str]:
+def sources(scope: Scope, *, session_locale: bool = True) -> dict[str, str]:
     """Only canonical UUIDs and datetimes enter these server-authored templates."""
-    from datetime import timezone
 
     project = f"toUUID('{scope.project_id}')"
     org = f"toUUID('{scope.organization_id}')"
     workspace = f"toUUID('{scope.workspace_id}')"
-    start = scope.start.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
-    end = scope.end.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+    start = scope.start.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
+    end = scope.end.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
 
     def window(column):
         return (
@@ -414,6 +413,11 @@ def sources(scope: Scope) -> dict[str, str]:
         "eval_results": f"WITH {EVAL_CANDIDATES_CTE} AS ({eligible_evals}) SELECT id, trace_id, observation_span_id AS span_id, trace_session_id AS session_id, trace_session_id AS raw_session_id, custom_eval_config_id AS config_id, target_type, output_float AS score, output_bool AS passed, output_str AS label, error, created_at, CAST(NULL AS Nullable(String)) AS run_id, eval_task_id, {sampling_projection} FROM {EVAL_CANDIDATES_CTE} WHERE {targets}",
         "annotations": f"SELECT id, trace_id, observation_span_id AS span_id, trace_session_id AS session_id, trace_session_id AS raw_session_id, label_id, value, notes, created_at, score_source FROM model_hub_score FINAL WHERE organization_id = {org} AND workspace_id = {workspace} AND tracer_project_id = {project} AND deleted = 0 AND _peerdb_is_deleted = 0 AND {window('created_at')}",
     }
+
+    if not session_locale:
+        result["sessions"] = (
+            f"SELECT trace_session_id AS id, trace_session_id AS raw_id, external_session_id AS external_id, first_seen FROM trace_sessions FINAL WHERE {session_scope}"
+        )
 
     if scope.derived_metrics_enabled:
         columns = ", ".join(COLUMNS["derived_metrics"])
