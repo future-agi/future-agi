@@ -490,7 +490,9 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 project.name = new_name
                 update_fields = ["name"]
                 if "sampling_contact_attribute" in validated_data:
-                    project.sampling_contact_attribute = validated_data["sampling_contact_attribute"]
+                    project.sampling_contact_attribute = validated_data[
+                        "sampling_contact_attribute"
+                    ]
                     update_fields.append("sampling_contact_attribute")
                 project.save(update_fields=update_fields)
 

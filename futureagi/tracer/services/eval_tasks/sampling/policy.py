@@ -81,7 +81,7 @@ def _rule(value: dict, *, live: bool, named: bool) -> dict:
         rate = result.get("rate", 100)
         if (
             isinstance(rate, bool)
-            or not isinstance(rate, (int, float))
+            or not isinstance(rate, int | float)
             or not math.isfinite(rate)
             or not 0 <= rate <= 100
         ):
@@ -118,7 +118,7 @@ def _rule(value: dict, *, live: bool, named: bool) -> dict:
             not isinstance(values, list)
             or len(values) > 100
             or any(
-                not isinstance(v, (str, bool, int, float))
+                not isinstance(v, str | bool | int | float)
                 or (isinstance(v, float) and not math.isfinite(v))
                 or len(str(v)) > 500
                 for v in values
@@ -329,7 +329,7 @@ def _coordination(policy: dict) -> None:
     start = policy.get("prn_start", 0)
     if (
         isinstance(start, bool)
-        or not isinstance(start, (int, float))
+        or not isinstance(start, int | float)
         or not math.isfinite(start)
         or not 0 <= start < 100
     ):

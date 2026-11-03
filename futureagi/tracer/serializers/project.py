@@ -150,7 +150,9 @@ class ProjectViewSetListQuerySerializer(ProjectListQuerySerializer):
 
 
 class ProjectNameUpdateSerializer(serializers.Serializer):
-    sampling_contact_attribute = serializers.CharField(max_length=200, allow_blank=True, required=False)
+    sampling_contact_attribute = serializers.CharField(
+        max_length=200, allow_blank=True, required=False
+    )
     project_id = serializers.UUIDField(required=True)
     name = serializers.CharField(required=True)
     sampling_rate = serializers.FloatField(required=False, min_value=0.0, max_value=1.0)
