@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, ButtonBase, Stack, Typography } from "@mui/material";
 import { fDateTime } from "src/utils/format-time";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { formatLatency } from "src/sections/projects/LLMTracing/formatters";
 import { useLLMTracingStoreShallow } from "src/sections/projects/LLMTracing/states";
 import LLMTracingTraceDetailDrawer from "src/sections/projects/LLMTracing/LLMTracingTraceDetailDrawer";
@@ -10,6 +10,12 @@ import EmptyState from "../../../components/EmptyState";
 import { CALL_TRACES_COPY } from "./callTraces.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
+
+// A span status as the tracer sends it ("OK", "ERROR"), in sentence case.
+const statusLabel = (status) =>
+  status.toUpperCase() === "OK"
+    ? "OK"
+    : status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
 
 export default function CallTracesPanel({
   traces,
@@ -109,13 +115,7 @@ function TraceRow({ trace, onOpen }) {
         textAlign: "left",
         px: 1,
         py: 1,
-        "&:hover": {
-          bgcolor: (t) =>
-            alpha(
-              t.palette.text.primary,
-              t.palette.mode === "dark" ? 0.03 : 0.02,
-            ),
-        },
+        "&:hover": { bgcolor: "action.hover" },
       }}
     >
       <Stack direction="row" alignItems="center" spacing={1}>
@@ -133,15 +133,11 @@ function TraceRow({ trace, onOpen }) {
           {hasRoot ? trace.name : CALL_TRACES_COPY.noRoot}
         </Typography>
         {trace.status && (
-          <Typography
-            sx={{
-              typography: "s3",
-              color: "text.subtitle",
-              textTransform: "uppercase",
-            }}
-          >
-            {trace.status}
-          </Typography>
+          <StatusBadge
+            status={trace.status}
+            label={statusLabel(trace.status)}
+            variant="dot"
+          />
         )}
       </Stack>
       <Stack

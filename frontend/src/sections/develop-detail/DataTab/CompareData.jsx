@@ -1,4 +1,5 @@
-import { Box, Stack, Typography } from "@mui/material";
+import EmptyContent from "src/components/empty-content";
+import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, {
   useCallback,
@@ -20,7 +21,6 @@ import { ExperimentDataDefaultColDef } from "src/sections/experiment-detail/Expe
 import CustomExperimentGroupHeader from "src/sections/experiment-detail/ExperimentData/CustomExperimentGroupHeader";
 import ExperimentStatusBar from "src/sections/experiment-detail/ExperimentData/ExperimentStatusBar";
 import { getEachCompareColumnDef } from "./compareTableConfig";
-import { typography } from "src/theme/typography";
 import CompareDatasetDetailDrawer from "./CompareDatasetDetailDrawer/CompareDatasetDetailDrawer";
 import { useDeleteCompare } from "src/api/develop/dataset-compare";
 import { useDevelopDetailContext } from "src/pages/dashboard/Develop/Context/DevelopDetailContext";
@@ -517,51 +517,13 @@ const CompareData = ({
   };
 
   // Function to render the overlay message based on state
-  const NoRowsOverlay = () => {
-    return (
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "center",
-          minHeight: "400px",
-        }}
-      >
-        <img
-          style={{
-            height: "109px",
-            width: "117px",
-          }}
-          alt="no dataset added ui"
-          src="/assets/illustrations/no-dataset-added.svg"
-        />
-        <Stack direction={"column"} rowGap={0} alignItems={"center"}>
-          <Typography
-            sx={{
-              mt: 2.5,
-              mb: 2,
-              fontFamily: typography.fontFamily,
-              color: "text.primary",
-              ...typography.subtitle2,
-            }}
-          >
-            No Common rows
-          </Typography>
-          <Typography
-            sx={{
-              fontFamily: typography.fontFamily,
-              color: "text.disabled",
-              fontWeight: typography.fontWeightRegular,
-              ...typography.s1,
-            }}
-          >
-            There are no common rows to show
-          </Typography>
-        </Stack>
-      </Box>
-    );
-  };
+  const NoRowsOverlay = () => (
+    <EmptyContent
+      title="No Common rows"
+      description="There are no common rows to show"
+      sx={{ minHeight: 400 }}
+    />
+  );
 
   return (
     <AudioPlaybackProvider>

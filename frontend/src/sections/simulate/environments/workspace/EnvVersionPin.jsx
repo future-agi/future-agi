@@ -1,21 +1,18 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, Button, Stack, Typography, Popover } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { fDateTime } from "src/utils/format-time";
+import { STATUS_ROLES } from "src/utils/runStatus";
 import {
   canMakeDefault,
   isVersioningDisabled,
   useEnvironmentVersions,
   useMoveDefault,
 } from "src/api/simulate-environments/versions";
-import { BUILD_TONES } from "../buildEnvironment/buildTones";
 import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
 import { refusalText } from "./evals/refusalText";
 import MakeDefaultConfirm from "./versions/MakeDefaultConfirm";
-
-const ACCENT = BUILD_TONES.accent;
 
 // The environment-version pin: the header names the default environment version,
 // and clicking it lists every version of the world, where an earlier active one
@@ -86,7 +83,7 @@ export default function EnvVersionPin({ env }) {
         sx={{
           px: 0.875,
           height: 22,
-          borderRadius: 0.75,
+          borderRadius: "4px",
           cursor: "pointer",
           border: "1px solid",
           color: "text.secondary",
@@ -96,7 +93,7 @@ export default function EnvVersionPin({ env }) {
         }}
       >
         <Iconify icon="solar:code-linear" width={11} sx={{ opacity: 0.75 }} />
-        <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold" }}>
+        <Typography sx={{ typography: "s3", fontWeight: 500 }}>
           {versionBar.envPrefix} {currentLabel}
         </Typography>
         <Iconify
@@ -123,11 +120,9 @@ export default function EnvVersionPin({ env }) {
               maxWidth: 420,
               mt: 0.5,
               p: 0.75,
-              borderRadius: 1.5,
+              borderRadius: "8px",
               border: "1px solid",
               borderColor: "divider",
-              boxShadow: (t) =>
-                `0 12px 32px ${alpha(t.palette.common.black, t.palette.mode === "dark" ? 0.5 : 0.16)}`,
             },
           },
         }}
@@ -136,11 +131,9 @@ export default function EnvVersionPin({ env }) {
           <Typography
             id="env-version-list-heading"
             sx={{
-              typography: "s3",
-              fontWeight: "fontWeightBold",
-              color: "text.subtitle",
-              textTransform: "uppercase",
-              letterSpacing: 0.5,
+              typography: "s1",
+              fontWeight: 500,
+              color: "text.primary",
             }}
           >
             {pin.heading}
@@ -151,7 +144,7 @@ export default function EnvVersionPin({ env }) {
           {move.isError && (
             <Typography
               role="alert"
-              sx={{ typography: "s3", color: "error.main", mt: 0.75 }}
+              sx={{ typography: "s3", color: "status.danger.fg", mt: 0.75 }}
             >
               {refusalText(move.error, makeDefault.error)}
             </Typography>
@@ -172,24 +165,21 @@ export default function EnvVersionPin({ env }) {
               sx={{
                 px: 1.25,
                 py: 1.125,
-                borderRadius: 1,
-                border: "1px solid",
-                borderColor: v.isDefault ? alpha(ACCENT, 0.35) : "transparent",
-                bgcolor: (t) =>
-                  v.isDefault ? alpha(ACCENT, t.palette.mode === "dark" ? 0.12 : 0.06) : "transparent",
+                borderRadius: "4px",
+                bgcolor: v.isDefault ? "action.selected" : "transparent",
               }}
             >
               <Stack direction="row" alignItems="center" spacing={0.625} flexWrap="wrap" rowGap={0.375}>
                 <Typography
                   sx={{
-                    typography: "s2",
-                    fontWeight: "fontWeightBold",
+                    typography: "s1",
+                    fontWeight: 500,
                     fontFamily: "ui-monospace, Menlo, monospace",
                   }}
                 >
                   {v.label || VERSIONS_COPY.unlabelled}
                 </Typography>
-                {v.isDefault && <VersionBadge label={pin.default} tone={ACCENT} />}
+                {v.isDefault && <VersionBadge label={pin.default} />}
                 {VERSIONS_COPY.status[v.status] && (
                   <VersionBadge label={VERSIONS_COPY.status[v.status]} />
                 )}
@@ -218,7 +208,7 @@ export default function EnvVersionPin({ env }) {
                   color="inherit"
                   disabled={move.isPending}
                   onClick={() => setConfirming(v)}
-                  sx={{ mt: 0.75, height: 24, textTransform: "none" }}
+                  sx={{ mt: 0.75 }}
                 >
                   {actionLabel(v, index)}
                 </Button>
@@ -245,24 +235,28 @@ EnvVersionPin.propTypes = {
   }).isRequired,
 };
 
-// Small pill — neutral outline by default, tinted when a tone is given.
-export function VersionBadge({ label, tone }) {
+// Small tag. Neutral by default (11/500 secondary on action.selected); a status
+// role (`role`, or a role name passed as `tone`) tints it with the status tokens.
+export function VersionBadge({ label, tone, role }) {
+  const statusRole = role || (STATUS_ROLES.includes(tone) ? tone : null);
   return (
     <Box
       sx={{
-        px: 0.625,
-        height: 16,
-        borderRadius: 0.5,
+        px: 0.75,
+        height: 18,
+        borderRadius: "4px",
         display: "inline-flex",
         alignItems: "center",
-        border: "1px solid",
-        borderColor: (t) => (tone ? alpha(tone, 0.4) : t.palette.divider),
-        color: tone || "text.subtitle",
-        bgcolor: (t) => (tone ? alpha(tone, t.palette.mode === "dark" ? 0.14 : 0.08) : "transparent"),
+        color: statusRole ? `status.${statusRole}.fg` : "text.secondary",
+        bgcolor: statusRole ? `status.${statusRole}.bg` : "action.selected",
       }}
     >
-      <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold" }}>{label}</Typography>
+      <Typography sx={{ typography: "s3", fontWeight: 500 }}>{label}</Typography>
     </Box>
   );
 }
-VersionBadge.propTypes = { label: PropTypes.string, tone: PropTypes.string };
+VersionBadge.propTypes = {
+  label: PropTypes.string,
+  tone: PropTypes.string,
+  role: PropTypes.oneOf(STATUS_ROLES),
+};

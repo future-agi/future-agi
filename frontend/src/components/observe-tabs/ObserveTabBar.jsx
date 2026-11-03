@@ -40,14 +40,14 @@ import { CAPABILITY, useFeatureDenied } from "src/hooks/useCapabilities";
 
 // Fixed default tabs — matches backend DEFAULT_TABS
 const FIXED_TABS = [
-  { key: "traces", label: "Trace", icon: "mdi:link-variant", shortcut: "1" },
+  { key: "traces", label: "Trace", icon: "solar:link-linear", shortcut: "1" },
   {
     key: "sessions",
     label: "Sessions",
-    icon: "mdi:account-group-outline",
+    icon: "solar:users-group-rounded-linear",
     shortcut: "2",
   },
-  { key: "users", label: "Users", icon: "mdi:account-outline", shortcut: "3" },
+  { key: "users", label: "Users", icon: "solar:user-linear", shortcut: "3" },
   // Letter shortcut so the digit shortcuts of saved views don't shift.
   // Insights is Enterprise: without it the tab is marked and opens its gate.
   {
@@ -484,7 +484,7 @@ const ObserveTabBar = ({
               }}
             >
               <Iconify
-                icon="mdi:plus"
+                icon="solar:add-linear"
                 width={16}
                 sx={{ color: "text.primary" }}
               />

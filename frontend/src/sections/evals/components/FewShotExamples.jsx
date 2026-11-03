@@ -83,8 +83,7 @@ const FewShotExamples = ({
               key={opt.id}
               label={opt.name}
               size="small"
-              icon={<Iconify icon="mdi:database-outline" width={14} />}
-              sx={{ fontSize: "12px", height: 24 }}
+              icon={<Iconify icon="solar:database-linear" width={14} />}
             />
           ))
         }
@@ -99,7 +98,7 @@ const FewShotExamples = ({
               }}
             >
               <Iconify
-                icon="mdi:database-outline"
+                icon="solar:database-linear"
                 width={16}
                 sx={{ color: "text.secondary", flexShrink: 0 }}
               />

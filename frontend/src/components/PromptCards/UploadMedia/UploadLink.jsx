@@ -1,4 +1,4 @@
-import { Box, Button, TextField, useTheme } from "@mui/material";
+import { Box, Button, TextField } from "@mui/material";
 import React, { useState } from "react";
 import PropTypes from "prop-types";
 import { useFieldArray } from "react-hook-form";
@@ -7,7 +7,6 @@ import { z } from "zod";
 import { useSnackbar } from "src/components/snackbar";
 
 const UploadLink = ({ control }) => {
-  const theme = useTheme();
   const { append, fields } = useFieldArray({ control, name: "links" });
   const [url, setUrl] = useState("");
   const { enqueueSnackbar } = useSnackbar();
@@ -45,11 +44,6 @@ const UploadLink = ({ control }) => {
         color="primary"
         sx={{
           minWidth: "90px",
-          height: "38px",
-          padding: "10px 24px",
-          ...theme.typography["s2"],
-          fontWeight: (theme) => theme.typography["fontWeightSemiBold"],
-          fontSize: (theme) => theme.spacing(1.5),
         }}
         onClick={handleAddLink}
       >

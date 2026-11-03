@@ -7,13 +7,13 @@
  * - pause: block further usage
  */
 
+import EmptyState from "src/components/empty-state";
 import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Box,
   Typography,
   Stack,
-  Paper,
   Button,
   Chip,
   TextField,
@@ -28,18 +28,23 @@ import {
   DialogActions,
   Skeleton,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 
 const ACTION_LABELS = {
-  notify: { label: "Notify", color: "info", icon: "mdi:bell-outline" },
-  warn: { label: "Warn", color: "warning", icon: "mdi:alert-outline" },
+  notify: { label: "Notify", color: "info", icon: "solar:bell-linear" },
+  warn: {
+    label: "Warn",
+    color: "warning",
+    icon: "solar:danger-triangle-linear",
+  },
   pause: {
     label: "Pause Usage",
     color: "error",
-    icon: "mdi:pause-circle-outline",
+    icon: "solar:pause-circle-linear",
   },
 };
 
@@ -163,7 +168,7 @@ export default function BudgetManager() {
         <Button
           variant="outlined"
           size="small"
-          startIcon={<Iconify icon="mdi:plus" />}
+          startIcon={<Iconify icon="solar:add-linear" />}
           onClick={() => setDialogOpen(true)}
         >
           Add Budget
@@ -171,25 +176,24 @@ export default function BudgetManager() {
       </Stack>
 
       {!budgets || budgets.length === 0 ? (
-        <Paper
-          variant="outlined"
-          sx={{
-            p: 3,
-            textAlign: "center",
-            borderStyle: "dashed",
-            borderRadius: 2,
-          }}
-        >
-          <Iconify
-            icon="mdi:shield-check-outline"
-            width={36}
-            sx={{ color: "text.disabled", mb: 1 }}
+        <Section variant="panel" sx={{ p: 0 }}>
+          <EmptyState
+            icon="solar:shield-check-linear"
+            title="No budgets yet"
+            description="Add a budget to get notified or pause usage when thresholds are reached."
+            action={
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                onClick={() => setDialogOpen(true)}
+              >
+                Add budget
+              </Button>
+            }
+            sx={{ pt: 6, pb: 6 }}
           />
-          <Typography variant="body2" color="text.secondary">
-            No budgets set. Add a budget to get notified or pause usage when
-            thresholds are reached.
-          </Typography>
-        </Paper>
+        </Section>
       ) : (
         <Stack spacing={1.5}>
           {budgets.map((budget) => {
@@ -200,11 +204,7 @@ export default function BudgetManager() {
               budget.scope;
 
             return (
-              <Paper
-                key={budget.id}
-                variant="outlined"
-                sx={{ p: 2, borderRadius: 2 }}
-              >
+              <Section variant="panel" key={budget.id} sx={{ p: 2 }}>
                 <Stack
                   direction="row"
                   justifyContent="space-between"
@@ -246,18 +246,18 @@ export default function BudgetManager() {
                       onClick={() => handleOpenEdit(budget)}
                       title="Edit budget"
                     >
-                      <Iconify icon="mdi:pencil-outline" width={18} />
+                      <Iconify icon="solar:pen-linear" width={20} />
                     </IconButton>
                     <IconButton
                       size="small"
                       onClick={() => setDeleteTarget(budget)}
                       title="Delete budget"
                     >
-                      <Iconify icon="mdi:delete-outline" width={18} />
+                      <Iconify icon="solar:trash-bin-trash-linear" width={20} />
                     </IconButton>
                   </Stack>
                 </Stack>
-              </Paper>
+              </Section>
             );
           })}
         </Stack>
@@ -267,7 +267,8 @@ export default function BudgetManager() {
       <Dialog
         open={dialogOpen}
         onClose={handleCloseDialog}
-        maxWidth="sm"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 720 } }}
         fullWidth
       >
         <DialogTitle>
@@ -365,7 +366,7 @@ export default function BudgetManager() {
         color="error"
         onClickAction={() => deleteMutation.mutate(deleteTarget?.id)}
         loading={deleteMutation.isPending}
-        preTitleIcon="mdi:alert-circle"
+        preTitleIcon="solar:danger-circle-linear"
       >
         <Box sx={{ px: 2, py: 1 }}>
           <Typography variant="body2" color="text.secondary">

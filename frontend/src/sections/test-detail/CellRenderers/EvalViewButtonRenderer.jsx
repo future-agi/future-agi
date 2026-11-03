@@ -10,12 +10,10 @@ const EvalViewButtonRenderer = ({ data }) => {
 
   return (
     <Button
+      className="row-hover-action"
       variant="text"
       size="small"
       color="primary"
-      sx={{
-        fontWeight: "fontWeightRegular",
-      }}
       onClick={() =>
         setEvalView({
           metricDetail: data?.metricDetails,

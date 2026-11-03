@@ -29,7 +29,7 @@ const SkeletonCellRenderer = () => (
       variant="rectangular"
       width="80%"
       height={20}
-      sx={{ borderRadius: 0.5 }}
+      sx={{ borderRadius: "4px" }}
     />
   </Box>
 );

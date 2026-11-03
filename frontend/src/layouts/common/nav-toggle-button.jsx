@@ -28,8 +28,6 @@ export default function NavToggleButton({ sx, ...other }) {
       }
       sx={{
         width: 32, // or 36/40 depending on the size you want
-        height: 32,
-        borderRadius: "50%",
         border: "1.2px solid var(--border-default)", // fallback border color
         bgcolor: "background.paper",
         display: "flex",
@@ -50,8 +48,8 @@ export default function NavToggleButton({ sx, ...other }) {
         width={12}
         icon={
           settings.themeLayout === "vertical"
-            ? "octicon:sidebar-expand-16"
-            : "octicon:sidebar-collapse-16"
+            ? "solar:panel-left-open-linear"
+            : "solar:panel-left-close-linear"
         }
         sx={{
           color: "text.disabled",

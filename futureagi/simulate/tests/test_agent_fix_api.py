@@ -50,6 +50,7 @@ from simulate.tests.test_agent_fix_services import (
     _check,
     _executions,
     _fix_run,
+    _receipt,
     _run,
     _runtime,
     _tree,
@@ -728,7 +729,77 @@ class TestUserApi:
             str(source_run.test_execution_id),
         )
         assert body["request"]["failing_sub_goals"] == ["refunded"]
+        assert body["request"]["protected_scenario_keys"] == []
         temporal.start.assert_called_once_with(body["id"])
+
+    def test_protected_cases_reach_the_engine(
+        self, auth_client, api_client, source_run
+    ):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(source_run, protected_scenario_keys=[KEYS[1]]),
+            format="json",
+        )
+
+        assert response.status_code == 201, response.content
+        assert response.json()["request"]["protected_scenario_keys"] == [KEYS[1]]
+        fix_run = AgentFixRun.no_workspace_objects.get(id=response.json()["id"])
+        brief = _engine(api_client, "get", _armed(fix_run), "brief/").json()
+        assert brief["request"]["protected_scenario_keys"] == [KEYS[1]]
+
+    @pytest.mark.parametrize(
+        ("protected", "code"),
+        [
+            (["not-in-the-run"], "fix_targets_unknown"),
+            ([KEYS[0]], "fix_protected_is_target"),
+        ],
+        ids=["not-in-the-run", "also-a-target"],
+    )
+    def test_a_protected_case_the_fix_cannot_keep_starts_nothing(
+        self, auth_client, source_run, protected, code
+    ):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(source_run, protected_scenario_keys=protected),
+            format="json",
+        )
+
+        assert (response.status_code, response.json()["error"]) == (400, code)
+        assert not AgentFixRun.no_workspace_objects.exists()
+
+    @pytest.mark.parametrize(
+        ("held", "passed", "launched"),
+        [
+            ({"refunded": True}, True, (201, None)),
+            ({"refunded": False}, False, (400, "fix_protected_not_passed")),
+            ({"refunded": None}, None, (400, "fix_protected_not_passed")),
+            ({}, None, (400, "fix_protected_not_passed")),
+        ],
+        ids=["passing", "failed", "judge-decided-nothing", "no-verdict"],
+    )
+    def test_only_a_case_that_passed_can_be_protected_and_the_form_says_which(
+        self, auth_client, source_run, held, passed, launched
+    ):
+        execution = _executions(source_run).get(source_scenario__scenario_key=KEYS[1])
+        _receipt(execution.call_execution, KEYS[1], held)
+
+        options = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(source_run, protected_scenario_keys=[KEYS[1]]),
+            format="json",
+        )
+
+        offered = {one["key"]: one["passed"] for one in options["scenarios"]}
+        assert offered[KEYS[1]] is passed
+        assert options["suggested"]["protected_scenario_keys"] == (
+            [KEYS[1]] if passed else []
+        )
+        assert (response.status_code, response.json().get("error")) == launched
+        assert AgentFixRun.no_workspace_objects.exists() is bool(passed)
 
     @pytest.mark.parametrize(
         "overrides",
@@ -1170,8 +1241,8 @@ class TestUserApi:
         )
         return SimpleNamespace(bare=bare, commit=commit)
 
-    def _ship(self, auth_client, fix_run, candidate, replies):
-        """POST pull-request with GitHub's API answering ``replies`` in turn."""
+    def _ship(self, auth_client, fix_run, candidate, replies, **body):
+        """POST pull-request with ``body`` and GitHub's API answering ``replies`` in turn."""
         calls = []
 
         def answer(method, url, **kwargs):
@@ -1186,7 +1257,7 @@ class TestUserApi:
         ):
             response = auth_client.post(
                 f"{BASE}/{fix_run.id}/candidates/{candidate.id}/pull-request/",
-                {},
+                body,
                 format="json",
             )
         return response, calls
@@ -1433,6 +1504,339 @@ class TestUserApi:
             "fix_github_not_connected",
             [],
         )
+
+    TIERS = ["static", "target", "held-back", "must-pass", "repeats", "ceilings"]
+    REGRESSED = f"{KEYS[1]}: cancels_visit"
+    REASON = "The refund fix matters more than the cancel flow."
+
+    def _vetoed(
+        self,
+        source_run,
+        kind,
+        *,
+        failed=("must-pass",),
+        protected=(),
+        held_back=True,
+        tiers=None,
+        plan_held_back=None,
+        plan=True,
+    ):
+        """A finished fix whose candidate the verdict refused at the ``failed`` tiers, on an
+        agent of this source kind. A failed screen skips the tiers after it; the final
+        check records all of its tiers. Without ``held_back`` the fix has no held-back
+        case, so the verdict has no held-back tier and no held-back rate. ``tiers``
+        replaces the recorded tiers."""
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source_kind=kind)
+        fix_run = _fix_run(source_run)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={
+                **fix_run.request,
+                "protected_scenario_keys": list(protected),
+                "held_back_scenario_keys": [f"held-{n}" for n in range(4)]
+                if held_back
+                else [],
+            },
+            # The comparison the engine froze; plan_held_back overrides its held-back count.
+            plan={
+                "target": 4,
+                "held_back": (4 if held_back else 0)
+                if plan_held_back is None
+                else plan_held_back,
+                "must_pass": 2,
+                "protected": len(protected),
+                "max_candidates": 3,
+                "repeats": 3,
+                "baseline_spread_pts": 0,
+            }
+            if plan
+            else None,
+        )
+        fix_run.refresh_from_db()
+        candidate = _candidate(fix_run)
+        names = [name for name in self.TIERS if held_back or name != "held-back"]
+        first = min(names.index(name) for name in failed)
+        final = first >= names.index("must-pass")
+        recorded = [
+            {
+                "name": name,
+                "status": "failed"
+                if name in failed
+                else "passed"
+                if at < first or final
+                else "skipped",
+                "detail": "",
+            }
+            for at, name in enumerate(names)
+        ]
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=AgentFixCandidate.Outcome.REJECTED,
+            verdict={
+                "accepted": False,
+                "reason": f"{failed[0]}: failed",
+                "target_pass_rate": [0, 0.75],
+                "held_back_pass_rate": [0, 0.5] if held_back else None,
+                "must_pass_regressions": [self.REGRESSED]
+                if "must-pass" in failed
+                else [],
+                "must_pass_within_noise": [],
+                "tiers": recorded if tiers is None else tiers,
+            },
+        )
+        close_fix_run(fix_run.id, AgentFixRun.State.NO_IMPROVEMENT)
+        candidate.refresh_from_db()
+        return fix_run, candidate
+
+    def _override(self, auth_client, fix_run):
+        [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+        return shown["override"]
+
+    def test_a_candidate_only_must_pass_refused_ships_with_a_reason_it_names(
+        self, auth_client, user, source_run, github
+    ):
+        fix_run, candidate = self._vetoed(source_run, "github")
+        before = self._override(auth_client, fix_run)
+
+        response, [(_, _, sent)] = self._ship(
+            auth_client,
+            fix_run,
+            candidate,
+            [(201, {"html_url": self.PULL})],
+            override_reason=self.REASON,
+        )
+
+        assert before == {
+            "allowed": True,
+            "regressions": [self.REGRESSED],
+            "reason": "",
+            "by": None,
+            "at": None,
+        }
+        assert (response.status_code, response.json()) == (
+            200,
+            {"pull_request_url": self.PULL},
+        )
+        pull = sent["json"]
+        assert pull["draft"] is True
+        assert pull["title"].startswith("Fix my agent (known regression): ")
+        assert pull["body"].startswith("**Known regression.**")
+        assert f"- `{self.REGRESSED}`" in pull["body"]
+        assert f"> {self.REASON}" in pull["body"]
+        assert "Proven by" not in pull["body"]
+        after = self._override(auth_client, fix_run)
+        assert (after["allowed"], after["reason"], after["by"]["id"]) == (
+            True,
+            self.REASON,
+            str(user.id),
+        )
+        assert after["at"] is not None
+
+    @pytest.mark.parametrize("body", [{}, {"override_reason": "   "}])
+    def test_a_candidate_only_must_pass_refused_needs_a_reason(
+        self, auth_client, source_run, github, body
+    ):
+        fix_run, candidate = self._vetoed(source_run, "github")
+
+        response, calls = self._ship(auth_client, fix_run, candidate, [], **body)
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            422,
+            "fix_override_reason_required",
+            [],
+        )
+        assert self._override(auth_client, fix_run)["reason"] == ""
+
+    @pytest.mark.parametrize(
+        ("failed", "protected"),
+        [
+            (("held-back",), ()),
+            (("static",), ()),
+            (("must-pass", "repeats"), ()),
+            (("must-pass",), (KEYS[1],)),
+        ],
+        ids=["held-back", "static", "must-pass-and-repeats", "protected-case-lost"],
+    )
+    def test_a_candidate_refused_for_anything_else_cannot_ship_with_a_reason(
+        self, auth_client, source_run, github, failed, protected
+    ):
+        fix_run, candidate = self._vetoed(
+            source_run, "github", failed=failed, protected=protected
+        )
+
+        response, calls = self._ship(
+            auth_client, fix_run, candidate, [], override_reason=self.REASON
+        )
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            422,
+            "fix_candidate_not_proven",
+            [],
+        )
+        override = self._override(auth_client, fix_run)
+        assert (override["allowed"], override["regressions"]) == (False, [])
+
+    def test_a_fix_without_held_back_cases_ships_a_must_pass_refusal_with_a_reason(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._vetoed(source_run, "github", held_back=False)
+
+        response, calls = self._ship(
+            auth_client,
+            fix_run,
+            candidate,
+            [(201, {"html_url": self.PULL})],
+            override_reason=self.REASON,
+        )
+
+        assert self._override(auth_client, fix_run)["allowed"] is True
+        assert (response.status_code, len(calls)) == (200, 1)
+
+    def _final(self, failed="must-pass", skip=()):
+        return [
+            {"name": name, "status": "failed" if name == failed else "passed"}
+            for name in self.TIERS
+            if name not in skip
+        ]
+
+    @pytest.mark.parametrize(
+        "tiers",
+        [
+            pytest.param(
+                [{"name": "must-pass", "status": "failed"}], id="must-pass-only"
+            ),
+            pytest.param([], id="no-tiers"),
+            pytest.param(None, id="tiers-not-recorded"),
+            pytest.param("final-without-held-back", id="held-back-tier-missing"),
+            pytest.param("final-without-ceilings", id="ceilings-missing"),
+            pytest.param("final-with-must-pass-twice", id="duplicate-tier"),
+            pytest.param("final-reordered", id="tiers-out-of-order"),
+            pytest.param("final-with-a-pending-repeats", id="repeats-pending"),
+        ],
+    )
+    def test_a_verdict_short_of_the_whole_final_check_cannot_ship_with_a_reason(
+        self, auth_client, source_run, github, tiers
+    ):
+        final = self._final()
+        recorded = (
+            {
+                "final-without-held-back": self._final(skip=("held-back",)),
+                "final-without-ceilings": self._final(skip=("ceilings",)),
+                "final-with-must-pass-twice": [*final[:4], final[3], *final[4:]],
+                "final-reordered": [final[1], final[0], *final[2:]],
+                "final-with-a-pending-repeats": [
+                    *final[:4],
+                    {"name": "repeats", "status": "pending"},
+                    final[5],
+                ],
+            }.get(tiers, tiers)
+            if isinstance(tiers, str)
+            else tiers
+        )
+        fix_run, candidate = self._vetoed(source_run, "github", tiers=recorded)
+        if recorded is None:
+            AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+                verdict={**candidate.verdict, "tiers": None}
+            )
+
+        response, calls = self._ship(
+            auth_client, fix_run, candidate, [], override_reason=self.REASON
+        )
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            422,
+            "fix_candidate_not_proven",
+            [],
+        )
+        override = self._override(auth_client, fix_run)
+        assert (override["allowed"], override["regressions"]) == (False, [])
+
+    def test_a_verdict_missing_both_the_held_back_tier_and_rate_cannot_ship(
+        self, auth_client, source_run, github
+    ):
+        # The verdict looks like a fix without held-back cases, but the plan froze 4.
+        fix_run, candidate = self._vetoed(
+            source_run, "github", held_back=False, plan_held_back=4
+        )
+
+        response, calls = self._ship(
+            auth_client, fix_run, candidate, [], override_reason=self.REASON
+        )
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            422,
+            "fix_candidate_not_proven",
+            [],
+        )
+        assert self._override(auth_client, fix_run)["allowed"] is False
+
+    def test_a_fix_without_its_frozen_plan_cannot_ship_a_refusal(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._vetoed(source_run, "github", plan=False)
+
+        response, calls = self._ship(
+            auth_client, fix_run, candidate, [], override_reason=self.REASON
+        )
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            422,
+            "fix_candidate_not_proven",
+            [],
+        )
+        assert self._override(auth_client, fix_run)["allowed"] is False
+
+    def test_a_winner_ships_as_before_and_takes_no_reason(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        override = self._override(auth_client, fix_run)
+
+        refused, none = self._ship(
+            auth_client, fix_run, candidate, [], override_reason=self.REASON
+        )
+        shipped, [(_, _, sent)] = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert override == {
+            "allowed": False,
+            "regressions": [],
+            "reason": "",
+            "by": None,
+            "at": None,
+        }
+        assert (refused.status_code, refused.json()["error"], none) == (
+            422,
+            "fix_override_not_needed",
+            [],
+        )
+        assert shipped.status_code == 200, shipped.content
+        assert "known regression" not in sent["json"]["title"]
+        assert "Known regression" not in sent["json"]["body"]
+
+    def test_an_uploaded_agent_s_vetoed_candidate_becomes_the_default_on_a_reason(
+        self, auth_client, user, environment, source_run
+    ):
+        fix_run, candidate = self._vetoed(source_run, "archive")
+        before = environment.agent_version_id
+        url = f"{BASE}/{fix_run.id}/candidates/{candidate.id}/make-default/"
+
+        refused = auth_client.post(url, {}, format="json")
+        environment.refresh_from_db()
+        unmoved = environment.agent_version_id
+        shipped = auth_client.post(url, {"override_reason": self.REASON}, format="json")
+
+        assert (refused.status_code, refused.json()["error"], unmoved) == (
+            422,
+            "fix_override_reason_required",
+            before,
+        )
+        assert (shipped.status_code, shipped.json()) == (200, {"outcome": "activated"})
+        environment.refresh_from_db()
+        assert environment.agent_version_id == candidate.agent_version_id
+        override = self._override(auth_client, fix_run)
+        assert (override["reason"], override["by"]["id"]) == (self.REASON, str(user.id))
 
 
 @pytest.mark.parametrize(

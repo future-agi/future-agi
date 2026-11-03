@@ -21,6 +21,7 @@ export const CAPABILITY = Object.freeze({
   OPTIMIZATION: "optimization",
   INSTANT_EVAL: "instant_eval",
   INSIGHTS: "insights",
+  FIX_MY_AGENT: "fix_my_agent",
 });
 
 export function useCapabilities() {

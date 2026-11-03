@@ -28,6 +28,8 @@ export const WORKSPACE_TABS = [
     badge: "evals",
   },
   { id: "runs", label: "Runs", icon: "solar:play-circle-linear", badge: "runs" },
+  // Shown only once the environment has a fix (Fix my agent).
+  { id: "improvements", label: "Improvements", icon: "solar:magic-stick-3-linear", badge: "improvements" },
   // Shown only when the environment has versioning switched on.
   { id: "versions", label: "Versions", icon: "solar:history-linear" },
   {
