@@ -46,7 +46,7 @@ The design system is the standard for every screen. Docs, with every component s
 - **Surfaces:** flat with a 1px `divider` border. Shadows only on menus, dialogs, drawers and toasts. Tables sit on the page with hairline rows — never inside a card.
 - **Icons:** Iconify Solar set (`solar:*-linear`, `solar:*-bold`); check the icon renders in the browser, since only registered ones show offline. No mdi, mingcute or eva icons.
 - **Behaviour:** one primary button per view; one side drawer open at a time; every screen designs its empty, loading and error states; works in light and dark.
-- **Older components:** `EmptyLayout`, `CustomStatusChip`, `filter-panel`'s `FilterPanel` and bare MUI `Dialog` stay where they are, but the design-system lint fails a new import of them. Move an existing screen only as its own change, checked on that screen.
+- **Older components:** `EmptyLayout`, `CustomStatusChip`, `filter-panel`'s `FilterPanel` and bare MUI `Dialog` stay where they are; the design-system lint warns on a new import of them and names the replacement. Move an existing screen only as its own change, checked on that screen.
 - **Words:** plain sentences a user would say; name things the way the rest of the product names them.
 
 ## Before you finish

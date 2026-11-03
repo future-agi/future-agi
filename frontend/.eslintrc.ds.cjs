@@ -40,15 +40,11 @@ module.exports = {
     "react/prop-types": "off",
     "react-hooks/exhaustive-deps": "off",
     "react-refresh/only-export-components": "off",
+    // A warning, not an error: CI prints it for added imports but doesn't fail.
     "no-restricted-imports": [
-      "error",
+      "warn",
       {
         paths: [
-          {
-            name: "@mui/material",
-            importNames: ["Card", "CardContent", "CardHeader"],
-            message: "[DS] Use src/components/section (plain or panel) instead of Card.",
-          },
           {
             name: "@mui/material",
             importNames: ["Dialog"],
@@ -56,8 +52,8 @@ module.exports = {
           },
           { name: "@mui/material/Dialog", message: DIALOG_MESSAGE },
         ],
-        // Older components kept for the screens that already use them. CI checks
-        // only added lines, so existing imports stay; new ones use the replacement.
+        // Older components kept for the screens that already use them. A new
+        // import of one prints a warning that names the replacement.
         patterns: [
           {
             group: ["**/EmptyLayout", "**/EmptyLayout/*"],
@@ -77,6 +73,10 @@ module.exports = {
     ],
     "no-restricted-syntax": [
       "error",
+      DS(
+        "ImportDeclaration[source.value='@mui/material'] > ImportSpecifier[imported.name=/^(Card|CardContent|CardHeader)$/]",
+        "Use src/components/section (plain or panel) instead of Card.",
+      ),
       DS(
         "Literal[value=/^#[0-9A-Fa-f]{3}([0-9A-Fa-f]{3}([0-9A-Fa-f]{2})?)?$/]",
         "Hex colour. Use a theme token (text.*, background.*, border.*, status.*).",

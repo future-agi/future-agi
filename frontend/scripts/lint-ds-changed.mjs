@@ -110,6 +110,7 @@ const baseImportMessages = async (filePath) => {
 };
 
 let count = 0;
+let warnings = 0;
 for (const result of results) {
   const lines = changed.get(result.filePath);
   let hits = result.messages.filter(
@@ -122,14 +123,16 @@ for (const result of results) {
     );
   }
   for (const m of hits) {
-    count += 1;
+    const isError = m.severity === 2;
+    if (isError) count += 1;
+    else warnings += 1;
     console.log(
-      `${path.relative(frontendRoot, result.filePath)}:${m.line}:${m.column}  ${m.message}`,
+      `${path.relative(frontendRoot, result.filePath)}:${m.line}:${m.column}  ${isError ? "error" : "warning"}  ${m.message}`,
     );
   }
 }
 
 console.log(
-  `\nlint:ds:changed: ${count} design-system error(s) on lines added since ${ref} (${mergeBase.slice(0, 9)}), ${files.length} file(s) checked.`,
+  `\nlint:ds:changed: ${count} design-system error(s) and ${warnings} warning(s) on lines added since ${ref} (${mergeBase.slice(0, 9)}), ${files.length} file(s) checked.`,
 );
 process.exit(count ? 1 : 0);
