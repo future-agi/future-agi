@@ -683,14 +683,35 @@ describe("TracingTestMode exact task attribute mapping", () => {
     expect(screen.queryByText("(100 matching total)")).not.toBeInTheDocument();
   });
 
-  it.each([
-    ["spans", "/spans/"],
-    ["traces", "/traces/"],
-    ["sessions", "/sessions/"],
-    ["voiceCalls", "/calls/"],
-  ])(
-    "sends the visible preview range for %s and resets it on 12M selection",
-    async (rowType, endpoint) => {
+  it.each(
+    [
+      ["spans", "/spans/"],
+      ["traces", "/traces/"],
+      ["sessions", "/sessions/"],
+      ["voiceCalls", "/calls/"],
+    ].flatMap(([rowType, endpoint]) =>
+      [
+        "2026-03-10T12:37:42", // Spring DST lookback.
+        "2026-07-15T12:37:42", // No DST transition in the lookback.
+        "2026-11-03T12:37:42", // Autumn DST lookback.
+      ].map((now) => [rowType, endpoint, now]),
+    ),
+  )(
+    "sends the visible preview range for %s via %s at %s and resets it on 12M selection",
+    async (rowType, endpoint, clock) => {
+      // Freeze only Date; UI interactions and query timers still run normally.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const now = new Date(clock);
+      vi.setSystemTime(now);
+      const expectedStart = new Date(now);
+      expectedStart.setDate(expectedStart.getDate() - 30);
+      expectedStart.setUTCMinutes(0, 0, 0);
+      const expectedEnd = new Date(now);
+      expectedEnd.setDate(expectedEnd.getDate() + 1);
+      expectedEnd.setHours(0, 0, 0, 0);
+      const expectedYearStart = new Date(now);
+      expectedYearStart.setFullYear(expectedYearStart.getFullYear() - 1);
+      expectedYearStart.setUTCMinutes(0, 0, 0);
       mocks.get.mockImplementation(async (url) => {
         if (url === `/projects/${PROJECT_ID}`) {
           return {
@@ -753,11 +774,9 @@ describe("TracingTestMode exact task attribute mapping", () => {
         (f) => f.column_id === "created_at",
       );
       expect(initial.filter_config.filter_op).toBe("between");
-      const initialStart = new Date(initial.filter_config.filter_value[0]);
-      expect((Date.now() - initialStart.getTime()) / 86400000).toBeCloseTo(
-        30,
-        1,
-      );
+      expect(
+        initial.filter_config.filter_value.map((value) => new Date(value)),
+      ).toEqual([expectedStart, expectedEnd]);
       await userEvent.click(screen.getByRole("button", { name: "Past 30D" }));
       await userEvent.click(screen.getByRole("menuitem", { name: "Past 12M" }));
       await waitFor(() => {
@@ -765,8 +784,8 @@ describe("TracingTestMode exact task attribute mapping", () => {
           (f) => f.column_id === "created_at",
         );
         expect(
-          new Date(latest.filter_config.filter_value[0]).getTime(),
-        ).toBeLessThan(initialStart.getTime() - 300 * 86400000);
+          latest.filter_config.filter_value.map((value) => new Date(value)),
+        ).toEqual([expectedYearStart, expectedEnd]);
       });
       expect(screen.getByRole("button", { name: "Past 12M" })).toBeVisible();
       expect(calls().at(-1)[1].params).not.toHaveProperty("cursor");
