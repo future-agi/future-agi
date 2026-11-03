@@ -99,7 +99,7 @@ TraceDetailSpanFilterPanel.propTypes = {
   onClose: PropTypes.func.isRequired,
   currentFilters: PropTypes.array.isRequired,
   onApply: PropTypes.func.isRequired,
-  projectId: PropTypes.string.isRequired,
+  projectId: PropTypes.string,
 };
 
 const ACTION_ITEMS = [
