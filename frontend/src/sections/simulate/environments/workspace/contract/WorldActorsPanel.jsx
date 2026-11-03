@@ -74,6 +74,7 @@ const idFrom = (name, taken) => {
     (name || "")
       .toLowerCase()
       .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "")
       .slice(0, 60) || "actor";
@@ -81,6 +82,8 @@ const idFrom = (name, taken) => {
   for (let n = 2; taken.has(id); n += 1) id = `${base}_${n}`;
   return id;
 };
+// The id rule the server enforces, checked as the user types.
+const ID_RULE = /^[a-z0-9_]{1,64}$/;
 // A sub-actor speaks on a call channel; a world actor has none.
 const speaks = (actor) => Boolean(actor?.channel);
 
@@ -109,7 +112,16 @@ export default function WorldActorsPanel({
     others: cast,
   };
 
-  const remove = (actorId) => edit.mutate({ op: "delete", actorId, revision });
+  const [inUse, setInUse] = useState(null);
+  const remove = (actor) => {
+    if (actor.scenarios) {
+      setInUse(C.inUse(actor.name || actor.id, actor.scenarios));
+      return;
+    }
+    setInUse(null);
+    edit.mutate({ op: "delete", actorId: actor.id, revision });
+  };
+  const actionIds = context.actions.map((one) => one.action);
   const rows = (group) =>
     group.map((actor) => (
       <ActorRow
@@ -118,7 +130,8 @@ export default function WorldActorsPanel({
         actor={actor}
         locked={locked}
         onEdit={() => setEditing(actor)}
-        onRemove={() => remove(actor.id)}
+        onRemove={() => remove(actor)}
+        actionIds={actionIds}
       />
     ));
 
@@ -126,6 +139,11 @@ export default function WorldActorsPanel({
     <SectionCard title={C.title(cast.length)} subtitle={C.subtitle}>
       <Stack spacing={1.5} sx={{ px: 2.5, py: 1.5 }}>
         {data?.source === "draft" && <Alert severity="info">{C.unsaved}</Alert>}
+        {inUse && (
+          <Alert severity="warning" onClose={() => setInUse(null)}>
+            {inUse}
+          </Alert>
+        )}
         {edit.error && !editing && (
           <Alert severity="error">{edit.error.message}</Alert>
         )}
@@ -228,7 +246,7 @@ Group.propTypes = {
   children: PropTypes.node,
 };
 
-function summary(actor) {
+function summary(actor, actionIds) {
   if (speaks(actor))
     return [
       CHANNEL_LABELS[actor.channel] || actor.channel,
@@ -247,13 +265,21 @@ function summary(actor) {
   const tool = actor.activation?.trigger?.tool;
   const fallback = actor.activation?.fallback || "silent";
   return [
-    `${C.mayDo}: ${permitted.length ? permitted.join(", ") : C.nothing}`,
+    `${C.mayDo}: ${
+      permitted.length
+        ? permitted
+            .map((one) =>
+              actionIds.includes(one) ? one : `${one} (${C.notInWorld})`,
+            )
+            .join(", ")
+        : C.nothing
+    }`,
     `${C.comesIn}: ${tool ? C.whenCalled(tool) : C.atStart}`,
     `${C.ifNoAnswer}: ${C.form.fallbackLabel(fallback)}`,
   ].join(" · ");
 }
 
-function ActorRow({ envId, actor, locked, onEdit, onRemove }) {
+function ActorRow({ envId, actor, locked, onEdit, onRemove, actionIds }) {
   const [open, setOpen] = useState(false);
   const { data: view } = useActorView(envId, actor.id, null, {
     enabled: open,
@@ -280,7 +306,9 @@ function ActorRow({ envId, actor, locked, onEdit, onRemove }) {
           onClick={() => setOpen((o) => !o)}
           sx={{ cursor: "pointer" }}
         >
-          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+          <Typography
+            sx={{ typography: "s1", fontWeight: 600, wordBreak: "break-word" }}
+          >
             {actor.name}
             {actor.role ? (
               <Box
@@ -291,7 +319,11 @@ function ActorRow({ envId, actor, locked, onEdit, onRemove }) {
           </Typography>
           {actor.goal ? (
             <Typography
-              sx={{ typography: "s2", color: "text.secondary" }}
+              sx={{
+                typography: "s2",
+                color: "text.secondary",
+                wordBreak: "break-word",
+              }}
             >{`${C.wants}: ${actor.goal}`}</Typography>
           ) : null}
           <Typography
@@ -301,7 +333,7 @@ function ActorRow({ envId, actor, locked, onEdit, onRemove }) {
               wordBreak: "break-word",
             }}
           >
-            {summary(actor)}
+            {summary(actor, actionIds)}
           </Typography>
         </Box>
         <Button size="small" onClick={() => setOpen((o) => !o)}>
@@ -363,6 +395,7 @@ ActorRow.propTypes = {
   locked: PropTypes.bool,
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
+  actionIds: PropTypes.arrayOf(PropTypes.string),
 };
 
 // How loud a voice beside the caller is: automatic (each call picks within the release's range) or a fixed share.
@@ -458,6 +491,8 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
   const takenBy = existing
     ? null
     : context.others.find((one) => one.id === typedId);
+  const idInvalid = !existing && !ID_RULE.test(typedId);
+  const nameMissing = !value("name", actor?.name || "").trim();
   const save = () => {
     const base = {
       ...actor,
@@ -551,6 +586,7 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
       helperText,
     });
   const permitted = value("permitted", actor?.permitted_actions || []);
+  const unknownActions = permitted.filter((one) => !actionIds.includes(one));
   const describe = (id) =>
     actions.find((one) => one.action === id)?.description || "";
   const channel = value("channel", actor?.channel);
@@ -578,8 +614,10 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
               ? F.idFixed
               : takenBy
                 ? F.idTaken(takenBy.name)
-                : F.idHelp,
-            error: Boolean(takenBy),
+                : idInvalid
+                  ? F.idInvalid
+                  : F.idHelp,
+            error: Boolean(takenBy) || idInvalid,
             disabled: existing,
             placeholder: madeId,
             InputLabelProps: { shrink: true },
@@ -712,8 +750,13 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
                   <TextField
                     {...params}
                     label={F.permitted}
+                    error={unknownActions.length > 0}
                     helperText={
-                      actions.length ? F.permittedHelp : F.noWorldActions
+                      unknownActions.length
+                        ? F.permittedUnknown(unknownActions)
+                        : actions.length
+                          ? F.permittedHelp
+                          : F.noWorldActions
                     }
                   />
                 )}
@@ -819,7 +862,7 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
             <Button onClick={close}>{F.cancel}</Button>
             <Button
               variant="contained"
-              disabled={busy || Boolean(takenBy)}
+              disabled={busy || Boolean(takenBy) || idInvalid || nameMissing}
               onClick={save}
             >
               {F.save}

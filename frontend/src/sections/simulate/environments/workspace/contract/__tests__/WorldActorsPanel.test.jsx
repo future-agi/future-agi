@@ -357,6 +357,9 @@ describe("WorldActorsPanel", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Priya Raman" },
+    });
     fireEvent.change(screen.getByLabelText("Role (optional)"), {
       target: { value: "store manager" },
     });
