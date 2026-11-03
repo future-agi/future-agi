@@ -246,6 +246,18 @@ const CLAMP_CHARS = 480;
 const long = (text) =>
   text.split("\n").length > CLAMP_LINES || text.length > CLAMP_CHARS;
 
+// An answer a worker returns as data (a JSON object, or a printed dict or list) keeps its shape as code.
+const asShown = (text) => {
+  if (!/^\s*[[{]/.test(text)) return text;
+  let body = text.trim();
+  try {
+    body = JSON.stringify(JSON.parse(body), null, 2);
+  } catch {
+    // A printed Python dict or a cut-off object stays as it came.
+  }
+  return `\`\`\`\n${body}\n\`\`\``;
+};
+
 function Answer({ text }) {
   const [whole, setWhole] = useState(false);
   if (!text)
@@ -254,7 +266,8 @@ function Answer({ text }) {
         {C.unknown}
       </Typography>
     );
-  const clamped = long(text) && !whole;
+  const shown = asShown(text);
+  const clamped = long(shown) && !whole;
   return (
     <Box>
       <Box
@@ -272,6 +285,15 @@ function Answer({ text }) {
             fontWeight: 600,
             my: 0.25,
           },
+          "& pre": {
+            m: 0,
+            p: 1,
+            borderRadius: 0.5,
+            bgcolor: "background.neutral",
+            typography: "s3",
+            fontFamily: "monospace",
+            whiteSpace: "pre-wrap",
+          },
           ...(clamped && { maxHeight: "8.4em", overflow: "hidden" }),
         }}
       >
@@ -280,10 +302,10 @@ function Answer({ text }) {
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeSanitize]}
         >
-          {text}
+          {shown}
         </ReactMarkdown>
       </Box>
-      {long(text) ? (
+      {long(shown) ? (
         <Typography
           component="button"
           onClick={() => setWhole((one) => !one)}
