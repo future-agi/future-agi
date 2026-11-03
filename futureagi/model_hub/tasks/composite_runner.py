@@ -445,7 +445,7 @@ class CompositeEvaluationRunner:
         )
         try:
             self.user_eval_metric.status = StatusType.RUNNING.value
-            self.user_eval_metric.save(update_fields=["status"])
+            self.user_eval_metric.save(update_fields=["status", "updated_at"])
 
             column = self._get_or_create_column()
 

@@ -50,6 +50,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "harness_versions_backfill",
         "migrate",
         "provision_grouping_features",
+        "recover_stale_work",
         "enable_sampled_grouping",
         "requeue_budget_grouping",
         "requeue_failed_grouping",
