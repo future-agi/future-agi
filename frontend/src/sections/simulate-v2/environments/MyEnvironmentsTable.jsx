@@ -318,12 +318,19 @@ export default function MyEnvironmentsTable({
               spacing={0.75}
               sx={{ minWidth: 0 }}
             >
-              <Typography
-                noWrap
-                sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}
+              {/* One line: what it is shows on hover over the name. */}
+              <Tooltip
+                arrow
+                title={row.original.description || ""}
+                enterDelay={500}
               >
-                {getValue()}
-              </Typography>
+                <Typography
+                  noWrap
+                  sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}
+                >
+                  {getValue()}
+                </Typography>
+              </Tooltip>
               {row.original.version && (
                 <Tooltip arrow title="Environment version">
                   <Typography
@@ -352,22 +359,6 @@ export default function MyEnvironmentsTable({
                 </Tooltip>
               )}
             </Stack>
-            {/* What it is, under its name — the full line on hover. */}
-            {row.original.description && (
-              <Tooltip arrow title={row.original.description} enterDelay={500}>
-                <Typography
-                  noWrap
-                  sx={{
-                    typography: "s3",
-                    color: "text.secondary",
-                    minWidth: 0,
-                    mt: 0.5,
-                  }}
-                >
-                  {row.original.description}
-                </Typography>
-              </Tooltip>
-            )}
           </Box>
         ),
       },
@@ -382,7 +373,7 @@ export default function MyEnvironmentsTable({
               id: "status",
               accessorKey: "status",
               header: "Status",
-              size: 128,
+              size: 156,
               cell: ({ getValue, row }) => (
                 <StatusPill
                   status={getValue()}
@@ -395,7 +386,7 @@ export default function MyEnvironmentsTable({
         id: "agentType",
         accessorKey: "agentType",
         header: "Agent type",
-        size: 150,
+        size: 120,
         cell: ({ getValue }) => {
           const m = MODALITY[getValue()] || MODALITY.chat;
           return (
@@ -439,8 +430,7 @@ export default function MyEnvironmentsTable({
                 —
               </Typography>
             );
-          /* Name on top, its role and proofs as one quiet line under it —
-             the same two-line rhythm as the Name column, no chips. */
+          /* Name, then its role and proofs quietly on the same line, no chips. */
           const detail = [r.isMain && "Main", r.proof?.label].filter(Boolean);
           const why = [
             r.isMain &&
@@ -448,11 +438,20 @@ export default function MyEnvironmentsTable({
             r.proof?.note && `${r.proof.label} — ${r.proof.note}`,
           ].filter(Boolean);
           return (
-            <Box sx={{ minWidth: 0, width: "100%" }}>
+            <Stack
+              direction="row"
+              alignItems="baseline"
+              spacing={0.75}
+              sx={{ minWidth: 0, width: "100%" }}
+            >
               <Tooltip arrow title={r.agentSource || ""} enterDelay={400}>
                 <Typography
                   noWrap
-                  sx={{ typography: "s2", color: "text.secondary" }}
+                  sx={{
+                    typography: "s2",
+                    color: "text.secondary",
+                    minWidth: 0,
+                  }}
                 >
                   {r.agentName}
                 </Typography>
@@ -474,18 +473,16 @@ export default function MyEnvironmentsTable({
                     noWrap
                     sx={{
                       typography: "s3",
-                      color: "text.secondary",
-                      mt: 0.5,
+                      color: "text.tertiary",
                       cursor: "default",
-                      width: "fit-content",
-                      maxWidth: "100%",
+                      flexShrink: 0,
                     }}
                   >
                     {detail.join(" · ")}
                   </Typography>
                 </Tooltip>
               )}
-            </Box>
+            </Stack>
           );
         },
       },
@@ -845,7 +842,7 @@ export default function MyEnvironmentsTable({
         rowCount={shown.length}
         getRowId={(row) => row.id}
         onRowClick={(row) => onOpen?.(row.env)}
-        rowHeight={ROW_HEIGHT.twoLine}
+        rowHeight={ROW_HEIGHT.default}
         emptyMessage={
           filtering
             ? "No environments match these filters"
