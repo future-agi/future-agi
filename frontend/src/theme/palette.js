@@ -390,7 +390,7 @@ export {
 };
 
 // The light and dark palettes come from the Future AGI Design System
-// (product-design/design-system/tokens → ds-tokens.js). The ramps above stay
+// (frontend/design-system/tokens/tokens.json → ds-tokens.js). The ramps above stay
 // exported for files that import them directly.
 export function palette(mode) {
   const isLight = mode !== "dark";

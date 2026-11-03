@@ -5,7 +5,7 @@ description: Use whenever you create or change frontend UI in this repo — page
 
 # Building UI with the Future AGI Design System
 
-The design system is the standard for every screen. Docs, with every component shown in light and dark, a Part · Spec table and Do / Don't: https://cuddly-disco-y9y51ke.pages.github.io/design-system/
+The design system is the standard for every screen. Docs, with every component shown in light and dark, a Part · Spec table and Do / Don't, live in `frontend/design-system/` (open `index.html`; the README says how to serve it). Tokens come from `frontend/design-system/tokens/tokens.json`.
 
 ## Before writing code
 

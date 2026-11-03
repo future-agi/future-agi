@@ -17,6 +17,7 @@
     "lint:ds": "eslint --no-eslintrc -c .eslintrc.ds.cjs \"src/**/*.{js,jsx}\"",
     "lint:ds:changed": "node scripts/lint-ds-changed.mjs",
     "ds:optouts": "node scripts/ds-optouts.mjs",
+    "tokens:build": "python3 -I design-system/tools/build_tokens.py",
     "prettier": "prettier --write \"src/**/*.{js,jsx,ts,tsx}\"",
     "type-check": "if [ -f tsconfig.json ]; then tsc --noEmit; else echo 'No tsconfig.json found, skipping type check'; fi",
     "contracts:generate": "node scripts/generate-filter-contract.mjs && node scripts/generate-api-surface-contract.mjs && node scripts/generate-openapi-contract.mjs && node scripts/generate-openapi-client.mjs && node scripts/generate-management-api-contract-debt.mjs && node scripts/generate-runtime-management-api-contract-debt.mjs",
