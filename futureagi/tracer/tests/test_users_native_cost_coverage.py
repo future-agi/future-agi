@@ -874,8 +874,13 @@ def test_nonzero_session_state_survives_singleton_usage_projection(
             [{"trace_session_id": session, "cost": 1.25}],
             trace=f"session-state-{index}",
         )
+    # The embedded aggregate is enabled only for an admitted finite user page.
     result, raw = _read(
-        client, project, organization, include_num_sessions=include_num_sessions
+        client,
+        project,
+        organization,
+        candidate_end_user_ids=[str(user)],
+        include_num_sessions=include_num_sessions,
     )
     row = result["table"][0]
     assert row["num_sessions"] == (2 if include_num_sessions else 0)

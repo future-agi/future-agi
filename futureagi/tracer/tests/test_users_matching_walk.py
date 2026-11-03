@@ -46,10 +46,11 @@ WINDOW_START = datetime(2026, 9, 1, tzinfo=UTC)
 WINDOW_END = datetime(2026, 9, 2, tzinfo=UTC)
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 SERVICE = "tracer.services.users_list_manager.V2AnalyticsQueryService"
-# Reviewed unfiltered cursor shape: tuple-winner usage and trace-level money
-# reduction before whole-user totals (not the retired scalar-argMax pin).
+# Reviewed unfiltered cursor shape: complete tuple-winner replay, followed by
+# the lexically bound trace-metric tuple before whole-user totals. The former
+# pin expanded the summary proof into each metric's SELECT alias.
 UNFILTERED_PAGE_DIGEST = (
-    "44cf1a3b4c926b956cd34e7257f7e20ea52315915c51217dd3f3a547094563bb"
+    "ada3a7176700fdc3cbd8e91f50ff1de0cb0058ca98e1dbe5e040f87ee76c491c"
 )
 
 
