@@ -1030,7 +1030,7 @@ const PrimaryGraph = ({
         type: "datetime",
         labels: {
           datetimeUTC: false,
-          style: { fontSize: "10px", colors: theme.palette.text.disabled },
+          style: { fontSize: "12px", colors: theme.palette.text.disabled },
           datetimeFormatter: {
             year: "yyyy",
             month: "MMM 'yy",
@@ -1051,7 +1051,7 @@ const PrimaryGraph = ({
           opposite: false,
           title: { text: undefined },
           labels: {
-            style: { fontSize: "10px", colors: theme.palette.text.disabled },
+            style: { fontSize: "12px", colors: theme.palette.text.disabled },
             formatter: (v) => {
               if (v == null) return "";
               if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`;
@@ -1069,7 +1069,7 @@ const PrimaryGraph = ({
           opposite: true,
           title: { text: undefined },
           labels: {
-            style: { fontSize: "10px", colors: theme.palette.text.disabled },
+            style: { fontSize: "12px", colors: theme.palette.text.disabled },
             formatter: (v) => (v != null ? Math.round(v).toLocaleString() : ""),
             offsetX: 4,
           },
@@ -1160,7 +1160,7 @@ const PrimaryGraph = ({
               {metricDef.label}
             </Typography>
             <Iconify
-              icon="mdi:chevron-down"
+              icon="solar:alt-arrow-down-linear"
               width={14}
               sx={{ flexShrink: 0, color: "text.secondary" }}
             />
@@ -1214,7 +1214,7 @@ const PrimaryGraph = ({
                     startAdornment: (
                       <InputAdornment position="start">
                         <Iconify
-                          icon="mdi:magnify"
+                          icon="solar:magnifier-linear"
                           width={16}
                           sx={{ color: "text.disabled" }}
                         />
@@ -1235,10 +1235,10 @@ const PrimaryGraph = ({
                   <Box key={groupKey}>
                     <Typography
                       sx={{
-                        fontSize: 10,
-                        fontWeight: 700,
+                        fontSize: 12,
+                        fontWeight: 600,
                         color: "text.disabled",
-                        textTransform: "uppercase",
+                        textTransform: "none",
                         letterSpacing: 0.5,
                         px: 1.5,
                         pt: 1,
@@ -1280,7 +1280,7 @@ const PrimaryGraph = ({
                         {m.unit && (
                           <Typography
                             sx={{
-                              fontSize: 10,
+                              fontSize: 12,
                               color: "text.disabled",
                               flexShrink: 0,
                             }}
@@ -1343,8 +1343,10 @@ const PrimaryGraph = ({
                 ref={dateButtonRef}
                 variant="outlined"
                 size="small"
-                startIcon={<Iconify icon="mdi:calendar-outline" width={16} />}
-                endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+                startIcon={<Iconify icon="solar:calendar-linear" width={16} />}
+                endIcon={
+                  <Iconify icon="solar:alt-arrow-down-linear" width={14} />
+                }
                 onClick={(e) => setDateAnchor(e.currentTarget)}
                 sx={pillSx}
               >
@@ -1367,7 +1369,7 @@ const PrimaryGraph = ({
                     key={opt.key}
                     selected={dateFilter?.dateOption === opt.key}
                     onClick={() => handleDateOptionChange(opt.key)}
-                    sx={{ fontSize: 13, py: 0.75 }}
+                    sx={{ py: 0.75 }}
                   >
                     {opt.label}
                   </MenuItem>
@@ -1395,10 +1397,10 @@ const PrimaryGraph = ({
                   startIcon={
                     hasActiveFilter ? (
                       <Badge variant="dot" color="error" overlap="circular">
-                        <Iconify icon="mdi:filter-outline" width={16} />
+                        <Iconify icon="solar:filter-linear" width={16} />
                       </Badge>
                     ) : (
-                      <Iconify icon="mdi:filter-outline" width={16} />
+                      <Iconify icon="solar:filter-linear" width={16} />
                     )
                   }
                   onClick={(e) => onFilterToggle(e)}
@@ -1422,7 +1424,7 @@ const PrimaryGraph = ({
                 bgcolor: lineColor,
               }}
             />
-            <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               {lineSeriesName}
             </Typography>
           </Box>
@@ -1431,11 +1433,11 @@ const PrimaryGraph = ({
               sx={{
                 width: 10,
                 height: 10,
-                borderRadius: "2px",
+                borderRadius: "4px",
                 bgcolor: barColor,
               }}
             />
-            <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               Traffic
             </Typography>
           </Box>
@@ -1446,7 +1448,7 @@ const PrimaryGraph = ({
       {graphStatusMessage && displaySnapshot ? (
         <Typography
           role="status"
-          sx={{ px: 1, fontSize: 11, color: "text.secondary" }}
+          sx={{ px: 1, fontSize: 12, color: "text.secondary" }}
         >
           {graphStatusMessage}
         </Typography>

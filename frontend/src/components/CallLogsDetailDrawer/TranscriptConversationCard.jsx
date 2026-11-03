@@ -9,27 +9,27 @@ const ColorMap = (role) => {
   switch (role) {
     case "system": {
       return {
-        borderColor: "orange.200",
-        backgroundColor: "orange.o10",
-        headerColor: "orange.500",
-        textColor: "orange.600",
+        borderColor: "status.warning.border",
+        backgroundColor: "status.warning.bg",
+        headerColor: "status.warning.solid",
+        textColor: "status.warning.fg",
       };
     }
     case "user": {
       return {
-        borderColor: "green.100",
-        backgroundColor: "blue.o10",
-        headerColor: "green.500",
-        textColor: "green.600",
+        borderColor: "status.success.border",
+        backgroundColor: "status.info.bg",
+        headerColor: "status.success.solid",
+        textColor: "status.success.fg",
       };
     }
     case "agent":
     case "bot": {
       return {
-        borderColor: "blue.100",
-        backgroundColor: "#E9C00C1A",
-        headerColor: "blue.500",
-        textColor: "blue.600",
+        borderColor: "status.info.border",
+        backgroundColor: "status.warning.bg",
+        headerColor: "status.info.solid",
+        textColor: "status.info.fg",
       };
     }
     default: {
@@ -58,7 +58,7 @@ const TranscriptConversationCard = ({
         display: "flex",
         maxWidth: "80%",
         backgroundColor: ColorMap(role)?.backgroundColor,
-        borderRadius: 0.5,
+        borderRadius: "4px",
         padding: 1,
         flexDirection: "column",
         gap: 1,

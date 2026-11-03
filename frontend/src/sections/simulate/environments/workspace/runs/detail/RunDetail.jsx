@@ -3,16 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { alpha } from "@mui/material/styles";
-import {
-  Box,
-  Stack,
-  Typography,
-  Button,
-  IconButton,
-  Link,
-  Tab,
-} from "@mui/material";
+import { Box, Stack, Typography, Button, IconButton, Link, Tab } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
@@ -245,24 +236,20 @@ export default function RunDetail({
                 sx={{
                   width: 24,
                   height: 24,
-                  borderRadius: 0.875,
+                  borderRadius: "4px",
                   flexShrink: 0,
                   display: "grid",
                   placeItems: "center",
                   typography: "s3",
-                  fontWeight: 700,
+                  fontWeight: 600,
                   color: identity.color,
-                  bgcolor: (t) =>
-                    alpha(
-                      identity.color,
-                      t.palette.mode === "dark" ? 0.22 : 0.14,
-                    ),
+                  bgcolor: "action.selected",
                 }}
               >
                 {identity.letter}
               </Box>
             )}
-            <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>
+            <Typography noWrap sx={{ typography: "s1_2", fontWeight: 600 }}>
               {fixRun ? (
                 <>
                   {`Check run ${fixRun.label} for `}
@@ -330,12 +317,6 @@ export default function RunDetail({
               width={15}
             />
           }
-          sx={{
-            color: "text.primary",
-            borderColor: "divider",
-            typography: "s2",
-            fontWeight: 600,
-          }}
         >
           {backed ? "Run evals" : "Add evals"}
         </Button>
@@ -347,12 +328,6 @@ export default function RunDetail({
           startIcon={
             <Iconify icon="solar:download-minimalistic-linear" width={15} />
           }
-          sx={{
-            color: "text.primary",
-            borderColor: "divider",
-            typography: "s2",
-            fontWeight: 600,
-          }}
         >
           {exporting ? "Exporting…" : "Export"}
         </Button>
@@ -369,12 +344,6 @@ export default function RunDetail({
                 rerunOptions,
               )
             }
-            sx={{
-              color: "text.primary",
-              borderColor: "divider",
-              typography: "s2",
-              fontWeight: 600,
-            }}
           >
             Run again
           </Button>
@@ -387,7 +356,6 @@ export default function RunDetail({
             onClick={() => setDebugging(true)}
             disabled={live}
             startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
-            sx={{ typography: "s2", fontWeight: 700 }}
           >
             Debug failures
           </Button>
@@ -400,27 +368,9 @@ export default function RunDetail({
           <CustomTabs
             value={tab}
             onChange={(_, v) => setTab(v)}
-            sx={{
-              borderBottom: "1px solid",
-              borderColor: "divider",
-              mb: 2,
-              minHeight: 38,
-              // The app theme puts a 40px marginRight on every non-last Tab, and
-              // MUI's default 90px min-width centers short labels ("Analytics")
-              // inside a wide box — together they leave dead space between tabs.
-              // Zero the theme margin (matching its :not(:last-of-type) specificity)
-              // and size each tab to its label, then space them with one even
-              // gutter so the strip reads as a single seamless row.
-              "& .MuiTabs-flexContainer": { gap: 3 },
-              "& .MuiTab-root": { minWidth: "auto", px: 0 },
-              "& .MuiTab-root:not(:last-of-type)": { mr: 0 },
-            }}
+            sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider", mb: 2 }}
           >
-            <Tab
-              value="tasks"
-              label={`Test runs (${stats.total})`}
-              sx={{ minHeight: 38 }}
-            />
+            <Tab value="tasks" label={`Test runs (${stats.total})`} />
             {hasTrials && (
               <Tab
                 value="trials"
@@ -431,10 +381,9 @@ export default function RunDetail({
                     {!selfImprovementOpen && <BetaChip />}
                   </>
                 }
-                sx={{ minHeight: 38 }}
               />
             )}
-            <Tab value="analytics" label="Analytics" sx={{ minHeight: 38 }} />
+            <Tab value="analytics" label="Analytics" />
           </CustomTabs>
 
           {tab === "tasks" && (
@@ -497,12 +446,6 @@ export default function RunDetail({
                   startIcon={
                     <Iconify icon="solar:magic-stick-3-linear" width={15} />
                   }
-                  sx={{
-                    color: "text.primary",
-                    borderColor: "divider",
-                    typography: "s2",
-                    fontWeight: 600,
-                  }}
                 >
                   Launch optimization
                 </Button>
