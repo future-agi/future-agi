@@ -60,6 +60,9 @@ function entrypointsByTool(env) {
 
 function SchemaCard({ schema, totalRows }) {
   const [openTable, setOpenTable] = useState(null);
+  // The chevron's slot only exists when some table can open; otherwise the
+  // icons would sit indented from the header for a chevron nobody sees.
+  const anyExpandable = schema.some((t) => t.cols?.length);
   return (
     <SectionCard
       title="World state · database"
@@ -83,11 +86,13 @@ function SchemaCard({ schema, totalRows }) {
                 onClick={expandable ? () => setOpenTable(open ? null : t.name) : undefined}
                 sx={{ px: 2.5, py: 1.375, cursor: expandable ? "pointer" : "default", "&:hover": expandable ? { bgcolor: "action.hover" } : {} }}
               >
-                <Iconify
-                  icon={open ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"}
-                  width={13}
-                  sx={{ color: "text.subtitle", flexShrink: 0, visibility: expandable ? "visible" : "hidden" }}
-                />
+                {anyExpandable && (
+                  <Iconify
+                    icon={open ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"}
+                    width={13}
+                    sx={{ color: "text.subtitle", flexShrink: 0, visibility: expandable ? "visible" : "hidden" }}
+                  />
+                )}
                 <Iconify icon="solar:database-linear" width={15} sx={{ color: "#2563EB", flexShrink: 0 }} />
                 <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: MONO, minWidth: 140 }}>{t.name}</Typography>
                 <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }} noWrap>

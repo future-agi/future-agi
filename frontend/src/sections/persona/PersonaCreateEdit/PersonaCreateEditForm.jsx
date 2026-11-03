@@ -21,6 +21,7 @@ import { ShowComponent } from "src/components/show";
 import { PersonaChatSettings } from "./PersonaChatSettings";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import PersonaBehavioralSetting from "./PersonaBehaviouralSetting";
+import { PERSONAS_DOCS_URL } from "../common";
 
 const PersonaCreateEditForm = ({
   onSuccess,
@@ -128,7 +129,7 @@ const PersonaCreateEditForm = ({
               {isEditMode ? "Edit persona" : "Create persona"}
             </Typography>
             <Link
-              href="https://docs.futureagi.com/docs/simulation/concepts/personas"
+              href={PERSONAS_DOCS_URL}
               underline="always"
               color="blue.500"
               target="_blank"

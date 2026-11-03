@@ -44,7 +44,8 @@ export function validateMockRouting(source: string, evalBackground = false): voi
   requireSafe(same(routes, [...judgeModels, 'turing_flash']) ||
     (!evalBackground && same(routes, judgeModels)), 'unexpected model routes or missing background capability');
   requireSafe(Object.keys(cfg.server).every(k => ['port', 'host', 'read_timeout', 'write_timeout',
-    'idle_timeout', 'shutdown_timeout', 'max_request_body_size', 'default_request_timeout'].includes(k)) &&
+    'idle_timeout', 'shutdown_timeout', 'max_request_body_size', 'default_request_timeout',
+    'max_request_timeout'].includes(k)) &&
     cfg.server.port === 8080 && cfg.server.host === '0.0.0.0', 'unexpected gateway server settings');
   requireSafe(same(Object.keys(cfg.logging), ['level']) &&
     ['debug', 'info', 'warn', 'error'].includes(cfg.logging.level), 'unexpected logging configuration');
@@ -56,12 +57,19 @@ const PROXY_OR_PRELOAD = /^(https?_proxy|all_proxy|node_options|ld_preload|pytho
 /** Licence, notification and credential settings, refused wherever the inspection
  * is strict: the Distributed background opt-in, and always in Standalone. */
 const CREDENTIAL_OVERRIDE = /^(EE_LICENSE_KEY|SENTRY_DSN|SLACK_.*|DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK|ERROR_LOGS_WEBHOOK|MIX_PANEL_TOKEN|MAILGUN_.*|SMTP_.*|SENDGRID_.*|RESEND_.*|AWS_SESSION_TOKEN|GOOGLE_APPLICATION_CREDENTIALS|DAYTONA_API_KEY|E2B_API_KEY)$/;
+const MOCK_SLACK_ENV: Record<string, string> = {
+  SLACK_CLIENT_ID: 'e2e-client',
+  SLACK_CLIENT_SECRET: 'e2e-secret',
+  SLACK_OAUTH_AUTHORIZE_URL: 'http://localhost:28081/oauth/v2/authorize',
+  SLACK_REDIRECT_URI: 'http://localhost:8100/integrations/slack/callback/',
+  SLACK_API_URL: 'http://mock-slack:8080/api',
+};
 
 /** Where the gateway, the API it syncs from and Temporal listen: their own
  * services in Distributed, loopback inside Standalone's one `app` container. */
-export interface MockTopology { gateway: string; controlPlane: string; temporal: string }
+export interface MockTopology { gateway: string; controlPlane: string; temporal: string; settingsModule: string }
 const DISTRIBUTED: MockTopology = { gateway: 'http://agentcc-gateway:8080', controlPlane: 'http://backend',
-  temporal: 'temporal:7233' };
+  temporal: 'temporal:7233', settingsModule: 'tfc.settings.e2e' };
 
 function gatewayValues({ gateway, controlPlane }: MockTopology) {
   const allowed: Record<string, string> = { AGENTCC_INTERNAL_API_KEY: MOCK_KEY,
@@ -100,6 +108,9 @@ export function validateEnvironmentEntries(service: string, env: Record<string, 
       validateBackgroundMockMounts(service, mounts);
       continue; // Exact root-Compose /dev/null suppression, never a credential.
     }
+    if (key.startsWith('SLACK_') && ['backend', 'worker'].includes(service) &&
+        env.SLACK_API_URL === MOCK_SLACK_ENV.SLACK_API_URL &&
+        MOCK_SLACK_ENV[key] === value) continue;
     requireSafe(!CREDENTIAL_OVERRIDE.test(key), `${service} has a license, notification or credential override (${key})`);
     if (key === 'EMAIL_BACKEND') requireSafe(value === 'django.core.mail.backends.console.EmailBackend', 'nonlocal email backend');
     if (key === 'SENTRY_ENABLED') requireSafe(value === 'false', 'Sentry must be disabled');
@@ -116,7 +127,7 @@ export function requiredMockValues(topology: MockTopology, evalBackground: boole
   if (!evalBackground) return pins;
   return { ...pins, MODEL_SERVING_URL: MOCK_SERVING_BASE, ENV_TYPE: 'local', EE_LICENSE_KEY: '',
     NO_STARTUP_DB_MUTATIONS: 'true', OTEL_ENABLED: 'false', TEMPORAL_HOST: topology.temporal,
-    TEMPORAL_NAMESPACE: 'default', DJANGO_SETTINGS_MODULE: 'tfc.settings.settings', MAILGUN_API_KEY: '' };
+    TEMPORAL_NAMESPACE: 'default', DJANGO_SETTINGS_MODULE: topology.settingsModule, MAILGUN_API_KEY: '' };
 }
 
 /** Required values are checked even when absent. No license or generic-provider
@@ -224,7 +235,7 @@ export function inspectManagedMock({ evalBackground = false }: { evalBackground?
 }
 
 function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceipt {
-  for (const endpoint of [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl]) {
+  for (const endpoint of [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl, E2E.slackMockUrl]) {
     requireSafe(new URL(endpoint).hostname === 'localhost', 'requires localhost endpoints');
   }
   const context = process.env.DOCKER_CONTEXT || (process.env.CI ? 'default' : '');
@@ -290,23 +301,26 @@ function inspectMockStack(stack: MockStack, evalBackground: boolean): MockReceip
 
 function distributedMockStack(evalBackground: boolean): MockStack {
   return {
-    services: ['agentcc-gateway', 'mock-llm', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse',
+    services: ['agentcc-gateway', 'mock-llm', 'mock-slack', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse',
       ...(evalBackground ? ['temporal'] : [])],
     endpoints: [
       ['frontend', '80/tcp', E2E.appUrl], ['backend', '80/tcp', E2E.apiUrl],
       ['agentcc-gateway', '8080/tcp', E2E.gatewayUrl], ['postgres', '5432/tcp', E2E.pgUrl],
-      ['clickhouse', '8123/tcp', E2E.chUrl],
+      ['clickhouse', '8123/tcp', E2E.chUrl], ['mock-slack', '8080/tcp', E2E.slackMockUrl],
     ],
     sources: [
       ['agentcc-gateway', '/app/config.yaml', gatewayFile, ['--config', '/app/config.yaml']],
       ['mock-llm', '/srv/server.mjs', mockFile, ['node', '/srv/server.mjs']],
+      ['mock-slack', '/srv/server.mjs', `${root}e2e/stack/mock-slack/server.mjs`, ['node', '/srv/server.mjs']],
     ],
     check: ({ context, network, selected, config, run, docker }) => {
       if (evalBackground) {
         for (const service of ['agentcc-gateway', 'mock-llm']) validateBackgroundMockMounts(service, selected[service].Mounts);
       }
       requireSafe(same(selected['agentcc-gateway'].Config.Entrypoint, ['/app/agentcc-gateway']) &&
-        same(selected['mock-llm'].Config.Entrypoint, ['docker-entrypoint.sh']), 'unexpected gateway/mock entrypoint');
+        same(selected['mock-llm'].Config.Entrypoint, ['docker-entrypoint.sh']) &&
+        same(selected['mock-slack'].Config.Entrypoint, ['docker-entrypoint.sh']) &&
+        selected['mock-slack'].Mounts.length === 1, 'unexpected gateway/mock entrypoint or mount');
       const environments: Record<string, Record<string, string>> = {};
       for (const service of ['agentcc-gateway', 'mock-llm', 'backend', 'worker']) {
         const env = environments[service] = containerEnvironment(selected[service]);
@@ -329,6 +343,13 @@ function distributedMockStack(evalBackground: boolean): MockStack {
         'agentic_eval/core/embeddings/serving_client.py', 'agentic_eval/core/embeddings/embedding_manager.py',
         'agentic_eval/core/utils/model_config.py'];
       const sourceHashes = Object.fromEntries(paths.map(path => [path, hash(readFileSync(`${root}futureagi/${path}`))]));
+      for (const [packaged, source] of Object.entries({
+        'tfc/settings/e2e.py': 'settings_e2e.py',
+        'tfc/urls_e2e.py': 'urls_e2e.py',
+        'tracer/views/e2e_feed_issue.py': 'e2e_feed_issue.py',
+      })) {
+        sourceHashes[packaged] = hash(readFileSync(`${root}e2e/stack/backend/${source}`));
+      }
       const probeSource = readFileSync(`${root}e2e/lib/managed-mock-background.py`, 'utf8');
       const addresses = Object.fromEntries(['temporal', 'mock-llm', 'agentcc-gateway'].map(service =>
         [service, selected[service].NetworkSettings.Networks[network].IPAddress]));

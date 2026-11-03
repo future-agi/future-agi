@@ -35,6 +35,7 @@ from simulate.services.run_results_v3_queries import (
     run_calls_queryset,
 )
 from simulate.services.run_results_v3_scan import scan_call_values
+from simulate.services.scoring_status import SCORING_ROW_FIELDS
 from simulate.views.run_results_v3 import RunCallsV3QuerySerializer
 
 
@@ -647,7 +648,11 @@ def test_rows_keep_the_call_value_shape(run, organization):
         test_execution=execution, scenario=scenario, status="completed"
     )
     (row,) = scan_call_values(execution, [{"id": eval_id}])
-    assert list(row) == [*dict.fromkeys(CALL_VALUE_FIELDS), "scores"]
+    assert list(row) == [
+        *dict.fromkeys(CALL_VALUE_FIELDS),
+        "scores",
+        *SCORING_ROW_FIELDS,
+    ]
     assert list(row["scores"]) == [eval_id]
 
 

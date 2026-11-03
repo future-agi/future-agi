@@ -38,6 +38,7 @@ import RunPromptButton from "./RunPromptButton";
 import StopGeneratingButton from "./StopGeneratingButton";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useAuthContext } from "src/auth/hooks";
+import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { usePromptStore } from "../../../workbench-v2/store/usePromptStore";
 import { NavLink } from "react-router-dom";
@@ -60,6 +61,7 @@ const PromptActions = () => {
 
   const [saveCommitOpen, setSaveCommitOpen] = useState(false);
   const { role: userRole } = useAuthContext();
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
 
   const {
     setOpenSelectModel,
@@ -859,38 +861,40 @@ const PromptActions = () => {
             value="Metrics"
           />
 
-          <Tab
-            icon={
-              <Iconify
-                icon="mdi:chat-processing-outline"
-                width={18}
-                height={18}
-              />
-            }
-            iconPosition="start"
-            label={
-              versions.length === 0 ||
-              isAnyPromptDraft ||
-              isContentEmpty ||
-              isGenerating ? (
-                <CustomTooltip
-                  size="small"
-                  title={
-                    versions.length === 0
-                      ? "You need to submit at least one prompt before running simulations."
-                      : "Save your prompt to run simulations"
-                  }
-                  show
-                  arrow
-                >
-                  <span>Simulation</span>
-                </CustomTooltip>
-              ) : (
-                "Simulation"
-              )
-            }
-            value="Simulation"
-          />
+          {!restrictSimulateToEnvironments && (
+            <Tab
+              icon={
+                <Iconify
+                  icon="mdi:chat-processing-outline"
+                  width={18}
+                  height={18}
+                />
+              }
+              iconPosition="start"
+              label={
+                versions.length === 0 ||
+                isAnyPromptDraft ||
+                isContentEmpty ||
+                isGenerating ? (
+                  <CustomTooltip
+                    size="small"
+                    title={
+                      versions.length === 0
+                        ? "You need to submit at least one prompt before running simulations."
+                        : "Save your prompt to run simulations"
+                    }
+                    show
+                    arrow
+                  >
+                    <span>Simulation</span>
+                  </CustomTooltip>
+                ) : (
+                  "Simulation"
+                )
+              }
+              value="Simulation"
+            />
+          )}
         </Tabs>
       </Box>
       <SaveAndCommit

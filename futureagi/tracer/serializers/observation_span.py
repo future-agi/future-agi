@@ -24,6 +24,7 @@ from tracer.serializers.filters import (
     bounded_filter_list_query_param_field,
     filter_list_query_param_field,
 )
+from tracer.serializers.trace import RUN_SCOPE_KEYS, RunScopeQueryMixin
 
 
 class ProjectScopeQueryParamField(serializers.CharField):
@@ -128,9 +129,10 @@ class _SpanReferenceVersionField(serializers.CharField):
         return data
 
 
-class SpanReferenceQuerySerializer(StrictInputSerializer):
+class SpanReferenceQuerySerializer(RunScopeQueryMixin, StrictInputSerializer):
     """An empty selector preserves bare GET; ``project_id`` alone pins the bare
-    span id to one project; any other selector requires every field."""
+    span id to one project; any other selector requires every field. The run
+    parameters are never part of the selector."""
 
     project_id = serializers.UUIDField(required=False)
     trace_id = serializers.CharField(
@@ -157,9 +159,11 @@ class SpanReferenceQuerySerializer(StrictInputSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        if not attrs or attrs.keys() == {"project_id"}:
+        self.reject_both(attrs)
+        selector = attrs.keys() - RUN_SCOPE_KEYS
+        if not selector or selector == {"project_id"}:
             return attrs
-        missing = self.fields.keys() - attrs.keys()
+        missing = (self.fields.keys() - RUN_SCOPE_KEYS) - attrs.keys()
         if missing:
             raise serializers.ValidationError(
                 dict.fromkeys(

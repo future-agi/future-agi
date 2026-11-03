@@ -31,6 +31,7 @@ export const SCENARIOS_COPY = {
   addShortLabel: "Add",
   addComingSoon: "Coming soon",
   editLabel: "Edit scenario",
+  openRow: (name) => `Open ${name}`,
   removeLabel: "Remove from this environment",
   filterLabel: "Filter",
   filterTitle: "Filter by use case",
@@ -48,6 +49,28 @@ export const SCENARIOS_COPY = {
     "Scenarios are normally derived from your agent when the environment is built.",
   critical: "Critical: a failure here is a release blocker",
 };
+
+// A row the unsaved changes add or change; an added one can't be picked for a
+// run yet.
+export const hasUnsavedChange = (row) =>
+  row?.draftChange === "added" || row?.draftChange === "changed";
+export const isUnsavedAddition = (row) => row?.draftChange === "added";
+// The ids a header checkbox selects: every row but the unsaved additions.
+export const selectableRowIds = (rows) =>
+  rows
+    .filter((r) => !isUnsavedAddition(r))
+    .map((r) => r.id)
+    .filter(Boolean);
+// The id of an added row's visible "Save to run" reason, for its checkbox.
+export const unsavedReasonId = (row) => `unsaved-${row.id}`;
+// An added row's checkbox: off, and described by its "Save to run" reason.
+export const unsavedCheckboxProps = (row) =>
+  isUnsavedAddition(row)
+    ? {
+        disabled: true,
+        inputProps: { "aria-describedby": unsavedReasonId(row) },
+      }
+    : {};
 
 // The three axes a reader scans scenarios by. The trace table on the run view
 // uses the same three, so a scenarios-tab "Persona" bucket matches the trace

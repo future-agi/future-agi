@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import PropTypes from "prop-types";
-import { render, screen } from "@testing-library/react";
+import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -38,6 +38,7 @@ vi.mock("../evals/EvalsStep", () => ({
   default: ({ grading }) => <div>{`evals-body:grading=${grading}`}</div>,
 }));
 vi.mock("../runs/summary/RunsSummary", () => ({ default: () => <div>runs-body</div> }));
+vi.mock("../versions/VersionsPanel", () => ({ default: () => <div>versions-body</div> }));
 
 // The real runs hook by default; the loading cases override it.
 vi.mock("src/api/simulate-environments/runs", async (importOriginal) => {
@@ -216,36 +217,18 @@ describe("WorkspacePanels", () => {
     expect(screen.queryByRole("tab", { name: /Runs \d/ })).toBeNull();
   });
 
-  it("shows a gap badge whose tooltip lists the missing pieces", async () => {
-    const user = userEvent.setup();
-    renderPanels({
-      gapsByTab: { evals: [{ id: "no-evals", title: "No evaluations added" }] },
-      counts: { scenarios: 2, evals: 0 },
-    });
-
-    await user.hover(screen.getByText("Evaluations"));
-    expect(await screen.findByText("Needs your input before you can run:")).toBeInTheDocument();
-    expect(screen.getByText(/No evaluations added/)).toBeInTheDocument();
-  });
-
-  it("explains a tab on hover instead of repeating it as a heading", async () => {
-    const user = userEvent.setup();
-    renderPanels();
-    await user.hover(screen.getByText("Contract"));
-    expect(await screen.findByText(/What this environment is made of/)).toBeInTheDocument();
-    // The hint describes the tab; it never replaces the tab's name.
-    expect(screen.getByRole("tab", { name: "Contract" })).toBeInTheDocument();
-  });
-
-  it("keeps the gap list in the tooltip alongside the tab's explanation", async () => {
+  it("shows neither the hint nor the gap list when a gap tab is hovered", async () => {
     const user = userEvent.setup();
     renderPanels({
       gapsByTab: { evals: [{ id: "no-evals", title: "No evaluations added" }] },
       counts: { scenarios: 2, evals: 0 },
     });
     await user.hover(screen.getByText("Evaluations"));
-    expect(await screen.findByText(/These decide whether each task passed/)).toBeInTheDocument();
-    expect(screen.getByText("Needs your input before you can run:")).toBeInTheDocument();
+    // Wait past a tooltip's open delay so one would have shown by now.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(screen.queryByText(/These decide whether each task passed/)).toBeNull();
+    expect(screen.queryByText("Needs your input before you can run:")).toBeNull();
   });
 
   it("falls back to the Overview body for an unknown tab", () => {
@@ -385,3 +368,26 @@ describe("useWorkspaceTab", () => {
     expect(screen.getByTestId("param")).toHaveTextContent("runs");
   });
 });
+
+describe("Versions tab", () => {
+  it("is hidden while versioning is off", () => {
+    renderPanels();
+    expect(screen.queryByRole("tab", { name: /Versions/ })).toBeNull();
+  });
+
+  it("is shown and renders the versions body when versioning is on", () => {
+    renderPanels({
+      env: { ...ENV, versioning: { enabled: true, nudges_enabled: false } },
+      tab: "versions",
+    });
+    expect(screen.getByRole("tab", { name: /Versions/ })).toBeInTheDocument();
+    expect(screen.getByText("versions-body")).toBeInTheDocument();
+  });
+
+  it("falls back to the Overview when versions is deep-linked with versioning off", () => {
+    renderPanels({ tab: "versions" });
+    expect(screen.queryByText("versions-body")).toBeNull();
+    expect(screen.getByText(/overview-body/)).toBeInTheDocument();
+  });
+});
+

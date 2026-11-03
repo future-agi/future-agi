@@ -9,6 +9,7 @@ import Iconify from "src/components/iconify";
 
 import { BUILD_TONES } from "../buildTones";
 import AskUserQuestionCard from "./AskUserQuestionCard";
+import NudgeCard from "./NudgeCard";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -27,6 +28,7 @@ const STEP_SHAPE = PropTypes.shape({
     "cancelled",
     "completed",
     "heartbeat",
+    "nudge-line",
   ]),
   text: PropTypes.string,
   markdown: PropTypes.bool,
@@ -72,6 +74,8 @@ export function Turn({ turn }) {
     );
   }
 
+  if (turn.role === "system") return <NudgeCard turn={turn} />;
+
   return (
     <Stack spacing={1.5}>
       {turn.title && (
@@ -92,7 +96,7 @@ export function Turn({ turn }) {
 Turn.propTypes = {
   turn: PropTypes.shape({
     id: PropTypes.string,
-    role: PropTypes.oneOf(["builder", "user"]),
+    role: PropTypes.oneOf(["builder", "user", "system"]),
     title: PropTypes.string,
     text: PropTypes.string,
     steps: PropTypes.arrayOf(STEP_SHAPE),
@@ -262,6 +266,16 @@ export function Step({ step }) {
 
   if (step.kind === "heartbeat") {
     return <HeartbeatRow since={step.since} />;
+  }
+
+  if (step.kind === "nudge-line") {
+    return (
+      <Typography
+        sx={{ typography: "s2", color: "text.subtitle", px: 0.5, py: 0.25 }}
+      >
+        {step.text}
+      </Typography>
+    );
   }
 
   return <ToolStep step={step} />;

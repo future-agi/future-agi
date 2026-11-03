@@ -276,11 +276,13 @@ const DrawerHeader = ({
             tooltip="Download raw data"
             onClick={onDownload}
           />
-          <HeaderButton
-            icon="basil:share-outline"
-            tooltip="Share trace"
-            onClick={onShare}
-          />
+          {onShare && (
+            <HeaderButton
+              icon="basil:share-outline"
+              tooltip="Share trace"
+              onClick={onShare}
+            />
+          )}
         </Stack>
 
         {/* Close button */}

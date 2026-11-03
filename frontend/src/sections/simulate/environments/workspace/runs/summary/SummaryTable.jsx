@@ -1,21 +1,26 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Table, TableHead, TableBody,
+  Box, Stack, Typography, Checkbox, Table, TableHead, TableBody,
   TableRow, TableCell,
 } from "@mui/material";
 import { fDateTime, formatDuration } from "src/utils/format-time";
+import CustomTooltip from "src/components/tooltip";
 import { runColor } from "../runs.constants";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
+import AgentDiffersTag from "../../run/AgentDiffersTag";
+import { neutralCheckboxSx } from "../detail/trace/traceTable.constants";
+import { COMPARE_COPY } from "../../workspace.constants";
 
-// The dashed placeholder a not-yet-backed cell shows.
+// The dashed cell a run with no value for a column shows.
 const DASH = "-";
 
 // The run comparison table. Real columns (pass, avg duration) plus the derived
-// eval columns render live values; the columns with no backend field yet show a
-// plain dashed cell.
-export default function SummaryTable({ rows, evals, onOpenRun }) {
+// eval columns render live values; Tokens and Cost have no field on the runs
+// list and show a plain dashed cell. With `onToggleSelect`, each row leads with
+// a checkbox for picking runs to compare.
+export default function SummaryTable({ rows, evals, onOpenRun, selectedIds = [], canSelect, onToggleSelect }) {
   return (
     // The card no longer clips (the graph tooltip must escape it), so clip the
     // table to the card's bottom corners here; a scroll box can't clip its own
@@ -36,6 +41,7 @@ export default function SummaryTable({ rows, evals, onOpenRun }) {
       <Table stickyHeader size="small" sx={{ minWidth: 720 }}>
         <TableHead>
           <TableRow sx={{ "& th": { border: 0, py: 1, typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" } }}>
+            {onToggleSelect && <TableCell padding="checkbox" />}
             <TableCell>Run</TableCell>
             <TableCell>Status</TableCell>
             <TableCell align="right">Scenarios</TableCell>
@@ -45,8 +51,6 @@ export default function SummaryTable({ rows, evals, onOpenRun }) {
             <TableCell align="right">Duration</TableCell>
             <TableCell align="right">Tokens</TableCell>
             <TableCell align="right">Cost</TableCell>
-            <TableCell align="right">Said not done</TableCell>
-            <TableCell align="right">Mean return</TableCell>
             {evals.map((e) => (
               <TableCell key={e.id} align="right">{e.name}</TableCell>
             ))}
@@ -54,7 +58,12 @@ export default function SummaryTable({ rows, evals, onOpenRun }) {
         </TableHead>
         <TableBody>
           {rows.map((r) => (
-            <SummaryRow key={r.id} row={r} evals={evals} onOpenRun={onOpenRun} />
+            <SummaryRow
+              key={r.id} row={r} evals={evals} onOpenRun={onOpenRun}
+              selected={selectedIds.includes(r.executionId)}
+              selectable={!!canSelect?.(r)}
+              onToggleSelect={onToggleSelect}
+            />
           ))}
         </TableBody>
       </Table>
@@ -67,16 +76,19 @@ SummaryTable.propTypes = {
   rows: PropTypes.arrayOf(PropTypes.object).isRequired,
   evals: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string, name: PropTypes.string })).isRequired,
   onOpenRun: PropTypes.func,
+  selectedIds: PropTypes.arrayOf(PropTypes.string),
+  canSelect: PropTypes.func,
+  onToggleSelect: PropTypes.func,
 };
 
-function SummaryRow({ row, evals, onOpenRun }) {
+function SummaryRow({ row, evals, onOpenRun, selected, selectable, onToggleSelect }) {
   const color = runColor(row.ordinal);
   const clickable = !!row.executionId;
   const open = () => clickable && onOpenRun?.(row);
 
-  // The run's own agent version (per-execution, real). The environment version
-  // is deliberately NOT shown per row: there is no per-run env version, so
-  // stamping the current one onto every run misrepresents what each ran against.
+  // The run's own agent version (per-execution, real). A run pinned to an
+  // environment version whose agent differs is tagged; its versions show on
+  // the run's own page.
   const sub = row.agentVersion ? `agent ${row.agentVersion}` : "";
 
   return (
@@ -88,6 +100,24 @@ function SummaryRow({ row, evals, onOpenRun }) {
         "& td": { border: 0, borderTop: "1px solid", borderColor: "divider", py: 1.25, whiteSpace: "nowrap" },
       }}
     >
+      {onToggleSelect && (
+        <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()}>
+          {/* A disabled box says why: the run isn't finished, or two are picked. */}
+          <CustomTooltip
+            show={!selected && !selectable} arrow size="small"
+            title={row.executionId && row.runState === "finished" ? COMPARE_COPY.atCap : COMPARE_COPY.onlyFinished}
+          >
+            <span>
+              <Checkbox
+                size="small" checked={selected} disabled={!selected && !selectable}
+                onChange={() => onToggleSelect(row)}
+                inputProps={{ "aria-label": COMPARE_COPY.selectRun(row.label) }}
+                sx={{ p: 0.5, ...neutralCheckboxSx }}
+              />
+            </span>
+          </CustomTooltip>
+        </TableCell>
+      )}
       <TableCell>
         <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0 }}>
           <Box
@@ -101,9 +131,17 @@ function SummaryRow({ row, evals, onOpenRun }) {
             {row.ordinal}
           </Box>
           <Box minWidth={0}>
-            <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
-              {row.label}{sub ? ` · ${sub}` : ""}
-            </Typography>
+            <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
+              <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
+                {row.label}{sub ? ` · ${sub}` : ""}
+              </Typography>
+              {row.agentDiffers && (
+                <AgentDiffersTag
+                  agentVersion={row.pinnedAgentVersion}
+                  environmentVersion={row.environmentVersion}
+                />
+              )}
+            </Stack>
             <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
               {row.at ? fDateTime(row.at) : DASH}
             </Typography>
@@ -125,8 +163,6 @@ function SummaryRow({ row, evals, onOpenRun }) {
       <NumCell value={row.durationS != null ? formatDuration(row.durationS) : DASH} />
       <NumCell value={DASH} muted />
       <NumCell value={DASH} muted />
-      <NumCell value={DASH} muted />
-      <NumCell value={DASH} muted />
       {evals.map((e) => {
         const v = row.scores?.[e.id];
         return <NumCell key={e.id} value={v == null ? DASH : `${Math.round(v)}%`} muted={v == null} />;
@@ -139,6 +175,9 @@ SummaryRow.propTypes = {
   row: PropTypes.object.isRequired,
   evals: PropTypes.array.isRequired,
   onOpenRun: PropTypes.func,
+  selected: PropTypes.bool,
+  selectable: PropTypes.bool,
+  onToggleSelect: PropTypes.func,
 };
 
 function NumCell({ value, bold, muted }) {

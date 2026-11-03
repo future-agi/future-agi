@@ -115,9 +115,6 @@ export const TRACE_COLUMNS = [
 // Columns a chat run has no data for: interruptions only happen on a voice call.
 export const VOICE_ONLY_COLUMNS = new Set(["aiInterruptions", "stopLatency"]);
 
-// An eval result's status while its grade is still on the way.
-export const PENDING_EVAL_STATUS = "pending";
-
 // Every group closed: the table's starting state, and Collapse all. Expand all
 // sets `all`; `expanded` holds the labels opened.
 export const CLOSED_GROUP_VIEW = { all: false, expanded: new Set() };

@@ -1,15 +1,21 @@
 import { describe, it, expect, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { render } from "src/utils/test-utils";
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import OverviewPanel from "../OverviewPanel";
+
+// The drawer's real-data panel has its own tests; here it only has to mount.
+vi.mock("../../agents/AgentVersionsPanel", () => ({
+  default: ({ env }) => (
+    <div data-testid="agent-versions-panel">{env.id}</div>
+  ),
+}));
 import { HardRulesCard } from "../OverviewCards";
 
 const connectedState = {
   agent: { via: "endpoint", typeId: "livekit", values: {} },
-  agentVersions: [{ label: "v1", note: "First build." }],
-  activeAgentVersion: "v1",
   scenarios: [],
 };
 
@@ -18,11 +24,10 @@ const renderPanel = (props = {}) =>
     <OverviewPanel
       env={MOCK_WORLD}
       envState={connectedState}
-      patch={vi.fn()}
       onGo={vi.fn()}
       agentConnected
       {...props}
-    />
+    />,
   );
 
 describe("OverviewPanel", () => {
@@ -68,7 +73,12 @@ describe("OverviewPanel", () => {
         stores: [],
         amendments: [],
         dependencies: [
-          { name: "postgres", kind: "datastore", what: "Stores rider rows", used_by: ["book_ride"] },
+          {
+            name: "postgres",
+            kind: "datastore",
+            what: "Stores rider rows",
+            used_by: ["book_ride"],
+          },
         ],
       },
     });
@@ -85,11 +95,177 @@ describe("OverviewPanel", () => {
     expect(screen.queryByText("Actors")).toBeNull();
   });
 
-  // The Seeded-data card was removed from Overview; stores now live only in the
-  // source→sandbox map (covered by the SourceToSandboxMap suite in
-  // overviewExtras). Its panel-level test went with it.
+  const BACKED_WORLD = { stores: [], amendments: [], dependencies: [] };
 
-  // The "Manage versions" agent card + its version drawer are commented out
-  // (picked up later), so their tests — attach-agent disabled, open the drawer,
-  // seeded-baseline copy — were removed with the feature.
+  it("adds the real domain, direction, source and mode to the facts of a backed voice env", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        surface: "voice",
+        domain: "Logistics",
+        callDirection: "inbound",
+        source: { kind: "github", repository: "acme/ride-agent", ref: "main" },
+        agentMode: "connect_only",
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("Logistics")).toBeInTheDocument();
+    expect(screen.getByText("Inbound")).toBeInTheDocument();
+    expect(screen.getByText("acme/ride-agent@main")).toBeInTheDocument();
+    expect(screen.getByText("Connect only")).toBeInTheDocument();
+  });
+
+  it("leaves out direction for a chat env and empty facts entirely", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        surface: "chat",
+        domain: null,
+        callDirection: "inbound",
+        source: { kind: "provider" },
+        agentMode: null,
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.queryByText("Direction")).toBeNull();
+    expect(screen.queryByText("Domain")).toBeNull();
+    expect(screen.queryByText("Mode")).toBeNull();
+    expect(screen.getByText("Hosted platform")).toBeInTheDocument();
+  });
+
+  it("shows the seeded tables under The world for a backed env", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        seed: {
+          tables: [
+            { name: "bookings", rows: 900, note: "world_db · postgres" },
+          ],
+        },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("Seeded data")).toBeInTheDocument();
+    expect(screen.getByText("bookings")).toBeInTheDocument();
+    expect(screen.getByText("900")).toBeInTheDocument();
+  });
+
+  it("shows a seeded table the API sent without a row count, without breaking", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        seed: { tables: [{ name: "bookings", rows: 900 }, { name: "fares" }] },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("fares")).toBeInTheDocument();
+    expect(screen.getByText("900")).toBeInTheDocument();
+    // The total counts only the rows the API reported.
+    expect(screen.getByText(/^900 rows fill/)).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).toBeNull();
+  });
+
+  it("leaves the harness's own tables out of Seeded data, and the card with them", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        seed: {
+          tables: [
+            { name: "_alk_tool_trace", rows: 0 },
+            { name: "harness_seed_sentinel", rows: 1 },
+          ],
+        },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.queryByText("Seeded data")).toBeNull();
+    expect(screen.queryByText("harness_seed_sentinel")).toBeNull();
+  });
+
+  it("names an agent-definition provider the way the Agents pages do", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        testSubject: {
+          id: "a",
+          name: "Ride bot",
+          provider: "livekit_bridge",
+          versions_count: 1,
+          active_version: "v1",
+        },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("LiveKit · 1 version")).toBeInTheDocument();
+  });
+
+  it("names the agent's provider and versions, with a link to the agent", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        testSubject: {
+          id: "agent-1",
+          name: "Single Prompt Agent",
+          provider: "retell",
+          versions_count: 2,
+          active_version: "v2",
+        },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("Single Prompt Agent v2")).toBeInTheDocument();
+    expect(screen.getByText("Retell · 2 versions")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /View agent/ })).toHaveAttribute(
+      "href",
+      // The Connected agent page, which every org can open; the old Agent
+      // Definition page is hidden from orgs restricted to Environments.
+      "/dashboard/agents/connected/agent-1",
+    );
+  });
+
+  describe("Manage versions", () => {
+    const versioned = {
+      ...MOCK_WORLD,
+      id: "env-1",
+      versioning: { enabled: true },
+    };
+    const manage = () =>
+      screen.queryByRole("button", { name: "Manage versions" });
+
+    it("opens the agent versions in a drawer while versioning is on", async () => {
+      const user = userEvent.setup();
+      renderPanel({ env: versioned });
+      expect(screen.queryByTestId("agent-versions-panel")).toBeNull();
+
+      await user.click(manage());
+      expect(screen.getByTestId("agent-versions-panel")).toHaveTextContent(
+        "env-1",
+      );
+      expect(
+        screen.getByRole("heading", { level: 2, name: "Test subject" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Manage the agent versions running against this environment",
+        ),
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Close" }));
+      await waitFor(() =>
+        expect(screen.queryByTestId("agent-versions-panel")).toBeNull(),
+      );
+    });
+
+    it("offers nothing while versioning is off", () => {
+      renderPanel({ env: { ...versioned, versioning: { enabled: false } } });
+      expect(manage()).toBeNull();
+      renderPanel();
+      expect(manage()).toBeNull();
+    });
+
+    it("offers nothing on a locked template", () => {
+      renderPanel({ env: versioned, locked: true });
+      expect(manage()).toBeNull();
+    });
+  });
 });

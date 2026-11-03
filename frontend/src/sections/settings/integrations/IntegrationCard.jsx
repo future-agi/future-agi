@@ -1,6 +1,7 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
 import {
+  Alert,
   Box,
   Button,
   Card,
@@ -18,10 +19,11 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { fDateTime } from "src/utils/format-time";
-import { useDeleteConnection } from "src/api/integrations";
+import { useDeleteConnection, useStartSlackInstall } from "src/api/integrations";
 import PlatformLogo from "./PlatformLogo";
 import StatusBadge from "./StatusBadge";
 import { SKIP_SYNC_SETTINGS_PLATFORMS } from "./constants";
+import { getErrorMessage } from "./utils";
 
 export default function IntegrationCard({ connection }) {
   const theme = useTheme();
@@ -46,8 +48,10 @@ export default function IntegrationCard({ connection }) {
   const lastSyncedAt = connection.last_synced_at || connection.lastSyncedAt;
 
   const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
   const { mutate: deleteConnection, isPending: deleting } =
     useDeleteConnection();
+  const startSlackInstall = useStartSlackInstall();
 
   const handleClick = () => {
     if (isActionOnly) {
@@ -67,6 +71,18 @@ export default function IntegrationCard({ connection }) {
   const handleDisconnect = () => {
     deleteConnection(connection.id, {
       onSuccess: () => setDisconnectOpen(false),
+    });
+  };
+
+  const handleReconnectSlack = () => {
+    setConnectionError("");
+    startSlackInstall.mutate(connection.id, {
+      onSuccess: (response) => {
+        const authorizationUrl = response.data?.result?.authorization_url;
+        if (authorizationUrl) window.location.assign(authorizationUrl);
+        else setConnectionError("Could not start Slack authorization. Please try again.");
+      },
+      onError: (error) => setConnectionError(getErrorMessage(error, "Could not reconnect Slack.")),
     });
   };
 
@@ -153,15 +169,21 @@ export default function IntegrationCard({ connection }) {
           <DialogTitle>Manage {displayName}</DialogTitle>
           <DialogContent>
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              Connected {createdAt ? fDateTime(createdAt) : "—"}. Disconnecting
-              will remove the API key and disable issue creation from Error
-              Feed.
+              {connection.platform === "slack"
+                ? `Connected ${createdAt ? fDateTime(createdAt) : "—"}. Reconnect to renew Slack access, or disconnect to stop Error Feed notifications using this workspace.`
+                : `Connected ${createdAt ? fDateTime(createdAt) : "—"}. Disconnecting will remove the API key and disable issue creation from Error Feed.`}
             </Typography>
+            {connectionError && <Alert severity="error" sx={{ mt: 2 }}>{connectionError}</Alert>}
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setDisconnectOpen(false)} size="small">
               Cancel
             </Button>
+            {connection.platform === "slack" && (
+              <Button onClick={handleReconnectSlack} size="small" disabled={startSlackInstall.isPending}>
+                {startSlackInstall.isPending ? "Connecting…" : "Reconnect Slack"}
+              </Button>
+            )}
             <Button
               onClick={handleDisconnect}
               color="error"

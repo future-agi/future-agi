@@ -12,9 +12,9 @@ import {
 import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
+import { SCORING_STATUS } from "../../runs.constants";
 import {
   HEAD_ROW_PX,
-  PENDING_EVAL_STATUS,
   isBad,
   neutralCheckboxSx,
   pinnedLeftSx,
@@ -248,7 +248,7 @@ export default function TraceGroupHeaderRow({
             // A finished call can still be waiting on this eval's grade.
             const grading = group.rows.some((t) =>
               t.evalResults?.some(
-                (r) => r.id === e.id && r.status === PENDING_EVAL_STATUS,
+                (r) => r.id === e.id && r.status === SCORING_STATUS.PENDING,
               ),
             );
             return (

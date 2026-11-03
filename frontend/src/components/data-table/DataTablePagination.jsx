@@ -46,6 +46,7 @@ export default function DataTablePagination({
         Rows per page:
         <Box
           component="select"
+          aria-label="Rows per page"
           value={pageSize}
           onChange={(e) => onPageSizeChange?.(parseInt(e.target.value, 10))}
           sx={{
@@ -72,6 +73,7 @@ export default function DataTablePagination({
 
       <IconButton
         size="small"
+        aria-label="Previous page"
         disabled={isFirstPage}
         onClick={() => onPageChange?.(page - 1)}
       >
@@ -79,6 +81,7 @@ export default function DataTablePagination({
       </IconButton>
       <IconButton
         size="small"
+        aria-label="Next page"
         disabled={isLastPage}
         onClick={() => onPageChange?.(page + 1)}
       >

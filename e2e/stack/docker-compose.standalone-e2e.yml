@@ -22,6 +22,8 @@ services:
     # SAML checks the response Destination against BASE_URL/saml2_auth/acs/.
     environment:
       BASE_URL: http://localhost:${BACKEND_PORT:-8100}
+      # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
+      RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
     extra_hosts:
       - "agentcc-gateway:127.0.0.1"
     # A crash should fail the run loudly instead of restarting quietly.

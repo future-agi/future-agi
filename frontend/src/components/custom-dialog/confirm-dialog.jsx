@@ -17,6 +17,7 @@ export default function ConfirmDialog({
   action,
   open,
   onClose,
+  closeDisabled = false,
   ...other
 }) {
   const theme = useTheme();
@@ -43,6 +44,7 @@ export default function ConfirmDialog({
                 color: "text.primary",
               }}
               onClick={onClose}
+              disabled={closeDisabled}
             >
               <Iconify icon="mdi:close" />
             </IconButton>
@@ -67,6 +69,7 @@ export default function ConfirmDialog({
             variant="outlined"
             color="inherit"
             onClick={onClose}
+            disabled={closeDisabled}
             sx={{ paddingX: "24px" }}
           >
             Cancel
@@ -80,6 +83,7 @@ export default function ConfirmDialog({
 
 ConfirmDialog.propTypes = {
   action: PropTypes.node,
+  closeDisabled: PropTypes.bool,
   content: PropTypes.node,
   onClose: PropTypes.func,
   open: PropTypes.bool,

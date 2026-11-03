@@ -726,6 +726,113 @@
 
 ## error-feed
 
+### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
+
+**Goal:** A developer connects Slack, creates an Error Feed rule, and receives only matching issue notifications  
+**Spec:** `flows/error-feed/slack-alert.spec.ts:22`  
+**Tags:** —
+
+**User steps:**
+
+1. open the Error Feed alert builder and enter a project, trigger, and filters
+2. connect a Slack workspace from the builder and return to the saved draft
+3. select a channel and create the rule
+4. create a nonmatching issue and a matching issue
+5. see the matching notification in Slack
+
+**Backend state verified:**
+
+- the rule is saved in the scoped alert API with the selected Slack channel
+- both seeded issue events are processed and only the matching issue has a sent delivery
+- the mock Slack API receives exactly the matching issue message with a Feed link
+
+### ERR-E2E-002 — every issue trigger sends only after its selected transition
+
+**Goal:** A developer chooses each issue trigger and receives a Slack alert when its condition occurs  
+**Spec:** `flows/error-feed/trigger-matrix.spec.ts:30`  
+**Tags:** —
+
+**User steps:**
+
+1. connect a test Slack workspace and create an Error Feed project
+2. create a rule in the UI for each issue trigger with a distinct issue-group filter
+3. create and update issues through the test-only issue API to exercise each transition
+4. confirm each selected transition posts exactly one message to Slack
+
+**Backend state verified:**
+
+- the alert API persists all four selected triggers and issue-group filters
+- each matching transition creates a sent delivery for its rule
+- the mock Slack API receives one message for each matched issue
+
+### ERR-E2E-003 — failed Slack reconnect can recover and the connection can be removed
+
+**Goal:** A developer can recover from a denied Slack reconnect and disconnect the integration  
+**Spec:** `flows/error-feed/slack-integration-management.spec.ts:17`  
+**Tags:** —
+
+**User steps:**
+
+1. connect Slack and open its card in Settings Integrations
+2. attempt to reconnect but deny consent and see the error
+3. retry the reconnect successfully
+4. disconnect Slack from the integration card
+
+**Backend state verified:**
+
+- denied consent leaves the existing connection active and unchanged
+- successful reconnect preserves the same workspace connection ID
+- disconnect removes the connection from the scoped integrations API
+
+### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV
+
+**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)  
+**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`  
+**Tags:** —
+
+**User steps:**
+
+1. open the issue page
+2. click Export
+3. save the downloaded CSV
+4. upload the downloaded CSV using the Add Dataset form
+
+**Backend state verified:**
+
+- the imported dataset has exactly the 12 export columns
+- each exported trace becomes one dataset row, with its quoted multiline input and leading-symbol output stored unchanged
+
+**Browser observations:**
+
+- the export requests the issue overview once, with rep_limit=200
+- the file is named error-feed-<issue>-traces.csv and its header is exactly the 12 export columns
+- the file has exactly one row per stubbed trace, with quoted cells intact and no formula prefix
+- the snackbar reports exactly the exported trace count
+- the uploaded dataset's grid shows exactly the exported trace ids
+
+### ERR-E2E-005 — a shared issue opens read-only for someone who is not signed in
+
+**Goal:** Someone who is not signed in opens a shared Error Feed issue and reads it without being able to change it  
+**Spec:** `flows/error-feed/shared-issue.spec.ts:28`  
+**Tags:** —
+
+**User steps:**
+
+1. open the issue's public share link while signed out
+2. read the issue on Overview
+3. pick another trace in Traces affected
+4. open a trace from the Traces tab
+5. open the Trends and Fix tabs
+6. open a restricted share link while signed out
+
+**Browser observations:**
+
+- the page shows the issue title and View only, with no Resolve, Acknowledge, Ignore, Share, Debug or Create Linear issue action
+- the browser never calls the signed-in Error Feed endpoints (/tracer/feed/issues/)
+- picking a trace reads the sidebar through the share token for exactly that trace
+- opening a trace reads it through the share token and shows its spans
+- a restricted link shows Sign in required, with no error toast, and stays on the shared URL
+
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
 **Goal:** A saved link to a retired issue opens its surviving issue  
@@ -851,6 +958,28 @@
 - managed mock routing attested before model calls
 - UI POST and stored task retain the custom predicate
 - completed task has exactly the matching span in PG and CH, with mock verdict and usage
+
+### EVAL-E2E-006 — a task run opens its trace in a drawer from the Usage tab
+
+**Goal:** Open the trace behind an eval task result without leaving the task Usage tab  
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:25`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a trace and run an eval task over it through the mock judge
+2. open the task Usage tab and click its run
+3. read the run panel Trace ID and Span ID
+4. click Open trace and read the drawer
+5. press Esc to close the drawer, then Esc again to close the run panel
+
+**Backend state verified:**
+
+- the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored
+- the Usage runs response carries only the completed run, with the seeded trace and span IDs
+- the run panel shows the seeded trace and span IDs
+- the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open
+- the first Esc closes only the drawer and the second closes the run panel
 
 ## gateway
 
@@ -1218,7 +1347,7 @@
 ### OBS-E2E-027 — trace list pager windows forward without an endless page count
 
 **Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end  
-**Spec:** `flows/observe/list-pagination.spec.ts:311`  
+**Spec:** `flows/observe/list-pagination.spec.ts:220`  
 **Tags:** —
 
 **User steps:**
@@ -1239,7 +1368,7 @@
 ### OBS-E2E-028 — Next stays usable through a full Back-Back-Next-Next round trip from the terminal page
 
 **Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation  
-**Spec:** `flows/observe/list-pagination.spec.ts:537`  
+**Spec:** `flows/observe/list-pagination.spec.ts:446`  
 **Tags:** —
 
 **User steps:**
@@ -1257,7 +1386,7 @@
 ### OBS-E2E-029 — an exactly-full final page ends pagination without offering a phantom next page
 
 **Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1  
-**Spec:** `flows/observe/list-pagination.spec.ts:629`  
+**Spec:** `flows/observe/list-pagination.spec.ts:538`  
 **Tags:** —
 
 **User steps:**
@@ -1274,7 +1403,7 @@
 ### OBS-E2E-030 — has_more without a strictly greater total promises no page number, but keeps Next enabled
 
 **Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists  
-**Spec:** `flows/observe/list-pagination.spec.ts:683`  
+**Spec:** `flows/observe/list-pagination.spec.ts:592`  
 **Tags:** —
 
 **User steps:**
@@ -1292,7 +1421,7 @@
 ### OBS-E2E-031 — the Next label DOM node survives ~1.5s of ancestor re-render churn
 
 **Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it  
-**Spec:** `flows/observe/list-pagination.spec.ts:762`  
+**Spec:** `flows/observe/list-pagination.spec.ts:671`  
 **Tags:** —
 
 **User steps:**
@@ -1310,7 +1439,7 @@
 ### OBS-E2E-032 — a real dwell-click on Next/Back actually fires a click, not just a press
 
 **Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render  
-**Spec:** `flows/observe/list-pagination.spec.ts:828`  
+**Spec:** `flows/observe/list-pagination.spec.ts:737`  
 **Tags:** —
 
 **User steps:**
@@ -1329,7 +1458,7 @@
 ### OBS-E2E-033 — changing page size changes the outbound page_size, the rendered row count, and resets to page 1
 
 **Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position  
-**Spec:** `flows/observe/list-pagination.spec.ts:897`  
+**Spec:** `flows/observe/list-pagination.spec.ts:806`  
 **Tags:** —
 
 **User steps:**
@@ -1346,7 +1475,7 @@
 ### OBS-E2E-034 — the agent call-log pager (a plain DRF-paginated, non-cursor screen) still paginates and reaches its last row
 
 **Goal:** A developer browsing an agent version's call logs gets a working pager even though this screen has no cursor `has_more` contract  
-**Spec:** `flows/observe/list-pagination.spec.ts:937`  
+**Spec:** `flows/observe/agent-call-log-pager.spec.ts:11`  
 **Tags:** —
 
 **User steps:**
@@ -1365,7 +1494,7 @@
 ### OBS-E2E-035 — changing the date filter resets pagination to page 1 and drops the old cursor
 
 **Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced  
-**Spec:** `flows/observe/list-pagination.spec.ts:995`  
+**Spec:** `flows/observe/list-pagination.spec.ts:846`  
 **Tags:** —
 
 **User steps:**
@@ -1383,7 +1512,7 @@
 ### OBS-E2E-036 — the furthest-visited page reappears as a boundary after walking back to page 1
 
 **Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on  
-**Spec:** `flows/observe/list-pagination.spec.ts:1082`  
+**Spec:** `flows/observe/list-pagination.spec.ts:933`  
 **Tags:** —
 
 **User steps:**
@@ -1707,6 +1836,27 @@
 - Custom links and views send and keep their stored range verbatim and list no span
 - opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
 
+### OBS-E2E-052 — OpenRouter-shaped traces keep coherent usage through filters, sorting and details
+
+**Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details  
+**Spec:** `flows/observe/openrouter-usage.spec.ts:43`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest empty-root generation/attempt trees, tiny/zero costs, nested summaries, parent-only and independent-call controls
+2. select Total Tokens greater than 20 in the real Filter panel and cross a real page boundary
+3. scroll to Tokens and Total Cost, sort each ascending and descending, and compare complete UI/API pages with the independent oracle
+4. inspect tiny-cost and usage-control trace details
+5. inspect first-generation session messages and exact Users identities
+
+**Backend state verified:**
+
+- A: exact latest source hierarchy, usage, project type and user linkage retain the scoped fixture identities
+- B: actual filter/sort requests and two complete pages equal the canonical usage oracle with exact total, stable ties and no duplicates
+- C: trace/span/session API precision and UI displays retain positive subprecision costs, nested 18, equal independent calls and parent-only usage
+- D: session first-generation messages and Users UI/API identities equal the scoped storage facts
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
@@ -1750,3 +1900,55 @@
 - PG mcp_server_mcptoolgroupconfig.enabled_groups equals that exact set for the actor connection
 - GET /mcp/internal/tools/ equals the initial tool set minus all dataset tools
 - POST /mcp/internal/tool-call/ list_datasets returns 403 while whoami and list_projects still succeed
+
+## simulate
+
+### SIM-E2E-001 — Simulate opens on Environments, and an org from after the cutoff sees only Environments
+
+**Goal:** A developer opening Simulate lands on Environments, old Harness, Simulator Agent, Personas and template links go somewhere sensible, Personas opens as a tab on Environments, and a new org sees only Environment in the menu and gets not found from direct Scenarios, Run Simulation and Agent Definition links  
+**Spec:** `flows/simulate/environments-only-routing.spec.ts:33`  
+**Tags:** —
+
+**User steps:**
+
+1. open /dashboard/simulate
+2. open the old Harness list, new and job links
+3. open the old Simulator Agent link
+4. open the old Personas link
+5. open the Personas tab
+6. open the Prebuilt template links
+7. read the Simulate menu
+8. open the old Agent Definition link
+9. open the Scenarios, Run Simulation and Agent Definition links directly
+
+**Browser observations:**
+
+- /dashboard/simulate lands on Environments
+- harness lands on Environments, harness/new on the Build tab, harness/<id> on environments/<id>
+- simulator-agent lands on Environments
+- personas lands on the Environments Personas tab
+- the Personas tab is selected and shows the persona search
+- both template URLs stay on their URL and open their page by title
+- agent-definitions lands on Connected agents
+- the Simulate menu is exactly Environment
+- /dashboard/simulate/scenarios, /test and /agent-definitions/<id> land on /404
+
+### SIM-E2E-002 — an org from before the Simulate cutoff keeps Scenarios and Run Simulation
+
+**Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu  
+**Spec:** `flows/simulate/existing-customer-pages.spec.ts:22`  
+**Tags:** —
+
+**User steps:**
+
+1. read the Simulate menu
+2. open Scenarios and Run Simulation from the menu
+
+**Backend state verified:**
+
+- user-info for the actor's org reports restrict_simulate_to_environments: false
+
+**Browser observations:**
+
+- the Simulate menu is exactly Environment, Scenarios, Run Simulation
+- each of those two items opens its page by URL and title, never /404

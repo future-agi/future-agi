@@ -5,18 +5,20 @@ Tests for GatewayClient, auth_bridge, and log_ingestion services.
 """
 
 import hashlib
+import importlib
 import json
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 import structlog
+from django.db import connection
 from django.utils import timezone
 from pydantic import ValidationError
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
-from agentcc.models import AgentccAPIKey
+from agentcc.models import AgentccAPIKey, AgentccEmailAlert, AgentccRequestLog
 from agentcc.models.webhook import AgentccWebhook, AgentccWebhookEvent
 from agentcc.services import auth_bridge
 from agentcc.services.gateway_client import (
@@ -720,6 +722,249 @@ class TestLogIngestion:
             "guardrail.triggered",
         }
         assert mock_deliver_webhook_events.call_count == 1
+
+    @patch("agentcc.services.webhook_delivery.deliver_webhook_events")
+    def test_resent_batch_adds_no_rows_or_webhook_events(
+        self, mock_deliver_webhook_events, organization
+    ):
+        # The gateway resends a batch whose response it did not get in time.
+        # Each resend used to add the same rows, and fire the webhooks, again.
+        AgentccAPIKey.objects.create(
+            gateway_key_id="test-key-for-resend",
+            name="resend-key",
+            organization=organization,
+        )
+        webhook = AgentccWebhook.objects.create(
+            organization=organization,
+            name="resend-hook",
+            url="https://example.com/webhook",
+            events=["request.completed"],
+            is_active=True,
+        )
+        logs = [
+            {
+                "request_id": f"resend-{i}",
+                "model": "gpt-4",
+                "provider": "openai",
+                "status_code": 200,
+                "cost": 0.01,
+                "auth_key_id": "test-key-for-resend",
+            }
+            for i in range(2)
+        ]
+
+        assert ingest_request_logs(logs) == 2
+        assert ingest_request_logs(logs) == 0
+        assert (
+            ingest_request_logs(logs + [{**logs[0], "request_id": "resend-new"}]) == 1
+        )
+
+        rows = AgentccRequestLog.no_workspace_objects.filter(organization=organization)
+        assert sorted(rows.values_list("request_id", flat=True)) == [
+            "resend-0",
+            "resend-1",
+            "resend-new",
+        ]
+        assert (
+            AgentccWebhookEvent.no_workspace_objects.filter(webhook=webhook).count()
+            == 3
+        )
+        assert mock_deliver_webhook_events.call_count == 2
+
+    def test_rows_without_a_request_id_are_all_kept(self, organization):
+        AgentccAPIKey.objects.create(
+            gateway_key_id="test-key-for-blank-id",
+            name="blank-id-key",
+            organization=organization,
+        )
+        entry = {
+            "model": "gpt-4",
+            "status_code": 200,
+            "auth_key_id": "test-key-for-blank-id",
+        }
+
+        assert ingest_request_logs([entry, entry]) == 2
+        assert (
+            AgentccRequestLog.no_workspace_objects.filter(
+                organization=organization, request_id=""
+            ).count()
+            == 2
+        )
+
+    @patch("agentcc.services.webhook_delivery.deliver_webhook_events")
+    def test_budget_refusal_raises_budget_exceeded(
+        self, mock_deliver_webhook_events, organization
+    ):
+        AgentccAPIKey.objects.create(
+            gateway_key_id="test-key-for-budget-event",
+            name="budget-event-key",
+            organization=organization,
+        )
+        webhook = AgentccWebhook.objects.create(
+            organization=organization,
+            name="budget",
+            url="https://example.com/budget",
+            events=["budget.exceeded"],
+            is_active=True,
+        )
+        refused = {
+            "model": "gpt-5.5",
+            "status_code": 429,
+            "auth_key_id": "test-key-for-budget-event",
+        }
+
+        ingest_request_logs(
+            [
+                {
+                    **refused,
+                    "request_id": "budget-refused",
+                    "error_code": "org_budget_exceeded",
+                },
+                {
+                    **refused,
+                    "request_id": "rate-limited",
+                    "error_code": "rate_limit_exceeded",
+                },
+            ]
+        )
+
+        events = AgentccWebhookEvent.no_workspace_objects.filter(webhook=webhook)
+        assert [(e.event_type, e.payload["request_id"]) for e in events] == [
+            ("budget.exceeded", "budget-refused")
+        ]
+
+    @patch("agentcc.services.email_sender.send_alert_email_activity.apply_async")
+    @patch("agentcc.services.webhook_delivery.deliver_webhook_events")
+    def test_email_alert_starts_once_per_cooldown_off_the_request(
+        self, mock_deliver_webhook_events, mock_start, organization
+    ):
+        AgentccAPIKey.objects.create(
+            gateway_key_id="test-key-for-email-alert",
+            name="email-alert-key",
+            organization=organization,
+        )
+        alert = AgentccEmailAlert.objects.create(
+            organization=organization,
+            name="errors",
+            recipients=["ops@example.com"],
+            events=["error.occurred"],
+            provider="sendgrid",
+            cooldown_minutes=5,
+        )
+        entry = {"model": "gpt-5.5", "auth_key_id": "test-key-for-email-alert"}
+        failed = {**entry, "status_code": 500, "error_message": "upstream failed"}
+
+        ingest_request_logs([{**entry, "request_id": "email-ok", "status_code": 200}])
+        assert mock_start.call_count == 0
+
+        # One send for the batch, naming the first failed request, started in
+        # the background; ingestion does not wait on the mail provider.
+        ingest_request_logs(
+            [
+                {**failed, "request_id": "email-failed-1"},
+                {**failed, "request_id": "email-failed-2"},
+            ]
+        )
+        assert mock_start.call_count == 1
+        alert_id, event_type, context = mock_start.call_args.kwargs["args"]
+        assert (alert_id, event_type) == (str(alert.id), "error.occurred")
+        assert context["request_id"] == "email-failed-1"
+        assert mock_start.call_args.kwargs["dispatch_timeout_seconds"] == 5
+        alert.refresh_from_db()
+        assert alert.last_triggered_at is not None
+
+        # The cooldown started when the alert fired, whatever the send does.
+        ingest_request_logs([{**failed, "request_id": "email-failed-3"}])
+        assert mock_start.call_count == 1
+
+        AgentccEmailAlert.no_workspace_objects.filter(id=alert.id).update(
+            last_triggered_at=timezone.now() - timedelta(minutes=6)
+        )
+        ingest_request_logs([{**failed, "request_id": "email-failed-4"}])
+        assert mock_start.call_count == 2
+
+    @patch(
+        "agentcc.services.email_sender._send_via_sendgrid",
+        return_value={"success": True},
+    )
+    def test_email_alert_activity_sends_inside_the_cooldown_it_started(
+        self, mock_send, organization
+    ):
+        from agentcc.services.email_sender import send_alert_email_activity
+
+        alert = AgentccEmailAlert.objects.create(
+            organization=organization,
+            name="errors",
+            recipients=["ops@example.com"],
+            events=["error.occurred"],
+            provider="sendgrid",
+            cooldown_minutes=5,
+            last_triggered_at=timezone.now(),
+        )
+
+        # The function itself: the activity wrapper closes the test's DB connection.
+        send_alert_email_activity._original_func(
+            str(alert.id), "error.occurred", {"request_id": "email-failed-1"}
+        )
+
+        assert mock_send.call_count == 1
+        _, recipients, subject, body = mock_send.call_args.args
+        assert recipients == ["ops@example.com"]
+        assert "Error Occurred" in subject
+        assert "email-failed-1" in body
+
+
+@pytest.mark.integration
+@pytest.mark.django_db(transaction=True)
+def test_request_log_migration_keeps_one_row_per_request(organization):
+    """Runs migration 0029's own code over duplicates saved before it existed.
+
+    Transactional, because CREATE INDEX CONCURRENTLY cannot run in a
+    transaction block.
+    """
+    migration = importlib.import_module(
+        "agentcc.migrations.0029_request_log_unique_request_id"
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(migration._DROP_INDEX_SQL)
+
+    now = timezone.now()
+    kept = None
+    for minutes in (3, 2, 1):
+        row = AgentccRequestLog.no_workspace_objects.create(
+            organization=organization, request_id="dup-1", model="gpt-4"
+        )
+        AgentccRequestLog.no_workspace_objects.filter(id=row.id).update(
+            created_at=now - timedelta(minutes=minutes)
+        )
+        kept = kept or row
+    for _ in range(2):
+        AgentccRequestLog.no_workspace_objects.create(
+            organization=organization, request_id="", model="gpt-4"
+        )
+    AgentccRequestLog.no_workspace_objects.create(
+        organization=organization, request_id="single", model="gpt-4"
+    )
+
+    migration._dedupe_and_build_index(connection)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+            "WHERE c.relname = %s",
+            [migration._INDEX],
+        )
+        assert cursor.fetchone() == (True,)
+
+    live = AgentccRequestLog.no_workspace_objects.filter(organization=organization)
+    assert list(live.filter(request_id="dup-1").values_list("id", flat=True)) == [
+        kept.id
+    ]
+    assert live.filter(request_id="").count() == 2
+    assert live.filter(request_id="single").count() == 1
+    assert (
+        AgentccRequestLog.all_objects.filter(request_id="dup-1", deleted=True).count()
+        == 2
+    )
 
 
 @pytest.mark.integration
