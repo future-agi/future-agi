@@ -666,9 +666,11 @@ const traceRow = (raw) => ({
 });
 
 // The worker record lands up to a minute after the call ends, so a missing one is checked again
-// for two minutes before settling on none.
+// for two minutes, then once a minute for ten more while the drawer stays open, before settling on none.
 export const WORKERS_ARRIVAL_POLL_MS = 15000;
 export const WORKERS_ARRIVAL_POLLS = 8;
+export const WORKERS_LATE_POLL_MS = 60000;
+export const WORKERS_LATE_POLLS = 10;
 
 // Which of a multi-agent app's workers did what in one call. An empty answer (204) means the
 // trial has no worker record (no hand-off was seen, or the record is still arriving): null.
@@ -681,17 +683,26 @@ export function useCallWorkers(callExecutionId) {
     enabled: !!callExecutionId,
     retry: false,
     refetchInterval: (query) =>
-      query.state.data === null &&
-      query.state.dataUpdateCount <= WORKERS_ARRIVAL_POLLS
-        ? WORKERS_ARRIVAL_POLL_MS
-        : false,
+      query.state.data !== null
+        ? false
+        : query.state.dataUpdateCount <= WORKERS_ARRIVAL_POLLS
+          ? WORKERS_ARRIVAL_POLL_MS
+          : query.state.dataUpdateCount <=
+              WORKERS_ARRIVAL_POLLS + WORKERS_LATE_POLLS
+            ? WORKERS_LATE_POLL_MS
+            : false,
   });
 }
 
 // Whether a call has workers to show: a call that handed no work to other agents has no Participants tab.
 export function useHasWorkers(callExecutionId) {
   const { data } = useCallWorkers(callExecutionId);
-  return Boolean(data?.workers?.length || data?.events?.length);
+  return Boolean(
+    data?.workers?.length ||
+      data?.events?.some(
+        (one) => one.type === "delegated" || one.type === "transferred",
+      ),
+  );
 }
 
 export function useCallTraces(executionId, callExecutionId) {

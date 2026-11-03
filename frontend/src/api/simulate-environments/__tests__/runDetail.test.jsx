@@ -1646,11 +1646,39 @@ describe("useCallWorkers", () => {
     expect(result.current.data).toBe(null);
   });
 
+  it("shows Participants only for a call with a worker or a hand-off", async () => {
+    const { useHasWorkers } = await import("../runDetail");
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const has = async (record) => {
+      axios.get.mockReset();
+      axios.get.mockResolvedValue({ data: record });
+      const { result } = renderHook(() => useHasWorkers(JSON.stringify(record)), {
+        wrapper: Wrapper,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return result.current;
+    };
+    expect(await has({ workers: [], events: [{ type: "tool_call" }] })).toBe(false);
+    expect(await has({ workers: [], events: [{ type: "delegated" }] })).toBe(true);
+    expect(await has({ workers: [{ id: "w" }], events: [] })).toBe(true);
+  });
+
   it("checks again for a record still arriving after the call, then stops", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      const { useCallWorkers, WORKERS_ARRIVAL_POLL_MS, WORKERS_ARRIVAL_POLLS } =
-        await import("../runDetail");
+      const {
+        useCallWorkers,
+        WORKERS_ARRIVAL_POLL_MS,
+        WORKERS_ARRIVAL_POLLS,
+        WORKERS_LATE_POLL_MS,
+        WORKERS_LATE_POLLS,
+      } = await import("../runDetail");
       const notYet = { status: 204, data: "" };
       const record = { workers: [], events: [] };
       axios.get.mockReset();
@@ -1679,9 +1707,16 @@ describe("useCallWorkers", () => {
       });
       await waitFor(() => expect(never.result.current.isSuccess).toBe(true));
       await vi.advanceTimersByTimeAsync(
-        WORKERS_ARRIVAL_POLL_MS * (WORKERS_ARRIVAL_POLLS + 3),
+        WORKERS_ARRIVAL_POLL_MS * WORKERS_ARRIVAL_POLLS,
       );
       expect(axios.get).toHaveBeenCalledTimes(WORKERS_ARRIVAL_POLLS + 1);
+      // Then once a minute for a while longer, and no more.
+      await vi.advanceTimersByTimeAsync(
+        WORKERS_LATE_POLL_MS * (WORKERS_LATE_POLLS + 3),
+      );
+      expect(axios.get).toHaveBeenCalledTimes(
+        WORKERS_ARRIVAL_POLLS + WORKERS_LATE_POLLS + 1,
+      );
     } finally {
       vi.useRealTimers();
     }
