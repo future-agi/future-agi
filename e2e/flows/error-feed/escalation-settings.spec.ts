@@ -33,7 +33,7 @@ test('ESC-E2E-004: Configure and restore workspace escalation thresholds', {
     await expectValues(dialog, defaults);
     await fillValues(dialog, { ...custom, min_findings: 4 });
     await dialog.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(dialog.getByText('Must be lower than the entry minimum.')).toBeVisible({ timeout: UI_READY });
+    await expect(dialog.getByText('Must be below 4.')).toBeVisible({ timeout: UI_READY });
     expect((await readSettings(scopeActors, actor)).revision).toBe(initial.revision);
     await fillValues(dialog, custom);
     await saveSettings(page, dialog);
