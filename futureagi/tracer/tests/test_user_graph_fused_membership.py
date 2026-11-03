@@ -398,12 +398,26 @@ class _UniqExact:
 
 
 def _sqlite_metric_sql(sql):
-    # Replace only CH-only syntax/functions; execute both real generated
-    # reductions against the same pre-replayed latest_spans/remap fixtures.
-    tail = sql[_cte(sql, "eu_survivor_map")[1] :].split("SETTINGS", 1)[0]
+    # Exercise the generated fused-window/member reduction against the same
+    # explicitly pre-replayed latest_spans/remap fixture. The CH-only monetary
+    # proof runs through real CH25 coverage suites; here the fixture supplies
+    # its already-qualified compact flags, just as this module's docstring says.
+    monetary, after_monetary = _cte(sql, "graph_monetary_spans")
+    assert "groupArrayIf(tuple(" in monetary
+    assert "AS graph_cost_flags" in monetary
+    assert "AS graph_output_match" in monetary
+    tail = sql[after_monetary:].split("SETTINGS", 1)[0].lstrip(" ,\n")
+    query = (
+        "WITH graph_monetary_spans AS ("
+        "SELECT latest_spans.*, 1 AS graph_cost_known, "
+        "0 AS graph_cost_unknown, 1 AS graph_output_match FROM latest_spans)\n"
+        + tail
+    )
     return (
-        tail.replace(" FINAL", "")
+        query.replace(" FINAL", "")
         .replace("%(project_id)s", ":project_id")
+        .replace("rs.graph_cost_flags.1", "rs.graph_cost_known")
+        .replace("rs.graph_cost_flags.2", "rs.graph_cost_unknown")
         # SQLite gives input column names precedence over SELECT aliases.
         .replace("GROUP BY end_user_id, trace_id", "GROUP BY 1, 2")
     )
