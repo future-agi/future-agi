@@ -207,3 +207,19 @@ class TestFewShotRetrievalWithStructuredInputs:
 
         assert examples == [[{"item_id": "fb-1", "feedback_comment": "too vague"}]]
         assert service.payloads == [{"text": [str(eval_input)], "input_type": "text"}]
+
+    @pytest.mark.parametrize(
+        "eval_input", [None, {}, []], ids=["none", "empty_dict", "empty_list"]
+    )
+    def test_empty_inputs_are_still_skipped(self, client, manager, eval_input):
+        service = FakeEmbedService()
+        with patch.object(client.session, "post", side_effect=service):
+            examples = manager.retrieve_avg_rag_based_examples(
+                eval_id="eval-1",
+                inputs=[eval_input],
+                input_cols=["input"],
+                organization_id="org-1",
+            )
+
+        assert examples == []
+        assert service.payloads == []

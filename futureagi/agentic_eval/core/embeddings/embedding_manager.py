@@ -1084,7 +1084,7 @@ class EmbeddingManager:
                     logger.warning(f"Skipping input {n} due to mismatch in column names or types")
                     continue
                 # Stored feedback embeds text as str(value) (data_formatter); match it.
-                if self.input_types[n] == "text" and not isinstance(inp, str):
+                if self.input_types[n] == "text" and inp and not isinstance(inp, str):
                     inp = str(inp)
                 if table_name == GROUND_TRUTH_TABLE_NAME:
                     meta_col = "column_name"
