@@ -2,11 +2,17 @@ import PropTypes from "prop-types";
 import Button from "@mui/material/Button";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
-import CircularProgress from "@mui/material/CircularProgress";
 import Iconify from "src/components/iconify";
-import { useCapabilities } from "src/hooks/useCapabilities";
+import OSSUpgradeGate from "src/components/oss-upgrade-gate";
+import { CAPABILITY, useCapabilities } from "src/hooks/useCapabilities";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const CONTACT_URL = "https://futureagi.com/talk-to-human";
+
+const CAPABILITY_PREVIEW = Object.freeze({
+  [CAPABILITY.ERROR_FEED]: "errorFeed",
+  [CAPABILITY.FALCON_AI]: "falconAI",
+});
 
 export default function CapabilityGate({ feature, children }) {
   const { data, isLoading, isError, refetch } = useCapabilities();
@@ -18,7 +24,7 @@ export default function CapabilityGate({ feature, children }) {
         justifyContent="center"
         sx={{ height: 1, minHeight: 240 }}
       >
-        <CircularProgress size={32} />
+        <ContentSkeleton variant="panel" />
       </Stack>
     );
   }
@@ -35,7 +41,7 @@ export default function CapabilityGate({ feature, children }) {
         sx={{ height: 1, minHeight: 240, px: 3, textAlign: "center" }}
       >
         <Iconify
-          icon="mdi:cloud-alert-outline"
+          icon="solar:cloud-cross-linear"
           sx={{ width: 48, height: 48, color: "text.secondary" }}
         />
         <Typography variant="body1">
@@ -60,6 +66,11 @@ export default function CapabilityGate({ feature, children }) {
 
   const reasonCode = featureData?.reason_code;
 
+  const previewFeature = CAPABILITY_PREVIEW[feature];
+  if (previewFeature) {
+    return <OSSUpgradeGate feature={previewFeature} reasonCode={reasonCode} />;
+  }
+
   return (
     <Stack
       alignItems="center"
@@ -68,7 +79,7 @@ export default function CapabilityGate({ feature, children }) {
       sx={{ height: 1, minHeight: 480, px: 3, textAlign: "center" }}
     >
       <Iconify
-        icon="mdi:rocket-launch-outline"
+        icon="solar:rocket-linear"
         sx={{ width: 64, height: 64, color: "primary.main" }}
       />
       <Typography variant="h5">This feature requires an upgrade.</Typography>

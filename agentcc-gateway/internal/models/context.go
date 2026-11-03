@@ -59,7 +59,23 @@ type RequestContext struct {
 	Timings       map[string]time.Duration
 	Errors        []error
 
-	// mu protects Timings and Metadata during parallel post-plugin execution.
+	// GuardrailRequest and GuardrailResponse carry the text of a request and
+	// its response, chat-shaped, on the routes that forward the client's own
+	// body: native /v1/messages, /v1/responses and native GenAI. There Request
+	// is nil, so that the cache key is not built from an empty carrier, and
+	// Response holds usage only. Guardrails read these; nothing else does.
+	GuardrailRequest  *ChatCompletionRequest
+	GuardrailResponse *ChatCompletionResponse
+
+	// mu serializes writes to Timings and Metadata between the goroutines that
+	// legitimately write them — handlers, pre-plugins, sequential post-plugins,
+	// streaming callbacks.
+	//
+	// It does NOT make the parallel post-plugin window safe, and must not be
+	// relied on for that: those plugins read both maps directly, so any write
+	// during that window is a concurrent map read/write and a runtime fatal,
+	// mutex or no mutex. The window is read-only by contract — see
+	// pipeline.PostParallel.
 	mu sync.Mutex
 
 	// RequestHeaders stores the original HTTP request headers for logging.
@@ -94,6 +110,24 @@ type RequestContext struct {
 
 	// Per-org model fallback chains: model → ordered fallback models.
 	OrgModelFallbacks map[string][]string
+
+	// CustomMetadataKeys lists the Metadata keys that came from the caller's
+	// x-agentcc-metadata header. Metadata also holds ~120 internal keys written
+	// by plugins, so this is the only reliable way to tell caller-supplied
+	// dimensions apart from gateway internals when exporting telemetry.
+	CustomMetadataKeys []string
+
+	// CallerExtras holds the body's unknown top-level fields (extra_body, plus
+	// every OpenAI param newer than UnmarshalJSON's `known` map). Scalars only.
+	//
+	// Snapshotted in the handler, not read from Request.Extra at export time:
+	// the translation layer writes its own state into that same map, so
+	// provenance is what keeps gateway internals out.
+	CallerExtras map[string]any
+
+	// CallerExtrasDropped counts fields left out — non-scalars and
+	// credential-shaped key names.
+	CallerExtrasDropped int
 }
 
 type RequestFlags struct {
@@ -102,6 +136,9 @@ type RequestFlags struct {
 	FallbackUsed       bool
 	Timeout            bool
 	ShortCircuited     bool
+	// NoSpend marks a call that cannot spend, such as a delete. Budget and
+	// credit limits do not refuse it: a key out of budget can still clean up.
+	NoSpend bool
 }
 
 var requestContextPool = sync.Pool{
@@ -132,6 +169,8 @@ func (rc *RequestContext) Release() {
 	rc.Provider = ""
 	rc.Request = nil
 	rc.Response = nil
+	rc.GuardrailRequest = nil
+	rc.GuardrailResponse = nil
 	rc.IsStream = false
 	rc.SessionID = ""
 	rc.UserID = ""
@@ -156,6 +195,9 @@ func (rc *RequestContext) Release() {
 	rc.OrgModelFallbacks = nil
 	rc.GuardrailResults = rc.GuardrailResults[:0]
 	rc.RequestHeaders = nil
+	rc.CustomMetadataKeys = rc.CustomMetadataKeys[:0]
+	rc.CallerExtras = nil
+	rc.CallerExtrasDropped = 0
 
 	// Reuse maps by clearing them (keeps allocated memory).
 	for k := range rc.Metadata {

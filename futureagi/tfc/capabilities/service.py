@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import structlog
+
 from tfc.capabilities.registry import (
     FEATURE_REGISTRY,
     FeatureDefinition,
@@ -83,7 +84,12 @@ def configure(
     cloud_plan_resolver: CloudPlanResolver | None = None,
 ) -> None:
     """Wire resolvers at application startup. Called from AppConfig.ready()."""
-    global _license_resolver, _cloud_plan_resolver, _deployment_flavor, _deployment_location, _configured
+    global \
+        _license_resolver, \
+        _cloud_plan_resolver, \
+        _deployment_flavor, \
+        _deployment_location, \
+        _configured
     _deployment_flavor = flavor
     _deployment_location = location
     _license_resolver = license_resolver
@@ -120,6 +126,11 @@ def check(
     exception based on the result. For convenience, use check_or_raise()
     which raises CapabilityDenied on denial.
     """
+    # A blank org id is not an identity. Normalise it to None so a caller that
+    # passes "" gets a clean denial instead of reaching the cloud resolver and
+    # raising ValidationError on an invalid-UUID lookup inside the request path.
+    org_id = (org_id or "").strip() or None
+
     feature = FEATURE_REGISTRY.get(feature_id)
 
     # 1. Unknown feature → programming error, always deny

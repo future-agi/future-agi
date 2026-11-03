@@ -1,0 +1,63 @@
+# Argo CD Application for the published chart (not Helm values: apply it with
+# kubectl in the Argo CD namespace). Argo CD renders the chart with `helm
+# template`, so the chart cannot `lookup` its generated Secret: set
+# secrets.existingSecret to a Secret with the application keys SECRET_KEY,
+# INTEGRATION_ENCRYPTION_KEY, AGENTCC_INTERNAL_API_KEY, AGENTCC_ADMIN_TOKEN,
+# PROPERTY_CATALOG_API_PASSWORD, PROPERTY_CATALOG_CONSUMER_PASSWORD and
+# AGENTCC_WEBHOOK_SECRET (examples/external-secrets.yaml creates it from a
+# store), and pass every other value here or from a values file in Git.
+# Argo CD runs the chart's hooks (the bootstrap job, the Secret) as PreSync
+# hooks on every sync.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: futureagi
+  namespace: argocd
+spec:
+  project: default
+  source:
+    # Helm OCI chart: repoURL without the oci:// scheme and the chart name
+    # (register ghcr.io/future-agi/charts as a Helm repository with
+    # enableOCI: "true" if your Argo CD version asks for it).
+    repoURL: ghcr.io/future-agi/charts
+    chart: futureagi
+    targetRevision: X.Y.Z
+    helm:
+      releaseName: futureagi
+      valuesObject:
+        secrets:
+          existingSecret: futureagi-app
+        postgres:
+          mode: external
+          existingSecret: futureagi-postgres
+          external:
+            host: postgres.example.internal
+        clickhouse:
+          mode: external
+          external:
+            host: clickhouse.example.internal
+        redis:
+          mode: external
+          external:
+            host: redis.example.internal
+        temporal:
+          mode: external
+          external:
+            address: temporal-frontend.temporal.svc:7233
+        objectStorage:
+          mode: external
+          existingSecret: futureagi-s3
+          external:
+            endpoint: https://s3.us-east-1.amazonaws.com
+        urls:
+          app: https://futureagi.example.com
+          api: https://api.futureagi.example.com
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: futureagi
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

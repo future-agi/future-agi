@@ -6,7 +6,9 @@ we rebind to the real seeded values at parametrize-time inside the test body.
 """
 
 import json
+from dataclasses import replace
 from datetime import timedelta
+from math import fsum
 
 import pytest
 
@@ -24,15 +26,93 @@ ENDPOINTS = {
 }
 
 
+def _is_observe_usage_case(case) -> bool:
+    return (
+        case.target_type == "traces"
+        and case.col_type == "SYSTEM_METRIC"
+        and case.column_id
+        in {"cost", "total_tokens", "prompt_tokens", "completion_tokens"}
+    )
+
+
+def _observe_usage_rows(seeded: list[SeededRow]) -> list[SeededRow]:
+    """Independent whole-trace oracle for this corpus's non-summary spans.
+
+    Observe usage filters now match displayed totals, not the root alone. Keep
+    root identity/time and sum every independent member, including equal calls.
+    This corpus has no repeated Pydantic summaries; their exclusion is exercised
+    separately in test_openrouter_broadcast_list_rollups_ch25.py. Do not import
+    the production aggregator here or change span/voice/session expectations.
+    """
+    groups: dict[str, list[SeededRow]] = {}
+    for row in seeded:
+        groups.setdefault(row.trace_id, []).append(row)
+    return [
+        replace(
+            next(row for row in rows if row.parent_span_id is None),
+            cost=fsum(row.cost for row in rows),
+            total_tokens=sum(row.total_tokens for row in rows),
+            prompt_tokens=sum(row.prompt_tokens for row in rows),
+            completion_tokens=sum(row.completion_tokens for row in rows),
+        )
+        for rows in groups.values()
+    ]
+
+
 def _expected_count(case, seeded: list[SeededRow]) -> int:
     """Aggregate per-span predicate to the case's target unit."""
+    if _is_observe_usage_case(case):
+        return sum(case.expected_predicate(row) for row in _observe_usage_rows(seeded))
     if case.meta_kind is not None:
         return _expected_meta_count(case, seeded)
     if case.aggregate_predicate is not None:
         return _expected_aggregate_count(case, seeded)
+    if (
+        case.col_type == "SPAN_ATTRIBUTE"
+        and case.filter_op in {"is_null", "is_not_null"}
+        and case.target_type != "spans"
+    ):
+        # Nullness applies to the displayed entity: a missing sibling trace
+        # does not prove that the whole session is missing the attribute.
+        rows_by_entity: dict[str, list[SeededRow]] = {}
+        for row in seeded:
+            entity_id = (
+                row.session_id if case.target_type == "sessions" else row.trace_id
+            )
+            rows_by_entity.setdefault(entity_id, []).append(row)
+        entity_matches = {
+            entity_id
+            for entity_id, entity_rows in rows_by_entity.items()
+            if (
+                all(case.expected_predicate(row) for row in entity_rows)
+                if case.filter_op == "is_null"
+                else any(case.expected_predicate(row) for row in entity_rows)
+            )
+        }
+        if case.target_type == "voiceCalls":
+            voice_trace_ids = {
+                row.trace_id
+                for row in seeded
+                if row.parent_span_id is None and row.observation_type == "conversation"
+            }
+            return len(entity_matches & voice_trace_ids)
+        if case.target_type == "traces":
+            return len(entity_matches)
+        if case.target_type == "sessions":
+            return len(entity_matches)
     if case.target_type in ("spans", "voiceCalls"):
         return sum(1 for r in seeded if case.expected_predicate(r))
     if case.target_type == "traces":
+        if case.col_type == "SYSTEM_METRIC" and case.filter_type == "datetime":
+            # Trace datetime filters bind to the displayed root timestamp,
+            # not to any child span in the trace.  Counting every matching
+            # child and then de-duplicating trace ids would incorrectly include
+            # a trace whose root is exactly on a strict greater-than boundary.
+            return sum(
+                1
+                for r in seeded
+                if r.parent_span_id is None and case.expected_predicate(r)
+            )
         return len({r.trace_id for r in seeded if case.expected_predicate(r)})
     if case.target_type == "sessions":
         return len({r.session_id for r in seeded if case.expected_predicate(r)})
@@ -40,9 +120,7 @@ def _expected_count(case, seeded: list[SeededRow]) -> int:
 
 
 def _expected_meta_count(case, seeded: list[SeededRow]) -> int:
-    """has_eval / has_annotation are trace/session-scoped: a trace matches if
-    ANY child span carries the flag. Roll the per-span flag up to the target
-    grain, then apply the True/False variant."""
+    """Roll has_eval / has_annotation up to the requested target grain."""
     flag = (
         (lambda r: r.has_eval)
         if case.meta_kind == "has_eval"
@@ -51,12 +129,9 @@ def _expected_meta_count(case, seeded: list[SeededRow]) -> int:
     want = bool(case.filter_value)
     traces_with = {r.trace_id for r in seeded if flag(r)}
     if case.target_type in ("spans", "voiceCalls"):
-        # has_eval is trace-scoped on the span grid (every span in an
-        # eval-bearing trace matches); has_annotation is span-scoped (only the
-        # annotated span itself). See _build_has_eval_condition (trace_id IN …)
-        # vs _build_has_annotation_condition (observation_span_id IN …).
-        if case.meta_kind == "has_eval":
-            return sum(1 for r in seeded if (r.trace_id in traces_with) == want)
+        # Span/voice grids match the exact trace+span pair for both direct-write
+        # eval rows and annotations.  A metric on one child must not pull in its
+        # siblings merely because they share a trace.
         return sum(1 for r in seeded if flag(r) == want)
     if case.target_type == "traces":
         all_ids = {r.trace_id for r in seeded}
@@ -173,8 +248,11 @@ def test_list_endpoint_total_rows(
     expected = _expected_count(case, seeded)
 
     filters = case.to_filter_dict()["filters"]
-    if case.column_id != "created_at":
-        filters = filters + [_DEFAULT_WINDOW_FILTER]
+    # The UI always sends its explicit date-range filter in addition to any
+    # user-created timestamp predicate. Keep that broad safety window for all
+    # cases so one-sided and complement operators exercise the real request
+    # shape instead of falling back to the backend's rolling 30-day default.
+    filters = filters + [_DEFAULT_WINDOW_FILTER]
     filter_json = json.dumps(filters)
     url = ENDPOINTS[case.target_type]
     # list_voice_calls uses a 1-based `page` param; the others use page_number.
@@ -208,6 +286,18 @@ def test_list_endpoint_total_rows(
     assert total == expected, (
         f"{case.case_id}: endpoint returned {total}, predicate expected {expected}"
     )
+    if _is_observe_usage_case(case):
+        expected_rows = {
+            row.trace_id: row
+            for row in _observe_usage_rows(seeded)
+            if case.expected_predicate(row)
+        }
+        actual_rows = resp.data["result"]["table"]
+        assert sorted(row["trace_id"] for row in actual_rows) == sorted(expected_rows)
+        for row in actual_rows:
+            oracle = expected_rows[row["trace_id"]]
+            assert row["cost"] == pytest.approx(oracle.cost, rel=1e-12, abs=1e-18)
+            assert row["total_tokens"] == oracle.total_tokens
 
 
 def _read_total(body) -> int:

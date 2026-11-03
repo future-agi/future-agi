@@ -24,11 +24,11 @@ const SuccessRateCellRenderer = ({ value }) => {
         sx={{
           flexGrow: 1,
           height: "10px",
-          borderRadius: "5px",
+          borderRadius: "6px",
           backgroundColor: backgroundColor, // Set the track background
           "& .MuiLinearProgress-bar": {
             backgroundColor: barColor,
-            borderRadius: "5px", // Match the container border radius
+            borderRadius: "6px", // Match the container border radius
           },
           // Override any default MUI theming that might add purple tints
           "& .MuiLinearProgress-colorPrimary": {

@@ -311,7 +311,12 @@ class OrgApiKey(BaseModel):
     type = models.CharField(
         max_length=50,
         default="system",
-        choices=[("system", "System"), ("user", "User"), ("mcp", "MCP")],
+        choices=[
+            ("system", "System"),
+            ("user", "User"),
+            ("mcp", "MCP"),
+            ("ingest", "Ingest"),
+        ],
     )
     enabled = models.BooleanField(default=True)
     user = models.ForeignKey(
@@ -328,6 +333,8 @@ class OrgApiKey(BaseModel):
         null=True,
         blank=True,
     )
+    # A plain column: ``accounts`` cannot depend on ``simulate``, which depends on it.
+    simulation_agent_id = models.UUIDField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -336,7 +343,18 @@ class OrgApiKey(BaseModel):
                 condition=models.Q(type="system", deleted=False),
                 name="unique_system_api_key_per_org_not_deleted",
                 violation_error_message="Only one system API key is allowed per organization.",
-            )
+            ),
+            # Each agent's sandbox key names that agent, so concurrent first
+            # launches of one agent must converge on a single row.
+            models.UniqueConstraint(
+                fields=["organization", "workspace", "simulation_agent_id"],
+                condition=models.Q(type="ingest", deleted=False),
+                name="unique_ingest_api_key_per_org_workspace_agent_not_deleted",
+                violation_error_message=(
+                    "Only one ingest API key is allowed per organization, "
+                    "workspace and agent."
+                ),
+            ),
         ]
 
     def __str__(self):

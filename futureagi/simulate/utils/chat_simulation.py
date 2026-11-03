@@ -1,58 +1,29 @@
-import json
-import uuid
-from datetime import datetime, timedelta
-from typing import Any, List, Optional, Tuple, Union
-
 import structlog
-from django.db import connection, transaction
-from django.db.models import Avg, Count, Q
-from django.utils import timezone
-
-from accounts.models.organization import Organization
-from accounts.models.workspace import Workspace
-
-from tfc.ee_stub import _ee_stub
+from django.db import connection
 
 try:
     from ee.agenthub.traceerroragent.token_utils import estimate_tokens_text
 except ImportError:
+
     def estimate_tokens_text(text) -> int:
         return 0
 
-try:
-    from ee.evals.futureagi.eval_deterministic.evaluator import DeterministicEvaluator
-except ImportError:
-    DeterministicEvaluator = _ee_stub("DeterministicEvaluator")
+
 from simulate.constants.csat_score_prompt import CSAT_SCORE_PROMPT
 from simulate.models import (  # SimulatorAgent
-    AgentDefinition,
     CallExecution,
-    TestExecution,
 )
 from simulate.models.chat_message import ChatMessageModel
-from simulate.models.simulator_agent import SimulatorAgent
-from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import (
     ChatMessage,
     ChatRole,
-    ChatSessionResponse,
-    ChatSessionSendMessageResponse,
-    SendChatRequest,
-    SimulationCallType,
-)
-from simulate.services.chat_initial_message import get_chat_initial_message
-from simulate.services.test_executor import (
-    TestExecutor,
-    _run_simulate_evaluations_task,
 )
 from simulate.utils.sql_query import get_chat_metrics_aggregation_query
-from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
 
 logger = structlog.get_logger(__name__)
-from tfc.temporal.drop_in import temporal_activity
 
 
-def _calculate_tokens_from_messages(messages: List[str], content: List[dict]) -> int:
+def _calculate_tokens_from_messages(messages: list[str], content: list[dict]) -> int:
     """
     Calculate total tokens from message content.
 
@@ -90,7 +61,7 @@ def _calculate_tokens_from_messages(messages: List[str], content: List[dict]) ->
     return total_tokens
 
 
-def _build_chat_transcript(chat_messages: List[ChatMessageModel]) -> str:
+def _build_chat_transcript(chat_messages: list[ChatMessageModel]) -> str:
     """
     Build a transcript string from chat messages for evaluation purposes.
     Format: "User: <message>\nAssistant: <message>\n..."
@@ -136,48 +107,43 @@ def _build_chat_transcript(chat_messages: List[ChatMessageModel]) -> str:
     return "\n".join(transcript_lines)
 
 
-def _calculate_csat_score(transcript: str) -> Optional[float]:
+def _calculate_csat_score(transcript: str) -> float | None:
     """
-    Calculate CSAT score from chat transcript using DeterministicEvaluator.
-    Returns a float between 1-10 or None if calculation fails.
+    Calculate CSAT score from chat transcript using AgentEvaluator.
+
+    Uses the same evaluator (turing_large, agent mode, choices 1–10) and rule
+    prompt as the native voice CSAT path
+    (``ee.voice.temporal.activities.voice_xl.calculate_voice_csat_score``) so
+    scoring is consistent across chat and voice. Returns a float 1-10 or None
+    if calculation fails.
     """
     try:
         if not transcript or not transcript.strip():
             logger.warning("empty_transcript_for_csat")
             return None
 
-        csat_config = CSAT_SCORE_PROMPT
+        from ee.evals.llm.agent_evaluator.evaluator import AgentEvaluator
 
-        evaluator = DeterministicEvaluator(
-            multi_choice=csat_config["multi_choice"],
-            choices=csat_config["choices"],
-            rule_prompt=csat_config["criteria"],
-            input=[transcript],
-            input_type=["text"],
+        evaluator = AgentEvaluator(
+            rule_prompt=(
+                CSAT_SCORE_PROMPT["criteria"]
+                + "\n\n## Inputs\n\n<output>{{output}}</output>"
+            ),
+            model="turing_large",
+            output_type="choices",
+            choices=list(CSAT_SCORE_PROMPT["choices"]),
+            agent_mode="agent",
         )
-        result = evaluator._evaluate()
+        batch_result = evaluator.run(output=transcript, required_keys=["output"])
+        score_value = float(batch_result.eval_results[0]["data"]["result"])
+        logger.info("csat_evaluation_result", csat_score=score_value)
+        return score_value
 
-        try:
-            csat_score = result.get("data", [])
-            if csat_score and len(csat_score) > 0:
-                score_value = float(csat_score[0])
-                logger.info(
-                    "csat_evaluation_result",
-                    csat_score=score_value,
-                )
-                return score_value
-        except (ValueError, TypeError, IndexError) as e:
-            logger.warning(
-                "csat_evaluation_parse_failed",
-                error=str(e),
-            )
-            return None
-
+    except (ValueError, TypeError, IndexError, KeyError) as e:
+        logger.warning("csat_evaluation_parse_failed", error=str(e))
+        return None
     except Exception as e:
-        logger.exception(
-            "error_calculating_csat",
-            error=str(e),
-        )
+        logger.exception("error_calculating_csat", error=str(e))
         return None
 
 
@@ -272,7 +238,7 @@ def _swap_user_assistant_roles(items: list[dict]) -> list[dict]:
 
 
 def extract_message_from_chatmessages(
-    messages: List[Union[ChatMessage, dict]], role: ChatRole
+    messages: list[ChatMessage | dict], role: ChatRole
 ) -> list[str]:
     try:
         all_message_content = []

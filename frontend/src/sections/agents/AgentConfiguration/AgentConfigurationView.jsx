@@ -1,13 +1,5 @@
 import React, { useState } from "react";
-import {
-  Alert,
-  Box,
-  Button,
-  Divider,
-  Link,
-  Typography,
-  useTheme,
-} from "@mui/material";
+import { Alert, Box, Button, Divider, Link, Typography } from "@mui/material";
 import EditAgentDetails from "./EditAgentDetails";
 import { handleOnDocsClicked } from "src/utils/Mixpanel";
 import { useAgentConfigForm, useAgentSubmit } from "../useAgentConfigForm";
@@ -25,27 +17,35 @@ const AgentConfigurationView = () => {
   const { agentDetails, setSelectedVersion } = useAgentDetailsStore();
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
-  const theme = useTheme();
+  const agentKind = agentDetails?.agent_kind;
   // const [open, setOpen] = useState(false);
   const {
     control,
     handleSubmit,
     reset,
     formState,
+    setError: setFieldError,
     setValue,
     getValues,
     trigger,
-  } = useAgentConfigForm(createAgentDefinitionSchema({ agentDefinitionId }), agentDetails);
+    clearErrors,
+  } = useAgentConfigForm(
+    createAgentDefinitionSchema({ agentDefinitionId, agentKind }),
+    agentDetails,
+  );
 
   const { errors, isSubmitting, isDirty } = formState;
   const [error, setError] = useState("");
 
   const { onSubmit } = useAgentSubmit({
     agentDefinitionId,
+    agentKind,
     reset,
     queryClient,
     enqueueSnackbar,
     setError,
+    setFieldError,
+    setValue,
     onClose: null,
     setSelectedVersion,
   });
@@ -67,8 +67,9 @@ const AgentConfigurationView = () => {
           maxWidth: "52vw",
           bgcolor: "background.paper",
           p: 2.5,
-          borderRadius: "4px",
-          boxShadow: theme.shadows[6],
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "8px",
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
@@ -103,11 +104,11 @@ const AgentConfigurationView = () => {
                 <Link
                   onClick={() => handleOnDocsClicked("agent_definition_page")}
                   href="https://docs.futureagi.com/docs/simulation/concepts/agent-definition"
-                  color="blue.500"
+                  color="status.info.fg"
                   target="_blank"
                   rel="noopener noreferrer"
                   fontWeight="fontWeightMedium"
-                  fontSize="14px"
+                  fontSize="13px"
                   sx={{ textDecoration: "underline", fontSize: "13px" }}
                 >
                   Learn more
@@ -117,12 +118,7 @@ const AgentConfigurationView = () => {
             {/* Right side buttons */}
             {isDirty && (
               <Box display="flex" gap={1}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() => reset()}
-                  sx={{ borderRadius: "4px", height: "35px", width: "70px" }}
-                >
+                <Button variant="outlined" size="small" onClick={() => reset()}>
                   Cancel
                 </Button>
                 <LoadingButton
@@ -133,7 +129,6 @@ const AgentConfigurationView = () => {
                   // onClick={() => setOpen(true)}
                   loading={isSubmitting}
                   // disabled={!isValid}
-                  sx={{ borderRadius: "4px", height: "35px" }}
                 >
                   Save
                 </LoadingButton>
@@ -156,6 +151,8 @@ const AgentConfigurationView = () => {
               trigger={trigger}
               setValue={setValue}
               getValues={getValues}
+              clearErrors={clearErrors}
+              agentKind={agentKind}
             />
             <Box sx={{ display: "flex", flexDirection: "column" }}>
               <FormTextFieldV2

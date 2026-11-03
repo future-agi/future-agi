@@ -1,0 +1,56 @@
+import PropTypes from "prop-types";
+import { Box, Chip, Stack, Typography } from "@mui/material";
+import Iconify from "src/components/iconify";
+import { EVAL_ENTRY_SHAPE, inputRowsOf, sourceLabel } from "./evalEntry";
+
+const MONO = "ui-monospace, Menlo, monospace";
+
+// Library/Custom, read straight off the entry. An entry without a known
+// source draws no chip.
+export function EvalEntryChips({ entry }) {
+  const source = sourceLabel(entry);
+  return (
+    <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
+      {source && <Chip size="small" label={source} />}
+    </Stack>
+  );
+}
+EvalEntryChips.propTypes = { entry: EVAL_ENTRY_SHAPE };
+
+// "required key → what fills it", one row per `inputs[]` entry, in the order
+// the API sent them. The right-hand side is `label` and nothing else: the
+// raw source name (voice_recording, scenario_columns.situation.value) is
+// never shown.
+export function EvalInputs({ entry, heading = "Inputs" }) {
+  const rows = inputRowsOf(entry);
+  if (rows.length === 0) return null;
+  return (
+    <Box>
+      {heading && (
+        <Typography sx={{ typography: "s3", color: "text.disabled", mb: 0.75 }}>
+          {heading}
+        </Typography>
+      )}
+      <Stack spacing={0.75}>
+        {rows.map((row) => (
+          <Stack key={row.key} direction="row" alignItems="center" spacing={1}>
+            <Chip
+              size="small"
+              label={`{{${row.key}}}`}
+              sx={{ fontFamily: MONO }}
+            />
+            <Iconify
+              icon="solar:arrow-right-linear"
+              width={13}
+              sx={{ color: "text.disabled", flexShrink: 0 }}
+            />
+            <Typography sx={{ typography: "s3", color: "text.primary", minWidth: 0 }}>
+              {row.label}
+            </Typography>
+          </Stack>
+        ))}
+      </Stack>
+    </Box>
+  );
+}
+EvalInputs.propTypes = { entry: EVAL_ENTRY_SHAPE, heading: PropTypes.string };

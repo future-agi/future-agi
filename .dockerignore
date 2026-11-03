@@ -166,9 +166,9 @@ changelog/
 **/*.backup
 **/celerybeat-schedule
 
-# Private EE artifacts: gitignored, so a fresh clone never has them. Exclude
-# from local builds too so the image matches what an OSS user can build.
+# Private EE artifacts: the cloud-private delta is a separate repo checked out
+# at futureagi/ee/cloud/, and is gitignored, so a fresh clone never has it.
+# Exclude it from local builds too so the image matches what an OSS user can
+# build. The CE base image must not carry cloud code — Dockerfile.ee in the
+# private repo overlays it at runtime.
 futureagi/ee/cloud/
-futureagi/ee/billing.yaml
-futureagi/ee/Dockerfile.cloud
-futureagi/ee/.github/

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
@@ -15,8 +16,8 @@ type mockPlugin struct {
 	onResp   func(ctx context.Context, rc *models.RequestContext) PluginResult
 }
 
-func (m *mockPlugin) Name() string    { return m.name }
-func (m *mockPlugin) Priority() int   { return m.priority }
+func (m *mockPlugin) Name() string  { return m.name }
+func (m *mockPlugin) Priority() int { return m.priority }
 func (m *mockPlugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) PluginResult {
 	if m.onReq != nil {
 		return m.onReq(ctx, rc)
@@ -232,3 +233,98 @@ func TestEngineContextCancelled(t *testing.T) {
 		t.Error("Timeout flag should be set")
 	}
 }
+
+// readOnlyPostPlugin mimics what the real post-parallel plugins do to the
+// shared context: direct key lookups plus whole-map range loops over Metadata
+// and Timings. It writes nothing.
+type readOnlyPostPlugin struct{ name string }
+
+func (p readOnlyPostPlugin) Name() string         { return p.name }
+func (p readOnlyPostPlugin) Priority() int        { return 900 }
+func (p readOnlyPostPlugin) IsPostParallel() bool { return true }
+
+func (p readOnlyPostPlugin) ProcessRequest(context.Context, *models.RequestContext) PluginResult {
+	return ResultContinue()
+}
+
+func (p readOnlyPostPlugin) ProcessResponse(_ context.Context, rc *models.RequestContext) PluginResult {
+	_ = rc.Metadata["cost"]
+	_ = rc.Metadata["cache_status"]
+	_, _ = rc.Timings["ttft"]
+	for k, v := range rc.Metadata {
+		_, _ = k, v
+	}
+	for k, v := range rc.Timings {
+		_, _ = k, v
+	}
+	return ResultContinue()
+}
+
+// TestRunPostPluginsLeavesContextAlone pins the contract that makes every
+// post-parallel plugin's unsynchronized reads legal: nothing — plugin or
+// engine — writes to the RequestContext while that window is open.
+//
+// A write there is a concurrent map read/write, which is a Go runtime fatal
+// that takes the whole gateway down, so this must never regress. It needs at
+// least two plugins: with one, the engine's own bookkeeping is serial with
+// that plugin's reads and the bug hides. Run under -race.
+func TestRunPostPluginsLeavesContextAlone(t *testing.T) {
+	engine := NewEngine(
+		readOnlyPostPlugin{name: "alpha"},
+		readOnlyPostPlugin{name: "beta"},
+		readOnlyPostPlugin{name: "gamma"},
+	)
+
+	for i := 0; i < 50; i++ {
+		rc := &models.RequestContext{
+			RequestID: "req",
+			StartTime: time.Now(),
+			Metadata:  map[string]string{"cost": "0.01", "cache_status": "miss", "org_id": "org"},
+			Timings:   map[string]time.Duration{"ttft": time.Millisecond, "provider": time.Second},
+			Errors:    []error{},
+		}
+		engine.RunPostPlugins(context.Background(), rc)
+
+		// Timings are still recorded — just after the window, not inside it.
+		for _, name := range []string{"post_alpha", "post_beta", "post_gamma"} {
+			if _, ok := rc.Timings[name]; !ok {
+				t.Fatalf("timing %q missing; per-plugin timings must survive the move out of the goroutine", name)
+			}
+		}
+	}
+}
+
+// A plugin skipped on a cache hit must not leave a phantom zero timing behind,
+// which is the failure mode of pairing durations to plugins by index without
+// filtering first.
+func TestRunPostPluginsSkipOnCacheHitTimings(t *testing.T) {
+	engine := NewEngine(
+		readOnlyPostPlugin{name: "alpha"},
+		skipOnCacheHitPostPlugin{readOnlyPostPlugin{name: "skipped"}},
+		readOnlyPostPlugin{name: "beta"},
+	)
+
+	rc := &models.RequestContext{
+		RequestID: "req",
+		StartTime: time.Now(),
+		Metadata:  map[string]string{"cache_status": "hit_exact"},
+		Timings:   map[string]time.Duration{},
+		Errors:    []error{},
+	}
+	rc.Flags.ShortCircuited = true
+
+	engine.RunPostPlugins(context.Background(), rc)
+
+	if _, ok := rc.Timings["post_skipped"]; ok {
+		t.Error("skipped plugin recorded a timing")
+	}
+	for _, name := range []string{"post_alpha", "post_beta"} {
+		if _, ok := rc.Timings[name]; !ok {
+			t.Errorf("timing %q missing after a skip", name)
+		}
+	}
+}
+
+type skipOnCacheHitPostPlugin struct{ readOnlyPostPlugin }
+
+func (skipOnCacheHitPostPlugin) ShouldSkipOnCacheHit() bool { return true }

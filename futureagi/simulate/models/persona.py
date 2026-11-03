@@ -25,6 +25,7 @@ class Persona(BaseModel):
         FEMALE = "female", "Female"
 
     class AgeGroupChoices(models.TextChoices):
+        AGE_13_17 = "13-17", "13-17"
         AGE_18_25 = "18-25", "18-25"
         AGE_25_32 = "25-32", "25-32"
         AGE_32_40 = "32-40", "32-40"

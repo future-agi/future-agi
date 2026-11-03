@@ -2,20 +2,37 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import axios, { endpoints } from "src/utils/axios";
 
+export const evalDetailQuery = (templateId) => ({
+  queryKey: ["evals", "detail", templateId],
+  queryFn: async () => {
+    const { data } = await axios.get(
+      endpoints.develop.eval.getEvalDetail(templateId),
+    );
+    return data?.result;
+  },
+});
+
 /**
  * Hook to fetch a single eval template's detail.
  */
 export function useEvalDetail(templateId) {
   return useQuery({
-    queryKey: ["evals", "detail", templateId],
-    queryFn: async () => {
-      const { data } = await axios.get(
-        endpoints.develop.eval.getEvalDetail(templateId),
-      );
-      return data?.result;
-    },
+    ...evalDetailQuery(templateId),
     enabled: !!templateId,
   });
+}
+
+/**
+ * A blank model means none is picked yet (deployments without Turing have no
+ * default), and code evals don't use one. The update API rejects a blank
+ * model and treats an absent one as "unchanged", so leave it out.
+ */
+export function toEvalUpdatePayload(payload) {
+  if (!payload || (payload.model && payload.eval_type !== "code")) {
+    return payload;
+  }
+  const { model: _model, ...rest } = payload;
+  return rest;
 }
 
 /**
@@ -28,7 +45,7 @@ export function useUpdateEval(templateId) {
     mutationFn: async (payload) => {
       const { data } = await axios.put(
         endpoints.develop.eval.updateEvalTemplate(templateId),
-        payload,
+        toEvalUpdatePayload(payload),
       );
       return data?.result;
     },

@@ -17,12 +17,14 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 // Provider implements the Provider interface for OpenAI-compatible APIs.
 type Provider struct {
 	id         string
 	baseURL    string
+	pathPrefix string
 	apiKey     string
 	httpClient *http.Client
 	semaphore  chan struct{}
@@ -67,6 +69,7 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		MaxIdleConnsPerHost: poolSize,
 		IdleConnTimeout:     90 * time.Second,
 		ForceAttemptHTTP2:   true,
+		DialContext:         cfg.DialContext,
 	}
 	if cfg.SkipTLS {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // user-opted skip
@@ -74,9 +77,10 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 	}
 
 	return &Provider{
-		id:      id,
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:  cfg.APIKey,
+		id:         id,
+		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
+		pathPrefix: cfg.EffectiveAPIPathPrefix(),
+		apiKey:     cfg.APIKey,
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   timeout,
@@ -108,19 +112,18 @@ func (p *Provider) normalizeMaxTokens(req *models.ChatCompletionRequest) {
 	req.MaxTokens = nil
 }
 
-// endpoint builds a full upstream URL for a versioned path like "/v1/ocr".
-// If the configured baseURL already ends with "/v1" (as some presets do,
-// e.g. "https://api.cohere.ai/compatibility/v1"), the leading "/v1" of path
-// is stripped to avoid "/v1/v1/..." — keeps callers from having to reason
-// about whether each provider preset includes the version suffix.
+// endpoint builds a full upstream URL for a path like "/v1/ocr", swapping the
+// assumed "/v1" for whatever version segment this provider actually uses.
 func (p *Provider) endpoint(path string) string {
-	if strings.HasSuffix(p.baseURL, "/v1") && strings.HasPrefix(path, "/v1/") {
-		return p.baseURL + path[len("/v1"):]
-	}
-	return p.baseURL + path
+	return config.JoinEndpoint(p.baseURL, p.pathPrefix, path)
 }
 
 func (p *Provider) ID() string { return p.id }
+
+// ClientTimeout reports the timeout on this provider's HTTP client. It bounds
+// the whole exchange, a streamed body included, so it is a hard ceiling on any
+// request this provider serves.
+func (p *Provider) ClientTimeout() time.Duration { return p.httpClient.Timeout }
 
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
 	select {
@@ -161,7 +164,7 @@ func (p *Provider) OCR(ctx context.Context, req *models.OCRRequest) (*models.OCR
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("provider request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("provider request failed: %v", err))
@@ -170,7 +173,7 @@ func (p *Provider) OCR(ctx context.Context, req *models.OCRRequest) (*models.OCR
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 25*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading provider response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "reading provider response")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, parseProviderError(resp.StatusCode, respBody)
@@ -213,7 +216,7 @@ func (p *Provider) TextCompletion(ctx context.Context, req *models.CompletionReq
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("provider request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("provider request failed: %v", err))
@@ -222,7 +225,7 @@ func (p *Provider) TextCompletion(ctx context.Context, req *models.CompletionReq
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading provider response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "reading provider response")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, parseProviderError(resp.StatusCode, respBody)
@@ -256,7 +259,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/chat/completions"), bytes.NewReader(body))
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating request: %v", err))
 	}
@@ -268,7 +271,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("provider request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("provider request failed: %v", err))
@@ -277,7 +280,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024)) // 10MB limit
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading provider response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "reading provider response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -311,6 +314,10 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		reqCopy := *req
 		reqCopy.Model = actualModel
 		reqCopy.Stream = true
+		// An OpenAI-format stream reports usage only when asked. Asked here,
+		// every route that streams through this provider can be priced, not
+		// only the one that remembered to set it.
+		reqCopy.StreamOptions = &models.StreamOptions{IncludeUsage: true}
 		p.normalizeMaxTokens(&reqCopy)
 
 		body, err := json.Marshal(&reqCopy)
@@ -319,7 +326,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			return
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/chat/completions", bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/chat/completions"), bytes.NewReader(body))
 		if err != nil {
 			errs <- models.ErrInternal(fmt.Sprintf("creating request: %v", err))
 			return
@@ -333,7 +340,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
-			if ctx.Err() != nil {
+			if common.TimedOut(ctx, err) {
 				errs <- models.ErrGatewayTimeout("provider request timed out")
 				return
 			}
@@ -382,6 +389,12 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 				)
 				continue
 			}
+			if streamErrorChunk(chunk) {
+				// The upstream failed mid-stream. Relayed as a chunk, the
+				// error reached the client but the stream ended as a success.
+				errs <- parseProviderError(http.StatusBadGateway, []byte(data))
+				return
+			}
 
 			select {
 			case chunks <- chunk:
@@ -392,7 +405,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		if err := scanner.Err(); err != nil {
 			if ctx.Err() == nil {
-				errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("stream read error: %v", err))
+				errs <- common.ReadError(err, 0, "stream read")
 			}
 		}
 	}()
@@ -402,7 +415,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 // ListModels returns available models from this provider.
 func (p *Provider) ListModels(ctx context.Context) ([]models.ModelObject, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/v1/models", nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.endpoint("/v1/models"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +457,7 @@ func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling image request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/images/generations", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/images/generations"), bytes.NewReader(body))
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating image request: %v", err))
 	}
@@ -456,7 +469,7 @@ func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("image request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("image request failed: %v", err))
@@ -465,7 +478,7 @@ func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading image response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "reading image response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -496,7 +509,7 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 		return nil, "", models.ErrInternal(fmt.Sprintf("marshaling speech request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/audio/speech", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/audio/speech"), bytes.NewReader(body))
 	if err != nil {
 		p.releaseSemaphore()
 		return nil, "", models.ErrInternal(fmt.Sprintf("creating speech request: %v", err))
@@ -510,7 +523,7 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		p.releaseSemaphore()
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, "", models.ErrGatewayTimeout("speech request timed out")
 		}
 		return nil, "", models.ErrUpstreamProvider(0, fmt.Sprintf("speech request failed: %v", err))
@@ -579,18 +592,24 @@ func (p *Provider) CreateTranscription(ctx context.Context, req *models.Transcri
 	if req.Language != "" {
 		writer.WriteField("language", req.Language)
 	}
+	if req.Prompt != "" {
+		writer.WriteField("prompt", req.Prompt)
+	}
 	if req.ResponseFormat != "" {
 		writer.WriteField("response_format", req.ResponseFormat)
 	}
 	if req.Temperature != nil {
 		writer.WriteField("temperature", fmt.Sprintf("%g", *req.Temperature))
 	}
+	for _, granularity := range req.TimestampGranularities {
+		writer.WriteField("timestamp_granularities[]", granularity)
+	}
 
 	if err := writer.Close(); err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("closing multipart writer: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/audio/transcriptions", &buf)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/audio/transcriptions"), &buf)
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating transcription request: %v", err))
 	}
@@ -602,7 +621,7 @@ func (p *Provider) CreateTranscription(ctx context.Context, req *models.Transcri
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("transcription request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("transcription request failed: %v", err))
@@ -611,19 +630,18 @@ func (p *Provider) CreateTranscription(ctx context.Context, req *models.Transcri
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading transcription response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "reading transcription response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, parseProviderError(resp.StatusCode, respBody)
 	}
 
-	var result models.TranscriptionResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	result, err := models.NewTranscriptionResponse(respBody, resp.Header.Get("Content-Type"))
+	if err != nil {
 		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing transcription response: %v", err))
 	}
-
-	return &result, nil
+	return result, nil
 }
 
 // CreateResponse sends a Responses API request and returns the raw JSON response.
@@ -633,7 +651,7 @@ func (p *Provider) CreateResponse(ctx context.Context, reqBody []byte) ([]byte, 
 	}
 	defer p.releaseSemaphore()
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/responses", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/responses"), bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, 0, models.ErrInternal(fmt.Sprintf("creating responses request: %v", err))
 	}
@@ -645,7 +663,7 @@ func (p *Provider) CreateResponse(ctx context.Context, reqBody []byte) ([]byte, 
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, 0, models.ErrGatewayTimeout("responses request timed out")
 		}
 		return nil, 0, models.ErrUpstreamProvider(0, fmt.Sprintf("responses request failed: %v", err))
@@ -654,7 +672,7 @@ func (p *Provider) CreateResponse(ctx context.Context, reqBody []byte) ([]byte, 
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, resp.StatusCode, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading responses body: %v", err))
+		return nil, resp.StatusCode, common.ReadError(err, resp.StatusCode, "reading responses body")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -671,7 +689,7 @@ func (p *Provider) StreamResponse(ctx context.Context, reqBody []byte) (io.ReadC
 	}
 	// NOTE: semaphore is released when the caller closes the returned ReadCloser.
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/responses", bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/responses"), bytes.NewReader(reqBody))
 	if err != nil {
 		p.releaseSemaphore()
 		return nil, 0, models.ErrInternal(fmt.Sprintf("creating streaming responses request: %v", err))
@@ -686,7 +704,7 @@ func (p *Provider) StreamResponse(ctx context.Context, reqBody []byte) (io.ReadC
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		p.releaseSemaphore()
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, 0, models.ErrGatewayTimeout("streaming responses request timed out")
 		}
 		return nil, 0, models.ErrUpstreamProvider(0, fmt.Sprintf("streaming responses request failed: %v", err))
@@ -748,7 +766,7 @@ func (p *Provider) CreateTranslation(ctx context.Context, req *models.Translatio
 		return nil, models.ErrInternal(fmt.Sprintf("closing multipart writer: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/audio/translations", &buf)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/audio/translations"), &buf)
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating translation request: %v", err))
 	}
@@ -760,7 +778,7 @@ func (p *Provider) CreateTranslation(ctx context.Context, req *models.Translatio
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("translation request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("translation request failed: %v", err))
@@ -769,19 +787,18 @@ func (p *Provider) CreateTranslation(ctx context.Context, req *models.Translatio
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading translation response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "reading translation response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, parseProviderError(resp.StatusCode, respBody)
 	}
 
-	var result models.TranslationResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	result, err := models.NewTranscriptionResponse(respBody, resp.Header.Get("Content-Type"))
+	if err != nil {
 		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing translation response: %v", err))
 	}
-
-	return &result, nil
+	return result, nil
 }
 
 // CreateEmbedding sends an embedding request.
@@ -799,7 +816,7 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 		return nil, models.ErrInternal(fmt.Sprintf("marshaling embedding request: %v", err))
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/embeddings", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint("/v1/embeddings"), bytes.NewReader(body))
 	if err != nil {
 		return nil, models.ErrInternal(fmt.Sprintf("creating embedding request: %v", err))
 	}
@@ -811,7 +828,7 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("embedding request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("embedding request failed: %v", err))
@@ -820,7 +837,7 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading embedding response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "reading embedding response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -842,7 +859,7 @@ func (p *Provider) ProxyAssistantsRequest(ctx context.Context, method string, pa
 	}
 	defer p.releaseSemaphore()
 
-	upstreamURL := p.baseURL + path
+	upstreamURL := p.endpoint(path)
 	if len(queryParams) > 0 {
 		upstreamURL += "?" + queryParams.Encode()
 	}
@@ -865,7 +882,7 @@ func (p *Provider) ProxyAssistantsRequest(ctx context.Context, method string, pa
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, 0, nil, models.ErrGatewayTimeout("assistants request timed out")
 		}
 		return nil, 0, nil, models.ErrUpstreamProvider(0, fmt.Sprintf("assistants request failed: %v", err))
@@ -874,7 +891,7 @@ func (p *Provider) ProxyAssistantsRequest(ctx context.Context, method string, pa
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, resp.StatusCode, nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading assistants response: %v", err))
+		return nil, resp.StatusCode, nil, common.ReadError(err, resp.StatusCode, "reading assistants response")
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -899,7 +916,7 @@ func (p *Provider) StreamAssistantsRequest(ctx context.Context, method string, p
 	}
 	// NOTE: semaphore is released when the caller closes the returned ReadCloser.
 
-	upstreamURL := p.baseURL + path
+	upstreamURL := p.endpoint(path)
 	if len(queryParams) > 0 {
 		upstreamURL += "?" + queryParams.Encode()
 	}
@@ -925,7 +942,7 @@ func (p *Provider) StreamAssistantsRequest(ctx context.Context, method string, p
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		p.releaseSemaphore()
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, 0, nil, models.ErrGatewayTimeout("streaming assistants request timed out")
 		}
 		return nil, 0, nil, models.ErrUpstreamProvider(0, fmt.Sprintf("streaming assistants request failed: %v", err))
@@ -960,7 +977,7 @@ func (p *Provider) ProxyVectorStoresRequest(ctx context.Context, method string, 
 	}
 	defer p.releaseSemaphore()
 
-	upstreamURL := p.baseURL + path
+	upstreamURL := p.endpoint(path)
 	if len(queryParams) > 0 {
 		upstreamURL += "?" + queryParams.Encode()
 	}
@@ -982,7 +999,7 @@ func (p *Provider) ProxyVectorStoresRequest(ctx context.Context, method string, 
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, 0, nil, models.ErrGatewayTimeout("vector stores request timed out")
 		}
 		return nil, 0, nil, models.ErrUpstreamProvider(0, fmt.Sprintf("vector stores request failed: %v", err))
@@ -991,7 +1008,7 @@ func (p *Provider) ProxyVectorStoresRequest(ctx context.Context, method string, 
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, resp.StatusCode, nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading vector stores response: %v", err))
+		return nil, resp.StatusCode, nil, common.ReadError(err, resp.StatusCode, "reading vector stores response")
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -1032,6 +1049,14 @@ func parseProviderError(status int, body []byte) *models.APIError {
 		msg = msg[:500] + "..."
 	}
 	return models.ErrUpstreamProvider(status, fmt.Sprintf("provider error (HTTP %d): %s", status, msg))
+}
+
+// streamErrorChunk reports whether a stream chunk is an upstream's error
+// object, which an OpenAI-compatible server sends in place of a chunk when it
+// fails mid-stream.
+func streamErrorChunk(chunk models.StreamChunk) bool {
+	raw, ok := chunk.Extra["error"]
+	return ok && string(raw) != "null"
 }
 
 // resolveModelName returns the model ID as-is. Historically this stripped

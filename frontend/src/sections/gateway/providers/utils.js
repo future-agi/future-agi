@@ -1,3 +1,15 @@
+export const DEFAULT_API_PATH_PREFIX = "/v1";
+
+export function getApiPathPrefix(config) {
+  return config?.api_path_prefix ?? DEFAULT_API_PATH_PREFIX;
+}
+
+export function withApiPathPrefix(config, apiFormat, apiPathPrefix) {
+  return apiFormat === "openai"
+    ? { ...config, api_path_prefix: apiPathPrefix }
+    : config;
+}
+
 export function parseTimeoutSeconds(value) {
   const text = String(value ?? "")
     .trim()

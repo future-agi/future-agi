@@ -15,12 +15,17 @@ forever:
 """
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from tracer.models.trace_scan import TraceScanResult, TraceScanStatus
-from tracer.queries.trace_scanner import mark_traces_failed
+from tracer.queries.trace_scanner import (
+    filter_already_scanned,
+    mark_traces_failed,
+    write_scan_results,
+)
 from tracer.types.scan_types import ScanConfig, TraceData
 
 
@@ -112,3 +117,57 @@ class TestScanAndWriteMarksUnresolved:
         # PeerDB-lagged; leave it for the sweep, never mark it terminal.
         _, mark = self._run(mark_unresolved=False, resolved_data=lambda t: [])
         mark.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestAnUnfinishedScanIsNotPersisted:
+    """A scan that could not run must leave no row behind.
+
+    ``filter_already_scanned`` treats ANY row as terminal — FAILED exactly like
+    COMPLETED — so a row written while the gateway was down retires that trace
+    from every later sweep. The result carries ``retryable`` to say the scan did
+    not happen rather than that the trace is clean, and nothing is written for
+    it. Traces that fail forever are still bounded: the sweep abandons them past
+    the lag bound via ``mark_traces_failed`` above.
+
+    Deliberately typed structurally rather than importing the scanner's
+    ``ScanResult``: that dataclass lives in the EE package, which OSS builds do
+    not ship, and the guard reads the attribute with ``getattr``.
+    """
+
+    @staticmethod
+    def _result(trace_id, *, retryable):
+        return SimpleNamespace(
+            trace_id=trace_id,
+            has_issues=False,
+            issues=[],
+            key_moments=[],
+            meta=SimpleNamespace(
+                tools_called=[], tools_available=[], turn_count=0
+            ),
+            error="gateway unreachable",
+            retryable=retryable,
+        )
+
+    def test_a_retryable_result_writes_no_row(self, project):
+        trace_id = str(uuid.uuid4())
+
+        written = write_scan_results(
+            [self._result(trace_id, retryable=True)], str(project.id), "v8"
+        )
+
+        assert written == 0
+        assert not TraceScanResult.objects.filter(trace_id=trace_id).exists()
+        # The point of writing nothing: the trace stays visible to the sweep.
+        assert filter_already_scanned([trace_id]) == [trace_id]
+
+    def test_a_finished_scan_still_writes(self, project):
+        """The guard must not swallow ordinary results."""
+        trace_id = str(uuid.uuid4())
+
+        written = write_scan_results(
+            [self._result(trace_id, retryable=False)], str(project.id), "v8"
+        )
+
+        assert written == 1
+        assert filter_already_scanned([trace_id]) == []

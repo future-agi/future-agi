@@ -1,0 +1,807 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { useState } from "react";
+import {
+  render as rtlRender,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import EvalsStep from "../EvalsStep";
+import { EVALS_COPY } from "../evals.constants";
+import { NO_MISSELLING, selectedEntry } from "./fixtures/evalEntries";
+
+// The API client, mocked so a backed-env remove exercises the real DELETE path
+// without the apiPath contract throw.
+vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
+  listHarnessEnvironments: vi.fn(),
+  deleteHarnessEnvironment: vi.fn(),
+  renameHarnessEnvironment: vi.fn(),
+  getHarnessEnvironment: vi.fn(),
+  deleteAppliedEvaluation: vi.fn(() => Promise.resolve()),
+  addRunEvaluation: vi.fn(),
+  setToolCallEvaluation: vi.fn(),
+  updateAppliedEvaluation: vi.fn(),
+}));
+const {
+  deleteAppliedEvaluation,
+  getHarnessEnvironment,
+  setToolCallEvaluation,
+  updateAppliedEvaluation,
+  addRunEvaluation,
+} = await import("src/api/simulate-environments/harnessEnvironments");
+
+// Editing reads the run test's full eval rows (the tab's own rows are display
+// entries); only that read goes through the shared client.
+vi.mock("src/utils/axios", async (importOriginal) => ({
+  ...(await importOriginal()),
+  default: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), patch: vi.fn() },
+}));
+vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+const axios = (await import("src/utils/axios")).default;
+
+// EvalsStep now uses a react-query mutation (remove-eval), so every render
+// needs a client. Wrap the library render once so the call sites stay unchanged.
+const render = (ui, options) =>
+  rtlRender(
+    <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>,
+    options,
+  );
+
+// The product eval picker is a large real drawer with its own data fetching;
+// stub it with a marker that exposes the callbacks the wrapper wires up.
+const picker = vi.hoisted(() => ({ calls: [] }));
+vi.mock("src/sections/common/EvalPicker", async () => ({
+  serializeEvalConfig: (
+    await vi.importActual("src/sections/common/EvalPicker/serializeEvalConfig")
+  ).serializeEvalConfig,
+  EvalPickerDrawer: (p) => {
+    picker.calls.push(p);
+    return p.open ? (
+      <div data-testid="eval-picker">
+        <button
+          type="button"
+          onClick={() =>
+            p.onEvalAdded({ templateId: "a", name: "A", mapping: {} })
+          }
+        >
+          save-a
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            p.onEvalAdded({ templateId: "b", name: "B", mapping: {} })
+          }
+        >
+          save-b
+        </button>
+        <button type="button" onClick={p.onClose}>
+          picker-close
+        </button>
+      </div>
+    ) : null;
+  },
+}));
+
+const ENV = {
+  id: "env-1",
+  name: "Support",
+  surface: "voice",
+  evalPreset: ["task_success", "policy_adherence", "pii_leakage"],
+};
+
+// eslint-disable-next-line react/prop-types
+function Harness({ env = ENV, initial, onGo, patchSpy, ...flags }) {
+  const [envState, setEnvState] = useState(initial);
+  const patch = (p) => {
+    patchSpy?.(p);
+    setEnvState((s) => ({ ...s, ...p }));
+  };
+  return (
+    <EvalsStep
+      env={env}
+      envState={envState}
+      patch={patch}
+      onGo={onGo}
+      {...flags}
+    />
+  );
+}
+
+beforeEach(() => {
+  deleteAppliedEvaluation.mockClear();
+  picker.calls.length = 0;
+});
+
+describe("EvalsStep — tool-call evaluation toggle", () => {
+  it("keeps the toggle disabled until an agent is connected", () => {
+    render(
+      <Harness
+        initial={{ scenarios: [{ id: "s1" }], evals: [{ id: "e1" }] }}
+      />,
+    );
+    expect(
+      screen.getByRole("checkbox", { name: EVALS_COPY.toolCall.title }),
+    ).toBeDisabled();
+  });
+
+  it("enables it with an agent and patches toolCallEval on flip", () => {
+    const patchSpy = vi.fn();
+    render(
+      <Harness
+        initial={{
+          scenarios: [{ id: "s1" }],
+          evals: [{ id: "e1" }],
+          agent: { typeId: "voice" },
+        }}
+        patchSpy={patchSpy}
+      />,
+    );
+    const toggle = screen.getByRole("checkbox", {
+      name: EVALS_COPY.toolCall.title,
+    });
+    expect(toggle).toBeEnabled();
+    fireEvent.click(toggle);
+    expect(patchSpy).toHaveBeenCalledWith({ toolCallEval: true });
+  });
+});
+
+describe("EvalsStep — tool-call evaluation on a backend-backed env", () => {
+  const agentState = {
+    scenarios: [{ id: "s1" }],
+    evals: [],
+    agent: { typeId: "voice" },
+  };
+  const detail = (on) => ({
+    evaluations: { selected: [] },
+    settings: { enable_tool_evaluation: on },
+  });
+
+  afterEach(() => {
+    setToolCallEvaluation.mockReset();
+    getHarnessEnvironment.mockReset();
+  });
+
+  it("reads the switch from settings.enable_tool_evaluation", async () => {
+    getHarnessEnvironment.mockResolvedValue(detail(true));
+    render(<Harness backed initial={agentState} patchSpy={vi.fn()} />);
+    const toggle = screen.getByRole("checkbox", {
+      name: EVALS_COPY.toolCall.title,
+    });
+    await waitFor(() => expect(toggle).toBeChecked());
+  });
+
+  it("persists a flip through the endpoint and shows the server's answer", async () => {
+    getHarnessEnvironment.mockResolvedValue(detail(false));
+    setToolCallEvaluation.mockResolvedValue(detail(true));
+    const patchSpy = vi.fn();
+    render(<Harness backed initial={agentState} patchSpy={patchSpy} />);
+    const toggle = screen.getByRole("checkbox", {
+      name: EVALS_COPY.toolCall.title,
+    });
+    await waitFor(() => expect(toggle).toBeEnabled());
+
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(setToolCallEvaluation).toHaveBeenCalledWith(ENV.id, true),
+    );
+    await waitFor(() => expect(toggle).toBeChecked());
+    expect(patchSpy).not.toHaveBeenCalledWith({ toolCallEval: true });
+  });
+
+  it("shows the 409 a voice environment with no agent version returns", async () => {
+    getHarnessEnvironment.mockResolvedValue(detail(false));
+    setToolCallEvaluation.mockRejectedValue({
+      statusCode: 409,
+      detail:
+        "Tool-call evaluation is not available for a voice environment yet",
+    });
+    render(<Harness backed initial={agentState} patchSpy={vi.fn()} />);
+    const toggle = screen.getByRole("checkbox", {
+      name: EVALS_COPY.toolCall.title,
+    });
+    await waitFor(() => expect(toggle).toBeEnabled());
+
+    fireEvent.click(toggle);
+    expect(
+      await screen.findByText(/not available for a voice environment yet/),
+    ).toBeInTheDocument();
+    expect(toggle).not.toBeChecked();
+  });
+});
+
+describe("EvalsStep — preset auto-seeds into Added (no Suggested card)", () => {
+  it("seeds the whole preset into Added on first empty mount", () => {
+    const patchSpy = vi.fn();
+    render(
+      <Harness
+        initial={{ scenarios: [{ id: "s1" }], evals: [] }}
+        patchSpy={patchSpy}
+      />,
+    );
+
+    // The preset was added for the user — no separate Suggested card to click.
+    expect(screen.queryByText(/Suggested evaluations/)).not.toBeInTheDocument();
+    expect(patchSpy).toHaveBeenCalledTimes(1);
+    const { evals } = patchSpy.mock.calls[0][0];
+    expect(evals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "task_success" }),
+        expect.objectContaining({ id: "policy_adherence" }),
+        expect.objectContaining({ id: "pii_leakage" }),
+      ]),
+    );
+    expect(screen.getByText("Added evaluations (3)")).toBeInTheDocument();
+  });
+
+  it("does not seed when evals already exist", () => {
+    const patchSpy = vi.fn();
+    render(
+      <Harness
+        initial={{
+          scenarios: [{ id: "s1" }],
+          evals: [{ id: "policy_adherence" }],
+        }}
+        patchSpy={patchSpy}
+      />,
+    );
+
+    // Already has one → no evals are seeded, and there is no Suggested card.
+    // (The seed flag is still recorded so a later remove-all stays empty.)
+    expect(patchSpy.mock.calls.every(([p]) => !("evals" in p))).toBe(true);
+    expect(screen.queryByText(/Suggested evaluations/)).not.toBeInTheDocument();
+    expect(screen.getByText("Added evaluations (1)")).toBeInTheDocument();
+  });
+
+  it("does not re-seed after the user removes an added eval", () => {
+    const patchSpy = vi.fn();
+    render(
+      <Harness
+        initial={{ scenarios: [{ id: "s1" }], evals: [{ id: "task_success" }] }}
+        patchSpy={patchSpy}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: EVALS_COPY.remove }));
+
+    expect(patchSpy).toHaveBeenCalledWith({ evals: [] });
+    // The persisted seed flag keeps the suggestions from looping straight back in.
+    expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
+    expect(screen.getByText(EVALS_COPY.emptyTitle)).toBeInTheDocument();
+  });
+
+  it("does not re-seed after remove-all followed by a remount (tab switch)", () => {
+    // The seed guard lives in envState, not a component ref, so unmounting the
+    // step (switching tabs) and coming back must NOT re-add the removed evals.
+    function RemountHarness() {
+      const [envState, setEnvState] = useState({
+        scenarios: [{ id: "s1" }],
+        evals: [],
+      });
+      const [mounted, setMounted] = useState(true);
+      const patch = (p) => setEnvState((s) => ({ ...s, ...p }));
+      return (
+        <>
+          <button type="button" onClick={() => setMounted((m) => !m)}>
+            toggle
+          </button>
+          {mounted && (
+            <EvalsStep
+              env={ENV}
+              envState={envState}
+              patch={patch}
+              onGo={vi.fn()}
+            />
+          )}
+        </>
+      );
+    }
+    render(<RemountHarness />);
+
+    // Fresh env auto-seeds the 3 preset evals.
+    expect(screen.getByText("Added evaluations (3)")).toBeInTheDocument();
+    // Remove all three.
+    for (let i = 0; i < 3; i += 1) {
+      fireEvent.click(
+        screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+      );
+    }
+    expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
+
+    // Switch away and back — the deliberate empty set must survive.
+    fireEvent.click(screen.getByRole("button", { name: "toggle" }));
+    fireEvent.click(screen.getByRole("button", { name: "toggle" }));
+    expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
+  });
+});
+
+describe("EvalsStep — locked when scenarios are missing", () => {
+  it("does not seed, and routes the empty state to onGo('scenarios')", () => {
+    const patchSpy = vi.fn();
+    const onGo = vi.fn();
+    render(
+      <Harness
+        initial={{ scenarios: [], evals: [] }}
+        onGo={onGo}
+        patchSpy={patchSpy}
+      />,
+    );
+
+    expect(screen.queryByText(/Suggested evaluations/)).not.toBeInTheDocument();
+    expect(screen.getByText(EVALS_COPY.lockedTitle)).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: EVALS_COPY.addScenarios }),
+    );
+
+    expect(onGo).toHaveBeenCalledWith("scenarios");
+    // No auto-seed while scenarios are missing.
+    expect(patchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("EvalsStep — AddEvalsDrawer over the product picker", () => {
+  // An env with no preset so nothing auto-seeds — this test is about the picker.
+  const noPreset = { ...ENV, evalPreset: [] };
+
+  it("flows each saved eval through onAdd and closes the drawer on a single add", () => {
+    const patchSpy = vi.fn();
+    render(
+      <Harness
+        env={noPreset}
+        initial={{
+          scenarios: [{ id: "s1" }],
+          evals: [],
+          agent: { typeId: "voice" },
+        }}
+        patchSpy={patchSpy}
+      />,
+    );
+
+    // Empty state (no preset) → open the picker from its Add button.
+    fireEvent.click(screen.getByRole("button", { name: EVALS_COPY.add }));
+    expect(screen.getByTestId("eval-picker")).toBeInTheDocument();
+
+    // A single, non-queued add maps that eval and closes the drawer.
+    fireEvent.click(screen.getByRole("button", { name: "save-a" }));
+    expect(patchSpy).toHaveBeenCalledTimes(1);
+    expect(patchSpy.mock.calls[0][0].evals).toEqual([
+      expect.objectContaining({ id: "a", custom: true }),
+    ]);
+    expect(screen.queryByTestId("eval-picker")).not.toBeInTheDocument();
+
+    // Single-add mode: the picker is told not to keep itself open.
+    const afterFirst = picker.calls.at(-1);
+    expect(afterFirst.keepOpenAfterSave).toBe(false);
+
+    // Re-open to add a second eval — the first flows back in as existing.
+    fireEvent.click(screen.getByRole("button", { name: EVALS_COPY.add }));
+    const reopened = picker.calls.at(-1);
+    expect(reopened.existingEvals).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "a" })]),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "save-b" }));
+    expect(patchSpy).toHaveBeenCalledTimes(2);
+    expect(patchSpy.mock.calls[1][0].evals).toEqual([
+      expect.objectContaining({ id: "a" }),
+      expect.objectContaining({ id: "b", custom: true }),
+    ]);
+    expect(screen.queryByTestId("eval-picker")).not.toBeInTheDocument();
+  });
+});
+
+describe("EvalsStep — template lock (read-only until forked)", () => {
+  const LOCK_TOOLTIP = "Fork this environment to edit.";
+  // One applied eval so the header Add and the per-row remove both render.
+  const lockedState = {
+    scenarios: [{ id: "s1" }],
+    evals: [{ id: "policy_adherence" }],
+  };
+
+  const renderLocked = (locked) =>
+    render(
+      <EvalsStep
+        env={ENV}
+        envState={lockedState}
+        patch={vi.fn()}
+        onGo={vi.fn()}
+        locked={locked}
+      />,
+    );
+
+  it("disables the add/remove controls with the fork tooltip", () => {
+    renderLocked(true);
+    expect(screen.getByRole("button", { name: EVALS_COPY.add })).toBeDisabled();
+    expect(
+      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+    ).toBeDisabled();
+    expect(screen.getAllByLabelText(LOCK_TOOLTIP).length).toBeGreaterThan(0);
+  });
+
+  it("puts Add evaluations on the Added evaluations card, with no heading repeating the tab", () => {
+    renderLocked(false);
+    expect(
+      screen.queryByText(/These decide whether each task passed/),
+    ).toBeNull();
+    const addButton = screen.getByRole("button", { name: EVALS_COPY.add });
+    let card = screen.getByText(/^Added evaluations/).parentElement;
+    while (card && !card.contains(addButton)) card = card.parentElement;
+    expect(card.textContent).not.toContain(EVALS_COPY.toolCall.title);
+  });
+
+  it("keeps the same controls enabled when not locked", () => {
+    renderLocked(false);
+    expect(screen.getByRole("button", { name: EVALS_COPY.add })).toBeEnabled();
+    expect(
+      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+    ).toBeEnabled();
+    expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
+  });
+});
+
+describe("EvalsStep — remove on a backend-backed env", () => {
+  // A backed env's applied set comes from the environment detail
+  // (evaluations.selected), not
+  // the store — so mock the detail fetch to supply the real selected row.
+  const detailWith = (selected) => ({ evaluations: { selected } });
+  const state = { scenarios: [{ id: "s1" }], evals: [] };
+
+  beforeEach(() => {
+    getHarnessEnvironment.mockResolvedValue(
+      detailWith([selectedEntry(NO_MISSELLING, "cfg-1")]),
+    );
+  });
+
+  // The module mock's default is
+  // `deleteAppliedEvaluation: vi.fn(() => Promise.resolve())`, but the
+  // top-level `beforeEach` only `mockClear()`s it — that clears call
+  // history, not an implementation override. A test below sets
+  // `mockRejectedValue`, a standing override that survives `mockClear()`;
+  // left in place it would fail the next test with a rejected DELETE it
+  // never asked for. `mockRestore()` undoes both, back to the
+  // `vi.fn(() => …)` given at mock-factory time.
+  afterEach(() => {
+    deleteAppliedEvaluation.mockRestore();
+  });
+
+  it("shows where the eval came from and what fills its inputs, with no cost chip", async () => {
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+
+    expect(await screen.findByText("no_misselling")).toBeInTheDocument();
+    expect(screen.getByText("Library")).toBeInTheDocument();
+    expect(screen.queryByText(/credits per/)).toBeNull();
+    expect(screen.getByText("{{conversation}}")).toBeInTheDocument();
+    expect(screen.getByText("Call recording")).toBeInTheDocument();
+    // The raw source never reaches the screen.
+    expect(screen.queryByText("voice_recording")).toBeNull();
+  });
+
+  it("lists the detail's selected evals and fires the real DELETE with the config id", async () => {
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+
+    expect(await screen.findByText("no_misselling")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+    );
+
+    await waitFor(() =>
+      expect(deleteAppliedEvaluation).toHaveBeenCalledWith("env-1", "cfg-1"),
+    );
+  });
+
+  it("stays store-only (no DELETE) when the env is not backend-backed", () => {
+    const patchSpy = vi.fn();
+    render(
+      <Harness
+        initial={{
+          scenarios: [{ id: "s1" }],
+          evals: [{ id: "task_success", name: "Task success" }],
+        }}
+        patchSpy={patchSpy}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+    );
+
+    expect(deleteAppliedEvaluation).not.toHaveBeenCalled();
+    expect(patchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ evals: [] }),
+    );
+  });
+
+  it("disables remove while a backed env is still building", async () => {
+    render(
+      <Harness
+        backed
+        env={{ ...ENV, buildStatus: "building" }}
+        initial={state}
+        patchSpy={vi.fn()}
+      />,
+    );
+    expect(await screen.findByText("no_misselling")).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+    ).toBeDisabled();
+  });
+
+  // `selectedFromDetail` collapses a failed read to `[]`, which is the same
+  // value an environment with genuinely no evals produces. Announcing
+  // "Added (0) / No evaluations added yet" out of that turns a fetch that
+  // never answered into a confident claim about an environment that may hold
+  // eight.
+  it("says the applied list could not be read, never 'no evaluations added yet'", async () => {
+    // A 404 is the one failure the detail query treats as terminal; every
+    // other status is retried, which is the same branch reached a few
+    // seconds later.
+    getHarnessEnvironment.mockRejectedValue({
+      detail: "No environment matches this id",
+      statusCode: 404,
+    });
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+
+    expect(
+      await screen.findByText("No environment matches this id"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Added evaluations (0)")).toBeNull();
+    expect(screen.queryByText(EVALS_COPY.emptyTitle)).toBeNull();
+    expect(screen.queryByText(EVALS_COPY.emptyNoSuggestions)).toBeNull();
+  });
+
+  it("shows the loading state, not the empty state, while the applied list is still being read", async () => {
+    getHarnessEnvironment.mockReturnValue(new Promise(() => {}));
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+
+    expect(await screen.findByRole("progressbar")).toBeInTheDocument();
+    // No count either: nobody has read the list yet.
+    expect(screen.queryByText("Added evaluations (0)")).toBeNull();
+    expect(screen.queryByText(EVALS_COPY.emptyTitle)).toBeNull();
+  });
+
+  it("shows the server's sentence when a remove is refused, attributed to the eval it failed for, and keeps the row", async () => {
+    deleteAppliedEvaluation.mockRejectedValue({
+      detail: "Environment has no evaluations until it finishes building",
+      statusCode: 409,
+    });
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+
+    await screen.findByText("no_misselling");
+    fireEvent.click(
+      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+    );
+
+    // The Alert names which row the refusal belongs to, not just the
+    // server's sentence — with several rows a bare "already removed"
+    // doesn't say which one.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "no_misselling: Environment has no evaluations until it finishes building",
+    );
+    // Nothing was removed, so the row is still there — the Alert is the only
+    // thing that changed.
+    expect(screen.getByText("no_misselling")).toBeInTheDocument();
+  });
+});
+
+describe("EvalsStep — editing an eval on a backend-backed env", () => {
+  const state = { scenarios: [{ id: "s1" }], evals: [] };
+  const FULL_ROW = {
+    id: "cfg-1",
+    name: "no_misselling",
+    template_id: "tpl-1",
+    mapping: { conversation: "voice_recording" },
+    config: { run_config: { model: "turing_large" } },
+    editable: true,
+  };
+
+  beforeEach(() => {
+    getHarnessEnvironment.mockResolvedValue({
+      overview: { agent_type: "voice", run: { run_test_id: "rt-1" } },
+      evaluations: {
+        selected: [
+          { ...selectedEntry(NO_MISSELLING, "cfg-1"), editable: true },
+        ],
+      },
+    });
+    axios.get.mockResolvedValue({
+      data: { simulate_eval_configs_detail: [FULL_ROW] },
+    });
+  });
+  afterEach(() => {
+    deleteAppliedEvaluation.mockRestore();
+    updateAppliedEvaluation.mockReset();
+    addRunEvaluation.mockReset();
+    axios.get.mockReset();
+  });
+
+  const openEditor = async () => {
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: EVALS_COPY.edit }))[0],
+    );
+    await waitFor(() =>
+      expect(picker.calls.at(-1)?.initialEval?.userEvalId).toBe("cfg-1"),
+    );
+  };
+
+  it("opens the edit form on that eval's full settings", async () => {
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+    await openEditor();
+
+    expect(picker.calls.at(-1).initialEval).toMatchObject({
+      template_id: "tpl-1",
+      mapping: { conversation: "voice_recording" },
+    });
+  });
+
+  it("holds edits while the environment is still building", async () => {
+    render(
+      <Harness
+        backed
+        env={{ ...ENV, buildStatus: "building" }}
+        initial={state}
+        patchSpy={vi.fn()}
+      />,
+    );
+    const edit = (
+      await screen.findAllByRole("button", { name: EVALS_COPY.edit })
+    )[0];
+    expect(edit).toBeDisabled();
+    fireEvent.mouseOver(edit.parentElement);
+    expect(
+      await screen.findByText(
+        "Available once the environment finishes building.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("holds edits while a run is being graded, and says why", async () => {
+    render(<Harness backed grading initial={state} patchSpy={vi.fn()} />);
+    const edit = (
+      await screen.findAllByRole("button", { name: EVALS_COPY.edit })
+    )[0];
+    expect(edit).toBeDisabled();
+    // Only the edit waits for grading.
+    expect(
+      screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
+    ).toBeEnabled();
+    fireEvent.mouseOver(edit.parentElement);
+    expect(
+      await screen.findByText(EVALS_COPY.gradingLocked),
+    ).toBeInTheDocument();
+  });
+
+  it("lets an eval be edited when no run is being graded", async () => {
+    render(
+      <Harness backed grading={false} initial={state} patchSpy={vi.fn()} />,
+    );
+    expect(
+      (await screen.findAllByRole("button", { name: EVALS_COPY.edit }))[0],
+    ).toBeEnabled();
+  });
+
+  it("says why first when an eval can't be edited at all, even mid-grade", async () => {
+    getHarnessEnvironment.mockResolvedValue({
+      overview: { agent_type: "voice", run: { run_test_id: "rt-1" } },
+      evaluations: {
+        selected: [
+          { ...selectedEntry(NO_MISSELLING, "cfg-1"), editable: false },
+        ],
+      },
+    });
+    render(<Harness backed grading initial={state} patchSpy={vi.fn()} />);
+    const edit = (
+      await screen.findAllByRole("button", { name: EVALS_COPY.edit })
+    )[0];
+    fireEvent.mouseOver(edit.parentElement);
+    expect(await screen.findByText(EVALS_COPY.notEditable)).toBeInTheDocument();
+    expect(screen.queryByText(EVALS_COPY.gradingLocked)).toBeNull();
+  });
+
+  it("holds edits on a locked template", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <EvalsStep env={ENV} envState={state} patch={vi.fn()} backed locked />
+      </QueryClientProvider>,
+    );
+    const edit = (
+      await screen.findAllByRole("button", { name: EVALS_COPY.edit })
+    )[0];
+    expect(edit).toBeDisabled();
+    fireEvent.mouseOver(edit.parentElement);
+    expect(
+      await screen.findByText("Fork this environment to edit."),
+    ).toBeInTheDocument();
+  });
+
+  it("holds edits on an eval the server marks not editable, and says why", async () => {
+    getHarnessEnvironment.mockResolvedValue({
+      overview: { agent_type: "voice", run: { run_test_id: "rt-1" } },
+      evaluations: {
+        selected: [
+          { ...selectedEntry(NO_MISSELLING, "cfg-1"), editable: false },
+        ],
+      },
+    });
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+    const edit = (
+      await screen.findAllByRole("button", { name: EVALS_COPY.edit })
+    )[0];
+    expect(edit).toBeDisabled();
+    fireEvent.mouseOver(edit.parentElement);
+    expect(await screen.findByText(EVALS_COPY.notEditable)).toBeInTheDocument();
+  });
+
+  it("treats an eval the server didn't mark editable as not editable", async () => {
+    getHarnessEnvironment.mockResolvedValue({
+      overview: { agent_type: "voice", run: { run_test_id: "rt-1" } },
+      evaluations: { selected: [selectedEntry(NO_MISSELLING, "cfg-1")] },
+    });
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+    expect(
+      (await screen.findAllByRole("button", { name: EVALS_COPY.edit }))[0],
+    ).toBeDisabled();
+  });
+
+  it("offers no edit on an environment without a backend", () => {
+    render(
+      <Harness
+        initial={{
+          scenarios: [{ id: "s1" }],
+          evals: [{ id: "task_success", name: "Task success" }],
+        }}
+        patchSpy={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: EVALS_COPY.edit })).toBeNull();
+  });
+
+  it("saves through the environment's edit and grades nothing", async () => {
+    updateAppliedEvaluation.mockResolvedValue(FULL_ROW);
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+    await openEditor();
+
+    await picker.calls.at(-1).onEvalAdded({
+      templateId: "tpl-1",
+      name: "no_misselling",
+      mapping: { conversation: "call.transcript" },
+      config: {},
+    });
+    expect(updateAppliedEvaluation).toHaveBeenCalledWith(
+      "env-1",
+      "cfg-1",
+      expect.objectContaining({ mapping: { conversation: "call.transcript" } }),
+    );
+    expect(addRunEvaluation).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByTestId("eval-picker")).toBeNull());
+    expect(
+      screen.getAllByRole("button", { name: EVALS_COPY.edit })[0],
+    ).toBeEnabled();
+  });
+
+  it("holds edits while an eval is being removed", async () => {
+    deleteAppliedEvaluation.mockReturnValue(new Promise(() => {}));
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: EVALS_COPY.remove }))[0],
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("button", { name: EVALS_COPY.edit })[0],
+      ).toBeDisabled(),
+    );
+  });
+
+  it("sends nothing when the edit form is closed without saving", async () => {
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+    await openEditor();
+
+    fireEvent.click(screen.getByText("picker-close"));
+    await waitFor(() => expect(screen.queryByTestId("eval-picker")).toBeNull());
+    expect(updateAppliedEvaluation).not.toHaveBeenCalled();
+    expect(
+      screen.getAllByRole("button", { name: EVALS_COPY.edit })[0],
+    ).toBeEnabled();
+  });
+});
