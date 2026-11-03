@@ -15,7 +15,8 @@ export const CustomExperimentColumnHeader = (props) => {
   const { displayName, showColumnMenu, col, hideMenu, head, index } = props;
   const refButton = useRef(null);
 
-  const originType = col?.originType;
+  const originType = col?.origin_type;
+  const dataType = col?.data_type;
   const onMenuClicked = () => {
     showColumnMenu(refButton?.current);
   };
@@ -45,14 +46,14 @@ export const CustomExperimentColumnHeader = (props) => {
           </Typography>
         </Box>
       );
-    } else if (col.originType === "run_prompt") {
+    } else if (originType === "run_prompt") {
       return (
         <SvgColor
           src={`/assets/icons/action_buttons/ic_run_prompt.svg`}
           sx={{ width: 20, height: 20, color: "info.main" }}
         />
       );
-    } else if (col.originType === "evaluation") {
+    } else if (originType === "evaluation") {
       return (
         <Iconify
           icon="material-symbols:check-circle-outline"
@@ -60,8 +61,8 @@ export const CustomExperimentColumnHeader = (props) => {
         />
       );
     } else if (
-      col.originType === "optimisation" ||
-      col.originType === "optimisation_evaluation"
+      originType === "optimisation" ||
+      originType === "optimisation_evaluation"
     ) {
       return (
         <SvgColor
@@ -69,32 +70,32 @@ export const CustomExperimentColumnHeader = (props) => {
           sx={{ width: 20, height: 20, color: "primary.main" }}
         />
       );
-    } else if (col.originType === "annotation_label") {
+    } else if (originType === "annotation_label") {
       return <Iconify icon="jam:write" sx={iconStyle} />;
-    } else if (col.dataType === "text") {
+    } else if (dataType === "text") {
       return <Iconify icon="material-symbols:notes" sx={iconStyle} />;
-    } else if (col.dataType === "array") {
+    } else if (dataType === "array") {
       return <Iconify icon="material-symbols:data-array" sx={iconStyle} />;
-    } else if (col.dataType === "integer") {
+    } else if (dataType === "integer") {
       return <Iconify icon="material-symbols:tag" sx={iconStyle} />;
-    } else if (col.dataType === "float") {
+    } else if (dataType === "float") {
       return <Iconify icon="tabler:decimal" sx={iconStyle} />;
-    } else if (col.dataType === "boolean") {
+    } else if (dataType === "boolean") {
       return (
         <Iconify icon="material-symbols:toggle-on-outline" sx={iconStyle} />
       );
-    } else if (col.dataType === "datetime") {
+    } else if (dataType === "datetime") {
       return <Iconify icon="tabler:calendar" sx={iconStyle} />;
-    } else if (col.dataType === "json") {
+    } else if (dataType === "json") {
       return <Iconify icon="material-symbols:data-object" sx={iconStyle} />;
-    } else if (col.dataType === "image") {
+    } else if (dataType === "image") {
       return (
         <SvgColor
           src={`/assets/icons/action_buttons/ic_image.svg`}
           sx={{ width: 20, height: 20, color: "text.secondary" }}
         />
       );
-    } else if (col.dataType === "audio") {
+    } else if (dataType === "audio") {
       return (
         <SvgColor
           src={`/assets/icons/action_buttons/ic_audio.svg`}
@@ -152,7 +153,7 @@ export const CustomExperimentColumnHeader = (props) => {
           size="small"
           color="primary"
           onClick={() => {
-            setSelectedSourceId(col?.sourceId);
+            setSelectedSourceId(col?.source_id);
           }}
           disabled={[
             EXPERIMENT_COLUMN_STATUS.RUNNING,

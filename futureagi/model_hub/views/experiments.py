@@ -1549,12 +1549,9 @@ class DatasetExperimentsView(APIView):
 
             if column_config_only:
                 # Determine experiment-level output format (uniform across all prompt configs)
-                try:
-                    experiment_output_format = (experiment.prompt_config or [{}])[
-                        0
-                    ].get("output_format", "text")
-                except Exception:
-                    experiment_output_format = "text"
+                experiment_output_format = _rows_output_format(
+                    experiment, is_v2, deadline
+                )
 
                 response_data = {
                     "column_config": column_config,
@@ -1569,12 +1566,7 @@ class DatasetExperimentsView(APIView):
             table_data = [cells_by_row[rid] for rid in row_ids_list]
 
             # Determine experiment-level output format (uniform across all prompt configs)
-            try:
-                experiment_output_format = (experiment.prompt_config or [{}])[0].get(
-                    "output_format", "text"
-                )
-            except Exception:
-                experiment_output_format = "text"
+            experiment_output_format = _rows_output_format(experiment, is_v2, deadline)
 
             deadline.before_query()
             descriptions = {
@@ -5371,6 +5363,22 @@ def get_v2_output_format(experiment):
         experiment_dataset__deleted=False,
     ).first()
     return epc.output_format if epc else "string"
+
+
+def _rows_output_format(experiment, is_v2, deadline):
+    """Experiment-level output format reported by the rows view.
+
+    V2 experiments keep their configs in ExperimentPromptConfig and save the
+    deprecated ``prompt_config`` JSON as ``[]``, so reading that JSON reported
+    "text" for every V2 experiment and the Data tab never offered Show Diff.
+    """
+    if is_v2:
+        deadline.before_query()
+        return get_v2_output_format(experiment)
+    try:
+        return (experiment.prompt_config or [{}])[0].get("output_format", "text")
+    except Exception:
+        return "text"
 
 
 def get_working_dataset(experiment):

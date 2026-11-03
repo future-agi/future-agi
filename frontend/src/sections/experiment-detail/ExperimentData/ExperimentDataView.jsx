@@ -355,12 +355,12 @@ function ExperimentDataView() {
         } else {
           let children = processColumnsInGroup(columnsInGroup, showSummary);
 
-          // Hide only agent columns where isFinal is false
+          // Hide only agent columns where is_final is false
           // Show all other columns
           children = viewAllPrompts
             ? children
             : children.filter(
-                (child) => !(child?.col?.isAgent && !child?.col?.isFinal),
+                (child) => !(child?.col?.is_agent && !child?.col?.is_final),
               );
           if (children.length > 0) {
             groupedColumns.push({
