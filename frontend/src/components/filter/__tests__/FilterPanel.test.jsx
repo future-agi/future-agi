@@ -138,6 +138,59 @@ describe("FilterPanel", () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(null));
     document.body.removeChild(anchorEl);
   });
+
+  it("starts a picked field on its first operator when it has no equals", async () => {
+    const anchorEl = document.createElement("button");
+    document.body.appendChild(anchorEl);
+    const onChange = vi.fn();
+    render(
+      wrap(
+        <FilterPanel
+          anchorEl={anchorEl}
+          open
+          onClose={vi.fn()}
+          fields={[
+            {
+              id: "latency",
+              label: "Latency (ms)",
+              type: "number",
+              operators: [
+                "between",
+                "greater_than_or_equal",
+                "less_than_or_equal",
+              ],
+            },
+          ]}
+          value={[]}
+          onChange={onChange}
+        />,
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Property" }));
+    fireEvent.click(
+      document.querySelector('[data-filter-property-option="latency"]'),
+    );
+
+    expect(screen.getByRole("combobox")).toHaveTextContent("between");
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByPlaceholderText("Min"), {
+      target: { value: "100" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Max"), {
+      target: { value: "500" },
+    });
+    await waitFor(() =>
+      expect(onChange).toHaveBeenLastCalledWith([
+        expect.objectContaining({
+          field: "latency",
+          operator: "between",
+          value: ["100", "500"],
+        }),
+      ]),
+    );
+    document.body.removeChild(anchorEl);
+  });
 });
 
 describe("FilterButton", () => {

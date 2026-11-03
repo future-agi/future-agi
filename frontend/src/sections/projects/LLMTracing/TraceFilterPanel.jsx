@@ -3874,14 +3874,38 @@ function FilterRow({
           : normalizeFieldType(prop.type, prop.attributeTypes);
       // Native identifiers default to exact membership; raw keys keep their type.
       // defaultOperatorForType: optional per-flow { type: op } override.
-      const defaultOp = isNativeIdField(
+      const typeDefaultOp = isNativeIdField(
         prop.id,
         prop.apiColType || prop.category,
       )
         ? "in"
         : defaultOperatorForType?.[nt] || DEFAULT_OP_FOR_TYPE[nt] || "equals";
+      // A field that lists its own operators may not allow the type default
+      // (e.g. a latency range with no "equals"); start on the first one it
+      // declares.
+      const propOps = getOperatorsForFilter(
+        {
+          field: prop.id,
+          fieldType: nt,
+          fieldCategory: prop.category,
+          apiColType: prop.apiColType,
+        },
+        prop,
+      );
+      const allowedOps = operatorFilter
+        ? propOps.filter(operatorFilter)
+        : propOps;
+      const findOp = (value) => allowedOps.find((op) => op.value === value);
+      const defaultOpDef =
+        findOp(typeDefaultOp) ||
+        (prop.operators || []).map(findOp).find(Boolean) ||
+        allowedOps[0];
+      const defaultOp = defaultOpDef?.value || typeDefaultOp;
       let defaultValue;
-      if (nt === "number" || nt === "date" || nt === "map") defaultValue = "";
+      if ((nt === "number" || nt === "date") && defaultOpDef?.range)
+        defaultValue = ["", ""];
+      else if (nt === "number" || nt === "date" || nt === "map")
+        defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
       else if (nt === "text") defaultValue = "";
       else defaultValue = [];
@@ -3899,7 +3923,7 @@ function FilterRow({
         valueTypes: [],
       });
     },
-    [index, filter, onChange, defaultOperatorForType],
+    [index, filter, onChange, defaultOperatorForType, operatorFilter],
   );
 
   const handleOperatorChange = useCallback(
