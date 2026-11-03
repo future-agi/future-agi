@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { clearScenarioSelection } from "../../buildEnvironment/console/scenarioSelectionBus";
 import {
@@ -21,7 +21,7 @@ vi.mock("src/api/harness/harness", () => ({
 // the axios instance is stubbed.
 vi.mock("src/utils/axios", async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, default: { get: vi.fn() } };
+  return { ...actual, default: { get: vi.fn(), post: vi.fn() } };
 });
 
 const { getHarnessJob } = await import("src/api/harness/harness");
@@ -38,6 +38,9 @@ const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
 const { emptyEnvState } = await import("../../store/envState");
 const { seedFromTemplate } = await import("../helpers/seedEnvState");
 const { PIPELINE_CHECKS_COPY } = await import("../../buildEnvironment/build.constants");
+const { SAVE_GRACE_MS } = await import(
+  "src/api/simulate-environments/environment"
+);
 
 const NOW = "2026-09-15T09:00:00Z";
 
@@ -91,6 +94,14 @@ const BUILDING_JOB = {
   status: { stage: "generating_environment", created_at: NOW },
   credentials: { detected_connectors: ["livekit"] },
   stage_outputs: [],
+};
+
+// The completed job's environment detail before the build authored a contract:
+// it loads, but every section is still empty, so the job poll fills the page.
+const DETAIL_NOT_AUTHORED = {
+  id: "job-done",
+  overview: { id: "job-done", name: "Done Environment" },
+  contract: null,
 };
 
 const EXECUTIONS = {
@@ -184,10 +195,17 @@ describe("EnvironmentWorkspace route shell", () => {
     // The Runs-tab summary reads the executions list; the run DETAIL reads the
     // v3 run-results contract. Route each to its own shape so the full-page
     // RunDetail can resolve its identity header. The environment detail
-    // (GET /harness-environments/{id}/) 404s, so these tests exercise the
-    // job-poll path; answering it with the executions list would make every
-    // unknown id resolve to a garbage environment.
+    // (GET /harness-environments/{id}/) answers for the two known jobs with no
+    // contract authored, so these tests exercise the job-poll path; any other
+    // id 404s, since answering it would make every unknown id resolve to a
+    // garbage environment.
     axios.get.mockImplementation((url) => {
+      const known = url.match(/\/harness-environments\/(job-done|job-build)\/$/);
+      if (known) {
+        return Promise.resolve({
+          data: { ...DETAIL_NOT_AUTHORED, id: known[1], overview: { id: known[1] } },
+        });
+      }
       if (/\/harness-environments\/[^/]+\/$/.test(url)) {
         return Promise.reject(Object.assign(new Error("Not found"), { statusCode: 404 }));
       }
@@ -237,6 +255,19 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.queryByText("Pre-flight")).toBeNull();
   });
 
+  it("shows the app loader, not a blank page, while the environment is being resolved", async () => {
+    getHarnessJob.mockReturnValue(new Promise(() => {}));
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) =>
+      /\/harness-environments\/job-pending\/$/.test(url) ? new Promise(() => {}) : base(url),
+    );
+
+    renderWorkspace("/dashboard/simulate/environments/job-pending");
+
+    expect(await screen.findByText("Preparing for liftoff")).toBeInTheDocument();
+    expect(screen.queryByText("Environment not found")).toBeNull();
+  });
+
   it("shows the not-found state for an unknown id", async () => {
     // The axios interceptor rejects with statusCode (not response.status).
     const err = Object.assign(new Error("job not found"), { statusCode: 404 });
@@ -258,6 +289,88 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(await screen.findByText(/Couldn.t load this environment/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.queryByText("Environment not found")).toBeNull();
+  });
+
+  it("offers a retry instead of half-filled tabs when the environment detail fails", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+    let detailCalls = 0;
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) => {
+      if (/\/harness-environments\/job-done\/$/.test(url)) {
+        detailCalls += 1;
+        // Fails until the user retries; the query's own retries count too.
+        return detailCalls <= 4
+          ? Promise.reject(Object.assign(new Error("Server error"), { statusCode: 500 }))
+          : Promise.resolve({ data: DETAIL_NOT_AUTHORED });
+      }
+      return base(url);
+    });
+    const user = userEvent.setup();
+
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+
+    expect(
+      await screen.findByText(/Couldn.t load this environment.s details/, {}, { timeout: 8000 }),
+    ).toBeInTheDocument();
+    // None of the tabs render on the job poll alone: no guessed channel, no
+    // "No agent attached", no sample cards.
+    expect(screen.queryByRole("tab", { name: /Overview/ })).toBeNull();
+    expect(screen.queryByText("No agent attached")).toBeNull();
+    // Nor can a run start without them.
+    expect(screen.getByRole("button", { name: /Run simulation/ })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("tab", { name: /Overview/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn.t load this environment.s details/)).toBeNull();
+  }, 15000);
+
+  it("holds the tabs back, and Run with them, while the environment detail is on its way", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) =>
+      /\/harness-environments\/job-done\/$/.test(url) ? new Promise(() => {}) : base(url),
+    );
+
+    // A revisit: this environment's agent and scenarios are already in the
+    // client store, so Run would be ready on its own; only the missing detail
+    // holds it back.
+    useEnvironmentsStore.setState({
+      byEnv: {
+        "job-done": {
+          ...emptyEnvState(),
+          agent: { typeId: "livekit", via: "endpoint", values: {} },
+          scenarios: [{ id: "scenario-a", name: "scenario-a" }],
+        },
+      },
+    });
+
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+
+    const runButton = await screen.findByRole("button", { name: /Run simulation/ });
+    expect(runButton).toBeDisabled();
+    expect(screen.queryByRole("tab", { name: /Overview/ })).toBeNull();
+    expect(screen.queryByText(/scenarios, shared across agent versions/)).toBeNull();
+    // The tab area shows the loader rather than an empty pane.
+    expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
+  });
+
+  it("counts scenarios from the environment detail, not the seeded job list", async () => {
+    // The job poll seeds no scenarios; the detail says the suite has 3.
+    getHarnessJob.mockResolvedValue({ ...COMPLETED_JOB, scenarios: [] });
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) =>
+      /\/harness-environments\/job-done\/$/.test(url)
+        ? Promise.resolve({
+            data: { ...DETAIL_NOT_AUTHORED, overview: { id: "job-done", scenario_count: 3 } },
+          })
+        : base(url),
+    );
+
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+
+    const runButton = await screen.findByRole("button", { name: /Run simulation/ });
+    await waitFor(() => expect(runButton).toBeEnabled());
+    expect(await screen.findByRole("tab", { name: /Scenarios\s*3/ })).toBeInTheDocument();
   });
 
   it("resolves a harness job: Run enabled, runs listed, row opens the detail", async () => {
@@ -311,6 +424,125 @@ describe("EnvironmentWorkspace route shell", () => {
     } finally {
       window.localStorage.removeItem("simEnv.chatPane.collapsed");
     }
+  });
+
+  it("keeps the collapsed chat's dot on while a nudge waits for an answer", async () => {
+    const conversation = {
+      state: "warm_idle",
+      runtime: { available: true },
+      messages: [{ message_id: "m1", role: "system", kind: "status", state: "completed", content: "Agent v2 changed: prompt. Rebuild the environment?", payload: { nudge_id: "n1", nudge_target: "environment" }, created_at: NOW, sequence: 1 }],
+      events: [],
+    };
+    const nudgesAre = (state) =>
+      axios.get.mockImplementation((url) => {
+        if (url.endsWith("/nudges/")) {
+          return Promise.resolve({ data: [{ id: "n1", target: "environment", state, facts: {}, card_message_id: "m1" }] });
+        }
+        return Promise.reject(Object.assign(new Error("Not found"), { statusCode: 404 }));
+      });
+    const job = { ...COMPLETED_JOB, versioning: { enabled: true, nudges_enabled: true }, conversation };
+    window.localStorage.setItem("simEnv.chatPane.collapsed", "true");
+    try {
+      nudgesAre("pending");
+      getHarnessJob.mockResolvedValue(job);
+      const first = renderWorkspace("/dashboard/simulate/environments/job-done");
+      expect(await screen.findByTestId("chat-split-busy")).toBeInTheDocument();
+      first.unmount();
+
+      // Skipped: nothing waits on the user any more.
+      nudgesAre("answered_no");
+      renderWorkspace("/dashboard/simulate/environments/job-done");
+      // The card shows the skip once the list is in.
+      expect(
+        await screen.findByText("Skipped. The current version stays."),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("chat-split-busy")).not.toBeInTheDocument();
+    } finally {
+      window.localStorage.removeItem("simEnv.chatPane.collapsed");
+    }
+  });
+
+  it("offers Stop for a rebuild waiting on an answer without saying the chat is working, and holds it while it stops", async () => {
+    // The builder's question pauses the turn; its command stays delivered.
+    const conversation = {
+      state: "waiting_for_user",
+      runtime: { available: true },
+      blocking_input: { message_id: "q1", kind: "question_requested" },
+      messages: [
+        {
+          message_id: "m1",
+          role: "system",
+          kind: "status",
+          state: "completed",
+          content: "Agent v2 changed: prompt. Rebuild the environment?",
+          payload: { nudge_id: "n1", nudge_target: "environment" },
+          created_at: NOW,
+          sequence: 1,
+        },
+        {
+          message_id: "u1",
+          role: "user",
+          kind: "message",
+          state: "delivered",
+          content: "Add a rule",
+          created_at: NOW,
+          sequence: 2,
+        },
+        {
+          message_id: "q1",
+          role: "assistant",
+          kind: "question",
+          state: "completed",
+          content: "How strict?",
+          created_at: NOW,
+          sequence: 3,
+        },
+      ],
+      events: [],
+    };
+    axios.get.mockImplementation((url) => {
+      if (url.endsWith("/nudges/")) {
+        return Promise.resolve({
+          data: [
+            {
+              id: "n1",
+              target: "environment",
+              state: "queued",
+              queued_behind_input: true,
+              facts: {},
+              card_message_id: "m1",
+            },
+          ],
+        });
+      }
+      return Promise.reject(
+        Object.assign(new Error("Not found"), { statusCode: 404 }),
+      );
+    });
+    getHarnessJob.mockResolvedValue({
+      ...COMPLETED_JOB,
+      versioning: { enabled: true, nudges_enabled: true },
+      conversation,
+    });
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+    expect(
+      await screen.findByText("Waiting for your answer in chat"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Ask, correct, or steer what it builds"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Working…")).not.toBeInTheDocument();
+
+    axios.post.mockReturnValue(new Promise(() => {}));
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(axios.post).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/job-done/nudges/n1/stop/",
+      {},
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled(),
+    );
   });
 
   it("renders the run detail as its own full page, without the workspace chrome", async () => {
@@ -469,5 +701,287 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.getByTestId("location")).toHaveTextContent(
       `/dashboard/simulate/environments/${forkId}`,
     );
+  });
+});
+
+describe("EnvironmentWorkspace unsaved changes", () => {
+  const DRAFT = {
+    id: "ed",
+    status: "draft",
+    parent_id: "e1",
+    stale: false,
+    revision: 1,
+    last_edited_by: { id: "u1", name: "Asha" },
+    updated_at: NOW,
+    parent_label: "v1",
+    default_label: "v1",
+    changes: { tools: 1, rules: 0, sub_goals: 0, world_files: 0 },
+  };
+  const VERSIONED = { ...COMPLETED_JOB, versioning: { enabled: true } };
+  const conversationIn = (state, extra = {}) => ({
+    conversation_id: "c-drafts",
+    state,
+    runtime: { available: true },
+    messages: [],
+    events: [],
+    ...extra,
+  });
+  const asked = {
+    message_id: "q1",
+    role: "assistant",
+    kind: "question",
+    state: "completed",
+    content: "How strict?",
+    created_at: NOW,
+    sequence: 1,
+  };
+  // The command that started the turn stays "delivered" until the turn completes.
+  const command = (state) => ({
+    message_id: "m0",
+    role: "user",
+    kind: "message",
+    state,
+    content: "Tighten the rules",
+    created_at: NOW,
+    sequence: 0,
+  });
+  const reply = (state) => ({
+    message_id: "a1",
+    role: "user",
+    reply_to: "q1",
+    state,
+    content: "Strict",
+    created_at: NOW,
+    sequence: 2,
+  });
+  const pausedOn = (commandState, ...replies) =>
+    conversationIn("waiting_for_user", {
+      blocking_input: {
+        message_id: "q1",
+        kind: "question_requested",
+        prompt: "How strict?",
+      },
+      messages: [command(commandState), asked, ...replies],
+    });
+  const questionIn = (...replies) => pausedOn("delivered", ...replies);
+  const draftReads = () =>
+    axios.get.mock.calls.filter(([url]) => url.endsWith("/drafts/")).length;
+  const serve = (drafts) =>
+    axios.get.mockImplementation((url) => {
+      if (url.endsWith("/drafts/")) return Promise.resolve({ data: drafts });
+      if (url.endsWith("/versions/")) {
+        return Promise.resolve({
+          data: { agent: [], environment: [], suite: [] },
+        });
+      }
+      if (url.endsWith("/nudges/")) return Promise.resolve({ data: [] });
+      if (/\/harness-environments\/job-done\/$/.test(url)) {
+        return Promise.resolve({ data: DETAIL_NOT_AUTHORED });
+      }
+      return Promise.reject(
+        Object.assign(new Error("Not found"), { statusCode: 404 }),
+      );
+    });
+  const saveButton = () => screen.findByRole("button", { name: "Save" });
+
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+    resetEnvironmentsStore();
+    clearScenarioSelection();
+    getHarnessJob.mockReset();
+    axios.get.mockReset();
+    serve({ environment: DRAFT, suite: null, set_aside: [] });
+  });
+
+  it("shows the bar right under the version bar while drafts are open", async () => {
+    getHarnessJob.mockResolvedValue(VERSIONED);
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+    const bar = await screen.findByTestId("draft-bar");
+    expect(bar.previousElementSibling).toHaveTextContent(
+      /shared across agent versions/,
+    );
+    expect(await saveButton()).toBeEnabled();
+  });
+
+  it("opens the draft in the Versions tab from the bar", async () => {
+    getHarnessJob.mockResolvedValue(VERSIONED);
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "View changes" }),
+    );
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/dashboard/simulate/environments/job-done?tab=versions&version=environment%3Aed",
+    );
+  });
+
+  it("shows no bar without drafts", async () => {
+    serve({ environment: null, suite: null, set_aside: [] });
+    getHarnessJob.mockResolvedValue(VERSIONED);
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+    await screen.findByText(/shared across agent versions/);
+    await waitFor(() =>
+      expect(
+        axios.get.mock.calls.some(([url]) => url.endsWith("/drafts/")),
+      ).toBe(true),
+    );
+    expect(screen.queryByTestId("draft-bar")).toBeNull();
+  });
+
+  it.each([
+    ["the builder is working", conversationIn("responding")],
+    ["an answer is queued", questionIn(reply("queued"))],
+    ["an answer is delivered", questionIn(reply("delivered"))],
+  ])("keeps Save off while %s", async (_, conversation) => {
+    getHarnessJob.mockResolvedValue({ ...VERSIONED, conversation });
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+    expect(
+      await screen.findByText("Chat is working; save when it finishes"),
+    ).toBeVisible();
+    expect(await saveButton()).toBeDisabled();
+  });
+
+  it("holds Save and Discard while a rebuild is queued, and offers Stop in the composer", async () => {
+    serve({ environment: DRAFT, suite: null, set_aside: [] });
+    const drafts = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) =>
+      url.endsWith("/nudges/")
+        ? Promise.resolve({
+            data: [
+              {
+                id: "n1",
+                target: "environment",
+                state: "queued",
+                can_stop: true,
+                facts: {},
+              },
+            ],
+          })
+        : drafts(url),
+    );
+    getHarnessJob.mockResolvedValue({
+      ...VERSIONED,
+      conversation: conversationIn("warm_idle"),
+    });
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+    const reason = "An update is running; try again when it finishes";
+    expect(await screen.findByText(reason)).toBeVisible();
+    expect(await saveButton()).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Discard" }),
+    ).toHaveAccessibleDescription(reason);
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+  });
+
+  it("offers Save as soon as the builder asks a question", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      getHarnessJob.mockResolvedValue({
+        ...VERSIONED,
+        conversation: conversationIn("responding"),
+      });
+      renderWorkspace("/dashboard/simulate/environments/job-done");
+      await waitFor(async () => expect(await saveButton()).toBeDisabled());
+
+      getHarnessJob.mockResolvedValue({
+        ...VERSIONED,
+        conversation: questionIn(),
+      });
+      await act(() => vi.advanceTimersByTimeAsync(2000));
+      expect(
+        (await screen.findAllByText("How strict?")).length,
+      ).toBeGreaterThan(0);
+      expect(await saveButton()).toBeEnabled();
+      expect(
+        screen.queryByText("Chat is working; save when it finishes"),
+      ).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps Save off while a turn that ends on an open question saves", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      getHarnessJob.mockResolvedValue({
+        ...VERSIONED,
+        conversation: questionIn(),
+      });
+      renderWorkspace("/dashboard/simulate/environments/job-done");
+      await waitFor(async () => expect(await saveButton()).toBeEnabled());
+
+      // The turn completes with its question still unanswered.
+      getHarnessJob.mockResolvedValue({
+        ...VERSIONED,
+        conversation: pausedOn("completed"),
+      });
+      await act(() => vi.advanceTimersByTimeAsync(2000));
+      await waitFor(async () => expect(await saveButton()).toBeDisabled());
+      const reads = draftReads();
+
+      await act(() => vi.advanceTimersByTimeAsync(SAVE_GRACE_MS));
+      await waitFor(async () => expect(await saveButton()).toBeEnabled());
+      expect(draftReads()).toBeGreaterThan(reads);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps Save off until a finished turn's save has had time to land", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      getHarnessJob.mockResolvedValue({
+        ...VERSIONED,
+        conversation: conversationIn("responding"),
+      });
+      renderWorkspace("/dashboard/simulate/environments/job-done");
+      await waitFor(async () => expect(await saveButton()).toBeDisabled());
+
+      // The turn ends: chat is idle, but its save may still be landing.
+      getHarnessJob.mockResolvedValue({
+        ...VERSIONED,
+        conversation: conversationIn("idle"),
+      });
+      await act(() => vi.advanceTimersByTimeAsync(2000));
+      await waitFor(() =>
+        expect(getHarnessJob.mock.results.length).toBeGreaterThan(1),
+      );
+      expect(await saveButton()).toBeDisabled();
+
+      await act(() => vi.advanceTimersByTimeAsync(SAVE_GRACE_MS));
+      await waitFor(async () => expect(await saveButton()).toBeEnabled());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers Save after a turn ends with its acked answer still delivered", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      getHarnessJob.mockResolvedValue({
+        ...VERSIONED,
+        conversation: conversationIn("responding", {
+          messages: [command("delivered"), asked, reply("delivered")],
+        }),
+      });
+      renderWorkspace("/dashboard/simulate/environments/job-done");
+      await waitFor(async () => expect(await saveButton()).toBeDisabled());
+
+      // The turn took the answer mid-turn, so it is never marked completed.
+      getHarnessJob.mockResolvedValue({
+        ...VERSIONED,
+        conversation: conversationIn("warm_idle", {
+          messages: [command("completed"), asked, reply("delivered")],
+        }),
+      });
+      await act(() => vi.advanceTimersByTimeAsync(2000));
+      await waitFor(() =>
+        expect(getHarnessJob.mock.results.length).toBeGreaterThan(1),
+      );
+
+      await act(() => vi.advanceTimersByTimeAsync(SAVE_GRACE_MS));
+      await waitFor(async () => expect(await saveButton()).toBeEnabled());
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

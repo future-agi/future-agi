@@ -541,7 +541,7 @@ const AuditLogTab = ({ gatewayId }) => {
     queryKey: ["agentcc-audit-logs", gatewayId],
     queryFn: async () => {
       const { data } = await axiosInstance.get(
-        `${endpoints.gateway.requestLogs}?gateway_id=${gatewayId}&limit=50`,
+        `${endpoints.gateway.requestLogs}?limit=50`,
       );
       return data?.result?.results ?? data?.results ?? data?.result ?? [];
     },
@@ -552,9 +552,7 @@ const AuditLogTab = ({ gatewayId }) => {
   const logList = Array.isArray(logs) ? logs : logs?.results || [];
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   return (

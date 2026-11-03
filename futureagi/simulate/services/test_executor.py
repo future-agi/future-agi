@@ -134,7 +134,11 @@ from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import SimulationCallType
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
-from simulate.services.harness_evals import is_harness_run_test, regrade_mapping
+from simulate.services.harness_evals import (
+    effective_simulation_mapping,
+    is_harness_run_test,
+    regrade_mapping,
+)
 
 try:
     from ee.voice.services.conversation_metrics import ConversationMetricsCalculator
@@ -149,6 +153,7 @@ from simulate.temporal.activities.xl import (
     TRANSCRIPT_DOT_ALIASES,
     assert_recording_slot_available,
     build_simulation_context_map,
+    hosted_assistant_recording,
     stringify_leaf,
     walk_subject_path,
 )
@@ -4998,6 +5003,11 @@ class TestExecutor:
                     ):
                         transcript_data[transcript_key] = normalized_recording[key]
 
+            if not transcript_data["assistant_recording"]:
+                transcript_data["assistant_recording"] = hosted_assistant_recording(
+                    call_execution
+                )
+
             # Hosted/ALK ingestion persists recording URLs directly on the call
             # row (and may also provide normalized recording entries above).
             # Evaluation must not require a provider client merely to consume
@@ -5125,7 +5135,9 @@ class TestExecutor:
             if harness_run:
                 mapping = regrade_mapping(eval_config) or {}
             else:
-                mapping = eval_config.mapping.copy() if eval_config.mapping else {}
+                mapping = effective_simulation_mapping(
+                    eval_template, eval_config.mapping or {}
+                )
 
             # Replace mapping values with actual data
             updated_mapping = {}

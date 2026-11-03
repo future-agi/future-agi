@@ -1,6 +1,9 @@
 package models
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"slices"
+)
 
 // ChatCompletionRequest represents an OpenAI-compatible chat completion request.
 type ChatCompletionRequest struct {
@@ -161,10 +164,169 @@ func (t *Tool) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*t = Tool(a)
-	if t.Type != "" && t.Type != "function" {
+	// Keep the caller's bytes for anything that is not a plain function tool.
+	// A declared non-function type is one such entry. So is an entry that
+	// names no function at all: Gemini's provider-executed tools are written
+	// as a bare {"google_search": {}}, with no type to declare, and without
+	// its own bytes an entry like that reaches the provider as an empty
+	// function and is dropped.
+	if (t.Type != "" && t.Type != "function") || t.Function.Name == "" {
 		t.Raw = append(json.RawMessage(nil), data...)
 	}
 	return nil
+}
+
+// builtinCapabilityAliases maps every spelling of a provider-executed tool to
+// the one name it is known by.
+//
+// The Google SDKs write these in camelCase and the OpenAI-compatible clients
+// in snake_case, and a provider treats both as the same capability. So a
+// policy must too: with only the supplied spelling to go on, deny:
+// [code_execution] let {"codeExecution":{}} straight through to the upstream.
+var builtinCapabilityAliases = map[string]string{
+	"google_search":           "google_search",
+	"googleSearch":            "google_search",
+	"google_search_retrieval": "google_search_retrieval",
+	"googleSearchRetrieval":   "google_search_retrieval",
+	"url_context":             "url_context",
+	"urlContext":              "url_context",
+	"code_execution":          "code_execution",
+	"codeExecution":           "code_execution",
+}
+
+// CanonicalCapability returns the one name a built-in capability is known by.
+//
+// Every side of an authorization decision must call this: the identity read
+// off a request, and each entry of an allow or deny list an operator wrote.
+// Normalizing one side alone leaves the other spelling unmatched, which is a
+// bypass rather than a cosmetic inconsistency. A name it does not recognize —
+// an ordinary function, a server tool belonging to another provider — is
+// returned unchanged, so function-name semantics are untouched.
+func CanonicalCapability(name string) string {
+	if canonical, ok := builtinCapabilityAliases[name]; ok {
+		return canonical
+	}
+	return name
+}
+
+// CapabilitySpellings returns every name a capability is written as, its
+// canonical one first.
+//
+// For a matcher that takes glob patterns rather than exact names, canonicalizing
+// alone is not enough: an operator who denied "*Execution" would stop matching
+// once the name became code_execution. Testing each spelling keeps a pattern
+// written either way working, and a denylist fails closed on any of them.
+func CapabilitySpellings(name string) []string {
+	canonical := CanonicalCapability(name)
+	spellings := []string{canonical}
+	for spelling, c := range builtinCapabilityAliases {
+		if c == canonical && spelling != canonical {
+			spellings = append(spellings, spelling)
+		}
+	}
+	if name != canonical {
+		// The name as supplied, when it is not one of the known aliases.
+		if !slices.Contains(spellings, name) {
+			spellings = append(spellings, name)
+		}
+	}
+	return spellings
+}
+
+// CanonicalCapabilities normalizes a policy list in place of the caller
+// writing the loop.
+func CanonicalCapabilities(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, CanonicalCapability(name))
+	}
+	return out
+}
+
+// Capability reports the one thing a tools entry asks the provider to do: the
+// function it declares, or the provider-executed tool it names.
+//
+// Policy and provider must read a tool's identity from here, and only from
+// here. They used to disagree: the tool-policy plugin read Function.Name while
+// a provider chose what to forward from Type, so an entry declaring
+// {"type": "code_execution", "function": {"name": "get_weather"}} passed a
+// policy that allowed get_weather and then forwarded code_execution. An entry
+// written as a bare {"google_search": {}} names no function at all, so a
+// policy denying google_search never matched it.
+//
+// A declared type that is not "function" wins, because that is what a provider
+// forwards. ContradictsItsType reports the entry that declares both.
+func (t Tool) Capability() string {
+	if t.Type != "" && t.Type != "function" {
+		return CanonicalCapability(t.Type)
+	}
+	if t.Function.Name != "" {
+		// An application's own function name, exactly as written. Resolving it
+		// through the alias table would make a custom function called
+		// "codeExecution" the same identity as the built-in code_execution,
+		// and a policy naming either would then cover both.
+		return t.Function.Name
+	}
+	return CanonicalCapability(t.rawKey())
+}
+
+// NamesBuiltinCapability reports whether this entry asks for a tool the
+// provider runs itself, rather than an application function.
+//
+// Alias equivalence applies to those and only to those: two spellings of
+// google_search are one capability, while two spellings of a function name are
+// two different functions.
+func (t Tool) NamesBuiltinCapability() bool {
+	if t.IsFunction() {
+		return false
+	}
+	name := t.Type
+	if name == "" || name == "function" {
+		name = t.rawKey()
+	}
+	_, known := builtinCapabilityAliases[name]
+	return known
+}
+
+// IsBuiltinCapability reports whether a name is a recognized spelling of a
+// tool the provider runs itself.
+func IsBuiltinCapability(name string) bool {
+	_, known := builtinCapabilityAliases[name]
+	return known
+}
+
+// IsFunction reports whether the entry declares a plain function, which is
+// the one shape the canonical struct describes in full.
+func (t Tool) IsFunction() bool {
+	return (t.Type == "function" || t.Type == "") && t.Function.Name != ""
+}
+
+// rawKey reads the capability out of an entry that names it as its only key,
+// which is how Gemini's own tools are written.
+func (t Tool) rawKey() string {
+	if len(t.Raw) == 0 {
+		return ""
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(t.Raw, &fields) != nil {
+		return ""
+	}
+	// A single-key object names its capability. More than one key, and there
+	// is nothing to pick, so the entry has no identity to enforce against.
+	if len(fields) != 1 {
+		return ""
+	}
+	for name := range fields {
+		return name
+	}
+	return ""
+}
+
+// ContradictsItsType reports an entry that declares a non-function capability
+// and a function name at the same time. Such an entry asks for two different
+// things, and whichever one a reader picks, the other is silently ignored.
+func (t Tool) ContradictsItsType() bool {
+	return t.Type != "" && t.Type != "function" && t.Function.Name != ""
 }
 
 // MarshalJSON replays those bytes, so a server tool survives the round trip

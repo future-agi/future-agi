@@ -92,6 +92,7 @@ export const emptyAgentSteps = [
 export const createAgentDefinitionSchema = (options) => {
   const keysRequired = options?.keysRequired || false;
   const agentDefinitionId = options?.agentDefinitionId;
+  const isSourceAgent = options?.agentKind === "source";
   return z
     .object({
       // Basic Information
@@ -122,7 +123,10 @@ export const createAgentDefinitionSchema = (options) => {
         .optional(),
 
       // Behaviour
-      description: z.string().min(1, "Description is required"),
+      // A code agent keeps its instructions in its stored Agent, so its description can be empty.
+      description: isSourceAgent
+        ? z.string()
+        : z.string().min(1, "Description is required"),
       knowledgeBase: z.string().optional(),
       countryCode: z.string().optional(),
       contactNumber: z.string().optional(),
@@ -223,33 +227,36 @@ export const createAgentDefinitionSchema = (options) => {
       }
 
       if (isLiveKitProvider(data.provider)) {
-        if (!data.livekitUrl || data.livekitUrl.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitUrl"],
-            message: "LiveKit Server URL is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (!data.livekitApiKey || data.livekitApiKey.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitApiKey"],
-            message: "LiveKit API Key is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (!data.livekitApiSecret || data.livekitApiSecret.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitApiSecret"],
-            message: "LiveKit API Secret is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (!data.livekitAgentName || data.livekitAgentName.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitAgentName"],
-            message: "Agent Name is required",
-            code: z.ZodIssueCode.custom,
-          });
+        // A code agent only carries the word livekit; its credentials are not on this form.
+        if (!isSourceAgent) {
+          if (!data.livekitUrl || data.livekitUrl.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitUrl"],
+              message: "LiveKit Server URL is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!data.livekitApiKey || data.livekitApiKey.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitApiKey"],
+              message: "LiveKit API Key is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!data.livekitApiSecret || data.livekitApiSecret.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitApiSecret"],
+              message: "LiveKit API Secret is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!data.livekitAgentName || data.livekitAgentName.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitAgentName"],
+              message: "Agent Name is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
         }
       } else if (data.provider === "others") {
         // if (data.authenticationMethod === "api_key") {
@@ -279,7 +286,9 @@ export const createAgentDefinitionSchema = (options) => {
       } else {
         if (
           data.agentType === AGENT_TYPES.VOICE &&
-          (data.observabilityEnabled || keysRequired || !data.inbound)
+          ((!isSourceAgent && data.observabilityEnabled) ||
+            keysRequired ||
+            !data.inbound)
         ) {
           if (!data?.authenticationMethod) {
             ctx.addIssue({

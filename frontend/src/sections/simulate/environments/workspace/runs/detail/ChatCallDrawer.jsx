@@ -7,11 +7,16 @@ import Iconify from "src/components/iconify";
 import EvalsTabView from "src/components/traceDetail/EvalsTabView";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { ShareDialog } from "src/components/share-dialog";
-import { useCallDetail } from "src/api/simulate-environments/runDetail";
+import {
+  useCallDetail,
+  useCallTraces,
+} from "src/api/simulate-environments/runDetail";
 
 import { BUILD_TONES } from "../../../buildEnvironment/buildTones";
 import { SCORING_STATUS } from "../runs.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
+import CallTracesPanel from "./CallTracesPanel";
+import { CALL_TRACES_COPY } from "./callTraces.constants";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
 
 const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
@@ -82,15 +87,18 @@ const ownsArrowKeys = {
 
 export default function ChatCallDrawer({
   task,
+  executionId = null,
   onClose,
   onPrev,
   onNext,
   hasPrev = false,
   hasNext = false,
+  traceOpen = false,
+  onTracePanelMountedChange,
 }) {
   const [shareOpen, setShareOpen] = useState(false);
   useEffect(() => {
-    if (shareOpen) return undefined;
+    if (shareOpen || traceOpen) return undefined;
     const onKeyDown = (e) => {
       const tag = e.target?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable) return;
@@ -104,9 +112,12 @@ export default function ChatCallDrawer({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [hasNext, hasPrev, onNext, onPrev, shareOpen]);
+  }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
+  const [artifact, setArtifact] = useState("transcript");
   const { callDetail, isLoading } = useCallDetail(task.id);
+  const callTraces = useCallTraces(executionId, task.id);
+  const showTraces = artifact === "traces";
 
   // The header and chips paint from the already-loaded row immediately, then
   // hydrate from the call detail once it resolves.
@@ -184,14 +195,26 @@ export default function ChatCallDrawer({
         {/* left: the artifact */}
         <Stack sx={{ flex: 1.15, minWidth: 0, borderRight: { md: "1px solid" }, borderColor: { md: "divider" } }}>
           <CustomTabs
-            value="transcript"
+            value={showTraces ? "traces" : "transcript"}
+            onChange={(_, value) => setArtifact(value)}
             sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider", minHeight: 40 }}
           >
             <Tab value="transcript" label="Transcript" sx={{ minHeight: 40 }} />
+            <Tab value="traces" label={CALL_TRACES_COPY.tab} sx={{ minHeight: 40 }} />
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
-            {isLoading && turns.length === 0 ? (
+            {showTraces ? (
+              <Box sx={{ px: 1.5, py: 1, display: "flex", flexDirection: "column", minHeight: "100%" }}>
+                <CallTracesPanel
+                  traces={callTraces.traces}
+                  projectId={callTraces.projectId}
+                  testExecutionId={executionId}
+                  isError={callTraces.isError}
+                  onMountedChange={onTracePanelMountedChange}
+                />
+              </Box>
+            ) : isLoading && turns.length === 0 ? (
               <Stack alignItems="center" sx={{ py: 6 }}>
                 <CircularProgress size={20} />
               </Stack>
@@ -331,9 +354,12 @@ ChatCallDrawer.propTypes = {
     provider: PropTypes.string,
     evalResults: PropTypes.array,
   }).isRequired,
+  executionId: PropTypes.string,
   onClose: PropTypes.func,
   onPrev: PropTypes.func,
   onNext: PropTypes.func,
   hasPrev: PropTypes.bool,
   hasNext: PropTypes.bool,
+  traceOpen: PropTypes.bool,
+  onTracePanelMountedChange: PropTypes.func,
 };

@@ -186,6 +186,7 @@ const EvalTableRow = ({
   showSpanColumn,
   onFixWithFalcon,
   showFixWithFalcon,
+  showErrorLocalization = true,
   layout,
 }) => {
   const [expanded, setExpanded] = useState(false);
@@ -251,6 +252,7 @@ const EvalTableRow = ({
   const initialStatus =
     ev.error_localizer_status || ev.errorLocalizerStatus || null;
   const hasErrorLocalization =
+    showErrorLocalization &&
     !isComposite &&
     (ev?.error_localizer === true ||
       !!initialAnalysis ||
@@ -542,6 +544,7 @@ EvalTableRow.propTypes = {
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
   showFixWithFalcon: PropTypes.bool,
+  showErrorLocalization: PropTypes.bool,
   layout: PropTypes.object.isRequired,
 };
 
@@ -559,6 +562,7 @@ const EvalsTabView = ({
   onFixWithFalcon,
   showFixWithFalcon = true,
   showAddEvals = true,
+  showErrorLocalization = true,
 }) => {
   const [search, setSearch] = useState("");
   // The action column only holds "View span", so a drawer that can't jump to
@@ -975,6 +979,7 @@ const EvalsTabView = ({
             showSpanColumn={showSpanColumn}
             onFixWithFalcon={onFixWithFalcon}
             showFixWithFalcon={showFixWithFalcon}
+            showErrorLocalization={showErrorLocalization}
             layout={layout}
           />
         ))}
@@ -991,6 +996,7 @@ EvalsTabView.propTypes = {
   onFixWithFalcon: PropTypes.func,
   showFixWithFalcon: PropTypes.bool,
   showAddEvals: PropTypes.bool,
+  showErrorLocalization: PropTypes.bool,
 };
 
 export default EvalsTabView;

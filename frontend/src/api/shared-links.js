@@ -55,6 +55,37 @@ export const useResolveSharedLink = (token) => {
     select: (d) => d.data,
     enabled: !!token,
     retry: false,
+    // The shared page shows its own screen per status; no global toast.
+    meta: { errorHandled: true },
+  });
+};
+
+/**
+ * A shared Error Feed issue's sidebar for the trace picked in Traces affected.
+ */
+export const useSharedIssueSidebar = (token, traceId) => {
+  return useQuery({
+    queryKey: [SHARED_LINKS_KEY, "issue-sidebar", token, traceId],
+    queryFn: () =>
+      axios.get(endpoints.sharedLinks.issueSidebar(token), {
+        params: { trace_id: traceId },
+      }),
+    select: (d) => d.data?.result,
+    enabled: !!token && !!traceId,
+    retry: false,
+  });
+};
+
+/**
+ * One trace of a shared Error Feed issue, read through the issue's share token.
+ */
+export const useSharedIssueTrace = (token, traceId) => {
+  return useQuery({
+    queryKey: [SHARED_LINKS_KEY, "issue-trace", token, traceId],
+    queryFn: () => axios.get(endpoints.sharedLinks.issueTrace(token, traceId)),
+    select: (d) => d.data?.result,
+    enabled: !!token && !!traceId,
+    retry: false,
   });
 };
 

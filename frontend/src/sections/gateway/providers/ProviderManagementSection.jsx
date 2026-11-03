@@ -169,6 +169,10 @@ const ProviderManagementSection = () => {
         open={addProviderOpen}
         onClose={() => setAddProviderOpen(false)}
         gatewayId={gatewayId}
+        existingNames={Object.keys({
+          ...orgConfig?.providers,
+          ...config?.providers,
+        })}
       />
     </Box>
   );

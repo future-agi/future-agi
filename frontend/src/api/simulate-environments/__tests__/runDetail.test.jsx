@@ -26,6 +26,7 @@ const {
   callTranscript,
   useCallDetail,
   useCallExecutionV3Detail,
+  useCallTraces,
   withScoringStatus,
   useRunCalls,
 } = await import("../runDetail");
@@ -766,6 +767,10 @@ describe("useRunDetail", () => {
           completed_at: "2026-01-14T09:22:00.000Z",
           selected_scenario_keys: ["scenario-a", "scenario-b"],
           trials: 3,
+          pinned_agent_version: { id: "a4", label: "v4" },
+          environment_version: { id: "e2", label: "v2" },
+          suite_version: { id: "s3", label: "v3" },
+          agent_differs: true,
           summary: {
             total: 12,
             measured: 12,
@@ -796,6 +801,19 @@ describe("useRunDetail", () => {
       "scenario-b",
     ]);
     expect(result.current.identity.trials).toBe(3);
+    expect(result.current.identity.pinnedAgentVersion).toEqual({
+      id: "a4",
+      label: "v4",
+    });
+    expect(result.current.identity.environmentVersion).toEqual({
+      id: "e2",
+      label: "v2",
+    });
+    expect(result.current.identity.suiteVersion).toEqual({
+      id: "s3",
+      label: "v3",
+    });
+    expect(result.current.identity.agentDiffers).toBe(true);
     expect(result.current.stats.total).toBe(12);
     expect(result.current.stats.passRate).toBe(74);
     expect(axios.get).toHaveBeenCalledWith(
@@ -1458,5 +1476,107 @@ describe("useRunDetail fed by the calls table", () => {
     expect(result.current.header.identity).toEqual(before.identity);
     expect(result.current.header.stats).toEqual(before.stats);
     expect(callsRequests()).toHaveLength(1);
+  });
+});
+
+describe("useCallTraces", () => {
+  beforeEach(() => {
+    axios.get.mockReset();
+  });
+
+  it("reads one call's traces of the run and maps the rows", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        project_id: "hidden-project",
+        traces: [
+          {
+            trace_id: "trace-1",
+            name: "book_ride",
+            start_time: "2026-10-14T11:08:13Z",
+            status: "OK",
+            latency_ms: 1830,
+            call_execution_id: "call-1",
+          },
+        ],
+      },
+    });
+
+    const { result } = renderHook(() => useCallTraces("exec-1", "call-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.projectId).toBe("hidden-project"));
+    expect(axios.get).toHaveBeenCalledWith(
+      endpoints.runResultsV3.traces("exec-1"),
+      { params: { call_execution_id: "call-1" } },
+    );
+    expect(result.current.traces).toEqual([
+      {
+        traceId: "trace-1",
+        name: "book_ride",
+        startTime: "2026-10-14T11:08:13Z",
+        status: "OK",
+        latencyMs: 1830,
+      },
+    ]);
+    expect(result.current.isError).toBe(false);
+  });
+
+  it("answers no project and no rows when the run has nothing to read", async () => {
+    axios.get.mockResolvedValue({ data: { project_id: null, traces: [] } });
+
+    const { result } = renderHook(() => useCallTraces("exec-1", "call-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+    expect(result.current.projectId).toBeNull();
+    expect(result.current.traces).toEqual([]);
+  });
+
+  it("reads again for the next call of the run rather than showing the last call's traces", async () => {
+    axios.get.mockImplementation((_url, { params }) =>
+      Promise.resolve({
+        data: {
+          project_id: "hidden-project",
+          traces: [
+            {
+              trace_id: `trace-of-${params.call_execution_id}`,
+              name: "turn",
+            },
+          ],
+        },
+      }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ callId }) => useCallTraces("exec-1", callId),
+      { wrapper: makeWrapper(), initialProps: { callId: "call-a" } },
+    );
+    await waitFor(() =>
+      expect(result.current.traces.map((t) => t.traceId)).toEqual([
+        "trace-of-call-a",
+      ]),
+    );
+
+    rerender({ callId: "call-b" });
+
+    await waitFor(() =>
+      expect(result.current.traces.map((t) => t.traceId)).toEqual([
+        "trace-of-call-b",
+      ]),
+    );
+    expect(axios.get).toHaveBeenCalledTimes(2);
+    expect(axios.get).toHaveBeenLastCalledWith(
+      endpoints.runResultsV3.traces("exec-1"),
+      { params: { call_execution_id: "call-b" } },
+    );
+  });
+
+  it("stays idle without a run or a call", () => {
+    renderHook(() => useCallTraces(null, "call-1"), { wrapper: makeWrapper() });
+    renderHook(() => useCallTraces("exec-1", null), { wrapper: makeWrapper() });
+
+    expect(axios.get).not.toHaveBeenCalled();
   });
 });

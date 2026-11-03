@@ -3,6 +3,12 @@ from .agent_optimiser import AgentOptimiser
 from .agent_optimiser_run import AgentOptimiserRun
 from .agent_prompt_optimiser_run import AgentPromptOptimiserRun
 from .agent_prompt_optimiser_run_step import AgentPromptOptimiserRunStep
+from .agent_setup import (
+    AgentBehaviourUnit,
+    AgentTelephony,
+    AgentTool,
+    AgentVersionSetup,
+)
 from .agent_version import AgentVersion
 from .call_log_entry import CallLogEntry
 from .chat_message import ChatMessageModel
@@ -13,6 +19,15 @@ from .harness_environment_credentials import (
     HarnessEnvironmentCredentials,
 )
 from .eval_config import SimulateEvalConfig
+from .harness_versioning import (
+    HarnessAgentVersionRuntime,
+    HarnessAssembledBundle,
+    HarnessEnvironmentVersion,
+    HarnessNudge,
+    HarnessSuiteMember,
+    HarnessSuiteValidation,
+    HarnessSuiteVersion,
+)
 from .hosted_harness import (
     HostedHarnessArtifact,
     HostedHarnessAttempt,
@@ -55,9 +70,20 @@ __all__ = [
     "AgentPromptOptimiserRun",
     "AgentPromptOptimiserRunStep",
     "AgentVersion",
+    "AgentVersionSetup",
+    "AgentBehaviourUnit",
+    "AgentTool",
+    "AgentTelephony",
     "ComponentEvaluation",
     "HarnessCredentialFile",
     "HarnessEnvironmentCredentials",
+    "HarnessAgentVersionRuntime",
+    "HarnessAssembledBundle",
+    "HarnessEnvironmentVersion",
+    "HarnessNudge",
+    "HarnessSuiteMember",
+    "HarnessSuiteValidation",
+    "HarnessSuiteVersion",
     "PromptTrial",
     "SimulatorAgent",
     "RunTest",

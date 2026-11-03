@@ -16,6 +16,14 @@ export const VERIFIER_KINDS = [
 
 // Every copy string on the contract tab, so nothing is inlined in the JSX.
 export const CONTRACT_COPY = {
+  endConditions: {
+    title: "Run end conditions",
+    subtitle: "When a run is over, and which kind of over it was",
+    notAuthored: "Not authored yet",
+    // A built environment's build writes them; a template or fork is never built.
+    notAuthoredBuilt: "The build writes these once it has read how a run of this agent ends.",
+    notAuthoredUnbuilt: "This environment hasn't been built, so it has none.",
+  },
   headingBlurb:
     "What makes this an environment rather than a test script. Everything read from your agent compiles into these five parts, and everything downstream reads them back.",
   compiled: (done, total) => `${done}/${total} compiled`,
