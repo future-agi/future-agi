@@ -186,19 +186,27 @@ def _delete(store, table, predicate, params):
     )
 
 
-def _proposal_rows(writer, attempt, head, table, prefix):
-    """Logical proposal, never an INSERT of an expired private payload."""
+def _proposal_overlay(writer, attempt, table, prefix):
+    """Raw frozen rows, so callers can bound keys BEFORE proposal collapse."""
     from tracer.services.derived_metrics.publication import FrozenRows
     from tracer.services.derived_metrics.refresh import TABLE_KIND, payload_select
 
+    return payload_select(
+        table,
+        [
+            FrozenRows(tuple(plan["rows"]))
+            for plan in writer.plans(attempt, kind=TABLE_KIND[table.name])
+        ],
+        prefix=prefix,
+    )
+
+
+def _proposal_rows(writer, attempt, head, table, prefix):
+    """Logical proposal, never an INSERT of an expired private payload."""
     current, params = committed_rows_select(
         table, head, org_id=writer.org_id, project_id=writer.lease.project_id
     )
-    payloads = [
-        FrozenRows(tuple(plan["rows"]))
-        for plan in writer.plans(attempt, kind=TABLE_KIND[table.name])
-    ]
-    overlay, bound = payload_select(table, payloads, prefix=prefix)
+    overlay, bound = _proposal_overlay(writer, attempt, table, prefix)
     params.update(bound)
     return (
         f"SELECT * FROM (({current}) UNION ALL ({overlay})) "
@@ -377,11 +385,12 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
         )
     )
     if not logical_expiry and not span_definitions and not current_cleanup:
+        overlay, overlay_params = _proposal_overlay(
+            writer, draft, FIELD_VALUES, "retire_fields"
+        )
         for definition in definitions:
             if definition.level != "user":
-                writer._freeze_buckets(
-                    draft, head, definition, fields, params, complete_fields=True
-                )
+                writer._freeze_buckets(draft, head, definition, overlay, overlay_params)
         return draft
     # Span checkpoints also scrub unproven conversation/user owner links from
     # retained span dependencies and PG preimages. Without an actual privacy
@@ -823,11 +832,16 @@ def _span_owner_cleanup_required(writer, head, fields, field_params, cutoff):
 
 def _expired_span_buckets(writer, head, cutoff):
     """Private span membership, not the mere presence of a span definition."""
-    dependencies, params = committed_rows_select(
+    from tracer.services.derived_metrics.bounded_reads import windowed_rows_select
+
+    dependencies, params = windowed_rows_select(
         SOURCE_DEPENDENCIES,
         head,
         org_id=writer.org_id,
         project_id=writer.lease.project_id,
+        predicate="unit_start < toDateTime64(%(span_expiry_cutoff)s, 6, 'UTC')",
+        params={"span_expiry_cutoff": cutoff},
+        param_prefix="expired_span_dependencies",
     )
     return {
         row[0]
@@ -876,13 +890,25 @@ def _expiring_span_fields(writer, head, definition, cutoff, now):
         end=max(lower, cutoff),
         as_of=now,
     )
+    from tracer.services.derived_metrics.bounded_reads import (
+        KeyRelation,
+        merge_bindings,
+    )
+
     dependencies, dp = committed_rows_select(
         SOURCE_DEPENDENCIES,
         head,
         org_id=writer.org_id,
         project_id=writer.lease.project_id,
+        key_relation=KeyRelation(
+            ("trace_id", "span_id"),
+            "SELECT JSONExtractString(unit_id, 1), JSONExtractString(unit_id, 2) "
+            f"FROM ({fields})",
+            params,
+        ),
+        param_prefix="retiring_span_dependencies",
     )
-    params.update(dp)
+    params = merge_bindings(params, dp)
     if writer.store.execute(
         f"SELECT count() FROM ({fields}) WHERE unit_id NOT IN "
         f"(SELECT toJSONString(tuple(trace_id, span_id)) FROM ({dependencies}) WHERE is_deleted = 0)",

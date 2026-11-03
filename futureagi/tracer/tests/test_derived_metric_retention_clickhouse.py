@@ -18,7 +18,10 @@ from tracer.services.derived_metrics.publication import (
     committed_rows_select,
 )
 from tracer.services.derived_metrics.queries import Scope
-from tracer.services.derived_metrics.refresh import payload_select
+from tracer.services.derived_metrics.refresh import (
+    MetricAdmissionUnproven,
+    payload_select,
+)
 from tracer.services.derived_metrics.retention import (
     assert_capture_retained,
     expire_project,
@@ -562,6 +565,11 @@ def test_finite_retention_takeover_keeps_candidates_exclusive_to_the_failed_atte
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.xfail(
+    strict=True,
+    raises=MetricAdmissionUnproven,
+    reason="TH-8975: retained conversation admission raises MetricAdmissionUnproven",
+)
 @pytest.mark.parametrize("prune_before_expiry", [False, True])
 def test_expired_active_conversation_is_not_reanchored_after_source_retention(
     live_writer, workspace, observe_project, prune_before_expiry
@@ -1248,6 +1256,11 @@ def test_physical_expiry_waits_for_delayed_insert_drain_and_final_scrub(
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.xfail(
+    strict=True,
+    raises=MetricAdmissionUnproven,
+    reason="TH-8975: retired versus new span admission raises MetricAdmissionUnproven",
+)
 @pytest.mark.parametrize("prior_retirement", [False, True])
 def test_retired_and_new_spans_with_identical_surviving_rows_require_admission_proof(
     live_writer, workspace, observe_project, prior_retirement

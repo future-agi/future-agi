@@ -404,3 +404,82 @@ def test_expiry_fences_later_allocated_namespaces_and_keeps_idle_cleanup_schedul
     assert MetricErasureRequest.claim(obligation.id, ttl=timedelta(minutes=1)) is None
     with pytest.raises(MetricStateConflict):
         writer.stage_and_publish(later)
+
+
+@pytest.mark.django_db
+def test_batch_number_seed_is_once_per_table_and_resume_uses_durable_max(writer):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    attempt = writer.begin()
+    with CaptureQueriesContext(connection) as queries:
+        for _ in range(6):
+            writer.freeze(attempt, FIELD_VALUES, "SELECT frozen")
+        for _ in range(3):
+            writer.freeze(attempt, UNIT_STATE, "SELECT frozen")
+    seeds = [
+        q["sql"] for q in queries if "MAX(" in q["sql"] and '"payload"' in q["sql"]
+    ]
+    assert len(seeds) == 2
+    assert not any("COUNT(" in q["sql"] and '"payload"' in q["sql"] for q in queries)
+    assert [p["batch_no"] for p in writer.plans(attempt, kind="field_values")] == list(
+        range(6)
+    )
+    assert [p["batch_no"] for p in writer.plans(attempt, kind="unit_state")] == list(
+        range(3)
+    )
+    # A durable historical gap must not make COUNT allocate an existing number.
+    prior = next(writer.plans(attempt, kind="field_values"))
+    writer.append(attempt, "cleanup_intent", [{**prior, "batch_no": 20}])
+    resumed = RefreshWriter(writer.lease, writer.store, org_id=writer.org_id)
+    resumed.freeze(attempt, FIELD_VALUES, "SELECT frozen")
+    assert [p["batch_no"] for p in resumed.plans(attempt, kind="field_values")] == [
+        *range(6),
+        20,
+        21,
+    ]
+    resumed.freeze(attempt, UNIT_STATE, "SELECT frozen")
+    assert [p["batch_no"] for p in resumed.plans(attempt, kind="unit_state")] == list(
+        range(4)
+    )
+
+
+@pytest.mark.django_db
+def test_batch_number_lost_append_acknowledgement_reseeds_same_writer(
+    writer, monkeypatch
+):
+    attempt = writer.begin()
+    original = writer.append
+
+    def lose_ack(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("lost append acknowledgement")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(writer, "append", lose_ack)
+        with pytest.raises(RuntimeError, match="lost append"):
+            writer.freeze(attempt, FIELD_VALUES, "SELECT frozen")
+    writer.freeze(attempt, FIELD_VALUES, "SELECT frozen")
+    assert [p["batch_no"] for p in writer.plans(attempt)] == [0, 1]
+    writer.seal(attempt)
+    writer.stage_and_publish(attempt)
+    # A process restart at the staging boundary replays only the sealed bytes.
+    resumed = RefreshWriter(writer.lease, writer.store, org_id=writer.org_id)
+    writes = list(writer.store.writes)
+    resumed.stage_and_publish(attempt)
+    assert writer.store.writes == writes
+
+
+@pytest.mark.django_db
+def test_batch_counter_does_not_survive_rolled_back_preparation(writer):
+    from django.db import transaction
+
+    attempt = writer.begin()
+    writer.freeze(attempt, FIELD_VALUES, "SELECT frozen")
+    with pytest.raises(RuntimeError, match="rollback"):
+        with transaction.atomic():
+            writer.freeze(attempt, FIELD_VALUES, "SELECT frozen")
+            writer.freeze(attempt, FIELD_VALUES, "SELECT frozen")
+            raise RuntimeError("rollback")
+    writer.freeze(attempt, FIELD_VALUES, "SELECT frozen")
+    assert [p["batch_no"] for p in writer.plans(attempt)] == [0, 1]

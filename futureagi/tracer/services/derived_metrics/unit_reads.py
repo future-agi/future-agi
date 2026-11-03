@@ -452,6 +452,32 @@ def span_values_select(definition, scope, *, start, end, as_of):
     if definition.level != "span":
         raise ValueError("span totals require a span definition")
     recipe = field_recipe(definition)
+    # A raw timestamp may nominate an identity, never its winning revision.
+    # Select the current in-window identities from their complete history before
+    # invoking the shared compiler. unit_predicate deliberately disables that
+    # compiler's member window, so this relation MUST apply it after collapse.
+    # This also keeps same-span-id sampling ambiguity restricted to the window.
+    window_keys = """span_window_keys AS (
+        SELECT trace_id, id FROM (
+            SELECT trace_id, id, start_time FROM spans
+            PREWHERE project_id = %(project_id)s AND (trace_id, id) IN (
+                SELECT trace_id, id FROM spans
+                PREWHERE project_id = %(project_id)s
+                WHERE (org_id = %(org_id)s OR isNull(org_id))
+                    AND start_time >= %(start)s AND start_time < %(end)s
+            )
+            WHERE (org_id = %(org_id)s OR isNull(org_id))
+                AND created_at <= %(as_of)s AND updated_at <= %(as_of)s
+            ORDER BY _version DESC LIMIT 1 BY project_id, trace_id, id
+        ) WHERE start_time >= %(start)s AND start_time < %(end)s
+    )"""
+    # The shared compiler also derives evaluation candidates from span_versions
+    # BEFORE collapsing evaluation IDs. Evaluation targets are mutable, so a
+    # window-limited span universe can hide a newer retargeted revision (including
+    # a tombstone) and resurrect its old score. Preserve the legacy universe for
+    # eval-backed recipes until that compiler nominates immutable evaluation IDs
+    # and loads their complete histories independently of span membership.
+    has_evaluations = any(item["source"] == "eval" for item in recipe.source.inputs)
     source, params = snapshot_select(
         recipe.source,
         scope,
@@ -460,6 +486,10 @@ def span_values_select(definition, scope, *, start, end, as_of):
         as_of,
         list(getattr(definition, "filters", ())),
         "",
+        unit_predicate=None
+        if has_evaluations
+        else "(trace_id, id) IN (SELECT trace_id, id FROM span_window_keys)",
+        source_ctes=() if has_evaluations else (window_keys,),
         include_evidence=True,
     )
     params["unit_settle_minutes"] = 0

@@ -1509,3 +1509,470 @@ def test_original_raw_page_guard_survives_emitted_output_subpages(
         assert writer.store.execute(
             f"SELECT unit_id, value_number FROM ({sql}) WHERE is_deleted = 0", params
         ) == [(str(survivor), 5.0)]
+
+
+@pytest.mark.parametrize("seed", [8975, 1102, 3588])
+def test_bucket_window_raw_history_parity_and_writer_paths(
+    publication_store, monkeypatch, seed
+):
+    """Late moves both ways, alias tombstones, mixed levels/versions and branches."""
+    from tracer.services.derived_metrics.bounded_reads import windowed_rows_select
+    from tracer.services.derived_metrics.refresh import RefreshWriter
+
+    store = publication_store
+    rng = random.Random(seed)
+    org, project, metric = uuid4(), uuid4(), uuid4()
+    attempts = [uuid4() for _ in range(4)]
+    head = SimpleNamespace(
+        project_id=project,
+        checkpoint_attempt_id=attempts[0],
+        allowed_attempts=lambda: [(1, attempts[0]), (2, attempts[1])],
+    )
+    keys = list(FIELD_VALUES.logical_key)
+    projection = keys + [
+        "bucket_start",
+        "unit_start",
+        "user_id",
+        "is_deleted",
+        "generation",
+        "_version",
+    ]
+    histories = []
+    for branch in range(4):
+        data = []
+        for i in range(80):
+            for revision in range(1, 3):
+                # Include a canonical and retired alias key, never group by owner.
+                key = f"{'alias' if i % 2 else 'canonical'}-{i:03}"
+                at = AT + timedelta(minutes=15 * ((i + branch + revision) % 2))
+                row = dict(
+                    zip(
+                        projection,
+                        (
+                            org,
+                            project,
+                            metric,
+                            1 + (i % 9 == 0),
+                            "conversation" if i % 7 else "other",
+                            key,
+                            at,
+                            at,
+                            f"owner-{rng.randrange(3)}",
+                            int((branch + i + revision) % 5 == 0),
+                            branch + 1,
+                            revision,
+                        ),
+                        strict=True,
+                    )
+                )
+                data.append(tuple(row[c] for c in projection) + (attempts[branch],))
+                if branch < 3:
+                    histories.append(row)
+        table = physical_table(FIELD_VALUES, checkpoint=branch == 0)
+        store.client.execute(
+            f"INSERT INTO {table.name} ({', '.join(projection)}, attempt_id) VALUES",
+            data,
+        )
+    overlay = (
+        "SELECT * FROM metric_field_values WHERE project_id = %(overlay_project)s "
+        "AND attempt_id = %(overlay_attempt)s"
+    )
+    overlay_params = {"overlay_project": project, "overlay_attempt": attempts[2]}
+    legacy, legacy_params = committed_rows_select(
+        FIELD_VALUES,
+        head,
+        org_id=org,
+        project_id=project,
+    )
+    legacy = (
+        f"SELECT * FROM (({legacy}) UNION ALL ({overlay})) "
+        f"ORDER BY generation DESC, _version DESC LIMIT 1 BY {', '.join(keys)}"
+    )
+    winners = {}
+    for row in histories:
+        identity = tuple(row[c] for c in keys)
+        old = winners.get(identity)
+        if old is None or (row["generation"], row["_version"]) > (
+            old["generation"],
+            old["_version"],
+        ):
+            winners[identity] = row
+    for at in (AT, AT + timedelta(minutes=15)):
+        sql, params = windowed_rows_select(
+            FIELD_VALUES,
+            head,
+            org_id=org,
+            project_id=project,
+            key_in={"field_id": (metric,), "field_version": (1,)},
+            candidate_columns=("level", "unit_id"),
+            predicate="bucket_start = %(at)s",
+            params={"at": at},
+            frozen_overlay=(overlay, overlay_params),
+        )
+        expected = _result(
+            [
+                tuple(row[c] for c in projection)
+                for row in winners.values()
+                if row["bucket_start"] == at and row["field_version"] == 1
+            ]
+        )
+        assert (
+            _result(
+                store.execute(f"SELECT {', '.join(projection)} FROM ({sql})", params)
+            )
+            == expected
+        )
+        assert (
+            _result(
+                store.execute(
+                    f"SELECT {', '.join(projection)} FROM ({legacy}) WHERE bucket_start = %(at)s AND field_version = 1",
+                    merge_bindings(legacy_params, overlay_params, {"at": at}),
+                )
+            )
+            == expected
+        )
+
+    # Exercise the actual writer entry, including the no-collapse complete overlay
+    # and retired-override path, rather than testing only the helper's SQL.
+    writer = RefreshWriter(SimpleNamespace(project_id=project), store, org_id=org)
+    attempt = SimpleNamespace(
+        ledger_chunks=SimpleNamespace(
+            filter=lambda **_: [
+                SimpleNamespace(payload=[{"bucket_start": AT.isoformat()}]),
+            ]
+        )
+    )
+    definition = SimpleNamespace(metric_id=metric, version=1)
+    captured = []
+
+    def capture(_attempt, _definition, fields, retired, params):
+        captured.append(
+            _result(
+                store.execute(f"SELECT {', '.join(projection)} FROM ({fields})", params)
+            )
+        )
+        assert store.execute(f"SELECT count() FROM ({retired})", params) == [(0,)]
+        return "SELECT * FROM metric_bucket_totals WHERE 0"
+
+    monkeypatch.setattr(writer, "_anonymous_bucket_parts", capture)
+    monkeypatch.setattr(writer, "append", lambda *a, **k: None)
+    monkeypatch.setattr(writer, "freeze", lambda *a, **k: [])
+    for complete in (False, True):
+        writer._freeze_buckets(
+            attempt,
+            head,
+            definition,
+            overlay,
+            overlay_params,
+            complete_fields=complete,
+            retired_override=("SELECT * FROM metric_bucket_retired_parts WHERE 0", {}),
+        )
+        reference = overlay if complete else legacy
+        assert captured[-1] == _result(
+            store.execute(
+                f"SELECT {', '.join(projection)} FROM ({reference}) WHERE bucket_start = %(at)s AND field_version = 1",
+                merge_bindings(legacy_params, overlay_params, {"at": AT}),
+            )
+        )
+
+
+def test_bucket_window_memory_excludes_outside_units(
+    publication_store, record_property
+):
+    """Small local diagnostic, not the required 10M M2 qualification."""
+    from tracer.services.derived_metrics.bounded_reads import windowed_rows_select
+
+    store = publication_store
+    org, project, metric, attempt = uuid4(), uuid4(), uuid4(), uuid4()
+    head = SimpleNamespace(
+        project_id=project,
+        checkpoint_attempt_id=attempt,
+        allowed_attempts=lambda: [(1, attempt)],
+    )
+    store.client.execute(
+        """INSERT INTO metric_field_values_checkpoint
+        (org_id, project_id, field_id, field_version, level, unit_id, bucket_start,
+         value_text, generation, attempt_id, _version)
+        SELECT %(org)s, %(project)s, %(metric)s, 1, 'conversation', toString(number),
+            toDateTime(%(at)s, 'UTC') + if(number < 64, 0, 900),
+            repeat('evidence', 64), 1, %(attempt)s, 1 FROM numbers(32768)""",
+        {
+            "org": org,
+            "project": project,
+            "metric": metric,
+            "at": AT,
+            "attempt": attempt,
+        },
+    )
+    broad, bp = committed_rows_select(
+        FIELD_VALUES, head, org_id=org, project_id=project
+    )
+    pushed, pp = windowed_rows_select(
+        FIELD_VALUES,
+        head,
+        org_id=org,
+        project_id=project,
+        key_in={"field_id": (metric,), "field_version": (1,)},
+        candidate_columns=("level", "unit_id"),
+        predicate="bucket_start = %(at)s",
+        params={"at": AT},
+    )
+    # Consume payload to prevent count-only optimizations from hiding collapse memory.
+    projection = "SELECT sum(length(value_text)) FROM ({})"
+    old, old_receipt = _read_receipt(
+        store,
+        projection.format(f"SELECT * FROM ({broad}) WHERE bucket_start = %(at)s"),
+        {**bp, "at": AT},
+    )
+    new, new_receipt = _read_receipt(store, projection.format(pushed), pp)
+    assert old == new == [(64 * 8 * 64,)]
+    assert new_receipt["memory_bytes"] < old_receipt["memory_bytes"]
+    assert (
+        new_receipt["memory_bytes"] <= WRITE_SETTINGS["max_memory_usage"] < 2 * 1024**3
+    )
+    record_property(
+        "window_memory", json.dumps({"broad": old_receipt, "pushed": new_receipt})
+    )
+
+
+def test_span_window_nomination_preserves_broad_compiler_and_expiry(
+    publication_store, monkeypatch
+):
+    from tracer.services.derived_metrics import unit_reads
+    from tracer.services.derived_metrics.queries import Scope
+    from tracer.services.derived_metrics.retention import _expired_span_buckets
+
+    store = publication_store
+    org, project, session, user = uuid4(), uuid4(), uuid4(), uuid4()
+    scope = Scope(org, uuid4(), project)
+    rng = random.Random(11028975)
+    definition = SimpleNamespace(
+        level="span",
+        kind="average",
+        selection_unit="span",
+        formula="mean(y)",
+        inputs=[
+            {
+                "alias": "y",
+                "source": "span",
+                "field": "attribute_number",
+                "attribute_key": "y",
+                "reducer": "latest",
+            }
+        ],
+        field_spec={},
+        weighting="none",
+        cohort_key="",
+        filters=[],
+    )
+    rows, dependencies = [], defaultdict(list)
+    attempts = [uuid4(), uuid4()]
+    head = SimpleNamespace(
+        project_id=project,
+        checkpoint_attempt_id=attempts[0],
+        allowed_attempts=lambda: [(1, attempts[0]), (2, attempts[1])],
+    )
+    for i in range(64):
+        for revision in (1, 2, 3):
+            at = AT + timedelta(minutes=15 * ((i + revision) % 3))
+            deleted = int((i + revision) % 11 == 0)
+            # Repeated span IDs under different trace IDs exercise ambiguity.
+            rows.append(
+                (
+                    org,
+                    project,
+                    f"trace-{i}",
+                    f"span-{i % 3}",
+                    session,
+                    user,
+                    at,
+                    at + timedelta(seconds=1),
+                    at,
+                    at,
+                    revision,
+                    deleted,
+                    {"y": float(rng.randrange(20))},
+                )
+            )
+            generation = 1 if revision == 1 else 2
+            dependencies[generation].append(
+                (
+                    org,
+                    project,
+                    f"trace-{i}",
+                    f"span-{i % 3}",
+                    at,
+                    deleted,
+                    generation,
+                    attempts[generation - 1],
+                    revision,
+                )
+            )
+    store.client.execute(
+        "INSERT INTO spans (org_id, project_id, trace_id, id, trace_session_id, end_user_id, "
+        "start_time, end_time, created_at, updated_at, _version, is_deleted, attrs_number) VALUES",
+        rows,
+    )
+    for rows in dependencies.values():
+        store.client.execute(
+            "INSERT INTO metric_source_dependencies (org_id, project_id, trace_id, span_id, "
+            "unit_start, is_deleted, generation, attempt_id, _version) VALUES",
+            rows,
+        )
+    original = unit_reads.snapshot_select
+
+    def broad(*args, **kwargs):
+        kwargs.pop("unit_predicate", None)
+        kwargs.pop("source_ctes", None)
+        return original(*args, **kwargs)
+
+    for minute in (0, 15, 30):
+        start = AT + timedelta(minutes=minute)
+        end = start + timedelta(minutes=15)
+        sql, params = unit_reads.span_values_select(
+            definition,
+            scope,
+            start=start,
+            end=end,
+            as_of=AT + timedelta(days=1),
+        )
+        actual = _result(store.execute(sql, params))
+        with monkeypatch.context() as patch:
+            patch.setattr(unit_reads, "snapshot_select", broad)
+            legacy, lp = unit_reads.span_values_select(
+                definition,
+                scope,
+                start=start,
+                end=end,
+                as_of=AT + timedelta(days=1),
+            )
+        assert actual == _result(store.execute(legacy, lp))
+        dep_sql, dp = committed_rows_select(
+            SOURCE_DEPENDENCIES,
+            head,
+            org_id=org,
+            project_id=project,
+        )
+        expected = {
+            r[0]
+            for r in store.execute(
+                f"SELECT DISTINCT toStartOfFifteenMinutes(unit_start) FROM ({dep_sql}) WHERE unit_start < %(cutoff)s",
+                {**dp, "cutoff": end},
+            )
+        }
+        writer = SimpleNamespace(
+            store=store, org_id=org, lease=SimpleNamespace(project_id=project)
+        )
+        assert _expired_span_buckets(writer, head, end) == expected
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("same_trace", [False, True])
+def test_span_window_preserves_retargeted_evaluation_winner(
+    publication_store, monkeypatch, deleted, reverse, same_trace
+):
+    """Window nomination must not resurrect an evaluation's old target revision."""
+    from tracer.services.derived_metrics import unit_reads
+    from tracer.services.derived_metrics.queries import Scope
+    from tracer.tests.test_derived_metric_clickhouse import seed_eval
+
+    store = publication_store
+    org, project, config, evaluation, session = (uuid4() for _ in range(5))
+    scope = Scope(org, uuid4(), project)
+    traces = [uuid4(), uuid4()]
+    if same_trace:
+        traces[1] = traces[0]
+    definition = SimpleNamespace(
+        level="span",
+        kind="average",
+        selection_unit="span",
+        formula="mean(y)",
+        inputs=[
+            {
+                "alias": "y",
+                "source": "eval",
+                "config_id": str(config),
+                "config_hash": "a" * 64,
+                "reducer": "latest",
+            }
+        ],
+        field_spec={},
+        weighting="none",
+        cohort_key="",
+        filters=[],
+    )
+    # Keep both physical evaluation revisions so an incidental merge cannot hide
+    # a pre-collapse membership bug. Both spans belong to one session; only the
+    # evaluation's target identity changes, in either direction across a bucket.
+    store.client.execute("SYSTEM STOP MERGES tracer_eval_logger_v2")
+    try:
+        for index, trace in enumerate(traces):
+            at = AT + timedelta(minutes=15 * index)
+            store.client.execute(
+                "INSERT INTO spans (id, project_id, org_id, trace_id, trace_session_id, "
+                "start_time, end_time, created_at, updated_at) VALUES",
+                [
+                    (
+                        f"span-{index}",
+                        project,
+                        org,
+                        str(trace),
+                        session,
+                        at,
+                        at + timedelta(seconds=1),
+                        AT,
+                        AT,
+                    )
+                ],
+            )
+        old, new = (1, 0) if reverse else (0, 1)
+        for revision, target, value, tombstone in (
+            (1, old, 7.0, False),
+            (2, new, 9.0, deleted),
+        ):
+            seed_eval(
+                store.client,
+                config,
+                session,
+                AT + timedelta(minutes=1),
+                value,
+                1,
+                span_id=f"span-{target}",
+                trace_id=traces[target],
+                row_id=evaluation,
+                version=revision,
+                deleted=int(tombstone),
+            )
+        original = unit_reads.snapshot_select
+
+        def broad(*args, **kwargs):
+            kwargs.pop("unit_predicate", None)
+            kwargs.pop("source_ctes", None)
+            return original(*args, **kwargs)
+
+        for index in (0, 1):
+            start = AT + timedelta(minutes=15 * index)
+            arguments = {
+                "start": start,
+                "end": start + timedelta(minutes=15),
+                "as_of": AT + timedelta(days=1),
+            }
+            sql, params = unit_reads.span_values_select(definition, scope, **arguments)
+            actual = _result(store.execute(sql, params))
+            with monkeypatch.context() as patch:
+                patch.setattr(unit_reads, "snapshot_select", broad)
+                legacy, lp = unit_reads.span_values_select(
+                    definition, scope, **arguments
+                )
+            assert actual == _result(store.execute(legacy, lp))
+            expected = (
+                (9.0, "ok", "")
+                if index == new and not deleted
+                else (None, "no_value", "not_evaluated")
+            )
+            assert store.execute(
+                f"SELECT value_number, status, no_value_reason FROM ({sql})", params
+            ) == [expected]
+    finally:
+        store.client.execute("SYSTEM START MERGES tracer_eval_logger_v2")

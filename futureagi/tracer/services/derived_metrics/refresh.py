@@ -15,8 +15,9 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from django.db import transaction
-from django.db.models import Count, Sum
+from django.db import connection, transaction
+from django.db.models import BigIntegerField, Count, Max, Sum
+from django.db.models.functions import Cast
 
 from tracer.models.derived_metric import (
     LEDGER_CHUNK_MAX_KEYS,
@@ -29,10 +30,12 @@ from tracer.models.derived_metric import (
     MetricStateConflict,
 )
 from tracer.services.derived_metrics.bounded_reads import (
+    KeyRelation,
     capture_source_output,
     committed_key_pages,
     iter_key_membership_batches,
     merge_bindings,
+    windowed_rows_select,
 )
 from tracer.services.derived_metrics.buckets import (
     KEYS,
@@ -105,6 +108,32 @@ class RefreshWriter:
         # Discovery refresh MUST receive a live organization-policy loader.
         # Low-level replay/compaction may omit it; neither discovers new evidence.
         self.retention_days = retention_days
+        self._batch_numbers = {}
+        self._batch_context = None
+
+    def _next_batch_number(self, attempt, kind):
+        # A rolled-back preparation must not reuse its in-memory counter. Django
+        # removes exited atomic blocks on both commit and rollback; retaining the
+        # objects (rather than their ids) also prevents identity reuse.
+        context = tuple(connection.atomic_blocks)
+        if context != self._batch_context:
+            self._batch_numbers.clear()
+            self._batch_context = context
+        key = (attempt.id, kind)
+        if key not in self._batch_numbers:
+            # One JSON scan per (attempt, table, preparation), NOT per page. No
+            # migration is needed; restart derives the durable maximum, not COUNT
+            # (which would reuse a number if historical numbering has gaps).
+            last = MetricAttemptLedgerChunk.objects.filter(
+                attempt=attempt,
+                part="cleanup_intent",
+                payload__0__kind="frozen_batch",
+                payload__0__table=kind,
+            ).aggregate(last=Max(Cast("payload__0__batch_no", BigIntegerField())))[
+                "last"
+            ]
+            self._batch_numbers[key] = 0 if last is None else last + 1
+        return self._batch_numbers[key]
 
     def begin(self, *, purpose="incremental", ceilings=None, versions=(), ledger=None):
         with serialized_project(self.lease.project_id):
@@ -151,9 +180,10 @@ class RefreshWriter:
             return attempt
 
     def append(self, attempt, part, entries):
-        count = MetricAttemptLedgerChunk.objects.filter(
+        last = MetricAttemptLedgerChunk.objects.filter(
             attempt=attempt, part=part
-        ).count()
+        ).aggregate(last=Max("chunk_no"))["last"]
+        count = 0 if last is None else last + 1
         entries = _json(list(entries))
         for offset in range(0, len(entries), LEDGER_CHUNK_MAX_KEYS):
             MetricRefreshAttempt.append_ledger_chunk(
@@ -188,14 +218,7 @@ class RefreshWriter:
         physical = physical_table(table, checkpoint=attempt.purpose == "compaction")
         after, result = None, []
         kind = TABLE_KIND[table.name]
-        # Count metadata, never hydrate all preceding private payloads to allocate
-        # a batch number. Each frozen batch has exactly one ledger chunk.
-        batch_no = MetricAttemptLedgerChunk.objects.filter(
-            attempt=attempt,
-            part="cleanup_intent",
-            payload__0__kind="frozen_batch",
-            payload__0__table=kind,
-        ).count()
+        batch_no = 0 if transient else self._next_batch_number(attempt, kind)
         while True:
             self.lease.keepalive()
             first, _ = MetricProjectRefresh.allocate_row_sequences(
@@ -262,7 +285,14 @@ class RefreshWriter:
                 "last": last,
             }
             if not transient:
-                self.append(attempt, "cleanup_intent", [entry])
+                try:
+                    self.append(attempt, "cleanup_intent", [entry])
+                except Exception:
+                    # An acknowledgement can be lost after a durable append.
+                    # Re-derive from storage if this writer is retried in-process.
+                    self._batch_numbers.pop((attempt.id, kind), None)
+                    raise
+                self._batch_numbers[attempt.id, kind] = batch_no + 1
             if collect_payloads:
                 result.append(payload)
             batch_no += 1
@@ -1688,8 +1718,15 @@ class RefreshWriter:
                     head,
                     org_id=self.org_id,
                     project_id=self.lease.project_id,
+                    key_relation=KeyRelation(
+                        ("trace_id", "span_id"),
+                        "SELECT JSONExtractString(unit_id, 1), JSONExtractString(unit_id, 2) "
+                        f"FROM ({fields})",
+                        params,
+                    ),
+                    param_prefix="span_bucket_dependencies",
                 )
-                params.update(dp)
+                params = merge_bindings(params, dp)
                 if self.store.execute(
                     f"SELECT count() FROM ({fields}) WHERE unit_id NOT IN "
                     f"(SELECT toJSONString(tuple(trace_id, span_id)) FROM ({dependencies}) WHERE is_deleted = 0)",
@@ -1776,24 +1813,11 @@ class RefreshWriter:
         complete_fields=False,
         retired_override=None,
     ):
-        field, params = committed_rows_select(
-            FIELD_VALUES,
-            head,
-            org_id=self.org_id,
-            project_id=self.lease.project_id,
-            key_in={
-                "field_id": (definition.metric_id,),
-                "field_version": (definition.version,),
-            },
-            param_prefix="bucket_fields",
-        )
-        combined = (
-            overlay
-            if complete_fields
-            else f"SELECT * FROM (({field}) UNION ALL ({overlay})) ORDER BY generation DESC, _version DESC LIMIT 1 BY {', '.join(FIELD_VALUES.logical_key)}"
-        )
+        # Complete fields are already frozen final rows, not a SQL relation with
+        # a hidden broad collapse. Proposal callers supply the raw overlay plus
+        # head instead, so every physical branch can receive candidate membership.
         filter_sql = "field_id = toUUID(%(bucket_metric)s) AND field_version = %(bucket_metric_version)s"
-        params = merge_bindings(params, overlay_params)
+        params = dict(overlay_params)
         params.update(
             bucket_metric=str(definition.metric_id),
             bucket_metric_version=definition.version,
@@ -1811,7 +1835,24 @@ class RefreshWriter:
         for start in sorted(dirty):
             p = {**params, "dirty_start": start}
             predicate = "bucket_start = parseDateTimeBestEffort(%(dirty_start)s, 'UTC')"
-            fields = f"SELECT * FROM ({combined}) WHERE {filter_sql} AND {predicate}"
+            if complete_fields:
+                fields = f"SELECT * FROM ({overlay}) WHERE {filter_sql} AND {predicate}"
+            else:
+                fields, p = windowed_rows_select(
+                    FIELD_VALUES,
+                    head,
+                    org_id=self.org_id,
+                    project_id=self.lease.project_id,
+                    key_in={
+                        "field_id": (definition.metric_id,),
+                        "field_version": (definition.version,),
+                    },
+                    candidate_columns=("level", "unit_id"),
+                    predicate=predicate,
+                    params=p,
+                    frozen_overlay=(overlay, overlay_params),
+                    param_prefix="bucket_fields",
+                )
             at = datetime.fromisoformat(str(start))
             membership = {
                 "metric_id": (definition.metric_id,),

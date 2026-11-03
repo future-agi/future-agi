@@ -922,3 +922,73 @@ def test_identical_chain_observations_share_one_key_page_without_losing_multipli
     assert len(pages) == 1 and len(pages[0].field_keys) == 1
     assert len(pages[0].records) == 2
     assert pages[0].select()[1]["captured_source_rows"] == "01020102"
+
+
+def test_relational_membership_validates_keys_and_reaches_every_branch():
+    from tracer.services.derived_metrics.bounded_reads import KeyRelation
+
+    head = manifest()
+    overlay = SimpleNamespace(id=uuid4(), generation=3, purpose="incremental")
+    relation = KeyRelation(
+        ("level", "unit_id"),
+        "SELECT level, unit_id FROM compiler_candidates WHERE bucket_start = %(candidate_at)s",
+        {"candidate_at": datetime(2026, 1, 1, tzinfo=UTC)},
+    )
+    sql, params = committed_rows_select(
+        FIELD_VALUES,
+        head,
+        org_id=uuid4(),
+        project_id=head.project_id,
+        overlay=overlay,
+        key_relation=relation,
+    )
+    assert (
+        sql.count("(level, unit_id) IN (SELECT level, unit_id FROM compiler_candidates")
+        == 3
+    )
+    assert params["candidate_at"] == relation.params["candidate_at"]
+    for columns in (("bucket_start",), ("is_deleted",), ("unit_id", "unit_id")):
+        with pytest.raises(ValueError, match="immutable"):
+            committed_rows_select(
+                FIELD_VALUES,
+                head,
+                org_id=uuid4(),
+                project_id=head.project_id,
+                key_relation=KeyRelation(columns, "SELECT 1", {}),
+            )
+    for name in ("pub_project", "pub_base", "pub_overlay"):
+        with pytest.raises(ValueError, match="conflicting"):
+            committed_rows_select(
+                FIELD_VALUES,
+                head,
+                org_id=uuid4(),
+                project_id=head.project_id,
+                overlay=overlay,
+                key_relation=KeyRelation(
+                    ("unit_id",), "SELECT 'x'", {name: "different"}
+                ),
+            )
+
+
+def test_window_nomination_has_only_one_collapse_after_all_memberships():
+    from tracer.services.derived_metrics.bounded_reads import windowed_rows_select
+
+    head = manifest()
+    sql, params = windowed_rows_select(
+        FIELD_VALUES,
+        head,
+        org_id=uuid4(),
+        project_id=head.project_id,
+        predicate="bucket_start = %(at)s",
+        params={"at": datetime(2026, 1, 1, tzinfo=UTC)},
+        key_in={"field_id": (uuid4(),), "field_version": (1,)},
+        candidate_columns=("level", "unit_id"),
+        frozen_overlay=("SELECT * FROM frozen_fields", {}),
+    )
+    assert sql.count("LIMIT 1 BY") == 1
+    assert sql.count("(level, unit_id) IN (") == 3
+    # The mutable predicate nominates raw keys, and still follows the collapse.
+    assert sql.endswith("unit_id) WHERE bucket_start = %(at)s")
+    assert sql.count("SELECT DISTINCT level, unit_id") == 1
+    assert sql.count("SELECT * FROM frozen_fields") == 1
+    assert "window_kin_2" not in params  # candidates never materialize as a literal

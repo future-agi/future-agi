@@ -87,6 +87,7 @@ def committed_rows_select(
     overlay=None,
     key_after=None,
     key_in=None,
+    key_relation=None,
     param_prefix="pub",
 ):
     """Collapse an exact allowlist BEFORE any mutable/time/deletion predicate.
@@ -96,6 +97,8 @@ def committed_rows_select(
     Identifiers come exclusively from storage.py. Callers may wrap this SQL with
     post-collapse filters. key_in accepts bounded scalar or correlated-tuple
     memberships in immutable logical keys ONLY; an empty membership is false.
+    key_relation is a compiler-owned positive key subquery for large nominations,
+    not a raw predicate on the revisions being collapsed.
     Give composed readers distinct param_prefix values so their bindings cannot
     overwrite each other. No mutable/time/deletion pushdown is exposed.
     """
@@ -111,6 +114,7 @@ def committed_rows_select(
         overlay=overlay,
         key_after=key_after,
         key_in=key_in,
+        key_relation=key_relation,
         param_prefix=param_prefix,
     )
     if not branches:

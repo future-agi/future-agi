@@ -189,6 +189,96 @@ def key_membership_sql(table, key_in, *, param_prefix="pub"):
     return " AND ".join(predicates) or "1", params
 
 
+@dataclass(frozen=True)
+class KeyRelation:
+    """Compiler-owned positive membership; large candidates stay on the shard.
+
+    Columns must be immutable logical keys. The relation nominates identities,
+    never revisions: every permitted revision of each identity still participates
+    in the consumer's collapse. SQL is internal, not a public filter API.
+    """
+
+    columns: tuple[str, ...]
+    sql: str
+    params: dict
+
+    def predicate(self, table):
+        names = _columns(_table(table), self.columns)
+        return f"({', '.join(names)}) IN ({self.sql})"
+
+
+def windowed_rows_select(
+    table,
+    manifest,
+    *,
+    org_id,
+    project_id,
+    predicate,
+    params,
+    key_in=None,
+    candidate_columns=None,
+    frozen_overlay=None,
+    param_prefix="window",
+):
+    """Nominate from RAW history, collapse complete keys, then apply the window.
+
+    Mutable predicates may nominate a superset of identities, but MUST NOT select
+    a winning revision. In particular an old row in X with a winner in Y belongs
+    to X's candidates and is removed only by the final post-collapse predicate.
+    Checkpoint, delta and frozen overlay histories all nominate and all receive
+    the same correlated membership. Candidates never become Python literals.
+    """
+    table = _table(table)
+    branches, bound = committed_branches(
+        table,
+        manifest,
+        org_id=org_id,
+        project_id=project_id,
+        key_in=key_in,
+        param_prefix=param_prefix,
+    )
+    bound = merge_bindings(bound, params)
+    ctes = []
+    if frozen_overlay is not None:
+        overlay, overlay_params = frozen_overlay
+        fixed, fixed_params = key_membership_sql(
+            table, key_in, param_prefix=param_prefix
+        )
+        # Render private RowBinary bindings only once, not once per occurrence
+        # of C in each branch (which could exceed max_query_size for a legal page).
+        ctes.append(f"{param_prefix}_frozen AS ({overlay})")
+        branches.append(f"SELECT * FROM {param_prefix}_frozen WHERE {fixed}")
+        bound = merge_bindings(bound, overlay_params, fixed_params)
+    if not branches:
+        branches = [f"SELECT * FROM {table.name} WHERE 0"]
+    keys = _columns(
+        table,
+        candidate_columns
+        or tuple(c for c in table.logical_key if c not in {"org_id", "project_id"}),
+    )
+    candidates = " UNION ALL ".join(
+        f"SELECT {', '.join(keys)} FROM ({branch}) WHERE {predicate}"
+        for branch in branches
+    )
+    ctes.append(
+        f"{param_prefix}_candidates AS (SELECT DISTINCT {', '.join(keys)} FROM ({candidates}))"
+    )
+    relation = KeyRelation(
+        keys, f"SELECT {', '.join(keys)} FROM {param_prefix}_candidates", {}
+    )
+    # Each branch here is RAW: the only LIMIT BY is below these memberships.
+    selected = " UNION ALL ".join(
+        f"SELECT * FROM ({branch}) WHERE {relation.predicate(table)}"
+        for branch in branches
+    )
+    return (
+        f"WITH {', '.join(ctes)} SELECT * FROM (SELECT * FROM ({selected}) "
+        f"ORDER BY generation DESC, {table.version_column} DESC "
+        f"LIMIT 1 BY {', '.join(table.logical_key)}) WHERE {predicate}",
+        bound,
+    )
+
+
 def iter_key_membership_batches(
     table,
     *,
@@ -449,6 +539,7 @@ def committed_branches(
     overlay=None,
     key_after=None,
     key_in=None,
+    key_relation=None,
     param_prefix="pub",
     columns=None,
 ):
@@ -486,6 +577,10 @@ def committed_branches(
     if predicate != "1":
         scope += f" AND ({predicate})"
     params.update(bound)
+    if key_relation is not None:
+        if not isinstance(key_relation, KeyRelation):
+            raise ValueError("metric membership requires a compiler-owned relation")
+        scope += f" AND ({key_relation.predicate(table)})"
     branches = []
     if manifest is not None:
         if str(manifest.project_id) != str(project_id):
@@ -513,7 +608,9 @@ def committed_branches(
         branches.append(
             f"SELECT {projection} FROM {physical.name} PREWHERE {scope} WHERE attempt_id = %({prefix}_overlay)s AND generation = %({prefix}_overlay_generation)s"
         )
-    return branches, params
+    return branches, merge_bindings(
+        params, key_relation.params
+    ) if key_relation else params
 
 
 def committed_key_pages(
