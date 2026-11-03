@@ -6,10 +6,15 @@ import structlog
 
 from simulate.serializers.agent_reading import AgentScanSerializer
 from simulate.services.agent_setup import AGENT_MAX_BYTES
-from simulate.services.hosted_harness_gateway import read_failure_file, refusal_failure
+from simulate.services.hosted_harness_gateway import (
+    FAILURE_FILE_UNREADABLE,
+    read_failure_file,
+    refusal_failure,
+)
 from simulate.services.hosted_sandbox import (
     SandboxFileNotFoundError,
     SandboxNotFoundError,
+    SandboxProviderError,
 )
 
 logger = structlog.get_logger(__name__)
@@ -79,21 +84,34 @@ def _failure(sandbox) -> dict[str, Any] | None:
     found = read_failure_file(sandbox, FAILURE_FILE)
     if found is None:
         return None
+    if found == FAILURE_FILE_UNREADABLE:
+        raise ReadingResultInvalid("reading_file_unreadable", FAILURE_FILE)
     failure = refusal_failure({"refusal_file": found})
     if failure is None:
         raise ReadingResultInvalid("reading_file_invalid", FAILURE_FILE)
     return failure
 
 
-def _json_object(sandbox, path: str, max_bytes: int) -> dict[str, Any]:
+def _download(sandbox, path: str, max_bytes: int) -> bytes:
+    """The file's bytes, read in chunks so an oversized file is refused before it
+    is held in memory."""
+    body = bytearray()
     try:
-        body = sandbox.fs.download_file(path, _READ_TIMEOUT_SECONDS)
+        for chunk in sandbox.fs.download_file_stream(path, _READ_TIMEOUT_SECONDS):
+            body.extend(chunk)
+            if len(body) > max_bytes:
+                raise ReadingResultInvalid("reading_file_too_large", path)
     except (SandboxNotFoundError, SandboxFileNotFoundError, FileNotFoundError) as error:
         raise ReadingResultInvalid("reading_file_missing", path) from error
+    except SandboxProviderError as error:
+        raise ReadingResultInvalid("reading_file_unreadable", path) from error
+    return bytes(body)
+
+
+def _json_object(sandbox, path: str, max_bytes: int) -> dict[str, Any]:
+    body = _download(sandbox, path, max_bytes)
     if not body:
         raise ReadingResultInvalid("reading_file_missing", path)
-    if len(body) > max_bytes:
-        raise ReadingResultInvalid("reading_file_too_large", path)
     try:
         value = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as error:

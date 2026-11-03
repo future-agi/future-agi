@@ -14,9 +14,13 @@ from simulate.services.agent_reading import (
     collect_reading,
     collect_scan,
 )
-from simulate.services.hosted_sandbox import SandboxFileNotFoundError
+from simulate.services.hosted_sandbox import (
+    SandboxFileNotFoundError,
+    SandboxProviderError,
+)
 
 SHA = "a" * 40
+CHUNK = 64 * 1024
 SUPPORT = {
     "name": "support_agent",
     "subfolder": "agents/support",
@@ -45,14 +49,28 @@ REFUSAL = {
 }
 
 
-def _sandbox(files):
+def _sandbox(files, read=None):
+    read = read if read is not None else []
+
     def download_file(path, _timeout=None):
         if path not in files:
             raise SandboxFileNotFoundError(path)
         body = files[path]
+        if isinstance(body, Exception):
+            raise body
         return body if isinstance(body, bytes) else json.dumps(body).encode()
 
-    return SimpleNamespace(fs=SimpleNamespace(download_file=download_file))
+    def download_file_stream(path, _timeout=None):
+        body = download_file(path)
+        for start in range(0, len(body), CHUNK):
+            read.append(path)
+            yield body[start : start + CHUNK]
+
+    return SimpleNamespace(
+        fs=SimpleNamespace(
+            download_file=download_file, download_file_stream=download_file_stream
+        )
+    )
 
 
 def _scan(**changes):
@@ -211,3 +229,29 @@ def test_a_scan_with_no_agent_list_is_a_retryable_failure():
         "reading_file_missing",
         AGENTS_FILE,
     )
+
+
+def test_an_oversized_file_is_refused_before_it_is_read_in_full():
+    read = []
+    oversized = b" " * (CONTRACT_MAX_BYTES * 4)
+
+    with pytest.raises(ReadingResultInvalid) as raised:
+        collect_reading(_sandbox({CONTRACT_FILE: oversized, AGENT_FILE: {}}, read))
+
+    assert raised.value.code == "reading_file_too_large"
+    assert len(read) * CHUNK <= CONTRACT_MAX_BYTES + CHUNK
+
+
+@pytest.mark.parametrize(
+    ("files", "path"),
+    [
+        ({FAILURE_FILE: SandboxProviderError("timed out")}, FAILURE_FILE),
+        ({AGENTS_FILE: SandboxProviderError("timed out")}, AGENTS_FILE),
+    ],
+    ids=["failure_file", "result_file"],
+)
+def test_a_read_that_times_out_is_unreadable_not_invalid(files, path):
+    with pytest.raises(ReadingResultInvalid) as raised:
+        collect_scan(_sandbox(files))
+
+    assert (raised.value.code, raised.value.path) == ("reading_file_unreadable", path)

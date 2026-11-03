@@ -4637,7 +4637,7 @@ class HostedHarnessGateway:
             )
             if (
                 exit_code == 78
-                and observation.get("refusal_file") != _REFUSAL_FILE_UNREADABLE
+                and observation.get("refusal_file") != FAILURE_FILE_UNREADABLE
             ):
                 from simulate.services.harness_versioning.assembly import mark_failed
 
@@ -5233,7 +5233,7 @@ def _secret_safe(value: Any, *, key: str = "") -> Any:
 
 _REFUSAL_FILE = "/work/authoring/failure.json"
 _REFUSAL_FILE_INVALID = "invalid"
-_REFUSAL_FILE_UNREADABLE = "unreadable"
+FAILURE_FILE_UNREADABLE = "unreadable"
 
 
 def read_failure_file(sandbox, path: str = _REFUSAL_FILE) -> Any:
@@ -5245,7 +5245,7 @@ def read_failure_file(sandbox, path: str = _REFUSAL_FILE) -> Any:
         return None
     except Exception:  # noqa: BLE001 - unknown, so never read as "no file"
         logger.warning("refusal_file_unreadable path=%s", path, exc_info=True)
-        return _REFUSAL_FILE_UNREADABLE
+        return FAILURE_FILE_UNREADABLE
     if not body:
         return None
     try:

@@ -1,5 +1,3 @@
-import re
-
 from rest_framework import serializers
 
 from simulate.serializers.harness_job import SUBFOLDER_PATTERN
@@ -21,13 +19,6 @@ FRAMEWORK_NAMES = (
     "none",
     "unknown",
 )
-_RELATIVE_PATH = re.compile(SUBFOLDER_PATTERN)
-
-
-def _relative_path(value):
-    if value and not _RELATIVE_PATH.fullmatch(value):
-        raise serializers.ValidationError("must be a path inside the repository")
-    return value
 
 
 class FrameworkSerializer(serializers.Serializer):
@@ -50,10 +41,10 @@ class EstimatesSerializer(serializers.Serializer):
 
 class FoundAgentSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
-    subfolder = serializers.CharField(
-        max_length=512, allow_blank=True, validators=[_relative_path]
+    subfolder = serializers.RegexField(
+        SUBFOLDER_PATTERN, max_length=512, allow_blank=True
     )
-    entry = serializers.CharField(max_length=512, validators=[_relative_path])
+    entry = serializers.RegexField(SUBFOLDER_PATTERN, max_length=512)
     framework = FrameworkSerializer()
     confidence = serializers.ChoiceField(choices=("high", "medium", "low"))
     evidence = serializers.ListField(
