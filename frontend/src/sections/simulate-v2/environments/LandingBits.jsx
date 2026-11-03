@@ -199,7 +199,9 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
               ? "Coming soon"
               : world.readiness === "retired"
                 ? "Retired"
-                : "Withdrawn"}
+                : world.readiness === "unsupported"
+                  ? "Discovered · Unsupported"
+                  : "Withdrawn"}
           </QuietTag>
         )}
         <QuietTag>{world.typeLabel}</QuietTag>

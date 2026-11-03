@@ -1115,7 +1115,11 @@ export const CATALOGUE_ALL = [
     domain: "Google Sheets",
     task: "Google Sheets expense reconciliation and approved row updates",
     templateId: "env-task-sheets",
-    release: R("2026.10.1"),
+    /* Discovered, not adapted (catalogue.md CA-1): listed so people can see
+       it exists, never launchable until it has a tested adapter. */
+    release: R("2026.10.1", "unsupported", 0, {
+      note: "Discovered, but it has no tested adapter yet, so it can't be launched. We don't offer a sample agent for it.",
+    }),
     requests: ["Reconcile October expenses in the team sheet."],
     actors: ["Approver"],
     recipe: { model: "gpt-4.1-mini", limitations: ["Edits unapproved rows"] },
@@ -1137,7 +1141,9 @@ const LAUNCH_IDS = [
   "M04",
   "M05",
 ];
-export const CATALOGUE = CATALOGUE_ALL.filter((c) => LAUNCH_IDS.includes(c.id));
+export const CATALOGUE = CATALOGUE_ALL.filter(
+  (c) => LAUNCH_IDS.includes(c.id) || c.release.status === "unsupported",
+);
 
 /* Release states, as a person reads them. */
 export const READINESS = {
@@ -1145,6 +1151,7 @@ export const READINESS = {
   soon: { label: "Checks pending", runnable: false },
   retired: { label: "Retired", runnable: true },
   withdrawn: { label: "Withdrawn", runnable: false },
+  unsupported: { label: "Discovered · Unsupported", runnable: false },
 };
 
 /** The catalogue entry for a world template (the first, when two tasks share one). */
@@ -1160,7 +1167,7 @@ export const adoptBlockOf = (entry) => {
   const r = entry.release;
   if (r.status === "soon")
     return `Its starter cases aren't proved yet — ${r.proved} of 5 so far.`;
-  if (r.status === "withdrawn") return r.note;
+  if (r.status === "withdrawn" || r.status === "unsupported") return r.note;
   return null;
 };
 
