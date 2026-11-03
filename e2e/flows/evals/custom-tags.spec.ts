@@ -48,10 +48,10 @@ test('EVAL-E2E-011: custom evaluation tags survive draft reopening and repeated 
     const input = page.getByRole('textbox', { name: 'Add custom tag' });
     await input.fill(`  ${entered}  `);
     await input.press('Enter');
-    await expect(input).toHaveValue('');
+    await expect(input).toHaveValue('', { timeout: UI_READY });
     await input.fill(entered);
     await input.press('Enter');
-    await expect(page.getByRole('button', { name: entered, exact: true })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: entered, exact: true })).toHaveCount(1, { timeout: UI_READY });
     await input.fill(`  ${pending}  `);
     await page.screenshot({ path: testInfo.outputPath('draft-tags.png') });
   }, { timeout: UI_READY });
@@ -68,13 +68,16 @@ test('EVAL-E2E-011: custom evaluation tags survive draft reopening and repeated 
   await test.step('reopen saved default version and save pending text', async () => {
     await page.goto(`/dashboard/evaluations/${id}`);
     await expect(page.getByRole('button', { name: `Client${suffix}`, exact: true })).toBeVisible({ timeout: UI_READY });
-    await expect(page.getByRole('button', { name: `Entered${suffix}`, exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: `Entered${suffix}`, exact: true })).toBeVisible({ timeout: UI_READY });
     await page.getByRole('button', { name: `Pending${suffix}`, exact: true }).press('Backspace');
     await page.getByRole('textbox', { name: 'Add custom tag' }).fill(`  ${later}  `);
     await page.getByRole('button', { name: 'Save Version', exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'Add custom tag' })).toHaveValue('', { timeout: UI_READY });
     await expect(page.getByRole('button', { name: 'Save Version', exact: true })).toBeDisabled({ timeout: UI_READY });
     expect((await actor.api.get<Detail>(detailPath)).result.tags).toEqual(['output_validation', client, entered, later]);
+    // The success snackbar overlaps Save; hovering it pauses its dismissal.
+    await page.mouse.move(0, 0);
+    await expect(page.getByText(/^Version V\d+ saved$/)).toBeHidden({ timeout: UI_READY });
   }, { timeout: UI_READY });
 
   await test.step('remove the previously pending tag and save again', async () => {
@@ -87,9 +90,9 @@ test('EVAL-E2E-011: custom evaluation tags survive draft reopening and repeated 
   await test.step('reload and inspect remaining labels', async () => {
     await page.reload();
     await expect(page.getByRole('button', { name: `Client${suffix}`, exact: true })).toBeVisible({ timeout: UI_READY });
-    await expect(page.getByRole('button', { name: `Entered${suffix}`, exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: `Pending${suffix}`, exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: `Later${suffix}`, exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: `Entered${suffix}`, exact: true })).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByRole('button', { name: `Pending${suffix}`, exact: true })).toHaveCount(0, { timeout: UI_READY });
+    await expect(page.getByRole('button', { name: `Later${suffix}`, exact: true })).toHaveCount(0, { timeout: UI_READY });
     await page.getByRole('textbox', { name: 'Add custom tag' }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath('reopened-tags.png') });
   }, { timeout: UI_READY });

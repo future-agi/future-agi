@@ -9,14 +9,12 @@ vi.mock("src/utils/axios", () => ({ default: {}, endpoints: {} }));
 // network boundary; a rejected contract must never reach it.
 describe("Unit: evaluation save contract", () => {
   it("reproduces the old blank-model failure before PUT and accepts the dev payload repair", async () => {
-    const adapter = vi
-      .fn()
-      .mockResolvedValue({
-        status: 200,
-        data: { result: {} },
-        headers: {},
-        config: {},
-      });
+    const adapter = vi.fn().mockResolvedValue({
+      status: 200,
+      data: { result: {} },
+      headers: {},
+      config: {},
+    });
     const client = axios.create({ adapter });
     client.interceptors.request.use(assertContractedRequestConfig);
     const url =
