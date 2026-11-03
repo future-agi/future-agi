@@ -319,6 +319,20 @@ describe("WorldActorsPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps a role within the length its record schema sets and says so at the limit", () => {
+    actorsData = cast([MANAGER], {
+      record_schemas: {
+        "actors.json": { properties: { role: { maxLength: 12 } } },
+      },
+    });
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    const role = screen.getByLabelText("Role (optional)");
+    expect(role).toHaveAttribute("maxLength", "12");
+    fireEvent.change(role, { target: { value: "twelve chars" } });
+    expect(screen.getByText("At most 12 characters")).toBeInTheDocument();
+  });
+
   it("says who already has a typed id and will not save it, and offers no one to be brought in by when the world is empty", () => {
     actorsData = cast([
       { id: "colleague", name: "Jordan Taylor", channel: "audio_mix" },
