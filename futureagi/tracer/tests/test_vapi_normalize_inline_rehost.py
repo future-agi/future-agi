@@ -61,14 +61,20 @@ def _make_fake_convert(url_map):
 
 
 def test_duration_falls_back_to_created_at_when_started_at_is_null():
-    result = normalize_vapi_data(
-        {
-            **VAPI_LOG,
-            "startedAt": None,
-            "createdAt": "2026-07-17T12:00:00Z",
-            "endedAt": "2026-07-17T12:01:35Z",
-        }
-    )
+    # Keep the inline rehost off the network: VAPI_LOG carries real-looking
+    # recording URLs, and an unpatched convert downloads them (240 s on CI).
+    with patch(
+        "tracer.utils.vapi.convert_audio_url_to_s3_sync",
+        side_effect=_make_fake_convert({}),
+    ):
+        result = normalize_vapi_data(
+            {
+                **VAPI_LOG,
+                "startedAt": None,
+                "createdAt": "2026-07-17T12:00:00Z",
+                "endedAt": "2026-07-17T12:01:35Z",
+            }
+        )
 
     assert result["span_attributes"]["call.duration"] == 95
 
