@@ -16,6 +16,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 )
@@ -118,17 +119,27 @@ func parseTable(raw []byte, strict bool) (*Table, error) {
 	return &Table{prices: m, providers: providers, Skipped: skipped, usable: usable}, nil
 }
 
-// statesTokenPrice reports whether an entry carries input_cost_per_token or
-// output_cost_per_token as a number of 0 or more.
+// statesTokenPrice reports whether an entry can be priced from a download:
+// it states input_cost_per_token or output_cost_per_token, and every rate Cost
+// reads, the long-context tier rates included, is a finite number of 0 or
+// more when supplied. One bad rate makes the entry unusable. An absent rate is
+// fine, and an explicit 0 is a free price.
 func statesTokenPrice(entry json.RawMessage) bool {
 	var f struct {
-		In  *float64 `json:"input_cost_per_token"`
-		Out *float64 `json:"output_cost_per_token"`
+		In      *float64 `json:"input_cost_per_token"`
+		Out     *float64 `json:"output_cost_per_token"`
+		InTier  *float64 `json:"input_cost_per_token_above_128k_tokens"`
+		OutTier *float64 `json:"output_cost_per_token_above_128k_tokens"`
 	}
 	if json.Unmarshal(entry, &f) != nil {
 		return false
 	}
-	return (f.In != nil && *f.In >= 0) || (f.Out != nil && *f.Out >= 0)
+	for _, r := range []*float64{f.In, f.Out, f.InTier, f.OutTier} {
+		if r != nil && (*r < 0 || math.IsNaN(*r) || math.IsInf(*r, 0)) {
+			return false
+		}
+	}
+	return f.In != nil || f.Out != nil
 }
 
 // overlay returns a table of t's entries with other's laid over them: other

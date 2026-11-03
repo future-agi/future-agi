@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 )
 
 type liteLLMEntry struct {
@@ -59,6 +60,12 @@ func parseLiteLLM(data []byte) (map[string]*ModelInfo, error) {
 		var entry liteLLMEntry
 		if err := json.Unmarshal(rawEntry, &entry); err != nil {
 			slog.Warn("skipping unparseable litellm entry", "key", key, "error", err)
+			skipped++
+			continue
+		}
+
+		if badRate(entry) {
+			slog.Warn("skipping litellm entry with a negative or invalid rate", "key", key)
 			skipped++
 			continue
 		}
@@ -172,6 +179,24 @@ func normalizeProvider(p string) string {
 	default:
 		return p
 	}
+}
+
+// badRate reports a negative or non-finite value in any rate the gateway reads.
+// A rate that is absent is 0 and fine; an explicit 0 is a free price.
+func badRate(e liteLLMEntry) bool {
+	for _, r := range []float64{
+		e.InputCostPerToken, e.OutputCostPerToken, e.CacheReadInputTokenCost,
+		e.InputCostPerTokenBatches, e.OutputCostPerTokenBatches,
+		e.OutputCostPerImage, e.InputCostPerImage, e.InputCostPerSecond,
+		e.InputCostPerCharacter, e.InputCostPerQuery, e.OCRCostPerPage,
+		e.OutputCostPerSecond, e.InputCostPerPixel, e.OutputCostPerPixel,
+		e.InputCostPerImageToken, e.OutputCostPerImageToken,
+	} {
+		if r < 0 || math.IsNaN(r) || math.IsInf(r, 0) {
+			return true
+		}
+	}
+	return false
 }
 
 func isZeroPricing(mode ModelMode, entry liteLLMEntry) bool {

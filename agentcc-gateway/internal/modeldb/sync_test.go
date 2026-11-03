@@ -305,3 +305,68 @@ func TestSync_UnpricedObjectsDoNotOverwriteBundledPrices(t *testing.T) {
 		t.Errorf("gpt-4o price = %+v, want the bundled %+v", got, want)
 	}
 }
+
+// One negative rate drops the entry, whichever rate it is: the bundled price
+// stays and a catalogue of such entries is rejected.
+func TestSync_NegativeRateDropsTheEntry(t *testing.T) {
+	cases := map[string]string{
+		"negative input, non-negative output": `{"litellm_provider":"openai","mode":"chat","input_cost_per_token":-0.00001,"output_cost_per_token":0.000001}`,
+		"non-negative input, negative output": `{"litellm_provider":"openai","mode":"chat","input_cost_per_token":0.000001,"output_cost_per_token":-0.00001}`,
+		"negative cache rate":                 `{"litellm_provider":"openai","mode":"chat","input_cost_per_token":0.000001,"output_cost_per_token":0.000001,"cache_read_input_token_cost":-0.00001}`,
+		"negative non-token rate":             `{"litellm_provider":"openai","mode":"image_generation","output_cost_per_image":-0.04}`,
+	}
+	for name, entry := range cases {
+		t.Run(name, func(t *testing.T) {
+			body := catalogueJSON(60, 1e-6)
+			body = body[:len(body)-1] + fmt.Sprintf(`,"gpt-4o":%s}`, entry)
+			f := newFakeCatalogue(t, body)
+			s, ptr, _ := newTestSyncer(f.URL, 100)
+			want, _ := ptr.Load().GetPricing("gpt-4o")
+
+			s.syncOnce(context.Background(), time.Second)
+
+			if _, ok := ptr.Load().Get("fetched-7"); !ok {
+				t.Fatal("the good entries were not loaded")
+			}
+			got, _ := ptr.Load().GetPricing("gpt-4o")
+			if *got != *want || got.InputPerToken < 0 || got.OutputPerToken < 0 {
+				t.Errorf("gpt-4o pricing = %+v, want the bundled %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestSync_AllNegativeCatalogueRejected(t *testing.T) {
+	out := "{"
+	for i := 0; i < 500; i++ {
+		if i > 0 {
+			out += ","
+		}
+		out += fmt.Sprintf(`"fetched-%d":{"litellm_provider":"openai","mode":"chat","input_cost_per_token":-0.00001,"output_cost_per_token":0.000001}`, i)
+	}
+	f := newFakeCatalogue(t, out+"}")
+	s, _, c := newTestSyncer(f.URL, 100)
+
+	s.syncOnce(context.Background(), time.Second)
+
+	if info := c.Info(); info.Source != SourceBundled || info.LastError == "" {
+		t.Errorf("info = %+v, want bundled with a last_error", info)
+	}
+}
+
+// An explicit 0 is a free price, and an absent optional rate is fine.
+func TestSync_ExplicitFreeAndAbsentOptionalRatesAccepted(t *testing.T) {
+	body := catalogueJSON(60, 1e-6)
+	body = body[:len(body)-1] + `,"free-image":{"litellm_provider":"openai","mode":"image_generation","output_cost_per_image":0}}`
+	f := newFakeCatalogue(t, body)
+	s, ptr, _ := newTestSyncer(f.URL, 100)
+
+	s.syncOnce(context.Background(), time.Second)
+
+	if _, ok := ptr.Load().Get("free-image"); !ok {
+		t.Error("an explicit free price was dropped")
+	}
+	if _, ok := ptr.Load().Get("fetched-7"); !ok {
+		t.Error("an entry with no optional rates was dropped")
+	}
+}

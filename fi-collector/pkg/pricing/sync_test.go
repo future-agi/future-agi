@@ -183,6 +183,73 @@ func TestSync_PartiallyMalformedKeepsUsableEntries(t *testing.T) {
 	}
 }
 
+// One bad supplied rate drops the whole entry, whichever rate it is: the
+// starting price of gpt-4o stays and the entry does not count as usable.
+func TestSync_NegativeRateDropsTheEntry(t *testing.T) {
+	cases := map[string]string{
+		"negative input, non-negative output": `{"mode":"chat","input_cost_per_token":-0.00001,"output_cost_per_token":0.000001}`,
+		"non-negative input, negative output": `{"mode":"chat","input_cost_per_token":0.000001,"output_cost_per_token":-0.00001}`,
+		"negative long-context input tier":    `{"input_cost_per_token":1e-6,"output_cost_per_token":1e-6,"input_cost_per_token_above_128k_tokens":-0.00001}`,
+		"negative long-context output tier":   `{"input_cost_per_token":1e-6,"output_cost_per_token":1e-6,"output_cost_per_token_above_128k_tokens":-0.00001}`,
+	}
+	for name, entry := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeCatalogue(t, withEntry(tableJSON(60, 1e-6), "gpt-4o", entry))
+			s, p := newTestSyncer(t, f.URL, 100)
+
+			s.syncOnce(context.Background(), time.Second)
+
+			if !priced(p, "fetched-7") {
+				t.Fatal("the good entries were not loaded")
+			}
+			if got := cost(p, "gpt-4o"); got != 0.0025 {
+				t.Errorf("gpt-4o cost = %v, want the starting 0.0025", got)
+			}
+			if c, _ := p.TokenCost(context.Background(), "", "gpt-4o", 129000, 129000); c != 129000*2*gpt4oPrice {
+				t.Errorf("gpt-4o long-context cost = %v, want %v", c, 129000*2*gpt4oPrice)
+			}
+		})
+	}
+}
+
+// A download whose every entry has a bad rate counts no usable entry, so it is
+// rejected and the table in use stays.
+func TestSync_AllNegativeCatalogueRejected(t *testing.T) {
+	f := newFakeCatalogue(t, tableJSON(150, 2e-6))
+	s, p := newTestSyncer(t, f.URL, 150)
+	s.syncOnce(context.Background(), time.Second)
+	f.body.Store(mixedSign(500))
+
+	s.syncOnce(context.Background(), time.Second)
+
+	if got := cost(p, "fetched-7"); got != 0.004 {
+		t.Errorf("fetched-7 cost = %v, want the last good 0.004", got)
+	}
+}
+
+func mixedSign(n int) string {
+	out := "{"
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			out += ","
+		}
+		out += fmt.Sprintf(`"fetched-%d":{"input_cost_per_token":-0.00001,"output_cost_per_token":0.000001}`, i)
+	}
+	return out + "}"
+}
+
+// An optional rate that is absent is fine; only a supplied bad one drops an entry.
+func TestSync_AbsentOptionalRatesAccepted(t *testing.T) {
+	f := newFakeCatalogue(t, withEntry(tableJSON(60, 1e-6), "input-only", `{"input_cost_per_token":1e-6}`))
+	s, p := newTestSyncer(t, f.URL, 100)
+
+	s.syncOnce(context.Background(), time.Second)
+
+	if c, ok := p.TokenCost(context.Background(), "", "input-only", 1000, 1000); !ok || c != 0.001 {
+		t.Errorf("input-only = (%v, %v), want (0.001, true)", c, ok)
+	}
+}
+
 func TestSync_ExplicitFreePricingAccepted(t *testing.T) {
 	body := withEntry(tableJSON(60, 1e-6), "free-model",
 		`{"litellm_provider":"openai","input_cost_per_token":0,"output_cost_per_token":0}`)
