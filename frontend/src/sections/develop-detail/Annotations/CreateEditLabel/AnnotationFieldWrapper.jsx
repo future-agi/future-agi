@@ -51,7 +51,7 @@ const AnnotationFieldWrapper = ({
       label: "Delete",
       icon: "/assets/icons/ic_delete.svg",
       action: onDeleteLabelClick,
-      color: "status.danger.fg",
+      color: "text.primary",
     },
   ];
   const [open, setOpen] = useState(defaultOpen);
@@ -207,7 +207,6 @@ const AnnotationFieldWrapper = ({
                     flexDirection: "row",
                     alignItems: "center",
                     gap: 0.5,
-                    // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
                     color: action.color,
                   }}
                 >

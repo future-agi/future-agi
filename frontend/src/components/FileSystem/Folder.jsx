@@ -271,8 +271,7 @@ export default function Folder({
               );
               setOpen(false), setSelectedActionName("Delete");
             }}
-            // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-            sx={{ color: "status.danger.fg", px: 1.25, py: 0.75 }}
+            sx={{ px: 1.25, py: 0.75 }}
           >
             <ListItemText
               primary="Delete"

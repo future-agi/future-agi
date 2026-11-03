@@ -382,8 +382,7 @@ export default function PromptItem({
           )}
 
           <MenuItem
-            // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-            sx={{ color: "status.danger.fg", px: 1.25, py: 0.75 }}
+            sx={{ px: 1.25, py: 0.75 }}
             onClick={() => {
               // TODO: open delete wrapper
               if (type) {

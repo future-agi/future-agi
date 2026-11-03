@@ -233,8 +233,7 @@ function RunTestActionMenu({ test, onView, onDelete }) {
             onDelete?.(test);
             handleClose();
           }}
-          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-          sx={{ color: "status.danger.fg", px: 1.25, py: 0.75 }}
+          sx={{ px: 1.25, py: 0.75 }}
         >
           <ListItemIcon sx={{ minWidth: "unset", mr: 1 }}>
             <SvgColor

@@ -111,8 +111,6 @@ export default function AccountBillingAddress({ addressBook }) {
             handleClose();
             logger.debug("DELETE", addressId);
           }}
-          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-          sx={{ color: "status.danger.fg" }}
         >
           <Iconify icon="solar:trash-bin-trash-bold" />
           Delete

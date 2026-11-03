@@ -94,8 +94,7 @@ const TemplateCard = ({ name, description, createdBy, onClick, onDelete }) => {
                 setMenuAnchor(null);
                 onDelete();
               }}
-              // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-              sx={{ color: "status.danger.fg", gap: 1 }}
+              sx={{ gap: 1 }}
             >
               <Iconify icon="solar:trash-bin-trash-bold" width={16} />
               Delete

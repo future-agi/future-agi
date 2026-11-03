@@ -543,8 +543,7 @@ export default function ChatListPanel() {
         </MenuItem>
         <MenuItem
           onClick={handleDelete}
-          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-          sx={{ py: 0.75, gap: 1.5, color: "status.danger.fg" }}
+          sx={{ py: 0.75, gap: 1.5 }}
         >
           <Iconify icon="solar:trash-bin-trash-linear" width={16} />
           Delete

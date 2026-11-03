@@ -1686,17 +1686,9 @@ export default function DashboardDetailView() {
           />
         </MenuItem>
         <Divider />
-        <MenuItem
-          onClick={handleDeleteWidget}
-          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-          sx={{ color: "status.danger.fg" }}
-        >
+        <MenuItem onClick={handleDeleteWidget}>
           <ListItemIcon>
-            <Iconify
-              icon="solar:trash-bin-trash-linear"
-              width={16}
-              sx={{ color: "error.main" }}
-            />
+            <Iconify icon="solar:trash-bin-trash-linear" width={16} />
           </ListItemIcon>
           <ListItemText>Delete</ListItemText>
         </MenuItem>
@@ -1755,17 +1747,9 @@ export default function DashboardDetailView() {
           <ListItemText>Add Widget</ListItemText>
         </MenuItem>
         <Divider />
-        <MenuItem
-          onClick={handleDeleteDashboard}
-          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-          sx={{ color: "status.danger.fg" }}
-        >
+        <MenuItem onClick={handleDeleteDashboard}>
           <ListItemIcon>
-            <Iconify
-              icon="solar:trash-bin-trash-linear"
-              width={16}
-              sx={{ color: "error.main" }}
-            />
+            <Iconify icon="solar:trash-bin-trash-linear" width={16} />
           </ListItemIcon>
           <ListItemText>Delete Dashboard</ListItemText>
         </MenuItem>

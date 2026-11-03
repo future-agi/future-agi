@@ -199,8 +199,6 @@ export default function IntegrationDetail() {
                   setMenuAnchor(null);
                   setDeleteOpen(true);
                 }}
-                // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-                sx={{ color: "status.danger.fg" }}
               >
                 Delete
               </MenuItem>

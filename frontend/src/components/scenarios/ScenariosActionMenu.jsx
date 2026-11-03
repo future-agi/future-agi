@@ -101,11 +101,7 @@ const ScenarioActionMenu = ({ scenario, onEdit, onDelete }) => {
             }}
           />
         </MenuItem>
-        <MenuItem
-          onClick={handleDelete}
-          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-          sx={{ color: "status.danger.fg", px: 1.25, py: 0.75 }}
-        >
+        <MenuItem onClick={handleDelete} sx={{ px: 1.25, py: 0.75 }}>
           <ListItemIcon sx={{ minWidth: "unset", mr: 1 }}>
             <SvgColor
               src="/assets/icons/ic_delete.svg"

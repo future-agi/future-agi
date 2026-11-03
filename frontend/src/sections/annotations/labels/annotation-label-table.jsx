@@ -362,15 +362,11 @@ export default function AnnotationLabelTable({
             </MenuItem>
           )}
           {!archivedView && (
-            <MenuItem
-              onClick={() => handleAction("archive")}
-              // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-              sx={{ color: "status.danger.fg" }}
-            >
+            <MenuItem onClick={() => handleAction("archive")}>
               <Iconify
                 icon="solar:archive-down-bold"
                 width={16}
-                sx={{ mr: 1, color: "error.main" }}
+                sx={{ mr: 1 }}
               />
               Archive
             </MenuItem>

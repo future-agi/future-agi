@@ -27,7 +27,6 @@ export const ALLOWED_REASONS = {
   "status dot size": "the size of a status dot",
   layout: "a layout value the rule mistakes for styling",
   "error state": "a menu option shown in red because it can't be used",
-  "destructive menu item": "red destructive menu items, pending a design decision",
 };
 
 // Files that are whole tables of exception colours. This list can only shrink.
@@ -49,7 +48,7 @@ export const WHOLE_FILE_EXCEPTIONS = [
   "sections/simulate/environments/buildEnvironment/buildTones.js",
 ];
 
-export const MAX_DS_OPTOUTS = 107;
+export const MAX_DS_OPTOUTS = 81;
 
 const RULE = "no-restricted-syntax";
 const DISABLE = /eslint-disable(-next-line|-line)?\s+([^*\n]*?)(?:\s*\*\/|\s*$)/;

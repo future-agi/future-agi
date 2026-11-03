@@ -173,11 +173,7 @@ export default function AnnotationTaskTableRow({ row }) {
 
         <Divider sx={{ borderStyle: "dashed" }} />
 
-        <MenuItem
-          onClick={() => {}}
-          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-          sx={{ color: "status.danger.fg" }}
-        >
+        <MenuItem onClick={() => {}}>
           <Iconify icon="solar:trash-bin-trash-bold" />
           Delete
         </MenuItem>

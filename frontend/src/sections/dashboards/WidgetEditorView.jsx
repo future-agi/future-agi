@@ -4664,14 +4664,11 @@ export default function WidgetEditorView() {
                 setMoreMenuAnchor(null);
                 setConfirmDeleteOpen(true);
               }}
-              // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-              sx={{ color: "status.danger.fg" }}
             >
               <ListItemIcon>
                 <Iconify
                   icon="solar:trash-bin-trash-linear"
                   width={16}
-                  sx={{ color: "error.main" }}
                 />
               </ListItemIcon>
               <ListItemText>Delete</ListItemText>

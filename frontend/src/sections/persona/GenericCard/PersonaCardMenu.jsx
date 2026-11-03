@@ -100,11 +100,7 @@ const PersonaCardMenu = ({
       </MenuItem>
 
       <ShowComponent condition={!isPrebuilt && canWrite}>
-        <MenuItem
-          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-          sx={{ color: "status.danger.fg", px: 1.25, py: 0.75 }}
-          onClick={onDeleteClick}
-        >
+        <MenuItem sx={{ px: 1.25, py: 0.75 }} onClick={onDeleteClick}>
           <ListItemIcon sx={{ minWidth: "unset", mr: 1 }}>
             <SvgColor
               src="/assets/icons/ic_delete.svg"

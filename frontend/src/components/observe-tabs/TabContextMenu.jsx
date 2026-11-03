@@ -134,8 +134,6 @@ const TabContextMenu = ({
         <MenuItem
           onClick={() => setDeleteConfirmOpen(true)}
           dense
-          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-          sx={{ color: "status.danger.fg" }}
         >
           <ListItemIcon sx={{ color: "inherit" }}>
             <Iconify icon="solar:trash-bin-trash-linear" width={16} />

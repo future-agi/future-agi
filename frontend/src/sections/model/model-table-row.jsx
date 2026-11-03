@@ -216,8 +216,6 @@ export default function ModelTableRow({
             confirm.onTrue();
             popover.onClose();
           }}
-          // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-          sx={{ color: "status.danger.fg" }}
         >
           <Iconify icon="solar:trash-bin-trash-bold" />
           Delete

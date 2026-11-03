@@ -175,11 +175,7 @@ const SimulatorAgentCellRenderer = (params) => {
                   }}
                 />
               </MenuItem>
-              <MenuItem
-                onClick={handleDelete}
-                // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-                sx={{ color: "status.danger.fg" }}
-              >
+              <MenuItem onClick={handleDelete}>
                 <ListItemIcon sx={{ minWidth: "unset", mr: 0 }}>
                   <SvgColor
                     src="/assets/icons/ic_delete.svg"
