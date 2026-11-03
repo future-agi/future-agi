@@ -97,7 +97,7 @@ const ModelDatabaseConfigTab = ({ modelDatabase, onChange }) => {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Icon icon="mdi:database-cog-outline" width={24} />
+        <Icon icon="solar:database-linear" width={24} />
         <Typography variant="h6">Model Database Overrides</Typography>
       </Stack>
 
@@ -163,26 +163,29 @@ const ModelDatabaseConfigTab = ({ modelDatabase, onChange }) => {
 
         return (
           <Accordion key={modelId} defaultExpanded sx={{ mb: 1 }}>
-            <AccordionSummary expandIcon={<Icon icon="mdi:chevron-down" />}>
+            <AccordionSummary
+              expandIcon={<Icon icon="solar:alt-arrow-down-linear" />}
+            >
               <Stack
                 direction="row"
                 alignItems="center"
                 spacing={1}
                 sx={{ flex: 1 }}
               >
-                <Icon icon="mdi:cube-outline" width={18} />
-                <Typography variant="subtitle1" fontWeight="bold">
+                <Icon icon="solar:box-linear" width={18} />
+                <Typography variant="subtitle1" fontWeight="600">
                   {modelId}
                 </Typography>
                 <Box sx={{ flex: 1 }} />
                 <IconButton
+                  sx={{ color: "status.danger.fg" }}
                   size="small"
                   onClick={(e) => {
                     e.stopPropagation();
                     removeModel(modelId);
                   }}
                 >
-                  <Icon icon="mdi:delete-outline" width={18} color="#d32f2f" />
+                  <Icon icon="solar:trash-bin-trash-linear" width={18} />
                 </IconButton>
               </Stack>
             </AccordionSummary>

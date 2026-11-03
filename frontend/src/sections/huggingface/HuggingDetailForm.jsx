@@ -1,8 +1,8 @@
 import { LoadingButton } from "@mui/lab";
-import { Box, Button, Stack, Typography, useTheme } from "@mui/material";
+import { Box, Button, Chip, Stack, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
-import { DatasetInfo, FaceBadge } from "./huggingFaceStyle";
+import { DatasetInfo } from "./huggingFaceStyle";
 import Iconify from "src/components/iconify";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import LinkifiedTypography from "src/components/LinkifiedTypography/LinkifiedTypography";
@@ -47,30 +47,27 @@ const HuggingDetailForm = ({
           </Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: "5px" }}>
             <Iconify
-              icon="material-symbols:download"
-              sx={{ color: "text.disabled" }}
+              icon="solar:download-minimalistic-linear"
+              sx={{ color: "text.secondary" }}
             />
             <Typography
               component="span"
               sx={{
-                color: "text.disabled",
+                color: "text.secondary",
                 textAlign: "center",
-                fontSize: "10px",
+                fontSize: "12px",
               }}
             >
               {huggingFaceDetail?.downloads}
             </Typography>
-            <Iconify
-              icon="weui:like-outlined"
-              sx={{ color: "text.disabled" }}
-            />
+            <Iconify icon="solar:like-linear" sx={{ color: "text.secondary" }} />
             <Typography
               variant="span"
               component="span"
               sx={{
-                color: "text.disabled",
+                color: "text.secondary",
                 textAlign: "center",
-                fontSize: "10px",
+                fontSize: "12px",
               }}
             >
               {huggingFaceDetail?.likes}
@@ -98,7 +95,7 @@ const HuggingDetailForm = ({
             variant="p"
             component="span"
             sx={{
-              color: "text.disabled",
+              color: "text.secondary",
               textAlign: "center",
               fontWeight: "500",
               fontSize: "12px",
@@ -125,9 +122,12 @@ const HuggingDetailForm = ({
           >
             Author
           </Typography>
-          <FaceBadge color={"#2F7CF7"} bgcolor={"#2F7CF729"}>
-            {huggingFaceDetail?.author}
-          </FaceBadge>
+          <Chip
+            size="small"
+            variant="soft"
+            color="info"
+            label={huggingFaceDetail?.author}
+          />
         </Stack>
         <Stack
           paddingTop={"10px"}
@@ -144,10 +144,11 @@ const HuggingDetailForm = ({
           </Typography>
           <Typography
             sx={{
-              color: "text.disabled",
-              fontWeight: "400",
-              fontSize: "14px",
-              pt: "6px",
+              // Reading text: body size in the secondary text colour.
+              // text.disabled is for unavailable controls, not content.
+              typography: "m3",
+              color: "text.secondary",
+              pt: 0.75,
             }}
           >
             {huggingFaceDetail?.description}
@@ -243,7 +244,7 @@ const HuggingDetailForm = ({
         {huggingFaceDatasetConfigError && (
           <LinkifiedTypography
             text={huggingFaceDatasetConfigError}
-            color={"red.500"}
+            color={"status.danger.fg"}
             variant="s2"
             fontWeight={"fontWeightRegular"}
           />

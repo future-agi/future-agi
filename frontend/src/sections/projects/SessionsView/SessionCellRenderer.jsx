@@ -46,7 +46,9 @@ const SessionCellRenderer = (params) => {
           coverage={data.capture_coverage}
           value={
             colId === "total_cost"
-              ? Number.isFinite(value) ? formatCost(value) : "Unknown"
+              ? Number.isFinite(value)
+                ? formatCost(value)
+                : "Unknown"
               : `${Number(value ?? 0).toLocaleString()} tokens`
           }
         />
@@ -85,7 +87,7 @@ const SessionCellRenderer = (params) => {
       return (
         <Box display="flex" alignItems="center" justifyContent={"flex-end"}>
           <Iconify
-            icon="radix-icons:clock"
+            icon="solar:clock-circle-linear"
             width={14}
             marginRight="7px"
             sx={{ flexShrink: 0 }}

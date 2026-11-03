@@ -1,4 +1,5 @@
 import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
+import { statusColors } from "src/utils/runStatus";
 import React, {
   useState,
   useEffect,
@@ -37,8 +38,10 @@ import {
   useTheme,
   InputAdornment,
   CircularProgress,
+  ButtonBase,
 } from "@mui/material";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { alpha } from "@mui/material/styles";
 import ReactApexChart from "react-apexcharts";
 import ChartLegend from "./ChartLegend";
 import WidgetPieCharts from "./WidgetPieCharts";
@@ -79,6 +82,7 @@ import {
 } from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
 import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
+import { seriesColors } from "src/theme/data-colors";
 import {
   coerceFilterValue,
   FILTER_STRING_MAX_UTF8_BYTES,
@@ -209,35 +213,60 @@ function getAllowedGranularities(preset, customDays) {
 }
 
 const CHART_TYPES = [
-  { label: "Line", value: "line", icon: "mdi:chart-line", group: "line" },
+  {
+    label: "Line",
+    value: "line",
+    icon: "solar:graph-up-linear",
+    group: "line",
+  },
   {
     label: "Stacked Line",
     value: "stacked_line",
-    icon: "mdi:chart-line-stacked",
+    icon: "solar:graph-up-linear",
     group: "line",
   },
-  { label: "Column", value: "column", icon: "mdi:chart-bar", group: "column" },
+  {
+    label: "Column",
+    value: "column",
+    icon: "solar:chart-2-linear",
+    group: "column",
+  },
   {
     label: "Stacked Column",
     value: "stacked_column",
-    icon: "mdi:chart-bar-stacked",
+    icon: "solar:chart-2-linear",
     group: "column",
   },
   {
     label: "Bar",
     value: "bar",
-    icon: "mdi:chart-timeline-variant-shimmer",
+    icon: "solar:stars-minimalistic-linear",
     group: "bar",
   },
   {
     label: "Stacked Bar",
     value: "stacked_bar",
-    icon: "mdi:chart-timeline-variant-shimmer",
+    icon: "solar:stars-minimalistic-linear",
     group: "bar",
   },
-  { label: "Pie", value: "pie", icon: "mdi:chart-pie", group: "other" },
-  { label: "Table", value: "table", icon: "mdi:table", group: "other" },
-  { label: "Metric", value: "metric", icon: "mdi:pound", group: "other" },
+  {
+    label: "Pie",
+    value: "pie",
+    icon: "solar:pie-chart-2-linear",
+    group: "other",
+  },
+  {
+    label: "Table",
+    value: "table",
+    icon: "solar:table-linear",
+    group: "other",
+  },
+  {
+    label: "Metric",
+    value: "metric",
+    icon: "solar:hashtag-linear",
+    group: "other",
+  },
 ];
 
 // Curated list of unit presets shown in the widget editor's Unit
@@ -257,24 +286,24 @@ const UNIT_PRESETS = [
 ];
 
 const METRIC_CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
+  { key: "all", label: "All", icon: "solar:widget-4-linear" },
   {
     key: "trace",
     label: "Traces",
-    icon: "mdi:chart-timeline-variant",
+    icon: "solar:chart-2-linear",
     source: "traces",
     category: "system_metric",
   },
   {
     key: "eval_metric",
     label: "Evals",
-    icon: "mdi:check-circle-outline",
+    icon: "solar:check-circle-linear",
     category: "eval_metric",
   },
   {
     key: "prompt",
     label: "Prompts",
-    icon: "mdi:text-box-edit-outline",
+    icon: "solar:pen-new-square-linear",
     source: "traces",
     category: "system_metric",
     nameFilter: "prompt_",
@@ -282,19 +311,19 @@ const METRIC_CATEGORIES = [
   {
     key: "dataset",
     label: "Datasets",
-    icon: "mdi:table-large",
+    icon: "solar:table-linear",
     source: "datasets",
   },
   {
     key: "simulation",
     label: "Simulate",
-    icon: "mdi:robot-outline",
+    icon: "solar:bot-linear",
     source: "simulation",
   },
   {
     key: "user",
     label: "Users",
-    icon: "mdi:account-group-outline",
+    icon: "solar:users-group-rounded-linear",
     source: "traces",
     category: "system_metric",
     nameFilter: "user",
@@ -302,13 +331,13 @@ const METRIC_CATEGORIES = [
   {
     key: "annotation",
     label: "Annotations",
-    icon: "mdi:format-quote-close",
+    icon: "solar:quote-linear",
     category: "annotation_metric",
   },
   {
     key: "custom_attribute",
     label: "Trace Attributes",
-    icon: "mdi:tune-variant",
+    icon: "solar:tuning-2-linear",
     source: "traces",
     category: "custom_attribute",
   },
@@ -472,8 +501,8 @@ export function WidgetCatalogOption({ option, onSelect }) {
       sx={{ width: "100%", gap: 1, px: 1.5, py: 0.75 }}
     >
       <Iconify
-        icon={METRIC_TYPE_ICONS[option.type] || "mdi:cog-outline"}
-        width={15}
+        icon={METRIC_TYPE_ICONS[option.type] || "solar:settings-linear"}
+        width={16}
         sx={{ color: "text.disabled", flexShrink: 0 }}
       />
       <Typography
@@ -496,7 +525,7 @@ export function WidgetCatalogOption({ option, onSelect }) {
           size="small"
           variant="outlined"
           label={label}
-          sx={{ height: 18, fontSize: 10, flexShrink: 0 }}
+          sx={{ flexShrink: 0 }}
         />
       ))}
     </ListItemButton>
@@ -1348,25 +1377,12 @@ export function restoreWidgetFilterConfig(config) {
 }
 
 const METRIC_TYPE_ICONS = {
-  system: "mdi:cog-outline",
-  eval_metric: "mdi:check-circle-outline",
-  annotation: "mdi:format-quote-close",
-  custom_attribute: "mdi:tune-variant",
-  custom_column: "mdi:table-column",
+  system: "solar:settings-linear",
+  eval_metric: "solar:check-circle-linear",
+  annotation: "solar:quote-linear",
+  custom_attribute: "solar:tuning-2-linear",
+  custom_column: "solar:columns-3-linear",
 };
-
-const SERIES_COLORS = [
-  "#7B56DB", // purple (primary)
-  "#1ABCFE", // cyan
-  "#FF6B6B", // coral red
-  "#2ECB71", // emerald green
-  "#F7B731", // amber
-  "#E84393", // magenta pink
-  "#0984E3", // ocean blue
-  "#FD7E14", // tangerine orange
-  "#00CEC9", // teal
-  "#A29BFE", // lavender
-];
 
 const hashSeriesName = (name) => {
   const s = String(name || "");
@@ -1376,27 +1392,27 @@ const hashSeriesName = (name) => {
   }
   return Math.abs(h);
 };
-const buildSeriesColorMap = (names) => {
+// `palette` is the theme's data palette (seriesColors(theme)).
+const buildSeriesColorMap = (names, palette) => {
   const map = {};
   const used = new Set();
   (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % SERIES_COLORS.length;
+    const start = hashSeriesName(name) % palette.length;
     let picked = start;
-    for (let i = 0; i < SERIES_COLORS.length; i += 1) {
-      const candidate = (start + i) % SERIES_COLORS.length;
+    for (let i = 0; i < palette.length; i += 1) {
+      const candidate = (start + i) % palette.length;
       if (!used.has(candidate)) {
         picked = candidate;
         break;
       }
     }
     used.add(picked);
-    map[name] = SERIES_COLORS[picked];
+    map[name] = palette[picked];
   });
   return map;
 };
-const getSeriesColor = (name, map) =>
-  (map && map[name]) ||
-  SERIES_COLORS[hashSeriesName(name) % SERIES_COLORS.length];
+const getSeriesColor = (name, map, palette) =>
+  (map && map[name]) || palette[hashSeriesName(name) % palette.length];
 
 const LETTER_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -1424,12 +1440,7 @@ function ToggleButtons({ options, value, onChange, theme }) {
               value === opt.value
                 ? theme.palette.text.primary
                 : theme.palette.text.secondary,
-            bgcolor:
-              value === opt.value
-                ? theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.08)"
-                  : "rgba(0,0,0,0.06)"
-                : "transparent",
+            bgcolor: value === opt.value ? "action.selected" : "transparent",
             borderRight:
               i < options.length - 1
                 ? `1px solid ${theme.palette.divider}`
@@ -1438,10 +1449,7 @@ function ToggleButtons({ options, value, onChange, theme }) {
             userSelect: "none",
             transition: "all 0.15s",
             "&:hover": {
-              bgcolor:
-                theme.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.05)"
-                  : "rgba(0,0,0,0.03)",
+              bgcolor: "action.hover",
             },
           }}
         >
@@ -1473,7 +1481,7 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
         alignItems="center"
         sx={{ mb: 1.5 }}
       >
-        <Typography variant="subtitle2" fontWeight={700}>
+        <Typography variant="subtitle2" fontWeight={600}>
           {title}
         </Typography>
         {showReset && (
@@ -1556,17 +1564,11 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
           sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
         >
           {UNIT_PRESETS.map((opt) => (
-            <MenuItem
-              key={opt.value}
-              value={opt.value}
-              sx={{ fontSize: "13px" }}
-            >
+            <MenuItem key={opt.value} value={opt.value}>
               {opt.label}
             </MenuItem>
           ))}
-          <MenuItem value="custom" sx={{ fontSize: "13px" }}>
-            Custom
-          </MenuItem>
+          <MenuItem value="custom">Custom</MenuItem>
         </TextField>
       </Stack>
 
@@ -1739,7 +1741,6 @@ AxisSection.propTypes = {
 function AggregationPicker({
   value,
   onChange,
-  theme,
   extraOptions,
   allowedAggregations,
 }) {
@@ -1789,9 +1790,9 @@ function AggregationPicker({
         size="small"
         variant="outlined"
         onClick={handleOpen}
-        deleteIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+        deleteIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
         onDelete={handleOpen}
-        sx={{ mt: 1, cursor: "pointer", fontSize: "12px" }}
+        sx={{ mt: 1, cursor: "pointer" }}
       />
       <Popper
         open={open}
@@ -1800,15 +1801,7 @@ function AggregationPicker({
         sx={{ zIndex: 1400 }}
       >
         <ClickAwayListener onClickAway={handleClose}>
-          <Paper
-            elevation={8}
-            sx={{
-              minWidth: 180,
-              border: `1px solid ${theme.palette.divider}`,
-              borderRadius: 1,
-              overflow: "hidden",
-            }}
-          >
+          <Paper elevation={8} sx={{ minWidth: 180, overflow: "hidden" }}>
             {!showPercentiles ? (
               <List dense disablePadding>
                 {primaryAggs.map((opt) => (
@@ -1868,7 +1861,7 @@ function AggregationPicker({
                         }}
                       />
                       <Iconify
-                        icon="mdi:chevron-right"
+                        icon="solar:alt-arrow-right-linear"
                         width={16}
                         sx={{ color: "text.secondary" }}
                       />
@@ -1883,7 +1876,7 @@ function AggregationPicker({
                   sx={{ py: 0.75 }}
                 >
                   <Iconify
-                    icon="mdi:chevron-left"
+                    icon="solar:alt-arrow-left-linear"
                     width={16}
                     sx={{ color: "text.secondary", mr: 0.5 }}
                   />
@@ -1925,7 +1918,6 @@ function AggregationPicker({
 AggregationPicker.propTypes = {
   value: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
-  theme: PropTypes.object.isRequired,
   extraOptions: PropTypes.arrayOf(
     PropTypes.shape({
       label: PropTypes.string.isRequired,
@@ -2153,14 +2145,7 @@ export function FilterValuePickerPopup({
       >
         <Paper
           elevation={8}
-          sx={{
-            width: 300,
-            display: "flex",
-            flexDirection: "column",
-            border: `1px solid ${theme.palette.divider}`,
-            borderRadius: 1,
-            bgcolor: "background.paper",
-          }}
+          sx={{ width: 300, display: "flex", flexDirection: "column" }}
         >
           {/* Search */}
           <Box sx={{ p: 1.5 }}>
@@ -2182,8 +2167,8 @@ export function FilterValuePickerPopup({
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon="eva:search-fill"
-                      width={18}
+                      icon="solar:magnifier-linear"
+                      width={16}
                       sx={{ color: "text.disabled" }}
                     />
                   </InputAdornment>
@@ -2220,9 +2205,12 @@ export function FilterValuePickerPopup({
           )}
 
           {/* Select all */}
-          <Box
+          <ButtonBase
+            component="div"
             onClick={toggleAll}
             sx={{
+              justifyContent: "flex-start",
+              textAlign: "left",
               display: "flex",
               alignItems: "center",
               gap: 1,
@@ -2242,7 +2230,7 @@ export function FilterValuePickerPopup({
             <Typography variant="body2" fontWeight={600} color="primary.main">
               Select all in list ({filteredOptions.length})
             </Typography>
-          </Box>
+          </ButtonBase>
           <Divider />
 
           {/* Options list */}
@@ -2251,10 +2239,13 @@ export function FilterValuePickerPopup({
             sx={{ flex: 1, overflow: "auto", maxHeight: 240 }}
           >
             {canSpecifyExactValue && (
-              <Box
+              <ButtonBase
+                component="div"
                 data-widget-filter-exact-value={exactSearchValue}
                 onClick={() => toggleValue(exactSearchValue, exactValueType)}
                 sx={{
+                  justifyContent: "flex-start",
+                  textAlign: "left",
                   display: "flex",
                   alignItems: "center",
                   gap: 1,
@@ -2280,7 +2271,7 @@ export function FilterValuePickerPopup({
                 >
                   Specify: <strong>{exactSearchValue}</strong>
                 </Typography>
-              </Box>
+              </ButtonBase>
             )}
             {isLoading ? (
               <Box sx={{ p: 2, textAlign: "center" }}>
@@ -2309,10 +2300,13 @@ export function FilterValuePickerPopup({
               </Box>
             ) : (
               filteredOptions.map((opt) => (
-                <Box
+                <ButtonBase
+                  component="div"
                   key={`${opt.type || ""}:${typeof opt.value}:${JSON.stringify(opt.value)}`}
                   onClick={() => toggleValue(opt.value, optionStorageType(opt))}
                   sx={{
+                    justifyContent: "flex-start",
+                    textAlign: "left",
                     display: "flex",
                     alignItems: "center",
                     gap: 1,
@@ -2338,7 +2332,7 @@ export function FilterValuePickerPopup({
                   >
                     {opt.label || opt.value}
                   </Typography>
-                </Box>
+                </ButtonBase>
               ))
             )}
             <BoundedCursorPaginationControl
@@ -3829,30 +3823,37 @@ export default function WidgetEditorView() {
   }, [axisConfig.leftY.unit, autoAppliedLeftAxisUnit, suggestedLeftAxisUnit]);
 
   // Hash-derived colors give cross-reload stability; the map walker
-  // advances to the next free slot on collision so ≤10 series never
-  // share a color inside one widget. Built from previewSeries so hidden
-  // series keep their color when re-checked.
+  // advances to the next free slot on collision so series never share a
+  // color inside one widget until the palette runs out. Built from
+  // previewSeries so hidden series keep their color when re-checked.
+  const palette = seriesColors(theme);
   const seriesColorMap = useMemo(
-    () => buildSeriesColorMap(previewSeries.map((s) => s.name)),
-    [previewSeries],
+    () =>
+      buildSeriesColorMap(
+        previewSeries.map((s) => s.name),
+        palette,
+      ),
+    [previewSeries, palette],
   );
   const chartColors = useMemo(
-    () => chartSeries.map((s) => getSeriesColor(s.name, seriesColorMap)),
-    [chartSeries, seriesColorMap],
+    () =>
+      chartSeries.map((s) => getSeriesColor(s.name, seriesColorMap, palette)),
+    [chartSeries, seriesColorMap, palette],
   );
 
   // Pie slices are breakdown values, which repeat across metrics — key their
   // colours by the raw breakdown name so a project stays one colour in every pie.
   const pieColorMap = useMemo(
     () =>
-      buildSeriesColorMap([
-        ...new Set(previewSeries.map((s) => s.breakdownName)),
-      ]),
-    [previewSeries],
+      buildSeriesColorMap(
+        [...new Set(previewSeries.map((s) => s.breakdownName))],
+        palette,
+      ),
+    [previewSeries, palette],
   );
   const pieColorFor = useCallback(
-    (name) => getSeriesColor(name, pieColorMap),
-    [pieColorMap],
+    (name) => getSeriesColor(name, pieColorMap, palette),
+    [pieColorMap, palette],
   );
 
   // A pie needs a category to slice by. `hasBreakdown` mirrors the filter in
@@ -4059,7 +4060,7 @@ export default function WidgetEditorView() {
         ? {
             labels: {
               show: false,
-              style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
             },
             axisBorder: { show: false },
             axisTicks: { show: false },
@@ -4071,7 +4072,7 @@ export default function WidgetEditorView() {
             ...(chartTimeWindow || {}),
             labels: {
               show: axisConfig.xAxis.visible,
-              style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
               datetimeUTC: false,
               datetimeFormatter: {
                 year: "MMMM",
@@ -4130,7 +4131,7 @@ export default function WidgetEditorView() {
               },
             }),
             labels: {
-              style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
               formatter: formatVal,
             },
           };
@@ -4163,7 +4164,7 @@ export default function WidgetEditorView() {
               },
             }),
             labels: {
-              style: { colors: theme.palette.text.secondary, fontSize: "11px" },
+              style: { colors: theme.palette.text.secondary, fontSize: "12px" },
               formatter: makeFormatter(cfg),
             },
           };
@@ -4195,7 +4196,7 @@ export default function WidgetEditorView() {
       markers: {
         size: markerSizes,
         strokeWidth: 2,
-        strokeColors: isDark ? theme.palette.background.paper : "#fff",
+        strokeColors: theme.palette.background.paper,
         hover: isLineChart
           ? { size: 8, sizeOffset: 2 }
           : { size: 6, sizeOffset: 3 },
@@ -4242,7 +4243,8 @@ export default function WidgetEditorView() {
             intersect: isLineChart && !isDenseSeries,
             custom: ({ series, seriesIndex, dataPointIndex, w }) => {
               const sName = w.globals.seriesNames[seriesIndex] || "";
-              const color = w.globals.colors[seriesIndex] || "#6366F1";
+              const color =
+                w.globals.colors[seriesIndex] || seriesColors(theme)[0];
               const val = series[seriesIndex]?.[dataPointIndex];
               const prevVal =
                 dataPointIndex > 0
@@ -4251,28 +4253,26 @@ export default function WidgetEditorView() {
               const ts = w.globals.seriesX[seriesIndex]?.[dataPointIndex];
               const dateStr = ts ? format(new Date(ts), "MMM dd, yyyy") : "";
               const fmtVal = formatVal(val);
-              const bg = isDark ? "#1e1e2e" : "#fff";
-              const _border = isDark
-                ? "rgba(255,255,255,0.08)"
-                : "rgba(0,0,0,0.06)";
-              const textPrimary = isDark ? "#fff" : "#1a1a2e";
-              const textSecondary = isDark
-                ? "rgba(255,255,255,0.5)"
-                : "rgba(0,0,0,0.45)";
+              const bg = theme.palette.background.paper;
+              const border = theme.palette.divider;
+              const textPrimary = theme.palette.text.primary;
+              const textSecondary = theme.palette.text.secondary;
               let changeHtml = "";
               if (prevVal != null && prevVal !== 0 && val != null) {
                 const pct = ((val - prevVal) / Math.abs(prevVal)) * 100;
                 const sign = pct >= 0 ? "+" : "";
-                const changeColor = pct >= 0 ? "#22C55E" : "#FF4842";
+                const changeColor = statusColors(
+                  theme,
+                  pct >= 0 ? "success" : "danger",
+                ).fg;
                 changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
               }
-              return `<div style="display:flex;background:${bg};border:none;border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
-                <div style="width:4px;flex-shrink:0;background:${color}"></div>
-                <div style="padding:14px 16px;flex:1">
-                  <div style="font-weight:700;font-size:14px;color:${textPrimary};line-height:1.3">${escapeHtml(sName)}</div>
+              return `<div style="display:flex;background:${bg};border:1px solid ${border};border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
+                                <div style="padding:14px 16px;flex:1">
+                  <div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:14px;color:${textPrimary};line-height:1.3"><span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${color}"></span>${escapeHtml(sName)}</div>
                   <div style="font-size:12px;color:${textSecondary};margin-top:3px">${escapeHtml(dateStr)}</div>
                   <div style="display:flex;align-items:baseline;gap:8px;margin-top:8px">
-                    <span style="font-weight:700;font-size:20px;color:${textPrimary}">${escapeHtml(fmtVal)}</span>
+                    <span style="font-weight:600;font-size:20px;color:${textPrimary}">${escapeHtml(fmtVal)}</span>
                   </div>
                   ${changeHtml}
                 </div>
@@ -4471,7 +4471,7 @@ export default function WidgetEditorView() {
       >
         {/* Breadcrumb links */}
         <Breadcrumbs
-          separator={<Iconify icon="mdi:chevron-right" width={14} />}
+          separator={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
           sx={{ flexShrink: 0 }}
         >
           <Link
@@ -4500,7 +4500,7 @@ export default function WidgetEditorView() {
           </Link>
         </Breadcrumbs>
         <Iconify
-          icon="mdi:chevron-right"
+          icon="solar:alt-arrow-right-linear"
           width={14}
           sx={{ color: "text.disabled", flexShrink: 0 }}
         />
@@ -4523,7 +4523,7 @@ export default function WidgetEditorView() {
               maxWidth: 350,
               "& .MuiOutlinedInput-input": {
                 py: 0.5,
-                fontSize: "14px",
+                fontSize: "13px",
                 fontWeight: 500,
               },
             }}
@@ -4532,7 +4532,7 @@ export default function WidgetEditorView() {
           <Typography
             onClick={() => !isReadOnly && setEditingName(true)}
             sx={{
-              fontSize: "14px",
+              fontSize: "13px",
               fontWeight: 500,
               cursor: isReadOnly ? "default" : "pointer",
               maxWidth: 300,
@@ -4591,7 +4591,7 @@ export default function WidgetEditorView() {
                   }}
                 >
                   <Iconify
-                    icon="mdi:text-box-outline"
+                    icon="solar:notes-linear"
                     width={14}
                     sx={{ flexShrink: 0 }}
                   />
@@ -4609,12 +4609,10 @@ export default function WidgetEditorView() {
             !isReadOnly && (
               <Button
                 size="small"
-                startIcon={<Iconify icon="mdi:plus" width={14} />}
+                startIcon={<Iconify icon="solar:add-linear" width={14} />}
                 onClick={() => setDescOpen(true)}
                 sx={{
                   flexShrink: 0,
-                  fontSize: "13px",
-                  fontWeight: 400,
                   color: "text.disabled",
                   "&:hover": { color: "text.secondary" },
                 }}
@@ -4642,7 +4640,7 @@ export default function WidgetEditorView() {
           onClick={(e) => setMoreMenuAnchor(e.currentTarget)}
           sx={{ color: "text.secondary" }}
         >
-          <Iconify icon="mdi:dots-horizontal" width={20} />
+          <Iconify icon="solar:menu-dots-linear" width={20} />
         </IconButton>
 
         {/* More menu */}
@@ -4652,7 +4650,7 @@ export default function WidgetEditorView() {
           onClose={() => setMoreMenuAnchor(null)}
           anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
           transformOrigin={{ vertical: "top", horizontal: "right" }}
-          slotProps={{ paper: { sx: { minWidth: 180 } } }}
+          slotProps={{ paper: { sx: { minWidth: 200 } } }}
         >
           {isEditing && canDelete && (
             <MenuItem
@@ -4660,14 +4658,9 @@ export default function WidgetEditorView() {
                 setMoreMenuAnchor(null);
                 setConfirmDeleteOpen(true);
               }}
-              sx={{ color: "error.main" }}
             >
               <ListItemIcon>
-                <Iconify
-                  icon="mdi:delete-outline"
-                  width={18}
-                  sx={{ color: "error.main" }}
-                />
+                <Iconify icon="solar:trash-bin-trash-linear" width={16} />
               </ListItemIcon>
               <ListItemText>Delete</ListItemText>
             </MenuItem>
@@ -4681,7 +4674,7 @@ export default function WidgetEditorView() {
               }}
             >
               <ListItemIcon>
-                <Iconify icon="mdi:pencil-outline" width={18} />
+                <Iconify icon="solar:pen-linear" width={16} />
               </ListItemIcon>
               <ListItemText>Rename</ListItemText>
             </MenuItem>
@@ -4720,7 +4713,7 @@ export default function WidgetEditorView() {
               }}
             >
               <ListItemIcon>
-                <Iconify icon="mdi:content-copy" width={18} />
+                <Iconify icon="solar:copy-linear" width={16} />
               </ListItemIcon>
               <ListItemText>Duplicate</ListItemText>
             </MenuItem>
@@ -4760,7 +4753,7 @@ export default function WidgetEditorView() {
             }}
           >
             <ListItemIcon>
-              <Iconify icon="mdi:download-outline" width={18} />
+              <Iconify icon="solar:download-minimalistic-linear" width={16} />
             </ListItemIcon>
             <ListItemText>Export CSV</ListItemText>
           </MenuItem>
@@ -4791,7 +4784,7 @@ export default function WidgetEditorView() {
             }}
           >
             <ListItemIcon>
-              <Iconify icon="mdi:clipboard-outline" width={18} />
+              <Iconify icon="solar:clipboard-linear" width={16} />
             </ListItemIcon>
             <ListItemText>Copy CSV</ListItemText>
           </MenuItem>
@@ -4809,7 +4802,7 @@ export default function WidgetEditorView() {
               {isPreviewRefreshing ? (
                 <CircularProgress size={16} />
               ) : (
-                <Iconify icon="mdi:refresh" width={18} />
+                <Iconify icon="solar:refresh-linear" width={16} />
               )}
             </ListItemIcon>
             <ListItemText>
@@ -4838,7 +4831,7 @@ export default function WidgetEditorView() {
 
         <Button
           onClick={() => navigate(dashboardDetailUrl)}
-          sx={{ color: "text.primary", fontWeight: 500 }}
+          sx={{ color: "text.primary" }}
         >
           Close
         </Button>
@@ -4857,7 +4850,7 @@ export default function WidgetEditorView() {
               color={saveStatus === "saved" ? "success" : "primary"}
               startIcon={
                 saveStatus === "saved" ? (
-                  <Iconify icon="mdi:check" width={18} />
+                  <Iconify icon="solar:check-linear" width={20} />
                 ) : undefined
               }
             >
@@ -4920,9 +4913,7 @@ export default function WidgetEditorView() {
                         : theme.palette.text.secondary,
                     bgcolor:
                       timePreset === p.value
-                        ? theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.08)"
-                          : "rgba(0,0,0,0.06)"
+                        ? "action.selected"
                         : "transparent",
                     borderRight:
                       i < DATE_PRESETS.length - 1
@@ -4935,15 +4926,12 @@ export default function WidgetEditorView() {
                     alignItems: "center",
                     gap: 0.5,
                     "&:hover": {
-                      bgcolor:
-                        theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.05)"
-                          : "rgba(0,0,0,0.03)",
+                      bgcolor: "action.hover",
                     },
                   }}
                 >
                   {p.value === "custom" && (
-                    <Iconify icon="mdi:calendar-outline" width={15} />
+                    <Iconify icon="solar:calendar-linear" width={16} />
                   )}
                   {p.value === "custom" && customDateRange
                     ? `${format(customDateRange[0], "MMM dd")} - ${format(getDateRangeDisplayEnd(customDateRange), "MMM dd")}`
@@ -4995,7 +4983,10 @@ export default function WidgetEditorView() {
                   const ct = CHART_TYPES.find((t) => t.value === val);
                   return (
                     <Stack direction="row" alignItems="center" gap={0.5}>
-                      <Iconify icon={ct?.icon || "mdi:chart-line"} width={16} />
+                      <Iconify
+                        icon={ct?.icon || "solar:graph-up-linear"}
+                        width={16}
+                      />
                       {ct?.label || val}
                     </Stack>
                   );
@@ -5148,7 +5139,11 @@ export default function WidgetEditorView() {
                         sx={{ px: 2, pt: 2, pb: 1 }}
                       >
                         {chartSeries.map((s, i) => {
-                          const color = getSeriesColor(s.name, seriesColorMap);
+                          const color = getSeriesColor(
+                            s.name,
+                            seriesColorMap,
+                            palette,
+                          );
                           return (
                             <Stack
                               key={i}
@@ -5160,7 +5155,7 @@ export default function WidgetEditorView() {
                                 sx={{
                                   width: 10,
                                   height: 10,
-                                  borderRadius: "2px",
+                                  borderRadius: "4px",
                                   bgcolor: color,
                                   flexShrink: 0,
                                 }}
@@ -5234,6 +5229,7 @@ export default function WidgetEditorView() {
                               const color = getSeriesColor(
                                 row.name || row.label,
                                 seriesColorMap,
+                                palette,
                               );
                               const pct =
                                 maxVal > 0 ? (Math.abs(val) / maxVal) * 100 : 0;
@@ -5285,9 +5281,7 @@ export default function WidgetEditorView() {
                                       sx={{
                                         flex: 1,
                                         height: 22,
-                                        bgcolor: isDark
-                                          ? "rgba(255,255,255,0.04)"
-                                          : "rgba(0,0,0,0.02)",
+                                        bgcolor: "action.hover",
                                         borderRadius: "4px",
                                         overflow: "hidden",
                                       }}
@@ -5345,7 +5339,7 @@ export default function WidgetEditorView() {
                                 startAdornment: (
                                   <InputAdornment position="start">
                                     <Iconify
-                                      icon="eva:search-fill"
+                                      icon="solar:magnifier-linear"
                                       width={16}
                                       sx={{ color: "text.disabled" }}
                                     />
@@ -5364,15 +5358,18 @@ export default function WidgetEditorView() {
                             <Typography
                               variant="caption"
                               color="text.secondary"
-                              sx={{ fontSize: "11px" }}
+                              sx={{ fontSize: "12px" }}
                             >
                               Metric {chartSeries.length} of{" "}
                               {previewSeries.length}
                             </Typography>
                           </Box>
                           {/* Select all */}
-                          <Box
+                          <ButtonBase
+                            component="div"
                             sx={{
+                              justifyContent: "flex-start",
+                              textAlign: "left",
                               px: 1.5,
                               pb: 0.5,
                               display: "flex",
@@ -5397,7 +5394,7 @@ export default function WidgetEditorView() {
                             >
                               Select all
                             </Typography>
-                          </Box>
+                          </ButtonBase>
                           {/* Individual checkboxes */}
                           <Box sx={{ flex: 1, overflow: "auto", px: 0.5 }}>
                             {previewSeries.map((s, si) => {
@@ -5414,17 +5411,21 @@ export default function WidgetEditorView() {
                               const color = getSeriesColor(
                                 s.name,
                                 seriesColorMap,
+                                palette,
                               );
                               return (
-                                <Box
+                                <ButtonBase
+                                  component="div"
                                   key={si}
                                   sx={{
+                                    justifyContent: "flex-start",
+                                    textAlign: "left",
                                     display: "flex",
                                     alignItems: "center",
                                     gap: 0.5,
                                     px: 1,
                                     py: 0.6,
-                                    borderRadius: 0.5,
+                                    borderRadius: "4px",
                                     cursor: "pointer",
                                     "&:hover": { bgcolor: "action.hover" },
                                   }}
@@ -5452,7 +5453,7 @@ export default function WidgetEditorView() {
                                   >
                                     {s.name}
                                   </Typography>
-                                </Box>
+                                </ButtonBase>
                               );
                             })}
                           </Box>
@@ -5624,10 +5625,11 @@ export default function WidgetEditorView() {
                                           sx={{
                                             width: 8,
                                             height: 8,
-                                            borderRadius: "2px",
+                                            borderRadius: "4px",
                                             bgcolor: getSeriesColor(
                                               s.name,
                                               seriesColorMap,
+                                              palette,
                                             ),
                                             display: "inline-block",
                                           }}
@@ -5824,19 +5826,18 @@ export default function WidgetEditorView() {
                       borderRadius: "8px",
                       overflow: "hidden",
                       bgcolor: "background.paper",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
                     }}
                   >
                     {[
                       {
                         mode: "table",
-                        icon: "mdi:table",
+                        icon: "solar:table-linear",
                         height: 0,
                         tip: "Table",
                       },
                       {
                         mode: "split-table",
-                        icon: "mdi:page-layout-header",
+                        icon: "solar:panel-top-linear",
                         height: 180,
                         tip: "Chart + Table",
                       },
@@ -5848,7 +5849,7 @@ export default function WidgetEditorView() {
                       },
                       {
                         mode: "chart",
-                        icon: "mdi:chart-line",
+                        icon: "solar:graph-up-linear",
                         height: 600,
                         tip: "Chart only",
                       },
@@ -5863,9 +5864,6 @@ export default function WidgetEditorView() {
                           }}
                           onMouseDown={(e) => e.stopPropagation()}
                           sx={{
-                            borderRadius: 0,
-                            px: 1.2,
-                            py: 0.6,
                             bgcolor:
                               viewMode === mode
                                 ? "action.selected"
@@ -5880,7 +5878,7 @@ export default function WidgetEditorView() {
                         >
                           <Iconify
                             icon={icon}
-                            width={18}
+                            width={20}
                             sx={{
                               color:
                                 viewMode === mode
@@ -5936,7 +5934,7 @@ export default function WidgetEditorView() {
                       variant="caption"
                       sx={{
                         color: "text.secondary",
-                        fontSize: "11px",
+                        fontSize: "12px",
                         display: "block",
                       }}
                     >
@@ -6041,7 +6039,7 @@ export default function WidgetEditorView() {
                           startAdornment: (
                             <InputAdornment position="start">
                               <Iconify
-                                icon="eva:search-fill"
+                                icon="solar:magnifier-linear"
                                 width={16}
                                 sx={{ color: "text.disabled" }}
                               />
@@ -6186,6 +6184,7 @@ export default function WidgetEditorView() {
                             const color = getSeriesColor(
                               s.name,
                               seriesColorMap,
+                              palette,
                             );
                             return (
                               <tr
@@ -6305,20 +6304,12 @@ export default function WidgetEditorView() {
             }}
           >
             {/* Tabs */}
-            <Tabs
-              value={rightTab}
-              onChange={(_, v) => setRightTab(v)}
-              sx={{ px: 2, minHeight: 40 }}
-            >
-              <Tab
-                label="Query"
-                sx={{ minHeight: 40, textTransform: "none" }}
-              />
-              <Tab
-                label="Chart"
-                sx={{ minHeight: 40, textTransform: "none" }}
-              />
-            </Tabs>
+            <Box sx={{ px: 2 }}>
+              <Tabs value={rightTab} onChange={(_, v) => setRightTab(v)}>
+                <Tab label="Query" />
+                <Tab label="Chart" />
+              </Tabs>
+            </Box>
             <Divider />
 
             {rightTab === 0 && (
@@ -6328,29 +6319,21 @@ export default function WidgetEditorView() {
                 {/* Metric section */}
                 <Box>
                   <Tooltip
+                    classes={{ tooltip: "ds-hovercard" }}
                     placement="left"
+                    // An illustration only: it opens over the property picker,
+                    // so let clicks through and close as soon as you move on.
+                    disableInteractive
                     arrow
                     componentsProps={{
                       tooltip: {
                         sx: {
-                          bgcolor: isDark ? "#1a1a2e" : "#fff",
-                          borderRadius: 2,
-                          p: 2,
                           maxWidth: 180,
-                          boxShadow: isDark
-                            ? "0 4px 20px rgba(0,0,0,0.5)"
-                            : "0 4px 20px rgba(0,0,0,0.12)",
-                          border: isDark ? "none" : "1px solid",
-                          borderColor: isDark ? "transparent" : "divider",
                         },
                       },
                       arrow: {
                         sx: {
-                          color: isDark ? "#1a1a2e" : "#fff",
-                          "&::before": {
-                            border: isDark ? "none" : "1px solid",
-                            borderColor: isDark ? "transparent" : "divider",
-                          },
+                          "&::before": {},
                         },
                       },
                     }}
@@ -6369,11 +6352,7 @@ export default function WidgetEditorView() {
                             y1="75"
                             x2="15"
                             y2="10"
-                            stroke={
-                              isDark
-                                ? "rgba(255,255,255,0.15)"
-                                : "rgba(0,0,0,0.1)"
-                            }
+                            stroke={theme.palette.border.default}
                             strokeWidth="1"
                           />
                           <line
@@ -6381,11 +6360,7 @@ export default function WidgetEditorView() {
                             y1="75"
                             x2="110"
                             y2="75"
-                            stroke={
-                              isDark
-                                ? "rgba(255,255,255,0.15)"
-                                : "rgba(0,0,0,0.1)"
-                            }
+                            stroke={theme.palette.border.default}
                             strokeWidth="1"
                           />
                           {/* Grid lines */}
@@ -6394,11 +6369,7 @@ export default function WidgetEditorView() {
                             y1="55"
                             x2="110"
                             y2="55"
-                            stroke={
-                              isDark
-                                ? "rgba(255,255,255,0.06)"
-                                : "rgba(0,0,0,0.04)"
-                            }
+                            stroke={theme.palette.divider}
                             strokeWidth="1"
                             strokeDasharray="3 3"
                           />
@@ -6407,11 +6378,7 @@ export default function WidgetEditorView() {
                             y1="35"
                             x2="110"
                             y2="35"
-                            stroke={
-                              isDark
-                                ? "rgba(255,255,255,0.06)"
-                                : "rgba(0,0,0,0.04)"
-                            }
+                            stroke={theme.palette.divider}
                             strokeWidth="1"
                             strokeDasharray="3 3"
                           />
@@ -6419,7 +6386,7 @@ export default function WidgetEditorView() {
                           <polyline
                             points="20,60 35,45 50,50 65,28 80,32 95,18 105,22"
                             fill="none"
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="2"
                             strokeLinecap="round"
                             strokeLinejoin="round"
@@ -6428,68 +6395,26 @@ export default function WidgetEditorView() {
                           <polyline
                             points="20,68 35,62 50,58 65,48 80,52 95,42 105,45"
                             fill="none"
-                            stroke={isDark ? "#5BE49B" : "#22C55E"}
+                            stroke={palette[2]}
                             strokeWidth="2"
                             strokeLinecap="round"
                             strokeLinejoin="round"
                           />
                           {/* Data points - purple */}
-                          <circle
-                            cx="20"
-                            cy="60"
-                            r="2.5"
-                            fill={isDark ? "#916BFF" : "#7C4DFF"}
-                          />
-                          <circle
-                            cx="50"
-                            cy="50"
-                            r="2.5"
-                            fill={isDark ? "#916BFF" : "#7C4DFF"}
-                          />
-                          <circle
-                            cx="65"
-                            cy="28"
-                            r="2.5"
-                            fill={isDark ? "#916BFF" : "#7C4DFF"}
-                          />
-                          <circle
-                            cx="95"
-                            cy="18"
-                            r="2.5"
-                            fill={isDark ? "#916BFF" : "#7C4DFF"}
-                          />
+                          <circle cx="20" cy="60" r="2.5" fill={palette[0]} />
+                          <circle cx="50" cy="50" r="2.5" fill={palette[0]} />
+                          <circle cx="65" cy="28" r="2.5" fill={palette[0]} />
+                          <circle cx="95" cy="18" r="2.5" fill={palette[0]} />
                           {/* Data points - teal */}
-                          <circle
-                            cx="20"
-                            cy="68"
-                            r="2.5"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
-                          />
-                          <circle
-                            cx="50"
-                            cy="58"
-                            r="2.5"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
-                          />
-                          <circle
-                            cx="65"
-                            cy="48"
-                            r="2.5"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
-                          />
-                          <circle
-                            cx="95"
-                            cy="42"
-                            r="2.5"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
-                          />
+                          <circle cx="20" cy="68" r="2.5" fill={palette[2]} />
+                          <circle cx="50" cy="58" r="2.5" fill={palette[2]} />
+                          <circle cx="65" cy="48" r="2.5" fill={palette[2]} />
+                          <circle cx="95" cy="42" r="2.5" fill={palette[2]} />
                         </svg>
                         <Typography
                           variant="caption"
                           sx={{
-                            color: isDark
-                              ? "rgba(255,255,255,0.7)"
-                              : "text.secondary",
+                            color: "text.secondary",
                             mt: 0.5,
                             display: "block",
                             lineHeight: 1.3,
@@ -6517,10 +6442,7 @@ export default function WidgetEditorView() {
                         "&:hover":
                           metrics.length < 5
                             ? {
-                                bgcolor: (t) =>
-                                  t.palette.mode === "dark"
-                                    ? "rgba(145, 107, 255, 0.12)"
-                                    : "rgba(105, 65, 198, 0.08)",
+                                bgcolor: "action.hover",
                                 "& .metric-section-title": {
                                   color: "primary.main",
                                 },
@@ -6540,8 +6462,8 @@ export default function WidgetEditorView() {
                         </Typography>
                       </Typography>
                       <Iconify
-                        icon="mdi:plus"
-                        width={18}
+                        icon="solar:add-linear"
+                        width={20}
                         sx={{
                           color:
                             metrics.length >= 5
@@ -6573,9 +6495,6 @@ export default function WidgetEditorView() {
                           variant="outlined"
                           sx={{
                             minWidth: 24,
-                            height: 24,
-                            fontSize: "12px",
-                            fontWeight: 600,
                             "& .MuiChip-label": {
                               paddingLeft: "0px !important",
                               paddingRight: "0px !important",
@@ -6585,7 +6504,9 @@ export default function WidgetEditorView() {
                           }}
                         />
                         <Iconify
-                          icon={METRIC_TYPE_ICONS[m.type] || "mdi:cog-outline"}
+                          icon={
+                            METRIC_TYPE_ICONS[m.type] || "solar:settings-linear"
+                          }
                           width={16}
                           sx={{ color: "text.secondary" }}
                         />
@@ -6614,11 +6535,6 @@ export default function WidgetEditorView() {
                               size="small"
                               color="info"
                               variant="outlined"
-                              sx={{
-                                height: 20,
-                                fontSize: "10px",
-                                "& .MuiChip-label": { px: 0.75 },
-                              }}
                             />
                           </Tooltip>
                         )}
@@ -6638,7 +6554,7 @@ export default function WidgetEditorView() {
                                   : "text.secondary",
                             }}
                           >
-                            <Iconify icon="mdi:filter-outline" width={16} />
+                            <Iconify icon="solar:filter-linear" width={16} />
                           </IconButton>
                         </Tooltip>
                         <IconButton
@@ -6650,7 +6566,7 @@ export default function WidgetEditorView() {
                             transition: "opacity 0.15s",
                           }}
                         >
-                          <Iconify icon="mdi:close" width={14} />
+                          <Iconify icon="solar:close-linear" width={14} />
                         </IconButton>
                       </Stack>
                       <AggregationPicker
@@ -6658,7 +6574,6 @@ export default function WidgetEditorView() {
                         onChange={(val) =>
                           handleUpdateMetricAggregation(i, val)
                         }
-                        theme={theme}
                         allowedAggregations={m.allowedAggregations}
                         extraOptions={
                           m.source === "datasets" ||
@@ -6692,7 +6607,7 @@ export default function WidgetEditorView() {
                               <Iconify
                                 icon={
                                   METRIC_TYPE_ICONS[mf.type] ||
-                                  "mdi:filter-outline"
+                                  "solar:filter-linear"
                                 }
                                 width={14}
                                 sx={{ color: "primary.main" }}
@@ -6714,9 +6629,8 @@ export default function WidgetEditorView() {
                               <IconButton
                                 size="small"
                                 onClick={() => handleRemoveMetricFilter(i, fi)}
-                                sx={{ p: 0.25 }}
                               >
-                                <Iconify icon="mdi:close" width={12} />
+                                <Iconify icon="solar:close-linear" width={12} />
                               </IconButton>
                             </Stack>
                             <Stack
@@ -6887,9 +6801,9 @@ export default function WidgetEditorView() {
                                   mt: 0.5,
                                   px: 1,
                                   py: 0.25,
-                                  borderRadius: 0.5,
+                                  borderRadius: "4px",
                                   bgcolor: "action.hover",
-                                  fontSize: "11px",
+                                  fontSize: "12px",
                                 }}
                               >
                                 And
@@ -6916,8 +6830,8 @@ export default function WidgetEditorView() {
                     >
                       <Stack direction="row" alignItems="center" gap={0.75}>
                         <Iconify
-                          icon="mdi:plus-circle-outline"
-                          width={18}
+                          icon="solar:add-circle-linear"
+                          width={20}
                           sx={{ color: "primary.main" }}
                         />
                         <Typography variant="body2" color="primary.main">
@@ -6933,29 +6847,21 @@ export default function WidgetEditorView() {
                 {/* Filter section */}
                 <Box>
                   <Tooltip
+                    classes={{ tooltip: "ds-hovercard" }}
                     placement="left"
+                    // An illustration only: it opens over the property picker,
+                    // so let clicks through and close as soon as you move on.
+                    disableInteractive
                     arrow
                     componentsProps={{
                       tooltip: {
                         sx: {
-                          bgcolor: isDark ? "#1a1a2e" : "#fff",
-                          borderRadius: 2,
-                          p: 2,
                           maxWidth: 180,
-                          boxShadow: isDark
-                            ? "0 4px 20px rgba(0,0,0,0.5)"
-                            : "0 4px 20px rgba(0,0,0,0.12)",
-                          border: isDark ? "none" : "1px solid",
-                          borderColor: isDark ? "transparent" : "divider",
                         },
                       },
                       arrow: {
                         sx: {
-                          color: isDark ? "#1a1a2e" : "#fff",
-                          "&::before": {
-                            border: isDark ? "none" : "1px solid",
-                            borderColor: isDark ? "transparent" : "divider",
-                          },
+                          "&::before": {},
                         },
                       },
                     }}
@@ -6980,7 +6886,7 @@ export default function WidgetEditorView() {
                                 ? "rgba(145,107,255,0.25)"
                                 : "rgba(105,65,198,0.1)"
                             }
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1.5"
                           />
                           <rect
@@ -6994,7 +6900,7 @@ export default function WidgetEditorView() {
                                 ? "rgba(145,107,255,0.4)"
                                 : "rgba(105,65,198,0.18)"
                             }
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1.5"
                           />
                           <rect
@@ -7008,7 +6914,7 @@ export default function WidgetEditorView() {
                                 ? "rgba(145,107,255,0.6)"
                                 : "rgba(105,65,198,0.28)"
                             }
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1.5"
                           />
                           {/* Connecting lines */}
@@ -7017,7 +6923,7 @@ export default function WidgetEditorView() {
                             y1="26"
                             x2="25"
                             y2="34"
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1"
                             strokeDasharray="2 2"
                           />
@@ -7026,7 +6932,7 @@ export default function WidgetEditorView() {
                             y1="26"
                             x2="95"
                             y2="34"
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1"
                             strokeDasharray="2 2"
                           />
@@ -7035,7 +6941,7 @@ export default function WidgetEditorView() {
                             y1="50"
                             x2="40"
                             y2="58"
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1"
                             strokeDasharray="2 2"
                           />
@@ -7044,7 +6950,7 @@ export default function WidgetEditorView() {
                             y1="50"
                             x2="80"
                             y2="58"
-                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            stroke={palette[0]}
                             strokeWidth="1"
                             strokeDasharray="2 2"
                           />
@@ -7053,63 +6959,61 @@ export default function WidgetEditorView() {
                             cx="30"
                             cy="18"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="50"
                             cy="18"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="70"
                             cy="18"
                             r="2"
-                            fill={isDark ? "#FF6B6B" : "#EF4444"}
+                            fill={theme.palette.status.danger.solid}
                           />
                           <circle
                             cx="90"
                             cy="18"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="40"
                             cy="42"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="60"
                             cy="42"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="80"
                             cy="42"
                             r="2"
-                            fill={isDark ? "#FF6B6B" : "#EF4444"}
+                            fill={theme.palette.status.danger.solid}
                           />
                           <circle
                             cx="52"
                             cy="66"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="68"
                             cy="66"
                             r="2"
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                         </svg>
                         <Typography
                           variant="caption"
                           sx={{
-                            color: isDark
-                              ? "rgba(255,255,255,0.7)"
-                              : "text.secondary",
+                            color: "text.secondary",
                             mt: 0.5,
                             display: "block",
                             lineHeight: 1.3,
@@ -7133,10 +7037,7 @@ export default function WidgetEditorView() {
                         mx: -1,
                         transition: "background-color 0.15s",
                         "&:hover": {
-                          bgcolor: (t) =>
-                            t.palette.mode === "dark"
-                              ? "rgba(145, 107, 255, 0.12)"
-                              : "rgba(105, 65, 198, 0.08)",
+                          bgcolor: "action.hover",
                           "& .filter-section-title": {
                             color: "primary.main",
                           },
@@ -7152,8 +7053,8 @@ export default function WidgetEditorView() {
                         Filter
                       </Typography>
                       <Iconify
-                        icon="mdi:plus"
-                        width={18}
+                        icon="solar:add-linear"
+                        width={20}
                         sx={{ color: "text.secondary" }}
                       />
                     </Stack>
@@ -7174,7 +7075,7 @@ export default function WidgetEditorView() {
                       <Stack direction="row" alignItems="center" gap={1}>
                         <Iconify
                           icon={
-                            METRIC_TYPE_ICONS[f.type] || "mdi:filter-outline"
+                            METRIC_TYPE_ICONS[f.type] || "solar:filter-linear"
                           }
                           width={16}
                           sx={{ color: "text.secondary" }}
@@ -7199,7 +7100,7 @@ export default function WidgetEditorView() {
                             transition: "opacity 0.15s",
                           }}
                         >
-                          <Iconify icon="mdi:close" width={14} />
+                          <Iconify icon="solar:close-linear" width={14} />
                         </IconButton>
                       </Stack>
                       {f.name &&
@@ -7392,74 +7293,51 @@ export default function WidgetEditorView() {
                 {/* Breakdown section */}
                 <Box>
                   <Tooltip
+                    classes={{ tooltip: "ds-hovercard" }}
                     placement="left"
+                    // An illustration only: it opens over the property picker,
+                    // so let clicks through and close as soon as you move on.
+                    disableInteractive
                     arrow
                     componentsProps={{
                       tooltip: {
                         sx: {
-                          bgcolor: isDark ? "#1a1a2e" : "#fff",
-                          borderRadius: 2,
-                          p: 2,
                           maxWidth: 180,
-                          boxShadow: isDark
-                            ? "0 4px 20px rgba(0,0,0,0.5)"
-                            : "0 4px 20px rgba(0,0,0,0.12)",
-                          border: isDark ? "none" : "1px solid",
-                          borderColor: isDark ? "transparent" : "divider",
                         },
                       },
                       arrow: {
                         sx: {
-                          color: isDark ? "#1a1a2e" : "#fff",
-                          "&::before": {
-                            border: isDark ? "none" : "1px solid",
-                            borderColor: isDark ? "transparent" : "divider",
-                          },
+                          "&::before": {},
                         },
                       },
                     }}
                     title={
                       <Box sx={{ textAlign: "center" }}>
                         {(() => {
-                          const teal = isDark ? "#5BE49B" : "#16A34A";
-                          const tealFill1 = isDark
-                            ? "rgba(91,228,155,0.2)"
-                            : "rgba(22,163,74,0.12)";
-                          const tealFill2 = isDark
-                            ? "rgba(91,228,155,0.3)"
-                            : "rgba(22,163,74,0.2)";
-                          const tealFill3 = isDark
-                            ? "rgba(91,228,155,0.15)"
-                            : "rgba(22,163,74,0.08)";
-                          const tealFill4 = isDark
-                            ? "rgba(91,228,155,0.25)"
-                            : "rgba(22,163,74,0.15)";
-                          const purple = isDark ? "#916BFF" : "#7C4DFF";
-                          const purpleFill1 = isDark
-                            ? "rgba(145,107,255,0.2)"
-                            : "rgba(105,65,198,0.12)";
-                          const purpleFill2 = isDark
-                            ? "rgba(145,107,255,0.3)"
-                            : "rgba(105,65,198,0.2)";
-                          const purpleFill3 = isDark
-                            ? "rgba(145,107,255,0.15)"
-                            : "rgba(105,65,198,0.08)";
-                          const purpleFill4 = isDark
-                            ? "rgba(145,107,255,0.25)"
-                            : "rgba(105,65,198,0.15)";
-                          const coral = isDark ? "#FF6B6B" : "#EF4444";
-                          const coralFill1 = isDark
-                            ? "rgba(255,107,107,0.2)"
-                            : "rgba(239,68,68,0.12)";
-                          const coralFill2 = isDark
-                            ? "rgba(255,107,107,0.3)"
-                            : "rgba(239,68,68,0.2)";
-                          const coralFill3 = isDark
-                            ? "rgba(255,107,107,0.15)"
-                            : "rgba(239,68,68,0.08)";
-                          const coralFill4 = isDark
-                            ? "rgba(255,107,107,0.25)"
-                            : "rgba(239,68,68,0.15)";
+                          const teal = palette[2];
+                          const tealFill1 = alpha(teal, isDark ? 0.2 : 0.12);
+                          const tealFill2 = alpha(teal, isDark ? 0.3 : 0.2);
+                          const tealFill3 = alpha(teal, isDark ? 0.15 : 0.08);
+                          const tealFill4 = alpha(teal, isDark ? 0.25 : 0.15);
+                          const purple = palette[0];
+                          const purpleFill1 = alpha(
+                            purple,
+                            isDark ? 0.2 : 0.12,
+                          );
+                          const purpleFill2 = alpha(purple, isDark ? 0.3 : 0.2);
+                          const purpleFill3 = alpha(
+                            purple,
+                            isDark ? 0.15 : 0.08,
+                          );
+                          const purpleFill4 = alpha(
+                            purple,
+                            isDark ? 0.25 : 0.15,
+                          );
+                          const coral = palette[4];
+                          const coralFill1 = alpha(coral, isDark ? 0.2 : 0.12);
+                          const coralFill2 = alpha(coral, isDark ? 0.3 : 0.2);
+                          const coralFill3 = alpha(coral, isDark ? 0.15 : 0.08);
+                          const coralFill4 = alpha(coral, isDark ? 0.25 : 0.15);
                           return (
                             <svg
                               width="120"
@@ -7609,9 +7487,7 @@ export default function WidgetEditorView() {
                         <Typography
                           variant="caption"
                           sx={{
-                            color: isDark
-                              ? "rgba(255,255,255,0.7)"
-                              : "text.secondary",
+                            color: "text.secondary",
                             mt: 0.5,
                             display: "block",
                             lineHeight: 1.3,
@@ -7635,10 +7511,7 @@ export default function WidgetEditorView() {
                         mx: -1,
                         transition: "background-color 0.15s",
                         "&:hover": {
-                          bgcolor: (t) =>
-                            t.palette.mode === "dark"
-                              ? "rgba(145, 107, 255, 0.12)"
-                              : "rgba(105, 65, 198, 0.08)",
+                          bgcolor: "action.hover",
                           "& .breakdown-section-title": {
                             color: "primary.main",
                           },
@@ -7654,8 +7527,8 @@ export default function WidgetEditorView() {
                         Breakdown
                       </Typography>
                       <Iconify
-                        icon="mdi:plus"
-                        width={18}
+                        icon="solar:add-linear"
+                        width={20}
                         sx={{ color: "text.secondary" }}
                       />
                     </Stack>
@@ -7676,8 +7549,7 @@ export default function WidgetEditorView() {
                       <Stack direction="row" alignItems="center" gap={1}>
                         <Iconify
                           icon={
-                            METRIC_TYPE_ICONS[b.type] ||
-                            "mdi:chart-timeline-variant"
+                            METRIC_TYPE_ICONS[b.type] || "solar:chart-2-linear"
                           }
                           width={16}
                           sx={{ color: "text.secondary" }}
@@ -7702,7 +7574,7 @@ export default function WidgetEditorView() {
                             transition: "opacity 0.15s",
                           }}
                         >
-                          <Iconify icon="mdi:close" width={14} />
+                          <Iconify icon="solar:close-linear" width={14} />
                         </IconButton>
                       </Stack>
                     </Box>
@@ -7730,7 +7602,7 @@ export default function WidgetEditorView() {
                     {/* AXIS collapsible section */}
                     <Typography
                       variant="overline"
-                      fontWeight={700}
+                      fontWeight={600}
                       sx={{ mb: 2, display: "block", letterSpacing: 1.5 }}
                     >
                       AXIS
@@ -7740,7 +7612,7 @@ export default function WidgetEditorView() {
                     <Box>
                       <Typography
                         variant="subtitle2"
-                        fontWeight={700}
+                        fontWeight={600}
                         sx={{ mb: 1.5 }}
                       >
                         Axis Assignment
@@ -7749,6 +7621,7 @@ export default function WidgetEditorView() {
                         const seriesColor = getSeriesColor(
                           s.name,
                           seriesColorMap,
+                          palette,
                         );
                         return (
                           <Stack
@@ -7768,20 +7641,20 @@ export default function WidgetEditorView() {
                                 sx={{
                                   width: 22,
                                   height: 22,
-                                  borderRadius: 0.5,
+                                  borderRadius: "4px",
                                   display: "flex",
                                   alignItems: "center",
                                   justifyContent: "center",
                                   bgcolor: seriesColor + "22",
                                   color: seriesColor,
-                                  fontSize: "11px",
-                                  fontWeight: 700,
+                                  fontSize: "12px",
+                                  fontWeight: 600,
                                 }}
                               >
                                 {LETTER_LABELS[si] || si}
                               </Box>
                               <Iconify
-                                icon="mdi:chart-line"
+                                icon="solar:graph-up-linear"
                                 width={16}
                                 sx={{
                                   color: seriesColor,
@@ -7881,7 +7754,7 @@ export default function WidgetEditorView() {
                     <Box sx={{ mb: 3 }}>
                       <Typography
                         variant="subtitle2"
-                        fontWeight={700}
+                        fontWeight={600}
                         sx={{ mb: 1.5 }}
                       >
                         X-Axis
@@ -7951,8 +7824,6 @@ export default function WidgetEditorView() {
               maxHeight: 440,
               display: "flex",
               flexDirection: "column",
-              border: `1px solid ${theme.palette.divider}`,
-              borderRadius: 2,
             }}
           >
             {/* Search + count */}
@@ -7968,8 +7839,8 @@ export default function WidgetEditorView() {
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="eva:search-fill"
-                        width={18}
+                        icon="solar:magnifier-linear"
+                        width={16}
                         sx={{ color: "text.disabled" }}
                       />
                     </InputAdornment>
@@ -7986,7 +7857,7 @@ export default function WidgetEditorView() {
                     <InputAdornment position="end">
                       <Typography
                         variant="caption"
-                        sx={{ color: "text.disabled", fontSize: 11 }}
+                        sx={{ color: "text.disabled", fontSize: 12 }}
                       >
                         {paginatedTotal} results
                       </Typography>
@@ -8016,10 +7887,13 @@ export default function WidgetEditorView() {
                   const categoryCountPresentation =
                     getWidgetCatalogCategoryCountPresentation(categoryCount);
                   return (
-                    <Box
+                    <ButtonBase
+                      component="div"
                       key={cat.key}
                       onClick={() => setPickerCategory(cat.key)}
                       sx={{
+                        justifyContent: "flex-start",
+                        textAlign: "left",
                         display: "flex",
                         alignItems: "center",
                         gap: 1,
@@ -8072,11 +7946,11 @@ export default function WidgetEditorView() {
                             : "exact count unavailable"
                         }`}
                         title={categoryCountPresentation.title || undefined}
-                        sx={{ color: "text.disabled", fontSize: 10 }}
+                        sx={{ color: "text.disabled", fontSize: 12 }}
                       >
                         {categoryCountPresentation.text}
                       </Typography>
-                    </Box>
+                    </ButtonBase>
                   );
                 })}
               </Box>
@@ -8119,7 +7993,7 @@ export default function WidgetEditorView() {
                         sx={{
                           width: 15,
                           height: 15,
-                          borderRadius: 0.5,
+                          borderRadius: "4px",
                           bgcolor: "action.hover",
                           flexShrink: 0,
                         }}
@@ -8127,7 +8001,7 @@ export default function WidgetEditorView() {
                       <Box
                         sx={{
                           height: 12,
-                          borderRadius: 0.5,
+                          borderRadius: "4px",
                           bgcolor: "action.hover",
                           flex: 1,
                           maxWidth: `${55 + Math.random() * 35}%`,

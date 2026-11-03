@@ -469,17 +469,16 @@ const ChartsView = () => {
               variant="outlined"
               size="small"
               sx={{
-                px: 1.5,
                 bgcolor: isFilterOpen ? "action.hover" : "background.paper",
               }}
               onClick={handleFilterToggle}
               startIcon={
                 hasActiveFilter ? (
                   <Badge variant="dot" color="error" overlap="circular">
-                    <Iconify icon="mdi:filter-outline" width={16} />
+                    <Iconify icon="solar:filter-linear" width={16} />
                   </Badge>
                 ) : (
-                  <Iconify icon="mdi:filter-outline" width={16} />
+                  <Iconify icon="solar:filter-linear" width={16} />
                 )
               }
             >
@@ -500,9 +499,6 @@ const ChartsView = () => {
             <Button
               variant="outlined"
               size="small"
-              sx={{
-                px: 1.5,
-              }}
               disabled={isLoading}
               startIcon={
                 <SvgColor

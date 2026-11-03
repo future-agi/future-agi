@@ -7,7 +7,7 @@ import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 
-import { runColor } from "../runs/runs.constants";
+import { runColor, runColorValue } from "../runs/runs.constants";
 
 import { outcomeLabel, pct, pts } from "./fixRunView";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
@@ -109,7 +109,7 @@ export default function TrialsTable({ fix }) {
                   color: runColor(c.attempt),
                   bgcolor: (t) =>
                     alpha(
-                      runColor(c.attempt),
+                      runColorValue(t, c.attempt),
                       t.palette.mode === "dark" ? 0.22 : 0.14,
                     ),
                   flexShrink: 0,

@@ -1,5 +1,5 @@
 import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
-import { Box, Button, ButtonGroup, Typography, useTheme } from "@mui/material";
+import { Box, Button, ButtonGroup, Typography } from "@mui/material";
 import React, { useEffect, useRef, useState } from "react";
 import { DateRangeButtonOptions } from "src/utils/constants";
 import { formatDate } from "src/utils/report-utils";
@@ -26,7 +26,6 @@ const ChartsDateTimeRangePicker = ({
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
 
   const customDatePickerAnc = useRef(null);
-  const theme = useTheme();
 
   const [dateFilter, setDateFilter] = useState(() => {
     return [
@@ -149,15 +148,14 @@ const ChartsDateTimeRangePicker = ({
           const isCustom = option.title === "Custom";
           return (
             <Button
+              size="small"
               color={selected ? "primary" : "inherit"}
               sx={{
                 flex: isCustom ? "0 1 auto" : "1 0 auto", // Adjust flex behavior
                 backgroundColor: selected ? "action.hover" : undefined,
-                fontWeight: selected ? 600 : 400,
 
                 borderColor: "divider",
-                borderWidth: "1px",
-                px: 1.5, // Slightly more padding
+                borderWidth: "1px", // Slightly more padding
                 minWidth: 0,
                 whiteSpace: "nowrap",
                 overflow: "hidden",
@@ -169,8 +167,6 @@ const ChartsDateTimeRangePicker = ({
                   transition:
                     "background-color 0.2s ease, font-weight 0.2s ease, color 0.2s ease, border-color 0.2s ease",
                 },
-                height: "28px",
-                borderRadius: theme.spacing(0.5),
               }}
               ref={(ref) => {
                 if (option.title === "Custom") {
@@ -186,7 +182,11 @@ const ChartsDateTimeRangePicker = ({
               key={option.title}
               startIcon={
                 isCustom && selected ? (
-                  <Iconify icon="uil:calender" height={20} width={20} />
+                  <Iconify
+                    icon="solar:calendar-linear"
+                    height={20}
+                    width={20}
+                  />
                 ) : null
               }
             >
