@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import BaseNode from "../BaseNode";
 import { NODE_TYPES, PORT_DIRECTION } from "../../../utils/constants";
@@ -51,6 +52,7 @@ const defaultState = {
   isCompleted: false,
   isError: false,
   isWorkflowRunning: false,
+  isReadOnly: false,
   preview: false,
 };
 
@@ -110,6 +112,30 @@ describe("Unit: BaseNode", () => {
     fireEvent.click(deleteButton);
     expect(mockHandleDeleteClick).toHaveBeenCalledTimes(1);
     expect(mockHandleNodeClick).not.toHaveBeenCalled();
+  });
+
+  it("names the delete button and shows its tooltip on keyboard focus", async () => {
+    const user = userEvent.setup();
+    renderBaseNode();
+
+    await user.tab();
+
+    expect(screen.getByRole("button", {
+      name: "Delete canvas node: Agent node",
+    })).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Delete node");
+    expect(mockHandleDeleteClick).not.toHaveBeenCalled();
+  });
+
+  it("does not expose deletion to a read-only user", async () => {
+    useBaseNodeState.mockReturnValue({ ...defaultState, isReadOnly: true });
+    renderBaseNode();
+
+    expect(screen.queryByRole("button", {
+      name: /delete canvas node/i,
+    })).not.toBeInTheDocument();
+    await userEvent.setup().tab();
+    expect(mockHandleDeleteClick).not.toHaveBeenCalled();
   });
 
   it("does not render the delete tooltip control in preview mode", () => {

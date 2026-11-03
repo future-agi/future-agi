@@ -1,6 +1,6 @@
 /* eslint-disable react/prop-types */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import NodeDrawer from "../NodeDrawer";
@@ -29,6 +29,12 @@ const draftMocks = vi.hoisted(() => ({
 
 const workflowMocks = vi.hoisted(() => ({
   isRunning: false,
+}));
+
+const permissionMocks = vi.hoisted(() => ({ isReadOnly: false }));
+
+vi.mock("../../../hooks/useCanEditAgent", () => ({
+  default: () => permissionMocks,
 }));
 
 const notificationMocks = vi.hoisted(() => ({
@@ -128,6 +134,7 @@ describe("Unit: NodeDrawer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     workflowMocks.isRunning = false;
+    permissionMocks.isReadOnly = false;
     draftMocks.ensureDraft.mockResolvedValue(true);
     apiMocks.deleteNodeApi.mockResolvedValue({});
     storeMocks.getState.mockReturnValue({
@@ -151,6 +158,80 @@ describe("Unit: NodeDrawer", () => {
 
     await user.click(deleteButton);
     expect(screen.getByRole("dialog", { name: "Delete Node" })).toBeVisible();
+  });
+
+  it("keeps close keyboard accessible without deleting a node", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    renderDrawer({ onClose });
+
+    await user.tab();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Close node editor" })).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Close");
+    await user.keyboard("{Enter}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+  });
+
+  it("hides deletion but leaves close available in read-only mode", () => {
+    permissionMocks.isReadOnly = true;
+    renderDrawer();
+
+    expect(screen.queryByRole("button", { name: "Delete node" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close node editor" })).toBeEnabled();
+    expect(storeMocks.deleteNode).not.toHaveBeenCalled();
+  });
+
+  it("disables deletion while a workflow runs", () => {
+    workflowMocks.isRunning = true;
+    renderDrawer();
+    expect(screen.getByRole("button", { name: "Delete node" })).toBeDisabled();
+  });
+
+  it.each(["read-only", "running"])("guards an already-open confirmation when the graph becomes %s", async (mode) => {
+    const user = userEvent.setup();
+    const view = renderDrawer();
+    await user.click(screen.getByRole("button", { name: "Delete node" }));
+    if (mode === "read-only") permissionMocks.isReadOnly = true;
+    else workflowMocks.isRunning = true;
+    view.rerender(
+      <ThemeProvider theme={theme}>
+        <NodeDrawer open onClose={vi.fn()} node={node} width={520}
+          isResizing={false} onResizeStart={vi.fn()} />
+      </ThemeProvider>,
+    );
+
+    await user.click(within(screen.getByRole("dialog", { name: "Delete Node" }))
+      .getByRole("button", { name: "Delete", exact: true }));
+    expect(storeMocks.deleteNode).not.toHaveBeenCalled();
+    expect(draftMocks.ensureDraft).not.toHaveBeenCalled();
+    expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+  });
+
+  it("deletes an existing draft using the store's version_id", async () => {
+    const user = userEvent.setup();
+    renderDrawer();
+    await user.click(screen.getByRole("button", { name: "Delete node" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Delete Node" }))
+      .getByRole("button", { name: "Delete", exact: true }));
+
+    await waitFor(() => expect(apiMocks.deleteNodeApi).toHaveBeenCalledWith({
+      graphId: "graph-1", versionId: "version-1", nodeId: "node-1",
+    }));
+    expect(storeMocks.deleteNode).toHaveBeenCalledWith("node-1");
+  });
+
+  it("rolls back when draft creation is denied", async () => {
+    draftMocks.ensureDraft.mockResolvedValue(false);
+    const user = userEvent.setup();
+    renderDrawer();
+    await user.click(screen.getByRole("button", { name: "Delete node" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Delete Node" }))
+      .getByRole("button", { name: "Delete", exact: true }));
+
+    await waitFor(() => expect(storeMocks.setGraphData).toHaveBeenCalledWith([node], []));
+    expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
   });
 
   it("shows the close tooltip and preserves close clicks", async () => {
