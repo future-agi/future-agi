@@ -251,7 +251,7 @@ def sessions(request):
                 )
                 for row in rows:
                     if request.param == "v1":
-                        row = dict(row)
+                        row = {**row, "created_at": START}
                         row["span_attr_str"] = row.pop("attrs_string")
                         row["_peerdb_version"] = row.pop("_version")
                         row["_peerdb_is_deleted"] = row.pop("is_deleted")

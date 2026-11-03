@@ -87,6 +87,10 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
             " + INTERVAL 1 HOUR",
         )
 
+    def _replay_time_scope_sql(self, discovery_time_scope: str) -> str:
+        # Native discovery already rounds out to complete storage-hour keys.
+        return discovery_time_scope
+
     def build_candidate_slice_density_probe_query(
         self, *, slice_start: datetime, slice_end: datetime
     ) -> tuple[str, dict[str, Any]]:

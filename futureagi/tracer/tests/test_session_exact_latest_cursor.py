@@ -146,7 +146,7 @@ def test_session_replay_uses_schema_key_and_post_collapse_microsecond_window(
         if method in {"page", "cursor", "count", "match"}
         else ("start_date_us", "end_date_us")
     )
-    key = "project_id, trace_id, id, start_time"
+    key = "project_id, toDate(created_at), trace_id, id"
     if cls is SessionListQueryBuilderV2:
         key = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
         assert f"toStartOfHour(fromUnixTimestamp64Micro(%({low})s" in sql

@@ -120,9 +120,12 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         )
 
     def _physical_identity_fields(self) -> tuple[tuple[str, str], ...]:
-        """Legacy replacement key; v2 overrides expressions and key aliases."""
-        return tuple(
-            (name, name) for name in ("project_id", "trace_id", "id", "start_time")
+        """CDC ReplacingMergeTree key; start_time is mutable row state."""
+        return (
+            ("project_id", "project_id"),
+            ("toDate(created_at)", "created_day"),
+            ("trace_id", "trace_id"),
+            ("id", "id"),
         )
 
     def _physical_group_by_sql(self) -> str:
@@ -159,7 +162,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         start_param: str = "start_date_us",
         end_param: str = "end_date_us",
     ) -> str:
-        """Prune only complete replacement identities, never mutable leaf state."""
+        """Bound discovery; replay may prune only immutable key components."""
         if not enabled:
             return ""
         lower, upper = self._physical_time_bounds_sql(
@@ -170,6 +173,12 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             f"\n              AND start_time >= {lower}"
             f"\n              AND start_time < {upper}"
         )
+
+    def _replay_time_scope_sql(self, discovery_time_scope: str) -> str:
+        # CDC corrections can move start_time outside discovery's window.
+        # Replay stays bounded by project and the discovered full storage keys,
+        # including created_day; only the winning row may be time-filtered.
+        return ""
 
     def _latest_time_scope_sql(
         self,
@@ -2093,7 +2102,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
                 {scalar_aggregate_select}
             FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{span_time_scope}
+            PREWHERE {self.project_filter_sql()}{self._replay_time_scope_sql(span_time_scope)}
               AND ({self._physical_group_by_sql()}) IN (
                   SELECT {self._physical_identity_names_sql()}
                   FROM candidate_scalar_span_identities
@@ -2266,7 +2275,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 argMax(tuple(end_user_id), _peerdb_version).1 AS latest_end_user_id,
                 argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
             FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{span_time_scope}
+            PREWHERE {self.project_filter_sql()}{self._replay_time_scope_sql(span_time_scope)}
               AND ({self._physical_group_by_sql()}) IN (
                   SELECT {self._physical_identity_names_sql()}
                   FROM candidate_user_span_identities
@@ -2353,7 +2362,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 argMax(tuple(end_user_id), _peerdb_version).1 AS latest_end_user_id,
                 argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
             FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{span_time_scope}
+            PREWHERE {self.project_filter_sql()}{self._replay_time_scope_sql(span_time_scope)}
               AND ({self._physical_group_by_sql()}) IN (
                   SELECT {self._physical_identity_names_sql()}
                   FROM candidate_user_span_identities
@@ -2511,7 +2520,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
                 {latest_metric_select}
             FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{root_span_time_scope}
+            PREWHERE {self.project_filter_sql()}{self._replay_time_scope_sql(root_span_time_scope)}
               AND ({self._physical_group_by_sql()}) IN (
                   SELECT {self._physical_identity_names_sql()}
                   FROM candidate_root_identities
@@ -3239,7 +3248,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
                     {message_length}
                 FROM {self.TABLE}
-                PREWHERE {self.project_filter_sql()}{physical_time_scope}
+                PREWHERE {self.project_filter_sql()}{self._replay_time_scope_sql(physical_time_scope)}
                   AND ({group_by}) IN (
                       SELECT {identity_names} FROM candidate_member_identities
                   )
@@ -3354,7 +3363,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 {attributes["latest"]}
                 argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
             FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
+            PREWHERE {self.project_filter_sql()}{self._replay_time_scope_sql(physical_time_scope)}
               AND ({group_by}) IN (
                   SELECT {identity_names}
                   FROM candidate_root_identities
@@ -3434,7 +3443,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     tuple({group_by}) AS message_key,
                     argMax(tuple(input), _peerdb_version).1 AS message_input
                 FROM {self.TABLE}
-                PREWHERE {self.project_filter_sql()}{physical_time_scope}
+                PREWHERE {self.project_filter_sql()}{self._replay_time_scope_sql(physical_time_scope)}
                   AND ({group_by}) IN (
                       SELECT arrayJoin([first_message_key, last_message_key])
                       FROM member_rollup
@@ -3531,6 +3540,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             self.params,
             time_where=time_where,
             filter_fragment=filter_fragment,
+            scope_usage_to_request_window=True,
         )
 
         # Keep the common path light. Message aggregates are added only when
@@ -3624,6 +3634,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             self.params,
             time_where=time_where,
             filter_fragment=filter_fragment,
+            scope_usage_to_request_window=created_at_floor is None,
         )
 
         query = f"""
@@ -3697,6 +3708,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             params,
             time_where=time_where,
             filter_fragment=filter_fragment,
+            scope_usage_to_request_window=True,
             include_usage=False,
         )
 
@@ -3747,6 +3759,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             params,
             time_where=time_where,
             filter_fragment=filter_fragment,
+            scope_usage_to_request_window=True,
         )
 
         # Select the aggregate aliases so HAVING on `duration`/`total_cost`/
@@ -4055,6 +4068,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         *,
         time_where: str,
         filter_fragment: str,
+        scope_usage_to_request_window: bool,
         include_usage: bool = True,
     ) -> str:
         """Return the ``FROM … WHERE …`` clause for a session aggregation query.
@@ -4068,6 +4082,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         replacement collapse, each session joins one child-aware rollup. Taking
         its maximum during root aggregation preserves the value without adding
         it once per root. Unfiltered counts omit this extra relation entirely.
+        Arrival-window discovery instead resolves all members of the admitted
+        sessions, without an unrelated event lookback; date exclusions still
+        apply to winners. Ordinary list/count/id reads retain the request window.
         """
         base_predicates = f"""{self.project_where()}
           AND trace_session_id IS NOT NULL
@@ -4100,9 +4117,13 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             ) {where_clause}"""
         member_ctes = self._session_member_ctes(
             session_source="legacy_member_sessions",
-            physical_time_scope=self._physical_time_scope_sql(),
+            physical_time_scope=self._physical_time_scope_sql(
+                enabled=scope_usage_to_request_window
+            ),
             latest_time_scope=self._latest_time_scope_sql(
-                params, param_prefix="session_aggregate_member_time"
+                params,
+                enabled=scope_usage_to_request_window,
+                param_prefix="session_aggregate_member_time",
             ),
         )
         return f"""FROM (
