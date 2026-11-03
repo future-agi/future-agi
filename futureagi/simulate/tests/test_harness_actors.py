@@ -168,6 +168,10 @@ def test_an_actor_is_replaced_and_removed_in_the_draft_and_its_id_never_changes(
     )
     assert removed.status_code == 200 and removed.json()["actors"] == []
     assert (missing.status_code, missing.json()["error"]) == (404, "actor_not_found")
+    # Removing the only actor leaves nothing to review: no empty actors.json, so no draft.
+    from simulate.services.harness_versioning.drafts import fresh_draft
+
+    assert fresh_draft(environment, "environment") is None
 
 
 def test_a_view_hides_another_actor_s_private_material(

@@ -260,15 +260,16 @@ def write_actor_edit(
         raise _error("actor_invalid", " ".join(problems), 400)
     world = [one for one in actors if not _is_sub_actor(one)]
     speaking = [_sub_actor_entry(one) for one in actors if _is_sub_actor(one)]
-    environment_files = {
-        **environment_files,
-        ACTORS_FILE: (
+    environment_files = dict(environment_files)
+    # No world actors means no file, so removing the only actor leaves nothing to review.
+    environment_files.pop(ACTORS_FILE, None)
+    if world:
+        environment_files[ACTORS_FILE] = (
             json.dumps(
                 {"schema": rules["formats"][ACTORS_FILE], "actors": world}, indent=2
             )
             + "\n"
-        ).encode("utf-8"),
-    }
+        ).encode("utf-8")
     if speaking or SUB_ACTORS_FILE in environment_files:
         environment_files[SUB_ACTORS_FILE] = (
             json.dumps({"sub_actors": speaking}, indent=2) + "\n"
