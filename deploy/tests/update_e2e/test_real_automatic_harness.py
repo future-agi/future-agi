@@ -370,7 +370,8 @@ class SetupFailureTests(unittest.TestCase):
         from types import SimpleNamespace
         from deploy.update import __main__ as cli, enrollment
         from deploy.update.runner_state import RunnerStateStore
-        with tempfile.TemporaryDirectory() as directory:
+        # The real CLI validates every ancestor; default /tmp is world-writable.
+        with tempfile.TemporaryDirectory(dir=Path.home()) as directory:
             root = Path(directory).resolve()
             (root / '.env').write_text('')
             store = RunnerStateStore(root, root / '.env')
@@ -447,7 +448,8 @@ class SetupFailureTests(unittest.TestCase):
         import contextlib
         from types import SimpleNamespace
         from deploy.update import __main__ as cli
-        with tempfile.TemporaryDirectory() as directory:
+        # Exercise the real refusal, not an earlier unsafe-checkout rejection.
+        with tempfile.TemporaryDirectory(dir=Path.home()) as directory:
             root = Path(directory).resolve()
             (root / '.env').write_text('')
             stdout, stderr = io.StringIO(), io.StringIO()
