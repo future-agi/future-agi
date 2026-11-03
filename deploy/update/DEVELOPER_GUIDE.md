@@ -72,7 +72,9 @@ Sources: [migration](../../futureagi/tracer/migrations/0120_alert_issue_state_oc
 
 ### Why both upgrade baselines are tested
 
-For normally migrated release databases, v1.56.1 → PR applies all three migrations; v1.57.0 → PR already has them applied. The latter does not test these migrations again just because metadata changed. Qualification checks the real applied/pending plan rather than assuming every host's database matches its version label. The separate v1.53.0 → v1.54.0 → v1.55.0 journey tests two automatic updates after one opt-in.
+At the original guide baseline, normally migrated v1.56.1 databases had all three migrations pending, while v1.57.0 already had them applied. Metadata changes do not cause Django to rerun an applied migration. Qualification checks the real applied/pending plan rather than assuming every host's database matches its version label. The separate v1.53.0 → v1.54.0 → v1.55.0 journey tests two automatic updates after one opt-in.
+
+**Base-branch update (2026-11-03):** the later merge of `dev` through `007153995` also brings in `simulate/0100_agent_fix`. From v1.56.1 the next rehearsal therefore has four pending migrations; from v1.57.0 it has 0100 pending. This additional schema migration introduces agent-fix records and related fields, but adds no registered high-volume table scope under the current registry. It still needs normal forward/recovery qualification. Recheck the actual plan after every base merge.
 
 ## 3. What changes require extra work?
 

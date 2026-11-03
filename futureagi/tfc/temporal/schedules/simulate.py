@@ -59,6 +59,13 @@ SIMULATE_SCHEDULES: list[ScheduleConfig] = [
         description="Restart hosted environment chat runtimes that died with messages waiting",
     ),
     ScheduleConfig(
+        schedule_id="sweep-lost-agent-fixes",
+        activity_name="sweep_lost_agent_fixes",
+        interval_seconds=300,
+        queue="default",
+        description="End Fix my agent runs whose workflow is gone or that outlived their deadline",
+    ),
+    ScheduleConfig(
         schedule_id="seal-unsealed-hosted-harness-usage",
         activity_name="seal_unsealed_hosted_harness_usage",
         interval_seconds=600,

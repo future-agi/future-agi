@@ -26,6 +26,7 @@ from tracer.services.eval_tasks.reconciler import (
     _continuous_requires_full_reclassification,
     _evals_revision,
     _requeue_and_drop,
+    _task_revision,
     reconcile,
 )
 from tracer.tests._ch_seed import seed_ch_spans
@@ -204,6 +205,65 @@ class TestCreateAndIdempotency:
         assert result.requeued == 0
         assert result.dropped == 0
         assert _live(task).count() == 5
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestLastRun:
+    def test_creating_pass_stamps_last_run(self, project, custom_eval_config):
+        _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        assert task.last_run is None
+        t0 = timezone.now()
+
+        assert reconcile(task).created == 3
+
+        task.refresh_from_db()
+        assert t0 <= task.last_run <= timezone.now()
+
+    def test_no_op_pass_leaves_last_run_unchanged(self, project, custom_eval_config):
+        _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        old = timezone.now() - timedelta(days=1)
+        EvalTask.objects.filter(id=task.id).update(last_run=old)
+
+        assert reconcile(task).created == 0
+
+        task.refresh_from_db()
+        assert task.last_run == old
+
+    def test_requeue_only_pass_stamps_last_run(self, project, custom_eval_config):
+        _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _mark(task, EvalEntryStatus.COMPLETED)
+        old = timezone.now() - timedelta(days=1)
+        EvalTask.objects.filter(id=task.id).update(last_run=old)
+        # Edit the eval -> hash changes -> completed entries are requeued.
+        custom_eval_config.config = {"threshold": 0.9}
+        custom_eval_config.save()
+        t0 = timezone.now()
+
+        result = reconcile(task)
+
+        assert (result.created, result.requeued) == (0, 3)
+        task.refresh_from_db()
+        assert t0 <= task.last_run <= timezone.now()
+
+    def test_last_run_bump_does_not_change_revision(self, project, custom_eval_config):
+        _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        task.refresh_from_db()
+        revision = _task_revision(task)
+
+        reconcile(task)
+
+        task.refresh_from_db()
+        assert task.last_run is not None
+        assert _task_revision(task) == revision
+        # A follow-up pass sees the stamped row and must not trip the fence.
+        reconcile(task)
 
 
 @pytest.mark.integration
