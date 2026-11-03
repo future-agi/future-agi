@@ -63864,9 +63864,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             type: "object",
-            additionalProperties: {
-              type: "object",
-            },
+            additionalProperties: true,
           },
         },
         source: {
@@ -63881,9 +63879,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         record_schemas: {
           title: "Record schemas",
           type: "object",
-          additionalProperties: {
-            type: "object",
-          },
+          additionalProperties: true,
         },
       },
     },
@@ -63925,9 +63921,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         actor: {
           title: "Actor",
           type: "object",
-          additionalProperties: {
-            type: "object",
-          },
+          additionalProperties: true,
         },
         expected_revision: {
           title: "Expected revision",

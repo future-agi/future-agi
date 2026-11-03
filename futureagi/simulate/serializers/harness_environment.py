@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from model_hub.serializers.contracts import JsonObjectRequestField
 from simulate.models import HarnessNudge
 from simulate.serializers.harness_job import (
     TARGET_SYSTEM_PROMPT_MAX_CHARS,
@@ -1012,11 +1013,9 @@ class HarnessNudgeAnswerSerializer(serializers.Serializer):
     answer = serializers.ChoiceField(choices=("yes", "no"))
 
 
-class HarnessActorRecordField(serializers.DictField):
+class HarnessActorRecordField(JsonObjectRequestField):
     """One actor record, in the shape its environment's actor rules declare (`record_schemas` on the cast); checked
     against those rules on write, so a field a newer release adds passes through unchanged."""
-
-    child = serializers.JSONField()
 
 
 class HarnessActorWriteSerializer(serializers.Serializer):
@@ -1035,7 +1034,7 @@ class HarnessActorListSerializer(serializers.Serializer):
     source = serializers.ChoiceField(choices=("draft", "saved"))
     revision = serializers.IntegerField()
     # Each actor file's record schema, from the rules of the release that sealed the environment.
-    record_schemas = serializers.DictField(child=serializers.JSONField())
+    record_schemas = JsonObjectRequestField()
 
 
 class HarnessActorViewQuerySerializer(serializers.Serializer):

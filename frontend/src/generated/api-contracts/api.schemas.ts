@@ -17999,9 +17999,7 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
-export type HarnessActorListApiActorsItem = {
-  [key: string]: { [key: string]: unknown };
-};
+export type HarnessActorListApiActorsItem = { [key: string]: unknown };
 
 export type HarnessActorListApiSource =
   (typeof HarnessActorListApiSource)[keyof typeof HarnessActorListApiSource];
@@ -18011,9 +18009,7 @@ export const HarnessActorListApiSource = {
   saved: "saved",
 } as const;
 
-export type HarnessActorListApiRecordSchemas = {
-  [key: string]: { [key: string]: unknown };
-};
+export type HarnessActorListApiRecordSchemas = { [key: string]: unknown };
 
 export interface HarnessActorListApi {
   actors: HarnessActorListApiActorsItem[];
@@ -18022,9 +18018,7 @@ export interface HarnessActorListApi {
   record_schemas: HarnessActorListApiRecordSchemas;
 }
 
-export type HarnessActorWriteApiActor = {
-  [key: string]: { [key: string]: unknown };
-};
+export type HarnessActorWriteApiActor = { [key: string]: unknown };
 
 export interface HarnessActorWriteApi {
   actor: HarnessActorWriteApiActor;

@@ -148,9 +148,17 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
         )}
       </SectionCard>
 
-      {env.subActors?.length > 0 && <SubActorsPanel subActors={env.subActors} />}
+      {env.subActors?.length > 0 && (
+        <Box sx={{ mb: 2 }}>
+          <SubActorsPanel subActors={env.subActors} />
+        </Box>
+      )}
 
-      {env.versioning?.enabled && env.id && <WorldActorsPanel envId={env.id} locked={locked} />}
+      {env.versioning?.enabled && env.id && (
+        <Box sx={{ mb: 2 }}>
+          <WorldActorsPanel envId={env.id} locked={locked} />
+        </Box>
+      )}
 
       {/*
         Actors section removed — it was a dummy cast from the fixture

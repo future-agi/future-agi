@@ -126992,9 +126992,7 @@
                     "type": "array",
                     "items": {
                         "type": "object",
-                        "additionalProperties": {
-                            "type": "object"
-                        }
+                        "additionalProperties": true
                     }
                 },
                 "source": {
@@ -127012,9 +127010,7 @@
                 "record_schemas": {
                     "title": "Record schemas",
                     "type": "object",
-                    "additionalProperties": {
-                        "type": "object"
-                    }
+                    "additionalProperties": true
                 }
             }
         },
@@ -127027,9 +127023,7 @@
                 "actor": {
                     "title": "Actor",
                     "type": "object",
-                    "additionalProperties": {
-                        "type": "object"
-                    }
+                    "additionalProperties": true
                 },
                 "expected_revision": {
                     "title": "Expected revision",

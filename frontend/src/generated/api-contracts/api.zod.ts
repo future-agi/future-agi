@@ -36030,10 +36030,10 @@ export const SimulateApiHarnessEnvironmentsActorsParams = zod.object({
 });
 
 export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
-  actors: zod.array(zod.record(zod.string(), zod.object({}).passthrough())),
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
   source: zod.enum(["draft", "saved"]),
   revision: zod.number(),
-  record_schemas: zod.record(zod.string(), zod.object({}).passthrough()),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
 });
 
 /**
@@ -36046,7 +36046,7 @@ export const SimulateApiHarnessEnvironmentsCreateActorParams = zod.object({
 export const simulateApiHarnessEnvironmentsCreateActorBodyExpectedRevisionMin = 0;
 
 export const SimulateApiHarnessEnvironmentsCreateActorBody = zod.object({
-  actor: zod.record(zod.string(), zod.object({}).passthrough()),
+  actor: zod.record(zod.string(), zod.unknown()),
   expected_revision: zod
     .number()
     .min(simulateApiHarnessEnvironmentsCreateActorBodyExpectedRevisionMin)
@@ -36054,10 +36054,10 @@ export const SimulateApiHarnessEnvironmentsCreateActorBody = zod.object({
 });
 
 export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
-  actors: zod.array(zod.record(zod.string(), zod.object({}).passthrough())),
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
   source: zod.enum(["draft", "saved"]),
   revision: zod.number(),
-  record_schemas: zod.record(zod.string(), zod.object({}).passthrough()),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
 });
 
 /**
@@ -36102,7 +36102,7 @@ export const SimulateApiHarnessEnvironmentsReplaceActorParams = zod.object({
 export const simulateApiHarnessEnvironmentsReplaceActorBodyExpectedRevisionMin = 0;
 
 export const SimulateApiHarnessEnvironmentsReplaceActorBody = zod.object({
-  actor: zod.record(zod.string(), zod.object({}).passthrough()),
+  actor: zod.record(zod.string(), zod.unknown()),
   expected_revision: zod
     .number()
     .min(simulateApiHarnessEnvironmentsReplaceActorBodyExpectedRevisionMin)
@@ -36110,10 +36110,10 @@ export const SimulateApiHarnessEnvironmentsReplaceActorBody = zod.object({
 });
 
 export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
-  actors: zod.array(zod.record(zod.string(), zod.object({}).passthrough())),
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
   source: zod.enum(["draft", "saved"]),
   revision: zod.number(),
-  record_schemas: zod.record(zod.string(), zod.object({}).passthrough()),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
 });
 
 /**
@@ -36134,10 +36134,10 @@ export const SimulateApiHarnessEnvironmentsDeleteActorQueryParams = zod.object({
 });
 
 export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
-  actors: zod.array(zod.record(zod.string(), zod.object({}).passthrough())),
+  actors: zod.array(zod.record(zod.string(), zod.unknown())),
   source: zod.enum(["draft", "saved"]),
   revision: zod.number(),
-  record_schemas: zod.record(zod.string(), zod.object({}).passthrough()),
+  record_schemas: zod.record(zod.string(), zod.unknown()),
 });
 
 /**
