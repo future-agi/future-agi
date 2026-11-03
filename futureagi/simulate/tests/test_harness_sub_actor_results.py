@@ -91,6 +91,17 @@ def test_a_call_where_every_sub_goal_was_not_applicable_has_no_score():
         == "passed"
     )
     assert receipt_outcome_status({"status": "skipped", "sub_goals": []}) == "skipped"
+    # An evaluation that decided the call is a pass or fail of its own.
+    assert (
+        receipt_outcome_status(
+            {
+                "status": "passed",
+                "sub_goals": [_GOALS[1]],
+                "evaluations": [{"kind": "code", "name": "e", "passed": True}],
+            }
+        )
+        == "passed"
+    )
 
 
 def test_a_pass_rate_leaves_out_what_was_neither_a_pass_nor_a_fail():

@@ -225,10 +225,10 @@ def test_a_sub_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_pa
 
     assert _build_transcript_text(call).splitlines() == [
         "Agent: Where to?",
-        "Rowan (not the customer): Add a stop.",
+        "Rowan (not the person being served): Add a stop.",
         "Customer: Just the airport.",
     ]
-    assert "Rowan (not the customer): Add a stop." in (
+    assert "Rowan (not the person being served): Add a stop." in (
         _build_transcript_data(call)["transcript"]
     )
 
@@ -332,6 +332,10 @@ def test_run_results_filter_and_count_calls_by_the_sub_actor_that_entered_them(
         "absent": [
             {"sub_actor": "friend", "name": "Rowan", "triggered": False, "delivered": 0}
         ],
+        # Triggered, but the call ended before their line was said: they never came in.
+        "unsaid": [
+            {"sub_actor": "friend", "name": "Rowan", "triggered": True, "delivered": 0}
+        ],
         "plain": None,
     }
     ids = {}
@@ -362,11 +366,11 @@ def test_run_results_filter_and_count_calls_by_the_sub_actor_that_entered_them(
         )
 
     assert filtered(sub_actor=["friend"]) == ["entered"]
-    assert filtered(sub_actor=["none"]) == ["absent", "plain"]
-    assert filtered(sub_actor_not=["friend"]) == ["absent", "plain"]
-    assert filtered(sub_actor=["friend", "none"]) == ["absent", "entered", "plain"]
+    assert filtered(sub_actor=["none"]) == ["absent", "plain", "unsaid"]
+    assert filtered(sub_actor_not=["friend"]) == ["absent", "plain", "unsaid"]
+    assert filtered(sub_actor=["friend", "none"]) == ["absent", "entered", "plain", "unsaid"]
     assert _sub_actor_facet(calls) == [
-        {"value": "none", "count": 2, "label": "Simulated user only"},
+        {"value": "none", "count": 3, "label": "Simulated user only"},
         {"value": "friend", "count": 1, "label": "Rowan"},
     ]
     # A run where no sub-actor entered any call offers no sub-actor filter.

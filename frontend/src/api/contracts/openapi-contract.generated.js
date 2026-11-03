@@ -103895,6 +103895,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "failed",
         "error",
         "inconclusive",
+        "no_score",
         "scenario",
         "scenario_key",
         "runs",
@@ -103927,6 +103928,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         inconclusive: {
           title: "Inconclusive",
+          type: "integer",
+        },
+        no_score: {
+          title: "No score",
           type: "integer",
         },
         scenario: {
@@ -104792,6 +104797,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "failed",
         "error",
         "inconclusive",
+        "no_score",
         "turn_count",
       ],
       type: "object",
@@ -104818,6 +104824,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         inconclusive: {
           title: "Inconclusive",
+          type: "integer",
+        },
+        no_score: {
+          title: "No score",
           type: "integer",
         },
         turn_count: {
@@ -104855,6 +104865,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "failed",
         "error",
         "inconclusive",
+        "no_score",
       ],
       type: "object",
       properties: {
@@ -104880,6 +104891,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         inconclusive: {
           title: "Inconclusive",
+          type: "integer",
+        },
+        no_score: {
+          title: "No score",
           type: "integer",
         },
       },

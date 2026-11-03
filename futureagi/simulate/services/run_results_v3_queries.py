@@ -1018,23 +1018,28 @@ def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
     return sub_goal_query
 
 
+def _sub_actor_spoke(sub_actor: str | None = None) -> Q:
+    """Calls where a sub-actor (or this one) entered: at least one of its lines reached the agent."""
+    who = f" && @.sub_actor == {json.dumps(sub_actor)}" if sub_actor else ""
+    return Q(
+        Func(
+            F("call_metadata"),
+            Value(f"$.harness_sub_actors.summary[*] ? (@.delivered > 0{who})"),
+            function="jsonb_path_exists",
+            template="%(function)s(%(expressions)s::jsonpath)",
+            output_field=BooleanField(),
+        )
+    )
+
+
 def _sub_actor_q(values: list[str]) -> Q:
     """Calls each sub-actor entered; ``none`` is a call no sub-actor entered."""
-    entered = Q(
-        call_metadata__harness_sub_actors__summary__contains=[{"triggered": True}]
-    )
     query = Q(pk__in=[])
     for value in values:
         if value == NO_SUB_ACTOR:
-            query |= (
-                Q(call_metadata__harness_sub_actors__summary__isnull=True) | ~entered
-            )
+            query |= Q(call_metadata__isnull=True) | ~_sub_actor_spoke()
         else:
-            query |= Q(
-                call_metadata__harness_sub_actors__summary__contains=[
-                    {"sub_actor": value, "triggered": True}
-                ]
-            )
+            query |= _sub_actor_spoke(value)
     return query
 
 
@@ -1262,7 +1267,7 @@ def _sub_actor_facet(calls: QuerySet) -> list[dict[str, Any]]:
         entered = [
             one
             for one in (summary if isinstance(summary, list) else [])
-            if isinstance(one, dict) and one.get("triggered") and one.get("sub_actor")
+            if isinstance(one, dict) and (one.get("delivered") or 0) > 0 and one.get("sub_actor")
         ]
         for one in entered:
             key = str(one["sub_actor"])
