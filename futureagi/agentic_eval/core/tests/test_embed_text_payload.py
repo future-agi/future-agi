@@ -189,9 +189,21 @@ class TestFewShotRetrievalWithStructuredInputs:
             ],
             ["first turn", "second turn"],
             42,
+            0,
+            0.0,
+            False,
             "plain text",
         ],
-        ids=["dict", "message_list", "string_list", "number", "string"],
+        ids=[
+            "dict",
+            "message_list",
+            "string_list",
+            "number",
+            "zero",
+            "zero_float",
+            "false",
+            "string",
+        ],
     )
     def test_feedback_examples_are_found_for_any_input_shape(
         self, client, manager, eval_input
@@ -209,7 +221,9 @@ class TestFewShotRetrievalWithStructuredInputs:
         assert service.payloads == [{"text": [str(eval_input)], "input_type": "text"}]
 
     @pytest.mark.parametrize(
-        "eval_input", [None, {}, []], ids=["none", "empty_dict", "empty_list"]
+        "eval_input",
+        [None, {}, [], {"question": None}],
+        ids=["none", "empty_dict", "empty_list", "dict_of_empty_values"],
     )
     def test_empty_inputs_are_still_skipped(self, client, manager, eval_input):
         service = FakeEmbedService()

@@ -28,6 +28,7 @@ logger = structlog.get_logger(__name__)
 from analytics.utils import mixpanel_slack_notfy
 from model_hub.models.choices import DataTypeChoices
 from model_hub.models.develop_dataset import Cell
+from model_hub.utils.eval_input_validation import is_empty_value
 from tfc.utils.storage import (
     image_bytes_from_url_or_base64,
     open_image_from_url,
@@ -1084,7 +1085,9 @@ class EmbeddingManager:
                     logger.warning(f"Skipping input {n} due to mismatch in column names or types")
                     continue
                 # Stored feedback embeds text as str(value) (data_formatter); match it.
-                if self.input_types[n] == "text" and inp and not isinstance(inp, str):
+                if self.input_types[n] == "text" and not isinstance(inp, str):
+                    if is_empty_value(inp):
+                        continue
                     inp = str(inp)
                 if table_name == GROUND_TRUTH_TABLE_NAME:
                     meta_col = "column_name"
