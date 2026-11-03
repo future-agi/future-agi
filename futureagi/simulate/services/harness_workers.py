@@ -261,11 +261,15 @@ def worker_timeline(
     # The agent that hands work out and is never handed any is the coordinator, as a top-level agent span is, unless
     # it is a declared worker (one may run others as tools after the root passed it control); so is the one agent of
     # an app that hands nothing out.
+    def declared_row(row: Mapping[str, Any]) -> bool:
+        # A runtime may name a worker by an opaque id and give its declared name only as the label.
+        return any(_slug(name) in declared_by_key for name in (by_of(row), str(row.get("worker_label") or "")) if name)
+
     handed = {_slug(str(row["delegated_to"])) for row in rows if row.get("delegated_to")}
     named = {_slug(by_of(row)) for row in rows if by_of(row)}
-    top = named - handed - set(declared_by_key)
+    top = {_slug(by_of(row)) for row in rows if by_of(row) and not declared_row(row)} - handed
     coordinators = {_slug(by_of(row)) for row in rows if row.get("delegated_to") and _slug(by_of(row)) in top}
-    if not handed and len(named) == 1 and not workers and not any(name in declared_by_key for name in named):
+    if not handed and len(named) == 1 and not workers and not any(declared_row(row) for row in rows if by_of(row)):
         coordinators = named
 
     def traced_worker(by: str, label: str) -> str | None:

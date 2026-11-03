@@ -335,6 +335,27 @@ def test_tool_calls_a_runtime_attributes_to_a_worker_join_the_timeline_without_r
     assert [one.get("tool") for one in both["events"]].count("get_order") == 1
 
 
+def test_a_declared_worker_a_runtime_names_by_an_opaque_id_and_its_label_is_a_worker_not_the_coordinator():
+    # CrewAI's observer gives each agent a hashed key and its role as the label; a flow's verifier may be the only
+    # agent that calls a tool, with no hand-off recorded.
+    declared = [
+        {"id": "shakespearean_bard", "name": "Shakespearean Bard"},
+        {"id": "x_post_verifier", "name": "X Post Verifier"},
+    ]
+    traced = [{"name": "Character Counter Tool", "ok": True, "at": 1730454600.0, "worker_id": "1853305b0351f75f",
+               "worker_label": "X Post Verifier\n", "task_label": "verify_x_post"}]
+
+    timeline = worker_timeline([], declared, run_key=RUN, traced_calls=traced)
+
+    workers = {one["id"]: one for one in timeline["workers"]}
+    assert workers["x_post_verifier"]["observed"] and not workers["x_post_verifier"]["undeclared"]
+    assert workers["x_post_verifier"]["instance_ids"] == ["1853305b0351f75f"]
+    assert not workers["shakespearean_bard"]["observed"]
+    assert [(one["worker_id"], one["tool"]) for one in timeline["events"]] == [
+        ("run-1/x_post_verifier", "Character Counter Tool")
+    ]
+
+
 def test_hand_offs_in_the_sealed_trace_give_each_worker_a_delegation_and_a_return_without_spans():
     # The sandbox reads any framework's spans and seals who made each call and which call handed work out.
     traced = [
