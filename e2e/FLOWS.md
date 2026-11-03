@@ -1555,7 +1555,7 @@
 ### OBS-E2E-038 — a saved view opens its preset date on fresh dates, and Custom on its saved range
 
 **Goal:** A user who reopens a saved trace view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:421`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:438`  
 **Tags:** —
 
 **User steps:**
@@ -1576,7 +1576,7 @@
 ### OBS-E2E-039 — a saved span view opens its preset date on fresh dates, and Custom on its saved range
 
 **Goal:** A user who reopens a saved span view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:475`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:492`  
 **Tags:** —
 
 **User steps:**
@@ -1597,7 +1597,7 @@
 ### OBS-E2E-040 — a saved compare view opens its compare preset date on fresh dates, and a Custom compare range as saved
 
 **Goal:** A user who reopens a saved trace view in compare mode days later sees its compare preset (Today, Yesterday, 7D…12M) as of now, while a Custom compare range stays exactly as saved  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:529`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:546`  
 **Tags:** —
 
 **User steps:**
@@ -1617,7 +1617,7 @@
 ### OBS-E2E-041 — a saved session view opens its preset date on fresh dates, and Custom on its saved range
 
 **Goal:** A user who reopens a saved session view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:620`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:637`  
 **Tags:** —
 
 **User steps:**
@@ -1638,7 +1638,7 @@
 ### OBS-E2E-042 — a saved user view opens its preset date on fresh dates, and Custom on its saved range
 
 **Goal:** A user who reopens a saved user view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:620`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:637`  
 **Tags:** —
 
 **User steps:**
@@ -1659,7 +1659,7 @@
 ### OBS-E2E-043 — a bookmarked trace list link loads its preset date fresh, and a Custom range as bookmarked
 
 **Goal:** A user who opens a trace list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:715`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`  
 **Tags:** —
 
 **User steps:**
@@ -1679,7 +1679,7 @@
 ### OBS-E2E-044 — a bookmarked span list link loads its preset date fresh, and a Custom range as bookmarked
 
 **Goal:** A user who opens a span list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:715`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`  
 **Tags:** —
 
 **User steps:**
@@ -1699,7 +1699,7 @@
 ### OBS-E2E-045 — a bookmarked session list link loads its preset date fresh, and a Custom range as bookmarked
 
 **Goal:** A user who opens a session list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:715`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`  
 **Tags:** —
 
 **User steps:**
@@ -1719,7 +1719,7 @@
 ### OBS-E2E-046 — a bookmarked user list link loads its preset date fresh, and a Custom range as bookmarked
 
 **Goal:** A user who opens a user list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:715`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`  
 **Tags:** —
 
 **User steps:**
@@ -1739,7 +1739,7 @@
 ### OBS-E2E-047 — a bookmarked compare date link loads its preset date fresh, and a Custom range as bookmarked
 
 **Goal:** A user who opens a compare date bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:715`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`  
 **Tags:** —
 
 **User steps:**
@@ -1758,7 +1758,7 @@
 ### OBS-E2E-048 — the workspace Users list opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
 **Goal:** A user who reopens the workspace Users list days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:832`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:849`  
 **Tags:** —
 
 **User steps:**
@@ -1767,7 +1767,7 @@
 2. for each preset and Custom, open a /dashboard/users link carrying that option with a range from ~400 days ago
 3. save one workspace Users view per preset and Custom, all storing that range
 4. open /dashboard/users and click each saved view tab in turn
-5. wheel-scroll each complete Users API page, including a target beyond the first virtualized viewport
+5. wheel-scroll each nonempty complete Users API page, including a target beyond the first virtualized viewport; verify the confirmed empty Users screen for Custom
 
 **Backend state verified:**
 
@@ -1775,13 +1775,13 @@
 - each preset link and view sends every user-list request with the preset window as of now, never the stored one, and the URL date param is rewritten to it
 - Today lists only the today user, Yesterday only the yesterday user, and 7D–12M exactly both, among this flow's users
 - Custom links and views send and keep their stored range verbatim and list neither user
-- the complete wheel-scrolled rendered user-ID set equals the actual API page; a rolling view reveals the initially offscreen target
+- the complete wheel-scrolled rendered user-ID set equals the actual API page; a rolling view reveals the initially offscreen target; an empty API page shows the confirmed empty Users screen with no visible grid or user rows
 - opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
 
 ### OBS-E2E-049 — a user's session tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
 **Goal:** A user who reopens one end user's session tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:945`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:962`  
 **Tags:** —
 
 **User steps:**
@@ -1802,7 +1802,7 @@
 ### OBS-E2E-050 — a user's trace tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
 **Goal:** A user who reopens one end user's trace tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:945`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:962`  
 **Tags:** —
 
 **User steps:**
@@ -1823,7 +1823,7 @@
 ### OBS-E2E-051 — a user's span tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
 **Goal:** A user who reopens one end user's span tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:945`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:962`  
 **Tags:** —
 
 **User steps:**
