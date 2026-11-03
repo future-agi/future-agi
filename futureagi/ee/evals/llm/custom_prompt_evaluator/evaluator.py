@@ -1,21 +1,19 @@
 import json
-import os
 import time
 
+import structlog
 from django.conf import settings
-from jinja2 import Environment
+from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
 from agentic_eval.core.utils.llm_payloads import detect_and_build_media_blocks
 from agentic_eval.core.utils.model_config import ModelConfigs
+from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
 from agentic_eval.core_evals.fi_utils.evals_result import EvalResult
-import structlog
-
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 
-from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
+logger = structlog.get_logger(__name__)
 
 _AUTO_CONTEXT_ROOTS = ("row", "span", "trace", "session", "call")
 
@@ -56,7 +54,7 @@ class CustomPromptEvaluator(LLM):
         self._few_shot_examples = kwargs.get("few_shot_examples")
         # Configure Jinja2 environment with explicit {{ }} delimiters (Handlebars-compatible)
         # PreserveUndefined keeps undefined variables as {{ variable }} instead of raising errors
-        self.env = Environment(
+        self.env = SandboxedEnvironment(
             variable_start_string="{{",
             variable_end_string="}}",
             undefined=PreserveUndefined,
@@ -81,23 +79,21 @@ class CustomPromptEvaluator(LLM):
     def display_name(self):
         return "Custom Prompt Evaluation"
 
-
-
     @property
     def default_model(self):
         return self._model
-
 
     def to_config(self) -> dict | None:
         return {
             "eval_prompt": self.rule_prompt,
         }
+
     def is_failure(self, result) -> bool | None:
         return bool(str(result).lower() == "fail")
 
     def _user_message(self, **kwargs) -> str:
-        if 'chat_history' in kwargs:
-            kwargs['chat_history'] = json.dumps(kwargs['chat_history'], indent=2)
+        if "chat_history" in kwargs:
+            kwargs["chat_history"] = json.dumps(kwargs["chat_history"], indent=2)
         # Use rule_prompt as the template
         return self.rule_prompt
 
@@ -117,16 +113,18 @@ class CustomPromptEvaluator(LLM):
         if self._output_type == "Pass/Fail":
             self.system_template_value = "Pass/Fail"
             return (
-                judge_preamble +
-                "You MUST return a JSON object with the following fields:\n"
+                judge_preamble
+                + "You MUST return a JSON object with the following fields:\n"
                 "- result: Result must be either 'Pass' or 'Fail'.\n"
                 "- explanation: An explanation of why the result is Pass or Fail.\n"
             )
         elif self._output_type in ("score", "numeric"):
-            self.system_template_value = "score in 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0"
+            self.system_template_value = (
+                "score in 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0"
+            )
             return (
-                judge_preamble +
-                "You MUST return a JSON object with the following fields:\n"
+                judge_preamble
+                + "You MUST return a JSON object with the following fields:\n"
                 "- result: A NUMERIC score between 0.0 and 1.0 in increments of 0.1. Do NOT return text labels.\n"
                 "- explanation: An explanation of the score.\n"
             )
@@ -139,8 +137,8 @@ class CustomPromptEvaluator(LLM):
                 score_parts = [f'"{k}" = {v}' for k, v in self._choice_scores.items()]
                 score_hint = f"\nScore mapping: {', '.join(score_parts)}\n"
             return (
-                judge_preamble +
-                f"You MUST select EXACTLY ONE of these choices: {choices_str}\n"
+                judge_preamble
+                + f"You MUST select EXACTLY ONE of these choices: {choices_str}\n"
                 f"Do NOT make up new choices. Do NOT return a number. Return ONLY one of the listed choices.\n"
                 f"{score_hint}"
                 "You MUST return a JSON object with the following fields:\n"
@@ -210,7 +208,8 @@ class CustomPromptEvaluator(LLM):
                     )
                     # Also try with extra whitespace variants
                     prompt_to_render = prompt_to_render.replace(
-                        "{{ " + stripped + " }}", str(template_context.get(stripped, ""))
+                        "{{ " + stripped + " }}",
+                        str(template_context.get(stripped, "")),
                     )
                 elif "." in stripped and stripped in safe_context:
                     # Dotted variable names (e.g., {{json_col.field}}) are flat
@@ -234,8 +233,9 @@ class CustomPromptEvaluator(LLM):
                     val = safe_context[key]
                     if isinstance(val, str):
                         stripped = val.strip()
-                        if (stripped.startswith("[") and stripped.endswith("]")) or \
-                           (stripped.startswith("{") and stripped.endswith("}")):
+                        if (stripped.startswith("[") and stripped.endswith("]")) or (
+                            stripped.startswith("{") and stripped.endswith("}")
+                        ):
                             try:
                                 safe_context[key] = json.loads(val)
                             except (ValueError, json.JSONDecodeError):
@@ -254,7 +254,7 @@ class CustomPromptEvaluator(LLM):
                     rendered_prompt += f"<{k}>{val_str}</{k}>\n"
                 rendered_prompt += "--- End Input Data ---"
         except Exception as e:
-            raise ValueError(f"Error rendering rule prompt template: {str(e)}")
+            raise ValueError(f"Error rendering rule prompt template: {str(e)}") from e
 
         # Inject row_context when data injection is enabled (no mapping required)
         row_context = kwargs.get("row_context")
@@ -263,13 +263,13 @@ class CustomPromptEvaluator(LLM):
 
             rendered_prompt += "\n\n## Data\n"
             if isinstance(row_context, (dict, list)):
-                rendered_prompt += fit_row_to_context(
-                    row_context, max_chars=15000
-                )
+                rendered_prompt += fit_row_to_context(row_context, max_chars=15000)
             else:
                 ctx_str = str(row_context)
                 if len(ctx_str) > 15000:
-                    ctx_str = fit_to_context(ctx_str, max_total_chars=15000, label="data")
+                    ctx_str = fit_to_context(
+                        ctx_str, max_total_chars=15000, label="data"
+                    )
                 rendered_prompt += ctx_str
 
         logger.info(
@@ -305,7 +305,9 @@ class CustomPromptEvaluator(LLM):
             user_content = user_text
 
         # Build system message: use custom system_prompt if provided, else generated
-        system_content = self.system_prompt if self.system_prompt else self._system_message()
+        system_content = (
+            self.system_prompt if self.system_prompt else self._system_message()
+        )
 
         messages = [
             {
@@ -334,21 +336,25 @@ class CustomPromptEvaluator(LLM):
         # injected as calibration context for the judge.
         gt_few_shot = kwargs.get("ground_truth_few_shot")
         if gt_few_shot and isinstance(gt_few_shot, str) and gt_few_shot.strip():
-            messages.append({
-                "role": "user",
-                "content": (
-                    "Before evaluating, review these reference examples that show "
-                    "how similar cases were scored by human experts. Use them as "
-                    "calibration for your scoring:\n\n" + gt_few_shot
-                ),
-            })
-            messages.append({
-                "role": "assistant",
-                "content": (
-                    "I've reviewed the reference examples and will use them as "
-                    "calibration for consistent scoring. I'll now evaluate the case."
-                ),
-            })
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Before evaluating, review these reference examples that show "
+                        "how similar cases were scored by human experts. Use them as "
+                        "calibration for your scoring:\n\n" + gt_few_shot
+                    ),
+                }
+            )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        "I've reviewed the reference examples and will use them as "
+                        "calibration for consistent scoring. I'll now evaluate the case."
+                    ),
+                }
+            )
 
         # Add additional message chain (user/assistant turns from the editor)
         if self._messages:
@@ -380,7 +386,9 @@ class CustomPromptEvaluator(LLM):
             provider=self.provider,
             message_count=len(messages),
             has_media=bool(media_blocks),
-            detected_modalities=list(detected_media_types.values()) if detected_media_types else [],
+            detected_modalities=list(detected_media_types.values())
+            if detected_media_types
+            else [],
         )
 
         try:
@@ -389,7 +397,9 @@ class CustomPromptEvaluator(LLM):
                     from ee.turing.client import TuringClient
                 except ImportError:
                     if settings.DEBUG:
-                        logger.warning("Could not import ee.turing.client", exc_info=True)
+                        logger.warning(
+                            "Could not import ee.turing.client", exc_info=True
+                        )
                     return None
 
                 turing_client = TuringClient()
@@ -438,7 +448,9 @@ class CustomPromptEvaluator(LLM):
                 output_type=self._output_type,
                 message_count=len(messages),
                 has_media=bool(media_blocks),
-                detected_modalities=list(detected_media_types.values()) if detected_media_types else [],
+                detected_modalities=list(detected_media_types.values())
+                if detected_media_types
+                else [],
                 required_keys=required_keys,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
@@ -465,32 +477,41 @@ class CustomPromptEvaluator(LLM):
         end_time = time.time()
         eval_runtime_ms = int((end_time - start_time) * 1000)
 
-        metadata = json.dumps({
-            "usage": {
-                "completion_tokens": self.token_usage["completion_tokens"],
-                "prompt_tokens": self.token_usage["prompt_tokens"],
-                "total_tokens": self.token_usage["total_tokens"],
-            },
-            "cost": {
-                "total_cost": self.cost["total_cost"],
-                "prompt_cost": self.cost["prompt_cost"],
-                "completion_cost": self.cost["completion_cost"],
-            },
-            "response_time": eval_runtime_ms,
-            "explanation": chat_completion_response_json["explanation"],
-            # "data": chat_history,
-        })
+        metadata = json.dumps(
+            {
+                "usage": {
+                    "completion_tokens": self.token_usage["completion_tokens"],
+                    "prompt_tokens": self.token_usage["prompt_tokens"],
+                    "total_tokens": self.token_usage["total_tokens"],
+                },
+                "cost": {
+                    "total_cost": self.cost["total_cost"],
+                    "prompt_cost": self.cost["prompt_cost"],
+                    "completion_cost": self.cost["completion_cost"],
+                },
+                "response_time": eval_runtime_ms,
+                "explanation": chat_completion_response_json["explanation"],
+                # "data": chat_history,
+            }
+        )
 
         llm_eval_result: EvalResult = {
             "name": self.name,
             "display_name": self.display_name,
             "data": {"result": chat_completion_response_json["result"]},
-            "failure": True if chat_completion_response_json["result"] == "Fail" else False,
+            "failure": True
+            if chat_completion_response_json["result"] == "Fail"
+            else False,
             "metadata": metadata,
             "reason": chat_completion_response_json["explanation"],
             "runtime": eval_runtime_ms,
             "model": self._model,
-            "metrics": [{"id": "custom_eval_score", "value": chat_completion_response_json.get("result", 0.0)}],
+            "metrics": [
+                {
+                    "id": "custom_eval_score",
+                    "value": chat_completion_response_json.get("result", 0.0),
+                }
+            ],
             "datapoint_field_annotations": None,
         }
 
