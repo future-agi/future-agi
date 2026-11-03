@@ -196,7 +196,7 @@ const ErrorCellRenderer = ({ data }) => (
       color="error.main"
       sx={{ whiteSpace: "pre-wrap" }}
     >
-      {data.output}
+      {data.error ?? data.output}
     </Typography>
   </Box>
 );
@@ -226,6 +226,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
   }, []);
 
   const nodeStatus = nodeDetail?.status?.toLowerCase();
+  const isNodeError = nodeStatus === "error" || nodeStatus === "failed";
   const isNodeRunning = nodeStatus === "running" || nodeStatus === "pending";
   const nodeExecutionIdentifier =
     nodeDetail?.nodeExecutionId ||
@@ -238,7 +239,8 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     () => nodeDetail?.outputs || [],
     [nodeDetail?.outputs],
   );
-  const hasErrorMessage = !!errorMessage && outputs.length === 0;
+  const hasErrorMessage = isNodeError && !!errorMessage;
+  const hasOnlyErrorMessage = hasErrorMessage && outputs.length === 0;
   const isPairedMode = inputs.length > 0 && inputs.length === outputs.length;
 
   // Map API response to AG Grid row data
@@ -256,7 +258,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
       return [{ id: nodeExecutionIdentifier, _running: true }];
     }
 
-    if (hasErrorMessage) {
+    if (hasOnlyErrorMessage) {
       if (inputs.length > 0) {
         // Has inputs but output errored — one row per input
         return inputs.map((inp, i) => ({
@@ -282,6 +284,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
         id: `${nodeExecutionIdentifier}-${i}`,
         input: inp?.payload ?? "",
         output: outputs[i]?.payload ?? "",
+        error: errorMessage,
       }));
     }
 
@@ -291,13 +294,14 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
         id: nodeExecutionIdentifier,
         inputs,
         outputs,
+        error: errorMessage,
       },
     ];
   }, [
     nodeDetail,
     nodeExecutionIdentifier,
     errorMessage,
-    hasErrorMessage,
+    hasOnlyErrorMessage,
     isPairedMode,
     isNodeRunning,
     inputs,
@@ -331,7 +335,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     }
 
     const usePairedInput =
-      isPairedMode || (hasErrorMessage && inputs.length > 0);
+      isPairedMode || (hasOnlyErrorMessage && inputs.length > 0);
     const cols = [];
 
     if (showInputs) {
@@ -354,7 +358,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
       );
     }
 
-    if (hasErrorMessage) {
+    if (hasOnlyErrorMessage) {
       cols.push({
         field: "output",
         headerName: "Output",
@@ -380,10 +384,26 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
               cellRenderer: PortListCellRenderer,
             },
       );
+      if (hasErrorMessage) {
+        cols.push({
+          field: "error",
+          headerName: "Error",
+          minWidth: 300,
+          flex: 1,
+          cellRenderer: ErrorCellRenderer,
+        });
+      }
     }
 
     return cols;
-  }, [showInputs, hasErrorMessage, isPairedMode, isNodeRunning, inputs.length]);
+  }, [
+    showInputs,
+    hasErrorMessage,
+    hasOnlyErrorMessage,
+    isPairedMode,
+    isNodeRunning,
+    inputs.length,
+  ]);
 
   const PORT_ROW_HEIGHT = 120;
 
