@@ -665,6 +665,11 @@ const traceRow = (raw) => ({
   latencyMs: raw.latency_ms ?? null,
 });
 
+// The worker record lands up to a minute after the call ends, so a missing one is checked again
+// for two minutes before the tab settles on "no workers".
+export const WORKERS_ARRIVAL_POLL_MS = 15000;
+export const WORKERS_ARRIVAL_POLLS = 8;
+
 // Which of a multi-agent app's workers did what in one call. A 404 means the trial has
 // no worker record (no hand-off was seen, or the record is still arriving): null, not an error.
 export function useCallWorkers(callExecutionId) {
@@ -688,6 +693,11 @@ export function useCallWorkers(callExecutionId) {
     },
     enabled: !!callExecutionId,
     retry: false,
+    refetchInterval: (query) =>
+      query.state.data === null &&
+      query.state.dataUpdateCount <= WORKERS_ARRIVAL_POLLS
+        ? WORKERS_ARRIVAL_POLL_MS
+        : false,
   });
 }
 

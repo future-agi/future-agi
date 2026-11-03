@@ -1648,4 +1648,45 @@ describe("useCallWorkers", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toBe(null);
   });
+
+  it("checks again for a record still arriving after the call, then stops", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { useCallWorkers, WORKERS_ARRIVAL_POLL_MS, WORKERS_ARRIVAL_POLLS } =
+        await import("../runDetail");
+      const notYet = { code: "workers_unavailable", statusCode: 404 };
+      const record = { workers: [], events: [] };
+      axios.get.mockReset();
+      axios.get
+        .mockRejectedValueOnce(notYet)
+        .mockResolvedValueOnce({ data: record });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const Wrapper = ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      Wrapper.propTypes = { children: PropTypes.node };
+      const { result } = renderHook(() => useCallWorkers("call-2"), {
+        wrapper: Wrapper,
+      });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.data).toBe(null);
+      await vi.advanceTimersByTimeAsync(WORKERS_ARRIVAL_POLL_MS);
+      await waitFor(() => expect(result.current.data).toEqual(record));
+
+      axios.get.mockReset();
+      axios.get.mockRejectedValue(notYet);
+      const never = renderHook(() => useCallWorkers("call-3"), {
+        wrapper: Wrapper,
+      });
+      await waitFor(() => expect(never.result.current.isSuccess).toBe(true));
+      await vi.advanceTimersByTimeAsync(
+        WORKERS_ARRIVAL_POLL_MS * (WORKERS_ARRIVAL_POLLS + 3),
+      );
+      expect(axios.get).toHaveBeenCalledTimes(WORKERS_ARRIVAL_POLLS + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
