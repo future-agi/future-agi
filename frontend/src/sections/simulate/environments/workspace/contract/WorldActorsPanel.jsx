@@ -29,17 +29,20 @@ const lines = (value) =>
     .map((one) => one.trim())
     .filter(Boolean);
 const words = (key) => key.replace(/_/g, " ");
-// A view value as a person reads it: lists joined, objects as "field: value" pairs, never raw JSON.
+// A view value as a person reads it: lists joined, objects as "field: value" pairs, never raw JSON. A typed entry
+// reads as its content (a fact's text), and a `kind` tag as its value alone.
 const readable = (value) => {
   if (value == null) return "";
   if (Array.isArray(value))
     return value.map(readable).filter(Boolean).join("; ");
-  if (typeof value === "object")
+  if (typeof value === "object") {
+    if (typeof value.text === "string") return value.text;
     return Object.entries(value)
-      .map(([key, one]) => [words(key), readable(one)])
+      .map(([key, one]) => [key, readable(one)])
       .filter(([, one]) => one)
-      .map(([key, one]) => `${key}: ${one}`)
+      .map(([key, one]) => (key === "kind" ? one : `${words(key)}: ${one}`))
       .join(" · ");
+  }
   return String(value);
 };
 // `never_sees` names: grader material (`scenario.*`, `file.*`) and other actors' private fields (`<id>.<field>`).
@@ -49,7 +52,9 @@ const hidden = (names) => {
   for (const name of names || []) {
     const [head, ...rest] = name.split(".");
     const field = rest.join(".");
-    if (head === "scenario" || head === "file") grader.push(words(field));
+    // A file keeps its own name; a field reads as words.
+    if (head === "file") grader.push(field);
+    else if (head === "scenario") grader.push(words(field));
     else (others[head] ||= []).push(words(field));
   }
   return { grader, others };

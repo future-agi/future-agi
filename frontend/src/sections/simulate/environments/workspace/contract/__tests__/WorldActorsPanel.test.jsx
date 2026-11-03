@@ -8,8 +8,22 @@ vi.mock("src/api/simulate-environments/versions", () => ({
   useActors: () => ({ data: actorsData }),
   useActorView: () => ({
     data: {
-      sees: [{ input: "actor.goal", value: "Approve fast" }],
-      never_sees: ["scenario.solution"],
+      sees: [
+        { input: "actor.goal", value: "Approve fast" },
+        {
+          input: "actor.knowledge",
+          value: [{ kind: "facts", text: "The limit is 25%" }],
+        },
+        {
+          input: "actor.behaviour",
+          value: { response_timing: { kind: "delayed", seconds: 5 } },
+        },
+      ],
+      never_sees: [
+        "scenario.solution",
+        "scenario.sub_goals",
+        "file.sub_goals.json",
+      ],
     },
   }),
   useEditActor: () => ({
@@ -105,7 +119,17 @@ describe("WorldActorsPanel", () => {
     expect(
       screen.getByText("What they want: Approve fast"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Grader material: solution")).toBeInTheDocument();
+    expect(
+      screen.getByText("What they know: The limit is 25%"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "How they behave: response timing: delayed · seconds: 5",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Grader material: solution, sub goals, sub_goals.json"),
+    ).toBeInTheDocument();
   });
 
   it("adds someone in the world with every field, picking actions from the environment's own list", () => {
