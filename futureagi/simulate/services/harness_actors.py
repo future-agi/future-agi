@@ -243,6 +243,8 @@ def _reason(error: jsonschema.ValidationError) -> str:
     )
     if broken.validator == "pattern" and described:
         return f"{broken.instance!r} is not valid; use {described}"
+    if broken.validator == "maxLength":
+        return f"use at most {broken.validator_value} characters"
     return broken.message
 
 

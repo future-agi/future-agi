@@ -22,6 +22,7 @@ import {
 import SideDrawer from "../../components/SideDrawer";
 import SectionCard from "../../components/SectionCard";
 import { genderLabel } from "../scenarios/personaLabels";
+import { ClampCell, TruncTooltip } from "../scenarios/ScenarioTableCells";
 import { CONTRACT_COPY } from "./contract.constants";
 
 const C = CONTRACT_COPY.worldActors;
@@ -84,6 +85,13 @@ const idFrom = (name, taken) => {
 };
 // The id rule the server enforces, checked as the user types.
 const ID_RULE = /^[a-z0-9_]{1,64}$/;
+const TWO_LINES = {
+  wordBreak: "break-word",
+  display: "-webkit-box",
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: "vertical",
+  overflow: "hidden",
+};
 // A sub-actor speaks on a call channel; a world actor has none.
 const speaks = (actor) => Boolean(actor?.channel);
 
@@ -106,6 +114,7 @@ export default function WorldActorsPanel({
   const world = cast.filter((one) => !speaks(one) && one.side !== "caller");
   const revision = data?.revision ?? 0;
   const context = {
+    records: data?.record_schemas || {},
     actions: data?.actions || [],
     channels: data?.channels || {},
     loudness: data?.loudness || {},
@@ -306,25 +315,23 @@ function ActorRow({ envId, actor, locked, onEdit, onRemove, actionIds }) {
           onClick={() => setOpen((o) => !o)}
           sx={{ cursor: "pointer" }}
         >
-          <Typography
-            sx={{ typography: "s1", fontWeight: 600, wordBreak: "break-word" }}
+          <TruncTooltip
+            title={[actor.name, actor.role].filter(Boolean).join(" · ")}
           >
-            {actor.name}
-            {actor.role ? (
-              <Box
-                component="span"
-                sx={{ color: "text.secondary", fontWeight: 400 }}
-              >{` · ${actor.role}`}</Box>
-            ) : null}
-          </Typography>
-          {actor.goal ? (
             <Typography
-              sx={{
-                typography: "s2",
-                color: "text.secondary",
-                wordBreak: "break-word",
-              }}
-            >{`${C.wants}: ${actor.goal}`}</Typography>
+              sx={{ typography: "s1", fontWeight: 600, ...TWO_LINES }}
+            >
+              {actor.name}
+              {actor.role ? (
+                <Box
+                  component="span"
+                  sx={{ color: "text.secondary", fontWeight: 400 }}
+                >{` · ${actor.role}`}</Box>
+              ) : null}
+            </Typography>
+          </TruncTooltip>
+          {actor.goal ? (
+            <ClampCell text={`${C.wants}: ${actor.goal}`} lines={2} />
           ) : null}
           <Typography
             sx={{
@@ -570,6 +577,20 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
     });
   };
 
+  // A field's length limit is the one its record's schema declares, when it declares one.
+  const limit = (name) =>
+    context.records[callerSide ? "sub_actors.json" : "actors.json"]
+      ?.properties?.[name]?.maxLength;
+  const bounded = (name, initial, helperText) => {
+    const max = limit(name);
+    return {
+      inputProps: { maxLength: max },
+      helperText:
+        max && String(value(name, initial)).length >= max
+          ? F.atLimit(max)
+          : helperText,
+    };
+  };
   const text = (name, label, initial, extra = {}) => (
     <TextField
       size="small"
@@ -608,7 +629,12 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
                 : F.createTitle}
           </Typography>
           {error && <Alert severity="error">{error}</Alert>}
-          {text("name", F.name, actor.name || "", { helperText: F.nameHelp })}
+          {text(
+            "name",
+            F.name,
+            actor.name || "",
+            bounded("name", actor.name || "", F.nameHelp),
+          )}
           {text("id", F.id, madeId, {
             helperText: existing
               ? F.idFixed
@@ -622,7 +648,12 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
             placeholder: madeId,
             InputLabelProps: { shrink: true },
           })}
-          {text("role", F.role, actor.role || "", { helperText: F.roleHelp })}
+          {text(
+            "role",
+            F.role,
+            actor.role || "",
+            bounded("role", actor.role || "", F.roleHelp),
+          )}
           {callerSide ? (
             <>
               <TextField
@@ -884,6 +915,7 @@ ActorForm.propTypes = {
         description: PropTypes.string,
       }),
     ),
+    records: PropTypes.object,
     channels: PropTypes.object,
     loudness: PropTypes.object,
     others: PropTypes.array,

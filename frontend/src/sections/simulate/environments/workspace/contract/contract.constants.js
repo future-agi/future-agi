@@ -188,6 +188,7 @@ export const CONTRACT_COPY = {
       role: "Role (optional)",
       roleHelp:
         "Who they are, in a few words, such as a manager or a family member",
+      atLimit: (max) => `At most ${max} characters`,
       kind: "Kind (optional)",
       kinds: { person: "A person", agent: "Another agent", system: "A system" },
       parent: "Brought in by (optional)",
