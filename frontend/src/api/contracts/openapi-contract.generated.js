@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1107,
+  endpointCount: 1108,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28565,6 +28565,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/capabilities/": {
+      get: {
+        operationId: "simulate_api_harness-environments_capabilities",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          agent_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessCapabilityReport",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -64762,6 +64787,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessCapabilityReport: {
+      required: [
+        "environment_version_id",
+        "agent_version_id",
+        "catalog_version",
+        "checked_at",
+        "capabilities",
+        "selection",
+        "rules_version",
+        "computed_at",
+      ],
+      type: "object",
+      properties: {
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        catalog_version: {
+          title: "Catalog version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        checked_at: {
+          title: "Checked at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        capabilities: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessCapabilityRow",
+          },
+        },
+        selection: {
+          $ref: "#/definitions/HarnessCapabilitySelection",
+        },
+        rules_version: {
+          title: "Rules version",
+          type: "string",
+          minLength: 1,
+        },
+        computed_at: {
+          title: "Computed at",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessCompare: {
       required: [
         "execution_id",
@@ -96273,6 +96356,148 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         config: {
           $ref: "#/definitions/HarnessAgentConfigChange",
+        },
+      },
+    },
+    HarnessCapabilityRow: {
+      required: [
+        "id",
+        "label",
+        "status",
+        "finding",
+        "checks",
+        "blocked_by",
+        "stale_because",
+        "reason_code",
+        "reason",
+        "fix",
+        "fix_type",
+        "needed_by",
+        "affected",
+        "affected_scenarios",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "supported",
+            "partial",
+            "blocked",
+            "unavailable",
+            "untested",
+            "stale",
+          ],
+        },
+        finding: {
+          title: "Finding",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        checks: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        blocked_by: {
+          title: "Blocked by",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        stale_because: {
+          title: "Stale because",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        reason_code: {
+          title: "Reason code",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        fix: {
+          title: "Fix",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        fix_type: {
+          title: "Fix type",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        needed_by: {
+          title: "Needed by",
+          type: "integer",
+        },
+        affected: {
+          title: "Affected",
+          type: "integer",
+        },
+        affected_scenarios: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    HarnessCapabilitySelection: {
+      required: [
+        "requested",
+        "eligible",
+        "blocked",
+        "untested",
+        "requirements_recorded",
+      ],
+      type: "object",
+      properties: {
+        requested: {
+          title: "Requested",
+          type: "integer",
+        },
+        eligible: {
+          title: "Eligible",
+          type: "integer",
+        },
+        blocked: {
+          title: "Blocked",
+          type: "integer",
+        },
+        untested: {
+          title: "Untested",
+          type: "integer",
+        },
+        requirements_recorded: {
+          title: "Requirements recorded",
+          type: "boolean",
         },
       },
     },

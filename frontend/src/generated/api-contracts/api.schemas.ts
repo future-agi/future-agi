@@ -15599,7 +15599,7 @@ export interface AgentDefinitionCreateRequestApi {
   livekit_config_json?: AgentDefinitionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 5
+   * @maximum 25
    */
   livekit_max_concurrency?: number;
 }
@@ -16024,7 +16024,7 @@ export interface AgentDefinitionEditRequestApi {
   livekit_config_json?: AgentDefinitionEditRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 5
+   * @maximum 25
    */
   livekit_max_concurrency?: number;
 }
@@ -16172,7 +16172,7 @@ export interface AgentVersionCreateRequestApi {
   livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 5
+   * @maximum 25
    */
   livekit_max_concurrency?: number;
   commit_message?: string;
