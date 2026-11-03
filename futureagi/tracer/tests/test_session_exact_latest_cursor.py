@@ -231,7 +231,10 @@ def _inline_execute(chdb, sql, params, rows, remaps):
     literals = escape_params(
         {"rows": tuple(rows), "remaps": tuple(remaps), "columns": columns}, context
     )
+    # Ordinary, unnamed spans retain the existing literal total/cost oracles;
+    # the native member projection also reads these schema-default components.
     spans = f"""SELECT *, start_time + INTERVAL 1 SECOND AS end_time, toInt64(1) AS total_tokens,
+        '' AS name, toInt32(0) AS prompt_tokens, toInt32(0) AS completion_tokens,
         lengthUTF8(input) AS input_length,
         map('state', input) AS attrs_string, map('amount', cost) AS attrs_number,
         map('ok', true) AS attrs_bool, '{{}}' AS attributes_extra

@@ -290,6 +290,13 @@ def engine(tmp_path, record_property):
     local.oracle = independent.reference.reference_session_pages
     local.execute(
         "ALTER TABLE spans ADD COLUMN end_user_id Nullable(UUID), ADD COLUMN input String DEFAULT '',"
+        # The reduced RMT also needs the native member-accounting columns.
+        # Empty names and zero token components leave the seeded cost/token
+        # oracles unchanged; no row becomes a repeated source summary.
+        " ADD COLUMN name String DEFAULT '',"
+        " ADD COLUMN prompt_tokens Int32 DEFAULT 0,"
+        " ADD COLUMN completion_tokens Int32 DEFAULT 0,"
+        " ADD COLUMN attributes_extra String DEFAULT '{}',"
         # Materialized as in schema/002_spans_v2.sql; the session page's member
         # pass reads it instead of the content.
         " ADD COLUMN input_length UInt32 MATERIALIZED lengthUTF8(input)"
