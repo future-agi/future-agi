@@ -69,7 +69,6 @@ export default function ContinueRow({
             }
             sx={{
               typography: "s1",
-              fontWeight: "fontWeightSemiBold",
               px: 2,
               flexShrink: 0,
             }}

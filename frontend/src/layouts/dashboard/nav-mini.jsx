@@ -96,12 +96,11 @@ export default function NavMini() {
                 settings.themeLayout === "vertical" ? "mini" : "vertical",
               )
             }
+            size="small"
             sx={{
               color: "text.secondary",
               width: 36,
-              height: 24,
               p: 0,
-              borderRadius: "6px",
               "&:hover": { bgcolor: "action.hover" },
             }}
           >

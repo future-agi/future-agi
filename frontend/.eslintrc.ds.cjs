@@ -1,8 +1,9 @@
-// Future AGI Design System guard (product-design/design-system).
-// Run with `npm run lint:ds`. Each rule flags styling that should come from the
-// theme or a shared component instead of being written by hand on a screen.
-// Errors: a screen that restyles what the theme owns fails lint. Real exceptions
-// (data colours, overlay shadows) carry an eslint-disable comment with a reason.
+// Future AGI Design System guard.
+// `yarn lint:ds` checks all of src; `yarn lint:ds:changed` checks only the lines a
+// branch adds, which is what CI runs. Each rule flags styling that should come from
+// the theme or a shared component instead of being written by hand on a screen.
+// Real exceptions carry `eslint-disable-next-line no-restricted-syntax -- ds: <reason>`
+// with a reason from scripts/ds-optouts.mjs.
 
 const DS = (selector, message) => ({ selector, message: `[DS] ${message}` });
 
@@ -51,16 +52,17 @@ module.exports = {
         "Literal[value=/^(red|green|blue|orange|purple|pink|yellow|black|whiteScale)\\.(o?\\d+)$/]",
         "Legacy palette hue. Use status.<role>.* or text/border/background tokens.",
       ),
+      // `raw` (not `value`) so bare numbers match too: fontSize: 14 and "14px".
       DS(
-        "Property[key.name='fontSize'] > Literal[value=/^(8|9|10|11|14|15|17|18|19|21|22|28|32)(px)?$/]",
-        "Font size off the UI scale (12 / 13 / 16 / 20 / 24). Use a typography variant.",
+        "Property[key.name='fontSize'] > Literal[raw=/^[\"']?(8|9|10|17|18|19|21|22|28)(px)?[\"']?$/]",
+        "Font size off the type scale (11 / 12 / 13 / 14 / 15 / 16 / 20 / 24 / 32). Use a typography variant.",
       ),
       DS(
-        "JSXAttribute[name.name='fontSize'] Literal[value=/^(8|9|10|11|14|15|17|18|19|21|22|28|32)(px)?$/]",
-        "Font size off the UI scale (12 / 13 / 16 / 20 / 24). Use a typography variant.",
+        "JSXAttribute[name.name='fontSize'] Literal[raw=/^[\"']?(8|9|10|17|18|19|21|22|28)(px)?[\"']?$/]",
+        "Font size off the type scale (11 / 12 / 13 / 14 / 15 / 16 / 20 / 24 / 32). Use a typography variant.",
       ),
       DS(
-        "Property[key.name='fontWeight'] > Literal[value=/^(700|800|900|bold)$/]",
+        "Property[key.name='fontWeight'] > Literal[raw=/^[\"']?(700|800|900|bold)[\"']?$/]",
         "Weight above 600. The DS uses 400 / 500 / 600.",
       ),
       DS(
