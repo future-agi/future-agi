@@ -10,6 +10,12 @@ vi.mock("src/utils/axios", async (importOriginal) => {
   return withFakeFixRunsApi(await importOriginal());
 });
 
+const capability = vi.hoisted(() => ({ allowed: true }));
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useFeatureAllowed: () => ({ allowed: capability.allowed, isLoading: false }),
+}));
+
 const axios = (await import("src/utils/axios")).default;
 const { FIX_RUN_FIXTURES, fixtureFixRun, resetFixRunFixtures } = await import(
   "./fixtures/fixRuns"
@@ -38,6 +44,7 @@ describe("fix-run list", () => {
   beforeEach(() => {
     axios.get.mockClear();
     resetFixRunFixtures();
+    capability.allowed = true;
   });
 
   it("asks for one 1-based page and reports the server's total", async () => {
@@ -51,6 +58,16 @@ describe("fix-run list", () => {
     });
     expect(result.current.fixes).toHaveLength(FIX_RUN_FIXTURES.length - 10);
     expect(result.current.count).toBe(FIX_RUN_FIXTURES.length);
+  });
+
+  it("asks nothing when the org lacks Fix my agent", async () => {
+    capability.allowed = false;
+    const { result } = renderHook(() => useEnvironmentFixRuns("env-1"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(axios.get).not.toHaveBeenCalled();
+    expect(result.current.count).toBe(0);
   });
 
   it("polls only while the fix is live", () => {

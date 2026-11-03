@@ -6,6 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
+import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import axios, { endpoints } from "src/utils/axios";
 
 import { fetchRunCalls, mapCallRow } from "./runCalls";
@@ -39,15 +40,19 @@ export async function getFixRun(fixId) {
 }
 
 // 0-based page in, like the other environment lists; count is the server's
-// total across pages. Polls while a fix on the visible page is live.
+// total across pages. Polls while a fix on the visible page is live. Asks
+// nothing when the org lacks Fix my agent, since the list answers 402 there.
 export function useEnvironmentFixRuns(
   envId,
   { page = 0, pageSize = FIX_RUNS_PAGE_SIZE } = {},
 ) {
+  const { allowed, isLoading: capabilityLoading } = useFeatureAllowed(
+    CAPABILITY.FIX_MY_AGENT,
+  );
   const { data, isLoading } = useQuery({
     queryKey: fixRunsKey(envId, page, pageSize),
     queryFn: () => listFixRuns(envId, { page: page + 1, limit: pageSize }),
-    enabled: !!envId,
+    enabled: allowed && !!envId,
     placeholderData: keepPreviousData,
     refetchInterval: (query) =>
       (query.state.data?.results || []).some((f) =>
@@ -57,7 +62,11 @@ export function useEnvironmentFixRuns(
         : false,
   });
   const fixes = data?.results ?? [];
-  return { fixes, count: data?.count ?? 0, isLoading };
+  return {
+    fixes,
+    count: data?.count ?? 0,
+    isLoading: capabilityLoading || isLoading,
+  };
 }
 
 export function useFixRun(fixId) {
