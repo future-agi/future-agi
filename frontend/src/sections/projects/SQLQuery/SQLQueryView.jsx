@@ -27,6 +27,7 @@ import useSQLExecution from "./useSQLExecution";
 import QueryResults from "./QueryResults";
 import SaveQueryDialog from "./SaveQueryDialog";
 import QueryHistoryDialog from "./QueryHistoryDialog";
+import QueryProvenance from "./QueryProvenance";
 import QueryEstimate from "./QueryEstimate";
 import QueryExamples from "./QueryExamples";
 import QueryCatalog from "./QueryCatalog";
@@ -152,7 +153,7 @@ export default function SQLQueryView() {
       current = false;
     };
   }, [observeId, search]);
-  const execute = () => {
+  const execute = (reuse = true) => {
     // run clears the previous job synchronously and ignores superseded replies.
     // Capture the project/window here; the returned job supplies the SQL that ran.
     setSubmitted({ sql, projectId: observeId, hours });
@@ -166,7 +167,7 @@ export default function SQLQueryView() {
       run({ saved_query_id: selected.id, ...window }, true);
     } else {
       // Edits are an ad-hoc query, never silently execute the stored SQL.
-      run({ sql, ...window });
+      run({ sql, ...window, reuse });
     }
   };
   runRef.current = () => {
@@ -806,7 +807,7 @@ export default function SQLQueryView() {
                 {...PRIMARY_BUTTON_PROPS}
                 startIcon={<Iconify icon="solar:play-bold" />}
                 sx={{ ...PRIMARY_BUTTON_SX, px: 1.75 }}
-                onClick={execute}
+                onClick={() => execute()}
                 title={`Run query (${shortcut}+Enter)`}
                 aria-keyshortcuts={
                   shortcut === "⌘" ? "Meta+Enter" : "Control+Enter"
@@ -1083,6 +1084,12 @@ export default function SQLQueryView() {
                 </Button>
               </Stack>
             </Stack>
+            <QueryProvenance
+              finishedAt={job?.finished_at}
+              reused={job?.reused}
+              onRefresh={() => execute(false)}
+              disabled={busy || !catalog || !sql.trim()}
+            />
             {busy && <LinearProgress aria-label="Query in progress" />}
             <Box
               sx={{ p: { xs: 1.5, md: 2 }, minHeight: 180, minWidth: 0 }}
@@ -1251,6 +1258,8 @@ export default function SQLQueryView() {
         history={history}
         onSelect={(historySQL) => {
           setSQL(historySQL);
+          setSelected(null);
+          setChart({ type: "table" });
           setDialog("");
         }}
       />

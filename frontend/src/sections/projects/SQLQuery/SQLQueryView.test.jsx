@@ -356,6 +356,129 @@ describe("SQL refinement regressions", () => {
 });
 
 describe("SQL review regressions", () => {
+  it("opens History as a new private table query without overwriting the saved query", async () => {
+    const saved = {
+      ...savedQuery,
+      chart: { type: "bar", x: "count", y: "count" },
+    };
+    sqlApi.saved.mockResolvedValue({ items: [saved], has_more: false });
+    sqlApi.history.mockResolvedValue({
+      items: [
+        {
+          id: "history",
+          sql: "SELECT 2",
+          state: "succeeded",
+          created_at: "2026-11-03T12:00:00Z",
+        },
+      ],
+    });
+    sqlApi.save.mockResolvedValue({
+      ...savedQuery,
+      id: "new",
+      name: "History copy",
+      sql: "SELECT 2",
+      chart: { type: "table" },
+      visibility: "private",
+    });
+    renderPage();
+    await screen.findByText(schema.identity_semantics);
+    await openSaved();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save query", exact: true }),
+    );
+    expect(screen.getByLabelText("Query name")).toHaveValue(saved.name);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel", exact: true }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(
+      screen.getByRole("button", { name: "History", exact: true }),
+    );
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByText("SELECT 2"),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save query", exact: true }),
+    );
+    expect(screen.getByLabelText("Query name")).toHaveValue("");
+    expect(screen.getByRole("radio", { name: /Private/ })).toBeChecked();
+    fireEvent.change(screen.getByLabelText("Query name"), {
+      target: { value: "History copy" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+    await waitFor(() =>
+      expect(sqlApi.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sql: "SELECT 2",
+          name: "History copy",
+          visibility: "private",
+          chart: { type: "table" },
+        }),
+      ),
+    );
+    expect(sqlApi.update).not.toHaveBeenCalled();
+    expect(saved.sql).toBe(savedQuery.sql);
+  });
+
+  it("shows original completion time for reused results and requests a fresh scan", async () => {
+    const finishedAt = "2026-11-03T12:30:00.123456Z";
+    sqlApi.run.mockResolvedValue({
+      ...resultJob,
+      finished_at: finishedAt,
+      reused: true,
+    });
+    renderPage();
+    await screen.findByText(schema.identity_semantics);
+    runQuery();
+    const reused = await screen.findByText(/Reused result/);
+    expect(reused.querySelector("time")).toHaveAttribute(
+      "datetime",
+      finishedAt,
+    );
+    expect(reused).toHaveTextContent(/Completed.*UTC/);
+    sqlApi.run.mockResolvedValue({
+      ...resultJob,
+      id: "fresh",
+      finished_at: "2026-11-03T12:31:00Z",
+      reused: false,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run fresh" }));
+    await waitFor(() =>
+      expect(sqlApi.run).toHaveBeenLastCalledWith(
+        expect.objectContaining({ reuse: false }),
+        expect.any(Object),
+      ),
+    );
+    await waitFor(() => expect(screen.queryByText(/Reused result/)).toBeNull());
+    expect(screen.queryByRole("button", { name: "Run fresh" })).toBeNull();
+    expect(screen.getByText(/Completed/).querySelector("time")).toHaveAttribute(
+      "datetime",
+      "2026-11-03T12:31:00Z",
+    );
+  });
+
+  it.each([400, 429, 503])(
+    "keeps Run enabled after a normalized %s estimate error",
+    async (statusCode) => {
+      sqlApi.estimate.mockRejectedValue({
+        statusCode,
+        detail: "Unknown dataset: x.",
+      });
+      renderPage();
+      await screen.findByText(schema.identity_semantics);
+      await screen.findByText(
+        statusCode === 400
+          ? /This query will be rejected/
+          : statusCode === 429
+            ? /Estimate paused/
+            : /Estimate unavailable/,
+      );
+      expect(
+        screen.getByRole("button", { name: "Run query", exact: true }),
+      ).not.toBeDisabled();
+    },
+  );
   it("labels the executed window, restores freshness and keeps downloads on that execution", async () => {
     sqlApi.run.mockResolvedValue(resultJob);
     sqlApi.download.mockRejectedValue(new Error("Download test boundary"));

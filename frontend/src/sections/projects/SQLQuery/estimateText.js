@@ -14,8 +14,8 @@ export function describeEstimate(state) {
     return { tone: "info", text: "Estimating scan…" };
   }
   if (state.status === "error") {
-    const code = state.error?.response?.status;
-    const detail = state.error?.response?.data?.detail;
+    const code = state.error?.statusCode;
+    const detail = state.error?.detail;
     if (code === 429) {
       return {
         tone: "info",

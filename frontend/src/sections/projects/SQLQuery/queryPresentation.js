@@ -19,6 +19,11 @@ export const isPreviousQuery = (submitted, current) =>
 
 // Presentation only: execution, admission and cancellation stay in the hook.
 export const getQueryPresentation = ({ state, busy, waitingForAdmission }) => {
+  if (state === "unavailable")
+    return {
+      title: "Query status unavailable",
+      description: "Run the query again to retry.",
+    };
   if (state === "cancelled")
     return {
       title: "Query cancelled",

@@ -29,7 +29,8 @@ beforeEach(() => {
   useSQLExecution.mockReturnValue({
     job: {
       state: "succeeded",
-      created_at: new Date().toISOString(),
+      created_at: "2026-11-03T12:00:00Z",
+      finished_at: "2026-11-03T12:00:30.123456Z",
       result: { truncated: false },
     },
     busy: false,
@@ -63,6 +64,13 @@ describe("SQL dashboard widget time boundaries", () => {
       true,
     );
     expect(screen.getByText("SQL result grid")).toBeInTheDocument();
+    expect(base.onQuerySettled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        updatedAt: "2026-11-03T12:00:30.123456Z",
+        exact: true,
+        pollingPaused: false,
+      }),
+    );
   });
   it("does not silently truncate a dashboard range longer than the catalog window", () => {
     const cancel = vi.fn();

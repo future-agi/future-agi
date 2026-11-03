@@ -76,8 +76,8 @@ export default function SQLQueryWidget({
       refreshRequestId,
       manualRefresh: Boolean(refreshRequestId),
       exact: job?.state === "succeeded" && !job.result?.truncated,
-      pollingPaused: false,
-      updatedAt: job?.created_at,
+      pollingPaused: job?.state === "unavailable",
+      updatedAt: job?.finished_at,
     });
   }, [
     busy,
