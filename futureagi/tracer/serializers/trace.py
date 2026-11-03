@@ -21,6 +21,10 @@ from tracer.serializers.filters import (
     bounded_filter_list_query_param_field,
     filter_list_query_param_field,
 )
+from tracer.serializers.usage_coverage import (
+    CaptureCoverageSerializer,
+    CostCoverageSerializer,
+)
 from tracer.services.user_attribute_contract import unsupported_user_attribute_keys
 from tracer.services.user_filter_capabilities import validate_users_filter_capabilities
 
@@ -446,6 +450,8 @@ class TraceSessionTableRowSerializer(_ExtraSessionCellsMixin, serializers.Serial
     created_at = serializers.DateTimeField(required=False, allow_null=True)
     duration = serializers.FloatField(required=False, allow_null=True)
     total_cost = serializers.FloatField(required=False, allow_null=True)
+    cost_coverage = CostCoverageSerializer(required=False)
+    capture_coverage = CaptureCoverageSerializer(required=False)
     total_tokens = serializers.IntegerField(required=False, allow_null=True)
     total_traces_count = serializers.IntegerField(required=False, allow_null=True)
     first_message = JsonValueField(required=False, allow_null=True)
@@ -889,6 +895,7 @@ class TraceAgentGraphNodeSerializer(serializers.Serializer):
     avg_latency_ms = serializers.FloatField(min_value=0)
     total_tokens = serializers.IntegerField(min_value=0)
     total_cost = serializers.FloatField(min_value=0)
+    cost_coverage = CostCoverageSerializer(required=False)
     error_count = serializers.IntegerField(min_value=0)
     trace_count = serializers.IntegerField(min_value=0, allow_null=True)
     trace_count_exact = serializers.BooleanField(required=False)
@@ -903,6 +910,7 @@ class TraceAgentGraphEdgeSerializer(serializers.Serializer):
     avg_latency_ms = serializers.FloatField(min_value=0)
     total_tokens = serializers.IntegerField(min_value=0)
     total_cost = serializers.FloatField(min_value=0)
+    cost_coverage = CostCoverageSerializer(required=False)
     error_count = serializers.IntegerField(min_value=0)
     trace_count = serializers.IntegerField(min_value=0, allow_null=True)
     trace_count_exact = serializers.BooleanField(required=False)
@@ -1034,6 +1042,7 @@ class UsersQuerySerializer(StrictInputSerializer):
 class UsersTableRowSerializer(serializers.Serializer):
     user_id = serializers.CharField(required=False, allow_null=True)
     total_cost = serializers.FloatField()
+    cost_coverage = CostCoverageSerializer(required=False)
     total_tokens = serializers.IntegerField(required=False, allow_null=True)
     input_tokens = serializers.IntegerField(required=False, allow_null=True)
     output_tokens = serializers.IntegerField(required=False, allow_null=True)
@@ -1127,6 +1136,8 @@ class TraceDetailResultSerializer(serializers.Serializer):
     trace = serializers.JSONField()
     observation_spans = TraceDetailSpanSerializer(many=True)
     summary = serializers.JSONField()
+    cost_coverage = CostCoverageSerializer(required=False)
+    capture_coverage = CaptureCoverageSerializer(required=False)
     graph = serializers.JSONField()
 
 
