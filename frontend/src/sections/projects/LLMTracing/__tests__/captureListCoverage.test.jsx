@@ -125,6 +125,22 @@ describe("typed capture companion reaches actual list cells", () => {
     },
   );
 
+  it("keeps the full observed token value and uncertainty in its tooltip", async () => {
+    render(
+      <SessionCellRenderer
+        column={{ colId: "total_tokens" }}
+        value={43071}
+        data={{ capture_coverage: coverage(3) }}
+      />,
+    );
+    const label = screen.getByText("Observed-only · 43,071 tokens");
+    expect(label).toHaveClass("MuiTypography-noWrap");
+    fireEvent.mouseOver(label);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Observed-only · 43,071 tokens. Capture coverage unknown. 3 observed requests. Source summaries are nonadditive; observed amounts do not prove complete capture.",
+    );
+  });
+
   it("leaves ordinary legacy cost, token and session rendering alone", () => {
     const { container, rerender } = render(<TokenCell value={0} data={{}} />);
     expect(container.textContent).toBe("-");

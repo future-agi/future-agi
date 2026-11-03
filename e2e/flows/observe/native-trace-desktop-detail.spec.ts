@@ -147,9 +147,9 @@ test(
             await shot(page, testInfo, 'gemini-sanitized-event');
             await drawer.getByRole('tab', { name: 'Preview', exact: true }).click();
             await drawer.getByRole('button', { name: 'Display', exact: true }).click();
-            await page.getByRole('button', { name: 'Timeline View', exact: true }).click();
+            await page.getByRole('tab', { name: 'Timeline View', exact: true }).click();
             await page.keyboard.press('Escape');
-            await expect(page.getByRole('button', { name: 'Timeline View', exact: true })).toBeHidden({
+            await expect(page.getByRole('tab', { name: 'Timeline View', exact: true })).toBeHidden({
               timeout: UI_READY,
             });
             await expect(drawer.getByText('Trace Timeline', { exact: true })).toBeVisible({ timeout: UI_READY });
@@ -157,9 +157,9 @@ test(
             // The timeline intentionally has no no-selection summary. Restore tree
             // mode through the real control before later tree-summary assertions.
             await drawer.getByRole('button', { name: 'Display', exact: true }).click();
-            await page.getByRole('button', { name: 'Trace View', exact: true }).click();
+            await page.getByRole('tab', { name: 'Trace View', exact: true }).click();
             await page.keyboard.press('Escape');
-            await expect(page.getByRole('button', { name: 'Trace View', exact: true })).toBeHidden({
+            await expect(page.getByRole('tab', { name: 'Trace View', exact: true })).toBeHidden({
               timeout: UI_READY,
             });
             await expect(drawer.getByText('Trace Tree', { exact: true })).toBeVisible({ timeout: UI_READY });

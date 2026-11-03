@@ -93,7 +93,7 @@ test(
               .toHaveText(tokenLabel, { timeout: UI_READY });
             await cost.getByText(costLabel, { exact: true }).hover();
             await expect(page.getByRole('tooltip')).toHaveText(
-              `Capture coverage unknown. ${stage.count} observed requests. Source summaries are nonadditive; observed amounts do not prove complete capture.`,
+              `${costLabel}. Capture coverage unknown. ${stage.count} observed requests. Source summaries are nonadditive; observed amounts do not prove complete capture.`,
               { timeout: UI_READY },
             );
             await shot(page, testInfo, `capture-${stage.stage}-${costCol}`);
