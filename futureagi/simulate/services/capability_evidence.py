@@ -207,27 +207,56 @@ def affected_scenarios(rows: list[dict[str, Any]], requirements: dict[str, Any])
     return {**counts, "requirements_recorded": bool(requirements)}
 
 
+def _provisionable(dependency: dict[str, Any]) -> bool:
+    """The environment stands up its own copy of a dependency only when it knows the engine and how the agent reaches
+    it (the same rule the build uses)."""
+    reached = dependency.get("reached") or {}
+    seam = any(reached.get(name) for name in ("dsn_env", "config_key", "host", "port", "database", "loader_module"))
+    return bool(dependency.get("engine")) and seam
+
+
 def structural_findings(contract: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     """What the current contract alone shows cannot work, with no run: a tool the build recorded as unreachable, or
-    a service-backed tool that names no service, cannot be routed to the world."""
-    unroutable = [
+    a service-backed tool that names no service, cannot be routed to the world; a tool that uses a dependency the
+    environment cannot stand up reaches the real one, so it would run live."""
+    unroutable = sorted(
         str(entry.get("tool") or "")
         for entry in (contract or {}).get("tool_entrypoints") or []
         if isinstance(entry, dict)
         and (entry.get("mode") == "unreachable" or (entry.get("mode") == "service" and not entry.get("service")))
-    ]
-    if not unroutable:
-        return {}
-    return {
-        "tool_routing": {
-            "finding": "failed",
-            "reason_code": "tool_unreachable",
-            "reason": "No reachable implementation for: " + ", ".join(sorted(unroutable)),
-            "fix": "Bind each listed tool to its implementation in the agent's source, or to a service the "
-            "environment runs, then rebuild",
-            "checks": [{"target": tool, "result": "failed"} for tool in sorted(unroutable)],
+    )
+    live: dict[str, list[str]] = {}
+    for dependency in (contract or {}).get("dependencies") or []:
+        if isinstance(dependency, dict) and not _provisionable(dependency):
+            for tool in dependency.get("used_by") or []:
+                live.setdefault(str(tool), []).append(str(dependency.get("name") or ""))
+    if unroutable:
+        return {
+            "tool_routing": {
+                "finding": "failed",
+                "reason_code": "tool_unreachable",
+                "reason": "No reachable implementation for: " + ", ".join(unroutable),
+                "fix": "Bind each listed tool to its implementation in the agent's source, or to a service the "
+                "environment runs, then rebuild",
+                "checks": [{"target": tool, "result": "failed"} for tool in unroutable],
+            }
         }
-    }
+    if live:
+        named = sorted({name for names in live.values() for name in names})
+        return {
+            "tool_routing": {
+                "finding": "failed",
+                "reason_code": "production_route",
+                "reason": ", ".join(f"{tool} reaches {', '.join(sorted(live[tool]))}" for tool in sorted(live))
+                + " outside the test world, so it would run live",
+                "fix": "Redirect " + ", ".join(sorted(live)) + " to the test world: record how the agent reaches "
+                + ", ".join(named) + " (an environment variable, config key or host) so the environment runs its own "
+                "copy, then rebuild",
+                "flips_when": "every listed tool reaches a copy the environment runs",
+                "checks": [{"target": tool, "result": "failed"} for tool in sorted(live)],
+            }
+        }
+    return {}
 
 
 def preflight_findings(report: dict[str, Any] | None, status: str) -> dict[str, dict[str, Any]]:
@@ -265,6 +294,26 @@ def agent_version_of(job: HostedHarnessJob, agent_version_id: Any) -> Any:
     return version
 
 
+def _current_harness_version(agent_version_id: str, environment_version: Any) -> str | None:
+    """The harness release that last certified this agent and environment version, from its ready bundle; None when
+    none is cached, so only a known release is compared."""
+    from simulate.models import HarnessAssembledBundle
+
+    if not agent_version_id or environment_version is None:
+        return None
+    certificate = (
+        HarnessAssembledBundle.no_workspace_objects.filter(
+            agent_version_id=agent_version_id,
+            environment_version=environment_version,
+            state=HarnessAssembledBundle.State.READY,
+        )
+        .order_by("-updated_at")
+        .values_list("certificate", flat=True)
+        .first()
+    )
+    return str(((certificate or {}).get("compiler") or {}).get("version") or "") or None
+
+
 def _environment_rows(
     job: HostedHarnessJob, agent_version_id: Any = None, environment_version: Any = None
 ) -> tuple[HarnessCapabilityEvidence | None, list[dict[str, Any]], dict[str, str]]:
@@ -287,6 +336,9 @@ def _environment_rows(
         "environment_version_id": str(getattr(version, "id", None) or ""),
         "agent_version_id": str(agent_version_id or job.agent_version_id or ""),
     }
+    harness_version = _current_harness_version(current["agent_version_id"], version)
+    if harness_version:
+        current["harness_version"] = harness_version
     document = (
         {
             "inputs": {

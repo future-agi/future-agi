@@ -156,3 +156,20 @@ def test_an_unreachable_tool_in_the_current_contract_blocks_routing_over_older_o
         assert "notify, refund" in routing["reason"]
     assert structural_findings({"tool_entrypoints": [{"tool": "lookup", "mode": "import"}]}) == {}
     assert structural_findings(None) == {}
+
+
+def test_a_tool_whose_dependency_the_environment_cannot_stand_up_routes_live():
+    from simulate.services.capability_evidence import structural_findings
+
+    contract = {"dependencies": [
+        {"name": "payments", "used_by": ["refund", "charge"], "engine": "", "reached": {"host": "pay.example"}},
+        {"name": "ledger", "used_by": ["refund"], "engine": "postgres", "reached": {}},
+        {"name": "orders", "used_by": ["lookup"], "engine": "postgres", "reached": {"dsn_env": "ORDERS_DSN"}},
+    ]}
+
+    found = structural_findings(contract)["tool_routing"]
+
+    assert found["reason_code"] == "production_route"
+    assert [check["target"] for check in found["checks"]] == ["charge", "refund"]
+    assert found["reason"] == "charge reaches payments, refund reaches ledger, payments outside the test world, so it would run live"
+    assert structural_findings({"dependencies": [contract["dependencies"][2]]}) == {}
