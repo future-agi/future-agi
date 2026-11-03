@@ -352,29 +352,79 @@ def table_names(values):
 
 
 def postgres_table_sizes(tables):
+    """Exact per-statement visible counts and physical bytes, not a growth bound.
+
+    READ COMMITTED deliberately refreshes the catalog snapshot after each count:
+    DDL committed during that count must be visible. Tables are NOT sampled at
+    one simultaneous snapshot, nor is later schema/data mutation prevented.
+    """
     tables = table_names(tables)
     if not tables:
         return []
     rows = []
-    # Parameterized catalog lookup only; never interpolate identifiers/SQL.
-    query = ("SELECT c.reltuples::bigint,pg_total_relation_size(c.oid),c.relkind "
-             "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-             "WHERE n.nspname=%s AND c.relname=%s")
+    query = ("SELECT c.relkind,c.relpersistence,c.relispartition,c.relhassubclass,"
+             "n.nspname,c.relname,EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i "
+             "WHERE i.inhparent=c.oid OR i.inhrelid=c.oid),"
+             "pg_catalog.pg_total_relation_size(c.oid) "
+             "FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+             "WHERE c.oid=%s::pg_catalog.oid")
     with postgres_connection() as db:
         try:
+            # PG16 origin metadata semantics (including empty grouped results).
+            version = db.info.server_version
+            require(type(version) is int and version // 10000 == 16, "restore_capacity_unknown")
             with db.cursor() as cursor:
-                cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                cursor.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY")
+                cursor.execute("SET LOCAL row_security=off")
+                cursor.execute("SET LOCAL search_path=pg_catalog")
                 cursor.execute("SHOW transaction_read_only")
                 require(cursor.fetchone() == ("on",), "restore_capacity_unknown")
+                cursor.execute("SHOW max_identifier_length")
+                maximum = cursor.fetchone()
+                require(type(maximum) in (list, tuple) and len(maximum) == 1
+                        and type(maximum[0]) is str and re.fullmatch(r"[1-9][0-9]{0,4}", maximum[0]),
+                        "restore_capacity_unknown")
+                require(all(len(part) <= int(maximum[0]) for table in tables for part in table.split(".")),
+                        "restore_capacity_unknown")
                 for table in tables:
-                    cursor.execute(query, tuple(table.split(".")))
+                    schema, name = table.split(".")
+                    # Validated ASCII identifiers cannot truncate or escape quotes.
+                    # SYSTEM(100) visits every block, but rejects views/foreign
+                    # relations during parse, before foreign planning. ONLY avoids
+                    # touching unvalidated descendants. No explicit LOCK is needed:
+                    # this SELECT retains AccessShare until the final rollback.
+                    cursor.execute('SELECT t.tableoid, pg_catalog.count(*) FROM ONLY "{}"."{}" AS t '
+                                   'TABLESAMPLE pg_catalog.system(100) GROUP BY t.tableoid LIMIT 2'.format(schema, name),
+                                   prepare=False)
+                    # Capture origin BEFORE another execute overwrites pgresult.
+                    result = getattr(cursor, "pgresult", None)
+                    require(result is not None and type(getattr(result, "nfields", None)) is int and result.nfields == 2
+                            and callable(getattr(result, "ftable", None))
+                            and callable(getattr(result, "ftablecol", None)), "restore_capacity_unknown")
+                    oid, column = result.ftable(0), result.ftablecol(0)
+                    require(type(oid) is int and 0 < oid <= 4294967295
+                            and type(column) is int and column == -6, "restore_capacity_unknown")
+                    counted = cursor.fetchmany(2)
+                    require(type(counted) in (list, tuple) and len(counted) <= 1, "restore_capacity_unknown")
+                    count = 0
+                    if counted:
+                        require(type(counted[0]) in (list, tuple) and len(counted[0]) == 2
+                                and type(counted[0][0]) is int and counted[0][0] == oid
+                                and type(counted[0][1]) is int and 0 < counted[0][1] <= 9007199254740991,
+                                "restore_capacity_unknown")
+                        count = counted[0][1]
+                    # The held lock prevents drop/replacement. Numeric OID prevents
+                    # a schema rename + replacement name from redirecting the size.
+                    cursor.execute(query, (oid,))
                     found = cursor.fetchmany(2)
-                    require(len(found) == 1 and found[0][2] in ("r", "m"), "restore_capacity_unknown")
-                    count, size, _ = found[0]
-                    require(type(count) is int and count >= 0 and type(size) is int and size >= 0,
+                    require(type(found) in (list, tuple) and len(found) == 1
+                            and type(found[0]) in (list, tuple) and len(found[0]) == 8,
                             "restore_capacity_unknown")
-                    # pg_total_relation_size includes indexes and TOAST. reltuples
-                    # is an estimate, not COUNT(*); unknown (-1) never becomes 0.
+                    kind, persistence, partition, subclasses, actual_schema, actual_name, inherits, size = found[0]
+                    require(kind in ("r", "m") and persistence in ("p", "u")
+                            and partition is False and subclasses is False and inherits is False
+                            and (actual_schema, actual_name) == (schema, name)
+                            and type(size) is int and 0 <= size <= 9007199254740991, "restore_capacity_unknown")
                     rows.append({"engine": "postgres", "table": table, "rows": count, "bytes": size})
         finally:
             db.rollback()

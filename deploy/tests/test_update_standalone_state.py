@@ -1,6 +1,8 @@
 """Synthetic observation/migration contracts; no fixture is product qualification."""
+import contextlib
 import copy
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -169,20 +171,64 @@ class MigrationInventoryTests(unittest.TestCase):
                 self.probe.migration_inventory(mapping, self.root, self.root)
 
 
+class FakePGResult:
+    """Model libpq origin lifetime, including empty grouped SELECTs."""
+    def __init__(self, *, oid=12345, nfields=2, column=-6):
+        self.oid, self.nfields, self.column = oid, nfields, column
+        self.expired = False
+
+    def ftable(self, index):
+        assert index == 0 and not self.expired, "origin must be read before next execute"
+        return self.oid
+
+    def ftablecol(self, index):
+        assert index == 0 and not self.expired, "origin must be read before next execute"
+        return self.column
+
+
+_DEFAULT = object()
+
+
 class PostgresReadOnlyTests(unittest.TestCase):
-    def connection(self, applied=None, size_row=(123, 4096, "r")):
+    def connection(self, applied=None, *, estimate=123, catalog_rows=_DEFAULT,
+                   count_rows=((12345, 123),), read_only=("on",), failure=None,
+                   metadata=_DEFAULT, version=160006, maximum=("63",)):
         probe = probe_module()
         executed = []
         class Cursor:
+            pgresult = None
+            identity = ("public", "trace")
             def __enter__(self): return self
             def __exit__(self, *args): pass
-            def execute(self, query, params=None):
+            def execute(self, query, params=None, **kwargs):
+                if isinstance(self.pgresult, FakePGResult):
+                    self.pgresult.expired = True
+                self.pgresult = None
                 executed.append((query, params))
                 self.query = query
-            def fetchone(self): return ("on",)
+                if failure and failure[0] in query:
+                    raise failure[1]
+                if query.startswith("SELECT t.tableoid"):
+                    assert kwargs == {"prepare": False}
+                    self.identity = tuple(query.split('"')[i] for i in (1, 3))
+                    self.pgresult = FakePGResult() if metadata is _DEFAULT else metadata
+            def fetchone(self):
+                return maximum if self.query == "SHOW max_identifier_length" else read_only
             def fetchmany(self, size):
-                return applied if self.query.startswith("SELECT app,name") else ([] if size_row is None else [size_row])
+                if self.query.startswith("SELECT app,name"):
+                    return applied
+                if size != 2:
+                    raise AssertionError("unbounded fetch")
+                if self.query.startswith("SELECT t.tableoid"):
+                    return count_rows
+                if "pg_catalog.pg_class" in self.query:
+                    return [("r", "p", False, False, *self.identity, False, 4096)] if catalog_rows is _DEFAULT else catalog_rows
+                # Allows isolated original-AST regressions without tracked swaps.
+                if "c.reltuples::bigint" in self.query:
+                    return [(estimate, 4096, "r")]
+                raise AssertionError("unexpected query")
         class Connection:
+            info = SimpleNamespace(server_version=version)
             def __enter__(self): return self
             def __exit__(self, *args): pass
             def cursor(self): return Cursor()
@@ -200,31 +246,206 @@ class PostgresReadOnlyTests(unittest.TestCase):
         probe, conn, queries = self.connection(list(reversed(expected)))
         with patch.object(probe, "postgres_connection", return_value=conn):
             self.assertEqual(probe.postgres_migrations(expected), manifest_hash(expected))
+        self.assertEqual(queries[0][0], "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         self.assertEqual(queries[-1], ("ROLLBACK", None))
 
-    def test_sizes_use_estimates_and_total_relation_size_parameterized(self):
-        probe, conn, queries = self.connection()
-        with patch.object(probe, "postgres_connection", return_value=conn):
-            self.assertEqual(probe.postgres_table_sizes(["public.tracer"]), [{"engine": "postgres", "table": "public.tracer", "rows": 123, "bytes": 4096}])
-        query, params = next((q, p) for q, p in queries if "pg_class" in q)
-        self.assertIn("pg_total_relation_size", query)
-        self.assertEqual(params, ("public", "tracer"))
-        self.assertNotIn("public.tracer", query)
-        self.assertTrue(all(q.startswith(("SELECT ", "SHOW ", "SET TRANSACTION ", "ROLLBACK")) for q, _ in queries))
-        self.assertEqual(queries[-1][0], "ROLLBACK")
+    def test_unknown_and_stale_estimates_always_use_actual_count_and_total_bytes(self):
+        for estimate, actual in ((-1, 0), (-1, 17), (0, 19), (2, 123), (999, 0)):
+            for kind in ("r", "m"):
+                for persistence in ("p", "u"):
+                    with self.subTest(estimate=estimate, actual=actual, kind=kind, persistence=persistence):
+                        probe, conn, queries = self.connection(estimate=estimate,
+                            catalog_rows=[(kind, persistence, False, False, "public", "tracer", False, 4096)],
+                            count_rows=[(12345, actual)] if actual else [])
+                        with patch.object(probe, "postgres_connection", return_value=conn):
+                            self.assertEqual(probe.postgres_table_sizes(["public.tracer"]), [
+                                {"engine": "postgres", "table": "public.tracer", "rows": actual, "bytes": 4096}])
+                        query, params = next((q, p) for q, p in queries if "pg_class" in q)
+                        self.assertIn("pg_catalog.pg_total_relation_size(c.oid)", query)
+                        self.assertIn("WHERE c.oid=%s::pg_catalog.oid", query)
+                        self.assertIn("i.inhparent=c.oid OR i.inhrelid=c.oid", query)
+                        self.assertNotIn("reltuples", query)
+                        self.assertEqual(params, (12345,))
+                        self.assertNotIn("public.tracer", query)
+                        self.assertEqual(queries, [
+                            ("SET TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY", None),
+                            ("SET LOCAL row_security=off", None), ("SET LOCAL search_path=pg_catalog", None),
+                            ("SHOW transaction_read_only", None), ("SHOW max_identifier_length", None),
+                            ('SELECT t.tableoid, pg_catalog.count(*) FROM ONLY "public"."tracer" AS t '
+                             'TABLESAMPLE pg_catalog.system(100) GROUP BY t.tableoid LIMIT 2', None),
+                            (query, params), ("ROLLBACK", None)])
 
-    def test_unknown_size_missing_partitioned_and_boolean_are_not_zero(self):
-        for row in (None, (-1, 10, "r"), (1, 2, "p"), (True, 100, "r"), (1, -1, "r")):
-            probe, conn, _ = self.connection(size_row=row)
+    def test_all_relations_counted_with_quoted_identity_then_numeric_oid_in_one_transaction(self):
+        probe, conn, queries = self.connection(count_rows=((12345, 7),))
+        tables = ["public.trace", "other.trace", "select.from"]
+        with patch.object(probe, "postgres_connection", return_value=conn) as connect:
+            measured = probe.postgres_table_sizes(tables)
+        connect.assert_called_once_with()
+        self.assertEqual([row["table"] for row in measured], tables)
+        self.assertEqual([row["rows"] for row in measured], [7, 7, 7])
+        self.assertEqual([p for q, p in queries if "pg_class" in q], [(12345,)] * 3)
+        self.assertEqual([q for q, _ in queries if "count(*)" in q], [
+            'SELECT t.tableoid, pg_catalog.count(*) FROM ONLY "{}"."{}" AS t '
+            'TABLESAMPLE pg_catalog.system(100) GROUP BY t.tableoid LIMIT 2'.format(*name.split('.'))
+            for name in tables])
+        self.assertEqual(sum(q.startswith("SET TRANSACTION") for q, _ in queries), 1)
+        self.assertEqual(queries.count(("ROLLBACK", None)), 1)
+
+    def test_actual_counts_still_refuse_signed_reference_row_or_byte_overflow(self):
+        from dataclasses import replace
+        from deploy.update.contracts import HostTableSize
+        from deploy.tests.test_update_bootstrap_envelope_contract import fixture, host as observation, estimate as admit
+        _, _, reference = fixture()
+        before = canonical_json(reference)
+        for estimate, actual, size, allowed in ((-1, 0, 500, True), (0, 100000, 1000, True),
+                                               (0, 100001, 500, False), (2, 100001, 500, False),
+                                               (1, 0, 1001, False)):
+            with self.subTest(estimate=estimate, actual=actual, size=size):
+                probe, conn, _ = self.connection(estimate=estimate,
+                    count_rows=[(12345, actual)] if actual else [],
+                    catalog_rows=[("r", "p", False, False, "public", "synthetic_table", False, size)])
+                with patch.object(probe, "postgres_connection", return_value=conn):
+                    measured = probe.postgres_table_sizes(["public.synthetic_table"])
+                sizes = replace(observation(), table_sizes=tuple(HostTableSize(**row) for row in measured))
+                decision = admit(reference, sizes)
+                self.assertEqual(decision.allowed, allowed)
+                if not allowed:
+                    self.assertEqual(decision.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+        self.assertEqual(canonical_json(reference), before)
+
+    def test_missing_unsupported_inherited_mismatched_and_malformed_catalog_refuses(self):
+        valid = ("r", "p", False, False, "public", "trace", False, 4096)
+        invalid = [None, True, {}, [], [valid, valid], [None], [True], [()], [valid[:-1]],
+                   [valid + ("extra",)], [dict(enumerate(valid))], ["abcdefgh"]]
+        changes = {0: ("p", "v", "f", "i", "", None, True), 1: ("t", "", None, True),
+                   2: (True, 0, None), 3: (True, 0, None), 4: ("renamed", None),
+                   5: ("renamed", None), 6: (True, 0, None),
+                   7: (None, True, -1, "4096", 4096.0, 9007199254740992)}
+        for index, values in changes.items():
+            for value in values:
+                row = list(valid); row[index] = value
+                invalid.append([row])
+        for catalog_rows in invalid:
+            with self.subTest(catalog_rows=catalog_rows):
+                probe, conn, queries = self.connection(catalog_rows=catalog_rows)
+                with patch.object(probe, "postgres_connection", return_value=conn), self.assertRaises(probe.ProbeError) as error:
+                    probe.postgres_table_sizes(["public.trace"])
+                self.assertEqual(str(error.exception), "restore_capacity_unknown")
+                self.assertEqual(queries[-1], ("ROLLBACK", None))
+
+    def test_invalid_origin_never_certifies_even_an_empty_result(self):
+        invalid = [None, SimpleNamespace(), SimpleNamespace(nfields=2), FakePGResult(nfields=1), FakePGResult(nfields=True)]
+        invalid += [FakePGResult(oid=v) for v in (0, -1, True, None, "12345", 12345.0, 4294967296)]
+        invalid += [FakePGResult(column=v) for v in (0, 1, -5, -6.0, None, True)]
+        for metadata in invalid:
+            with self.subTest(metadata=metadata):
+                probe, conn, queries = self.connection(metadata=metadata, count_rows=[])
+                with patch.object(probe, "postgres_connection", return_value=conn), self.assertRaises(probe.ProbeError):
+                    probe.postgres_table_sizes(["public.trace"])
+                self.assertFalse(any("pg_class" in q for q, _ in queries))
+                self.assertEqual(queries[-1], ("ROLLBACK", None))
+
+    def test_malformed_boolean_negative_and_out_of_range_counts_never_become_zero(self):
+        invalid = [None, True, {}, [(12345, 1), (12345, 2)], [None], [True], [()], [(12345,)],
+                   [(12345, 1, 2)], [{0: 12345, 1: 1}], ["12"]]
+        invalid += [[(12345, v)] for v in (True, -1, 0, None, "1", 1.0, float("nan"), 9007199254740992)]
+        invalid += [[(v, 1)] for v in (0, 54321, True, "12345", 12345.0)]
+        for counted in invalid:
+            with self.subTest(counted=counted):
+                probe, conn, queries = self.connection(count_rows=counted)
+                with patch.object(probe, "postgres_connection", return_value=conn), self.assertRaises(probe.ProbeError):
+                    probe.postgres_table_sizes(["public.trace"])
+                self.assertFalse(any("pg_class" in q for q, _ in queries))
+                self.assertEqual(queries[-1], ("ROLLBACK", None))
+
+    def test_read_only_and_pg16_must_be_confirmed_before_any_measurement(self):
+        invalid = [dict(read_only=v) for v in (None, ("off",), (True,), ("on", "extra"))]
+        invalid += [dict(version=v) for v in (None, True, "160000", 150000, 170000)]
+        for kwargs in invalid:
+            probe, conn, queries = self.connection(**kwargs)
+            with self.subTest(kwargs=kwargs), patch.object(probe, "postgres_connection", return_value=conn), self.assertRaises(probe.ProbeError):
+                probe.postgres_table_sizes(["public.trace"])
+            self.assertFalse(any(q.startswith("SELECT") for q, _ in queries))
+            self.assertEqual(queries[-1], ("ROLLBACK", None))
+
+    def test_identifier_limits_checked_for_entire_list_before_first_count(self):
+        for tables in (["public.safe", "public." + "x" * 64], ["s" * 64 + ".t"]):
+            probe, conn, queries = self.connection()
+            with patch.object(probe, "postgres_connection", return_value=conn), self.assertRaises(probe.ProbeError):
+                probe.postgres_table_sizes(tables)
+            self.assertFalse(any(q.startswith("SELECT") for q, _ in queries))
+        for maximum in (None, [], ("0",), (63,), (True,), ("63", "extra"), ("63x",)):
+            probe, conn, _ = self.connection(maximum=maximum)
             with patch.object(probe, "postgres_connection", return_value=conn), self.assertRaises(probe.ProbeError):
                 probe.postgres_table_sizes(["public.trace"])
+        probe, conn, _ = self.connection()
+        with patch.object(probe, "postgres_connection", return_value=conn):
+            self.assertEqual(probe.postgres_table_sizes(["public." + "x" * 63])[0]["rows"], 123)
+
+    def test_query_errors_rollback_without_publishing_partial_counts_or_retrying(self):
+        for sql in ("pg_total_relation_size", 'FROM ONLY "public"."second"'):
+            for error in (PermissionError("private"), TimeoutError("statement/lock timeout"), LookupError("relation unavailable")):
+                with self.subTest(sql=sql, error=type(error).__name__):
+                    probe, conn, queries = self.connection(failure=(sql, error))
+                    out = io.StringIO()
+                    with patch.object(probe, "postgres_connection", return_value=conn) as connect, \
+                            patch.object(probe, "fixed_environment"), patch.object(probe.signal, "alarm") as alarm, \
+                            contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as caught:
+                        probe.main({}, postgres_tables=["public.first", "public.second"], clickhouse_tables=[])
+                    self.assertEqual(caught.exception.code, 2)
+                    self.assertEqual(out.getvalue(), "")
+                    self.assertEqual(queries[-1], ("ROLLBACK", None))
+                    self.assertEqual(sum(sql in q for q, _ in queries), 1)
+                    connect.assert_called_once_with()
+                    alarm.assert_called_once_with(45)
+
+    def test_native_ci_gate_rejects_missing_or_nonisolated_prerequisites(self):
+        from deploy.tests import test_update_postgres_native as native
+        valid = {"FAGI_UPDATE_PG_NATIVE_TEST": "1", "GITHUB_ACTIONS": "true",
+                 "RUNNER_ENVIRONMENT": "github-hosted", "PGHOST": "127.0.0.1",
+                 "PGDATABASE": "updater_probe", "PGPORT": "5432", "PGUSER": "synthetic",
+                 "PGPASSWORD": "synthetic"}
+        with patch.dict(os.environ, valid, clear=True), patch.object(native.platform, "system", return_value="Linux"), \
+                patch.object(native.platform, "machine", return_value="x86_64"):
+            self.assertEqual(native.native_settings()["dbname"], "updater_probe")
+            for key in valid:
+                with self.subTest(missing=key), patch.dict(os.environ, {k: v for k, v in valid.items() if k != key}, clear=True), \
+                        self.assertRaises(RuntimeError):
+                    native.native_settings()
+            for key, value in (("PGHOST", "localhost"), ("PGDATABASE", "postgres"),
+                               ("RUNNER_ENVIRONMENT", "self-hosted"), ("PGPORT", "0"), ("PGPORT", "65536")):
+                with self.subTest(key=key, value=value), patch.dict(os.environ, {key: value}), self.assertRaises(RuntimeError):
+                    native.native_settings()
+            for name, value in (("system", "Darwin"), ("machine", "aarch64")):
+                with patch.object(native.platform, name, return_value=value), self.assertRaises(RuntimeError):
+                    native.native_settings()
+
+    def test_connection_budgets_and_default_readonly_are_unchanged(self):
+        from unittest.mock import Mock
+        probe = probe_module()
+        driver = SimpleNamespace(connect=Mock())
+        with patch.dict(sys.modules, {"psycopg": driver}), patch.dict(os.environ,
+                {"PG_DB": "fixture", "PG_USER": "fixture", "PG_PASSWORD": "secret"}):
+            probe.postgres_connection()
+        driver.connect.assert_called_once_with(host="postgres", port=5432, dbname="fixture",
+            user="fixture", password="secret", connect_timeout=5,
+            options="-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=1000")
 
     def test_table_identifier_injection_rejected_before_connect(self):
         probe, conn, _ = self.connection()
-        for values in (["public.x;DELETE"], ["trace"], ["public.trace\n"], ["Public.trace"], ["public.trace"] * 2, [True]):
-            with patch.object(probe, "postgres_connection", return_value=conn) as connect, self.assertRaises(probe.ProbeError):
+        for values in (["public.x;DELETE"], ["trace"], ["public.trace\n"], ["Public.trace"],
+                       ["public.trace"] * 2, [True], ['public.x"'], ['pub"lic.trace'],
+                       ["public.trace --"], ["public.trace.other"], ["public.tracé"],
+                       ["public.trace\x00"], ["public." + "x" * 129], "public.trace",
+                       {"public.trace"}, ["public.t" + str(i) for i in range(probe.MAX_TABLES + 1)],
+                       ["public.safe", "public.x;DELETE"]):
+            with self.subTest(values=values), patch.object(probe, "postgres_connection", return_value=conn) as connect, \
+                    self.assertRaises(probe.ProbeError):
                 probe.postgres_table_sizes(values)
             connect.assert_not_called()
+        with patch.object(probe, "postgres_connection") as connect:
+            self.assertEqual(probe.postgres_table_sizes([]), [])
+        connect.assert_not_called()
 
     def test_clickhouse_uses_POST_explicit_readonly_and_bounded_catalog_results(self):
         probe = probe_module()

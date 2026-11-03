@@ -30,7 +30,7 @@ MAX_OUTPUT = 4 * 1024 * 1024
 SOURCE_DIGESTS = {
     "daemon_storage.py": "5ff3278b2a92ea7a0fef2223c9f1c69806859504e02fae14e27ce955e547b8ef",
     "daemon_overlay2.py": "575b9968ad17d8126bf300ec9f029d34803a17822b595cd94e5d6cbd0ed4b84d",
-    "standalone.py": "4299b2283a836dfa56cc5eb68ff680c5a175250dab5fe043119c75958cd57131",
+    "standalone.py": "729b3b5c142b40c4d6f7a667bc8128c42f007f75aadde4997a362bc4f002037e",
     "volume_storage.py": "b4be2088a0fdf80fa82b3d92b0dd7766f9d73706cebe0a84e2a5cef5ab69a31a",
     "migration-apps.json": "136402e5cb9ea3a6cbf401749756137924e9847af42e98a7f8f7c103632f6e38",
     "automatic-layout.json": "99910d7fbef73f3a3d976c10b9d5ff06f9c1ce566f0b31aa15bbf83cbe2b07a4",

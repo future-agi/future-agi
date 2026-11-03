@@ -1,8 +1,9 @@
 """Bounded post-failure observations, NEVER admission or qualification evidence.
 
 No runner/lifecycle entry points. Use existing app exec, fixed shipping probe
-bytes and parameterized read-only catalog queries; never create a helper, count
-application rows, ANALYZE, or replace the shipping observer's unknown sizes.
+bytes and parameterized read-only catalog queries; never create a helper or
+ANALYZE. Catalog estimates stay distinct from the shipping observer's counts;
+failed shipping measurements never fall back to those estimates.
 """
 from contextlib import contextmanager, ExitStack
 from datetime import datetime, timezone
@@ -156,7 +157,7 @@ def completed_admission_block(status, state, version, *, checked_after, store):
 
 # Executed after the fixed shipping standalone probe definitions in an isolated
 # existing app process. No Django/site startup and no helper-container lifecycle.
-# All query identifiers are VALUES. SQL rows are reduced before leaving the app.
+# Catalog query identifiers are VALUES. SQL rows are reduced before leaving the app.
 CATALOG_PROBE = r'''
 def catalog_sample(tables):
     query = ("SELECT c.relkind,c.reltuples,pg_total_relation_size(c.oid) "

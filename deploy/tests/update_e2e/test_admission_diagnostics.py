@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from deploy.tests.update_e2e import admission_diagnostics as diag
 from deploy.tests.test_update_bootstrap_envelope_contract import fixture
+from deploy.tests.test_update_standalone_state import FakePGResult
 from deploy.update.runner_state import StoreBusy
 
 
@@ -121,7 +122,7 @@ class ProjectionTests(unittest.TestCase):
 
 
 class ProbeTests(unittest.TestCase):
-    def probe(self, count, *, schema=True, found=True):
+    def probe(self, count, *, actual_count=17, schema=True, found=True, kind='r'):
         # Execute the shipping read-only table API, NOT a substitute estimate.
         namespace = {}
         source = diag.fixed_source('standalone.py').decode() + '\n' + diag.CATALOG_PROBE.rsplit('diagnostic_main()', 1)[0]
@@ -130,16 +131,34 @@ class ProbeTests(unittest.TestCase):
         class Cursor:
             def __enter__(self): return self
             def __exit__(self, *args): pass
-            def execute(self, sql, params=None):
+            pgresult = None
+            def execute(self, sql, params=None, **kwargs):
                 calls.append((sql, params)); self.sql = sql
-            def fetchone(self): return ('on',)
+                if isinstance(self.pgresult, FakePGResult):
+                    self.pgresult.expired = True
+                self.pgresult = None
+                if sql.startswith('SELECT t.tableoid'):
+                    assert kwargs == {'prepare': False}
+                    if isinstance(actual_count, Exception):
+                        raise actual_count
+                    if not schema or not found or kind in ('v', 'f'):
+                        raise namespace['ProbeError']('restore_capacity_unknown')
+                    self.pgresult = FakePGResult()
+            def fetchone(self):
+                return ('63',) if self.sql == 'SHOW max_identifier_length' else ('on',)
             def fetchmany(self, limit):
                 if limit != 2: raise AssertionError('unbounded fetch')
                 if 'current_database()' in self.sql: return [(True, True, schema)]
-                if not found: return []
-                if 'c.relkind,c.reltuples' in self.sql: return [('r', count, 32)]
-                return [(count, 32, 'r')]
+                if not schema or not found: return []
+                if 'c.relkind,c.reltuples' in self.sql: return [(kind, count, 32)]
+                if 'pg_catalog.pg_class' in self.sql:
+                    assert calls[-1][1] == (12345,)
+                    return [(kind, 'p', False, False, 'public', 'synthetic_table', False, 32)]
+                if self.sql.startswith('SELECT t.tableoid'):
+                    return [] if type(actual_count) is int and actual_count == 0 else [(12345, actual_count)]
+                raise AssertionError('unexpected query')
         class DB:
+            info = SimpleNamespace(server_version=160006)
             def __enter__(self): return self
             def __exit__(self, *args): pass
             def cursor(self): return Cursor()
@@ -157,18 +176,48 @@ class ProbeTests(unittest.TestCase):
         result = diag.closed_probe_result(output.getvalue().encode(), reference())
         return result, calls
 
-    def test_real_shipping_probe_refuses_unknown_but_accepts_measured_zero(self):
-        result, calls = self.probe(-1)
-        self.assertEqual(result['postgres'][0]['estimate_state'], 'unknown')
-        self.assertEqual(result['shipping_table_observer']['status'], 'refused')
-        self.assertEqual(result['shipping_table_observer']['reason_code'], 'restore_capacity_unknown')
-        self.assertTrue(result['shipping_table_observer']['frames'])
-        zero, _ = self.probe(0)
-        self.assertEqual(zero['shipping_table_observer']['tables'][0]['rows'], 0)
-        self.assertIn(('public', 'synthetic_table'), [p for _, p in calls])
-        self.assertTrue(all('synthetic_table' not in sql for sql, _ in calls))
-        self.assertEqual(sum(sql == 'SHOW transaction_read_only' for sql, _ in calls), 2)
-        self.assertTrue(all(sql.startswith(('SET TRANSACTION', 'SHOW ', 'SELECT ')) for sql, _ in calls))
+    def test_catalog_retains_unknown_while_shipping_measures_empty_and_nonempty_counts(self):
+        for actual in (0, 17):
+            with self.subTest(actual=actual):
+                result, calls = self.probe(-1, actual_count=actual)
+                self.assertEqual(result['postgres'][0]['estimate_state'], 'unknown')
+                self.assertEqual(result['postgres'][0]['reltuples'], -1)
+                self.assertEqual(result['shipping_table_observer'], dict(status='measured', tables=[dict(
+                    engine='postgres', table='public.synthetic_table', rows=actual, bytes=32)]))
+                self.assertIn(('public', 'synthetic_table'), [p for _, p in calls])
+                counts = [sql for sql, _ in calls if 'synthetic_table' in sql]
+                self.assertEqual(counts, ['SELECT t.tableoid, pg_catalog.count(*) FROM ONLY "public"."synthetic_table" AS t '
+                                          'TABLESAMPLE pg_catalog.system(100) GROUP BY t.tableoid LIMIT 2'])
+                self.assertEqual(sum(sql == 'SHOW transaction_read_only' for sql, _ in calls), 2)
+                self.assertTrue(all(sql.startswith(('SET TRANSACTION', 'SET LOCAL', 'SHOW ', 'SELECT ')) for sql, _ in calls))
+
+    def test_stale_positive_and_zero_catalog_estimates_do_not_replace_actual_counts(self):
+        for estimated, actual, state in ((0, 100001, 'estimated_zero'), (1, 100001, 'estimated'),
+                                         (99, 0, 'estimated')):
+            with self.subTest(estimated=estimated, actual=actual):
+                result, _ = self.probe(estimated, actual_count=actual)
+                self.assertEqual(result['postgres'][0]['estimate_state'], state)
+                self.assertEqual(result['postgres'][0]['reltuples'], estimated)
+                self.assertEqual(result['shipping_table_observer']['tables'][0]['rows'], actual)
+                self.assertEqual(result['shipping_table_observer']['tables'][0]['bytes'], 32)
+
+    def test_failed_count_keeps_catalog_but_never_reports_it_as_a_shipping_measurement(self):
+        for actual in (PermissionError('private'), TimeoutError('private'), LookupError('private'), -1, True, '17'):
+            with self.subTest(actual=actual):
+                result, calls = self.probe(0, actual_count=actual)
+                self.assertEqual(result['postgres'][0]['estimate_state'], 'estimated_zero')
+                shipping = result['shipping_table_observer']
+                self.assertEqual(shipping['status'], 'unavailable' if isinstance(actual, Exception) else 'refused')
+                self.assertNotIn('tables', shipping)
+                self.assertNotIn('private', json.dumps(result))
+                self.assertEqual(sum('count(*)' in sql for sql, _ in calls), 1)
+
+    def test_unsupported_kind_never_publishes_measurements(self):
+        for kind in ('p', 'v', 'f'):
+            result, calls = self.probe(0, kind=kind)
+            self.assertEqual(result['postgres'][0]['estimate_state'], 'unsupported_kind')
+            self.assertEqual(result['shipping_table_observer']['status'], 'refused')
+            self.assertEqual(sum('count(*)' in sql for sql, _ in calls), 1)
 
     def test_missing_schema_or_relation_refuses_shipping_without_fake_zero(self):
         for schema in (True, False):
@@ -188,6 +237,9 @@ class ProbeTests(unittest.TestCase):
         self.assertIn('connect_timeout=5', shipping)
         self.assertIn('statement_timeout=5000', shipping)
         self.assertIn('lock_timeout=1000', shipping)
+        self.assertIn('signal.alarm(45)', shipping)
+        self.assertIn('SELECT t.tableoid, pg_catalog.count(*) FROM ONLY', shipping)
+        self.assertIn('TABLESAMPLE pg_catalog.system(100)', shipping)
 
     def test_real_compose_discovery_defaults_to_registered_environment(self):
         from deploy.update import orchestrator
