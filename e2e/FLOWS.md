@@ -1781,7 +1781,7 @@
 ### OBS-E2E-049 — a user's session tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
 **Goal:** A user who reopens one end user's session tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:962`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:965`  
 **Tags:** —
 
 **User steps:**
@@ -1802,7 +1802,7 @@
 ### OBS-E2E-050 — a user's trace tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
 **Goal:** A user who reopens one end user's trace tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:962`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:965`  
 **Tags:** —
 
 **User steps:**
@@ -1823,7 +1823,7 @@
 ### OBS-E2E-051 — a user's span tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
 **Goal:** A user who reopens one end user's span tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:962`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:965`  
 **Tags:** —
 
 **User steps:**

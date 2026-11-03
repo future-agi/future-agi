@@ -873,7 +873,10 @@ scopeTest('OBS-E2E-048: the workspace Users list opens a preset date fresh from 
   const actor = scopeActors.owners[0];
   const context = await scopeActors.openContext(browser, scopeActors.ownerA);
   const page = await context.newPage();
-  await page.setViewportSize({ width: 1440, height: 900 });
+  // At 900px high AG Grid's overscan mounts the entire 25-row page. Keep a
+  // desktop width but a shorter viewport so the final virtualization guard
+  // proves that scrolling really reveals a previously unmounted target.
+  await page.setViewportSize({ width: 1440, height: 640 });
   const req = await request.newContext();
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const stored = staleRange(400);
