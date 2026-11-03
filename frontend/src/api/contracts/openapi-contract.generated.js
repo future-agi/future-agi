@@ -39167,7 +39167,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/SQLRun",
+          $ref: "#/definitions/SQLQueryInput",
         },
         queryParameters: {},
         responses: {
@@ -39232,6 +39232,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
               format: "uuid",
             },
           },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 10000,
+              default: 0,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 1000,
+            },
+          },
         },
         responses: {
           200: {
@@ -39287,6 +39304,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             type: "file",
+          },
+          409: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          410: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -76981,6 +77007,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "state",
         "created_at",
         "expires_at",
+        "finished_at",
         "error",
         "result",
         "expired",
@@ -77016,6 +77043,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Expires at",
           type: "string",
           format: "date-time",
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        reused: {
+          title: "Reused",
+          type: "boolean",
         },
         error: {
           title: "Error",
@@ -77057,6 +77094,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SQLQueryInput: {
+      required: ["project_id", "sql", "start", "end"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          maxLength: 32768,
+          minLength: 1,
+        },
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
     SQLRun: {
       required: ["project_id", "sql", "start", "end"],
       type: "object",
@@ -77081,6 +77145,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "End",
           type: "string",
           format: "date-time",
+        },
+        reuse: {
+          title: "Reuse",
+          type: "boolean",
+          default: true,
         },
       },
     },
@@ -105313,6 +105382,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         elapsed_ms: {
           title: "Elapsed ms",
           type: "integer",
+        },
+        offset: {
+          title: "Offset",
+          type: "integer",
+        },
+        next_offset: {
+          title: "Next offset",
+          type: "integer",
+          "x-nullable": true,
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+        page_row_count: {
+          title: "Page row count",
+          type: "integer",
+        },
+        previewed: {
+          title: "Previewed",
+          type: "boolean",
+        },
+        retrieval_note: {
+          title: "Retrieval note",
+          type: "string",
         },
       },
     },

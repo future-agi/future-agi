@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "690bd0340cd870e4e88dd7000a9edba6f8291bbc7492ff74dce3c37739f00d2c",
+  "source_contract_sha256": "605cebb40a1b6df455e875da595a41511413d23e9d083806d03bb1def7bde8e5",
   "tool_count": 111,
   "tools": [
     {
@@ -11047,6 +11047,11 @@
             "title": "End",
             "type": "string",
             "format": "date-time"
+          },
+          "reuse": {
+            "title": "Reuse",
+            "type": "boolean",
+            "default": true
           }
         },
         "additionalProperties": false,
@@ -11073,7 +11078,8 @@
             "project_id",
             "sql",
             "start",
-            "end"
+            "end",
+            "reuse"
           ]
         }
       },
@@ -11086,7 +11092,7 @@
     },
     {
       "name": "get_sql_result",
-      "description": "Poll a SQL job owned by the caller. Results expire after 24 hours; current project membership is required on every poll.",
+      "description": "Poll a SQL job owned by the caller. Defaults to 100 rows within a bounded byte page; pass result.next_offset as offset until has_more is false. Wide rows are marked previewed; use the authenticated REST download for full cells. Results expire after 24 hours; current project membership is required on every page.",
       "group": "observability",
       "inputSchema": {
         "type": "object",
@@ -11097,6 +11103,18 @@
           "project_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "description": "Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells."
           }
         },
         "additionalProperties": false,
@@ -11119,7 +11137,9 @@
             "id"
           ],
           "query": [
-            "project_id"
+            "project_id",
+            "offset",
+            "limit"
           ],
           "body": []
         }

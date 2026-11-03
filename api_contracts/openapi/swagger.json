@@ -69747,7 +69747,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/SQLRun"
+                            "$ref": "#/definitions/SQLQueryInput"
                         }
                     }
                 ],
@@ -69856,6 +69856,24 @@
                         "required": true,
                         "type": "string",
                         "format": "uuid"
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "maximum": 10000,
+                        "minimum": 0
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "description": "Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells.",
+                        "required": false,
+                        "type": "integer",
+                        "maximum": 1000,
+                        "minimum": 1
                     }
                 ],
                 "responses": {
@@ -69958,6 +69976,24 @@
                         "description": "Bounded result download",
                         "schema": {
                             "type": "file"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "410": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
                         }
                     },
                     "default": {
@@ -156451,6 +156487,31 @@
                 "elapsed_ms": {
                     "title": "Elapsed ms",
                     "type": "integer"
+                },
+                "offset": {
+                    "title": "Offset",
+                    "type": "integer"
+                },
+                "next_offset": {
+                    "title": "Next offset",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "has_more": {
+                    "title": "Has more",
+                    "type": "boolean"
+                },
+                "page_row_count": {
+                    "title": "Page row count",
+                    "type": "integer"
+                },
+                "previewed": {
+                    "title": "Previewed",
+                    "type": "boolean"
+                },
+                "retrieval_note": {
+                    "title": "Retrieval note",
+                    "type": "string"
                 }
             }
         },
@@ -156462,6 +156523,7 @@
                 "state",
                 "created_at",
                 "expires_at",
+                "finished_at",
                 "error",
                 "result",
                 "expired"
@@ -156503,6 +156565,16 @@
                     "title": "Expires at",
                     "type": "string",
                     "format": "date-time"
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "reused": {
+                    "title": "Reused",
+                    "type": "boolean"
                 },
                 "error": {
                     "title": "Error",
@@ -156658,7 +156730,7 @@
                 }
             }
         },
-        "SQLRun": {
+        "SQLQueryInput": {
             "required": [
                 "project_id",
                 "sql",
@@ -156801,6 +156873,43 @@
                     "title": "End",
                     "type": "string",
                     "format": "date-time"
+                }
+            }
+        },
+        "SQLRun": {
+            "required": [
+                "project_id",
+                "sql",
+                "start",
+                "end"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "maxLength": 32768,
+                    "minLength": 1
+                },
+                "start": {
+                    "title": "Start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "end": {
+                    "title": "End",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "reuse": {
+                    "title": "Reuse",
+                    "type": "boolean",
+                    "default": true
                 }
             }
         },

@@ -1099,6 +1099,7 @@ import type {
   SQLExecutionApi,
   SQLHistoryApi,
   SQLProjectApi,
+  SQLQueryInputApi,
   SQLRunApi,
   SQLRunSavedApi,
   SQLSaveApi,
@@ -80619,7 +80620,7 @@ export const getTracerSqlQueryEstimateUrl = () => {
  * Advisory index estimate of a query; never admits or blocks a run.
  */
 export const tracerSqlQueryEstimate = async (
-  sQLRunApi: SQLRunApi,
+  sQLQueryInputApi: SQLQueryInputApi,
   options?: RequestInit,
 ): Promise<tracerSqlQueryEstimateResponse> => {
   return apiMutator<tracerSqlQueryEstimateResponse>(
@@ -80628,7 +80629,7 @@ export const tracerSqlQueryEstimate = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(sQLRunApi),
+      body: JSON.stringify(sQLQueryInputApi),
     },
   );
 };
@@ -80833,19 +80834,38 @@ export type tracerSqlQueryDownloadResponse200 = {
   status: 200;
 };
 
+export type tracerSqlQueryDownloadResponse409 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 409;
+};
+
+export type tracerSqlQueryDownloadResponse410 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 410;
+};
+
+export type tracerSqlQueryDownloadResponse503 = {
+  data: ManagementAPIErrorResponseApi;
+  status: 503;
+};
+
 export type tracerSqlQueryDownloadResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 409 | 410 | 503>;
 };
 
 export type tracerSqlQueryDownloadResponseSuccess =
   tracerSqlQueryDownloadResponse200 & {
     headers: Headers;
   };
-export type tracerSqlQueryDownloadResponseError =
-  tracerSqlQueryDownloadResponseDefault & {
-    headers: Headers;
-  };
+export type tracerSqlQueryDownloadResponseError = (
+  | tracerSqlQueryDownloadResponse409
+  | tracerSqlQueryDownloadResponse410
+  | tracerSqlQueryDownloadResponse503
+  | tracerSqlQueryDownloadResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerSqlQueryDownloadResponse =
   | tracerSqlQueryDownloadResponseSuccess

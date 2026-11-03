@@ -12,6 +12,7 @@ from rest_framework.viewsets import ViewSet
 from accounts.authentication import workspace_read_only
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
+from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 from tracer.serializers.sql_query import (
     SQLCatalogSerializer,
     SQLEstimateSerializer,
@@ -20,6 +21,8 @@ from tracer.serializers.sql_query import (
     SQLHistorySerializer,
     SQLListSerializer,
     SQLProjectSerializer,
+    SQLQueryInputSerializer,
+    SQLResultQuerySerializer,
     SQLRunSavedSerializer,
     SQLRunSerializer,
     SQLSavedListSerializer,
@@ -38,6 +41,7 @@ from tracer.sql_workbench.catalog import (
 )
 from tracer.sql_workbench.compiler import MAX_RESULT_ROWS, UnsafeQuery
 from tracer.sql_workbench.examples import examples
+from tracer.sql_workbench.result_paging import page_snapshot
 from tracer.sql_workbench.runner import QueryUnavailable, derived_metrics_availability
 
 
@@ -69,19 +73,27 @@ class SQLViewMixin:
             getattr(getattr(self.request, "workspace", None), "id", None),
         )
 
+    def execution_response(self, snapshot, *, status=200, offset=0, limit=None):
+        if limit is None and getattr(self.request, "mcp_response", False):
+            limit = 100
+        if limit is not None:
+            snapshot = page_snapshot(snapshot, offset=offset, limit=limit)
+        return Response(SQLExecutionSerializer(snapshot).data, status=status)
+
     def handle_exception(self, exc):
         if isinstance(exc, AccessDenied):
             exc = PermissionDenied(str(exc))
-        elif isinstance(exc, (UnsafeQuery, ValueError)):
+        elif isinstance(exc, UnsafeQuery | ValueError):
             exc = ValidationError({"detail": str(exc)})
-        elif isinstance(exc, (QueryUnavailable, CatalogUnavailable)):
+        elif isinstance(exc, QueryUnavailable | CatalogUnavailable):
+            return Response(build_error_envelope(str(exc), status_code=503), status=503)
+        elif isinstance(exc, service.ResultNotReady | service.ResultExpired):
+            status = 410 if isinstance(exc, service.ResultExpired) else 409
             return Response(
-                build_error_envelope(str(exc), status_code=503), status=503
+                build_error_envelope(str(exc), status_code=status), status=status
             )
         elif isinstance(exc, service.AdmissionFull):
-            return Response(
-                build_error_envelope(str(exc), status_code=429), status=429
-            )
+            return Response(build_error_envelope(str(exc), status_code=429), status=429)
         return super().handle_exception(exc)
 
 
@@ -125,12 +137,15 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
         request_serializer=SQLRunSerializer, responses={202: SQLExecutionSerializer}
     )
     def run(self, request):
-        job = service.submit(self.actor(), **request.validated_data)
-        return Response(service.snapshot(job), status=202)
+        receipt = service.submit_receipt(self.actor(), **request.validated_data)
+        return self.execution_response(
+            {**service.snapshot(receipt.job), "reused": receipt.reused}, status=202
+        )
 
     @action(detail=False, methods=["post"])
     @validated_request(
-        request_serializer=SQLRunSerializer, responses={200: SQLEstimateSerializer}
+        request_serializer=SQLQueryInputSerializer,
+        responses={200: SQLEstimateSerializer},
     )
     def estimate(self, request):
         """Advisory index estimate of a query; never admits or blocks a run."""
@@ -158,24 +173,30 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
             # execution, even if the editor just ran this same definition.
             reuse=False,
         )
-        return Response(service.snapshot(job), status=202)
+        return self.execution_response(
+            {**service.snapshot(job), "reused": False}, status=202
+        )
 
     @validated_request(
         query_serializer=SQLListSerializer, responses={200: SQLHistorySerializer}
     )
     def list(self, request):
-        return Response(service.history(self.actor(), **request.validated_query_data))
+        return Response(
+            SQLHistorySerializer(
+                service.history(self.actor(), **request.validated_query_data)
+            ).data
+        )
 
     @validated_request(
-        query_serializer=SQLProjectSerializer, responses={200: SQLExecutionSerializer}
+        query_serializer=SQLResultQuerySerializer,
+        responses={200: SQLExecutionSerializer},
     )
     def retrieve(self, request, pk=None):
-        return Response(
-            service.snapshot(
-                service.execution(
-                    self.actor(), request.validated_query_data["project_id"], pk
-                )
-            )
+        data = request.validated_query_data
+        return self.execution_response(
+            service.snapshot(service.execution(self.actor(), data["project_id"], pk)),
+            offset=data["offset"],
+            limit=data.get("limit"),
         )
 
     @action(detail=True, methods=["post"])
@@ -183,7 +204,7 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
         request_serializer=SQLProjectSerializer, responses={200: SQLExecutionSerializer}
     )
     def cancel(self, request, pk=None):
-        return Response(
+        return self.execution_response(
             service.cancel(self.actor(), request.validated_data["project_id"], pk)
         )
 
@@ -193,7 +214,10 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
         responses={
             200: openapi.Response(
                 "Bounded result download", schema=openapi.Schema(type=openapi.TYPE_FILE)
-            )
+            ),
+            409: ManagementAPIErrorResponseSerializer,
+            410: ManagementAPIErrorResponseSerializer,
+            503: ManagementAPIErrorResponseSerializer,
         },
     )
     def download(self, request, pk=None):

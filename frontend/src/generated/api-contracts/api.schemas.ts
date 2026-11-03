@@ -30415,6 +30415,12 @@ export interface SQLResultApi {
   row_count?: number;
   result_bytes?: number;
   elapsed_ms?: number;
+  offset?: number;
+  next_offset?: number;
+  has_more?: boolean;
+  page_row_count?: number;
+  previewed?: boolean;
+  retrieval_note?: string;
 }
 
 export interface SQLExecutionApi {
@@ -30425,6 +30431,8 @@ export interface SQLExecutionApi {
   state: SQLExecutionApiState;
   created_at: string;
   expires_at: string;
+  finished_at: string;
+  reused?: boolean;
   error: string;
   result: SQLResultApi;
   expired: boolean;
@@ -30468,7 +30476,7 @@ export interface SQLCatalogApi {
   can_save: boolean;
 }
 
-export interface SQLRunApi {
+export interface SQLQueryInputApi {
   project_id: string;
   /**
    * @minLength 1
@@ -30511,6 +30519,18 @@ export interface SQLRunSavedApi {
   saved_query_id: string;
   start?: string;
   end?: string;
+}
+
+export interface SQLRunApi {
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 32768
+   */
+  sql: string;
+  start: string;
+  end: string;
+  reuse?: boolean;
 }
 
 export interface SQLProjectApi {
@@ -38052,6 +38072,17 @@ export type TracerSqlQueryCatalogParams = {
 
 export type TracerSqlQueryReadParams = {
   project_id: string;
+  /**
+   * @minimum 0
+   * @maximum 10000
+   */
+  offset?: number;
+  /**
+   * Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells.
+   * @minimum 1
+   * @maximum 1000
+   */
+  limit?: number;
 };
 
 export type TracerSqlQueryDownloadParams = {

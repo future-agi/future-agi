@@ -67027,6 +67027,8 @@ export const TracerSqlQueryListResponse = zod.object({
       ]),
       created_at: zod.string().datetime({ offset: true }),
       expires_at: zod.string().datetime({ offset: true }),
+      finished_at: zod.string().datetime({ offset: true }),
+      reused: zod.boolean().optional(),
       error: zod.string(),
       result: zod.object({
         columns: zod
@@ -67042,6 +67044,12 @@ export const TracerSqlQueryListResponse = zod.object({
         row_count: zod.number().optional(),
         result_bytes: zod.number().optional(),
         elapsed_ms: zod.number().optional(),
+        offset: zod.number().optional(),
+        next_offset: zod.number().optional(),
+        has_more: zod.boolean().optional(),
+        page_row_count: zod.number().optional(),
+        previewed: zod.boolean().optional(),
+        retrieval_note: zod.string().optional(),
       }),
       expired: zod.boolean(),
     }),
@@ -67132,11 +67140,14 @@ export const TracerSqlQueryRunSavedBody = zod.object({
  */
 export const tracerSqlQueryRunBodySqlMax = 32768;
 
+export const tracerSqlQueryRunBodyReuseDefault = true;
+
 export const TracerSqlQueryRunBody = zod.object({
   project_id: zod.string().uuid(),
   sql: zod.string().min(1).max(tracerSqlQueryRunBodySqlMax),
   start: zod.string().datetime({ offset: true }),
   end: zod.string().datetime({ offset: true }),
+  reuse: zod.boolean().default(tracerSqlQueryRunBodyReuseDefault),
 });
 
 /**
@@ -67146,8 +67157,27 @@ export const TracerSqlQueryReadParams = zod.object({
   id: zod.string(),
 });
 
+export const tracerSqlQueryReadQueryOffsetDefault = 0;
+export const tracerSqlQueryReadQueryOffsetMin = 0;
+export const tracerSqlQueryReadQueryOffsetMax = 10000;
+
+export const tracerSqlQueryReadQueryLimitMax = 1000;
+
 export const TracerSqlQueryReadQueryParams = zod.object({
   project_id: zod.string().uuid(),
+  offset: zod
+    .number()
+    .min(tracerSqlQueryReadQueryOffsetMin)
+    .max(tracerSqlQueryReadQueryOffsetMax)
+    .default(tracerSqlQueryReadQueryOffsetDefault),
+  limit: zod
+    .number()
+    .min(1)
+    .max(tracerSqlQueryReadQueryLimitMax)
+    .optional()
+    .describe(
+      "Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells.",
+    ),
 });
 
 export const TracerSqlQueryReadResponse = zod.object({
@@ -67157,6 +67187,8 @@ export const TracerSqlQueryReadResponse = zod.object({
   state: zod.enum(["queued", "running", "succeeded", "failed", "cancelled"]),
   created_at: zod.string().datetime({ offset: true }),
   expires_at: zod.string().datetime({ offset: true }),
+  finished_at: zod.string().datetime({ offset: true }),
+  reused: zod.boolean().optional(),
   error: zod.string(),
   result: zod.object({
     columns: zod
@@ -67172,6 +67204,12 @@ export const TracerSqlQueryReadResponse = zod.object({
     row_count: zod.number().optional(),
     result_bytes: zod.number().optional(),
     elapsed_ms: zod.number().optional(),
+    offset: zod.number().optional(),
+    next_offset: zod.number().optional(),
+    has_more: zod.boolean().optional(),
+    page_row_count: zod.number().optional(),
+    previewed: zod.boolean().optional(),
+    retrieval_note: zod.string().optional(),
   }),
   expired: zod.boolean(),
 });
@@ -67194,6 +67232,8 @@ export const TracerSqlQueryCancelResponse = zod.object({
   state: zod.enum(["queued", "running", "succeeded", "failed", "cancelled"]),
   created_at: zod.string().datetime({ offset: true }),
   expires_at: zod.string().datetime({ offset: true }),
+  finished_at: zod.string().datetime({ offset: true }),
+  reused: zod.boolean().optional(),
   error: zod.string(),
   result: zod.object({
     columns: zod
@@ -67209,6 +67249,12 @@ export const TracerSqlQueryCancelResponse = zod.object({
     row_count: zod.number().optional(),
     result_bytes: zod.number().optional(),
     elapsed_ms: zod.number().optional(),
+    offset: zod.number().optional(),
+    next_offset: zod.number().optional(),
+    has_more: zod.boolean().optional(),
+    page_row_count: zod.number().optional(),
+    previewed: zod.boolean().optional(),
+    retrieval_note: zod.string().optional(),
   }),
   expired: zod.boolean(),
 });
