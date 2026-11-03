@@ -84,16 +84,14 @@ describe("CallWorkersPanel", () => {
     ).toBeInTheDocument();
     // What was seen, and no scope note when the call stayed within it.
     expect(
-      screen.getByText("Seen: one level, one at a time"),
+      screen.getByText("One level, one hand-off at a time"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Checked for one coordinator/)).toBeNull();
     expect(screen.getByText("Please refund order 1042")).toBeInTheDocument();
     expect(
       screen.getByText("Delegated to Order-lookup worker: inspect order 1042"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Order-lookup worker · get_order/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/^get_order/)).toBeInTheDocument();
     expect(screen.getByText(/\(error\)/)).toBeInTheDocument();
     expect(
       screen.getByText("Order-lookup worker returned"),
@@ -118,6 +116,76 @@ describe("CallWorkersPanel", () => {
       );
   });
 
+  it("opens with what the tab shows, and names only the tool inside its worker's hand-off", () => {
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    expect(
+      screen.getByText(
+        "How the coordinator handed work to other agents in this call: each hand-off, the tools that agent used, and what it returned.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("get_order (error)")).toBeInTheDocument();
+    expect(screen.queryByText(/Order-lookup worker · get_order/)).toBeNull();
+    // A call outside any hand-off still says whose it was.
+    expect(screen.getByText("Coordinator · send_reply")).toBeInTheDocument();
+  });
+
+  it("folds a long answer to a few lines until asked for the rest", () => {
+    const answer = Array.from(
+      { length: 12 },
+      (_, index) => `line ${index + 1}`,
+    ).join("\n\n");
+    result = {
+      data: {
+        ...TIMELINE,
+        events: TIMELINE.events.map((one) =>
+          one.type === "returned" ? { ...one, result: answer } : one,
+        ),
+      },
+      isLoading: false,
+      isError: false,
+    };
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    const [returned] = screen
+      .getAllByTestId("answer")
+      .filter((one) => one.textContent.includes("line 12"));
+    expect(returned).toHaveAttribute("data-clamped", "true");
+    // The short request and reply are shown whole, with nothing to open.
+    expect(screen.getAllByText("Show more")).toHaveLength(1);
+    fireEvent.click(screen.getByText("Show more"));
+    expect(returned).toHaveAttribute("data-clamped", "false");
+    fireEvent.click(screen.getByText("Show less"));
+    expect(returned).toHaveAttribute("data-clamped", "true");
+  });
+
+  it("says plainly when an agent with no workers handed nothing out, but not when declared workers went unseen", () => {
+    const single = {
+      ...TIMELINE,
+      workers: [],
+      events: [TIMELINE.events[3]],
+    };
+    result = { data: single, isLoading: false, isError: false };
+    const { unmount } = render(<CallWorkersPanel callExecutionId="c1" />);
+    expect(
+      screen.getByText(
+        "This agent didn't hand work to other agents in this call.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Caller's request")).toBeNull();
+    unmount();
+    result = {
+      data: { ...single, workers: TIMELINE.workers.slice(1) },
+      isLoading: false,
+      isError: false,
+    };
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    expect(
+      screen.queryByText(
+        "This agent didn't hand work to other agents in this call.",
+      ),
+    ).toBeNull();
+    expect(screen.getByText("Audit worker · not observed")).toBeInTheDocument();
+  });
+
   it("times each step from the call's start", () => {
     render(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.getByText("+4.0 s")).toBeInTheDocument();
@@ -129,7 +197,7 @@ describe("CallWorkersPanel", () => {
   it("opens a tool call to show its input and output", () => {
     render(<CallWorkersPanel callExecutionId="c1" />);
     expect(screen.queryByText("store unavailable")).toBeNull();
-    fireEvent.click(screen.getByText(/Order-lookup worker · get_order/));
+    fireEvent.click(screen.getByText(/^get_order/));
     expect(screen.getByText("Input")).toBeInTheDocument();
     expect(screen.getByText("store unavailable")).toBeInTheDocument();
   });
@@ -301,7 +369,7 @@ describe("CallWorkersPanel", () => {
           .closest("[data-depth='1']"),
       ).not.toBeNull();
       expect(
-        screen.getByText("Seen: 2 levels deep, one at a time"),
+        screen.getByText("2 levels deep · one hand-off at a time"),
       ).toBeInTheDocument();
       expect(
         screen.getByText(/Checked for one coordinator/),
@@ -338,7 +406,7 @@ describe("CallWorkersPanel", () => {
       render(<CallWorkersPanel callExecutionId="c1" />);
       expect(screen.getAllByText("in parallel")).toHaveLength(2);
       expect(
-        screen.getByText("Seen: one level, 2 hand-offs in parallel"),
+        screen.getByText("One level · 2 hand-offs ran in parallel"),
       ).toBeInTheDocument();
     });
 
@@ -398,7 +466,7 @@ describe("CallWorkersPanel", () => {
       );
       result.data.events_omitted = 12;
       render(<CallWorkersPanel callExecutionId="c1" />);
-      fireEvent.click(screen.getByText("a worker · lookup"));
+      fireEvent.click(screen.getByText(/^lookup/));
       expect(
         screen.getAllByText(
           "Not kept: this call's record reached its size limit",
@@ -425,7 +493,7 @@ describe("CallWorkersPanel", () => {
       expect(depthOf("Delegated to a worker")).toBe("1");
       expect(depthOf("Delegated to b worker")).toBe("1");
       expect(
-        screen.getByText("Seen: one level, one at a time"),
+        screen.getByText("One level, one hand-off at a time"),
       ).toBeInTheDocument();
     });
 
@@ -518,12 +586,12 @@ describe("CallWorkersPanel", () => {
         screen.getByText("100 workers · 100 observed · 0 not observed"),
       ).toBeInTheDocument();
       expect(
-        screen.getByText("Seen: 3 levels deep, one at a time"),
+        screen.getByText("3 levels deep · one hand-off at a time"),
       ).toBeInTheDocument();
       // Levels one and two are open; level three shows its 60 headers folded, so its 600 steps are not in the page.
       expect(screen.getAllByTestId("hand-off")).toHaveLength(100);
       expect(screen.queryByText("leaf done")).toBeNull();
-      expect(screen.getAllByText(/ · t$/)).toHaveLength(210);
+      expect(screen.getAllByText(/^t$/)).toHaveLength(210);
       expect(took).toBeLessThan(3000);
     });
   });

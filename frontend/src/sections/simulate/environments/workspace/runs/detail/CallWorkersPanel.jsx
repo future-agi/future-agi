@@ -156,7 +156,7 @@ function ToolRow({ event, who, start }) {
             flex: 1,
           }}
         >
-          {`${who} · ${event.tool}`}
+          {who ? `${who} · ${event.tool}` : event.tool}
           {failed ? ` (${C.failed})` : ""}
         </Typography>
         <Stamp at={event.at} start={start} />
@@ -192,30 +192,59 @@ ToolRow.propTypes = {
   start: PropTypes.string,
 };
 
+// About six lines of text; a longer answer opens on request.
+const CLAMP_LINES = 6;
+const CLAMP_CHARS = 480;
+const long = (text) =>
+  text.split("\n").length > CLAMP_LINES || text.length > CLAMP_CHARS;
+
 function Answer({ text }) {
+  const [whole, setWhole] = useState(false);
   if (!text)
     return (
       <Typography sx={{ typography: "s2", color: "text.secondary" }}>
         {C.unknown}
       </Typography>
     );
+  const clamped = long(text) && !whole;
   return (
-    <Box
-      sx={{
-        typography: "s2",
-        color: "text.secondary",
-        wordBreak: "break-word",
-        "& p, & ul, & ol": { my: 0.25 },
-        "& ul, & ol": { pl: 2.5 },
-      }}
-    >
-      {/* A worker's answer is often markdown; show it as the app's other agent text is shown. */}
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSanitize]}
+    <Box>
+      <Box
+        data-testid="answer"
+        data-clamped={clamped}
+        sx={{
+          typography: "s2",
+          color: "text.secondary",
+          wordBreak: "break-word",
+          "& p, & ul, & ol": { my: 0.25 },
+          "& ul, & ol": { pl: 2.5 },
+          ...(clamped && { maxHeight: "8.4em", overflow: "hidden" }),
+        }}
       >
-        {text}
-      </ReactMarkdown>
+        {/* A worker's answer is often markdown; show it as the app's other agent text is shown. */}
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeSanitize]}
+        >
+          {text}
+        </ReactMarkdown>
+      </Box>
+      {long(text) ? (
+        <Typography
+          component="button"
+          onClick={() => setWhole((one) => !one)}
+          sx={{
+            typography: "s3",
+            color: "primary.main",
+            border: 0,
+            bgcolor: "transparent",
+            cursor: "pointer",
+            p: 0,
+          }}
+        >
+          {whole ? C.showLess : C.showMore}
+        </Typography>
+      ) : null}
     </Box>
   );
 }
@@ -318,7 +347,13 @@ function HandOff({ block, workers, nameOf, start }) {
               <ToolRow
                 key={item.key}
                 event={item.event}
-                who={nameOf(item.event)}
+                // Inside its worker's block a call names only the tool; one made by another agent still says whose.
+                who={
+                  item.event.worker_id === block.worker_id &&
+                  item.event.attribution !== "unattributed"
+                    ? null
+                    : nameOf(item.event)
+                }
                 start={start}
               />
             ),
@@ -563,6 +598,9 @@ export default function CallWorkersPanel({ callExecutionId }) {
 
   return (
     <Stack spacing={1.25} sx={{ p: 1.5 }}>
+      <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+        {C.intro}
+      </Typography>
       <Box
         sx={{
           borderLeft: "2px solid",
@@ -593,9 +631,13 @@ export default function CallWorkersPanel({ callExecutionId }) {
           </Typography>
         ) : null}
       </Box>
-      {hasHandOffs && (
+      {hasHandOffs ? (
         <Turn title={C.request} turn={data.request} start={start} />
-      )}
+      ) : !data.workers.length ? (
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          {C.noHandOffs}
+        </Typography>
+      ) : null}
       {tree.items.map((item) =>
         item.kind === "handoff" ? (
           <HandOff

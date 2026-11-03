@@ -13,15 +13,18 @@ export const CALL_WORKERS_COPY = {
   unknown: "Unknown",
   notObserved: "not observed",
   undeclared: "not declared",
-  seenFlat: "Seen: one level, one at a time",
+  intro:
+    "How the coordinator handed work to other agents in this call: each hand-off, the tools that agent used, and what it returned.",
+  noHandOffs: "This agent didn't hand work to other agents in this call.",
+  seenFlat: "One level, one hand-off at a time",
   seen: (depth, parallel) =>
-    `Seen: ${depth === 1 ? "one level" : `${depth} levels deep`}, ${
+    `${depth === 1 ? "One level" : `${depth} levels deep`} · ${
       parallel
-        ? `${parallel} hand-off${parallel === 1 ? "" : "s"} in parallel`
-        : "one at a time"
+        ? `${parallel} hand-off${parallel === 1 ? "" : "s"} ran in parallel`
+        : "one hand-off at a time"
     }`,
   scope:
-    "Checked for one coordinator handing work to its workers one at a time, one level deep; deeper or parallel hand-offs are shown as seen.",
+    "Checked for one coordinator handing work one at a time; deeper or parallel hand-offs are shown as they happened.",
   inParallel: "in parallel",
   payloadOmitted: "Not kept: this call's record reached its size limit",
   eventsOmitted: (count) =>
@@ -38,4 +41,6 @@ export const CALL_WORKERS_COPY = {
   input: "Input",
   output: "Output",
   showDetail: "Input and output",
+  showMore: "Show more",
+  showLess: "Show less",
 };
