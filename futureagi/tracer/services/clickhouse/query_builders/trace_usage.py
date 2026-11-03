@@ -102,6 +102,7 @@ def usage_aggregate_sql(
     prefix: str = "",
     coverage: str | None = None,
     source_summary: str | None = None,
+    known_cost_fact: str | None = None,
 ) -> str:
     """Aggregate light, latest-live span rows of ONE (project, trace) group.
 
@@ -113,12 +114,18 @@ def usage_aggregate_sql(
     array is shared by the four reducers in CH. Optional source_summary adds
     one scalar witness and an observed LLM count; it does not alter the existing
     two-flag coverage tuple, numeric reducers or callers that omit it.
+    known_cost_fact selects a singleton array of user money/count/token metrics
+    instead; callers must unpack it with ARRAY JOIN after trace grouping.
     """
     fields = ["id", "parent_span_id", "name", "observation_type", *USAGE_COLUMNS]
     values = ", ".join(f"{prefix}{field}" for field in fields)
     values += f", {coverage or 'tuple(0, 0)'}"
     if source_summary is not None:
         values += f", {source_summary}"
+    if known_cost_fact is not None:
+        if source_summary is not None:
+            raise ValueError("User metrics and capture coverage are separate projections")
+        values += f", {known_cost_fact}"
     # Fixed layout: identity, parent, name, kind, cost, total, prompt, completion,
     # (nonadditive, unknown billable cost). Siblings are never deduplicated.
     same_children = " AND ".join(
@@ -137,6 +144,33 @@ def usage_aggregate_sql(
         f"arrayFilter(s -> s.3 = '{SUMMARY_NAME}' AND s.4 != 'llm', usage_spans)"
     )
     repeated = f"arrayExists(c -> c.2 = s.1, usage_spans) AND {same_children}"
+    if known_cost_fact is not None:
+        # Bind each intermediate array lexically, rather than SELECT aliases
+        # that the analyzer recursively substitutes into every reducer. Return
+        # ONE tuple in ONE array; the caller ARRAY JOINs it after grouping, so
+        # projecting six fields cannot re-expand the proof or change row count.
+        # Known facts intentionally use the original array: the legacy counter
+        # removes wrappers only, even if a physical LLM shares a wrapper's id.
+        return f"""
+            arrayMap(usage_spans ->
+                arrayMap(repeated_usage_ids ->
+                    arrayMap(billable_usage_spans -> tuple(
+                        arraySum(s -> if(tupleElement(s.9, 2), 0, s.5), billable_usage_spans),
+                        arraySum(s -> toInt64(s.10
+                            AND NOT tupleElement(s.9, 1) AND NOT tupleElement(s.9, 2)
+                            AND NOT (s.3 = '{SUMMARY_NAME}' AND s.4 != 'llm'
+                                AND has(repeated_usage_ids, s.1))), usage_spans),
+                        arrayCount(s -> tupleElement(s.9, 2), billable_usage_spans),
+                        arraySum(s -> s.6, billable_usage_spans),
+                        arraySum(s -> s.7, billable_usage_spans),
+                        arraySum(s -> s.8, billable_usage_spans)
+                    ), [arrayFilter(s -> NOT tupleElement(s.9, 1)
+                        AND NOT has(repeated_usage_ids, s.1), usage_spans)])[1],
+                    [arrayMap(s -> s.1, arrayFilter(s -> {repeated}, {candidates}))]
+                )[1],
+                [groupArray(tuple({values}))]
+            ) AS trace_usage_metrics
+        """
     projections = [
         f"groupArray(tuple({values})) AS usage_spans",
         f"arrayMap(s -> s.1, arrayFilter(s -> {repeated}, {candidates})) AS repeated_usage_ids",

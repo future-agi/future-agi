@@ -274,29 +274,30 @@ def _latest_user_usage_sql(*, include_num_sessions: bool = False) -> str:
 
 
 def _user_trace_usage_sql() -> str:
-    """Count money facts within one user/trace, excluding proven summaries.
+    """Keep one complete usage array and summary proof per user/trace."""
+    return usage_aggregate_sql(
+        prefix="latest_",
+        coverage="latest_coverage",
+        known_cost_fact="latest_known_cost_fact",
+    )
 
-    Reuse the existing Pydantic summary rule. Only wrapper candidates need an
-    extra known-fact flag; ordinary requests do not carry raw attributes or a
-    second usage vector. Counts are summed across traces before deriving status.
-    """
-    return f"""
-        {usage_aggregate_sql(prefix="latest_", coverage="latest_coverage")},
-        arraySum(s -> if(tupleElement(s.9, 2), 0, s.5), billable_usage_spans)
-            AS known_cost_subtotal,
-        arrayCount(s -> tupleElement(s.9, 2), billable_usage_spans)
-            AS unknown_cost_fact_count,
-        groupArrayIf(
-            tuple(latest_id, latest_known_cost_fact),
-            latest_name = '{SUMMARY_NAME}' AND latest_observation_type != 'llm'
-            AND NOT tupleElement(latest_coverage, 1)
-            AND NOT tupleElement(latest_coverage, 2)
-        ) AS summary_cost_facts,
-        countIf(latest_known_cost_fact AND NOT tupleElement(latest_coverage, 1)
-            AND NOT tupleElement(latest_coverage, 2))
-            - arrayCount(s -> s.2 AND has(repeated_usage_ids, s.1), summary_cost_facts)
-            AS known_cost_fact_count
-    """
+
+def _user_trace_metrics_projection() -> str:
+    """Explicit projection of the materialized singleton tuple (CH 25)."""
+    return ",\n".join(
+        f"tupleElement(trace_metrics, {index}) AS {column}"
+        for index, column in enumerate(
+            (
+                "known_cost_subtotal",
+                "known_cost_fact_count",
+                "unknown_cost_fact_count",
+                "usage_total_tokens",
+                "usage_prompt_tokens",
+                "usage_completion_tokens",
+            ),
+            1,
+        )
+    )
 
 
 class UserListQueryBuilder(BaseQueryBuilder):
@@ -1526,6 +1527,10 @@ class UserListQueryBuilder(BaseQueryBuilder):
             id
     ),
     user_trace_usage AS (
+        SELECT project_id, trace_id, end_user_id, last_active,
+            {"session_count_state," if self.include_num_sessions else ""}
+            {_user_trace_metrics_projection()}
+        FROM (
         SELECT
             project_id,
             trace_id,
@@ -1541,6 +1546,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
           AND latest_start_time < fromUnixTimestamp64Micro(%(user_window_end_us)s, 'UTC')
           {usage_user_filter}
         GROUP BY project_id, trace_id, end_user_id
+        )
+        ARRAY JOIN trace_usage_metrics AS trace_metrics
     ),
     exact_usage AS (
         SELECT
@@ -2698,6 +2705,9 @@ class UserListQueryBuilder(BaseQueryBuilder):
             GROUP BY project_id, observation_type, service_name, identity_hour, trace_id, id
         ),
         user_trace_usage AS (
+            SELECT project_id, trace_id, end_user_id, last_active,
+                {_user_trace_metrics_projection()}
+            FROM (
             SELECT
                 project_id,
                 trace_id,
@@ -2714,6 +2724,8 @@ class UserListQueryBuilder(BaseQueryBuilder):
                   SELECT end_user_id FROM filtered_end_users
               )
             GROUP BY project_id, trace_id, end_user_id
+            )
+            ARRAY JOIN trace_usage_metrics AS trace_metrics
         ),
         exact_usage AS (
             SELECT
