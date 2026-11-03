@@ -12,6 +12,7 @@ walks several slices and the cursor is resumed twice.
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -239,15 +240,33 @@ class _LiveExecutor:
         server_execution_cap_ms=None,
     ):
         self.statements.append(query)
+        started = monotonic()
         rows, columns = self.client.execute(
             _bind(query, self.tables), params or {}, with_column_types=True
         )
+        elapsed_ms = (monotonic() - started) * 1000.0
         names = [name for name, _type in columns]
         return SimpleNamespace(
             data=[dict(zip(names, row, strict=True)) for row in rows],
             columns=names,
-            query_time_ms=1.0,
+            query_time_ms=elapsed_ms,
         )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("elapsed_seconds", [0.0, 0.025, 1.25])
+def test_live_executor_reports_measured_query_time(elapsed_seconds):
+    client = SimpleNamespace(
+        execute=lambda *args, **kwargs: ([(7,)], [("value", "UInt64")])
+    )
+    executor = _LiveExecutor(
+        client, ("fixture_spans", "fixture_users", "fixture_remap")
+    )
+    with patch(f"{__name__}.monotonic", side_effect=(50.0, 50.0 + elapsed_seconds)):
+        result = executor.execute_ch_query("SELECT 7 AS value")
+    assert result.query_time_ms == pytest.approx(elapsed_seconds * 1000)
+    assert result.data == [{"value": 7}]
+    assert result.columns == ["value"]
 
 
 def _manager(
