@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import PropTypes from "prop-types";
-import { render, screen } from "@testing-library/react";
+import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -217,27 +217,6 @@ describe("WorkspacePanels", () => {
     expect(screen.queryByRole("tab", { name: /Runs \d/ })).toBeNull();
   });
 
-  it("shows a gap tab with no tooltip on hover", async () => {
-    const user = userEvent.setup();
-    renderPanels({
-      gapsByTab: { evals: [{ id: "no-evals", title: "No evaluations added" }] },
-      counts: { scenarios: 2, evals: 0 },
-    });
-
-    await user.hover(screen.getByText("Evaluations"));
-    expect(screen.getByRole("tab", { name: "Evaluations" })).toBeInTheDocument();
-    expect(screen.queryByText("Needs your input before you can run:")).toBeNull();
-    expect(screen.queryByText(/No evaluations added/)).toBeNull();
-  });
-
-  it("shows no tooltip when a tab is hovered", async () => {
-    const user = userEvent.setup();
-    renderPanels();
-    await user.hover(screen.getByText("Contract"));
-    expect(screen.queryByText(/What this environment is made of/)).toBeNull();
-    expect(screen.getByRole("tab", { name: "Contract" })).toBeInTheDocument();
-  });
-
   it("shows neither the hint nor the gap list when a gap tab is hovered", async () => {
     const user = userEvent.setup();
     renderPanels({
@@ -245,6 +224,9 @@ describe("WorkspacePanels", () => {
       counts: { scenarios: 2, evals: 0 },
     });
     await user.hover(screen.getByText("Evaluations"));
+    // Wait past a tooltip's open delay so one would have shown by now.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+    expect(screen.queryByRole("tooltip")).toBeNull();
     expect(screen.queryByText(/These decide whether each task passed/)).toBeNull();
     expect(screen.queryByText("Needs your input before you can run:")).toBeNull();
   });
