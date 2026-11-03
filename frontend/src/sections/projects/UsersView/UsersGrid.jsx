@@ -55,6 +55,7 @@ import {
   dispatchObservePageChanged,
   OBSERVE_LIST_REFRESH_EVENT,
 } from "../observeEvents";
+import { endObserveListTimers } from "../LLMTracing/observeActionTimers";
 
 const getUsersGridThemeParams = (theme) => ({
   columnBorder: false,
@@ -306,6 +307,7 @@ const UsersGrid = React.memo(
           let requestGeneration = null;
           let loadingOwner = null;
           let continuationPending = false;
+          let readFailed = false;
           try {
             if (!isGridApiLive(params.api)) return;
             loadingOwner = {
@@ -602,13 +604,17 @@ const UsersGrid = React.memo(
             }
             setContinuationNotice(null);
             setReadError(QUERY_FAILED_RETRY_MESSAGE);
+            readFailed = true;
             setSearchState("error");
             failServerSideGridRead({ ...params, fail: finishRequest });
           } finally {
             // AG Grid releases its shared loader slot only via a callback,
             // even when the obsolete cache ignores the result. A scheduled
             // continuation owns completion until its resume callback runs.
-            if (!continuationPending) finishRequest();
+            if (!continuationPending) {
+              finishRequest();
+              endObserveListTimers(readFailed ? "error" : "ok");
+            }
             if (loadingOwner) {
               activeListReadsRef.current.delete(loadingOwner);
               // Obsolete reads cannot release loading during a filter handoff,

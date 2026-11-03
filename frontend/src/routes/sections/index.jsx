@@ -1,6 +1,7 @@
 import React, { Suspense, useMemo } from "react";
 import lazyWithRetry from "src/utils/lazyWithRetry";
 import { Navigate, useRoutes } from "react-router-dom";
+import * as Sentry from "@sentry/react";
 
 import { mainRoutes } from "./main";
 import { authRoutes } from "./auth";
@@ -16,6 +17,11 @@ import {
 import SOSLoginPage from "src/pages/SOSLoginPage";
 import { paths } from "src/routes/paths";
 import { isValidationDone } from "src/sections/oss-first-run/ossFlowState";
+
+// Lets Sentry name page loads by route pattern rather than raw URL. Wrapped
+// on first render, not at import: the wrapper needs Sentry.init (main.jsx) to
+// have run, and main.jsx imports this module before calling it.
+let useSentryRoutes;
 
 const OAuthConsent = lazyWithRetry(() => import("src/pages/mcp/OAuthConsent"));
 const SharedView = lazyWithRetry(() => import("src/pages/shared/SharedView"));
@@ -47,7 +53,8 @@ export default function Router() {
     rootTarget = paths.ossSetup;
   }
 
-  const element = useRoutes([
+  useSentryRoutes ??= Sentry.wrapUseRoutesV6(useRoutes);
+  const element = useSentryRoutes([
     {
       path: "/",
       element: <Navigate to={rootTarget} replace />,

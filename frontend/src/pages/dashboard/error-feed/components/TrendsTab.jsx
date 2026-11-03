@@ -13,6 +13,7 @@ import {
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useErrorFeedTrends } from "src/api/errorFeed/error-feed";
+import { useEndErrorFeedTabTimer } from "../errorFeedActionTimers";
 import { useSharedIssue } from "../sharedIssueContext";
 
 const TRENDS_WINDOW_DAYS = 14;
@@ -581,6 +582,7 @@ export default function TrendsTab({ error }) {
   });
   const data = shared ? shared.trends : fetched.data;
   const isLoading = shared ? false : fetched.isLoading;
+  useEndErrorFeedTabTimer(isLoading, fetched.isError);
 
   if (shared && !data) {
     return (

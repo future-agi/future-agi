@@ -86,6 +86,10 @@ import { useCursorAttributeInventory } from "../LLMTracing/useCursorAttributeInv
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
+import {
+  startObserveDateRangeTimer,
+  startObserveFilterTimer,
+} from "../LLMTracing/observeActionTimers";
 
 const getLiveSessionGridApi = (gridRef) => {
   const api = gridRef?.current?.api;
@@ -1028,7 +1032,10 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         // Date
         dateLabel={getDateLabel(dateFilter)}
         dateFilter={dateFilter}
-        setDateFilter={setDateFilter}
+        setDateFilter={(update) => {
+          startObserveDateRangeTimer();
+          setDateFilter(update);
+        }}
         // Filter
         hasActiveFilter={hasActiveFilter}
         canSaveView={canSaveViewDeferred}
@@ -1043,7 +1050,10 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           setIsFilterOpen(!isFilterOpen);
         }}
         filterFields={sessionFilterFields}
-        onApplyExtraFilters={setExtraFilters}
+        onApplyExtraFilters={(filters) => {
+          startObserveFilterTimer("panel", filters?.length ?? 0);
+          setExtraFilters(filters);
+        }}
         // Columns
         columns={displayColumns}
         onColumnVisibilityChange={(e) => {

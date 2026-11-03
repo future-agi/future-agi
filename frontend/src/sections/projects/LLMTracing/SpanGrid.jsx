@@ -81,6 +81,7 @@ import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 import CursorGridPagination from "./CursorGridPagination";
 import useCursorGridPagination from "./useCursorGridPagination";
 import useImmediateGridQueryTransition from "./useImmediateGridQueryTransition";
+import { endObserveListTimers } from "./observeActionTimers";
 import {
   dispatchObservePageChanged,
   OBSERVE_LIST_REFRESH_EVENT,
@@ -810,6 +811,7 @@ const SpanGrid = React.forwardRef(
                 // request before AG Grid starts its replacement. A replacement
                 // getRows call increments the id and re-enters loading.
                 setGridLoading(false);
+                endObserveListTimers(pageLoadSucceeded ? "ok" : "error");
               }
               if (
                 !continuationPending &&
@@ -931,8 +933,7 @@ const SpanGrid = React.forwardRef(
         }
         // Pin detail to the span's project (see TraceGrid's row click).
         const rowProjectId = event.data.project_id;
-        const sourceColumn =
-          event.column?.getColDef?.()?.context?.sourceColumn;
+        const sourceColumn = event.column?.getColDef?.()?.context?.sourceColumn;
         if (sourceColumn?.groupBy === "Evaluation Metrics") {
           setEvalFocus(true);
         }

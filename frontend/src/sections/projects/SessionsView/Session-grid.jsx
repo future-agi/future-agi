@@ -62,6 +62,7 @@ import {
   OBSERVE_GRID_MAX_BLOCKS_IN_CACHE,
   OBSERVE_GRID_MAX_CONCURRENT_REQUESTS,
 } from "src/config/runtime_limits";
+import { endObserveListTimers } from "../LLMTracing/observeActionTimers";
 
 const getSessionGridThemeParams = (theme) => ({
   columnBorder: false,
@@ -148,7 +149,8 @@ const SessionGrid = React.forwardRef(
     const refreshGrid = useCallback(() => {
       // Same-query refresh replaces cached pages, not the currently visible rows.
       const pendingReads = [...inFlightPageLoads.current.values()];
-      if (refreshSettledRef.current) pendingReads.push(refreshSettledRef.current);
+      if (refreshSettledRef.current)
+        pendingReads.push(refreshSettledRef.current);
       inFlightPageLoads.current.clear();
       cursorPagination.current.reset();
       const generation = cursorPagination.current.generation();
@@ -379,9 +381,7 @@ const SessionGrid = React.forwardRef(
     // make a page that was genuinely visited unreachable again. `frontierPage`
     // is 1-indexed (matches the UI); `canReachPage` takes the same 0-indexed
     // convention as `requestParams`.
-    const furthestPage = cursorPagination.current.canReachPage(
-      frontierPage - 1,
-    )
+    const furthestPage = cursorPagination.current.canReachPage(frontierPage - 1)
       ? frontierPage
       : 0;
 
@@ -600,15 +600,21 @@ const SessionGrid = React.forwardRef(
               if (listReadMessage) throw new Error(listReadMessage);
               // Bind the actual successful request to its rows, not the route
               // project or a later filter/sort render. Never lose decorated IDs.
-              const context = JSON.parse(JSON.stringify({
-                project_id: projectId || null,
-                workspace_id: workspaceId,
-                filters: backendFilters,
-                sort_params: sortParams,
-                cursor_mode: !sortParams.length && Boolean(buildParams(pageNumber).cursor_mode),
-                ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
-              }));
-              rows.forEach((row) => rowNavigationContexts.current.set(row, context));
+              const context = JSON.parse(
+                JSON.stringify({
+                  project_id: projectId || null,
+                  workspace_id: workspaceId,
+                  filters: backendFilters,
+                  sort_params: sortParams,
+                  cursor_mode:
+                    !sortParams.length &&
+                    Boolean(buildParams(pageNumber).cursor_mode),
+                  ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
+                }),
+              );
+              rows.forEach((row) =>
+                rowNavigationContexts.current.set(row, context),
+              );
 
               const isLastPage = exactPage.isLastPage;
               // A terminal cursor is an exact exhaustion proof. Normalize an
@@ -689,7 +695,10 @@ const SessionGrid = React.forwardRef(
               finishRequest();
             } finally {
               // A promise settling alone does not release AG Grid's slot.
-              if (!continuationPending) finishRequest();
+              if (!continuationPending) {
+                finishRequest();
+                endObserveListTimers(pageLoadSucceeded ? "ok" : "error");
+              }
               if (counted) {
                 activeListReadsRef.current = Math.max(
                   0,
@@ -782,7 +791,9 @@ const SessionGrid = React.forwardRef(
       }
 
       setCurrentRowData(event.data);
-      setNavigationContext(rowNavigationContexts.current.get(event.data) || null);
+      setNavigationContext(
+        rowNavigationContexts.current.get(event.data) || null,
+      );
       setOpen(true);
       trackEvent(Events.observeSessionidClicked);
     };
