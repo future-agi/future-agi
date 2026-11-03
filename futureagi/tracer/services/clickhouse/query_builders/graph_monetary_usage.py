@@ -68,13 +68,19 @@ def graph_monetary_rows_sql(
         f"ifNull({column}, 0)" if column in USAGE_COLUMNS else column
         for column in columns
     )
+    # CH25 does not export an ARRAY JOIN alias through SELECT *; the proof
+    # projection must name its payload so the outer scalar projection can read it.
     return f"""
         SELECT
             project_id,
             trace_id,
             {projection}
         FROM (
-            SELECT *, ({repeated}) AS graph_repeated_summary
+            SELECT
+                project_id,
+                trace_id,
+                graph_own_span,
+                ({repeated}) AS graph_repeated_summary
             FROM (
                 SELECT
                     project_id,
