@@ -249,16 +249,12 @@ def test_a_view_hides_another_actor_s_private_material(
 def test_an_actor_in_a_scenario_cannot_be_removed():
     from simulate.services.harness_actors import _scenarios_using
 
-    suite = {
-        "scenarios.json": json.dumps(
-            [
-                {
-                    "scenario_key": "discount-approved",
-                    "actors": [{"id": "manager", "instruction": "Approve it"}],
-                }
-            ]
-        ).encode()
-    }
+    suite = [
+        {
+            "scenario_key": "discount-approved",
+            "actors": [{"id": "manager", "instruction": "Approve it"}],
+        }
+    ]
     assert _scenarios_using(suite, "manager") == ["discount-approved"]
     assert _scenarios_using(suite, "coworker") == []
 
@@ -483,12 +479,8 @@ def test_a_sub_actor_a_scenario_includes_counts_as_in_use():
             }
         ).encode()
     }
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(
-            "simulate.services.harness_versioning.versions.suite_documents",
-            lambda files: [json.loads(raw) for raw in files.values()],
-        )
-        assert harness_actors._scenarios_using(suite, "colleague") == ["one"]
+    documents = [json.loads(raw) for raw in suite.values()]
+    assert harness_actors._scenarios_using(documents, "colleague") == ["one"]
 
 
 def test_the_checks_and_the_view_follow_the_rules_the_environment_was_sealed_with(
