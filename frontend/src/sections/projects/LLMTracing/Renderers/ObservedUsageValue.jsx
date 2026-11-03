@@ -8,8 +8,16 @@ export default function ObservedUsageValue({ coverage, value }) {
   const explanation = `Capture coverage unknown. ${count} observed request${count === 1 ? "" : "s"}. Source summaries are nonadditive; observed amounts do not prove complete capture.`;
   return (
     <Tooltip title={explanation} arrow placement="bottom">
-      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "flex-end", width: "100%", px: 1.5 }}>
-        <Typography variant="body2" sx={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          width: "100%",
+          px: 1.5,
+        }}
+      >
+        <Typography variant="s1" sx={{ fontVariantNumeric: "tabular-nums" }}>
           Observed-only · {value}
         </Typography>
       </Box>
@@ -18,6 +26,7 @@ export default function ObservedUsageValue({ coverage, value }) {
 }
 
 ObservedUsageValue.propTypes = {
-  coverage: PropTypes.shape({ request_count: PropTypes.number.isRequired }).isRequired,
+  coverage: PropTypes.shape({ request_count: PropTypes.number.isRequired })
+    .isRequired,
   value: PropTypes.string.isRequired,
 };
