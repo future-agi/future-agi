@@ -196,7 +196,7 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
         {!soon && world.readiness && world.readiness !== "ready" && (
           <QuietTag>
             {world.readiness === "soon"
-              ? "Coming soon"
+              ? "Checks pending"
               : world.readiness === "retired"
                 ? "Retired"
                 : world.readiness === "unsupported"

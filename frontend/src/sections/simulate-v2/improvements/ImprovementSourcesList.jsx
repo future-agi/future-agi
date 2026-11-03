@@ -34,7 +34,7 @@ const compactInputSx = {
   "& .MuiInputBase-root": { typography: "s2", height: 32 },
   "& .MuiOutlinedInput-input": { py: 0 },
 };
-const ROW_HEIGHT = DS_ROW_HEIGHT.twoLine;
+const ROW_HEIGHT = DS_ROW_HEIGHT.default;
 const HEADER_HEIGHT = 40;
 
 /**
@@ -270,36 +270,34 @@ export default function ImprovementSourcesList({ agent, run }) {
     {
       id: "name",
       header: "Name",
-      meta: { flex: 1.6 },
-      minSize: 260,
+      meta: { flex: 1 },
+      minSize: 160,
       enableSorting: false,
       cell: ({ row: { original: r } }) => (
-        <Box minWidth={0}>
-          <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
-            {r.name}
-          </Typography>
-          {/* Agent · source · sub-source · what it was, then where it ran. */}
+        /* One line: agent · source · what it was · where it ran, on hover. */
+        <Tooltip
+          arrow
+          enterDelay={500}
+          title={
+            r.kind === "dataset"
+              ? `${r.envName} · ${r.sub}`
+              : [
+                  r.agentName || r.modality?.label,
+                  r.duplicate && r.agentId,
+                  r.trigger && `${r.trigger.source} · ${r.trigger.label}`,
+                  `in ${r.envName}`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+          }
+        >
           <Typography
             noWrap
-            sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+            sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}
           >
-            {r.kind === "dataset" ? (
-              `${r.envName} · ${r.sub}`
-            ) : (
-              <>
-                {r.agentName || r.modality?.label}
-                {r.duplicate && r.agentId && (
-                  <Box
-                    component="span"
-                    sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}
-                  >{` · ${r.agentId}`}</Box>
-                )}
-                {r.trigger && ` · ${r.trigger.source} · ${r.trigger.label}`}
-                {` · in ${r.envName}`}
-              </>
-            )}
+            {r.name}
           </Typography>
-        </Box>
+        </Tooltip>
       ),
     },
     /* The PRD's columns: which agent, how it ended, what it proved, what it
@@ -352,35 +350,32 @@ export default function ImprovementSourcesList({ agent, run }) {
     {
       id: "result",
       header: "Result",
-      size: 170,
+      size: 240,
       enableSorting: false,
       cell: ({ row: { original: r } }) =>
         r.held ? (
-          <Box minWidth={0}>
-            <Typography
-              noWrap
-              sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}
-            >
-              {r.held.text}
-            </Typography>
+          /* One line: what it fixed, then what it broke (red when it broke any). */
+          <Typography
+            noWrap
+            sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}
+          >
+            {r.held.text}
             {(r.held.broke != null || r.held.note) && (
-              <Typography
-                noWrap
+              <Box
+                component="span"
                 sx={{
-                  typography: "s3",
                   color: r.held.broke ? "status.danger.fg" : "text.secondary",
-                  fontVariantNumeric: "tabular-nums",
-                  mt: 0.5,
                 }}
               >
+                {" · "}
                 {r.held.broke == null
                   ? r.held.note
                   : r.held.broke
-                    ? `broke ${r.held.broke} held back`
-                    : "broke none held back"}
-              </Typography>
+                    ? `broke ${r.held.broke}`
+                    : "broke none"}
+              </Box>
             )}
-          </Box>
+          </Typography>
         ) : (
           <Typography sx={{ typography: "s3", color: "text.disabled" }}>
             —

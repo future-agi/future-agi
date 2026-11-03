@@ -333,6 +333,11 @@ export default function TemplateBuildPanel({
             muted={!agent}
           />
           <Line label="Runs" value="In Future AGI" />
+          {/* Cloud only for now (clarified plan); local runs are a later ALK direction. */}
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            Running a world on your own machine is coming soon with ALK, our
+            open-source toolkit.
+          </Typography>
         </Stack>
       </SectionCard>
 
