@@ -1,12 +1,20 @@
-// Highlight for chosen values; primary.lighter washes out in dark mode.
+import { alpha } from "@mui/material/styles";
+
+// Highlight for chosen values, derived from the theme primary so it matches the
+// Save CTA: purple in light mode, monochrome in dark mode (the dark palette's
+// primary is near-white per the brand guide, so primary.lighter would wash out).
 export const accentSx = {
   bgcolor: (t) =>
     t.palette.mode === "dark"
-      ? "rgba(120,87,252,0.26)"
+      ? alpha(t.palette.primary.main, 0.14)
       : t.palette.primary.lighter,
   color: (t) =>
-    t.palette.mode === "dark" ? "#C7B9FF" : t.palette.primary.darker,
+    t.palette.mode === "dark"
+      ? t.palette.primary.main
+      : t.palette.primary.darker,
 };
+export const focusRing = (t) =>
+  `0 0 0 3px ${alpha(t.palette.primary.main, 0.22)}`;
 
 export const ENTRY = [
   ["min_findings", "Findings", "/hr"],

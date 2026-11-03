@@ -7,6 +7,7 @@ import {
   accentSx,
   escalateAt,
   explainLimit,
+  focusRing,
   recoverAt,
 } from "./escalationSettings";
 
@@ -85,7 +86,7 @@ function UsualStepper({ value, onChange }) {
         borderRadius: 0.75,
         bgcolor: "background.paper",
         overflow: "hidden",
-        "&:focus-within": { boxShadow: "0 0 0 3px rgba(120,87,252,0.22)" },
+        "&:focus-within": { boxShadow: focusRing },
       }}
     >
       {stepButton(-1, "Fewer findings an hour")}
