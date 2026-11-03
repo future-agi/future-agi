@@ -1629,12 +1629,9 @@ describe("sub-actor turns in a call", () => {
 });
 
 describe("useCallWorkers", () => {
-  it("reads a 404 from the app's client as no worker record, not a failure", async () => {
+  it("reads an empty answer (204) as no worker record, not a failure", async () => {
     const { useCallWorkers } = await import("../runDetail");
-    axios.get.mockRejectedValueOnce({
-      code: "workers_unavailable",
-      statusCode: 404,
-    });
+    axios.get.mockResolvedValueOnce({ status: 204, data: "" });
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -1654,11 +1651,11 @@ describe("useCallWorkers", () => {
     try {
       const { useCallWorkers, WORKERS_ARRIVAL_POLL_MS, WORKERS_ARRIVAL_POLLS } =
         await import("../runDetail");
-      const notYet = { code: "workers_unavailable", statusCode: 404 };
+      const notYet = { status: 204, data: "" };
       const record = { workers: [], events: [] };
       axios.get.mockReset();
       axios.get
-        .mockRejectedValueOnce(notYet)
+        .mockResolvedValueOnce(notYet)
         .mockResolvedValueOnce({ data: record });
       const client = new QueryClient({
         defaultOptions: { queries: { retry: false } },
@@ -1676,7 +1673,7 @@ describe("useCallWorkers", () => {
       await waitFor(() => expect(result.current.data).toEqual(record));
 
       axios.get.mockReset();
-      axios.get.mockRejectedValue(notYet);
+      axios.get.mockResolvedValue(notYet);
       const never = renderHook(() => useCallWorkers("call-3"), {
         wrapper: Wrapper,
       });

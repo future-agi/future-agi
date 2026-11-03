@@ -148,6 +148,28 @@ describe("CallWorkersPanel", () => {
     expect(screen.getByText("Coordinator · send_reply")).toBeInTheDocument();
   });
 
+  it("shows an answer returned as data as code, kept as it came", () => {
+    result = {
+      data: {
+        ...TIMELINE,
+        events: TIMELINE.events.map((one) =>
+          one.type === "returned"
+            ? { ...one, result: "{'valid': False, 'feedback': 'Too_short'}" }
+            : one,
+        ),
+      },
+      isLoading: false,
+      isError: false,
+    };
+    render(<CallWorkersPanel callExecutionId="c1" />);
+    const [returned] = screen
+      .getAllByTestId("answer")
+      .filter((one) => one.textContent.includes("feedback"));
+    expect(returned.querySelector("pre")).toHaveTextContent(
+      "{'valid': False, 'feedback': 'Too_short'}",
+    );
+  });
+
   it("folds a long answer to a few lines until asked for the rest", () => {
     const answer = Array.from(
       { length: 12 },
@@ -736,5 +758,8 @@ describe("readable", () => {
         '{"messages": ["content=\'Build a limiter\' additional_kwargs={}", "content=\'\' addi…',
       ),
     ).toBe(null);
+    expect(
+      readable('{"description": "Research the \\"PQC\\" standards and addi…'),
+    ).toBe('Research the "PQC" standards and addi…');
   });
 });

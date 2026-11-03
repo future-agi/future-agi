@@ -13,6 +13,7 @@ const useCallTraces = vi.fn(() => ({
   traces: [],
   isError: false,
 }));
+const useHasWorkers = vi.fn(() => true);
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -20,6 +21,7 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
     useCallDetail: (...a) => useCallDetail(...a),
     useCallExecutionV3Detail: (...a) => useCallExecutionV3Detail(...a),
     useCallTraces: (...a) => useCallTraces(...a),
+    useHasWorkers: (...a) => useHasWorkers(...a),
   };
 });
 
@@ -808,5 +810,32 @@ describe("CallDrawer — the call's traces", () => {
 
     expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Traces" })).toBeInTheDocument();
+  });
+
+  it("has no Participants tab for a call that handed no work to other agents", () => {
+    useHasWorkers.mockReturnValue(false);
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [] },
+      isPending: false,
+    });
+    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+
+    const { unmount } = render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces",
+    );
+    unmount();
+    render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);
+    expect(screen.getByRole("tab", { name: "Traces" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Participants" })).toBeNull();
+    useHasWorkers.mockReturnValue(true);
   });
 });
