@@ -7,6 +7,9 @@
 
 const DS = (selector, message) => ({ selector, message: `[DS] ${message}` });
 
+const DIALOG_MESSAGE =
+  "[DS] Use ConfirmDialog (confirm or delete), ModalWrapper (a form with submit) or ClosableDialog (any other popup), not a bare MUI Dialog.";
+
 module.exports = {
   root: true,
   env: { browser: true, es2021: true },
@@ -26,6 +29,13 @@ module.exports = {
   // Loaded only so existing eslint-disable comments for these rules resolve;
   // the rules themselves stay off here (the main config runs them).
   plugins: ["react", "react-hooks", "react-refresh"],
+  overrides: [
+    {
+      // The shared dialogs are built on MUI Dialog.
+      files: ["src/components/custom-dialog/**", "src/components/ModalWrapper/**"],
+      rules: { "no-restricted-imports": "off" },
+    },
+  ],
   rules: {
     "react/prop-types": "off",
     "react-hooks/exhaustive-deps": "off",
@@ -38,6 +48,29 @@ module.exports = {
             name: "@mui/material",
             importNames: ["Card", "CardContent", "CardHeader"],
             message: "[DS] Use src/components/section (plain or panel) instead of Card.",
+          },
+          {
+            name: "@mui/material",
+            importNames: ["Dialog"],
+            message: DIALOG_MESSAGE,
+          },
+          { name: "@mui/material/Dialog", message: DIALOG_MESSAGE },
+        ],
+        // Older components kept for the screens that already use them. CI checks
+        // only added lines, so existing imports stay; new ones use the replacement.
+        patterns: [
+          {
+            group: ["**/EmptyLayout", "**/EmptyLayout/*"],
+            message: "[DS] Use src/components/empty-state (EmptyState); EmptyLayout is kept only for existing screens.",
+          },
+          {
+            group: ["**/custom-status-chip", "**/custom-status-chip/*"],
+            message: "[DS] Use src/components/status-badge with src/utils/runStatus; CustomStatusChip is kept only for existing screens.",
+          },
+          {
+            group: ["**/components/filter-panel", "**/filter-panel/FilterPanel"],
+            importNames: ["FilterPanel", "default"],
+            message: "[DS] Use src/components/filter (FilterButton); this FilterPanel is kept only for its existing screens.",
           },
         ],
       },

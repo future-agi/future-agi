@@ -95,12 +95,32 @@ const eslint = new ESLint({
 });
 const results = files.length ? await eslint.lintFiles(files) : [];
 
+// An import rule fires on the whole import line, so reformatting or extending an
+// existing import would look new. Count it only if the base file didn't have it.
+const baseImportMessages = async (filePath) => {
+  const rel = path.relative(git("rev-parse", "--show-toplevel"), filePath);
+  const base = tryGit("show", `${mergeBase}:${rel}`);
+  if (base === null) return new Set();
+  const [result] = await eslint.lintText(base, { filePath });
+  return new Set(
+    result.messages
+      .filter((m) => m.ruleId === "no-restricted-imports")
+      .map((m) => m.message),
+  );
+};
+
 let count = 0;
 for (const result of results) {
   const lines = changed.get(result.filePath);
-  const hits = result.messages.filter(
-    (m) => m.message.startsWith("[DS]") && lines?.has(m.line),
+  let hits = result.messages.filter(
+    (m) => m.message.includes("[DS]") && lines?.has(m.line),
   );
+  if (hits.some((m) => m.ruleId === "no-restricted-imports")) {
+    const before = await baseImportMessages(result.filePath);
+    hits = hits.filter(
+      (m) => m.ruleId !== "no-restricted-imports" || !before.has(m.message),
+    );
+  }
   for (const m of hits) {
     count += 1;
     console.log(
