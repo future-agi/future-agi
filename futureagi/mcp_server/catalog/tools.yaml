@@ -46,7 +46,7 @@ tools:
     access: write
   - name: add_dataset_rows
     group: datasets
-    description: Add rows to an existing dataset using cells with column_name and value. Column names must already exist in the dataset.
+    description: 'Add rows to an existing dataset using rows: [{cells: [{column_name: "input", value: "hello"}]}]. Flat column-to-value row dictionaries are invalid. Column names must already exist and be writable; unknown or duplicate columns reject the batch. Read back the dataset to verify values and counts after writing.'
     operation: {method: POST, path: "/model-hub/develops/{dataset_id}/add_rows/"}
     access: write
   - name: run_dataset_evals

@@ -146,6 +146,7 @@ from tracer.services.clickhouse.v2.query_builders.session_list import (
     SessionListQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.filter_attestation import (
     applied_filter_attestation,
     graph_execution_filters,
@@ -818,19 +819,23 @@ def _soft_delete_trace_session_tree(trace_sessions):
             trace_id__in=trace_ids,
             deleted=False,
         ).update(deleted=True, deleted_at=now)
-        EvalLogger.no_workspace_objects.filter(
-            trace_id__in=trace_ids,
-            deleted=False,
-        ).update(deleted=True, deleted_at=now)
+        soft_delete_eval_results(
+            EvalLogger.no_workspace_objects.filter(
+                trace_id__in=trace_ids,
+                deleted=False,
+            )
+        )
         Trace.no_workspace_objects.filter(
             id__in=trace_ids,
             deleted=False,
         ).update(deleted=True, deleted_at=now)
 
-    EvalLogger.no_workspace_objects.filter(
-        trace_session_id__in=session_ids,
-        deleted=False,
-    ).update(deleted=True, deleted_at=now)
+    soft_delete_eval_results(
+        EvalLogger.no_workspace_objects.filter(
+            trace_session_id__in=session_ids,
+            deleted=False,
+        )
+    )
     TraceSession.no_workspace_objects.filter(
         id__in=session_ids,
         deleted=False,
