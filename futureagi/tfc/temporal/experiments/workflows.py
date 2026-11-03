@@ -46,6 +46,7 @@ with workflow.unsafe.imports_passed_through():
         CleanupRunningCellsInput,
         CreateErrorAgentCellsInput,
         CreateErrorEvalCellsInput,
+        FailEvalOnlyRerunInput,
         GetEvalTemplatesInput,
         MarkExperimentRunningInput,
         PrepareAgentRowInput,
@@ -68,6 +69,7 @@ with workflow.unsafe.imports_passed_through():
         SetupExperimentInput,
         SetupPromptV2Input,
         StopExperimentCleanupInput,
+        WaitForExperimentRunsInput,
     )
 
 
@@ -81,6 +83,14 @@ SETUP_RETRY_POLICY = RetryPolicy(
     maximum_interval=timedelta(seconds=10),
     maximum_attempts=3,
     backoff_coefficient=2.0,
+)
+
+# Waiting can span worker restarts; bound total time via schedule-to-close,
+# not a small per-attempt setup retry budget.
+WAIT_RETRY_POLICY = RetryPolicy(
+    initial_interval=timedelta(seconds=1),
+    maximum_interval=timedelta(minutes=1),
+    maximum_attempts=0,
 )
 
 # Retry policy for row processing (longer, more retries for LLM calls)
@@ -1405,6 +1415,43 @@ class RerunCellsV2Workflow:
         total_failed_rows = 0
 
         try:
+            if input.wait_for_inflight_runs:
+                wait_result = await workflow.execute_activity(
+                    "wait_for_experiment_runs_activity",
+                    WaitForExperimentRunsInput(
+                        experiment_id=input.experiment_id,
+                        exclude_workflow_id=workflow.info().workflow_id,
+                    ),
+                    schedule_to_close_timeout=timedelta(hours=6, minutes=5),
+                    start_to_close_timeout=timedelta(hours=6),
+                    heartbeat_timeout=timedelta(minutes=2),
+                    retry_policy=WAIT_RETRY_POLICY,
+                )
+                if get_result_field(wait_result, "status") == "CANCELLED":
+                    return RerunCellsV2WorkflowOutput(
+                        experiment_id=input.experiment_id,
+                        status="CANCELLED",
+                        total_rows_processed=0,
+                        failed_rows=0,
+                    )
+                if get_result_field(wait_result, "status") != "READY":
+                    await workflow.execute_activity(
+                        "fail_eval_only_rerun_activity",
+                        FailEvalOnlyRerunInput(
+                            experiment_id=input.experiment_id,
+                            eval_template_ids=input.eval_template_ids,
+                            reason="Timed out waiting for final outputs. Retry evaluation.",
+                        ),
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=SETUP_RETRY_POLICY,
+                    )
+                    return RerunCellsV2WorkflowOutput(
+                        experiment_id=input.experiment_id,
+                        status="FAILED",
+                        total_rows_processed=0,
+                        failed_rows=0,
+                    )
+
             # Step 1: Mark experiment RUNNING (no eval column reset)
             mark_result = await workflow.execute_activity(
                 "mark_experiment_running_activity",
@@ -1611,14 +1658,26 @@ class RerunCellsV2Workflow:
             )
 
         except Exception:
-            # On failure, mark experiment as failed
             try:
-                await workflow.execute_activity(
-                    "mark_experiment_failed_activity",
-                    input.experiment_id,
-                    start_to_close_timeout=timedelta(seconds=30),
-                    retry_policy=SETUP_RETRY_POLICY,
-                )
+                if input.wait_for_inflight_runs:
+                    # The main producer is a separate workflow. Do not fail it
+                    # or leave this eval's placeholders spinning indefinitely.
+                    await workflow.execute_activity(
+                        "fail_eval_only_rerun_activity",
+                        FailEvalOnlyRerunInput(
+                            experiment_id=input.experiment_id,
+                            eval_template_ids=input.eval_template_ids,
+                        ),
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=SETUP_RETRY_POLICY,
+                    )
+                else:
+                    await workflow.execute_activity(
+                        "mark_experiment_failed_activity",
+                        input.experiment_id,
+                        start_to_close_timeout=timedelta(seconds=30),
+                        retry_policy=SETUP_RETRY_POLICY,
+                    )
             except Exception:
                 pass
 
