@@ -19,6 +19,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { useMutation } from "@tanstack/react-query";
 import { LoadingButton } from "@mui/lab";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import { KEY_SWITCH_DENIED, switchLocked } from "../keys.constants";
 
 const allMenuItems = [
   {
@@ -176,16 +177,24 @@ const ActionMenu = ({ data, onRefresh }) => {
       >
         {menuItems.map((item) => (
           <CustomTooltip
-            show={data?.type === "system"}
+            show={
+              data?.type === "system" || switchLocked(data, item.actionType)
+            }
             key={item.title}
-            title={`Can't ${item.actionType} system key`}
+            title={
+              data?.type === "system"
+                ? `Can't ${item.actionType} system key`
+                : KEY_SWITCH_DENIED
+            }
             placement="left"
             arrow
           >
             <Box>
               <MenuItem
                 onClick={() => handleMenuItemClick(item)}
-                disabled={data?.type === "system"}
+                disabled={
+                  data?.type === "system" || switchLocked(data, item.actionType)
+                }
                 sx={{
                   py: 0.5,
                   "&:hover": {
