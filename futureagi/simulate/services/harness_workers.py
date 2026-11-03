@@ -63,6 +63,9 @@ def _summary(value: Any, *, argument: bool = False) -> str | None:
         # A worker that returns its whole conversation answers with its last message that says something.
         said = [_said(one) for one in parsed["messages"]]
         text = next((one for one in reversed(said) if one), text)
+    if "\\n" in text and "\n" not in text:
+        # Text taken from a printed message object keeps its line breaks escaped; show them as breaks.
+        text = text.replace("\\n", "\n").replace("\\'", "'")
     if len(text) > _SUMMARY_CHARS:
         # Say the text goes on, so a cut-off answer is not read as the whole of it.
         text = text[:_SUMMARY_CHARS].rstrip() + "…"

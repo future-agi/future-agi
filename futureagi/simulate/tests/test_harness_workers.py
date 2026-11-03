@@ -758,3 +758,10 @@ def test_a_job_recorded_at_start_and_end_is_one_hand_off_and_one_still_running_h
     assert ("returned", "coder") in kinds
     assert ("delegated", "researcher") in kinds and ("returned", "researcher") not in kinds
 
+
+def test_escaped_line_breaks_in_an_answer_read_as_line_breaks():
+    from simulate.services.harness_workers import _summary
+
+    assert _summary("# Plan\\n\\nStep one\\nIt\\'s done") == "# Plan\n\nStep one\nIt's done"
+    assert _summary("Line one\nLine two with a literal \\n kept") == "Line one\nLine two with a literal \\n kept"
+

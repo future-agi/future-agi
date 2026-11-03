@@ -237,7 +237,9 @@ describe("CallWorkersPanel", () => {
     expect(screen.getByText("Coordinator · Unknown")).toBeInTheDocument();
     expect(screen.getAllByText("Unknown")).toHaveLength(2);
     expect(
-      screen.getByText("No return from Order-lookup worker before the call ended"),
+      screen.getByText(
+        "No return from Order-lookup worker before the call ended",
+      ),
     ).toBeInTheDocument();
   });
 
@@ -728,6 +730,7 @@ describe("readable", () => {
       "Refund order #1043 in full",
     );
     expect(readable('{"order_id": 1043}')).toBe('{"order_id": 1043}');
+    expect(readable("# Plan\\n\\nIt\\'s done")).toBe("# Plan\n\nIt's done");
     expect(
       readable(
         '{"messages": ["content=\'Build a limiter\' additional_kwargs={}", "content=\'\' addi…',

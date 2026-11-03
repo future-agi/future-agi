@@ -44,6 +44,9 @@ const TEXT_KEYS = [
 ];
 export const readable = (value) => {
   if (typeof value !== "string") return value;
+  // Text taken from a printed message object keeps its line breaks escaped.
+  if (value.includes("\\n") && !value.includes("\n"))
+    return readable(value.replace(/\\n/g, "\n").replace(/\\'/g, "'"));
   const repr = value.match(/content='((?:[^'\\]|\\.)*)'/);
   let parsed;
   try {
@@ -259,6 +262,12 @@ function Answer({ text }) {
           wordBreak: "break-word",
           "& p, & ul, & ol": { my: 0.25 },
           "& ul, & ol": { pl: 2.5 },
+          // Headings inside an answer read as bold lines, not page titles.
+          "& h1, & h2, & h3, & h4, & h5, & h6": {
+            typography: "s2",
+            fontWeight: 600,
+            my: 0.25,
+          },
           ...(clamped && { maxHeight: "8.4em", overflow: "hidden" }),
         }}
       >
