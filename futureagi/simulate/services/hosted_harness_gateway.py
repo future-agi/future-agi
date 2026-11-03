@@ -39,11 +39,14 @@ from simulate.models import (
     HostedHarnessConversation,
     HostedHarnessConversationLease,
     HostedHarnessConversationMessage,
+    HostedHarnessExecution,
     HostedHarnessJob,
+    HostedHarnessReceipt,
     HostedHarnessSecret,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.hosted_harness import (
+    RERUN_EXECUTION_KEYS,
     HostedHarnessError,
     activate_attempt_capability,
     finish_deferred_delete,
@@ -4365,8 +4368,8 @@ class HostedHarnessGateway:
     def _should_retry(self, attempt: HostedHarnessAttempt, domain: str) -> bool:
         # An infrastructure/connectivity failure is worth a fresh attempt while
         # the domain is retryable and the whole-job attempt budget remains
-        # (spine §0.6 + §1 `retry`). Exit 0 (verdict delivered) and exit 3
-        # (superseded) never reach here.
+        # (spine §0.6 + §1 `retry`). Exit 3 (superseded) never reaches here; exit 0
+        # does only when the platform lost results the guest produced.
         retry = attempt.job.payload.get("retry", {})
         cycle_start = int(
             (attempt.job.payload.get("metadata") or {}).get("attempt_cycle_start") or 1
@@ -4375,6 +4378,24 @@ class HostedHarnessGateway:
         return domain in retry.get(
             "retryable_domains", []
         ) and attempts_in_cycle < retry.get("max_infrastructure_attempts", 1)
+
+    def _received_every_result(self, attempt: HostedHarnessAttempt) -> bool:
+        """Whether this attempt delivered a result for every call it was sent to run.
+
+        Only a Run of a saved environment qualifies: a build's product is its bundle, not
+        call results. A result an earlier attempt delivered is not this attempt's.
+        """
+        job = attempt.job
+        if job.environment_id is None:
+            return False
+        executions = HostedHarnessExecution.no_workspace_objects.filter(job=job)
+        rerun_keys = (job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS)
+        if rerun_keys:
+            executions = executions.filter(execution_key__in=rerun_keys)
+        received = HostedHarnessReceipt.no_workspace_objects.filter(
+            job=job, attempt_number=attempt.attempt_number, execution__isnull=False
+        ).values("execution_id")
+        return executions.exists() and not executions.exclude(id__in=received).exists()
 
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
@@ -4630,9 +4651,30 @@ class HostedHarnessGateway:
                     logger.exception(
                         "could not mark the bundle cache failed attempt=%s", attempt.id
                     )
+        elif (
+            exit_code == 0
+            and attempt.terminal_event_received
+            and not attempt.manifest_acked
+            and attempt.terminal_stage == "completed"
+            and self._received_every_result(attempt)
+        ):
+            # Every call's result is in, and the results are what the run page and a check
+            # run read; only the manifest listing the artifacts was lost. Keep the scored
+            # Run: manifest_acked stays False as the record of what never arrived.
+            logger.warning(
+                "hosted run kept without its manifest attempt=%s provider_ref=%s",
+                attempt.id,
+                attempt.provider_ref,
+            )
         elif exit_code == 0 and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
+            # Retry only results the guest produced and the platform lost: an ending the
+            # guest reported as failed or canceled is its own.
+            retry_pending = (
+                not attempt.terminal_event_received
+                or attempt.terminal_stage == "completed"
+            ) and self._should_retry(attempt, "infrastructure")
             attempt.terminal_stage = "failed"
             attempt.terminal_failure = {
                 "domain": "platform_sync",

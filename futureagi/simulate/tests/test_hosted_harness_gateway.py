@@ -22,12 +22,21 @@ import pytest
 from django.test import override_settings
 from django.utils import timezone
 
-from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+from simulate.models import (
+    HostedHarnessAttempt,
+    HostedHarnessExecution,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
+    HostedHarnessScenario,
+)
+from simulate.models.test_execution import CallExecution
 from simulate.services.harness_capacity import SandboxCapacity
 from simulate.services.harness_provider import serialize_job
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    begin_scenarios,
     create_hosted_job,
+    provision_scenarios,
     record_cleanup,
     register_attempt,
     request_cancellation,
@@ -2759,7 +2768,7 @@ def test_reconcile_waits_when_daytona_deletion_is_already_in_progress(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("exit_code", [0, 3, 78])
+@pytest.mark.parametrize("exit_code", [3, 78])
 def test_reconcile_terminal_and_authoring_exits_never_retry(
     organization, monkeypatch, exit_code
 ):
@@ -2920,6 +2929,196 @@ def test_reconcile_exit0_refreshes_terminal_delivery_flags(organization, monkeyp
     assert refreshed.manifest_acked is True
     assert refreshed.terminal_stage == "completed"
     assert refreshed.terminal_failure is None
+
+
+def _delivered_run(organization, key: str, *, receipts: int) -> HostedHarnessAttempt:
+    """A two-call Run of a saved environment holding its first ``receipts`` results and no
+    acknowledged manifest."""
+    environment, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"{key}-environment"
+    )
+    payload = _payload()
+    payload["scenario_count"] = 2
+    job, _ = create_hosted_job(organization, payload, idempotency_key=key)
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example", provider_ref="sandbox-1"
+    ).attempt
+    keys = ["scenario-1", "scenario-2"]
+    provisioned = provision_scenarios(
+        attempt,
+        {
+            "operation": "provision",
+            "name": "Delivered run",
+            "personas": [
+                {"scenario_key": name, "name": name, "description": name}
+                for name in keys
+            ],
+        },
+    )
+    attempt.job.refresh_from_db()
+    begin_scenarios(
+        attempt,
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["result"]["run_test_id"],
+            "scenario_keys": keys,
+        },
+    )
+    registrations = HostedHarnessScenario.no_workspace_objects.filter(job=job).order_by(
+        "scenario_key"
+    )
+    for number, registration in enumerate(registrations):
+        # A Run's call hangs off its execution, not off the scenario it was built from.
+        call = registration.call_execution
+        HostedHarnessScenario.no_workspace_objects.filter(id=registration.id).update(
+            call_execution=None
+        )
+        execution = HostedHarnessExecution.no_workspace_objects.create(
+            job=job,
+            source_scenario=registration,
+            execution_key=f"{registration.scenario_key}:0",
+            trial_index=0,
+            call_execution=call,
+        )
+        if number < receipts:
+            _receive(attempt, execution)
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        environment=environment
+    )
+    return attempt
+
+
+def _receive(attempt: HostedHarnessAttempt, execution: HostedHarnessExecution) -> None:
+    HostedHarnessReceipt.no_workspace_objects.create(
+        job_id=attempt.job_id,
+        attempt=attempt,
+        scenario=execution.source_scenario,
+        execution=execution,
+        attempt_number=attempt.attempt_number,
+        digest=f"sha256:{uuid.uuid4().hex * 2}",
+        status="passed",
+        body={},
+    )
+    CallExecution.objects.filter(id=execution.call_execution_id).update(
+        status=CallExecution.CallStatus.COMPLETED
+    )
+
+
+def _deliver_terminal(attempt: HostedHarnessAttempt, stage: str) -> None:
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        terminal_event_received=True,
+        terminal_stage=stage,
+        state=HostedHarnessAttempt.State.FINALIZING,
+    )
+
+
+def _exited_cleanly(monkeypatch) -> tuple[HostedHarnessGateway, dict]:
+    """A gateway whose guest exited 0 and whose offline spool holds nothing more."""
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    captured = {}
+
+    def fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", fake_delete)
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 0, "logs": "", "process_logs": ""},
+    )
+    monkeypatch.setattr(gateway, "_recover_offline_delivery", lambda _: False)
+    return gateway, captured
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_keeps_a_scored_run_whose_manifest_was_lost(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "scored-run-lost-manifest", receipts=2)
+    _deliver_terminal(attempt, "completed")
+    gateway, captured = _exited_cleanly(monkeypatch)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert captured["retry_pending"] is False
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    assert attempt.terminal_failure is None
+    # Nothing stands in for the manifest: the attempt still records that it never came.
+    assert attempt.manifest_acked is False
+    assert not attempt.manifests.exists()
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("terminal_stage", "receipts", "retried"),
+    [
+        ("completed", 1, True),  # a result never arrived
+        (None, 2, True),  # the terminal event never arrived
+        ("canceled", 2, False),  # the guest's own ending is not retried
+    ],
+)
+def test_reconcile_exit0_retries_a_run_only_when_its_results_are_missing(
+    organization, monkeypatch, terminal_stage, receipts, retried
+):
+    attempt = _delivered_run(
+        organization, f"run-missing-{terminal_stage}", receipts=receipts
+    )
+    if terminal_stage:
+        _deliver_terminal(attempt, terminal_stage)
+    gateway, captured = _exited_cleanly(monkeypatch)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "terminal_delivery_incomplete"
+    assert captured["retry_pending"] is retried
+    assert job.state == (
+        HostedHarnessJob.State.RETRY_WAIT if retried else HostedHarnessJob.State.FAILED
+    )
+
+
+@pytest.mark.django_db
+def test_reconcile_exit0_counts_only_the_relaunchs_own_results(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-missing-retry-spent", receipts=1)
+    _deliver_terminal(first, "completed")
+    gateway, _ = _exited_cleanly(monkeypatch)
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    # The relaunch delivers the result the first attempt lost but loses the other one. The
+    # first attempt's result is not this attempt's, so the Run is not finished from it.
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    _receive(
+        second,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=first.job_id, receipt__isnull=True
+        ),
+    )
+    _deliver_terminal(second, "completed")
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert job.failure["code"] == "terminal_delivery_incomplete"
 
 
 @pytest.mark.django_db(transaction=True)
