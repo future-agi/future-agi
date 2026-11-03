@@ -5,14 +5,14 @@ export const SearchFieldBox = styled(Box)(({ theme }) => ({
   display: "flex",
   alignItems: "center",
   border: `1px solid ${theme.palette.divider}`,
-  borderRadius: "10px",
+  borderRadius: "6px",
   height: "35px",
 }));
 
 export const LabelButton = styled(MenuItem)(({ theme }) => ({
   color: theme.palette.primary.main,
   cursor: "pointer",
-  fontSize: "14px",
+  fontSize: "13px",
   fontWeight: typography.fontWeightSemiBold,
   lineHeight: 1.6,
   display: "flex",

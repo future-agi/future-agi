@@ -48,7 +48,7 @@ const BottomAction = ({ currentLabel, setCurrentLabel }) => {
           color="primary"
           variant="contained"
           onClick={currentAction.buttonAction}
-          sx={{ minWidth: "120px", height: "38px", padding: "8px 24px" }}
+          sx={{ minWidth: "120px" }}
         >
           {currentAction?.buttonText}
         </Button>

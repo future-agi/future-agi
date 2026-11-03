@@ -150,7 +150,7 @@ const UploadFile = ({ setActiveStep, onClose }) => {
                           <IconButton color="primary" component="span">
                             <Iconify
                               width={24}
-                              icon="material-symbols:upload"
+                              icon="solar:upload-minimalistic-linear"
                               sx={{ color: "primary.main" }}
                             />
                           </IconButton>

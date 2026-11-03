@@ -76,7 +76,7 @@ const DeleteItem = (props) => {
             height: "16px",
             width: "16px",
           }}
-          icon="mdi:close"
+          icon="solar:close-linear"
         />
       </IconButton>
     </Stack>
@@ -111,10 +111,11 @@ export default function ConfirmDelete({
       aria-labelledby="confirm-dialog-title"
       aria-describedby="confirm-dialog-description"
       fullWidth
-      maxWidth="xs"
+      maxWidth={false}
       sx={{}}
       PaperProps={{
         sx: {
+          maxWidth: 400,
           padding: "16px",
           display: "flex",
           flexDirection: "column",
@@ -161,7 +162,7 @@ export default function ConfirmDelete({
             }}
             onClick={onClose}
           >
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -188,8 +189,6 @@ export default function ConfirmDelete({
         <Button
           sx={{
             color: "text.disabled",
-            px: "24ppx",
-            py: "6px",
             minWidth: "19px",
           }}
           disabled={isLoading}
@@ -199,7 +198,7 @@ export default function ConfirmDelete({
           <Typography
             variant="s2"
             fontWeight={"fontWeightMedium"}
-            fontSize={"14px"}
+            fontSize={"13px"}
           >
             Cancel
           </Typography>
@@ -211,17 +210,15 @@ export default function ConfirmDelete({
           autoFocus
           color="error"
           sx={{
-            backgroundColor: "red.500",
+            backgroundColor: "status.danger.solid",
             color: "common.white",
-            px: "24px",
-            py: "6px",
             minWidth: "19px",
           }}
         >
           <Typography
             variant="s2"
             fontWeight={"fontWeightSemiBold"}
-            fontSize={"14px"}
+            fontSize={"13px"}
           >
             Delete
           </Typography>

@@ -11,6 +11,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { fmtMs } from "src/utils/utils";
+import { seriesColor } from "src/theme/data-colors";
 import { computeCallMetrics, enrichTurns } from "./transcriptUtils";
 import { fmtWpm } from "./formatters";
 
@@ -44,11 +45,11 @@ const fmtNumber = (n) => {
 const SectionLabel = ({ children }) => (
   <Typography
     sx={{
-      fontSize: 10,
+      fontSize: 12,
       fontWeight: 600,
       color: "text.secondary",
-      textTransform: "uppercase",
-      letterSpacing: "0.06em",
+      textTransform: "none",
+      letterSpacing: 0,
     }}
   >
     {children}
@@ -64,12 +65,9 @@ SectionLabel.propTypes = { children: PropTypes.node };
 const KpiCell = ({ label, value, hint, tone = "default" }) => {
   const toneColor = {
     default: "text.primary",
-    success: "success.main",
-    warn: (theme) =>
-      theme.palette.mode === "dark"
-        ? theme.palette.warning.main
-        : theme.palette.warning.darker,
-    danger: "error.main",
+    success: "status.success.fg",
+    warn: "status.warning.fg",
+    danger: "status.danger.fg",
   }[tone];
   return (
     <Tooltip
@@ -88,11 +86,11 @@ const KpiCell = ({ label, value, hint, tone = "default" }) => {
       >
         <Typography
           sx={{
-            fontSize: 10.5,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.secondary",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
+            textTransform: "none",
+            letterSpacing: 0,
             whiteSpace: "nowrap",
           }}
         >
@@ -101,7 +99,7 @@ const KpiCell = ({ label, value, hint, tone = "default" }) => {
         <Typography
           sx={{
             fontSize: 16,
-            fontWeight: 700,
+            fontWeight: 600,
             color: toneColor,
             lineHeight: 1.2,
             whiteSpace: "nowrap",
@@ -148,7 +146,7 @@ const KpiStrip = ({ metrics, apiMetrics }) => {
   const talkRatioValue =
     userTalkPct != null && assistantTalkPct != null ? (
       <>
-        <Box component="span" sx={{ color: "#E9690C" }}>
+        <Box component="span" sx={{ color: "status.warning.fg" }}>
           {userTalkPct}
         </Box>
         <Box component="span" sx={{ color: "text.disabled" }}>
@@ -307,7 +305,7 @@ const LatencyPipeline = ({ latencies }) => {
       theme.palette.blue?.[700] || theme.palette.primary.dark,
       theme.palette.blue?.[600] || theme.palette.primary.main,
       theme.palette.blue?.[500] || theme.palette.primary.light,
-      theme.palette.blue?.[400] || "#8BB5FF",
+      theme.palette.blue?.[400] || seriesColor(theme, 1),
     ];
     return shades[i] || theme.palette.primary.main;
   };
@@ -318,7 +316,7 @@ const LatencyPipeline = ({ latencies }) => {
         <SectionLabel>Latency pipeline</SectionLabel>
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: "text.secondary",
             fontFamily: "monospace",
           }}
@@ -347,15 +345,16 @@ const LatencyPipeline = ({ latencies }) => {
           const showInline = pct >= 12;
           return (
             <Tooltip
+              classes={{ tooltip: "ds-hovercard" }}
               key={s.key}
               arrow
               placement="top"
               title={
                 <Box>
-                  <Typography sx={{ fontSize: 11, fontWeight: 600 }}>
+                  <Typography sx={{ fontSize: 12, fontWeight: 600 }}>
                     {s.label}
                   </Typography>
-                  <Typography sx={{ fontSize: 10 }}>
+                  <Typography sx={{ fontSize: 12 }}>
                     {fmtMs(s.value)} ({pct.toFixed(1)}% of total)
                   </Typography>
                 </Box>
@@ -368,8 +367,8 @@ const LatencyPipeline = ({ latencies }) => {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  color: "#fff",
-                  fontSize: 10,
+                  color: "common.white",
+                  fontSize: 12,
                   fontWeight: 600,
                   fontFamily: "monospace",
                   transition: "filter 120ms",
@@ -403,14 +402,14 @@ const LatencyPipeline = ({ latencies }) => {
               sx={{
                 width: 8,
                 height: 8,
-                borderRadius: "2px",
+                borderRadius: "4px",
                 bgcolor: colorForIndex(i),
                 flexShrink: 0,
               }}
             />
             <Typography
               sx={{
-                fontSize: 10,
+                fontSize: 12,
                 color: "text.secondary",
                 whiteSpace: "nowrap",
               }}
@@ -419,7 +418,7 @@ const LatencyPipeline = ({ latencies }) => {
             </Typography>
             <Typography
               sx={{
-                fontSize: 10,
+                fontSize: 12,
                 color: "text.primary",
                 fontWeight: 600,
                 fontFamily: "monospace",
@@ -441,9 +440,9 @@ LatencyPipeline.propTypes = { latencies: PropTypes.object };
 // ─────────────────────────────────────────────────────────────────────────────
 
 const COST_STAGES = [
-  { key: "stt", label: "Speech to Text", icon: "mdi:microphone-outline" },
-  { key: "llm", label: "LLM", icon: "mdi:brain" },
-  { key: "tts", label: "Text to Speech", icon: "mdi:volume-high" },
+  { key: "stt", label: "Speech to Text", icon: "solar:microphone-3-linear" },
+  { key: "llm", label: "LLM", icon: "solar:brain-linear" },
+  { key: "tts", label: "Text to Speech", icon: "solar:volume-loud-linear" },
 ];
 
 const CostBreakdown = ({ costBreakdown }) => {
@@ -472,7 +471,7 @@ const CostBreakdown = ({ costBreakdown }) => {
         <SectionLabel>Cost breakdown</SectionLabel>
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: "text.secondary",
             fontFamily: "monospace",
           }}
@@ -518,7 +517,7 @@ const CostBreakdown = ({ costBreakdown }) => {
                   width={14}
                   sx={{ color: "text.secondary" }}
                 />
-                <Typography sx={{ fontSize: 11, fontWeight: 600 }}>
+                <Typography sx={{ fontSize: 12, fontWeight: 600 }}>
                   {row.label}
                 </Typography>
               </Stack>
@@ -526,7 +525,7 @@ const CostBreakdown = ({ costBreakdown }) => {
                 <Box
                   sx={{
                     height: 5,
-                    borderRadius: "3px",
+                    borderRadius: "4px",
                     bgcolor: "action.hover",
                     overflow: "hidden",
                   }}
@@ -544,7 +543,7 @@ const CostBreakdown = ({ costBreakdown }) => {
                 {(row.promptTokens != null || row.completionTokens != null) && (
                   <Typography
                     sx={{
-                      fontSize: 9.5,
+                      fontSize: 12,
                       color: "text.disabled",
                       mt: 0.25,
                       fontFamily: "monospace",
@@ -567,7 +566,7 @@ const CostBreakdown = ({ costBreakdown }) => {
               >
                 <Typography
                   sx={{
-                    fontSize: 11.5,
+                    fontSize: 12,
                     fontWeight: 600,
                     color: "text.primary",
                     fontFamily: "monospace",
@@ -577,7 +576,7 @@ const CostBreakdown = ({ costBreakdown }) => {
                 </Typography>
                 <Typography
                   sx={{
-                    fontSize: 9.5,
+                    fontSize: 12,
                     color: "text.disabled",
                     fontFamily: "monospace",
                   }}
@@ -624,7 +623,7 @@ const AiSummaryCard = ({ summary }) => {
         }}
       >
         <Iconify
-          icon="mdi:creation"
+          icon="solar:stars-minimalistic-linear"
           width={14}
           sx={{ color: "primary.main", flexShrink: 0 }}
         />
@@ -632,7 +631,7 @@ const AiSummaryCard = ({ summary }) => {
           sx={{
             flex: 1,
             minWidth: 0,
-            fontSize: 11,
+            fontSize: 12,
             color: "text.primary",
             lineHeight: 1.4,
             overflow: "hidden",
@@ -644,7 +643,7 @@ const AiSummaryCard = ({ summary }) => {
           {!open && summary.length > 140 ? "…" : null}
         </Typography>
         <Iconify
-          icon="mdi:chevron-down"
+          icon="solar:alt-arrow-down-linear"
           width={14}
           sx={{
             color: "text.disabled",
@@ -731,7 +730,7 @@ const CallAnalyticsView = ({
             bgcolor: "background.neutral",
           }}
         >
-          <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+          <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
             System metrics and cost breakdown are not available for LiveKit
             agents — LiveKit does not expose internal pipeline metrics or
             billing data via API.

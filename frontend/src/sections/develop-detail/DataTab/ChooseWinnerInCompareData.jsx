@@ -17,6 +17,7 @@ import { LoadingButton } from "@mui/lab";
 import WeightSlider from "src/sections/project/ChooseWinner/WeightSlider";
 import WeightSliderSection from "src/sections/project/ChooseWinner/WeightSliderSection";
 import { enqueueSnackbar } from "notistack";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const ChooseProjectExperimentWinnerDrawerChild = ({
   onClose,
@@ -86,14 +87,14 @@ const ChooseProjectExperimentWinnerDrawerChild = ({
           Winner Settings
         </Typography>
         <IconButton size="small" onClick={onClose}>
-          <Iconify icon="mdi:close" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       <Typography
         variant="caption"
         sx={{ marginTop: 0, padding: theme.spacing(0, 2.5, 0) }}
         color="text.secondary"
-        fontSize="14px"
+        fontSize="13px"
         fontWeight={400}
       >
         Choose the overall importance value of the given variable below to
@@ -107,7 +108,7 @@ const ChooseProjectExperimentWinnerDrawerChild = ({
       >
         <Typography
           sx={{
-            fontSize: "14px",
+            fontSize: "13px",
             fontWeight: 500,
             color: "text.primary",
             padding: theme.spacing(2, 2.5, 0),
@@ -190,17 +191,19 @@ const ChooseWinnerInCompareData = ({
   setIsChooseWinnerSelected,
   setDataAfterChooseWinner,
 }) => {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       // onClose={onClose}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           zIndex: 99,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
         },
       }}
