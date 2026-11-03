@@ -44,7 +44,8 @@ _DATE_FILTER = {
 _END_USERS_DDL = """
 CREATE TABLE end_users (
     project_id UUID, end_user_id UUID, organization_id UUID,
-    user_id String, user_id_type Nullable(String), user_id_hash String DEFAULT '',
+    user_id String, user_id_type LowCardinality(Nullable(String)),
+    user_id_hash String DEFAULT '',
     first_seen DateTime64(6, 'UTC'), version UInt64, is_deleted UInt8 DEFAULT 0
 ) ENGINE = ReplacingMergeTree(version) ORDER BY (project_id, end_user_id)
 """
@@ -234,15 +235,18 @@ def users_cost_client():
             client.close()
 
 
-def _seed_user(client, project, organization, user, label="customer"):
+def _seed_user(
+    client, project, organization, user, label="customer", *, user_type=None
+):
     client.insert(
         "end_users",
-        [[project, user, organization, label, START, 1]],
+        [[project, user, organization, label, user_type, START, 1]],
         column_names=[
             "project_id",
             "end_user_id",
             "organization_id",
             "user_id",
+            "user_id_type",
             "first_seen",
             "version",
         ],
@@ -767,7 +771,15 @@ def test_half_present_internal_companion_is_not_treated_as_legacy(count_field):
 @pytest.mark.integration
 @pytest.mark.parametrize(
     "limit,offset,max_rows",
-    [(2, 0, None), (1, 1, None), (1, 10, None), (0, 0, None), (None, None, 2)],
+    [
+        (2, 0, None),
+        (1, 1, None),
+        (1, 2, None),
+        (3, 0, None),
+        (1, 10, None),
+        (0, 0, None),
+        (None, None, 2),
+    ],
 )
 def test_bounded_compatibility_rows_keep_types_nulls_order_and_count(
     users_cost_client, limit, offset, max_rows
@@ -780,7 +792,14 @@ def test_bounded_compatibility_rows_keep_types_nulls_order_and_count(
         ("unknown", {"attrs_string": UNKNOWN, "end_time": None}),
     ):
         user = uuid4()
-        _seed_user(client, project, organization, user, label)
+        _seed_user(
+            client,
+            project,
+            organization,
+            user,
+            label,
+            user_type="email" if label == "known" else None,
+        )
         _seed_spans(client, project, user, [spec])
     kwargs = {
         "organization_id": str(organization),
@@ -826,6 +845,44 @@ def test_bounded_compatibility_rows_keep_types_nulls_order_and_count(
         else reference_rows[:max_rows]
     )
     assert rows == [(*row[:-1], 3 if paginated else 0) for row in expected_native]
+    named_rows = [
+        dict(zip((name for name, _ in columns), row, strict=True)) for row in rows
+    ]
+    if paginated and ((limit, offset) == (1, 2) or limit == 3):
+        unknown = next(row for row in named_rows if row["user_id"] == "unknown")
+        assert unknown["complete_cost"] is None
+        assert unknown["last_active"] is None
+        assert unknown["user_id_type"] is None
+    for row in named_rows:
+        if row["user_id"] == "known":
+            assert row["user_id_type"] == "email"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("include_num_sessions", [False, True])
+def test_nonzero_session_state_survives_singleton_usage_projection(
+    users_cost_client, include_num_sessions
+):
+    client = users_cost_client
+    project, organization, user, session_a, session_b = (uuid4() for _ in range(5))
+    _seed_user(client, project, organization, user)
+    for index, session in enumerate((session_a, session_b, session_a, None)):
+        _seed_spans(
+            client,
+            project,
+            user,
+            [{"trace_session_id": session, "cost": 1.25}],
+            trace=f"session-state-{index}",
+        )
+    result, raw = _read(
+        client, project, organization, include_num_sessions=include_num_sessions
+    )
+    row = result["table"][0]
+    assert row["num_sessions"] == (2 if include_num_sessions else 0)
+    assert row["num_traces"] == 4
+    assert row["total_cost"] == 5.0
+    assert row["cost_coverage"] == _coverage("complete", 5.0, 4, 0)
+    assert raw[0]["num_sessions"] == row["num_sessions"]
 
 
 @pytest.mark.integration
