@@ -1369,13 +1369,13 @@ class TestResultIngest:
                     "noticed",
                     None,
                     "not_applicable",
-                    "Not applicable: Rowan's trigger never fired.",
+                    "Not applicable: the caller never asked to cancel.",
                 ),
                 (
                     "heard",
                     None,
                     "inconclusive",
-                    "Inconclusive: Rowan did not take part.",
+                    "Inconclusive: the deciding moment cannot be heard.",
                 ),
             )
         ]
