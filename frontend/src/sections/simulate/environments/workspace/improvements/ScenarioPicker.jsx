@@ -209,7 +209,8 @@ ScenarioList.propTypes = {
 };
 
 // The design's case picker on launch-options: a scenario with a failed
-// sub-goal can be fixed; any other can be protected. Never both.
+// sub-goal can be fixed; one that passed in the run can be protected, since
+// the backend refuses any other. Never both.
 export default function ScenarioPicker({
   options,
   targets,
@@ -218,7 +219,9 @@ export default function ScenarioPicker({
   onProtected,
 }) {
   const fixable = options.scenarios.filter((s) => s.failing_sub_goals.length);
-  const protectable = options.scenarios.filter((s) => !targets.includes(s.key));
+  const protectable = options.scenarios.filter(
+    (s) => s.passed === true && !targets.includes(s.key),
+  );
   return (
     <Stack spacing={2} sx={{ mt: 1.25 }}>
       <ScenarioList
@@ -244,7 +247,7 @@ export default function ScenarioPicker({
           (k) => !targets.includes(k),
         )}
         onChange={onProtected}
-        emptyText="No other cases to protect."
+        emptyText="No case passed in this run, so there's nothing to protect."
       />
     </Stack>
   );

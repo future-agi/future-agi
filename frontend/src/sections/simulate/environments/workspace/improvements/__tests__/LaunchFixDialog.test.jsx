@@ -126,7 +126,11 @@ describe("LaunchFixDialog", () => {
     expect(
       screen.getByText("11 failing to fix · 6 must keep passing"),
     ).toBeInTheDocument();
-    expect(protectCases().getAllByText("Not measured")).toHaveLength(2);
+    expect(protectCases().getByText("6 of 6")).toBeInTheDocument();
+    expect(
+      protectCases().queryByRole("checkbox", { name: "Authority claim" }),
+    ).toBeNull();
+    expect(protectCases().queryByText("Not measured")).toBeNull();
   });
 
   it("shows whether All or None is in effect", async () => {
@@ -219,39 +223,6 @@ describe("LaunchFixDialog", () => {
       .filter((k) => k !== field)
       .forEach((k) => expect({ [k]: after[k] }).toEqual({ [k]: before[k] }));
     expect(after[field]).not.toEqual(before[field]);
-  });
-
-  it("moves an unticked case to the protect list without ticking it", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-    await openPicker(user);
-    const protectBefore = picked("cases-protect");
-    await user.click(
-      fixCases().getByRole("checkbox", { name: "Authority claim" }),
-    );
-    expect(
-      protectCases().getByRole("checkbox", { name: "Authority claim" }),
-    ).toHaveAttribute("aria-checked", "false");
-    expect(picked("cases-protect")).toEqual(protectBefore);
-  });
-
-  it("takes a re-ticked case off the protect list even if it was protected", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-    await openPicker(user);
-    const authority = () =>
-      fixCases().getByRole("checkbox", { name: "Authority claim" });
-    await user.click(authority());
-    await user.click(
-      protectCases().getByRole("checkbox", { name: "Authority claim" }),
-    );
-    await user.click(authority());
-    expect(
-      protectCases().queryByRole("checkbox", { name: "Authority claim" }),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Start improvement" }),
-    ).toBeEnabled();
   });
 
   it("reads every field back in the review sentence", async () => {
