@@ -467,9 +467,21 @@ describe("mapCallDetail", () => {
       simulation_call_type: "text",
       transcript: [{ role: "assistant", content: "Here is the post." }],
       function_calls: [
-        { name: "Shakespearean Bard", delegated_to: "Shakespearean Bard", result: "a draft" },
-        { name: "Character Counter Tool", arguments: { text: "a draft" }, result: "208" },
-        { name: "X Post Verifier", delegated_to: "X Post Verifier", result: "valid" },
+        {
+          name: "Shakespearean Bard",
+          delegated_to: "Shakespearean Bard",
+          result: "a draft",
+        },
+        {
+          name: "Character Counter Tool",
+          arguments: { text: "a draft" },
+          result: "208",
+        },
+        {
+          name: "X Post Verifier",
+          delegated_to: "X Post Verifier",
+          result: "valid",
+        },
       ],
       eval_metrics: {},
     });
@@ -1522,7 +1534,9 @@ describe("useCallTraces", () => {
       wrapper: makeWrapper(),
     });
 
-    await waitFor(() => expect(result.current.projectId).toBe("hidden-project"));
+    await waitFor(() =>
+      expect(result.current.projectId).toBe("hidden-project"),
+    );
     expect(axios.get).toHaveBeenCalledWith(
       endpoints.runResultsV3.traces("exec-1"),
       { params: { call_execution_id: "call-1" } },
@@ -1611,5 +1625,27 @@ describe("sub-actor turns in a call", () => {
       ["sub_actor", "Rowan"],
       ["customer", ""],
     ]);
+  });
+});
+
+describe("useCallWorkers", () => {
+  it("reads a 404 from the app's client as no worker record, not a failure", async () => {
+    const { useCallWorkers } = await import("../runDetail");
+    axios.get.mockRejectedValueOnce({
+      code: "workers_unavailable",
+      statusCode: 404,
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const { result } = renderHook(() => useCallWorkers("call-1"), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toBe(null);
   });
 });

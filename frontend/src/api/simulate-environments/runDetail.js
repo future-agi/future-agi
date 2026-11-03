@@ -672,9 +672,17 @@ export function useCallWorkers(callExecutionId) {
     queryKey: ["simulation-call-workers-v3", callExecutionId],
     queryFn: async () => {
       try {
-        return (await axios.get(endpoints.runResultsV3.workers(callExecutionId))).data;
+        return (
+          await axios.get(endpoints.runResultsV3.workers(callExecutionId))
+        ).data;
       } catch (error) {
-        if (error?.status === 404 || error?.response?.status === 404) return null;
+        // The app's client rejects with `statusCode`; a call with no worker record is a 404, not a failure.
+        if (
+          [error?.statusCode, error?.status, error?.response?.status].includes(
+            404,
+          )
+        )
+          return null;
         throw error;
       }
     },
