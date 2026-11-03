@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('simulate', '0102_capability_evidence_scenario_requirements'),
+        ('simulate', '0104_capability_evidence_scenario_requirements'),
     ]
 
     operations = [
