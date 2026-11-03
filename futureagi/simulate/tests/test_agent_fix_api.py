@@ -1509,10 +1509,21 @@ class TestUserApi:
     REGRESSED = f"{KEYS[1]}: cancels_visit"
     REASON = "The refund fix matters more than the cancel flow."
 
-    def _vetoed(self, source_run, kind, *, failed=("must-pass",), protected=()):
+    def _vetoed(
+        self,
+        source_run,
+        kind,
+        *,
+        failed=("must-pass",),
+        protected=(),
+        held_back=True,
+        tiers=None,
+    ):
         """A finished fix whose candidate the verdict refused at the ``failed`` tiers, on an
         agent of this source kind. A failed screen skips the tiers after it; the final
-        check records all of its tiers."""
+        check records all of its tiers. Without ``held_back`` the fix has no held-back
+        case, so the verdict has no held-back tier and no held-back rate. ``tiers``
+        replaces the recorded tiers."""
         HarnessAgentVersionRuntime.no_workspace_objects.filter(
             agent_version_id=source_run.agent_version_id
         ).update(source_kind=kind)
@@ -1521,14 +1532,17 @@ class TestUserApi:
             request={
                 **fix_run.request,
                 "protected_scenario_keys": list(protected),
-                "held_back_scenario_keys": [f"held-{n}" for n in range(4)],
+                "held_back_scenario_keys": [f"held-{n}" for n in range(4)]
+                if held_back
+                else [],
             }
         )
         fix_run.refresh_from_db()
         candidate = _candidate(fix_run)
-        first = min(self.TIERS.index(name) for name in failed)
-        final = first >= self.TIERS.index("must-pass")
-        tiers = [
+        names = [name for name in self.TIERS if held_back or name != "held-back"]
+        first = min(names.index(name) for name in failed)
+        final = first >= names.index("must-pass")
+        recorded = [
             {
                 "name": name,
                 "status": "failed"
@@ -1538,7 +1552,7 @@ class TestUserApi:
                 else "skipped",
                 "detail": "",
             }
-            for at, name in enumerate(self.TIERS)
+            for at, name in enumerate(names)
         ]
         AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
             outcome=AgentFixCandidate.Outcome.REJECTED,
@@ -1546,12 +1560,12 @@ class TestUserApi:
                 "accepted": False,
                 "reason": f"{failed[0]}: failed",
                 "target_pass_rate": [0, 0.75],
-                "held_back_pass_rate": [0, 0.5],
+                "held_back_pass_rate": [0, 0.5] if held_back else None,
                 "must_pass_regressions": [self.REGRESSED]
                 if "must-pass" in failed
                 else [],
                 "must_pass_within_noise": [],
-                "tiers": tiers,
+                "tiers": recorded if tiers is None else tiers,
             },
         )
         close_fix_run(fix_run.id, AgentFixRun.State.NO_IMPROVEMENT)
@@ -1633,6 +1647,81 @@ class TestUserApi:
         fix_run, candidate = self._vetoed(
             source_run, "github", failed=failed, protected=protected
         )
+
+        response, calls = self._ship(
+            auth_client, fix_run, candidate, [], override_reason=self.REASON
+        )
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            422,
+            "fix_candidate_not_proven",
+            [],
+        )
+        override = self._override(auth_client, fix_run)
+        assert (override["allowed"], override["regressions"]) == (False, [])
+
+    def test_a_fix_without_held_back_cases_ships_a_must_pass_refusal_with_a_reason(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._vetoed(source_run, "github", held_back=False)
+
+        response, calls = self._ship(
+            auth_client,
+            fix_run,
+            candidate,
+            [(201, {"html_url": self.PULL})],
+            override_reason=self.REASON,
+        )
+
+        assert self._override(auth_client, fix_run)["allowed"] is True
+        assert (response.status_code, len(calls)) == (200, 1)
+
+    def _final(self, failed="must-pass", skip=()):
+        return [
+            {"name": name, "status": "failed" if name == failed else "passed"}
+            for name in self.TIERS
+            if name not in skip
+        ]
+
+    @pytest.mark.parametrize(
+        "tiers",
+        [
+            pytest.param(
+                [{"name": "must-pass", "status": "failed"}], id="must-pass-only"
+            ),
+            pytest.param([], id="no-tiers"),
+            pytest.param(None, id="tiers-not-recorded"),
+            pytest.param("final-without-held-back", id="held-back-tier-missing"),
+            pytest.param("final-without-ceilings", id="ceilings-missing"),
+            pytest.param("final-with-must-pass-twice", id="duplicate-tier"),
+            pytest.param("final-reordered", id="tiers-out-of-order"),
+            pytest.param("final-with-a-pending-repeats", id="repeats-pending"),
+        ],
+    )
+    def test_a_verdict_short_of_the_whole_final_check_cannot_ship_with_a_reason(
+        self, auth_client, source_run, github, tiers
+    ):
+        final = self._final()
+        recorded = (
+            {
+                "final-without-held-back": self._final(skip=("held-back",)),
+                "final-without-ceilings": self._final(skip=("ceilings",)),
+                "final-with-must-pass-twice": [*final[:4], final[3], *final[4:]],
+                "final-reordered": [final[1], final[0], *final[2:]],
+                "final-with-a-pending-repeats": [
+                    *final[:4],
+                    {"name": "repeats", "status": "pending"},
+                    final[5],
+                ],
+            }.get(tiers, tiers)
+            if isinstance(tiers, str)
+            else tiers
+        )
+        fix_run, candidate = self._vetoed(source_run, "github", tiers=recorded)
+        if recorded is None:
+            AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+                verdict={**candidate.verdict, "tiers": None}
+            )
 
         response, calls = self._ship(
             auth_client, fix_run, candidate, [], override_reason=self.REASON

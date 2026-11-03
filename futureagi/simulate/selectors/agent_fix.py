@@ -448,25 +448,38 @@ def limited_validation(fix_run: AgentFixRun) -> bool:
     return len(held_back) < HELD_BACK_VERIFIED_MIN
 
 
+# The tiers the engine's final check records for a finalist, in order.
+VERDICT_TIERS = ("static", "target", "held-back", "must-pass", "repeats", "ceilings")
+
+
 def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
     """The must-pass checks a refused candidate regressed on, as "scenario key: check",
-    when nothing else refused it: every other tier of its verdict passed, and no check is on
-    a case the user protected. Such a candidate may ship on the user's reason; for any
-    other the list is empty."""
+    when nothing else refused it: its verdict holds the final check's every tier, each one
+    passed but must-pass, and no check is on a case the user protected. Such a candidate
+    may ship on the user's reason; for any other the list is empty."""
     if candidate.outcome != AgentFixCandidate.Outcome.REJECTED:
         return []
     verdict = candidate.verdict or {}
-    # A verdict from an engine without tiers says too little to ship on.
-    unpassed = [
-        (tier.get("name"), tier.get("status"))
-        for tier in verdict.get("tiers") or []
-        if tier.get("status") != "passed"
+    # Fail closed: a verdict missing a tier, or naming one twice, proves too little.
+    tiers = [
+        (tier.get("name"), tier.get("status")) for tier in verdict.get("tiers") or []
+    ]
+    request = candidate.fix_run.request
+    # The engine drops the held-back tier, and reports no held-back rate, when the fix
+    # has no held-back case it can score.
+    held_back = bool(request.get("held_back_scenario_keys")) and (
+        verdict.get("held_back_pass_rate") is not None
+    )
+    expected = [
+        (name, "failed" if name == "must-pass" else "passed")
+        for name in VERDICT_TIERS
+        if held_back or name != "held-back"
     ]
     regressions = verdict.get("must_pass_regressions") or []
     # The engine names a lost protected case only in prose, so every regression on a
     # protected case counts as one: a protected case is never shipped regressed.
-    protected = candidate.fix_run.request.get("protected_scenario_keys") or []
-    if unpassed != [("must-pass", "failed")] or any(
+    protected = request.get("protected_scenario_keys") or []
+    if tiers != expected or any(
         check.startswith(f"{key}: ") for check in regressions for key in protected
     ):
         return []
