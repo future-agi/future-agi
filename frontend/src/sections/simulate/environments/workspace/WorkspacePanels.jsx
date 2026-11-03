@@ -175,7 +175,6 @@ export default function WorkspacePanels({
                   label={t.label}
                   count={t.badge ? badgeCount(t.badge) : null}
                   gaps={gapsByTab?.[t.id]}
-                  hint={t.hint}
                 />
               }
             />

@@ -1216,7 +1216,14 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
     assert all(
         "installation-secret-token" not in " ".join(cmd) for cmd in observed_commands
     )
-    assert observed_token == ["Authorization: Bearer installation-secret-token"] * 4
+    # GitHub takes an installation token as Basic x-access-token, not Bearer.
+    assert (
+        observed_token
+        == [
+            "Authorization: Basic eC1hY2Nlc3MtdG9rZW46aW5zdGFsbGF0aW9uLXNlY3JldC10b2tlbg=="
+        ]
+        * 4
+    )
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
         names = set(tar.getnames())
     assert "source/agent.py" in names

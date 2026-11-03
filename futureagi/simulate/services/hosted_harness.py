@@ -6,7 +6,7 @@ import secrets
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
@@ -274,6 +274,12 @@ def create_hosted_job(
         return job, True
 
 
+def run_idempotency_key(environment: HostedHarnessJob, idempotency_key: str) -> str:
+    """The key a Run submitted with ``idempotency_key`` is stored under."""
+    idempotency_digest = hashlib.sha256(idempotency_key.encode()).hexdigest()
+    return f"run:{environment.id}:{idempotency_digest}"
+
+
 def create_selected_harness_run(
     environment: HostedHarnessJob,
     *,
@@ -282,11 +288,15 @@ def create_selected_harness_run(
     idempotency_key: str,
     rerun_of: HostedHarnessJob | None = None,
     picks: VersionPicks | None = None,
+    fix_run: Any = None,
+    seed: int | None = None,
+    parallelism: int | None = None,
 ) -> tuple[HostedHarnessJob, bool]:
     """Freeze and preallocate one selected-scenario Run for an authored environment.
 
     A rerun of a pinned run (``rerun_of``) keeps that run's pins; ``picks`` win over
-    both, per piece.
+    both, per piece. A ``fix_run`` marks the Run as one of its check runs. ``seed`` and
+    ``parallelism`` replace the environment's; each defaults to what it has.
     """
 
     if environment.environment_id is not None:
@@ -359,7 +369,7 @@ def create_selected_harness_run(
                 status_code=409,
             )
         idempotency_digest = hashlib.sha256(idempotency_key.encode()).hexdigest()
-        child_idempotency_key = f"run:{environment.id}:{idempotency_digest}"
+        child_idempotency_key = run_idempotency_key(environment, idempotency_key)
         resolved = resolve_run_pins(environment, rerun_of=rerun_of, picks=picks)
         if resolved is not None:
             # A repeated request is answered before anything is written.
@@ -468,6 +478,10 @@ def create_selected_harness_run(
         runtime["max_duration_seconds"] = max(
             runtime["max_duration_seconds"], len(manifest) * 360
         )
+        if seed is not None:
+            child_payload["seed"] = seed
+        if parallelism is not None:
+            runtime["parallelism"] = parallelism
         child_metadata = child_payload.setdefault("metadata", {})
         for key in (
             "scenario_extend",
@@ -583,6 +597,7 @@ def create_selected_harness_run(
             ]
         )
         child.environment = environment
+        child.fix_run = fix_run
         child.run_test = environment.run_test
         child.stage_outputs = list(environment.stage_outputs or [])
         child.bundle_digest = environment.bundle_digest
@@ -604,6 +619,7 @@ def create_selected_harness_run(
             update_fields=[
                 "payload",
                 "environment",
+                "fix_run",
                 "run_test",
                 "test_execution",
                 "updated_at",
