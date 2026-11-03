@@ -8,13 +8,15 @@ must still enter the subsequent committed collapse, including tombstones.
 
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 from types import SimpleNamespace
 from uuid import UUID
 
 from clickhouse_driver.util.escape import escape_param
 
-from tracer.services.derived_metrics.storage import TABLES
+from tracer.services.derived_metrics.storage import FIELD_VALUES, TABLES
 
 MAX_KEY_IN_ITEMS = 1000
 MAX_KEY_IN_BYTES = 64 * 1024
@@ -241,6 +243,201 @@ def iter_key_membership_batches(
         page.append(value)
     if page:
         yield {**fixed, columns: tuple(page)}
+
+
+# A source result is NOT a stageable field batch: no generation, sequence or
+# publication metadata exists until every original-page admission check passes.
+SOURCE_SCHEMA = tuple(
+    (name, kind)
+    for name, kind in FIELD_VALUES.schema
+    if name
+    not in {
+        "org_id",
+        "project_id",
+        "workspace_id",
+        "field_id",
+        "field_version",
+        "generation",
+        "attempt_id",
+        "fencing_epoch",
+        "row_sequence",
+        "_version",
+    }
+) + (("source_rows", "UInt64"),)
+SOURCE_PAGE_BYTES = 8 * 1024 * 1024
+SOURCE_CAPTURE_BYTES = 16 * 1024 * 1024
+SOURCE_FIELD_KEY = ("field_id", "field_version", "level", "unit_id")
+
+
+@dataclass(frozen=True, repr=False)
+class SourceOutputPage:
+    """Private typed rows and their exact emitted keys, including tombstones."""
+
+    field_id: UUID
+    field_version: int
+    records: tuple[tuple[str, str, str], ...]
+
+    @property
+    def unit_ids(self):
+        return tuple(dict.fromkeys(row[1] for row in self.records))
+
+    @property
+    def field_keys(self):
+        return tuple(
+            dict.fromkeys(
+                (self.field_id, self.field_version, level, unit)
+                for level, unit, _ in self.records
+            )
+        )
+
+    def select(self, *, prefix="captured_source"):
+        validate_prefix(prefix)
+        return (
+            f"SELECT * FROM format(RowBinary, %({prefix}_schema)s, unhex(%({prefix}_rows)s))",
+            {
+                f"{prefix}_schema": ", ".join(f"{n} {t}" for n, t in SOURCE_SCHEMA),
+                f"{prefix}_rows": "".join(row[2] for row in self.records),
+            },
+        )
+
+
+@dataclass(frozen=True, repr=False)
+class CapturedSourceOutput(SourceOutputPage):
+    """One successfully exhausted source execution, never a second remap lookup.
+
+    This deliberately finite handle is scoped to ONE <=500-candidate execution,
+    not the whole refresh or a durable checkpoint. Total binary capture is capped
+    at 16 MiB (32 MiB hex); replay pages are <=8 MiB, except an indivisible
+    <=16 MiB key group. Identical repeated observations retain their multiplicity.
+    Whole-attempt frozen handles/private indexes are a separate protocol.
+    """
+
+    digest: str
+
+    def pages(self, *, max_items=500, max_bytes=MAX_KEY_IN_BYTES):
+        # Full field tuples reserve more bytes than any of the downstream scalar
+        # field/version/unit or level/unit memberships. Independently validate
+        # those at their committed reader as well.
+        from tracer.services.derived_metrics.publication import MAX_BATCH_ROWS
+
+        groups = {}
+        for record in self.records:
+            groups.setdefault(record[:2], []).append(record)
+        for membership in iter_key_membership_batches(
+            FIELD_VALUES,
+            fixed={},
+            columns=SOURCE_FIELD_KEY,
+            values=self.field_keys,
+            max_items=max_items,
+            max_bytes=max_bytes,
+        ):
+            page, size = [], 0
+            for _field, _version, level, unit in membership[SOURCE_FIELD_KEY]:
+                # A remap chain can drive the same canonical ID and retired raw
+                # ID. Keep identical observations together, with multiplicity;
+                # field-winner/lifecycle reduction is deliberately NOT done here.
+                group = groups[level, unit]
+                length = sum(len(r[2]) // 2 for r in group)
+                if len(group) > MAX_BATCH_ROWS or length > SOURCE_CAPTURE_BYTES:
+                    raise ValueError("metric source key group cap exceeded")
+                if page and (
+                    len(page) + len(group) > MAX_BATCH_ROWS
+                    or size + length > SOURCE_PAGE_BYTES
+                ):
+                    yield SourceOutputPage(
+                        self.field_id, self.field_version, tuple(page)
+                    )
+                    page, size = [], 0
+                page.extend(group)
+                size += length
+            if page:
+                yield SourceOutputPage(self.field_id, self.field_version, tuple(page))
+
+
+def capture_source_output(
+    store, sql, params, *, field_id, field_version, candidate_count
+):
+    """Capture canonical EMITTED output once, under count and transport-byte caps.
+
+    The source builder owns remapping and retired-alias emission. Inferring this
+    domain from requested IDs (or resolving the map again) is not equivalent.
+    No handle is exposed before stream exhaustion, including final server errors.
+    No LIMIT may hide an overflow. A failed capture cannot freeze or publish rows.
+    """
+    from tracer.services.derived_metrics.publication import (
+        MAX_BATCH_ROWS,
+        WRITE_SETTINGS,
+    )
+
+    if type(candidate_count) is not int or not 1 <= candidate_count <= MAX_BATCH_ROWS:
+        raise ValueError("invalid metric source candidate count")
+    field_id = _value("UUID", field_id)
+    field_version = _value("UInt32", field_version)
+    stream = getattr(store.client, "execute_iter", None)
+    if stream is None:
+        raise ValueError("metric source capture requires a streaming local client")
+    columns = ", ".join(
+        "CAST(" + name + ", '" + kind.replace("'", "\\'") + "')"
+        for name, kind in SOURCE_SCHEMA
+    )
+    # Check before hex expansion/transport; small server blocks prevent a full
+    # wide result being buffered by clickhouse-driver before Python can inspect it.
+    query = (
+        f"SELECT level, unit_id, hex(encoded) FROM (SELECT level, unit_id, "
+        f"formatRow('RowBinary', {columns}) AS encoded FROM ({sql})) "
+        f"WHERE throwIf(length(encoded) > {SOURCE_CAPTURE_BYTES}, 'metric source row byte cap exceeded') = 0"
+    )
+    settings = {
+        **WRITE_SETTINGS,
+        "max_block_size": 1,
+        "preferred_block_size_bytes": 64 * 1024,
+        "max_result_rows": 2 * candidate_count,
+        "max_result_bytes": 2 * SOURCE_CAPTURE_BYTES + 1024 * 1024,
+        "result_overflow_mode": "throw",
+    }
+    rows, seen, size = [], {}, 0
+    iterator = stream(query, params, settings=settings, chunk_size=1)
+    try:
+        for level, unit, encoded in iterator:
+            if len(rows) >= 2 * candidate_count:
+                raise ValueError("metric source output count cap exceeded")
+            if level != "conversation" or not isinstance(unit, str):
+                raise ValueError("invalid metric source output key")
+            if (level, unit) in seen and seen[level, unit] != encoded:
+                raise ValueError("conflicting metric source output key")
+            normalize_key_in(
+                FIELD_VALUES,
+                {
+                    SOURCE_FIELD_KEY: ((field_id, field_version, level, unit),),
+                },
+            )
+            if not isinstance(encoded, str) or len(encoded) % 2:
+                raise ValueError("invalid metric source encoding")
+            size += len(encoded) // 2
+            if size > SOURCE_CAPTURE_BYTES:
+                raise ValueError("metric source capture byte cap exceeded")
+            try:
+                bytes.fromhex(encoded)
+            except ValueError:
+                raise ValueError("invalid metric source encoding") from None
+            seen.setdefault((level, unit), encoded)
+            rows.append((level, unit, seen[level, unit]))
+    except BaseException:
+        # A local validation error must not leave unread packets on this shard's
+        # connection. No dependent query may observe a partial source handle.
+        store.client.disconnect()
+        raise
+    finally:
+        close = getattr(iterator, "close", None)
+        if close:
+            close()
+    rows.sort(key=lambda row: (row[0], row[1]))
+    digest = sha256()
+    for _level, _unit, encoded in rows:
+        digest.update(bytes.fromhex(encoded))
+    return CapturedSourceOutput(
+        field_id, field_version, tuple(rows), digest.hexdigest()
+    )
 
 
 def committed_branches(

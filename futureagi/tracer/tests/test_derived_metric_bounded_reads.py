@@ -732,3 +732,193 @@ def test_grouped_backfill_restarts_after_full_scan_and_does_not_emit_partial(
     second = page((first[-1]["level"], first[-1]["unit_id"]))
     assert [r["unit_id"] for r in second] == ["z"]
     assert seen == ["a", "a", "a"]
+
+
+class SourceStream:
+    def __init__(self, rows, *, fail=False):
+        self.rows, self.fail, self.calls, self.disconnected = rows, fail, [], False
+
+    def execute_iter(self, sql, params, **kwargs):
+        self.calls.append((sql, params, kwargs))
+        yield from self.rows
+        if self.fail:
+            raise RuntimeError("source transport failed after last row")
+
+    def disconnect(self):
+        self.disconnected = True
+
+
+def test_capture_is_one_exhausted_stream_partitioned_by_emitted_keys():
+    from tracer.services.derived_metrics.bounded_reads import capture_source_output
+
+    client = SourceStream(
+        [
+            ("conversation", "survivor-outside-candidates", "0102"),
+            ("conversation", "retired-alias", "0304"),
+        ]
+    )
+    result = capture_source_output(
+        SimpleNamespace(client=client),
+        "SELECT source",
+        {},
+        field_id=uuid4(),
+        field_version=2,
+        candidate_count=1,
+    )
+    pages = list(result.pages(max_items=1))
+    assert [p.unit_ids for p in pages] == [
+        ("retired-alias",),
+        ("survivor-outside-candidates",),
+    ]
+    assert len(client.calls) == 1
+    sql, _, kw = client.calls[0]
+    assert "formatRow('RowBinary'" in sql and "LIMIT" not in sql
+    assert kw["chunk_size"] == kw["settings"]["max_block_size"] == 1
+    assert kw["settings"]["result_overflow_mode"] == "throw"
+    assert kw["settings"]["max_result_rows"] == 2
+    assert "source_rows" in pages[0].select()[1]["captured_source_schema"]
+    assert "generation" not in pages[0].select()[1]["captured_source_schema"]
+
+
+@pytest.mark.parametrize("failure", ["transport", "count", "bytes", "duplicate", "key"])
+def test_capture_never_returns_partial_handle(monkeypatch, failure):
+    from tracer.services.derived_metrics import bounded_reads as bounded
+
+    rows = [("conversation", "alias", "0001")]
+    if failure == "count":
+        rows += [("conversation", "b", "00"), ("conversation", "c", "00")]
+    elif failure == "bytes":
+        monkeypatch.setattr(bounded, "SOURCE_CAPTURE_BYTES", 1)
+    elif failure == "duplicate":
+        rows += [("conversation", "alias", "0203")]
+    elif failure == "key":
+        rows = [("conversation", "x" * MAX_KEY_IN_BYTES, "00")]
+    client = SourceStream(rows, fail=failure == "transport")
+    with pytest.raises((ValueError, RuntimeError)):
+        bounded.capture_source_output(
+            SimpleNamespace(client=client),
+            "SELECT source",
+            {},
+            field_id=uuid4(),
+            field_version=1,
+            candidate_count=1,
+        )
+    assert client.disconnected
+
+
+def test_source_output_pages_obey_both_rendered_key_and_payload_caps(monkeypatch):
+    from tracer.services.derived_metrics import bounded_reads as bounded
+
+    client = SourceStream([("conversation", f"unit-{i}", "00" * 3) for i in range(6)])
+    result = bounded.capture_source_output(
+        SimpleNamespace(client=client),
+        "SELECT source",
+        {},
+        field_id=uuid4(),
+        field_version=1,
+        candidate_count=3,
+    )
+    monkeypatch.setattr(bounded, "SOURCE_PAGE_BYTES", 5)
+    assert len(list(result.pages())) == 6
+    monkeypatch.setattr(bounded, "SOURCE_PAGE_BYTES", 100)
+    assert len(list(result.pages(max_bytes=110))) == 6
+    assert sum(len(p.records) for p in result.pages(max_items=2)) == 6
+
+
+@pytest.mark.parametrize("matching_page", [0, 2, None])
+def test_admission_reduces_positive_anchor_matches_before_absence(
+    monkeypatch, matching_page
+):
+    from tracer.services.derived_metrics import refresh
+
+    visited = []
+    field = uuid4()
+    nominations = [
+        ((field, version, "conversation", "canonical"),) for version in (1, 2, 3)
+    ]
+
+    def nominate(*args, **kwargs):
+        assert kwargs["key_in"] == {
+            "level": ("conversation",),
+            "unit_id": ("canonical",),
+        }
+        yield from nominations
+
+    def committed(table, head, **kwargs):
+        assert kwargs["param_prefix"] == "admission_anchors"
+        index = nominations.index(
+            kwargs["key_in"][("field_id", "field_version", "level", "unit_id")]
+        )
+        visited.append(index)
+        return f"SELECT anchor_{index}", {"anchor_page": index}
+
+    class Store:
+        def execute(self, sql, params):
+            if "anchor_page" not in params:
+                return [("canonical",)]
+            assert "is_deleted = 0" in sql and "f.unit_start = a.unit_start" in sql
+            return [("canonical",)] if params["anchor_page"] == matching_page else []
+
+    monkeypatch.setattr(refresh, "committed_key_pages", nominate)
+    monkeypatch.setattr(refresh, "committed_rows_select", committed)
+    writer = refresh.RefreshWriter(
+        SimpleNamespace(project_id=uuid4()), Store(), org_id=uuid4()
+    )
+    unproven = writer._unproven_source_admission(
+        None,
+        SimpleNamespace(unit_ids=("canonical",)),
+        "SELECT source",
+        {},
+        "SELECT old",
+        {},
+        datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    assert unproven is (matching_page is None)
+    assert visited == list(range(3 if matching_page is None else matching_page + 1))
+
+
+def test_five_hundred_candidates_can_emit_one_thousand_bounded_keys():
+    from tracer.services.derived_metrics.bounded_reads import capture_source_output
+
+    client = SourceStream(
+        [("conversation", str(UUID(int=i)), "00") for i in range(1000)]
+    )
+    captured = capture_source_output(
+        SimpleNamespace(client=client),
+        "SELECT source",
+        {},
+        field_id=uuid4(),
+        field_version=1,
+        candidate_count=500,
+    )
+    pages = list(captured.pages())
+    assert len(pages) == 2
+    assert sum(len(page.records) for page in pages) == 1000
+    for page in pages:
+        membership = normalize_key_in(
+            FIELD_VALUES,
+            {
+                "field_id": (page.field_id,),
+                "field_version": (page.field_version,),
+                "unit_id": page.unit_ids,
+            },
+        )
+        assert sum(len(values) for values in membership.values()) == 502
+
+
+def test_identical_chain_observations_share_one_key_page_without_losing_multiplicity():
+    from tracer.services.derived_metrics.bounded_reads import capture_source_output
+
+    client = SourceStream([("conversation", "both-canonical-and-retired", "0102")] * 2)
+    captured = capture_source_output(
+        SimpleNamespace(client=client),
+        "SELECT source",
+        {},
+        field_id=uuid4(),
+        field_version=1,
+        candidate_count=1,
+    )
+    pages = list(captured.pages(max_items=1))
+    assert len(pages) == 1 and len(pages[0].field_keys) == 1
+    assert len(pages[0].records) == 2
+    assert pages[0].select()[1]["captured_source_rows"] == "01020102"
