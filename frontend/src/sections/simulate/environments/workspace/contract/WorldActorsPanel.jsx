@@ -453,14 +453,15 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
   const madeId = existing
     ? actor.id
     : idFrom(value("name", ""), new Set(context.others.map((one) => one.id)));
-  const typedId = value("id", madeId);
+  // An emptied id falls back to the one made from the name.
+  const typedId = existing ? actor.id : value("id", "").trim() || madeId;
   const takenBy = existing
     ? null
     : context.others.find((one) => one.id === typedId);
   const save = () => {
     const base = {
       ...actor,
-      id: value("id", actor?.id || madeId),
+      id: typedId,
       name: value("name", actor?.name || ""),
       role: value("role", actor?.role || ""),
     };
@@ -580,6 +581,8 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
                 : F.idHelp,
             error: Boolean(takenBy),
             disabled: existing,
+            placeholder: madeId,
+            InputLabelProps: { shrink: true },
           })}
           {text("role", F.role, actor.role || "", { helperText: F.roleHelp })}
           {callerSide ? (

@@ -335,6 +335,23 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText("Save to draft").closest("button")).toBeDisabled();
   });
 
+  it("uses the id made from the name when a typed id is cleared", () => {
+    actorsData = cast([]);
+    render(<WorldActorsPanel envId="env-1" callerSide />);
+    fireEvent.click(screen.getByText("Add someone on the caller's side"));
+    fireEvent.change(screen.getByLabelText("Id"), { target: { value: "x" } });
+    fireEvent.change(screen.getByLabelText("Id"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Ravi Kumar" },
+    });
+    expect(screen.getByLabelText("Id")).toHaveAttribute(
+      "placeholder",
+      "ravi_kumar",
+    );
+    fireEvent.click(screen.getByText("Save to draft"));
+    expect(mutate.mock.calls[0][0].actor.id).toBe("ravi_kumar");
+  });
+
   it("opens a fresh form for the next actor after a save", () => {
     mutate.mockImplementation((_change, options) => options?.onSuccess?.());
     actorsData = cast([]);
