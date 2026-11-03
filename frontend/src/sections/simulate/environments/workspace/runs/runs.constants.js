@@ -89,10 +89,16 @@ export const RUN_COLORS = Array.from({ length: 8 }, (_, i) => `data.${i}`);
 // The identity colour for a run at a given 1-based ordinal. A missing or
 // non-finite ordinal falls back to the first colour, so a caller never gets
 // `undefined`.
-export const runColor = (ordinal) => {
+const runColorIndex = (ordinal) => {
   const n = Number.isFinite(ordinal) ? ordinal : 1;
-  return RUN_COLORS[(Math.max(1, n) - 1) % RUN_COLORS.length];
+  return (Math.max(1, n) - 1) % RUN_COLORS.length;
 };
+
+export const runColor = (ordinal) => RUN_COLORS[runColorIndex(ordinal)];
+
+// The same colour as a value, for helpers like alpha() that can't read an sx path.
+export const runColorValue = (theme, ordinal) =>
+  theme.palette.data[runColorIndex(ordinal)];
 
 // The pass bar's two segments, as status roles.
 export const PASS_BAR_ROLES = { passed: "success", failed: "danger" };

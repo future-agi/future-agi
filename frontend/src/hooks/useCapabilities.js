@@ -18,6 +18,7 @@ export const CAPABILITY = Object.freeze({
   AGENTIC_EVAL: "agentic_eval",
   SYNTHETIC_DATA: "synthetic_data",
   OPTIMIZATION: "optimization",
+  FIX_MY_AGENT: "fix_my_agent",
 });
 
 export function useCapabilities() {
