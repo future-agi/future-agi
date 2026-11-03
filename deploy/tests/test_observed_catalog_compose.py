@@ -608,7 +608,8 @@ class ProductionCatalogContractTests(unittest.TestCase):
                     for name in services
                     if name == "backend" or name.startswith("worker")
                 }
-                self.assertEqual(len(runtimes), 10)
+                self.assertIn("worker-sql-workbench", runtimes)
+                self.assertEqual(len(runtimes), 11)
                 for name in sorted(runtimes):
                     with self.subTest(runtime=name):
                         runtime = services[name]["environment"]
