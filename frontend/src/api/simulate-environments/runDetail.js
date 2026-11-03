@@ -392,12 +392,18 @@ function relativeTime(row, end = false) {
 export function functionCallTranscriptRows(calls = []) {
   return (Array.isArray(calls) ? calls : []).map((call, index) => {
     const duration = call.duration_ms ?? call.durationMs;
-    const heading = `Function call · ${call.name || call.function?.name || "tool"}${duration != null ? ` · ${duration}ms` : ""}`;
+    const name = call.name || call.function?.name || "tool";
+    // A world actor's action is theirs, not one of the agent's tool calls.
+    const actor = Boolean(call.actor_id) && call.actor_id !== "agent";
+    const heading = actor
+      ? `${call.refused ? "Refused" : "Action"} · ${name}`
+      : `Function call · ${name}${duration != null ? ` · ${duration}ms` : ""}`;
     const args = call.arguments ?? call.function?.arguments;
     const result = call.result ?? call.output;
     return {
       id: call.id || `function-call-${index}`,
-      speaker_role: "tool",
+      speaker_role: actor ? "world_actor" : "tool",
+      speaker_name: actor ? call.actor_name || call.actor_id : undefined,
       content: [
         heading,
         args != null ? `→ args: ${displayJson(args)}` : null,
@@ -407,7 +413,7 @@ export function functionCallTranscriptRows(calls = []) {
         .join("\n"),
       start_time_seconds: relativeTime(call),
       end_time_seconds: relativeTime(call, true),
-      tool_calls: [call],
+      tool_calls: actor ? null : [call],
     };
   });
 }

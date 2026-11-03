@@ -26,6 +26,7 @@ import {
   enrichTurns,
   formatClock,
   subActorLabel,
+  worldActorLabel,
 } from "./transcriptUtils";
 import { DEFAULT_ROLE_LABELS } from "./constants";
 import FunctionCallContent from "./FunctionCallContent";
@@ -80,6 +81,7 @@ const useSpeakerColors = () => {
       system: theme.palette.mode === "dark" ? "#a78bfa" : "#7c3aed",
       tool: theme.palette.mode === "dark" ? "#fbbf24" : "#d97706",
       sub_actor: theme.palette.mode === "dark" ? "#2dd4bf" : "#0d9488",
+      world_actor: theme.palette.mode === "dark" ? "#a5b4fc" : "#4f46e5",
       unknown: theme.palette.text.disabled,
     }),
     [theme],
@@ -324,7 +326,7 @@ const TurnRow = React.forwardRef(
               ? "action.hover"
               : isFunctionCall
                 ? "background.neutral"
-                : turn.role === "sub_actor"
+                : turn.role === "sub_actor" || turn.role === "world_actor"
                   ? alpha(color, 0.08)
                   : "transparent",
           transition: "background-color 80ms",
@@ -372,6 +374,11 @@ const TurnRow = React.forwardRef(
           {turn.role === "sub_actor" && (
             <Typography sx={{ fontSize: 10, color, fontWeight: 600 }}>
               {subActorLabel(turn.speakerName)}
+            </Typography>
+          )}
+          {turn.role === "world_actor" && (
+            <Typography sx={{ fontSize: 10, color, fontWeight: 600 }}>
+              {worldActorLabel(turn.speakerName)}
             </Typography>
           )}
 

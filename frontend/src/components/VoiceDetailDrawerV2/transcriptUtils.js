@@ -23,6 +23,9 @@ export const normalizeRole = (role) => {
 export const subActorLabel = (name) =>
   `${name || "Someone else"} (not the customer)`;
 
+// A world actor acts through the world's own actions, never speaking on the call.
+export const worldActorLabel = (name) => `${name || "Someone"} (in the world)`;
+
 export const getContent = (item) => {
   const raw = item?.content ?? item?.message ?? item?.text ?? "";
   if (typeof raw === "string") return raw;

@@ -638,6 +638,28 @@ describe("callTranscript", () => {
     ).toBe(true);
     expect(callTranscript({ function_calls: null })).toEqual([]);
   });
+
+  it("shows a world actor's action as theirs, not as the agent's tool call", () => {
+    const detail = mapCallDetail({
+      function_calls: [
+        { id: "agent", name: "update_deal", actor_id: "agent", start_time_ms: 1000 },
+        {
+          id: "manager",
+          name: "approve",
+          actor_id: "manager",
+          actor_name: "Pat Lee",
+          refused: true,
+          start_time_ms: 2000,
+        },
+      ],
+    });
+    expect(detail.turns.map((turn) => [turn.role, turn.speakerName])).toEqual([
+      ["tool", ""],
+      ["world_actor", "Pat Lee"],
+    ]);
+    expect(detail.turns[1].text).toMatch(/^Refused · approve/);
+    expect(detail.turns[1].toolCalls).toBeNull();
+  });
 });
 
 const makeWrapper = () => {
