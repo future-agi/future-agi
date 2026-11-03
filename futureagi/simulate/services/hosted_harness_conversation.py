@@ -58,6 +58,9 @@ _HEARTBEAT_WRITE_SECONDS = 5
 # Restarts that keep failing back off, then give up so the user is not left waiting forever.
 RUNTIME_RETRY_BACKOFF_SECONDS = 60
 RUNTIME_GIVE_UP_SECONDS = 15 * 60
+# A poll restarts that wait, but no command waits longer than this in all: a runtime that
+# keeps coming back and stopping is still given up.
+RUNTIME_GIVE_UP_CAP_SECONDS = 60 * 60
 # Only a runtime start writes a starting lease, so one this fresh is a start still in progress.
 RUNTIME_START_SECONDS = 10 * 60
 # The most scenarios one chat save may hold; Extend's added total counts against it too.
@@ -169,14 +172,35 @@ def settle_interrupted_turn(conversation: HostedHarnessConversation) -> None:
         conversation.active_invocation_id = None
 
 
+def _past_give_up(
+    conversation: HostedHarnessConversation,
+    oldest: HostedHarnessConversationMessage,
+    lease: HostedHarnessConversationLease | None,
+    now,
+) -> bool:
+    """Whether the oldest command has waited too long. A chat process that polled after
+    it was queued was still working on it, so the wait counts from its last poll."""
+    from simulate.services.harness_versioning.rebuild import waiting_since
+
+    since = waiting_since(conversation, oldest)
+    # Only the process's own polls make a lease active; a start sets it to starting.
+    last_poll = (
+        lease.heartbeat_at
+        if lease is not None
+        and lease.state == HostedHarnessConversationLease.State.ACTIVE
+        and lease.heartbeat_at is not None
+        else since
+    )
+    return now - since > timedelta(seconds=RUNTIME_GIVE_UP_CAP_SECONDS) or (
+        now - max(since, last_poll) > timedelta(seconds=RUNTIME_GIVE_UP_SECONDS)
+    )
+
+
 def recover_stalled_conversations(
     schedule: Callable[[str], Any], *, limit: int = 100
 ) -> dict[str, int]:
     """Restart chat runtimes that died with messages outstanding; settle ones that died idle."""
-    from simulate.services.harness_versioning.rebuild import (
-        holds_conversation,
-        waiting_since,
-    )
+    from simulate.services.harness_versioning.rebuild import holds_conversation
 
     now = timezone.now()
     unacked = HostedHarnessConversationMessage.no_workspace_objects.filter(
@@ -260,8 +284,7 @@ def recover_stalled_conversations(
         oldest = _unacked_commands(candidate).order_by("sequence").first()
         if (
             oldest is not None
-            and now - waiting_since(candidate, oldest)
-            > timedelta(seconds=RUNTIME_GIVE_UP_SECONDS)
+            and _past_give_up(candidate, oldest, lease, now)
             # A rebuild's own checks end it; its chat restarts meanwhile.
             and not holds_conversation(candidate)
         ):
@@ -325,8 +348,6 @@ def retire_without_saved_workspace(conversation_id) -> int:
 
 
 def _abandon_outstanding(conversation_id) -> int:
-    from simulate.services.harness_versioning.rebuild import waiting_since
-
     with transaction.atomic():
         conversation = (
             HostedHarnessConversation.no_workspace_objects.select_for_update().get(
@@ -341,15 +362,29 @@ def _abandon_outstanding(conversation_id) -> int:
             runtime_is_live(lease)
             or runtime_start_pending(lease)
             or oldest is None
-            or timezone.now() - waiting_since(conversation, oldest)
-            <= timedelta(seconds=RUNTIME_GIVE_UP_SECONDS)
+            or not _past_give_up(conversation, oldest, lease, timezone.now())
         ):
             return 0
+        # A turn_started event marks its command delivered; a poll after the command
+        # arrived means a process was running to take it.
+        started = (
+            oldest.state == HostedHarnessConversationMessage.State.DELIVERED
+            or bool(
+                lease is not None
+                and lease.state == HostedHarnessConversationLease.State.ACTIVE
+                and lease.heartbeat_at is not None
+                and lease.heartbeat_at > oldest.created_at
+            )
+        )
         return _fail_outstanding(
             conversation,
             state=HostedHarnessConversation.State.DEGRADED,
             reply=(
-                "The environment chat could not start, so your message was not "
+                "The environment chat stopped responding before it finished your "
+                "message. Changes it had not saved yet are lost. Send it again to "
+                "retry."
+                if started
+                else "The environment chat could not start, so your message was not "
                 "delivered. Send it again to retry."
             ),
         )
