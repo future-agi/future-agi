@@ -7,6 +7,7 @@ import {
   List,
   ListItem,
   ListItemButton,
+  ListSubheader,
   ListItemText,
   Stack,
   CircularProgress,
@@ -17,15 +18,33 @@ import React, { useCallback, useMemo, useState } from "react";
 import SvgColor from "src/components/svg-color";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import {
+  useGetLibraryTemplatesInfinite,
   useGetNodeTemplates,
   useGetPromptTemplatesInfinite,
 } from "src/api/agent-playground/agent-playground";
 import axios, { endpoints } from "src/utils/axios";
 import { NODE_TYPES } from "../utils/constants";
 import { mapVersionToFormConfig } from "../utils/promptVersionUtils";
+import { getLibraryTemplateItems } from "src/api/agent-playground/libraryTemplateResponseUtils";
+import {
+  INCOMPATIBLE_LIBRARY_TEMPLATE_MESSAGE,
+  toDetachedLibraryTemplateConfig,
+} from "../utils/libraryTemplateUtils";
 import useAddNodeOptimistic from "../AgentBuilder/hooks/useAddNodeOptimistic";
 import { useDebounce } from "src/hooks/use-debounce";
 import { enqueueSnackbar } from "notistack";
+
+function LoadingListItem({ size = 20 }) {
+  return (
+    <ListItem sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+      <CircularProgress size={size} />
+    </ListItem>
+  );
+}
+
+LoadingListItem.propTypes = {
+  size: PropTypes.number,
+};
 
 export default function PromptNodePopper({
   open,
@@ -51,25 +70,52 @@ export default function PromptNodePopper({
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
+    isError: isPromptsError,
   } = useGetPromptTemplatesInfinite(debouncedSearch, { enabled: open });
+
+  const {
+    data: libraryTemplatesData,
+    isLoading: isLibraryLoading,
+    fetchNextPage: fetchNextLibraryPage,
+    hasNextPage: hasNextLibraryPage,
+    isFetchingNextPage: isFetchingNextLibraryPage,
+    isError: isLibraryError,
+  } = useGetLibraryTemplatesInfinite(debouncedSearch, { enabled: open });
 
   const prompts = useMemo(
     () => promptsData?.pages?.flatMap((p) => p.data?.results ?? []) ?? [],
     [promptsData],
   );
 
+  const libraryTemplates = useMemo(
+    () =>
+      libraryTemplatesData?.pages?.flatMap((p) =>
+        getLibraryTemplateItems(p.data),
+      ) ?? [],
+    [libraryTemplatesData],
+  );
+
   const handleListScroll = useCallback(
     (e) => {
       const { scrollTop, scrollHeight, clientHeight } = e.target;
-      if (
-        scrollTop + clientHeight >= scrollHeight - 5 &&
-        hasNextPage &&
-        !isFetchingNextPage
-      ) {
+      const isAtBottom = scrollTop + clientHeight >= scrollHeight - 5;
+
+      if (isAtBottom && hasNextPage && !isFetchingNextPage) {
         fetchNextPage();
       }
+
+      if (isAtBottom && hasNextLibraryPage && !isFetchingNextLibraryPage) {
+        fetchNextLibraryPage();
+      }
     },
-    [fetchNextPage, hasNextPage, isFetchingNextPage],
+    [
+      fetchNextLibraryPage,
+      fetchNextPage,
+      hasNextLibraryPage,
+      hasNextPage,
+      isFetchingNextLibraryPage,
+      isFetchingNextPage,
+    ],
   );
 
   const handleAddBlankPrompt = useCallback(() => {
@@ -129,6 +175,81 @@ export default function PromptNodePopper({
     },
     [addNode, onClose, onNodeSelect, llmPromptTemplateId],
   );
+
+  const handleLibraryTemplateClick = useCallback(
+    (template) => {
+      const config = toDetachedLibraryTemplateConfig(template);
+      if (!config) {
+        enqueueSnackbar(INCOMPATIBLE_LIBRARY_TEMPLATE_MESSAGE, {
+          variant: "error",
+        });
+        return;
+      }
+
+      if (onNodeSelect) {
+        onNodeSelect(NODE_TYPES.LLM_PROMPT, llmPromptTemplateId, {
+          ...config,
+          name: template.name,
+        });
+      } else {
+        addNode({
+          type: NODE_TYPES.LLM_PROMPT,
+          position: undefined,
+          node_template_id: llmPromptTemplateId,
+          name: template.name,
+          config,
+        });
+      }
+      onClose();
+    },
+    [addNode, onClose, onNodeSelect, llmPromptTemplateId],
+  );
+
+  const hasPrompts = prompts.length > 0;
+  const hasLibraryTemplates = libraryTemplates.length > 0;
+  const hasQueryError = isPromptsError || isLibraryError;
+  const queryErrorMessage = isPromptsError
+    ? isLibraryError
+      ? "Unable to load prompt templates. Check your connection and try again."
+      : "Unable to load your prompts. Library templates may still be available."
+    : "Unable to load library templates. Your prompts may still be available.";
+  const shouldShowEmptyState =
+    !isLoading &&
+    !isLibraryLoading &&
+    !hasPrompts &&
+    !hasLibraryTemplates &&
+    !hasQueryError;
+  const isFetchingMore = isFetchingNextPage || isFetchingNextLibraryPage;
+
+  const renderPromptItems = (items, keyPrefix, onClick) =>
+    items.map((prompt) => (
+      <ListItem key={`${keyPrefix}-${prompt.id}`} disablePadding>
+        <ListItemButton
+          onClick={() => onClick(prompt)}
+          sx={{
+            py: 1,
+            px: 2,
+            "&:hover": {
+              bgcolor: (theme) =>
+                theme.palette.mode === "dark"
+                  ? "action.hover"
+                  : "whiteScale.200",
+            },
+          }}
+        >
+          <Stack spacing={0.5} sx={{ width: "100%" }}>
+            <ListItemText
+              primary={prompt.name}
+              primaryTypographyProps={{
+                typography: "s1",
+                color: "text.primary",
+                noWrap: true,
+              }}
+            />
+          </Stack>
+        </ListItemButton>
+      </ListItem>
+    ));
 
   return (
     <Popper
@@ -222,56 +343,78 @@ export default function PromptNodePopper({
             dense
           >
             {isLoading ? (
-              <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
-                <CircularProgress size={20} />
-              </Box>
-            ) : prompts.length === 0 ? (
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{ px: 2, py: 1.5 }}
-              >
-                No prompts found
-              </Typography>
+              <LoadingListItem />
             ) : (
-              <>
-                {prompts.map((prompt) => (
-                  <ListItem key={prompt.id} disablePadding>
-                    <ListItemButton
-                      onClick={() => handlePromptClick(prompt)}
-                      sx={{
-                        py: 1,
-                        px: 2,
-                        "&:hover": {
-                          bgcolor: (theme) =>
-                            theme.palette.mode === "dark"
-                              ? "action.hover"
-                              : "whiteScale.200",
-                        },
-                      }}
-                    >
-                      <Stack spacing={0.5} sx={{ width: "100%" }}>
-                        <ListItemText
-                          primary={prompt.name}
-                          primaryTypographyProps={{
-                            typography: "s1",
-                            color: "text.primary",
-                            noWrap: true,
-                          }}
-                        />
-                      </Stack>
-                    </ListItemButton>
-                  </ListItem>
-                ))}
-                {isFetchingNextPage && (
-                  <Box
-                    sx={{ display: "flex", justifyContent: "center", py: 1 }}
+              hasPrompts && (
+                <>
+                  <ListSubheader
+                    disableSticky
+                    sx={{
+                      bgcolor: "background.paper",
+                      color: "text.secondary",
+                      lineHeight: "28px",
+                      typography: "s2",
+                      fontWeight: "fontWeightMedium",
+                    }}
                   >
-                    <CircularProgress size={16} />
-                  </Box>
-                )}
-              </>
+                    My Prompts
+                  </ListSubheader>
+                  {renderPromptItems(
+                    prompts,
+                    "saved-prompt",
+                    handlePromptClick,
+                  )}
+                </>
+              )
             )}
+
+            {isLibraryLoading ? (
+              <LoadingListItem />
+            ) : (
+              hasLibraryTemplates && (
+                <>
+                  <ListSubheader
+                    disableSticky
+                    sx={{
+                      bgcolor: "background.paper",
+                      color: "text.secondary",
+                      lineHeight: "28px",
+                      typography: "s2",
+                      fontWeight: "fontWeightMedium",
+                    }}
+                  >
+                    Library Templates
+                  </ListSubheader>
+                  {renderPromptItems(
+                    libraryTemplates,
+                    "library-template",
+                    handleLibraryTemplateClick,
+                  )}
+                </>
+              )
+            )}
+
+            {hasQueryError && (
+              <ListItem>
+                <Typography variant="body2" color="error.main" sx={{ py: 0.5 }}>
+                  {queryErrorMessage}
+                </Typography>
+              </ListItem>
+            )}
+
+            {shouldShowEmptyState && (
+              <ListItem>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ py: 1 }}
+                >
+                  No prompts found
+                </Typography>
+              </ListItem>
+            )}
+
+            {isFetchingMore && <LoadingListItem size={16} />}
           </List>
         </Paper>
       </ClickAwayListener>
