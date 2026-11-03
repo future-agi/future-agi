@@ -78,6 +78,7 @@ def _enabled_suite_doc():
             {
                 "case_key": "agent_one__primary",
                 "enabled": True,
+                "tiers": ["quick", "full"],
                 "agent": {
                     "name": "Agent One",
                     "model": "test-model",
@@ -191,6 +192,25 @@ def test_create_admits_campaign_once_and_materializes_cases(auth_client, organiz
         assert CertificationCampaign.objects.count() == 1
         assert CertificationCase.objects.count() == 1
         assert start_wf.call_count == 2
+
+
+@pytest.mark.django_db(transaction=True)
+def test_quick_and_full_are_distinct_campaigns(auth_client, organization):
+    with (
+        override_settings(PRODUCTION_CERTIFICATION_ORG_ALLOWLIST=str(organization.id)),
+        patch(
+            "simulate.services.certification.load_suite",
+            return_value=_enabled_suite_doc(),
+        ),
+        patch("simulate.temporal.client.start_certification_workflow"),
+    ):
+        quick = _post(auth_client, organization, {"tier": "quick"}, idem="quick-key")
+        full = _post(auth_client, organization, {"tier": "full"}, idem="full-key")
+
+    assert quick.status_code == 201, quick.json()
+    assert full.status_code == 201, full.json()
+    assert quick.json()["id"] != full.json()["id"]
+    assert CertificationCampaign.objects.count() == 2
 
 
 @pytest.mark.django_db(transaction=True)

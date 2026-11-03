@@ -18,6 +18,9 @@ class CertificationCampaignCreateSerializer(serializers.Serializer):
     suite_key = serializers.CharField(
         max_length=64, required=False, default="production_agents_v1"
     )
+    tier = serializers.ChoiceField(
+        choices=("quick", "full"), required=False, default="full"
+    )
 
     def validate_deployment_identity(self, value):
         # Reject anything that looks like raw secret material — identity is
@@ -116,6 +119,7 @@ class CertificationCaseReadSerializer(serializers.Serializer):
     state = serializers.CharField()
     failure_class = serializers.CharField(allow_null=True)
     hosted_harness_job_id = serializers.UUIDField(allow_null=True)
+    run_job_id = serializers.UUIDField(allow_null=True)
     reconciliation = serializers.DictField(allow_null=True)
     started_at = serializers.DateTimeField(allow_null=True)
     finished_at = serializers.DateTimeField(allow_null=True)

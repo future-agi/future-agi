@@ -85,6 +85,7 @@ class CertificationCampaignViewSet(viewsets.ViewSet):
                 deployment_id=data["deployment_id"],
                 deployment_identity=data.get("deployment_identity") or {},
                 suite_key=data.get("suite_key") or "production_agents_v1",
+                tier=data.get("tier") or "full",
                 requested_by=str(getattr(request.user, "email", "") or ""),
             )
         except CertificationError as exc:
