@@ -65,7 +65,7 @@ function UsualStepper({ value, onChange }) {
         height: "100%",
         color: "primary.main",
         fontSize: 15,
-        "&:hover": { bgcolor: "primary.lighter" },
+        "&:hover": { bgcolor: accentSx.bgcolor },
       }}
     >
       {dir < 0 ? "−" : "+"}

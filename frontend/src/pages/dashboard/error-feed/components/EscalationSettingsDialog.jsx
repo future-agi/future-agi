@@ -53,6 +53,9 @@ const disclosureSx = {
   bgcolor: "transparent",
   backgroundImage: "none",
   boxShadow: "none",
+  // The theme paints expanded accordions with background.paper, which shows
+  // as a band on the dialog surface in dark mode.
+  "&.Mui-expanded": { bgcolor: "transparent" },
   "&:before": { display: "none" },
   "& .MuiAccordionSummary-root": {
     minHeight: 36,
@@ -671,6 +674,7 @@ export default function EscalationSettingsDialog({
           {ready && scopedData.can_edit && (
             <LoadingButton
               variant="contained"
+              color="primary"
               size="small"
               type="submit"
               form="escalation-settings-form"
