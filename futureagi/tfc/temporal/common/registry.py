@@ -745,6 +745,7 @@ def _ensure_activities_registered() -> None:
             certification_reconcile_case,
             certification_record_case_result,
             certification_submit_case,
+            certification_submit_run,
         )
         from simulate.temporal.activities.hosted_harness_gateway import (
             author_hosted_harness_job,
@@ -773,6 +774,7 @@ def _ensure_activities_registered() -> None:
                 cancel_hosted_harness_attempt,
                 certification_load_cases,
                 certification_submit_case,
+                certification_submit_run,
                 certification_poll_case,
                 certification_reconcile_case,
                 certification_record_case_result,
@@ -781,7 +783,7 @@ def _ensure_activities_registered() -> None:
                 certification_finalize_campaign,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=16)
+        log.info("registered_hosted_runner_activities", count=17)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

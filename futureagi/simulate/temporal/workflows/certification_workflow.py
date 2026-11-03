@@ -55,18 +55,9 @@ class ProductionCertificationWorkflow:
     def status(self) -> dict:
         return {"state": self._state, "cancel_requested": self.cancel_requested}
 
-    async def _run_case(self, case_id: str) -> str:
-        """Drive one case to a reconciled terminal state. Returns its state."""
-        case_input = CertificationCaseInput(case_id=case_id)
-        submitted = await workflow.execute_activity(
-            "certification_submit_case",
-            case_input,
-            task_queue=QUEUE_RUNNER,
-            start_to_close_timeout=timedelta(minutes=5),
-            retry_policy=_ACTIVITY_RETRY,
-            result_type=CertificationSubmitOutput,
-        )
-        _ = submitted  # the job id is also recorded on the case row
+    async def _wait_for_terminal(
+        self, case_input: CertificationCaseInput
+    ) -> tuple[CertificationPollOutput, bool]:
         cancel_signaled = False
         while True:
             if self.cancel_requested and not cancel_signaled:
@@ -87,8 +78,33 @@ class ProductionCertificationWorkflow:
                 result_type=CertificationPollOutput,
             )
             if poll.done:
-                break
+                return poll, cancel_signaled
             await workflow.sleep(timedelta(seconds=_CASE_POLL_SECONDS))
+
+    async def _run_case(self, case_id: str) -> str:
+        """Drive one case to a reconciled terminal state. Returns its state."""
+        case_input = CertificationCaseInput(case_id=case_id)
+        submitted = await workflow.execute_activity(
+            "certification_submit_case",
+            case_input,
+            task_queue=QUEUE_RUNNER,
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=_ACTIVITY_RETRY,
+            result_type=CertificationSubmitOutput,
+        )
+        _ = submitted  # the job id is also recorded on the case row
+        environment_poll, cancel_signaled = await self._wait_for_terminal(case_input)
+
+        if environment_poll.job_state == "completed" and not cancel_signaled:
+            await workflow.execute_activity(
+                "certification_submit_run",
+                case_input,
+                task_queue=QUEUE_RUNNER,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=_ACTIVITY_RETRY,
+                result_type=CertificationSubmitOutput,
+            )
+            _run_poll, cancel_signaled = await self._wait_for_terminal(case_input)
 
         expected_terminal = "canceled" if cancel_signaled else "completed"
         reconcile = await workflow.execute_activity(

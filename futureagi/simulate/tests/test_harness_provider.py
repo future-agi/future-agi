@@ -176,6 +176,17 @@ def test_small_hosted_job_preserves_the_requested_runtime_budget():
     assert serializer.validated_data["runtime"]["max_duration_seconds"] == 600
 
 
+@pytest.mark.parametrize("path", ["/agent", "../agent", "agents//voice", "./agent"])
+def test_github_source_rejects_unsafe_repository_path(path):
+    payload = _v1_payload()
+    payload["source"]["path"] = path
+
+    serializer = HarnessJobCreateSerializer(data=payload)
+
+    assert not serializer.is_valid()
+    assert "path" in serializer.errors["source"]
+
+
 @pytest.mark.django_db
 def test_authoring_cannot_be_ready_without_registered_durable_snapshot(user, workspace):
     environment, _ = create_hosted_job(
