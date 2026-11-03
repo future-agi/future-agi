@@ -13,6 +13,8 @@ from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentVersionCreateSerializer,
     HarnessCapabilityQuerySerializer,
+    HarnessCapabilityRecheckResponseSerializer,
+    HarnessCapabilityRecheckSerializer,
     HarnessCapabilityReportSerializer,
     HarnessCompareQuerySerializer,
     HarnessCompareSerializer,
@@ -491,10 +493,45 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         agent is another version. No writes."""
         from simulate.services.capability_evidence import environment_capability_report
 
+        from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
+        from simulate.services.harness_versioning.read import version_not_found
+
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        return Response(environment_capability_report(job, request.validated_query_data.get("agent_version_id")))
+        query = request.validated_query_data
+        picked = {}
+        for name, model in (("environment_version", HarnessEnvironmentVersion), ("suite_version", HarnessSuiteVersion)):
+            if query.get(f"{name}_id"):
+                picked[name] = model.no_workspace_objects.filter(job=job, id=query[f"{name}_id"]).first()
+                if picked[name] is None:
+                    raise version_not_found()
+        return Response(
+            environment_capability_report(
+                job,
+                query.get("agent_version_id"),
+                picked.get("environment_version"),
+                suite_version=picked.get("suite_version") or job.suite_version,
+                keys=list(query.get("keys") or []) or None,
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessCapabilityRecheckSerializer,
+        responses={200: HarnessCapabilityRecheckResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="capabilities/recheck")
+    def recheck_capabilities(self, request, pk=None):
+        """Check the agent again (its preflight, when it failed or never finished) so the report reads it anew; the
+        world is checked again only by a new build for now. Starts no run."""
+        from simulate.services.capability_evidence import recheck_capabilities
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        data = request.validated_data
+        return Response(recheck_capabilities(job, data["scope"], data.get("check"), request.query_params.get("agent_version_id")))
 
     @validated_request(
         query_serializer=HarnessRunPlanQuerySerializer,

@@ -109,8 +109,16 @@ def test_a_production_only_refund_tool_blocks_only_the_cases_that_need_it_with_t
     }
     rows = capability_statuses(_CATALOGUE, evidence, _INPUTS)
     routing = next(row for row in rows if row["id"] == "tool_routing")
-    assert (routing["status"], routing["reason_code"], routing["fix"]) == (
-        "blocked", "production_only", "Point refund at the world's tool service, or mark it unavailable")
+    assert (routing["status"], routing["reason_code"]) == ("blocked", "production_only")
+    assert routing["fix"] == {
+        "type": "tool_routing",
+        "text": "Point refund at the world's tool service, or mark it unavailable",
+        "target": ["refund"],
+        "repair": "agent.tools",
+        "flips_when": "a re-check of this capability passes",
+        "recheck": {"scope": "world", "check": "tool_routing", "available": False},
+        "available": True,
+    }
     assert next(row for row in rows if row["id"] == "world_reset")["reason"] is None
 
     needs = {"capabilities": ["start_health", "one_turn", "tool_routing"]}

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-RULES_VERSION = "2"
+RULES_VERSION = "4"
 
 SUPPORTED = "supported"
 PARTIAL = "partial"
@@ -21,6 +21,41 @@ _FINDING_STATUS = {
     "unavailable": UNAVAILABLE,
 }
 _GATE_OPEN = {SUPPORTED, PARTIAL}
+
+
+# The screen that repairs each kind of gap (TH-8881's fix types); the web app maps each to its own route.
+_REPAIR = {
+    "startup": "agent.source",
+    "message_mapping": "agent.interface",
+    "tool_routing": "agent.tools",
+    "evidence": "environment.evidence",
+}
+
+
+def _fix(entry: dict[str, Any], reading: dict[str, Any], status: str) -> dict[str, Any] | None:
+    """What to do about a capability that is not Supported: the change to make, where, what would flip it, and the
+    re-check that reads it again. A preflight finding is re-checked on the agent, anything else on the world."""
+    if status == SUPPORTED:
+        return None
+    kind = entry.get("fix_type") or ""
+    failed = [check["target"] for check in reading.get("checks") or [] if check.get("result") == "failed" and check.get("target")]
+    scope = "agent" if reading.get("origin") == "preflight" else "world"
+    if status in (BLOCKED, PARTIAL, UNAVAILABLE):
+        text = reading.get("fix") or ("Choose another mode or accept a narrower test" if status == UNAVAILABLE else "")
+    elif status == STALE:
+        text = "Check it again with the versions you will run" if scope == "agent" else "Rebuild with the versions you will run"
+    else:
+        text = "Check it again" if scope == "agent" else "Not measured yet; a rebuild measures it"
+    return {
+        "type": kind or None,
+        "text": text,
+        "target": failed,
+        "repair": _REPAIR.get(kind),
+        "flips_when": reading.get("flips_when") or "a re-check of this capability passes",
+        # The world is read again only by a rebuild until a check-only job exists.
+        "recheck": {"scope": scope, "check": entry["id"], "available": scope == "agent"},
+        "available": status != UNAVAILABLE,
+    }
 
 
 def _stale_because(inputs: dict[str, Any], current: dict[str, Any]) -> str | None:
@@ -73,7 +108,7 @@ def capability_statuses(
                 "stale_because": stale_because if status == STALE else None,
                 "reason_code": reading.get("reason_code") if status == BLOCKED else None,
                 "reason": reading.get("reason") if status == BLOCKED else None,
-                "fix": reading.get("fix") if status == BLOCKED else None,
+                "fix": _fix(entry, reading, status),
                 "fix_type": entry.get("fix_type"),
             }
         )

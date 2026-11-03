@@ -768,6 +768,29 @@ class HarnessVersionDiffSerializer(serializers.Serializer):
     )
 
 
+class HarnessCapabilityRecheckSerializer(serializers.Serializer):
+    scope = serializers.ChoiceField(choices=("agent", "world", "all"))
+    check = serializers.CharField(required=False, allow_null=True)
+
+
+class HarnessCapabilityFixRecheckSerializer(serializers.Serializer):
+    scope = serializers.ChoiceField(choices=("agent", "world"))
+    check = serializers.CharField()
+    available = serializers.BooleanField(help_text="False for the world: a rebuild reads it again until a check-only job exists.")
+
+
+class HarnessCapabilityFixSerializer(serializers.Serializer):
+    """What to do about a capability that is not Supported, and the re-check that reads it again."""
+
+    type = serializers.CharField(allow_null=True)
+    text = serializers.CharField(allow_blank=True)
+    target = serializers.ListField(child=serializers.CharField(), help_text="The tools, fields or checks it names.")
+    repair = serializers.CharField(allow_null=True, help_text="The screen that repairs it: agent.tools, agent.source...")
+    flips_when = serializers.CharField()
+    recheck = HarnessCapabilityFixRecheckSerializer()
+    available = serializers.BooleanField()
+
+
 class HarnessCapabilityRowSerializer(serializers.Serializer):
     id = serializers.CharField()
     label = serializers.CharField()
@@ -780,7 +803,7 @@ class HarnessCapabilityRowSerializer(serializers.Serializer):
     stale_because = serializers.CharField(allow_null=True)
     reason_code = serializers.CharField(allow_null=True)
     reason = serializers.CharField(allow_null=True)
-    fix = serializers.CharField(allow_null=True)
+    fix = HarnessCapabilityFixSerializer(allow_null=True)
     fix_type = serializers.CharField(allow_null=True)
     needed_by = serializers.IntegerField()
     affected = serializers.IntegerField()
@@ -793,13 +816,26 @@ class HarnessCapabilitySelectionSerializer(serializers.Serializer):
     blocked = serializers.IntegerField()
     untested = serializers.IntegerField()
     requirements_recorded = serializers.BooleanField()
+    dropped = serializers.ListField(
+        child=serializers.DictField(), help_text="Scenarios no longer in the suite; counted in none of the others."
+    )
 
 
 class HarnessCapabilityQuerySerializer(serializers.Serializer):
     agent_version_id = serializers.UUIDField(required=False)
+    environment_version_id = serializers.UUIDField(required=False)
+    suite_version_id = serializers.UUIDField(required=False)
+    keys = serializers.ListField(child=serializers.CharField(), required=False)
+
+
+class HarnessCapabilityRecheckResponseSerializer(serializers.Serializer):
+    scope = serializers.CharField()
+    agent_version_id = serializers.CharField(allow_null=True)
+    state = serializers.CharField(help_text="started, or not_needed when the last check passed")
 
 
 class HarnessCapabilityReportSerializer(serializers.Serializer):
+    evidence_unreadable = serializers.BooleanField(help_text="The build's evidence could not be read; all is Untested.")
     environment_version_id = serializers.CharField(allow_null=True)
     agent_version_id = serializers.CharField(allow_null=True)
     catalog_version = serializers.CharField(allow_null=True)
