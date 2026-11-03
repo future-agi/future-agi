@@ -28,6 +28,25 @@ export function formatCost(value) {
   return "$0.00";
 }
 
+export const UNPRICED_COST_SOURCE = "unpriced";
+
+export const UNPRICED_LABEL = "Unpriced";
+
+export const UNPRICED_TOOLTIP =
+  "No price is set for this model, so this request was recorded without a cost and isn't counted against budgets. Add a price for the model to track it.";
+
+/**
+ * A log is "unpriced" only when the gateway tagged it
+ * `metadata.cost_source === "unpriced"` AND no positive cost was recorded.
+ * Other cost sources (e.g. "org_custom") and positive costs always win, so
+ * they keep showing the normal formatted cost.
+ */
+export function isUnpriced(log) {
+  if (!log || log.metadata?.cost_source !== UNPRICED_COST_SOURCE) return false;
+  if (log.cost == null || log.cost === "") return true;
+  return Number(log.cost) === 0;
+}
+
 // Axis ticks sit on round values, so zeros past the cents only widen the label
 export function formatCostTick(value) {
   return formatCost(value).replace(/(\.\d{2}\d*?)0+$/, "$1");
