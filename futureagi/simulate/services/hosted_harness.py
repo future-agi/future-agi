@@ -27,6 +27,7 @@ from simulate.models import (
     HostedHarnessScenario,
     TestExecution,
 )
+from simulate.services.agent_contracts import store_build_contract
 from simulate.services.agent_setup import AgentStoreError, store_agent
 from simulate.services.alk_simulate_ingestion import (
     ALKSimulateIngestionError,
@@ -2545,6 +2546,7 @@ def _store_authored_agent(
                 agent=sent["agent"],
                 sdk_version=sent["sdk_version"],
             )
+        store_build_contract(job, agent_version_id=agent_version_id)
         return outcome, agent_version_id
     except Exception as exc:
         logger.warning(

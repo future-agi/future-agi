@@ -41,6 +41,7 @@ class AgentVersionSetup(BaseModel):
     gaps = ArrayField(models.CharField(max_length=32), default=list, blank=True)
     instrumentation = models.CharField(max_length=16, default="none")
     raw_setup = models.JSONField(default=dict, blank=True)
+    contract_object_key = models.CharField(max_length=255, default="", blank=True)
 
     class Meta:
         db_table = "simulate_agent_version_setup"

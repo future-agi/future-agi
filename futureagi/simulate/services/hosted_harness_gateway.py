@@ -43,6 +43,7 @@ from simulate.models import (
     HostedHarnessSecret,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+from simulate.services.agent_contracts import store_build_contract
 from simulate.services.code_archives import (
     store_commit_archive,
     stored_commit_archive,
@@ -3864,6 +3865,7 @@ class HostedHarnessGateway:
                     proved_since=getattr(attempt, "created_at", None),
                 )
                 job.refresh_from_db()
+                store_build_contract(job, archive=body)
             except (
                 Exception
             ):  # noqa: BLE001 - retry on the next poll; do not abort calls
