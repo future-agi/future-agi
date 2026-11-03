@@ -41,6 +41,29 @@ VIEWER_REFUSALS = [
     ("post", f"{AGENT}versions/{OTHER}/activate/", "change the production version"),
 ]
 
+LABELS_WITHOUT_A_ROUTE_CASE = {
+    "add evaluations",
+    "add evaluations to a run",
+    "change a build",
+    "change an environment's default version",
+    "change scenarios",
+    "change the tool call evaluation",
+    "check an environment setup",
+    "create a test run",
+    "delete agents",
+    "delete an agent",
+    "delete an agent version",
+    "discard an agent version",
+    "discard environment drafts",
+    "dismiss a rebuild prompt",
+    "extend a build",
+    "restore an agent version",
+    "retry an agent version check",
+    "run evaluations",
+    "save environment drafts",
+    "upload agent code",
+}
+
 
 def _walk(patterns, prefix=""):
     for pattern in patterns:
@@ -123,7 +146,10 @@ def test_every_viewer_label_reads_as_a_sentence():
         for *_, handler in _simulation_write_handlers()
     } - {None}
 
-    assert labels >= {action for *_, action in VIEWER_REFUSALS}
+    assert (
+        labels
+        == {action for *_, action in VIEWER_REFUSALS} | LABELS_WITHOUT_A_ROUTE_CASE
+    )
     for label in labels:
         assert label == label.strip() and label[0].islower(), label
         assert not label.endswith("."), label

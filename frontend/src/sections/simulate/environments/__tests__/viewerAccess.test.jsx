@@ -10,6 +10,7 @@ import RowActionsMenu from "../components/RowActionsMenu";
 import CancelBuildControl from "../buildEnvironment/building/CancelBuildControl";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import WorkspaceHeader from "../workspace/WorkspaceHeader";
+import ForkMenu from "../workspace/ForkMenu";
 import { ENV_STATUS, ROW_ACTION_LABEL } from "../myEnvironments.constants";
 import { WORKSPACE_COPY } from "../workspace/workspace.constants";
 
@@ -130,6 +131,23 @@ describe("as a Viewer", () => {
 });
 
 describe("as a Member", () => {
+  it("can reach Delete by keyboard in the header menu", async () => {
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: true,
+      canRun: true,
+    });
+    const user = userEvent.setup();
+    render(<ForkMenu onFork={vi.fn()} onDelete={vi.fn()} />);
+
+    await user.click(
+      screen.getByRole("button", { name: WORKSPACE_COPY.moreActions }),
+    );
+
+    const remove = await screen.findByRole("menuitem", { name: /Delete/ });
+    await waitFor(() => expect(remove).toHaveFocus());
+    expect(remove).toHaveAttribute("tabindex", "0");
+  });
+
   it("keeps every row action available", () => {
     vi.mocked(useSimulationAccess).mockReturnValue({
       canEdit: true,
