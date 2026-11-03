@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from clickhouse_connect.driver.binding import finalize_query
 from clickhouse_driver.errors import ServerException
 from django.core.cache import cache
 from django.db import DatabaseError
@@ -5603,9 +5604,8 @@ def test_exact_trace_graph_merges_all_contribution_batches_before_averages(
     assert all(
         not any(f"attrs_string['{key}']" in call[0] for key in membership_keys)
         and not any(
-            value in membership_keys
-            for name, value in call[1].items()
-            if "filter_key_" in name
+            f"attrs_string['{key}']" in finalize_query(call[0], call[1])
+            for key in membership_keys
         )
         and "AS graph_cost_flags" in call[0]
         for call in analytics.calls
@@ -5797,11 +5797,10 @@ def test_exact_trace_graph_delegates_scalar_array_map_and_json_membership(
     assert "AS graph_cost_flags" in query
     membership_keys = {"final_status", "tags", "profile", "legacy_payload"}
     assert not any(f"attrs_string['{key}']" in query for key in membership_keys)
-    assert not any(
-        value in membership_keys
-        for name, value in params.items()
-        if "filter_key_" in name
-    )
+    # The builder may retain unused classifier bindings. Inspect the SQL
+    # sent to ClickHouse, so an actual bound membership access still fails.
+    rendered = finalize_query(query, params)
+    assert not any(f"attrs_string['{key}']" in rendered for key in membership_keys)
     assert "attrs_number" not in query
     assert "attrs_bool" not in query
     assert "attributes_extra" not in query
@@ -6257,11 +6256,10 @@ def test_exact_graph_budget_failure_does_not_publish_or_split_contribution_batch
     assert "AS graph_cost_flags" in query
     membership_keys = {"final_status", "confidence"}
     assert not any(f"attrs_string['{key}']" in query for key in membership_keys)
-    assert not any(
-        value in membership_keys
-        for name, value in params.items()
-        if "filter_key_" in name
-    )
+    # The builder may retain unused classifier bindings. Inspect the SQL
+    # sent to ClickHouse, so an actual bound membership access still fails.
+    rendered = finalize_query(query, params)
+    assert not any(f"attrs_string['{key}']" in rendered for key in membership_keys)
     assert "attrs_number" not in query
     assert "trace_id IN %(graph_candidate_trace_ids)s" in query
     assert "snapshot_version_ceiling" not in params

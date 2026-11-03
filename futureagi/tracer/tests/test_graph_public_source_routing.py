@@ -423,11 +423,10 @@ def test_exact_trace_reader_preserves_raw_date_in_real_identity_classifier(
     query, params, _ = analytics.calls[0]
     assert params["graph_candidate_trace_ids"] == ("trace-1",)
     assert "AS graph_cost_flags" in query
-    # Raw membership is classified, not reapplied to contributions. SQL keys
-    # are bound placeholders, so inspect the exact bound key rather than only
-    # looking for a literal map expression in the rendered query.
+    # Raw membership is classified, not reapplied to contributions. Render
+    # bound accesses too, without treating unused classifier params as SQL.
     assert f"attrs_string['{key}']" not in query
-    assert key not in {value for name, value in params.items() if "filter_key_" in name}
+    assert f"attrs_string['{key}']" not in finalize_query(query, params)
     assert "attrs_number" not in query and "attributes_extra" not in query
 
 

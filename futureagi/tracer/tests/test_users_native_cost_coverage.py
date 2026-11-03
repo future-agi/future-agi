@@ -8,7 +8,7 @@ import csv
 import io
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -499,8 +499,17 @@ def test_complete_price_filter_count_and_sort_before_paging(
         "unknown": [{"attrs_string": UNKNOWN}],
         "partial": [{}, {"attrs_string": UNKNOWN}],
     }
+    user_ids = {
+        "zero": uuid4(),
+        "known": uuid4(),
+        # The existing tiebreaker is native UUID DESC, not toString(UUID).
+        # ClickHouse compares the second half first: these deliberately
+        # disagree with lexical order, making the regression deterministic.
+        "unknown": UUID("ffffffff-ffff-4fff-8000-000000000001"),
+        "partial": UUID("00000000-0000-4000-bfff-ffffffffffff"),
+    }
     for label, specs in cases.items():
-        user = uuid4()
+        user = user_ids[label]
         _seed_user(client, project, organization, user, label)
         _seed_spans(client, project, user, specs)
     payload, _ = _read(client, project, organization, filters=[_filter("equals")])
@@ -520,9 +529,10 @@ def test_complete_price_filter_count_and_sort_before_paging(
     )
     incomplete = sorted_rows["table"][2:]
     assert {row["user_id"] for row in incomplete} == {"partial", "unknown"}
-    assert [row["end_user_id"] for row in incomplete] == sorted(
-        [row["end_user_id"] for row in incomplete], reverse=True
-    )
+    assert [row["end_user_id"] for row in incomplete] == [
+        str(user_ids["partial"]),
+        str(user_ids["unknown"]),
+    ]
 
 
 @pytest.mark.unit
