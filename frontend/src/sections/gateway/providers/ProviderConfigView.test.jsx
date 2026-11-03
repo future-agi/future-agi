@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, within } from "src/utils/test-utils";
 import ProviderConfigView from "./ProviderConfigView";
 
 vi.mock("./hooks/useGatewayConfig", () => ({
@@ -12,14 +12,15 @@ vi.mock("./AddProviderDialog", () => ({
   default: () => null,
 }));
 
-// The value printed beside a card's "API Format" label.
+// Find the provider's own details by its heading and label, regardless of
+// whether the surrounding design-system panel uses Card or Section markup.
 const formatShownFor = (providerName) => {
-  const card = screen
-    .getByRole("heading", { name: providerName })
-    .closest(".MuiCard-root");
-  const label = Array.from(card.querySelectorAll("p")).find(
-    (el) => el.textContent === "API Format",
-  );
+  let panel = screen.getByRole("heading", { name: providerName }).parentElement;
+  while (panel && !within(panel).queryByText("API Format", { exact: true })) {
+    panel = panel.parentElement;
+  }
+  if (!panel) throw new Error(`API Format missing for ${providerName}`);
+  const label = within(panel).getByText("API Format", { exact: true });
   return label.nextElementSibling.textContent;
 };
 

@@ -2,7 +2,13 @@
 import React, { forwardRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
+import {
+  render,
+  screen,
+  userEvent,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
 import EvalCreatePage from "../EvalCreatePage";
 import axios from "src/utils/axios";
 import { JEV_RUBRIC_ERROR } from "../../utils/jevMapping";
@@ -470,8 +476,20 @@ describe("EvalCreatePage with a Jev model", () => {
     });
     expect(lastPayload().model).toBe("");
     expect(lastPayload()).not.toHaveProperty("jev_mapping");
+    // The playground tab is also a button named Test Evaluation. Run the
+    // action beside Save Evaluation, not the tab that only switches views.
+    let actions = screen.getByRole("button", {
+      name: "Save Evaluation",
+    }).parentElement;
+    while (
+      actions &&
+      !within(actions).queryByRole("button", { name: "Test Evaluation" })
+    ) {
+      actions = actions.parentElement;
+    }
+    if (!actions) throw new Error("Evaluation test action is missing");
     await userEvent.click(
-      screen.getByRole("button", { name: /Test Evaluation/ }),
+      within(actions).getByRole("button", { name: "Test Evaluation" }),
     );
     await waitFor(() =>
       expect(axios.post).toHaveBeenCalledWith(
