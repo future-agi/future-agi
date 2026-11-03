@@ -163,6 +163,11 @@ and scalar subqueries. Row grain and window semantics are important:
   ``locale`` is the latest present span ``attrs_string['locale']`` in this same window
   (ties break deterministically by span id; missing keys do not erase a value).
   It is not an invented session property; absent attributes return an empty string.
+  Workbench queries that do not reference locale or project a wildcard omit the
+  span enrichment join. Direct BI views retain the full locale projection and
+  its join budget. Sessions and users are ordered by identity, not ``first_seen``;
+  narrowing the time window may still scan retained identity history and reach
+  the 10-million-row read ceiling.
 ``users``
   Users *first seen* in the window, not an active-users rollup. ``external_id`` is
   the external user label, while ``id`` is the internal UUID.
@@ -172,7 +177,11 @@ and scalar subqueries. Row grain and window semantics are important:
   typed project-owned span/trace/session target are mandatory. Candidate ids come
   from windowed eval rows; historical ownership lookups do not filter target
   timestamps or materialize every id in a project. Thus a recent backfill eval
-  of a sixty-day-old span/trace or long-lived session is retained. Span targets
+  of a sixty-day-old span/trace or long-lived session is retained. Ownership
+  checks may scan retained target history even for a short evaluation window.
+  The fixed 10-million-row read ceiling applies to those reads too; shortening
+  the evaluation window may not make the query fit. An over-budget query fails
+  explicitly, never returns a partial aggregate. Span targets
   match the (span id, trace id) pair, not a globally assumed span id. Null or
   foreign targets never grant access. Ownership comes from every configuration
   the project owns, *including soft-deleted ones*: a later deletion does not
@@ -372,11 +381,27 @@ Security and lifecycle
 Deployment
 ----------
 
-Apply Django migrations through ``tracer/0119_sql_execution_result_reuse`` using
-the normal bootstrap job (including ``0117_sql_workbench`` and its merge migration).
-Install the locked backend dependencies. The existing always-on Temporal
-``exact_aggregation`` worker imports ``tracer.sql_workbench.tasks`` from the shared
-activity registry; no extra worker process or Celery deployment is introduced.
+Apply Django migrations through ``tracer/0122_sql_payload_expiry_index`` using
+the normal bootstrap job. The additive payload-expiry index is built concurrently;
+legacy retained payloads with zero byte accounting are repaired in 1,000-row
+batches. Rollback removes only the index, not audit records or result bodies.
+Install the locked backend dependencies before starting workers.
+
+Interactive SQL uses a dedicated two-slot ``sql_workbench`` activity worker in
+Standalone, Distributed Compose and Helm, separate from the single-slot exact
+aggregation refresh worker. Workflow admission and the retention schedule honor
+``EXACT_AGGREGATION_TASK_QUEUE`` (``exact_aggregation`` or ``tasks_xl``); ensure
+that queue has a poller. Invalid queue settings fail closed. The ``tasks_s``
+control queue finalizes activity admission failures and reconciles abandoned
+jobs every minute. Never raise the exact-refresh worker's concurrency to make
+SQL responsive.
+
+Compose passes the shared ``.env`` to the API and workers with ``env_file``.
+Helm uses the existing ``secrets.extra``/Secret reference mechanism for secrets
+and ``backend.extraEnv``/``worker.extraEnv`` for nonsecret settings. The standard
+``.env.example`` and ``deploy/env-reference.toml`` list every supported SQL
+setting, default, consumer and validation range. Keep estimator credentials
+separate; only the backend consumes them.
 
 Application-service principal (operator only)::
 
@@ -426,8 +451,14 @@ with SELECT on those views only. Physical row policies use intrinsic ownership,
 not fact timestamps or recursive candidate queries. Eval policies restrict the
 project-owned config set; the immutable published eval view additionally enforces
 typed candidate-target ownership across history. No wildcard, write, SOURCES or access-management
-grants are issued. The password is represented only as a SHA-256 credential hash
-in emitted DDL; protect that output too. Restricted network CIDRs are mandatory.
+grants are issued. Passwords use SHA-256 with a fresh cryptographically random
+salt per generated principal (including service and estimator accounts). The
+emitted DDL contains the hash and salt, never the plaintext; protect that output
+too. Restricted network CIDRs are mandatory. For an existing principal, rotate
+with operator-reviewed ``ALTER USER ... IDENTIFIED WITH sha256_hash BY ... SALT ...``
+using the newly generated credential clause, then update its secret in the API
+and workers. Do not rerun ``CREATE USER`` over an existing name or change its
+grants/policies during a password-only rotation.
 The views have a rolling bounded window. Evaluation configuration ids are frozen
 at provisioning; reprovision when the authorized configuration set changes.
 Existing names deliberately fail rather than reuse users with unknown privileges.
@@ -444,6 +475,52 @@ when the client submits arbitrary SQL directly. Applying row policies can affect
 existing users without matching policies depending on ClickHouse server policy
 configuration: review/test on an isolated instance before production. Do not claim
 this command has changed a running installation; it prints DDL only.
+
+Result retrieval and rollback
+-----------------------------
+
+Execution responses include ``finished_at``. Each submission also reports
+``reused`` for that request only; polling the original job does not change its
+provenance. Set ``reuse=false`` on a run to force a fresh scan. Saved/dashboard
+runs always use a fresh scan. Current access and exact scope are checked before
+reuse, just as they are before a new run.
+
+REST retrieval accepts optional ``offset`` (0–10,000) and ``limit`` (1–1,000);
+omitting the limit retains the full bounded REST snapshot. MCP defaults to
+100 rows and a 56 KiB snapshot page. Follow ``result.next_offset`` while
+``result.has_more`` is true; ``page_row_count`` is this page, ``row_count`` is the
+stored snapshot. A single oversized row is explicitly marked ``previewed`` with
+a retrieval note. Use the authenticated CSV/Parquet download for full cells before
+expiry. Pagination never extends retention or bypasses actor/project checks.
+Downloads return 409 when no successful result exists, 410 when a successful
+snapshot expired, and 503 only for a dependency/configuration failure. For failed
+or cancelled jobs, 409 takes precedence over retention expiry.
+
+The service principal's two-statement concurrency ceiling is global, not per
+organization. Exhausted bounded startup retries report service busy; retry later.
+Scans that have already started are never retried automatically.
+
+Before rolling back SQL code or workers, pause both schedules by exact id::
+
+  python manage.py register_temporal_schedules --pause sql-workbench-result-retention
+  python manage.py register_temporal_schedules --describe sql-workbench-result-retention
+  python manage.py register_temporal_schedules --pause sql-workbench-deadline-reconciliation
+  python manage.py register_temporal_schedules --describe sql-workbench-deadline-reconciliation
+
+Verify each description says ``paused``, stop new SQL submissions, and drain
+in-flight SQL workflows before replacing the workers. Keep a maintenance worker
+on the current release and invoke ``python manage.py purge_sql_results`` every
+15 minutes during a prolonged rollback so 24-hour result-body erasure continues;
+retain PostgreSQL audit metadata unless an explicit audit-retention policy permits
+deletion. Do not drop the SQL tables to erase bodies. Global ``--cleanup-orphans``
+affects every unknown schedule and is not a feature-specific rollback command.
+
+For roll-forward, apply migrations, deploy workers and confirm all three required
+queues have pollers, then re-register schedules. Registration preserves pauses.
+Explicitly unpause the two exact ids only after their activities are available::
+
+  python manage.py register_temporal_schedules --unpause sql-workbench-result-retention
+  python manage.py register_temporal_schedules --unpause sql-workbench-deadline-reconciliation
 
 Verification and unqualified requirements
 -----------------------------------------
