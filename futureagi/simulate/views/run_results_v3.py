@@ -573,13 +573,30 @@ class CallWorkerEventSerializer(serializers.Serializer):
     result = serializers.CharField(allow_null=True, required=False)
     tool = serializers.CharField(required=False)
     status = serializers.CharField(required=False)
+    # A tool call's arguments and result as recorded, cut with an ellipsis past 2,000 characters.
+    input = serializers.JSONField(allow_null=True, required=False)
+    output = serializers.JSONField(allow_null=True, required=False)
     at = serializers.CharField(allow_null=True)
     attribution = serializers.ChoiceField(choices=("reported", "bound", "conflict", "unattributed"))
+
+
+class CallWorkerCoordinatorSerializer(serializers.Serializer):
+    name = serializers.CharField()
+
+
+class CallWorkerTurnSerializer(serializers.Serializer):
+    text = serializers.CharField(allow_null=True)
+    at = serializers.CharField(allow_null=True)
 
 
 class CallWorkersResponseSerializer(serializers.Serializer):
     workers = CallWorkerSerializer(many=True)
     events = CallWorkerEventSerializer(many=True)
+    # Each is null when it was not seen: the timeline shows it as Unknown.
+    coordinator = CallWorkerCoordinatorSerializer(allow_null=True, required=False)
+    request = CallWorkerTurnSerializer(allow_null=True, required=False)
+    response = CallWorkerTurnSerializer(allow_null=True, required=False)
+    started_at = serializers.CharField(allow_null=True, required=False)
     collected_at = serializers.CharField()
 
 

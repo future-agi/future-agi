@@ -23,6 +23,7 @@ _WORK_KINDS = {TOOL_KIND, "llm"}
 # What the runtime calls an agent instance, when it names one (OpenInference / traceAI graph node).
 _NODE_ID = "graph.node.id"
 _SUMMARY_CHARS = 500
+_PAYLOAD_CHARS = 2000
 
 
 def _slug(name: str) -> str:
@@ -51,18 +52,61 @@ def _summary(value: Any, *, argument: bool = False) -> str | None:
     return text or None
 
 
+def _payload(value: Any) -> Any:
+    """A tool call's input or output as recorded, cut with an ellipsis when it runs past the payload limit."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            pass
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    if len(text) <= _PAYLOAD_CHARS:
+        return value
+    return text[:_PAYLOAD_CHARS].rstrip() + "…"
+
+
+def _instant(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return moment.astimezone(UTC).replace(tzinfo=None) if moment.tzinfo else moment
+
+
+def _turn(turns: list[Mapping[str, Any]], role: str, *, before: datetime | None = None, after: datetime | None = None):
+    """The caller's last turn up to `before`, or the agent's first turn from `after`; None when none is known."""
+    timed = [(when, one) for one in turns if one.get("role") == role and (when := _instant(one.get("at"))) is not None]
+    if before is not None:
+        earlier = [pair for pair in timed if pair[0] <= before]
+        pick = earlier[-1] if earlier else None
+    else:
+        later = [pair for pair in timed if after is not None and pair[0] >= after]
+        pick = later[0] if later else None
+    if pick is None:
+        return None
+    return {"text": _summary(pick[1].get("text")), "at": pick[1].get("at")}
+
+
 def worker_timeline(
     spans: Iterable[Mapping[str, Any]],
     declared: Iterable[Mapping[str, Any]],
     *,
     run_key: str,
     traced_calls: Iterable[Mapping[str, Any]] = (),
+    turns: Iterable[Mapping[str, Any]] = (),
+    started_at: str | None = None,
 ) -> dict[str, Any]:
     """Each worker (declared, observed or both) and the run's worker events in order: `delegated`, the worker's
-    `tool_call`s, `returned`. `spans` are dicts with `span_id`, `parent_span_id`, `name`, `observation_type`,
-    `start_time`, `end_time`, `status`, `input`, `output` and `attributes`. `traced_calls` are the call's sealed
-    tool-trace rows; one a runtime attributed to a worker (`by`, with its `task` and `runtime_ids`) is that worker's
-    tool call, kept as reported, unless a span already showed the same call."""
+    `tool_call`s (with their input and output), `returned`. `spans` are dicts with `span_id`, `parent_span_id`, `name`,
+    `observation_type`, `start_time`, `end_time`, `status`, `input`, `output` and `attributes`. `traced_calls` are the
+    call's sealed tool-trace rows; one a runtime attributed to a worker (`by`, with its `task` and `runtime_ids`) is
+    that worker's tool call, kept as reported, unless a span already showed the same call. `turns` are the call's
+    messages (`role` "user" or "agent", `text`, `at`): the caller's request before the first hand-off and the
+    coordinator's reply after the last return frame the timeline, each None when it was not seen."""
     by_id = {str(span["span_id"]): span for span in spans}
     declared_by_key = {}
     for one in declared:
@@ -177,6 +221,8 @@ def worker_timeline(
                 "tool": str(span.get("name") or ""),
                 "span_id": str(span["span_id"]),
                 "status": "error" if str(span.get("status") or "").upper() == "ERROR" else "ok",
+                "input": _payload(span.get("input")),
+                "output": _payload(span.get("output")),
                 "at": span.get("start_time"),
                 # No agent span above the call: neither the coordinator nor a worker can be named for it.
                 "attribution": "reported" if owner is not None else "unattributed",
@@ -276,6 +322,8 @@ def worker_timeline(
                 "worker_id": worker_id,
                 "tool": tool,
                 "status": status,
+                "input": _payload(call.get("arguments")),
+                "output": _payload(call.get("result") if call.get("result") is not None else call.get("error")),
                 "at": when(call.get("at")),
                 "attribution": "reported",
                 **({"task": str(call.get("task_label") or call["task_id"])} if call.get("task_label") or call.get("task_id") else {}),
@@ -305,7 +353,26 @@ def worker_timeline(
                 "instance_ids": [],
             },
         )
-    return {"workers": sorted(workers.values(), key=lambda one: one["id"]), "events": events}
+    # The coordinator as the app names it: the top-level agent span, else the runtime's label for the agent that hands
+    # work out; None when neither was seen.
+    coordinator = next(
+        (name_of(span) for span in by_id.values() if span["span_id"] in participants and agent_ancestor(span) is None),
+        None,
+    ) or next(
+        (str(row.get("worker_label") or by_of(row)) for row in rows if _slug(by_of(row)) in coordinators),
+        None,
+    )
+    turns = [one for one in turns if isinstance(one, Mapping)]
+    handed_at = [moment for one in events if one["type"] == "delegated" and (moment := _instant(one["at"]))]
+    closed_at = [moment for one in events if (moment := _instant(one["at"])) is not None]
+    return {
+        "workers": sorted(workers.values(), key=lambda one: one["id"]),
+        "events": events,
+        "coordinator": {"name": coordinator} if coordinator else None,
+        "request": _turn(turns, "user", before=min(handed_at)) if handed_at else None,
+        "response": _turn(turns, "agent", after=max(closed_at)) if handed_at else None,
+        "started_at": started_at,
+    }
 
 
 WORKERS_KEY = "harness_workers"
@@ -339,6 +406,52 @@ def declared_workers(job: Any) -> list[dict[str, Any]]:
     return [one for one in contract.get("workers") or [] if isinstance(one, dict) and one.get("id")]
 
 
+def _clock_start(call: Any, sealed: list[dict[str, Any]]) -> float | None:
+    """Epoch seconds the call's message and tool-call offsets (`start_time_ms`) count from: the sealed tool calls
+    carry both, else the call's own start."""
+    for one in sealed:
+        at, offset = one.get("at"), one.get("start_time_ms")
+        if isinstance(at, (int, float)) and isinstance(offset, (int, float)):
+            return float(at) - offset / 1000
+    return call.started_at.timestamp() if call.started_at else None
+
+
+def _call_start(call: Any, sealed: list[dict[str, Any]]) -> str | None:
+    start = _clock_start(call, sealed)
+    return datetime.fromtimestamp(start, tz=UTC).replace(tzinfo=None).isoformat() if start is not None else None
+
+
+def _call_turns(call: Any, sealed: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The call's messages with when each was said, on the tool calls' clock; a message with no offset is left out."""
+    from simulate.models import CallTranscript
+    from simulate.models.chat_message import ChatMessageModel
+
+    start = _clock_start(call, sealed)
+    if start is None:
+        return []
+    # Only the caller and the agent under test; a sub-actor or an unknown speaker is neither the request nor the reply.
+    roles = {"user": "user", "assistant": "agent"}
+    said = []
+    for message in ChatMessageModel.objects.filter(call_execution=call).order_by("created_at"):
+        for item in message.content if isinstance(message.content, list) else []:
+            if isinstance(item, dict) and isinstance(item.get("start_time_ms"), (int, float)) and message.role in roles:
+                said.append((item["start_time_ms"], roles[message.role], item.get("content")))
+    if not said:
+        said = [
+            (row.start_time_ms, roles[row.speaker_role], row.content)
+            for row in CallTranscript.objects.filter(call_execution=call, start_time_ms__isnull=False)
+            if row.speaker_role in roles
+        ]
+    return [
+        {
+            "role": role,
+            "text": text,
+            "at": datetime.fromtimestamp(start + offset / 1000, tz=UTC).replace(tzinfo=None).isoformat(),
+        }
+        for offset, role, text in sorted(said, key=lambda one: one[0])
+    ]
+
+
 def record_call_workers(call_execution_id: str) -> dict[str, Any] | None:
     """Read one call's spans and its runtime-attributed tool calls, and keep its worker timeline on the call; None
     when the agent reports neither to us.
@@ -352,11 +465,12 @@ def record_call_workers(call_execution_id: str) -> dict[str, Any] | None:
 
     call = CallExecution.objects.select_related("test_execution").get(id=call_execution_id)
     traces = list_run_traces(call.test_execution, call_execution_id=call.id)
-    traced_calls = [
+    sealed = [
         one
         for one in ((call.provider_call_data or {}).get("livekit") or {}).get("tool_calls") or []
-        if isinstance(one, dict) and (one.get("worker_id") or one.get("worker_label"))
+        if isinstance(one, dict)
     ]
+    traced_calls = [one for one in sealed if one.get("worker_id") or one.get("worker_label")]
     if traces.project_id is None and not traced_calls:
         return None
     job = HostedHarnessJob.no_workspace_objects.filter(test_execution=call.test_execution).first()
@@ -373,6 +487,8 @@ def record_call_workers(call_execution_id: str) -> dict[str, Any] | None:
             declared_workers(job) if job is not None else [],
             run_key=str(job.run_id) if job is not None else str(call.test_execution_id),
             traced_calls=traced_calls,
+            turns=_call_turns(call, sealed),
+            started_at=_call_start(call, sealed),
         ),
         "collected_at": timezone.now().isoformat(),
     }

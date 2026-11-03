@@ -23849,6 +23849,10 @@ export const CallWorkerEventApiAttribution = {
   unattributed: "unattributed",
 } as const;
 
+export type CallWorkerEventApiInput = { [key: string]: unknown };
+
+export type CallWorkerEventApiOutput = { [key: string]: unknown };
+
 export interface CallWorkerEventApi {
   seq: number;
   type: CallWorkerEventApiType;
@@ -23866,14 +23870,33 @@ export interface CallWorkerEventApi {
   tool?: string;
   /** @minLength 1 */
   status?: string;
+  input?: CallWorkerEventApiInput;
+  output?: CallWorkerEventApiOutput;
   /** @minLength 1 */
   at: string;
   attribution: CallWorkerEventApiAttribution;
 }
 
+export interface CallWorkerCoordinatorApi {
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface CallWorkerTurnApi {
+  /** @minLength 1 */
+  text: string;
+  /** @minLength 1 */
+  at: string;
+}
+
 export interface CallWorkersResponseApi {
   workers: CallWorkerApi[];
   events: CallWorkerEventApi[];
+  coordinator?: CallWorkerCoordinatorApi;
+  request?: CallWorkerTurnApi;
+  response?: CallWorkerTurnApi;
+  /** @minLength 1 */
+  started_at?: string;
   /** @minLength 1 */
   collected_at: string;
 }

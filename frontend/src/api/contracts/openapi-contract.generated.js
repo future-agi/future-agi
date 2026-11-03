@@ -54455,6 +54455,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/CallWorkerEvent",
           },
         },
+        coordinator: {
+          $ref: "#/definitions/CallWorkerCoordinator",
+        },
+        request: {
+          $ref: "#/definitions/CallWorkerTurn",
+        },
+        response: {
+          $ref: "#/definitions/CallWorkerTurn",
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         collected_at: {
           title: "Collected at",
           type: "string",
@@ -88847,6 +88862,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    CallWorkerCoordinator: {
+      required: ["name"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
     CallWorkerEvent: {
       required: ["seq", "type", "worker_id", "at", "attribution"],
       type: "object",
@@ -88899,6 +88926,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        input: {
+          title: "Input",
+          type: "object",
+          "x-nullable": true,
+        },
+        output: {
+          title: "Output",
+          type: "object",
+          "x-nullable": true,
+        },
         at: {
           title: "At",
           type: "string",
@@ -88911,6 +88948,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
           enum: ["reported", "bound", "conflict", "unattributed"],
         },
       },
+    },
+    CallWorkerTurn: {
+      required: ["text", "at"],
+      type: "object",
+      properties: {
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        at: {
+          title: "At",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     CapabilityFeature: {
       required: [

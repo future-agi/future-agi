@@ -50127,10 +50127,30 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
       result: zod.string().min(1).optional(),
       tool: zod.string().min(1).optional(),
       status: zod.string().min(1).optional(),
+      input: zod.object({}).passthrough().optional(),
+      output: zod.object({}).passthrough().optional(),
       at: zod.string().min(1),
       attribution: zod.enum(["reported", "bound", "conflict", "unattributed"]),
     }),
   ),
+  coordinator: zod
+    .object({
+      name: zod.string().min(1),
+    })
+    .optional(),
+  request: zod
+    .object({
+      text: zod.string().min(1),
+      at: zod.string().min(1),
+    })
+    .optional(),
+  response: zod
+    .object({
+      text: zod.string().min(1),
+      at: zod.string().min(1),
+    })
+    .optional(),
+  started_at: zod.string().min(1).optional(),
   collected_at: zod.string().min(1),
 });
 

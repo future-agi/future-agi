@@ -444,3 +444,133 @@ def test_simulated_people_in_the_world_are_never_shown_as_workers():
 
     assert with_actors == worker_timeline(SPANS, DECLARED, run_key=RUN)
     assert not {"manager", "coworker"} & {one["id"] for one in with_actors["workers"]}
+
+
+def _hand_offs(result="delivered 3 days ago"):
+    return [
+        {
+            "name": "order_lookup",
+            "ok": True,
+            "at": 1730454600.0,
+            "ended_at": 1730454602.0,
+            "worker_label": "Returns coordinator",
+            "delegated_to": "Order-lookup worker",
+            "arguments": {"input": "order 1043"},
+            "result": "eligible",
+        },
+        {
+            "name": "get_order",
+            "ok": True,
+            "at": 1730454601.0,
+            "worker_label": "Order-lookup worker",
+            "arguments": {"order_id": "1043"},
+            "result": result,
+        },
+        {
+            "name": "list_refunds",
+            "ok": False,
+            "at": 1730454601.5,
+            "worker_label": "Order-lookup worker",
+            "arguments": {"order_id": "1043"},
+            "error": "store unavailable",
+        },
+    ]
+
+
+def test_each_tool_call_keeps_its_input_and_output_and_a_long_one_is_cut():
+    long_result = {"rows": ["x" * 50] * 100}
+    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_hand_offs(long_result))
+    calls = {one["tool"]: one for one in timeline["events"] if one["type"] == "tool_call"}
+
+    assert calls["get_order"]["input"] == {"order_id": "1043"}
+    assert calls["get_order"]["output"].endswith("…") and len(calls["get_order"]["output"]) == 2001
+    # A failed call shows what it failed with.
+    assert calls["list_refunds"]["output"] == "store unavailable"
+    short = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_hand_offs({"status": "delivered"}))
+    assert [one["output"] for one in short["events"] if one.get("tool") == "get_order"] == [{"status": "delivered"}]
+    # Spans carry theirs as text: JSON reads back as data, anything else stays text, nothing is None.
+    spans = worker_timeline(SPANS, DECLARED, run_key=RUN)
+    by_tool = {one["tool"]: one for one in spans["events"] if one["type"] == "tool_call"}
+    assert by_tool["get_order"]["input"] is None and by_tool["get_order"]["output"] is None
+
+
+def test_the_caller_s_request_and_the_coordinator_s_reply_frame_the_hand_offs():
+    turns = [
+        {"role": "user", "text": "Hello", "at": "2024-11-01T09:49:56"},
+        {"role": "user", "text": "Please refund order 1043", "at": "2024-11-01T09:49:58"},
+        {"role": "agent", "text": "Let me check", "at": "2024-11-01T09:49:59"},
+        {"role": "user", "text": "Still there?", "at": "2024-11-01T09:50:01"},
+        {"role": "agent", "text": "Your refund is issued", "at": "2024-11-01T09:50:03"},
+        {"role": "agent", "text": "Anything else?", "at": "2024-11-01T09:50:05"},
+    ]
+    timeline = worker_timeline(
+        [], DECLARED, run_key=RUN, traced_calls=_hand_offs(), turns=turns, started_at="2024-11-01T09:49:55"
+    )
+
+    assert timeline["request"] == {"text": "Please refund order 1043", "at": "2024-11-01T09:49:58"}
+    assert timeline["response"] == {"text": "Your refund is issued", "at": "2024-11-01T09:50:03"}
+    assert timeline["coordinator"] == {"name": "Returns coordinator"}
+    assert timeline["started_at"] == "2024-11-01T09:49:55"
+
+
+def test_a_request_reply_or_coordinator_not_seen_is_none_so_it_reads_unknown():
+    # No messages: the hand-offs are known, the request and the reply are not.
+    unseen = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_hand_offs())
+    assert unseen["request"] is None and unseen["response"] is None and unseen["started_at"] is None
+    # Nothing handed out: no request or reply belongs to a hand-off.
+    alone = worker_timeline(
+        [], DECLARED, run_key=RUN, turns=[{"role": "user", "text": "hi", "at": "2024-11-01T09:49:58"}]
+    )
+    assert alone["request"] is None and alone["coordinator"] is None
+    # From spans alone the coordinator is the top-level agent.
+    assert worker_timeline(SPANS, DECLARED, run_key=RUN)["coordinator"] == {"name": "Returns coordinator"}
+
+
+@pytest.mark.django_db
+def test_a_recorded_timeline_places_the_call_s_messages_on_the_tool_calls_clock(user, workspace, storage, settings):
+    from unittest.mock import patch
+
+    from simulate.models import CallExecution
+    from simulate.models.chat_message import ChatMessageModel
+    from simulate.services import harness_workers
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    environment = _environment(user, workspace, "workers-turns", storage)
+    run = _create(environment, key="t")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    # The first hand-off was sealed 5.9 s into the call, at this epoch second.
+    sealed = _hand_offs()
+    sealed[0]["start_time_ms"] = 5900
+    call.provider_call_data = {"livekit": {"tool_calls": sealed}}
+    call.save(update_fields=["provider_call_data"])
+    for role, text, offset in (("user", "Refund order 1043", 4300), ("assistant", "Refund issued", 17100)):
+        ChatMessageModel.objects.create(
+            call_execution=call,
+            role=role,
+            messages=[text],
+            content=[{"role": role, "content": text, "start_time_ms": offset}],
+            session_id=f"alk-chat-{call.id}",
+            tool_calls=[],
+            organization=call.test_execution.run_test.organization,
+            workspace=call.test_execution.run_test.workspace,
+        )
+    # A sub-actor's line is neither the caller's request nor the agent's reply.
+    ChatMessageModel.objects.create(
+        call_execution=call,
+        role="system",
+        messages=["Meera: ask for 20%"],
+        content=[{"role": "system", "content": "Meera: ask for 20%", "start_time_ms": 5000}],
+        session_id=f"alk-chat-{call.id}",
+        tool_calls=[],
+        organization=call.test_execution.run_test.organization,
+        workspace=call.test_execution.run_test.workspace,
+    )
+
+    with patch("simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)):
+        timeline = harness_workers.record_call_workers(str(call.id))
+
+    assert timeline["started_at"] == "2024-11-01T09:49:54.100000"
+    assert timeline["request"] == {"text": "Refund order 1043", "at": "2024-11-01T09:49:58.400000"}
+    assert timeline["response"] == {"text": "Refund issued", "at": "2024-11-01T09:50:11.200000"}
