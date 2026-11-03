@@ -41,6 +41,7 @@ type ModelInfo struct {
 type ModelDB struct {
 	models     map[string]*ModelInfo
 	byProvider map[string][]*ModelInfo
+	hidden     map[string]bool // Legacy bundled choices remain available through Get.
 }
 
 // New creates a ModelDB from bundled data merged with config overrides.
@@ -71,14 +72,21 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 
 	// Build provider index.
 	byProvider := make(map[string][]*ModelInfo)
-	for _, m := range models {
+	hidden := make(map[string]bool)
+	for id, m := range models {
+		_, configured := overrides[id]
+		if m.Provider == "minimax" && m.Mode == ModeChat &&
+			id != "minimax/MiniMax-M3.1-Flash" && id != "minimax/MiniMax-M3" && !configured {
+			hidden[id] = true
+			continue
+		}
 		byProvider[m.Provider] = append(byProvider[m.Provider], m)
 	}
 	for _, list := range byProvider {
-		sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
+		sort.Slice(list, func(i, j int) bool { return modelLess(list[i], list[j]) })
 	}
 
-	return &ModelDB{models: models, byProvider: byProvider}
+	return &ModelDB{models: models, byProvider: byProvider, hidden: hidden}
 }
 
 // Get returns model info by ID. Tries exact match, then strips "provider/"
@@ -87,6 +95,11 @@ func New(bundled map[string]*ModelInfo, overrides map[string]ModelOverride) *Mod
 func (db *ModelDB) Get(id string) (*ModelInfo, bool) {
 	if m, ok := db.models[id]; ok {
 		return m, true
+	}
+	// The direct provider sends bare model IDs; bundled pricing uses a prefix.
+	if id == "MiniMax-M3.1-Flash" || id == "MiniMax-M3" {
+		m, ok := db.models["minimax/"+id]
+		return m, ok
 	}
 	// Try stripping provider prefix: "openai/gpt-4o" → "gpt-4o"
 	if idx := strings.IndexByte(id, '/'); idx >= 0 {
@@ -131,13 +144,31 @@ func (db *ModelDB) GetLimits(id string) (maxInput, maxOutput int, ok bool) {
 	return m.MaxInputTokens, m.MaxOutputTokens, true
 }
 
-// List returns all models sorted by ID.
+// modelLess keeps ID ordering, with Flash first among MiniMax text choices.
+func modelLess(a, b *ModelInfo) bool {
+	aID, bID := a.ID, b.ID
+	if aID == "minimax/MiniMax-M3.1-Flash" {
+		aID = "minimax/MiniMax-M3"
+	}
+	if bID == "minimax/MiniMax-M3.1-Flash" {
+		bID = "minimax/MiniMax-M3"
+	}
+	if aID == bID {
+		return a.ID > b.ID
+	}
+	return aID < bID
+}
+
+// List returns ordinary model choices, with Flash first among current MiniMax models.
+// Legacy bundled metadata is still accessible through Get; explicit overrides are listed.
 func (db *ModelDB) List() []*ModelInfo {
 	result := make([]*ModelInfo, 0, len(db.models))
-	for _, m := range db.models {
-		result = append(result, m)
+	for id, m := range db.models {
+		if !db.hidden[id] {
+			result = append(result, m)
+		}
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	sort.Slice(result, func(i, j int) bool { return modelLess(result[i], result[j]) })
 	return result
 }
 
@@ -149,12 +180,12 @@ func (db *ModelDB) ListByProvider(provider string) []*ModelInfo {
 // ListByMode returns all models with the given mode.
 func (db *ModelDB) ListByMode(mode ModelMode) []*ModelInfo {
 	var result []*ModelInfo
-	for _, m := range db.models {
-		if m.Mode == mode {
+	for id, m := range db.models {
+		if m.Mode == mode && !db.hidden[id] {
 			result = append(result, m)
 		}
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	sort.Slice(result, func(i, j int) bool { return modelLess(result[i], result[j]) })
 	return result
 }
 
