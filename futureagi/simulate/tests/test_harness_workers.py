@@ -429,6 +429,27 @@ def test_a_declared_worker_that_hands_work_out_stays_a_worker_under_the_root_tha
     ]
 
 
+def test_background_jobs_launched_by_an_unnamed_agent_are_its_hand_offs_and_overlap():
+    # Two jobs a supervisor launched run at once; the runtime names each job's agent but not the supervisor.
+    traced = [
+        {"name": "start_async_task", "ok": True, "at": 1730454608.4, "ended_at": 1730454645.5, "delegated_to": "coder",
+         "arguments": "coder", "result": "code done", "runtime_ids": {"event_id": "a"}},
+        {"name": "start_async_task", "ok": True, "at": 1730454608.5, "ended_at": 1730454655.2,
+         "delegated_to": "researcher", "arguments": "researcher", "result": "research done", "runtime_ids": {"event_id": "b"}},
+        {"name": "analyze_topic", "ok": True, "at": 1730454612.6, "worker_label": "researcher"},
+        {"name": "run_code_check", "ok": True, "at": 1730454624.1, "worker_label": "coder"},
+    ]
+    events = worker_timeline([], [], run_key=RUN, traced_calls=traced)["events"]
+    assert [(one["type"], (one["worker_id"] or "").split("/")[-1], one.get("by")) for one in events] == [
+        ("delegated", "coder", None),
+        ("delegated", "researcher", None),
+        ("tool_call", "researcher", None),
+        ("tool_call", "coder", None),
+        ("returned", "coder", None),
+        ("returned", "researcher", None),
+    ]
+
+
 def test_a_control_pass_named_by_the_tool_itself_is_found_too():
     traced = [
         {"name": "transfer_to_billing_agent", "ok": True, "at": 1730454600.0, "worker_label": "triage"},

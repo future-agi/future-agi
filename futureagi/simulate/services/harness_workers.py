@@ -326,9 +326,10 @@ def worker_timeline(
 
     for index, call in enumerate(rows):
         by = by_of(call)
-        if not by:
+        if not by and not call.get("delegated_to"):
             continue
-        worker_id = traced_worker(by, str(call.get("worker_label") or by))
+        # A hand-off whose launcher the runtime could not name was made by the agent the caller talks to.
+        worker_id = traced_worker(by, str(call.get("worker_label") or by)) if by else None
         runtime_ids = call.get("runtime_ids") or {}
         status = "error" if call.get("ok") is False or call.get("refused") else "ok"
         if index in transfers:
