@@ -140337,6 +140337,7 @@
                     "type": "string",
                     "enum": [
                         "delegated",
+                        "transferred",
                         "tool_call",
                         "returned"
                     ]

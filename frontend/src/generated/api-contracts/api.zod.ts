@@ -50119,7 +50119,7 @@ export const SimulateV3CallExecutionWorkersResponse = zod.object({
   events: zod.array(
     zod.object({
       seq: zod.number(),
-      type: zod.enum(["delegated", "tool_call", "returned"]),
+      type: zod.enum(["delegated", "transferred", "tool_call", "returned"]),
       worker_id: zod.string().min(1),
       by: zod.string().min(1).optional(),
       delegation_id: zod.string().min(1).optional(),

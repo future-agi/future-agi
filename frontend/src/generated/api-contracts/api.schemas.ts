@@ -23835,6 +23835,7 @@ export type CallWorkerEventApiType =
 
 export const CallWorkerEventApiType = {
   delegated: "delegated",
+  transferred: "transferred",
   tool_call: "tool_call",
   returned: "returned",
 } as const;

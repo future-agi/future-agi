@@ -565,7 +565,7 @@ class CallWorkerSerializer(serializers.Serializer):
 
 class CallWorkerEventSerializer(serializers.Serializer):
     seq = serializers.IntegerField()
-    type = serializers.ChoiceField(choices=("delegated", "tool_call", "returned"))
+    type = serializers.ChoiceField(choices=("delegated", "transferred", "tool_call", "returned"))
     worker_id = serializers.CharField(allow_null=True)
     by = serializers.CharField(allow_null=True, required=False)
     delegation_id = serializers.CharField(required=False)

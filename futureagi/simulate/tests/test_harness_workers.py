@@ -407,7 +407,7 @@ def test_the_one_agent_of_an_app_that_hands_nothing_out_is_not_a_worker():
     assert [(one["worker_id"], one["tool"]) for one in timeline["events"]] == [(None, "lookup")]
 
 
-def test_a_declared_worker_that_hands_work_out_stays_a_worker():
+def test_a_declared_worker_that_hands_work_out_stays_a_worker_under_the_root_that_passed_it_control():
     # The root passes control with a tool, not a nested hand-off; the declared worker then runs another agent as a tool.
     traced = [
         {"name": "transfer_to_agent", "ok": True, "at": 1730454600.0, "worker_label": "root_agent",
@@ -419,16 +419,50 @@ def test_a_declared_worker_that_hands_work_out_stays_a_worker():
     timeline = worker_timeline([], declared, run_key=RUN, traced_calls=traced)
 
     workers = {one["id"]: (one["observed"], one["undeclared"]) for one in timeline["workers"]}
-    # The root that passed control is shown as the undeclared agent it is: with no hand-off on record, it cannot be
-    # told apart from an undeclared worker, and hiding a worker would be worse.
-    assert workers == {
-        "researcher": (True, False), "writer": (False, False), "source_finder": (True, True), "root_agent": (True, True)
-    }
+    # The root that passed control is the coordinator, and the control pass is the node the hand-off nests under.
+    assert workers == {"researcher": (True, False), "writer": (False, False), "source_finder": (True, True)}
+    assert timeline["coordinator"] == {"name": "root_agent"}
     assert [(one["type"], one["worker_id"], one.get("by")) for one in timeline["events"]] == [
-        ("tool_call", "run-1/root_agent", None),
+        ("transferred", "run-1/researcher", None),
         ("delegated", "run-1/source_finder", "run-1/researcher"),
         ("returned", "run-1/source_finder", None),
     ]
+
+
+def test_a_control_pass_named_by_the_tool_itself_is_found_too():
+    traced = [
+        {"name": "transfer_to_billing_agent", "ok": True, "at": 1730454600.0, "worker_label": "triage"},
+        {"name": "lookup", "ok": True, "at": 1730454601.0, "ended_at": 1730454602.0, "worker_label": "billing_agent",
+         "delegated_to": "ledger_agent", "result": "found"},
+    ]
+    events = worker_timeline([], [], run_key=RUN, traced_calls=traced)["events"]
+    assert [(one["type"], one["worker_id"], one.get("by")) for one in events][:2] == [
+        ("transferred", "run-1/billing_agent", None),
+        ("delegated", "run-1/ledger_agent", "run-1/billing_agent"),
+    ]
+
+
+def test_a_hand_off_stamped_after_it_ended_comes_before_its_return_with_its_start_unknown():
+    # A runtime that writes a hand-off line once it is over stamps the line's own time, later than its end.
+    traced = [
+        {"name": "transfer_to_agent", "ok": True, "at": 1730454620.0, "ended_at": 1730454614.0,
+         "worker_label": "root_agent", "arguments": {"agent_name": "inspiration_agent"}},
+        {"name": "place_agent", "ok": True, "at": 1730454620.9, "ended_at": 1730454618.9,
+         "worker_label": "inspiration_agent", "delegated_to": "place_agent", "result": "three places"},
+        {"name": "poi_agent", "ok": True, "at": 1730454636.9, "ended_at": 1730454634.7,
+         "worker_label": "inspiration_agent", "delegated_to": "poi_agent", "result": "five sights"},
+    ]
+    events = worker_timeline([], [], run_key=RUN, traced_calls=traced)["events"]
+
+    assert [(one["type"], one["worker_id"].split("/")[-1]) for one in events] == [
+        ("transferred", "inspiration_agent"),
+        ("delegated", "place_agent"),
+        ("returned", "place_agent"),
+        ("delegated", "poi_agent"),
+        ("returned", "poi_agent"),
+    ]
+    assert [one["at"] for one in events if one["type"] == "delegated"] == [None, None]
+    assert events[0]["at"] == "2024-11-01T09:50:14"
 
 
 def test_a_hand_off_and_its_return_say_who_what_and_when():

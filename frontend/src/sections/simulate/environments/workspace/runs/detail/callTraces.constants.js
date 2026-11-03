@@ -36,6 +36,7 @@ export const CALL_WORKERS_COPY = {
   request: "Caller's request",
   response: "Coordinator's reply",
   delegated: (name) => `Delegated to ${name}`,
+  transferred: (name) => `Control passed to ${name}`,
   returned: (name) => `${name} returned`,
   failed: "error",
   input: "Input",

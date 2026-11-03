@@ -267,8 +267,27 @@ def worker_timeline(
 
     handed = {_slug(str(row["delegated_to"])) for row in rows if row.get("delegated_to")}
     named = {_slug(by_of(row)) for row in rows if by_of(row)}
-    top = {_slug(by_of(row)) for row in rows if by_of(row) and not declared_row(row)} - handed
+    labels = {_slug(by_of(row)): str(row.get("worker_label") or by_of(row)) for row in rows if by_of(row)}
+    delegators = {_slug(by_of(row)) for row in rows if row.get("delegated_to") and by_of(row)}
+
+    def passes_control(row: Mapping[str, Any]) -> str | None:
+        # An agent that hands work out but was never handed any got control another way: a call by another agent
+        # that names it, as an argument or at the end of the tool's name (`transfer_to_agent`, `transfer_to_<name>`).
+        if row.get("delegated_to") or not by_of(row):
+            return None
+        arguments = row.get("arguments")
+        values = {_slug(one) for one in (arguments.values() if isinstance(arguments, Mapping) else ()) if isinstance(one, str)}
+        tool = _slug(str(row.get("name") or ""))
+        return next(
+            (name for name in sorted(delegators - handed) if name != _slug(by_of(row)) and (name in values or tool.endswith(name))),
+            None,
+        )
+
+    transfers = {index: target for index, row in enumerate(rows) if (target := passes_control(row))}
+    controlled = set(transfers.values())
+    top = {_slug(by_of(row)) for row in rows if by_of(row) and not declared_row(row)} - handed - controlled
     coordinators = {_slug(by_of(row)) for row in rows if row.get("delegated_to") and _slug(by_of(row)) in top}
+    coordinators |= {_slug(by_of(rows[index])) for index in transfers} & top
     if not handed and len(named) == 1 and not workers and not any(declared_row(row) for row in rows if by_of(row)):
         coordinators = named
 
@@ -298,6 +317,13 @@ def worker_timeline(
             return datetime.fromtimestamp(value, tz=UTC).replace(tzinfo=None).isoformat()
         return None
 
+    def started(row: Mapping[str, Any]) -> str | None:
+        # A row stamped after the call ended carries when it was written, not when the call began.
+        at, ended = row.get("at"), row.get("ended_at")
+        if isinstance(at, (int, float)) and isinstance(ended, (int, float)) and 0 < ended < at:
+            return None
+        return when(at)
+
     for index, call in enumerate(rows):
         by = by_of(call)
         if not by:
@@ -305,6 +331,19 @@ def worker_timeline(
         worker_id = traced_worker(by, str(call.get("worker_label") or by))
         runtime_ids = call.get("runtime_ids") or {}
         status = "error" if call.get("ok") is False or call.get("refused") else "ok"
+        if index in transfers:
+            target = transfers[index]
+            events.append(
+                {
+                    "type": "transferred",
+                    "worker_id": traced_worker(labels.get(target, target), labels.get(target, target)),
+                    "by": worker_id,
+                    "delegation_id": str(runtime_ids.get("event_id") or f"traced-{index}"),
+                    "at": started(call) or when(call.get("ended_at")),
+                    "attribution": "reported",
+                }
+            )
+            continue
         target = str(call.get("delegated_to") or "").strip()
         if target:
             # A hand-off: the call that gave the work, and its result when the worker returned.
@@ -321,7 +360,7 @@ def worker_timeline(
                     "by": worker_id,
                     "delegation_id": delegation_id,
                     "task": _summary(json.dumps(arguments) if isinstance(arguments, dict) else arguments, argument=True),
-                    "at": when(call.get("at")),
+                    "at": started(call),
                     "attribution": "reported",
                 }
             )
@@ -350,7 +389,7 @@ def worker_timeline(
                 "status": status,
                 "input": _payload(call.get("arguments")),
                 "output": _payload(call.get("result") if call.get("result") is not None else call.get("error")),
-                "at": when(call.get("at")),
+                "at": started(call) or when(call.get("ended_at")),
                 "attribution": "reported",
                 **({"task": str(call.get("task_label") or call["task_id"])} if call.get("task_label") or call.get("task_id") else {}),
                 **({"runtime_event_id": str(runtime_ids["event_id"])} if runtime_ids.get("event_id") else {}),
@@ -361,9 +400,23 @@ def worker_timeline(
                 ),
             }
         )
-    # A return sorts after the work it closes even when timestamps tie.
-    order = {"delegated": 0, "tool_call": 1, "returned": 2}
-    events.sort(key=lambda one: (str(one["at"] or ""), order[one["type"]]))
+    # A return sorts after the work it closes even when timestamps tie. A hand-off whose start is unknown sorts just
+    # before its worker's first step, and never after its own return.
+    order = {"transferred": 0, "delegated": 0, "tool_call": 1, "returned": 2}
+    returns = {one["delegation_id"]: one["at"] for one in events if one["type"] == "returned" and one["at"]}
+
+    def placed(one: Mapping[str, Any]) -> str:
+        if one["at"] or one["type"] != "delegated" or one["delegation_id"] not in returns:
+            return str(one["at"] or "")
+        until = returns[one["delegation_id"]]
+        steps = [
+            other["at"]
+            for other in events
+            if other["worker_id"] == one["worker_id"] and other["type"] == "tool_call" and other["at"] and other["at"] <= until
+        ]
+        return min([until, *steps])
+
+    events.sort(key=lambda one: (placed(one), order[one["type"]]))
     for seq, event in enumerate(events, 1):
         event["seq"] = seq
     for one in declared:
@@ -389,7 +442,7 @@ def worker_timeline(
         None,
     )
     turns = [one for one in turns if isinstance(one, Mapping)]
-    handed_at = [moment for one in events if one["type"] == "delegated" and (moment := _instant(one["at"]))]
+    handed_at = [moment for one in events if one["type"] in ("delegated", "transferred") and (moment := _instant(one["at"]))]
     closed_at = [moment for one in events if (moment := _instant(one["at"])) is not None]
     shown, omitted = _bounded(events)
     return {

@@ -315,6 +315,98 @@ describe("CallWorkersPanel", () => {
       isLoading: false,
       isError: false,
     });
+    // The guide-line branch a node hangs in, and the node that branch belongs to (the root when none).
+    const ownerOf = (node) =>
+      node.parentElement.closest(
+        '[data-testid="hand-off"], [data-testid="tree-root"]',
+      );
+
+    it("draws the coordinator as the root and each hand-off as a child joined by guide lines", () => {
+      result = { data: TIMELINE, isLoading: false, isError: false };
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      const root = screen.getByTestId("tree-root");
+      const node = screen.getByTestId("hand-off");
+      // The hand-off hangs in a guide-line branch of the root, under the coordinator, not beside it.
+      expect(node.closest('[data-testid="tree-child"]')).not.toBeNull();
+      expect(node.closest('[data-testid="tree-branch"]')).not.toBeNull();
+      expect(ownerOf(node)).toBe(root);
+      expect(root).toHaveTextContent("Coordinator · Returns coordinator");
+      // The request sits above the root and the reply after it.
+      const request = screen.getByText("Caller's request");
+      const reply = screen.getByText("Coordinator's reply");
+      expect(
+        request.compareDocumentPosition(root) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        root.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(root.contains(reply)).toBe(false);
+    });
+
+    it("hangs a nested hand-off under the node of the agent that made it", () => {
+      result = timeline(
+        [worker("lead"), worker("helper")],
+        [
+          { type: "delegated", worker_id: "r/lead", at: at(1) },
+          { type: "delegated", worker_id: "r/helper", by: "r/lead", at: at(2) },
+          { type: "returned", worker_id: "r/helper", result: "h", at: at(3) },
+          { type: "returned", worker_id: "r/lead", result: "l", at: at(4) },
+        ],
+      );
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      const [lead, helper] = screen.getAllByTestId("hand-off");
+      expect(ownerOf(lead)).toBe(screen.getByTestId("tree-root"));
+      expect(ownerOf(helper)).toBe(lead);
+      expect(helper.closest('[data-testid="tree-branch"]')).not.toBe(
+        lead.closest('[data-testid="tree-branch"]'),
+      );
+    });
+
+    it("shows a control pass as its own node, with the hand-offs that agent made under it", () => {
+      result = timeline(
+        [worker("inspiration"), worker("place"), worker("poi")],
+        [
+          {
+            type: "transferred",
+            worker_id: "r/inspiration",
+            by: null,
+            at: at(1),
+          },
+          {
+            type: "delegated",
+            worker_id: "r/place",
+            by: "r/inspiration",
+            at: null,
+          },
+          {
+            type: "returned",
+            worker_id: "r/place",
+            result: "places",
+            at: at(5),
+          },
+          {
+            type: "delegated",
+            worker_id: "r/poi",
+            by: "r/inspiration",
+            at: null,
+          },
+          { type: "returned", worker_id: "r/poi", result: "sights", at: at(9) },
+        ],
+      );
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      const nodes = screen.getAllByTestId("hand-off");
+      const passed = nodes.find(
+        (one) => one.dataset.worker === "inspiration worker",
+      );
+      expect(passed).toHaveTextContent("Control passed to inspiration worker");
+      expect(passed).not.toHaveTextContent("inspiration worker returned");
+      for (const name of ["place worker", "poi worker"])
+        expect(ownerOf(nodes.find((one) => one.dataset.worker === name))).toBe(
+          passed,
+        );
+    });
+
     const depthOf = (text) =>
       screen
         .getByText(text, { exact: false })

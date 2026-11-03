@@ -281,15 +281,59 @@ Turn.propTypes = {
   start: PropTypes.string,
 };
 
+// Children of one node, as a file tree draws them: a guide line down the left and an elbow into each child.
+const ELBOW_TOP = 13;
+function Branch({ children }) {
+  const items = children.filter(Boolean);
+  if (!items.length) return null;
+  return (
+    <Box data-testid="tree-branch" sx={{ ml: 1, pl: 2.25, pt: 0.75 }}>
+      {items.map((child, index) => (
+        <Box
+          key={child.key ?? index}
+          data-testid="tree-child"
+          sx={{
+            position: "relative",
+            pb: index === items.length - 1 ? 0 : 0.75,
+            "&::before": {
+              content: '""',
+              position: "absolute",
+              left: -18,
+              top: 0,
+              height: index === items.length - 1 ? ELBOW_TOP : "100%",
+              borderLeft: "1px solid",
+              borderColor: "divider",
+            },
+            "&::after": {
+              content: '""',
+              position: "absolute",
+              left: -18,
+              top: ELBOW_TOP,
+              width: 14,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            },
+          }}
+        >
+          {child}
+        </Box>
+      ))}
+    </Box>
+  );
+}
+Branch.propTypes = { children: PropTypes.array.isRequired };
+
 // A hand-off to one worker: what it was asked, its own calls, the hand-offs it made in turn, and what it returned.
 function HandOff({ block, workers, nameOf, start }) {
   const [open, setOpen] = useState(block.depth <= OPEN_DEPTH);
   const name = workers[block.worker_id]?.name || C.unknown;
   const color = depthColor(block.depth);
+  const transfer = Boolean(block.transfer);
   return (
     <Box
       data-testid="hand-off"
       data-depth={block.depth}
+      data-worker={name}
       sx={{
         borderLeft: "2px solid",
         borderColor: `${color}.main`,
@@ -317,7 +361,11 @@ function HandOff({ block, workers, nameOf, start }) {
         />
         <Box flex={1} minWidth={0}>
           <Line
-            title={`${C.delegated(name)}${block.delegated?.task ? `: ${block.delegated.task}` : ""}`}
+            title={
+              transfer
+                ? C.transferred(name)
+                : `${C.delegated(name)}${block.delegated?.task ? `: ${block.delegated.task}` : ""}`
+            }
             at={block.delegated?.at}
             start={start}
           >
@@ -333,32 +381,34 @@ function HandOff({ block, workers, nameOf, start }) {
         </Box>
       </Stack>
       <Collapse in={open} unmountOnExit>
-        <Stack spacing={0.75} sx={{ pt: 0.75, pl: 2.5 }}>
-          {block.items.map((item) =>
-            item.kind === "handoff" ? (
-              <HandOff
-                key={item.key}
-                block={item}
-                workers={workers}
-                nameOf={nameOf}
-                start={start}
-              />
-            ) : (
-              <ToolRow
-                key={item.key}
-                event={item.event}
-                // Inside its worker's block a call names only the tool; one made by another agent still says whose.
-                who={
-                  item.event.worker_id === block.worker_id &&
-                  item.event.attribution !== "unattributed"
-                    ? null
-                    : nameOf(item.event)
-                }
-                start={start}
-              />
-            ),
-          )}
-          {block.returned ? (
+        <Stack spacing={0.75}>
+          <Branch>
+            {block.items.map((item) =>
+              item.kind === "handoff" ? (
+                <HandOff
+                  key={item.key}
+                  block={item}
+                  workers={workers}
+                  nameOf={nameOf}
+                  start={start}
+                />
+              ) : (
+                <ToolRow
+                  key={item.key}
+                  event={item.event}
+                  // Inside its worker's node a call names only the tool; one made by another agent still says whose.
+                  who={
+                    item.event.worker_id === block.worker_id &&
+                    item.event.attribution !== "unattributed"
+                      ? null
+                      : nameOf(item.event)
+                  }
+                  start={start}
+                />
+              ),
+            )}
+          </Branch>
+          {transfer ? null : block.returned ? (
             <Box>
               <Line
                 title={`${C.returned(name)}${block.returned.status === "error" ? ` (${C.failed})` : ""}`}
@@ -406,13 +456,14 @@ const arrange = (events) => {
   };
   for (const event of events) {
     const at = instant(event);
-    if (event.type === "delegated") {
+    if (event.type === "delegated" || event.type === "transferred") {
       const parent = holder(event.by, at);
       const block = {
         kind: "handoff",
         key: event.seq,
         worker_id: event.worker_id,
         delegated: event,
+        transfer: event.type === "transferred",
         items: [],
         depth: parent.depth + 1,
         from: at,
@@ -593,7 +644,9 @@ export default function CallWorkersPanel({ callExecutionId }) {
         ? workers[event.worker_id]?.name || event.worker_id
         : C.coordinator;
   const start = data.started_at;
-  const hasHandOffs = data.events.some((one) => one.type === "delegated");
+  const hasHandOffs = data.events.some(
+    (one) => one.type === "delegated" || one.type === "transferred",
+  );
   const tree = arrange(data.events);
 
   return (
@@ -601,36 +654,6 @@ export default function CallWorkersPanel({ callExecutionId }) {
       <Typography sx={{ typography: "s2", color: "text.secondary" }}>
         {C.intro}
       </Typography>
-      <Box
-        sx={{
-          borderLeft: "2px solid",
-          borderColor: "primary.main",
-          bgcolor: (t) =>
-            alpha(
-              t.palette.primary.main,
-              t.palette.mode === "dark" ? 0.06 : 0.04,
-            ),
-          px: 1.75,
-          py: 1,
-        }}
-      >
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-          {`${C.coordinator} · ${data.coordinator?.name || C.unknown}`}
-        </Typography>
-        <WorkerChips workers={data.workers} depthOf={tree.depthOf} />
-        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>
-          {tree.depth === 0
-            ? null
-            : tree.depth === 1 && !tree.parallel
-              ? C.seenFlat
-              : C.seen(tree.depth, tree.parallel)}
-        </Typography>
-        {tree.depth > 1 || tree.parallel ? (
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {C.scope}
-          </Typography>
-        ) : null}
-      </Box>
       {hasHandOffs ? (
         <Turn title={C.request} turn={data.request} start={start} />
       ) : !data.workers.length ? (
@@ -638,24 +661,61 @@ export default function CallWorkersPanel({ callExecutionId }) {
           {C.noHandOffs}
         </Typography>
       ) : null}
-      {tree.items.map((item) =>
-        item.kind === "handoff" ? (
-          <HandOff
-            key={item.key}
-            block={item}
-            workers={workers}
-            nameOf={nameOf}
-            start={start}
-          />
-        ) : (
-          <ToolRow
-            key={item.key}
-            event={item.event}
-            who={nameOf(item.event)}
-            start={start}
-          />
-        ),
-      )}
+      {/* The coordinator is the tree's root: every hand-off hangs under the agent that made it. */}
+      <Box data-testid="tree-root">
+        <Box
+          sx={{
+            borderLeft: "2px solid",
+            borderColor: "primary.main",
+            bgcolor: (t) =>
+              alpha(
+                t.palette.primary.main,
+                t.palette.mode === "dark" ? 0.06 : 0.04,
+              ),
+            px: 1.75,
+            py: 1,
+          }}
+        >
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {`${C.coordinator} · ${data.coordinator?.name || C.unknown}`}
+          </Typography>
+          <WorkerChips workers={data.workers} depthOf={tree.depthOf} />
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}
+          >
+            {tree.depth === 0
+              ? null
+              : tree.depth === 1 && !tree.parallel
+                ? C.seenFlat
+                : C.seen(tree.depth, tree.parallel)}
+          </Typography>
+          {tree.depth > 1 || tree.parallel ? (
+            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+              {C.scope}
+            </Typography>
+          ) : null}
+        </Box>
+        <Branch>
+          {tree.items.map((item) =>
+            item.kind === "handoff" ? (
+              <HandOff
+                key={item.key}
+                block={item}
+                workers={workers}
+                nameOf={nameOf}
+                start={start}
+              />
+            ) : (
+              <ToolRow
+                key={item.key}
+                event={item.event}
+                who={nameOf(item.event)}
+                start={start}
+              />
+            ),
+          )}
+        </Branch>
+      </Box>
       {data.events_omitted ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {C.eventsOmitted(data.events_omitted)}

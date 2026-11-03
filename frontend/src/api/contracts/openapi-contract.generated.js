@@ -88889,7 +88889,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         type: {
           title: "Type",
           type: "string",
-          enum: ["delegated", "tool_call", "returned"],
+          enum: ["delegated", "transferred", "tool_call", "returned"],
         },
         worker_id: {
           title: "Worker id",
