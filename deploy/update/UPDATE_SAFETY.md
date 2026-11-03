@@ -1,5 +1,9 @@
 # Developer update safety
 
+For the team checklist, migration examples and PR handoff template, start with the
+[automatic-update developer guide](DEVELOPER_GUIDE.md). This file specifies the
+technical gate contract.
+
 This gate catches **honest developer mistakes** in the base OSS Standalone
 unattended-update path. It is a developer aid, **not a security boundary** or a
 proof that arbitrary Python, Go, shell or SQL is safe. Deliberate obfuscation,
