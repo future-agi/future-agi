@@ -598,6 +598,24 @@ func (vf *verifier) run(ctx context.Context) Verification {
 
 func (vf *verifier) fill(v *Verification) {
 	a := vf.cp.Accum
+	// A completed chunk can end inside a partial-success request. Attribute
+	// only its scanned prefix, reserving the whole request's rejection count
+	// before bounding loss: rejected identities are unknown. These are the
+	// same conservative bounds used for closed requests, not a final verdict.
+	// Update only this value copy, never the checkpoint: resume finalizes each
+	// request once, and must not add these snapshot-only counts again.
+	if vf.cp.NextChunk > 0 {
+		scannedEnd := vf.cp.Chunks[vf.cp.NextChunk-1].Hi
+		batch := int64(vf.cp.Config.BatchSize)
+		for r, present := range a.PartialOpen {
+			rejected := vf.ledger.partial[r]
+			missing := scannedEnd - r*batch - present
+			n := min((r+1)*batch, vf.cp.Attempted) - r*batch
+			a.PartialLoss += uint64(max(0, missing-rejected))
+			a.PartialRejected += uint64(min(missing, rejected))
+			a.PartialExcess += uint64(max(0, present-(n-rejected)))
+		}
+	}
 	var expected, present uint64
 	for class := outcomeAcknowledged; class <= outcomeAmbiguous; class++ {
 		expected += a.Expected[class]
