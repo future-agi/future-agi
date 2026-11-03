@@ -411,6 +411,8 @@ Loudness.propTypes = {
 };
 
 const CONSTRAINTS = ["may_agree", "private", "escalate_when", "stop_when"];
+// The persona fields a sub-actor's voice is picked from.
+const VOICE_FIELDS = ["gender", "age_group", "accent"];
 
 function ActorForm({ actor, context, busy, error, onClose, onSave }) {
   const F = C.form;
@@ -456,10 +458,17 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
     if (callerSide) {
       const channel = value("channel", actor.channel);
       const loudness = value("loudness_ratio", actor.loudness_ratio ?? null);
+      const persona = { ...(actor.persona || {}) };
+      for (const name of VOICE_FIELDS) {
+        const chosen = value(name, persona[name] || "");
+        if (chosen) persona[name] = chosen;
+        else delete persona[name];
+      }
       onSave({
         ...base,
         side: "caller",
         channel,
+        persona,
         loudness_ratio: channel === "audio_mix" ? loudness : null,
       });
       return;
@@ -580,6 +589,45 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
                   </MenuItem>
                 ))}
               </TextField>
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                {F.voice}
+              </Typography>
+              <Stack direction="row" spacing={1}>
+                {[
+                  ["gender", F.gender, Object.entries(F.genders)],
+                  ["age_group", F.ageGroup, Object.entries(F.ageGroups)],
+                  [
+                    "accent",
+                    F.accent,
+                    F.accents.map((one) => [one, one || F.anyAccent]),
+                  ],
+                ].map(([name, label, options]) => {
+                  const current = value(name, actor.persona?.[name] || "");
+                  const shown = options.some(([id]) => id === current)
+                    ? options
+                    : [...options, [current, current]];
+                  return (
+                    <TextField
+                      key={name}
+                      select
+                      fullWidth
+                      size="small"
+                      label={label}
+                      value={current}
+                      onChange={set(name)}
+                    >
+                      {shown.map(([id, text]) => (
+                        <MenuItem key={id || "any"} value={id}>
+                          {text}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  );
+                })}
+              </Stack>
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                {F.voiceHelp}
+              </Typography>
               {channel === "audio_mix" && (
                 <Loudness
                   value={value("loudness_ratio", actor.loudness_ratio ?? null)}

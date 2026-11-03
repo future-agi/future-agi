@@ -215,6 +215,22 @@ export const CONTRACT_COPY = {
       loudnessAutomatic: (low, high) =>
         `Automatic: each call picks between ${low} and ${high} of the caller's voice`,
       loudnessFixed: (share) => `${share} of the caller's voice`,
+      voice: "How they sound (optional)",
+      voiceHelp:
+        "Picks their voice on a call; left empty, a voice is chosen for them",
+      gender: "Gender",
+      genders: { "": "Any", male: "Male", female: "Female" },
+      ageGroup: "Age",
+      ageGroups: {
+        "": "Any",
+        "18-31": "Under 32",
+        "32-49": "32 to 49",
+        "50-59": "50 to 59",
+        "60+": "60 or older",
+      },
+      accent: "Accent",
+      accents: ["", "American", "British", "Indian", "Australian", "Neutral"],
+      anyAccent: "Any",
       cancel: "Cancel",
       save: "Save to draft",
     },

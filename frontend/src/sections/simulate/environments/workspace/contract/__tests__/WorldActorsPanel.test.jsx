@@ -238,6 +238,8 @@ describe("WorldActorsPanel", () => {
     fireEvent.click(automatic);
     expect(screen.getByRole("slider")).toHaveValue("0.5");
     expect(screen.getByText("50% of the caller's voice")).toBeInTheDocument();
+    choose("Gender", "Female");
+    choose("Age", "50 to 59");
     fireEvent.click(screen.getByText("Save to draft"));
     expect(mutate.mock.calls[0][0].actor).toMatchObject({
       id: "colleague",
@@ -245,6 +247,31 @@ describe("WorldActorsPanel", () => {
       side: "caller",
       channel: "audio_mix",
       loudness_ratio: 0.5,
+      persona: { gender: "female", age_group: "50-59" },
+    });
+    expect(mutate.mock.calls[0][0].actor.persona).not.toHaveProperty("accent");
+  });
+
+  it("changes how a sub-actor sounds and keeps the rest of its persona", () => {
+    actorsData = cast([
+      {
+        id: "colleague",
+        name: "Jordan Taylor",
+        channel: "audio_handoff",
+        persona: { gender: "male", age_group: "32-40", occupation: "Engineer" },
+      },
+    ]);
+    render(<WorldActorsPanel envId="env-1" callerSide />);
+    fireEvent.click(screen.getByText("Jordan Taylor"));
+    fireEvent.click(screen.getByText("Edit"));
+    expect(screen.getByLabelText("Age")).toHaveTextContent("32-40");
+    choose("Accent", "British");
+    fireEvent.click(screen.getByText("Save to draft"));
+    expect(mutate.mock.calls[0][0].actor.persona).toEqual({
+      gender: "male",
+      age_group: "32-40",
+      occupation: "Engineer",
+      accent: "British",
     });
   });
 
