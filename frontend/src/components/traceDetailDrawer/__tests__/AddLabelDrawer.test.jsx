@@ -10,6 +10,7 @@ const {
   mockRefetchLabels,
   mockGetOrCreate,
   mockGetOrCreateMutate,
+  mockAddQueueItems,
   mockInvalidateQueries,
   mockUseInfiniteLabels,
 } = vi.hoisted(() => ({
@@ -29,6 +30,7 @@ const {
   mockRefetchLabels: vi.fn(),
   mockGetOrCreate: vi.fn(),
   mockGetOrCreateMutate: vi.fn(),
+  mockAddQueueItems: vi.fn(),
   mockInvalidateQueries: vi.fn(),
   mockUseInfiniteLabels: vi.fn(),
 }));
@@ -67,6 +69,7 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
   },
   useAddLabelToQueue: () => ({ mutateAsync: vi.fn() }),
   useRemoveLabelFromQueue: () => ({ mutateAsync: vi.fn() }),
+  useAddQueueItems: () => ({ mutate: mockAddQueueItems }),
 }));
 
 vi.mock("src/sections/annotations/labels/create-label-drawer", () => ({
@@ -224,5 +227,49 @@ describe("AddLabelDrawer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Load more labels" }));
 
     expect(mockFetchNextPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("enrolls the current source as a queue item once the default queue is resolved", async () => {
+    mockGetOrCreateMutate.mockImplementation((_variables, callbacks) => {
+      callbacks.onSuccess({
+        data: { result: { queue: { id: "queue-1" }, labels: [] } },
+      });
+    });
+
+    render(
+      <AddLabelDrawer
+        open
+        onClose={vi.fn()}
+        projectId="project-1"
+        sourceType="trace"
+        sourceId="trace-1"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockAddQueueItems).toHaveBeenCalledTimes(1);
+    });
+    expect(mockAddQueueItems).toHaveBeenCalledWith(
+      {
+        queueId: "queue-1",
+        items: [{ source_type: "trace", source_id: "trace-1" }],
+      },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("does not enroll anything when no source is being annotated", async () => {
+    mockGetOrCreateMutate.mockImplementation((_variables, callbacks) => {
+      callbacks.onSuccess({
+        data: { result: { queue: { id: "queue-1" }, labels: [] } },
+      });
+    });
+
+    render(<AddLabelDrawer open onClose={vi.fn()} projectId="project-1" />);
+
+    await waitFor(() => {
+      expect(mockGetOrCreate).toHaveBeenCalled();
+    });
+    expect(mockAddQueueItems).not.toHaveBeenCalled();
   });
 });
