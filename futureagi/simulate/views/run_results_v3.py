@@ -66,6 +66,7 @@ from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.serializer_fields import JsonValueField
 from tracer.services.clickhouse.client import CHError
 
 logger = structlog.get_logger(__name__)
@@ -274,7 +275,8 @@ class EvaluationResultSerializer(serializers.Serializer):
     name = serializers.CharField()
     # Blank on an entry with no stored output type: pending, timed out, skipped.
     type = serializers.CharField(allow_blank=True)
-    value = serializers.JSONField(allow_null=True)
+    # An eval's output: a string, a number, a boolean or an object.
+    value = JsonValueField(allow_null=True)
     score = serializers.FloatField(allow_null=True)
     passed = serializers.BooleanField(allow_null=True)
     reason = serializers.CharField(allow_blank=True)
@@ -329,8 +331,9 @@ class RunCallSerializer(serializers.Serializer):
     cost_cents = serializers.FloatField(allow_null=True)
     cost_breakdown_cents = CostBreakdownSerializer()
     csat = serializers.FloatField(allow_null=True)
-    ended_reason = serializers.CharField(allow_null=True)
-    error_message = serializers.CharField(allow_null=True)
+    # Blank on a call that ended without a reason or an error.
+    ended_reason = serializers.CharField(allow_null=True, allow_blank=True)
+    error_message = serializers.CharField(allow_null=True, allow_blank=True)
     evaluations = EvaluationResultSerializer(many=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)

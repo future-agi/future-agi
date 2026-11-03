@@ -141632,7 +141632,9 @@
                 "value": {
                     "title": "Value",
                     "type": "object",
-                    "x-nullable": true
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
                 },
                 "score": {
                     "title": "Score",
@@ -144526,13 +144528,11 @@
                 "ended_reason": {
                     "title": "Ended reason",
                     "type": "string",
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "error_message": {
                     "title": "Error message",
                     "type": "string",
-                    "minLength": 1,
                     "x-nullable": true
                 },
                 "evaluations": {

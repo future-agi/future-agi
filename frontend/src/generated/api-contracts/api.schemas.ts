@@ -24089,6 +24089,9 @@ export const SimulateRunV3EvaluationResultApiStatus = {
   skipped: "skipped",
 } as const;
 
+/**
+ * Any valid JSON value.
+ */
 export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
 
 export interface SimulateRunV3EvaluationResultApi {
@@ -24097,6 +24100,7 @@ export interface SimulateRunV3EvaluationResultApi {
   /** @minLength 1 */
   name: string;
   type: string;
+  /** Any valid JSON value. */
   value: SimulateRunV3EvaluationResultApiValue;
   score: number;
   passed: boolean;
@@ -24893,9 +24897,7 @@ export interface RunCallApi {
   cost_cents: number;
   cost_breakdown_cents: CostBreakdownApi;
   csat: number;
-  /** @minLength 1 */
   ended_reason: string;
-  /** @minLength 1 */
   error_message: string;
   evaluations: SimulateRunV3EvaluationResultApi[];
   scoring_status: RunCallApiScoringStatus;

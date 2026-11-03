@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -598,3 +599,16 @@ class TestRunCallsV3StatusCounts:
 
         assert body["status_counts"] == body["execution"]["summary"]["outcomes"]
         assert sum(body["status_counts"].values()) == len(calls)
+
+
+def test_the_contract_takes_any_eval_value_and_blank_end_texts():
+    """The run page validates every call against this contract: an eval's value is a
+    string, a number or an object, and a call that ended cleanly has blank end texts."""
+    path = Path(__file__).resolve().parents[3] / "api_contracts/openapi/swagger.json"
+    definitions = json.loads(path.read_text())["definitions"]
+
+    value = definitions["SimulateRunV3EvaluationResult"]["properties"]["value"]
+    assert value["x-json-value"] is True
+    call = definitions["RunCall"]["properties"]
+    assert "minLength" not in call["ended_reason"]
+    assert "minLength" not in call["error_message"]

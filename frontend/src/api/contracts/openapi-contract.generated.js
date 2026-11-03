@@ -90110,6 +90110,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Value",
           type: "object",
           "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
         score: {
           title: "Score",
@@ -104809,13 +104811,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         ended_reason: {
           title: "Ended reason",
           type: "string",
-          minLength: 1,
           "x-nullable": true,
         },
         error_message: {
           title: "Error message",
           type: "string",
-          minLength: 1,
           "x-nullable": true,
         },
         evaluations: {
