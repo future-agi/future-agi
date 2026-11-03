@@ -200,6 +200,7 @@ def test_case_payload_materializes_frozen_agent_config():
                 "source": {
                     "repository": "https://github.com/future-agi/agent-one",
                     "commit_sha": "a" * 40,
+                    "path": "agents/agent-one",
                 },
             },
             "target": {"kind": "hosted_service", "ref": "agent-123"},
@@ -234,6 +235,12 @@ def test_case_payload_materializes_frozen_agent_config():
     assert payload["agent"]["mode"] == "connect_only"
     assert payload["agent"]["call_direction"] == "inbound"
     assert payload["agent"]["config"] == {"assistant_id": "agent-123"}
+    assert payload["source"]["path"] == "agents/agent-one"
+    certification = payload["metadata"]["certification"]
+    assert certification["production_call_authorization"] == {
+        "target_ownership": "futureagi"
+    }
+    assert "authorization" not in certification
 
 
 def _campaign(organization, workspace):

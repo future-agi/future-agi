@@ -415,7 +415,7 @@ def build_case_job_payload(case, campaign) -> dict:
                 "suite_digest": campaign.suite_digest,
                 "deployment_id": campaign.deployment_id,
                 "run_test_id": spec["run_test_id"],
-                "authorization": spec["authorization"],
+                "production_call_authorization": spec["authorization"],
                 "interactions": interactions,
             }
         },
