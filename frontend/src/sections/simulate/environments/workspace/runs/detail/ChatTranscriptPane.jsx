@@ -101,7 +101,12 @@ export default function ChatTranscriptPane({ turns }) {
             <Typography
               sx={{
                 typography: "s3",
-                color: s.role === "world_actor" ? "info.main" : "text.subtitle",
+                color: (theme) =>
+                  s.role === "world_actor"
+                    ? theme.palette.mode === "dark"
+                      ? "#f472b6"
+                      : "#db2777"
+                    : theme.palette.text.subtitle,
                 fontFamily: "ui-monospace, Menlo, monospace",
               }}
             >

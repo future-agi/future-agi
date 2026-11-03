@@ -81,7 +81,7 @@ const useSpeakerColors = () => {
       system: theme.palette.mode === "dark" ? "#a78bfa" : "#7c3aed",
       tool: theme.palette.mode === "dark" ? "#fbbf24" : "#d97706",
       sub_actor: theme.palette.mode === "dark" ? "#2dd4bf" : "#0d9488",
-      world_actor: theme.palette.mode === "dark" ? "#a5b4fc" : "#4f46e5",
+      world_actor: theme.palette.mode === "dark" ? "#f472b6" : "#db2777",
       unknown: theme.palette.text.disabled,
     }),
     [theme],
