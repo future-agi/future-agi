@@ -436,6 +436,7 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         )
         .prefetch_related(
             "candidates__agent_version",
+            "candidates__override_by",
             Prefetch("check_runs", queryset=check_runs, to_attr="check_run_list"),
         )
     )
@@ -445,6 +446,31 @@ def limited_validation(fix_run: AgentFixRun) -> bool:
     """Whether too few cases were held back to call this fix verified, however it scored."""
     held_back = fix_run.request.get("held_back_scenario_keys") or []
     return len(held_back) < HELD_BACK_VERIFIED_MIN
+
+
+def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
+    """The must-pass checks a refused candidate regressed on, as "scenario key: check",
+    when nothing else refused it: every other tier of its verdict passed, and no check is on
+    a case the user protected. Such a candidate may ship on the user's reason; for any
+    other the list is empty."""
+    if candidate.outcome != AgentFixCandidate.Outcome.REJECTED:
+        return []
+    verdict = candidate.verdict or {}
+    # A verdict from an engine without tiers says too little to ship on.
+    unpassed = [
+        (tier.get("name"), tier.get("status"))
+        for tier in verdict.get("tiers") or []
+        if tier.get("status") != "passed"
+    ]
+    regressions = verdict.get("must_pass_regressions") or []
+    # The engine names a lost protected case only in prose, so every regression on a
+    # protected case counts as one: a protected case is never shipped regressed.
+    protected = candidate.fix_run.request.get("protected_scenario_keys") or []
+    if unpassed != [("must-pass", "failed")] or any(
+        check.startswith(f"{key}: ") for check in regressions for key in protected
+    ):
+        return []
+    return list(regressions)
 
 
 def is_retryable(fix_run: AgentFixRun) -> bool:

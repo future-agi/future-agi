@@ -18,7 +18,9 @@ from simulate.selectors.agent_fix import (
     eval_warnings,
     is_retryable,
     limited_validation,
+    overridable_regressions,
 )
+from simulate.serializers.harness_environment import HarnessVersionPersonSerializer
 from simulate.services.harness_environment import environment_name
 
 
@@ -153,11 +155,25 @@ class AgentFixCheckRunSerializer(serializers.Serializer):
     state = serializers.CharField()
 
 
+class AgentFixOverrideSerializer(serializers.Serializer):
+    """Shipping a candidate the verdict refused, on the user's reason."""
+
+    # True when only the must-pass check refused it and no protected case regressed.
+    allowed = serializers.BooleanField()
+    # The must-pass checks it regressed, as "scenario key: check"; empty unless allowed.
+    regressions = serializers.ListField(child=serializers.CharField())
+    # Who shipped it anyway and why; blank and null until someone does.
+    reason = serializers.CharField(allow_blank=True)
+    by = HarnessVersionPersonSerializer(allow_null=True)
+    at = serializers.DateTimeField(allow_null=True)
+
+
 class AgentFixCandidateSerializer(serializers.ModelSerializer):
     agent_version_id = serializers.UUIDField()
     version_number = serializers.IntegerField(source="agent_version.version_number")
     verdict = AgentFixVerdictSerializer(allow_null=True)
     check_runs = serializers.SerializerMethodField()
+    override = serializers.SerializerMethodField()
 
     @swagger_serializer_method(
         serializer_or_field=AgentFixCheckRunSerializer(many=True)
@@ -168,6 +184,19 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
             run for run in runs if run.agent_version_id == candidate.agent_version_id
         ]
         return AgentFixCheckRunSerializer(mine, many=True).data
+
+    @swagger_serializer_method(serializer_or_field=AgentFixOverrideSerializer)
+    def get_override(self, candidate: AgentFixCandidate) -> dict:
+        regressions = overridable_regressions(candidate)
+        return AgentFixOverrideSerializer(
+            {
+                "allowed": bool(regressions),
+                "regressions": regressions,
+                "reason": candidate.override_reason,
+                "by": candidate.override_by,
+                "at": candidate.override_at,
+            }
+        ).data
 
     class Meta:
         model = AgentFixCandidate
@@ -180,6 +209,7 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
             "outcome",
             "verdict",
             "check_runs",
+            "override",
             "pull_request_url",
             "created_at",
         ]
@@ -319,6 +349,14 @@ class AgentFixRunListSerializer(serializers.Serializer):
     total_pages = serializers.IntegerField()
     current_page = serializers.IntegerField()
     results = AgentFixRunSerializer(many=True)
+
+
+class AgentFixShipSerializer(serializers.Serializer):
+    # Why a candidate only its must-pass check refused ships anyway; required for one,
+    # refused for any other.
+    override_reason = serializers.CharField(
+        required=False, allow_blank=True, default="", max_length=2000
+    )
 
 
 class AgentFixMakeDefaultSerializer(serializers.Serializer):

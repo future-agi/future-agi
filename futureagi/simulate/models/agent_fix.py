@@ -130,6 +130,16 @@ class AgentFixCandidate(BaseModel):
     verdict = models.JSONField(null=True, blank=True)
     # A GitHub agent's winner ships as a pull request on its repository, opened once.
     pull_request_url = models.URLField(max_length=512, blank=True, default="")
+    # Who shipped a candidate only its must-pass check refused, and the reason they gave.
+    override_reason = models.TextField(blank=True, default="")
+    override_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    override_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_agent_fix_candidate"

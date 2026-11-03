@@ -34682,6 +34682,18 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
               }),
             )
             .optional(),
+          override: zod
+            .object({
+              allowed: zod.boolean(),
+              regressions: zod.array(zod.string().min(1)),
+              reason: zod.string(),
+              by: zod.object({
+                id: zod.string().min(1),
+                name: zod.string(),
+              }),
+              at: zod.string().datetime({ offset: true }),
+            })
+            .optional(),
           pull_request_url: zod
             .string()
             .url()
@@ -35029,6 +35041,18 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
           }),
         )
         .optional(),
+      override: zod
+        .object({
+          allowed: zod.boolean(),
+          regressions: zod.array(zod.string().min(1)),
+          reason: zod.string(),
+          by: zod.object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          }),
+          at: zod.string().datetime({ offset: true }),
+        })
+        .optional(),
       pull_request_url: zod
         .string()
         .url()
@@ -35062,7 +35086,17 @@ export const SimulateApiAgentFixRunsCandidatesMakeDefaultParams = zod.object({
   candidate_id: zod.string(),
 });
 
-export const SimulateApiAgentFixRunsCandidatesMakeDefaultBody = zod.object({});
+export const simulateApiAgentFixRunsCandidatesMakeDefaultBodyOverrideReasonDefault = ``;
+export const simulateApiAgentFixRunsCandidatesMakeDefaultBodyOverrideReasonMax = 2000;
+
+export const SimulateApiAgentFixRunsCandidatesMakeDefaultBody = zod.object({
+  override_reason: zod
+    .string()
+    .max(simulateApiAgentFixRunsCandidatesMakeDefaultBodyOverrideReasonMax)
+    .default(
+      simulateApiAgentFixRunsCandidatesMakeDefaultBodyOverrideReasonDefault,
+    ),
+});
 
 export const SimulateApiAgentFixRunsCandidatesMakeDefaultResponse = zod.object({
   outcome: zod.string().min(1),
@@ -35082,14 +35116,25 @@ export const SimulateApiAgentFixRunsCandidatesCandidatePatchResponse =
   zod.string();
 
 /**
- * A GitHub agent's winner, opened once as a pull request on its repository.
+ * A GitHub agent's winner, or a candidate only its must-pass check refused with
+the user's reason, opened once as a pull request on its repository.
  */
 export const SimulateApiAgentFixRunsCandidatesPullRequestParams = zod.object({
   id: zod.string(),
   candidate_id: zod.string(),
 });
 
-export const SimulateApiAgentFixRunsCandidatesPullRequestBody = zod.object({});
+export const simulateApiAgentFixRunsCandidatesPullRequestBodyOverrideReasonDefault = ``;
+export const simulateApiAgentFixRunsCandidatesPullRequestBodyOverrideReasonMax = 2000;
+
+export const SimulateApiAgentFixRunsCandidatesPullRequestBody = zod.object({
+  override_reason: zod
+    .string()
+    .max(simulateApiAgentFixRunsCandidatesPullRequestBodyOverrideReasonMax)
+    .default(
+      simulateApiAgentFixRunsCandidatesPullRequestBodyOverrideReasonDefault,
+    ),
+});
 
 export const SimulateApiAgentFixRunsCandidatesPullRequestResponse = zod.object({
   pull_request_url: zod.string().url().min(1),
@@ -35313,6 +35358,18 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
             state: zod.string().min(1),
           }),
         )
+        .optional(),
+      override: zod
+        .object({
+          allowed: zod.boolean(),
+          regressions: zod.array(zod.string().min(1)),
+          reason: zod.string(),
+          by: zod.object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          }),
+          at: zod.string().datetime({ offset: true }),
+        })
         .optional(),
       pull_request_url: zod
         .string()

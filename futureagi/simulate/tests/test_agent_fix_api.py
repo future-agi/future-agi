@@ -1241,8 +1241,8 @@ class TestUserApi:
         )
         return SimpleNamespace(bare=bare, commit=commit)
 
-    def _ship(self, auth_client, fix_run, candidate, replies):
-        """POST pull-request with GitHub's API answering ``replies`` in turn."""
+    def _ship(self, auth_client, fix_run, candidate, replies, **body):
+        """POST pull-request with ``body`` and GitHub's API answering ``replies`` in turn."""
         calls = []
 
         def answer(method, url, **kwargs):
@@ -1257,7 +1257,7 @@ class TestUserApi:
         ):
             response = auth_client.post(
                 f"{BASE}/{fix_run.id}/candidates/{candidate.id}/pull-request/",
-                {},
+                body,
                 format="json",
             )
         return response, calls
@@ -1504,6 +1504,199 @@ class TestUserApi:
             "fix_github_not_connected",
             [],
         )
+
+    TIERS = ["static", "target", "held-back", "must-pass", "repeats", "ceilings"]
+    REGRESSED = f"{KEYS[1]}: cancels_visit"
+    REASON = "The refund fix matters more than the cancel flow."
+
+    def _vetoed(self, source_run, kind, *, failed=("must-pass",), protected=()):
+        """A finished fix whose candidate the verdict refused at the ``failed`` tiers, on an
+        agent of this source kind. A failed screen skips the tiers after it; the final
+        check records all of its tiers."""
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source_kind=kind)
+        fix_run = _fix_run(source_run)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={
+                **fix_run.request,
+                "protected_scenario_keys": list(protected),
+                "held_back_scenario_keys": [f"held-{n}" for n in range(4)],
+            }
+        )
+        fix_run.refresh_from_db()
+        candidate = _candidate(fix_run)
+        first = min(self.TIERS.index(name) for name in failed)
+        final = first >= self.TIERS.index("must-pass")
+        tiers = [
+            {
+                "name": name,
+                "status": "failed"
+                if name in failed
+                else "passed"
+                if at < first or final
+                else "skipped",
+                "detail": "",
+            }
+            for at, name in enumerate(self.TIERS)
+        ]
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            outcome=AgentFixCandidate.Outcome.REJECTED,
+            verdict={
+                "accepted": False,
+                "reason": f"{failed[0]}: failed",
+                "target_pass_rate": [0, 0.75],
+                "held_back_pass_rate": [0, 0.5],
+                "must_pass_regressions": [self.REGRESSED]
+                if "must-pass" in failed
+                else [],
+                "must_pass_within_noise": [],
+                "tiers": tiers,
+            },
+        )
+        close_fix_run(fix_run.id, AgentFixRun.State.NO_IMPROVEMENT)
+        candidate.refresh_from_db()
+        return fix_run, candidate
+
+    def _override(self, auth_client, fix_run):
+        [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+        return shown["override"]
+
+    def test_a_candidate_only_must_pass_refused_ships_with_a_reason_it_names(
+        self, auth_client, user, source_run, github
+    ):
+        fix_run, candidate = self._vetoed(source_run, "github")
+        before = self._override(auth_client, fix_run)
+
+        response, [(_, _, sent)] = self._ship(
+            auth_client,
+            fix_run,
+            candidate,
+            [(201, {"html_url": self.PULL})],
+            override_reason=self.REASON,
+        )
+
+        assert before == {
+            "allowed": True,
+            "regressions": [self.REGRESSED],
+            "reason": "",
+            "by": None,
+            "at": None,
+        }
+        assert (response.status_code, response.json()) == (
+            200,
+            {"pull_request_url": self.PULL},
+        )
+        pull = sent["json"]
+        assert pull["draft"] is True
+        assert pull["title"].startswith("Fix my agent (known regression): ")
+        assert pull["body"].startswith("**Known regression.**")
+        assert f"- `{self.REGRESSED}`" in pull["body"]
+        assert f"> {self.REASON}" in pull["body"]
+        assert "Proven by" not in pull["body"]
+        after = self._override(auth_client, fix_run)
+        assert (after["allowed"], after["reason"], after["by"]["id"]) == (
+            True,
+            self.REASON,
+            str(user.id),
+        )
+        assert after["at"] is not None
+
+    @pytest.mark.parametrize("body", [{}, {"override_reason": "   "}])
+    def test_a_candidate_only_must_pass_refused_needs_a_reason(
+        self, auth_client, source_run, github, body
+    ):
+        fix_run, candidate = self._vetoed(source_run, "github")
+
+        response, calls = self._ship(auth_client, fix_run, candidate, [], **body)
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            422,
+            "fix_override_reason_required",
+            [],
+        )
+        assert self._override(auth_client, fix_run)["reason"] == ""
+
+    @pytest.mark.parametrize(
+        ("failed", "protected"),
+        [
+            (("held-back",), ()),
+            (("static",), ()),
+            (("must-pass", "repeats"), ()),
+            (("must-pass",), (KEYS[1],)),
+        ],
+        ids=["held-back", "static", "must-pass-and-repeats", "protected-case-lost"],
+    )
+    def test_a_candidate_refused_for_anything_else_cannot_ship_with_a_reason(
+        self, auth_client, source_run, github, failed, protected
+    ):
+        fix_run, candidate = self._vetoed(
+            source_run, "github", failed=failed, protected=protected
+        )
+
+        response, calls = self._ship(
+            auth_client, fix_run, candidate, [], override_reason=self.REASON
+        )
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            422,
+            "fix_candidate_not_proven",
+            [],
+        )
+        override = self._override(auth_client, fix_run)
+        assert (override["allowed"], override["regressions"]) == (False, [])
+
+    def test_a_winner_ships_as_before_and_takes_no_reason(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        override = self._override(auth_client, fix_run)
+
+        refused, none = self._ship(
+            auth_client, fix_run, candidate, [], override_reason=self.REASON
+        )
+        shipped, [(_, _, sent)] = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+
+        assert override == {
+            "allowed": False,
+            "regressions": [],
+            "reason": "",
+            "by": None,
+            "at": None,
+        }
+        assert (refused.status_code, refused.json()["error"], none) == (
+            422,
+            "fix_override_not_needed",
+            [],
+        )
+        assert shipped.status_code == 200, shipped.content
+        assert "known regression" not in sent["json"]["title"]
+        assert "Known regression" not in sent["json"]["body"]
+
+    def test_an_uploaded_agent_s_vetoed_candidate_becomes_the_default_on_a_reason(
+        self, auth_client, user, environment, source_run
+    ):
+        fix_run, candidate = self._vetoed(source_run, "archive")
+        before = environment.agent_version_id
+        url = f"{BASE}/{fix_run.id}/candidates/{candidate.id}/make-default/"
+
+        refused = auth_client.post(url, {}, format="json")
+        environment.refresh_from_db()
+        unmoved = environment.agent_version_id
+        shipped = auth_client.post(url, {"override_reason": self.REASON}, format="json")
+
+        assert (refused.status_code, refused.json()["error"], unmoved) == (
+            422,
+            "fix_override_reason_required",
+            before,
+        )
+        assert (shipped.status_code, shipped.json()) == (200, {"outcome": "activated"})
+        environment.refresh_from_db()
+        assert environment.agent_version_id == candidate.agent_version_id
+        override = self._override(auth_client, fix_run)
+        assert (override["reason"], override["by"]["id"]) == (self.REASON, str(user.id))
 
 
 @pytest.mark.parametrize(

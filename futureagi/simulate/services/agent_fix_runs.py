@@ -24,6 +24,7 @@ from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     is_retryable,
     launch_blocker,
+    overridable_regressions,
     scenario_results,
 )
 from simulate.services.agent_fix_agents import agent_kind
@@ -310,6 +311,9 @@ def _set_aside_rejected(fix_run: AgentFixRun) -> None:
     for candidate in fix_run.candidates.exclude(outcome__in=kept).select_related(
         "agent_version"
     ):
+        # One only its must-pass check refused may still become the default on a reason.
+        if overridable_regressions(candidate):
+            continue
         try:
             discard_agent_version(
                 candidate.agent_version, by_environment=fix_run.environment_id
@@ -321,24 +325,58 @@ def _set_aside_rejected(fix_run: AgentFixRun) -> None:
             )
 
 
-def require_shippable(candidate: AgentFixCandidate) -> None:
-    """Refuse to ship a candidate before its fix finished, or one the fix did not prove."""
+def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> None:
+    """Refuse to ship a candidate before its fix finished, or one the fix did not prove. A
+    candidate only its must-pass check refused ships on the user's reason, and needs one."""
     if candidate.fix_run.state in AgentFixRun.ACTIVE_STATES:
         raise HostedHarnessError(
             "fix_run_active", "wait for the fix to finish", status_code=409
         )
     # Only the winner went through the final check; a finalist passed its screens only.
-    if candidate.outcome != AgentFixCandidate.Outcome.WINNER:
+    if candidate.outcome == AgentFixCandidate.Outcome.WINNER:
+        if override_reason:
+            raise HostedHarnessError(
+                "fix_override_not_needed",
+                "the fix's winner ships without a reason",
+                status_code=422,
+            )
+        return
+    if not overridable_regressions(candidate):
         raise HostedHarnessError(
             "fix_candidate_not_proven",
-            "only the fix's winner can ship",
+            "only the fix's winner can ship; a candidate only the must-pass check"
+            " refused can ship with a reason, unless it regressed a protected case",
+            status_code=422,
+        )
+    if not override_reason:
+        raise HostedHarnessError(
+            "fix_override_reason_required",
+            "this candidate regressed on its must-pass check: give the reason to ship it",
             status_code=422,
         )
 
 
-def make_candidate_default(candidate: AgentFixCandidate, *, user: Any) -> str:
+def record_override(candidate: AgentFixCandidate, *, reason: str, user: Any) -> None:
+    """Record who shipped a refused candidate and why, once: a later ship keeps the first
+    reason, which a pull request already carries."""
+    if not reason:
+        return
+    AgentFixCandidate.no_workspace_objects.filter(
+        id=candidate.id, override_at__isnull=True
+    ).update(override_reason=reason, override_by=user, override_at=timezone.now())
+    candidate.refresh_from_db(fields=["override_reason", "override_by", "override_at"])
+    logger.info(
+        "agent_fix_candidate_overridden",
+        candidate=str(candidate.id),
+        by=str(candidate.override_by_id),
+    )
+
+
+def make_candidate_default(
+    candidate: AgentFixCandidate, *, user: Any, override_reason: str = ""
+) -> str:
     """Make a finished fix's winner the environment's default, on the user's word."""
-    require_shippable(candidate)
+    require_shippable(candidate, override_reason=override_reason)
     fix_run = candidate.fix_run
     outcome = agent_kind(fix_run.environment).make_default(candidate, user=user)
     if outcome not in ("activated", "already_default"):
@@ -347,4 +385,5 @@ def make_candidate_default(candidate: AgentFixCandidate, *, user: Any) -> str:
             f"the version could not become the default: {outcome}",
             status_code=409,
         )
+    record_override(candidate, reason=override_reason, user=user)
     return outcome

@@ -17104,6 +17104,20 @@ export const AgentFixCandidateApiOutcome = {
   winner: "winner",
 } as const;
 
+export interface HarnessVersionPersonApi {
+  /** @minLength 1 */
+  id: string;
+  name: string;
+}
+
+export interface AgentFixOverrideApi {
+  allowed: boolean;
+  regressions: string[];
+  reason: string;
+  by: HarnessVersionPersonApi;
+  at: string;
+}
+
 export interface AgentFixCandidateApi {
   readonly id?: string;
   /**
@@ -17117,6 +17131,7 @@ export interface AgentFixCandidateApi {
   outcome?: AgentFixCandidateApiOutcome;
   verdict: AgentFixVerdictApi;
   readonly check_runs?: readonly AgentFixCheckRunApi[];
+  override?: AgentFixOverrideApi;
   /** @maxLength 512 */
   pull_request_url?: string;
   readonly created_at?: string;
@@ -17351,6 +17366,11 @@ export interface AgentFixRunDetailApi {
   finished_at?: string;
   readonly created_at?: string;
   readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
+}
+
+export interface AgentFixShipApi {
+  /** @maxLength 2000 */
+  override_reason?: string;
 }
 
 export interface AgentFixMakeDefaultApi {
@@ -18579,12 +18599,6 @@ export const HarnessDraftItemApiStatus = {
   active: "active",
   discarded: "discarded",
 } as const;
-
-export interface HarnessVersionPersonApi {
-  /** @minLength 1 */
-  id: string;
-  name: string;
-}
 
 /**
  * An agent version's non-secret source facts.
