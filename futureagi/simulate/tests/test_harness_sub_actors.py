@@ -225,10 +225,10 @@ def test_a_sub_actor_turn_is_stored_with_its_name_and_the_call_keeps_who_took_pa
 
     assert _build_transcript_text(call).splitlines() == [
         "Agent: Where to?",
-        "Rowan (not the customer): Add a stop.",
+        "Rowan (not the person being served): Add a stop.",
         "Customer: Just the airport.",
     ]
-    assert "Rowan (not the customer): Add a stop." in (
+    assert "Rowan (not the person being served): Add a stop." in (
         _build_transcript_data(call)["transcript"]
     )
 
