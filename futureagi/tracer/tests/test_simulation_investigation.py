@@ -1,5 +1,6 @@
 """Per-call Debug Analysis of a simulation run and its Omega claim boundaries."""
 
+import json
 import uuid
 from copy import deepcopy
 from datetime import timedelta
@@ -32,6 +33,7 @@ from tracer.services.grouping.feature_completion import complete_feature_job
 from tracer.services.simulation_diagnosis import _is_caller_fault
 from tracer.services.simulation_investigation import (
     SimulationInvestigationConflict,
+    _tool_calls,
     simulation_evidence_page,
 )
 from tracer.services.trace_investigation import (
@@ -499,6 +501,96 @@ def test_debug_evidence_carries_the_agent_prompt_and_recorded_tool_calls(
     )["calls"][0]
     assert "tool_calls" not in served
     assert served["agent_prompt"] == "You book tables."
+
+
+def _tool_call(index, **fields):
+    return {"name": f"tool_{index}", "ok": True, **fields}
+
+
+def _served_tool_calls(tool_calls):
+    return _tool_calls(
+        SimpleNamespace(provider_call_data={"livekit": {"tool_calls": tool_calls}})
+    )
+
+
+def test_tool_call_values_are_cut_by_their_serialized_size():
+    small = {"party_size": 4}
+    large = {"rows": ["x" * 100] * 100}
+    [served] = _served_tool_calls(
+        [_tool_call(0, arguments=small, result=large, error=["y" * 5000])]
+    )
+
+    assert served["arguments"] == small
+    assert served["result"].startswith('{"rows":["')
+    assert "more characters]" in served["result"]
+    assert len(served["result"]) < 4100
+    assert served["error"].startswith('["yyy')
+    assert served["ok"] is True
+
+
+def test_tool_calls_stop_at_the_total_and_say_how_many_were_left_out():
+    served = _served_tool_calls(
+        [_tool_call(index, result="x" * 4000) for index in range(100)]
+    )
+
+    assert len(json.dumps(served)) < 260_000
+    assert served[-1]["name"] == "tool_calls_omitted"
+    assert served[-1]["result"].startswith(f"{101 - len(served)} more recorded")
+    assert [entry["name"] for entry in served[:3]] == ["tool_0", "tool_1", "tool_2"]
+
+
+def test_tool_calls_stop_at_the_count_limit_the_worker_accepts():
+    fits = [_tool_call(index) for index in range(500)]
+    assert _served_tool_calls(fits) == fits
+
+    served = _served_tool_calls([_tool_call(index) for index in range(600)])
+    assert len(served) == 500
+    assert served[-1]["name"] == "tool_calls_omitted"
+    assert served[-1]["result"].startswith("101 more recorded")
+
+
+def test_debug_evidence_page_fits_a_call_with_the_most_tool_calls(
+    auth_client, organization, workspace
+):
+    scenario = Scenarios.objects.create(
+        name="Booking",
+        source="Booking policy",
+        organization=organization,
+        workspace=workspace,
+    )
+    execution, call = _execution(
+        organization, workspace, scenario, "large", CallExecution.CallStatus.COMPLETED
+    )
+    # As many tool calls as a call may carry, each with a large dict: about 7 MB
+    # before the limits, which would fail the whole analysis.
+    call.call_metadata = {"agent_prompt": "Follow the booking policy. " * 2000}
+    call.provider_call_data = {
+        "livekit": {
+            "tool_calls": [
+                _tool_call(
+                    index,
+                    arguments={"rows": ["x" * 100] * 100},
+                    result="y" * 4000,
+                )
+                for index in range(500)
+            ]
+        }
+    }
+    call.save(update_fields=["call_metadata", "provider_call_data"])
+    auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
+    claim = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    page = simulation_evidence_page(
+        attempt_id=claim["attempt_id"], lease_token=claim["lease_token"], cursor=0
+    )
+
+    assert len(json.dumps(page, separators=(",", ":")).encode()) < 1_800_000
+    [served] = page["calls"]
+    assert served["tool_calls"][0]["name"] == "tool_0"
+    assert served["tool_calls"][-1]["name"] == "tool_calls_omitted"
+    assert page["next_cursor"] == page["total_calls"] == 1
 
 
 @override_settings(

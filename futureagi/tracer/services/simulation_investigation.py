@@ -347,18 +347,22 @@ def _goals_payload(scenario) -> dict | None:
     }
 
 
-# A recorded tool call as the worker accepts it; long text values are cut so one
-# verbose tool cannot crowd out the transcript.
+# A recorded tool call as the worker accepts it; long values are cut so one
+# verbose tool cannot crowd out the transcript, and a call's tool calls stop at a
+# total that keeps its evidence page under the control payload limit.
 _TOOL_CALL_FIELDS = ("name", "arguments", "result", "ok", "error", "refused")
 _TOOL_CALL_TEXT_LIMIT = 4000
 _TOOL_CALL_LIMIT = 500
+_TOOL_CALLS_BYTES_LIMIT = 256_000
 
 
 def _capped(value):
-    if isinstance(value, str) and len(value) > _TOOL_CALL_TEXT_LIMIT:
-        cut = len(value) - _TOOL_CALL_TEXT_LIMIT
-        return f"{value[:_TOOL_CALL_TEXT_LIMIT]}... [{cut} more characters]"
-    return value
+    """Cut a value to the text limit; a dict or list is cut as its JSON text."""
+    text = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
+    if len(text) <= _TOOL_CALL_TEXT_LIMIT:
+        return value
+    cut = len(text) - _TOOL_CALL_TEXT_LIMIT
+    return f"{text[:_TOOL_CALL_TEXT_LIMIT]}... [{cut} more characters]"
 
 
 def _agent_prompt(call: CallExecution, execution: TestExecution) -> str | None:
@@ -372,6 +376,32 @@ def _agent_prompt(call: CallExecution, execution: TestExecution) -> str | None:
     metadata = call.call_metadata or {}
     prompt = snapshot.get("description") or metadata.get("agent_prompt")
     return prompt if isinstance(prompt, str) and prompt.strip() else None
+
+
+def _within_tool_call_limits(calls: list) -> list:
+    """The tool calls that fit, with a last entry saying how many did not.
+
+    Without that entry the investigator could read a cut list as the agent never
+    having called the tools that were left out.
+    """
+    kept, used = [], 0
+    for entry in calls:
+        used += len(json.dumps(entry, separators=(",", ":")).encode())
+        if used > _TOOL_CALLS_BYTES_LIMIT or len(kept) == _TOOL_CALL_LIMIT:
+            break
+        kept.append(entry)
+    if len(kept) == len(calls):
+        return calls
+    kept = kept[: _TOOL_CALL_LIMIT - 1]
+    omitted = len(calls) - len(kept)
+    return [
+        *kept,
+        {
+            "name": "tool_calls_omitted",
+            "result": f"{omitted} more recorded tool calls are not shown: "
+            "this list stops at its size limit.",
+        },
+    ]
 
 
 def _tool_calls(call: CallExecution) -> list | None:
@@ -397,7 +427,7 @@ def _tool_calls(call: CallExecution) -> list | None:
             if valid_time and start >= 0:
                 entry["start_time_ms"] = start
             calls.append(entry)
-    return calls[:_TOOL_CALL_LIMIT] if recorded else None
+    return _within_tool_call_limits(calls) if recorded else None
 
 
 def simulation_evidence_page(
