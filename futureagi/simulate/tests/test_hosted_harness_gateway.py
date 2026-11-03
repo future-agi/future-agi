@@ -3081,8 +3081,8 @@ def test_reconcile_keeps_a_failure_the_platform_set_over_a_crash_exit(
     assert job.state == HostedHarnessJob.State.FAILED
 
 
-def test_read_refusal_file_tells_absent_from_malformed():
-    from simulate.services.hosted_harness_gateway import _read_refusal_file
+def test_read_failure_file_tells_absent_from_malformed():
+    from simulate.services.hosted_harness_gateway import read_failure_file
     from simulate.services.hosted_sandbox import (
         SandboxFileNotFoundError,
         SandboxProviderError,
@@ -3099,15 +3099,15 @@ def test_read_refusal_file_tells_absent_from_malformed():
 
         return SimpleNamespace(fs=SimpleNamespace(download_file=download))
 
-    assert _read_refusal_file(_sandbox(None)) is None
-    assert _read_refusal_file(_sandbox(SandboxFileNotFoundError("gone"))) is None
+    assert read_failure_file(_sandbox(None)) is None
+    assert read_failure_file(_sandbox(SandboxFileNotFoundError("gone"))) is None
     assert (
-        _read_refusal_file(_sandbox(SandboxProviderError("timed out"))) == "unreadable"
+        read_failure_file(_sandbox(SandboxProviderError("timed out"))) == "unreadable"
     )
-    assert _read_refusal_file(_sandbox(b"")) is None
-    assert _read_refusal_file(_sandbox(b"not json")) == "invalid"
-    assert _read_refusal_file(_sandbox(b"\xff\xfe")) == "invalid"
-    assert _read_refusal_file(_sandbox(json.dumps(_refusal()).encode())) == _refusal()
+    assert read_failure_file(_sandbox(b"")) is None
+    assert read_failure_file(_sandbox(b"not json")) == "invalid"
+    assert read_failure_file(_sandbox(b"\xff\xfe")) == "invalid"
+    assert read_failure_file(_sandbox(json.dumps(_refusal()).encode())) == _refusal()
 
 
 @pytest.mark.django_db

@@ -3484,7 +3484,7 @@ class HostedHarnessGateway:
             observation["logs"] = capture.entrypoint_log[-8000:]
             observation["process_logs"] = capture.process_logs[-16000:]
         if command.exit_code:
-            observation["refusal_file"] = _read_refusal_file(sandbox)
+            observation["refusal_file"] = read_failure_file(sandbox)
         if command.exit_code is not None:
             # Keep the bounded failure tails in the worker log as well as the durable S3
             # snapshot so an operator can diagnose a run from either surface.
@@ -5212,15 +5212,15 @@ _REFUSAL_FILE_INVALID = "invalid"
 _REFUSAL_FILE_UNREADABLE = "unreadable"
 
 
-def _read_refusal_file(sandbox) -> Any:
+def read_failure_file(sandbox, path: str = _REFUSAL_FILE) -> Any:
     """The failure the guest wrote before exiting: None when absent, the parsed object,
     invalid, or unreadable when the read itself failed."""
     try:
-        body = sandbox.fs.download_file(_REFUSAL_FILE, _PROGRESS_FILE_TIMEOUT_SECONDS)
+        body = sandbox.fs.download_file(path, _PROGRESS_FILE_TIMEOUT_SECONDS)
     except (SandboxNotFoundError, SandboxFileNotFoundError, FileNotFoundError):
         return None
     except Exception:  # noqa: BLE001 - unknown, so never read as "no file"
-        logger.warning("refusal_file_unreadable path=%s", _REFUSAL_FILE, exc_info=True)
+        logger.warning("refusal_file_unreadable path=%s", path, exc_info=True)
         return _REFUSAL_FILE_UNREADABLE
     if not body:
         return None
