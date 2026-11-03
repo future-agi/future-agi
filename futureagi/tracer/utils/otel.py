@@ -1775,9 +1775,12 @@ def calculate_cost(
     # these units without a billed USD amount. Keep usage, but mark coverage
     # unknown rather than writing a manufactured monetary total.
     detailed_usage = (
-        "gen_ai.usage.cache_read_tokens", "gen_ai.usage.cache_write_tokens",
-        "gen_ai.usage.cache_read.input_tokens", "gen_ai.usage.cache_write.input_tokens",
-        "gen_ai.usage.output_tokens.reasoning", "gen_ai.usage.reasoning.output_tokens",
+        "gen_ai.usage.cache_read_tokens",
+        "gen_ai.usage.cache_write_tokens",
+        "gen_ai.usage.cache_read.input_tokens",
+        "gen_ai.usage.cache_write.input_tokens",
+        "gen_ai.usage.output_tokens.reasoning",
+        "gen_ai.usage.reasoning.output_tokens",
     )
     if track_cost and any(key in attributes for key in detailed_usage):
         attributes["fi.cost.kind"] = "unknown"

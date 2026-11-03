@@ -205,9 +205,27 @@ def test_latest_physical_replay_remaps_and_all_root_metrics_are_preserved():
     assert "argMax(tuple(trace_session_id), _version)" in latest
     assert "latest_is_deleted = 0" in live
     assert "LEFT JOIN ts_survivor_map AS scalar_ts_remap" in live
+    members = _cte(sql, "session_members")
+    assert "attrs_string['fi.cost.kind'] = 'unknown'" in members
+    assert "attrs_string['fi.usage.contribution'] = 'none'" in members
+    assert "AS latest_usage_coverage" in members
+    assert "argMax(tuple(cost), _version).1 AS latest_cost" in members
+    assert "argMax(tuple(total_tokens), _version).1 AS latest_total_tokens" in members
+    assert (
+        "GROUP BY project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+        in members
+    )
+    assert "WHERE latest_is_deleted = 0" in members
+    assert "LEFT JOIN ts_survivor_map AS member_remap" in members
+    assert "SELECT project_id, session_id FROM member_session_scope" in members
+    usage = _cte(sql, "session_usage")
+    assert "countIf(isNull(usage_cost)) > 0" in usage
+    assert "sum(usage_cost)) AS member_total_cost" in usage
+    assert "sum(usage_total_tokens) AS member_total_tokens" in usage
+    assert "GROUP BY project_id, member_session_id" in usage
     sessions = _cte(sql, "sessions")
-    assert "fi.cost.kind" in sessions
-    assert "AS total_cost" in sessions
+    assert "LEFT JOIN session_usage USING (project_id, session_id)" in sessions
+    assert "max(member_total_cost) AS total_cost" in sessions
     assert "FROM resolved_root_sessions" in sessions
     assert "latest_attr_value" not in sessions
     assert "matching_scalar_sessions" in sessions

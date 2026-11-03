@@ -35,73 +35,132 @@ CASES = [
     pytest.param({}, {"cost": 0.2}, 0.3, id="all-known"),
     pytest.param({"cost": 0.0}, None, 0.0, id="explicit-zero"),
     pytest.param({"cost": 0.0, "attrs_string": {}}, None, 0.0, id="legacy-zero"),
-    pytest.param(
-        {"cost": 0.0, "attrs_string": UNKNOWN}, None, None, id="all-unknown"
-    ),
+    pytest.param({"cost": 0.0, "attrs_string": UNKNOWN}, None, None, id="all-unknown"),
     pytest.param({}, {"attrs_string": UNKNOWN}, None, id="mixed-unknown"),
     pytest.param(
-        {}, {"observation_type": "tool", "total_tokens": 0, "attrs_string": UNKNOWN},
-        0.1, id="tokenless-tool",
+        {},
+        {"observation_type": "tool", "total_tokens": 0, "attrs_string": UNKNOWN},
+        0.1,
+        id="tokenless-tool",
     ),
     pytest.param(
-        {}, {"observation_type": "chain", "total_tokens": 0, "attrs_string": UNKNOWN},
-        0.1, id="tokenless-chain",
+        {},
+        {"observation_type": "chain", "total_tokens": 0, "attrs_string": UNKNOWN},
+        0.1,
+        id="tokenless-chain",
     ),
     pytest.param(
-        {}, {"total_tokens": 0, "attrs_string": UNKNOWN},
-        None, id="tokenless-llm",
+        {},
+        {"total_tokens": 0, "attrs_string": UNKNOWN},
+        None,
+        id="tokenless-llm",
     ),
     pytest.param(
-        {}, {"observation_type": "tool", "total_tokens": 0,
-             "prompt_tokens": 100, "attrs_string": UNKNOWN},
-        None, id="prompt-only-tool",
+        {},
+        {
+            "observation_type": "tool",
+            "total_tokens": 0,
+            "prompt_tokens": 100,
+            "attrs_string": UNKNOWN,
+        },
+        None,
+        id="prompt-only-tool",
     ),
     pytest.param(
-        {}, {"observation_type": "chain", "total_tokens": 0,
-             "completion_tokens": 20, "attrs_string": UNKNOWN},
-        None, id="completion-only-chain",
+        {},
+        {
+            "observation_type": "chain",
+            "total_tokens": 0,
+            "completion_tokens": 20,
+            "attrs_string": UNKNOWN,
+        },
+        None,
+        id="completion-only-chain",
     ),
     pytest.param(
-        {}, {"observation_type": "agent", "total_tokens": 0,
-             "prompt_tokens": 100, "completion_tokens": 20, "attrs_string": UNKNOWN},
-        None, id="components-only-agent",
+        {},
+        {
+            "observation_type": "agent",
+            "total_tokens": 0,
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "attrs_string": UNKNOWN,
+        },
+        None,
+        id="components-only-agent",
     ),
     pytest.param(
-        {}, {"observation_type": "agent", "total_tokens": 0,
-             "prompt_tokens": 100, "completion_tokens": 20, "attrs_string": NONADDITIVE},
-        0.1, id="components-nonadditive-summary",
+        {},
+        {
+            "observation_type": "agent",
+            "total_tokens": 0,
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "attrs_string": NONADDITIVE,
+        },
+        0.1,
+        id="components-nonadditive-summary",
     ),
     pytest.param(
-        {}, {"observation_type": "tool", "total_tokens": 1, "attrs_string": UNKNOWN},
-        None, id="tokenful-tool",
+        {},
+        {"observation_type": "tool", "total_tokens": 1, "attrs_string": UNKNOWN},
+        None,
+        id="tokenful-tool",
     ),
     pytest.param(
-        {}, {"observation_type": "chain", "total_tokens": 1, "attrs_string": UNKNOWN},
-        None, id="tokenful-chain",
+        {},
+        {"observation_type": "chain", "total_tokens": 1, "attrs_string": UNKNOWN},
+        None,
+        id="tokenful-chain",
     ),
     pytest.param(
-        {}, {"observation_type": "tool", "total_tokens": 0,
-             "attrs_string": {**UNKNOWN, "fi.usage.scope": "turn"}},
-        None, id="tokenless-turn-tool",
+        {},
+        {
+            "observation_type": "tool",
+            "total_tokens": 0,
+            "attrs_string": {**UNKNOWN, "fi.usage.scope": "turn"},
+        },
+        None,
+        id="tokenless-turn-tool",
     ),
     pytest.param(
-        {}, {"observation_type": "chain", "total_tokens": 0,
-             "attrs_string": {**UNKNOWN, "fi.usage.scope": "turn"}},
-        None, id="tokenless-turn-chain",
+        {},
+        {
+            "observation_type": "chain",
+            "total_tokens": 0,
+            "attrs_string": {**UNKNOWN, "fi.usage.scope": "turn"},
+        },
+        None,
+        id="tokenless-turn-chain",
     ),
     pytest.param(
-        {}, {"total_tokens": 0, "attrs_string": {
-            **UNKNOWN, "fi.usage.contribution": "future-additive-kind"}},
-        None, id="unknown-future-contribution",
+        {},
+        {
+            "total_tokens": 0,
+            "attrs_string": {
+                **UNKNOWN,
+                "fi.usage.contribution": "future-additive-kind",
+            },
+        },
+        None,
+        id="unknown-future-contribution",
     ),
     pytest.param(
-        {}, {"attrs_string": NONADDITIVE},
-        0.1, id="nonadditive-overrides-tokens-llm-turn",
+        {},
+        {"attrs_string": NONADDITIVE},
+        0.1,
+        id="nonadditive-overrides-tokens-llm-turn",
     ),
     pytest.param(
-        {"observation_type": "agent", "total_tokens": 0, "cost": 0.0,
-         "attrs_string": NONADDITIVE},
-        None, 0.0, id="summary-only",
+        {
+            "observation_type": "agent",
+            "total_tokens": 0,
+            "cost": 0.0,
+            "attrs_string": NONADDITIVE,
+        },
+        None,
+        0.0,
+        id="summary-only",
     ),
 ]
 
@@ -141,29 +200,53 @@ def test_native_cost_aggregate_completeness(
     project, session = uuid4(), uuid4()
     trace = str(uuid4())
     root = {
-        "id": "root", "parent_span_id": "", "observation_type": "llm",
-        "total_tokens": 120, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.1,
+        "id": "root",
+        "parent_span_id": "",
+        "observation_type": "llm",
+        "total_tokens": 120,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "cost": 0.1,
         "attrs_string": {"fi.cost.kind": "provider_reported"},
         **root_overrides,
     }
     spans = [root]
     if child_overrides is not None:
-        spans.append({
-            "id": "child", "parent_span_id": "root", "observation_type": "llm",
-            "total_tokens": 120, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0,
-            "attrs_string": {"fi.cost.kind": "provider_reported"},
-            **child_overrides,
-        })
+        spans.append(
+            {
+                "id": "child",
+                "parent_span_id": "root",
+                "observation_type": "llm",
+                "total_tokens": 120,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cost": 0.0,
+                "attrs_string": {"fi.cost.kind": "provider_reported"},
+                **child_overrides,
+            }
+        )
     columns = [
-        "project_id", "trace_session_id", "trace_id", "start_time", "end_time",
-        "name", "input", "_version", *root,
+        "project_id",
+        "trace_session_id",
+        "trace_id",
+        "start_time",
+        "end_time",
+        "name",
+        "input",
+        "_version",
+        *root,
     ]
     rows = []
     for span in spans:
         row = {
-            "project_id": project, "trace_session_id": session, "trace_id": trace,
-            "start_time": START, "end_time": START + timedelta(seconds=1),
-            "name": "synthetic.request", "input": "synthetic input", "_version": 1,
+            "project_id": project,
+            "trace_session_id": session,
+            "trace_id": trace,
+            "start_time": START,
+            "end_time": START + timedelta(seconds=1),
+            "name": "synthetic.request",
+            "input": "synthetic input",
+            "_version": 1,
             **span,
         }
         rows.append([row[column] for column in columns])
@@ -175,12 +258,18 @@ def test_native_cost_aggregate_completeness(
         reader._client = cost_client
         result = reader.trace_aggregate(trace)
         assert set(result) == {
-            "span_count", "prompt_tokens", "completion_tokens", "total_tokens",
-            "cost", "last_end",
+            "span_count",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "cost",
+            "last_end",
         }
         assert result["span_count"] == len(spans)
         assert result["prompt_tokens"] == sum(span["prompt_tokens"] for span in spans)
-        assert result["completion_tokens"] == sum(span["completion_tokens"] for span in spans)
+        assert result["completion_tokens"] == sum(
+            span["completion_tokens"] for span in spans
+        )
         assert result["total_tokens"] == expected_tokens
         # DateTime64(6, 'UTC') is decoded as naive UTC by some supported drivers.
         last_end = result["last_end"]
@@ -192,19 +281,27 @@ def test_native_cost_aggregate_completeness(
         # Session usage excludes explicit nonadditive summaries, even if a
         # stored legacy row still carries their copied numeric token values.
         expected_tokens = sum(
-            span["total_tokens"] for span in spans
+            span["total_tokens"]
+            for span in spans
             if span["attrs_string"].get("fi.usage.contribution") != "none"
         )
-        builder = SessionListQueryBuilderV2(project_id=str(project), filters=[{
-            "column_id": "created_at",
-            "filter_config": {
-                "col_type": "SYSTEM_METRIC", "filter_type": "datetime",
-                "filter_op": "between",
-                "filter_value": [
-                    START.isoformat(), (START + timedelta(days=1)).isoformat(),
-                ],
-            },
-        }])
+        builder = SessionListQueryBuilderV2(
+            project_id=str(project),
+            filters=[
+                {
+                    "column_id": "created_at",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "datetime",
+                        "filter_op": "between",
+                        "filter_value": [
+                            START.isoformat(),
+                            (START + timedelta(days=1)).isoformat(),
+                        ],
+                    },
+                }
+            ],
+        )
         sql, params = builder.build_page_hydration_query([str(session)])
         result = list(cost_client.query(sql, parameters=params).named_results())
         assert len(result) == 1
@@ -213,9 +310,11 @@ def test_native_cost_aggregate_completeness(
         assert result[0]["traces_count"] == 1
         actual_cost = result[0]["total_cost"]
         formatted = builder.format_sessions(result, list(result[0]))[0]
-        if not any(span["attrs_string"].get("fi.usage.scope") == "turn"
-                   and span["attrs_string"].get("fi.usage.contribution") == "none"
-                   for span in spans):
+        if not any(
+            span["attrs_string"].get("fi.usage.scope") == "turn"
+            and span["attrs_string"].get("fi.usage.contribution") == "none"
+            for span in spans
+        ):
             assert "capture_coverage" not in formatted
 
     if expected_cost is None:
@@ -226,17 +325,56 @@ def test_native_cost_aggregate_completeness(
 
 @pytest.mark.parametrize("surface", ["session", "batch", "per_trace"])
 @pytest.mark.parametrize("prompt,completion", [(100, 0), (0, 20), (100, 20)])
-def test_component_only_unknown_cost_in_other_reader_aggregates(cost_client, surface, prompt, completion):
+def test_component_only_unknown_cost_in_other_reader_aggregates(
+    cost_client, surface, prompt, completion
+):
     project, session, trace = uuid4(), uuid4(), str(uuid4())
-    columns = ["project_id", "trace_session_id", "trace_id", "id", "parent_span_id",
-               "start_time", "end_time", "observation_type", "prompt_tokens",
-               "completion_tokens", "total_tokens", "cost", "attrs_string", "_version"]
+    columns = [
+        "project_id",
+        "trace_session_id",
+        "trace_id",
+        "id",
+        "parent_span_id",
+        "start_time",
+        "end_time",
+        "observation_type",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "cost",
+        "attrs_string",
+        "_version",
+    ]
     common = [project, session, trace]
     rows = [
-        common + ["known", "", START, START + timedelta(seconds=1), "llm",
-                  0, 0, 120, 0.25, {"fi.cost.kind": "provider_reported"}, 1],
-        common + ["component-work", "known", START, START + timedelta(seconds=1), "agent",
-                  prompt, completion, 0, 0.0, UNKNOWN, 1],
+        common
+        + [
+            "known",
+            "",
+            START,
+            START + timedelta(seconds=1),
+            "llm",
+            0,
+            0,
+            120,
+            0.25,
+            {"fi.cost.kind": "provider_reported"},
+            1,
+        ],
+        common
+        + [
+            "component-work",
+            "known",
+            START,
+            START + timedelta(seconds=1),
+            "agent",
+            prompt,
+            completion,
+            0,
+            0.0,
+            UNKNOWN,
+            1,
+        ],
     ]
     cost_client.insert("spans", rows, column_names=columns)
     reader = CHSpanReader.__new__(CHSpanReader)
@@ -275,39 +413,81 @@ def test_native_source_summary_parent_late_children_and_replay(
     if source_usd is not None:
         raw_summary["fi.source.summary.gen_ai.cost.total"] = source_usd
     root = {
-        "id": root_id, "parent_span_id": "", "name": "invoke_agent",
-        "observation_type": "agent", "start_time": START,
-        "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-        "cost": 0.0, "attrs_string": {
-            **NONADDITIVE, "fi.normalization.profile": "github-copilot-cli-1.0.98",
-        }, "attrs_number": raw_summary, "is_deleted": 0,
+        "id": root_id,
+        "parent_span_id": "",
+        "name": "invoke_agent",
+        "observation_type": "agent",
+        "start_time": START,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost": 0.0,
+        "attrs_string": {
+            **NONADDITIVE,
+            "fi.normalization.profile": "github-copilot-cli-1.0.98",
+        },
+        "attrs_number": raw_summary,
+        "is_deleted": 0,
     }
     children = [
-        {**root, "id": sid, "parent_span_id": root_id, "name": "chat",
-         "observation_type": "llm", "start_time": START + timedelta(days=late_day),
-         "prompt_tokens": prompt, "completion_tokens": completion,
-         "total_tokens": prompt + completion, "attrs_string": UNKNOWN, "attrs_number": {}}
+        {
+            **root,
+            "id": sid,
+            "parent_span_id": root_id,
+            "name": "chat",
+            "observation_type": "llm",
+            "start_time": START + timedelta(days=late_day),
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": prompt + completion,
+            "attrs_string": UNKNOWN,
+            "attrs_number": {},
+        }
         for sid, prompt, completion in [
             ("0000000000000002", 14095, 61),
             ("0000000000000003", 14370, 52),
             ("0000000000000004", 14460, 33),
         ]
     ]
-    hook = {**root, "id": "0000000000000005", "parent_span_id": root_id,
-            "name": "execute_hook", "observation_type": "tool",
-            "attrs_string": UNKNOWN, "attrs_number": {}}
-    columns = ["project_id", "trace_session_id", "trace_id", "end_time", "_version", *root]
+    hook = {
+        **root,
+        "id": "0000000000000005",
+        "parent_span_id": root_id,
+        "name": "execute_hook",
+        "observation_type": "tool",
+        "attrs_string": UNKNOWN,
+        "attrs_number": {},
+    }
+    columns = [
+        "project_id",
+        "trace_session_id",
+        "trace_id",
+        "end_time",
+        "_version",
+        *root,
+    ]
 
     def insert(spans, version, selected_project=project):
         rows = []
         for span in spans:
-            values = {"project_id": selected_project, "trace_session_id": session,
-                      "trace_id": trace, "end_time": span["start_time"] + timedelta(seconds=1),
-                      "_version": version, **span}
+            values = {
+                "project_id": selected_project,
+                "trace_session_id": session,
+                "trace_id": trace,
+                "end_time": span["start_time"] + timedelta(seconds=1),
+                "_version": version,
+                **span,
+            }
             rows.append([values[column] for column in columns])
         cost_client.insert("spans", rows, column_names=columns)
 
-    def read_usage(expected_tokens, expected_count, expected_cost, root_version=1, source_present=True):
+    def read_usage(
+        expected_tokens,
+        expected_count,
+        expected_cost,
+        root_version=1,
+        source_present=True,
+    ):
         sql, params = build_session_detail_aggregate_query(str(project), [str(session)])
         rows = list(cost_client.query(sql, parameters=params).named_results())
         assert len(rows) == 1
@@ -316,30 +496,52 @@ def test_native_source_summary_parent_late_children_and_replay(
         assert row["total_cost"] == expected_cost
         assert row["total_traces"] == 1
         expected_capture = (
-            {"scope": "observed_requests", "source_summary_present": True,
-             "request_count": expected_count, "coverage_unknown": True}
-            if source_present else None
+            {
+                "scope": "observed_requests",
+                "source_summary_present": True,
+                "request_count": expected_count,
+                "coverage_unknown": True,
+            }
+            if source_present
+            else None
         )
         assert row["observed_request_count"] == expected_count
         assert bool(row["source_summary_present"]) is source_present
-        assert capture_coverage_from_counts(
-            source_summary_present=bool(row["source_summary_present"]),
-            request_count=row["observed_request_count"],
-        ) == expected_capture
+        assert (
+            capture_coverage_from_counts(
+                source_summary_present=bool(row["source_summary_present"]),
+                request_count=row["observed_request_count"],
+            )
+            == expected_capture
+        )
 
         # The actual trace-list physical winner and shared session-list base,
         # not just detail reducers. Each full statement is bounded to this page.
         from tracer.services.clickhouse.v2.query_builders.trace_list import (
-            TraceListQueryBuilderV2, apply_trace_rollup,
+            TraceListQueryBuilderV2,
+            apply_trace_rollup,
         )
+
         trace_builder = TraceListQueryBuilderV2(project_id=str(project), filters=[])
         start_us = int(START.timestamp() * 1_000_000)
-        identity = (str(project), trace, root_id, start_us, "agent", "",
-                    start_us // 3_600_000_000 * 3_600_000_000, root_version)
-        trace_sql, trace_params = trace_builder.build_content_query(
-            [trace], root_identities=[identity], include_trace_rollup=True,
+        identity = (
+            str(project),
+            trace,
+            root_id,
+            start_us,
+            "agent",
+            "",
+            start_us // 3_600_000_000 * 3_600_000_000,
+            root_version,
         )
-        trace_rows = list(cost_client.query(trace_sql, parameters=trace_params).named_results())
+        trace_sql, trace_params = trace_builder.build_content_query(
+            [trace],
+            root_identities=[identity],
+            include_trace_rollup=True,
+        )
+        trace_rows = list(
+            cost_client.query(trace_sql, parameters=trace_params).named_results()
+        )
         assert len(trace_rows) == 1
         trace_row = {"project_id": str(project), "trace_id": trace, "id": root_id}
         apply_trace_rollup(trace_row, trace_rows[0])
@@ -347,16 +549,33 @@ def test_native_source_summary_parent_late_children_and_replay(
         assert trace_row["cost"] == expected_cost
         assert trace_row["total_tokens"] == expected_tokens
         assert trace_row["id"] == "0000000000000001"
-        session_builder = SessionListQueryBuilderV2(project_id=str(project), filters=[{
-            "column_id": "created_at", "filter_config": {
-                "col_type": "SYSTEM_METRIC", "filter_type": "datetime", "filter_op": "between",
-                "filter_value": [START.isoformat(), (START + timedelta(days=2)).isoformat()],
-            },
-        }])
-        session_sql, session_params = session_builder.build_page_hydration_query([str(session)])
-        session_rows = list(cost_client.query(session_sql, parameters=session_params).named_results())
+        session_builder = SessionListQueryBuilderV2(
+            project_id=str(project),
+            filters=[
+                {
+                    "column_id": "created_at",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "datetime",
+                        "filter_op": "between",
+                        "filter_value": [
+                            START.isoformat(),
+                            (START + timedelta(days=2)).isoformat(),
+                        ],
+                    },
+                }
+            ],
+        )
+        session_sql, session_params = session_builder.build_page_hydration_query(
+            [str(session)]
+        )
+        session_rows = list(
+            cost_client.query(session_sql, parameters=session_params).named_results()
+        )
         assert len(session_rows) == 1
-        session_row = session_builder.format_sessions(session_rows, list(session_rows[0]))[0]
+        session_row = session_builder.format_sessions(
+            session_rows, list(session_rows[0])
+        )[0]
         assert session_row["session_id"] == str(session)
         assert session_row["total_tokens"] == expected_tokens
         assert session_row["total_cost"] == expected_cost
@@ -370,11 +589,13 @@ def test_native_source_summary_parent_late_children_and_replay(
     read_usage(43071, 3, None)
     insert([root, *children, hook], 2)
     read_usage(43071, 3, None, root_version=2)
-    stored = list(cost_client.query(
-        "SELECT id, attrs_number FROM spans FINAL WHERE project_id = %(project)s "
-        "AND trace_id = %(trace)s AND id = %(id)s AND is_deleted = 0",
-        parameters={"project": str(project), "trace": trace, "id": root_id},
-    ).named_results())
+    stored = list(
+        cost_client.query(
+            "SELECT id, attrs_number FROM spans FINAL WHERE project_id = %(project)s "
+            "AND trace_id = %(trace)s AND id = %(id)s AND is_deleted = 0",
+            parameters={"project": str(project), "trace": trace, "id": root_id},
+        ).named_results()
+    )
     assert stored == [{"id": root_id, "attrs_number": raw_summary}]
     insert([{**children[0], "is_deleted": 1}], 3)
     read_usage(28915, 2, None, root_version=2)

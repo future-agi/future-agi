@@ -2091,7 +2091,9 @@ class TestTraceSessionWorkspaceScopeAPI:
         for sql in (page_sql, count_sql):
             assert "candidate_root_identities AS" in sql
             assert "latest_roots AS" in sql
-            assert "sum(total_tokens) AS total_tokens" in sql
+            assert "sum(usage_total_tokens) AS member_total_tokens" in sql
+            assert "LEFT JOIN session_usage USING (project_id, session_id)" in sql
+            assert "max(member_total_tokens) AS total_tokens" in sql
             assert "HAVING total_tokens >" in sql
         for call in analytics.execute_ch_query.call_args_list:
             assert (

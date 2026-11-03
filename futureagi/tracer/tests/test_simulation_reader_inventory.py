@@ -1307,6 +1307,13 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "SessionListQueryBuilder._candidate_session_ctes": _SESSION_OR_USER,
         "SessionListQueryBuilder._seed_witness_identity_gate": _SESSION_OR_USER,
         "SessionListQueryBuilder._session_from_where": _SESSION_OR_USER,
+        "SessionListQueryBuilder._session_member_ctes": filed(
+            PROJECT_SET,
+            why=(
+                "latest live member replay and child-inclusive usage for sessions "
+                "scoped by the list view's project ids; shared by filtering and hydration"
+            ),
+        ),
         "SessionListQueryBuilder.build_filter_anchor_probe": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_filter_seed_page": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_page_hydration_query": _SESSION_OR_USER,

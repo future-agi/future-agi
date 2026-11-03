@@ -13,10 +13,13 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
 from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import (
     _drop_legacy_ch_spans_mvs,  # noqa: F401 -- shadow global DB mutator
     _ensure_test_score_tenant_column,  # noqa: F401 -- shadow global DB mutator
-    ch,  # noqa: F401 -- existing owned ClickHouse fixture
+)
+from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import (
+    ch as shared_ch,
 )
 
 pytestmark = pytest.mark.integration
+ch = shared_ch
 
 
 def span(**changes):
@@ -38,8 +41,12 @@ def span(**changes):
 def activity(**changes):
     return span(
         **{
-            "observation_type": "tool", "cost": 0.0, "total_tokens": 0,
-            "prompt_tokens": 0, "completion_tokens": 0, "kind": "unknown",
+            "observation_type": "tool",
+            "cost": 0.0,
+            "total_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "kind": "unknown",
             **changes,
         }
     )
@@ -63,16 +70,41 @@ def activity(**changes):
         ([span(), span(kind="unknown", contribution="none", scope="turn")], 0.25, 12),
         ([span(kind="", cost=0.0)], 0.0, 12),
         ([span(), span()], 0.50, 24),
-        ([span(name="pydantic_ai.agent.run", observation_type="chain"),
-          span(parent_span_id="0")], 0.25, 12),
-        ([span(name="pydantic_ai.agent.run", observation_type="chain"),
-          activity(parent_span_id="0")], 0.25, 12),
+        (
+            [
+                span(name="pydantic_ai.agent.run", observation_type="chain"),
+                span(parent_span_id="0"),
+            ],
+            0.25,
+            12,
+        ),
+        (
+            [
+                span(name="pydantic_ai.agent.run", observation_type="chain"),
+                activity(parent_span_id="0"),
+            ],
+            0.25,
+            12,
+        ),
     ],
     ids=[
-        "known", "explicit-zero", "unknown", "mixed", "tokenless-tool",
-        "tokenless-chain", "zero-with-activity", "tokenless-llm", "turn",
-        "prompt-only", "completion-only", "total-only", "nonadditive-summary",
-        "legacy-zero", "distinct-equal-calls", "pydantic-summary", "parent-only",
+        "known",
+        "explicit-zero",
+        "unknown",
+        "mixed",
+        "tokenless-tool",
+        "tokenless-chain",
+        "zero-with-activity",
+        "tokenless-llm",
+        "turn",
+        "prompt-only",
+        "completion-only",
+        "total-only",
+        "nonadditive-summary",
+        "legacy-zero",
+        "distinct-equal-calls",
+        "pydantic-summary",
+        "parent-only",
     ],
 )
 def test_native_coverage_uses_billable_work_not_activity(
@@ -86,9 +118,8 @@ def test_native_coverage_uses_billable_work_not_activity(
         for field in fields:
             params[f"{field}_{index}"] = row[field]
         selects.append(
-            "SELECT " + ", ".join(
-                f"%({field}_{index})s AS {field}" for field in ("id", *fields)
-            )
+            "SELECT "
+            + ", ".join(f"%({field}_{index})s AS {field}" for field in ("id", *fields))
         )
     source = " UNION ALL ".join(selects)
     coverage = usage_coverage_sql(attrs="attrs_string", prefix="input.")

@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import structlog
+
 from tracer.utils.normalization import normalize_span
 
 logger = structlog.get_logger(__name__)

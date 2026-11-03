@@ -2180,6 +2180,9 @@ def test_user_trace_and_session_candidates_execute_with_alias_remaps():
             """
             CREATE TABLE spans (
                 project_id UUID,
+                observation_type LowCardinality(String),
+                service_name LowCardinality(String),
+                project_version_id Nullable(UUID),
                 trace_id String,
                 id String,
                 start_time DateTime64(6, 'UTC'),
@@ -2190,7 +2193,7 @@ def test_user_trace_and_session_candidates_execute_with_alias_remaps():
                 _version UInt64
             ) ENGINE = ReplacingMergeTree(_version)
             PARTITION BY toDate(start_time)
-            ORDER BY (project_id, toStartOfHour(start_time), trace_id, id, start_time)
+            ORDER BY (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id)
             """
         )
         client.execute(
@@ -2255,7 +2258,11 @@ def test_user_trace_and_session_candidates_execute_with_alias_remaps():
                     index + 1,
                 )
             )
-        client.execute("INSERT INTO spans VALUES", span_rows)
+        client.execute(
+            "INSERT INTO spans (project_id, trace_id, id, start_time, parent_span_id, "
+            "trace_session_id, end_user_id, is_deleted, _version) VALUES",
+            span_rows,
+        )
 
         filters = [
             {
