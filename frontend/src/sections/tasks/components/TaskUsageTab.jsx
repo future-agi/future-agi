@@ -21,6 +21,7 @@ import { alpha } from "@mui/material/styles";
 import Editor from "@monaco-editor/react";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 
 import { useTaskUsageChart, useTaskUsageLogs } from "../hooks/useTaskUsage";
@@ -71,15 +72,16 @@ const ScoreCell = ({ value }) => {
         —
       </Typography>
     );
+  // Same bands as the eval Usage tab: 0.7 and up passes, below 0.3 fails.
   if (typeof value === "number")
     return (
-      <Typography
-        variant="body2"
-        color="text.primary"
-        sx={{ fontVariantNumeric: "tabular-nums" }}
-      >
-        {value.toFixed(2)}
-      </Typography>
+      <StatusBadge
+        role={value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "danger"}
+        label={value.toFixed(2)}
+        variant="badge"
+        dot={false}
+        size="sm"
+      />
     );
   return (
     <Typography variant="body2" color="text.primary">

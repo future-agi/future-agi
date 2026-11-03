@@ -145,6 +145,7 @@ const PdfPreviewDrawer = () => {
                 maxWidth: 900,
                 margin: "0 auto",
                 p: 4,
+                bgcolor: "background.paper",
                 fontFamily: "monospace",
                 fontSize: "13px",
                 lineHeight: 1.8,

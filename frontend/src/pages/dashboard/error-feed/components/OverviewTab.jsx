@@ -1634,9 +1634,11 @@ ViewModeToggle.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
-function TabDot({ color, active }) {
+// `...other` carries MUI's iconWrapper class, which gives the gap to the label.
+function TabDot({ color, active, ...other }) {
   return (
     <Box
+      {...other}
       sx={{
         width: 6,
         height: 6,

@@ -12,6 +12,8 @@ const ROLE = {
   [STATUS_TYPES.PASS]: "success",
   [STATUS_TYPES.ERROR]: "danger",
   [STATUS_TYPES.UNSET]: "neutral",
+  [STATUS_TYPES.RUNNING]: "info",
+  [STATUS_TYPES.CANCELED]: "warning",
 };
 
 const StatusChip = ({

@@ -11,6 +11,7 @@ const HeaderButton = ({ icon, tooltip, onClick, disabled }) => (
         size="small"
         onClick={onClick}
         disabled={disabled}
+        aria-label={tooltip}
         sx={{
           border: "1px solid",
           borderColor: "divider",
@@ -37,6 +38,7 @@ const NavButton = ({ icon, tooltip, onClick, disabled }) => (
         size="small"
         onClick={onClick}
         disabled={disabled}
+        aria-label={tooltip}
         sx={{
           border: "1px solid",
           borderColor: "divider",

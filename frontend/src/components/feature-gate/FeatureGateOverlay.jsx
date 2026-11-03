@@ -145,7 +145,12 @@ const FeatureGateOverlay = ({
       >
         <Section
           variant="panel"
-          sx={{ width: "100%", maxWidth: maxCardWidth, p: 3.5 }}
+          sx={{
+            width: "100%",
+            maxWidth: maxCardWidth,
+            p: 3.5,
+            bgcolor: "background.paper",
+          }}
         >
           <Stack spacing={2.5}>
             {eyebrow && (

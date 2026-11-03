@@ -4,6 +4,7 @@ import {
   Box,
   Checkbox,
   Chip,
+  CircularProgress,
   FormControlLabel,
   InputAdornment,
   Stack,
@@ -15,7 +16,6 @@ import { useOrganization } from "src/contexts/OrganizationContext";
 import { useOrgMembersInfinite } from "src/api/annotation-queues/annotation-queues";
 import { useDebounce } from "src/hooks/use-debounce";
 import { QUEUE_ROLES, ROLE_PRIORITY } from "../constants";
-import ContentSkeleton from "src/components/content-skeleton";
 
 const ROLE_OPTIONS = [
   { value: QUEUE_ROLES.ANNOTATOR, label: "Annotator" },
@@ -300,7 +300,7 @@ export default function AnnotatorPicker({
         )}
         {isFetchingNextPage && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 1 }}>
-            <ContentSkeleton variant="panel" />
+            <CircularProgress size={20} sx={{ color: "text.secondary" }} />
           </Box>
         )}
       </Box>

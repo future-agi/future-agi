@@ -684,6 +684,8 @@ function DragOverlayCard({ widget }) {
       sx={{
         width: 280,
         height: 120,
+        // Section is transparent; the drag preview floats over widgets.
+        bgcolor: "background.paper",
         opacity: 0.9,
         boxShadow: theme.shadows[16],
         pointerEvents: "none",

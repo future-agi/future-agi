@@ -28,26 +28,6 @@ export const STATUS_CONFIG = {
     borderColor: "text.disabled",
     textColor: "text.disabled",
   },
-  // Stopped on purpose — neither a failure nor an unknown, so it gets its own hue rather
-  // than the grey UNSET treatment it used to blend into. No cancel glyph ships under
-  // icons/status, so the neutral one is reused.
-  [STATUS_TYPES.CANCELED]: {
-    icon: "/assets/icons/status/unset.svg",
-    color: "orange.500",
-    bgColor: "orange.o5",
-    borderColor: "orange.500",
-    // Light-mode value; CustomStatusChip swaps it for orange.300 in dark, where the
-    // deep orange would sit at roughly 2:1 against the page.
-    textColor: "orange.700",
-  },
-  // No in-progress glyph ships under icons/status, so the neutral one is reused.
-  [STATUS_TYPES.RUNNING]: {
-    icon: "/assets/icons/status/unset.svg",
-    color: "blue.500",
-    bgColor: "blue.o5",
-    borderColor: "blue.500",
-    textColor: "blue.500",
-  },
 };
 
 /**

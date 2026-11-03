@@ -53,6 +53,7 @@ const FILTERABLE_DATA_TYPES = new Set([
   "boolean",
   "datetime",
   "array",
+  "audio",
 ]);
 import { getRandomId } from "src/utils/utils";
 import { isEqual } from "lodash";
@@ -1674,8 +1675,11 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         const dataType = cd.col?.data_type;
         return {
           id: FILTERABLE_DATA_TYPES.has(dataType) ? cd.field : undefined,
-          label: cd.headerName,
-          dataType,
+          // Audio columns filter on their duration, a number. Mapped here so
+          // other filters that share the adapter keep treating audio as text.
+          label:
+            dataType === "audio" ? `${cd.headerName} duration` : cd.headerName,
+          dataType: dataType === "audio" ? "float" : dataType,
         };
       }),
     [columnDefs],

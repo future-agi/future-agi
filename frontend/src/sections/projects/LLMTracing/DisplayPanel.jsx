@@ -15,6 +15,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 
 const GROUP_OPTIONS = [
@@ -112,14 +113,11 @@ PanelCheck.propTypes = {
 // ---------------------------------------------------------------------------
 // View mode tab button (Graph View / Agent Graph / Agent Path)
 // ---------------------------------------------------------------------------
+// Labels only: with an icon, "Agent Graph" doesn't fit a third of the 320px panel.
 const VIEW_MODES = [
-  { key: "graph", label: "Graph View", icon: "solar:graph-up-linear" },
-  { key: "agentGraph", label: "Agent Graph", icon: "solar:graph-linear" },
-  {
-    key: "agentPath",
-    label: "Agent Path",
-    icon: "solar:routing-2-linear",
-  },
+  { key: "graph", label: "Graph View" },
+  { key: "agentGraph", label: "Agent Graph" },
+  { key: "agentPath", label: "Agent Path" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -209,27 +207,39 @@ const DisplayPanel = ({
             <SegmentedTabs
               value={viewMode}
               onChange={(_, key) => onViewModeChange?.(key)}
-              sx={{ width: "100%", "& .MuiTab-root": { flex: 1 } }}
+              sx={{
+                width: "100%",
+                "& .MuiTab-root": { flex: 1, whiteSpace: "nowrap" },
+              }}
             >
               {VIEW_MODES.map((vm) => {
                 const isDisabled =
                   vm.key !== "graph" && (isSimulator || !agentGraphEnabled);
-                return (
+                const tab = (
                   <Tab
                     key={vm.key}
                     value={vm.key}
-                    icon={<Iconify icon={vm.icon} width={14} />}
-                    iconPosition="start"
                     label={vm.label}
                     disabled={isDisabled}
-                    title={
-                      isDisabled
-                        ? isSimulator
-                          ? "Not available for voice projects"
-                          : "Select a project filter to use agent visualizations"
-                        : undefined
-                    }
                   />
+                );
+                if (!isDisabled) return tab;
+                // A disabled tab gets no pointer events, so the tooltip wraps it.
+                return (
+                  <CustomTooltip
+                    key={vm.key}
+                    show
+                    size="small"
+                    arrow
+                    placement="top"
+                    title={
+                      isSimulator
+                        ? "Not available for voice projects"
+                        : "Select a project filter to use agent visualizations"
+                    }
+                  >
+                    <Box sx={{ flex: 1, display: "flex" }}>{tab}</Box>
+                  </CustomTooltip>
                 );
               })}
             </SegmentedTabs>

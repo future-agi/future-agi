@@ -1,6 +1,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import {
   Box,
+  CircularProgress,
   LinearProgress,
   Table,
   TableBody,
@@ -24,7 +25,6 @@ import PromptTemplateEvalRow from "./PromptTemplateEvalRow";
 import Lightbox from "yet-another-react-lightbox";
 import "yet-another-react-lightbox/styles.css";
 import PerformanceDetailDrawer from "./PerformanceDetail/PerformanceDetailDrawer";
-import ContentSkeleton from "src/components/content-skeleton";
 
 const PerformanceTable = ({
   tableData,
@@ -172,7 +172,7 @@ const PerformanceTable = ({
       />
       {isFetchingNextPage && (
         <Box sx={{ display: "flex", justifyContent: "center" }}>
-          <ContentSkeleton variant="rows" />
+          <CircularProgress size={20} sx={{ color: "text.secondary" }} />
         </Box>
       )}
     </Box>

@@ -1232,6 +1232,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                             }))
                           }
                           rowsPerPage={scenariosPagination.pageSize}
+                          rowsPerPageOptions={[10, 25, 50, 100]}
                           onRowsPerPageChange={(event) => {
                             setScenariosPagination({
                               page: 1,

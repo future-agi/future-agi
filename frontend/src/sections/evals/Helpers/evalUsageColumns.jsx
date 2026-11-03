@@ -14,17 +14,16 @@ export const ScoreCell = ({ value }) => {
         —
       </Typography>
     );
+  // Same bands as before the design system: 0.7 and up passes, below 0.3 fails.
   if (typeof value === "number")
     return (
-      <Typography
-        variant="s2"
-        sx={{
-          fontVariantNumeric: "tabular-nums",
-          color: "text.primary",
-        }}
-      >
-        {value.toFixed(2)}
-      </Typography>
+      <StatusBadge
+        role={value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "danger"}
+        label={value.toFixed(2)}
+        variant="badge"
+        dot={false}
+        size="sm"
+      />
     );
   return (
     <Typography variant="s2" sx={{ color: "text.secondary" }}>

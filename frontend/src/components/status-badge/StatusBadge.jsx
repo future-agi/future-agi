@@ -74,7 +74,18 @@ export default function StatusBadge({
         }}
         {...other}
       >
-        <Dot colors={colors} shape={meta.shape} size={8} />
+        {/* A caller's icon stands in for the dot, so a column of mixed
+            states shows icons throughout. */}
+        {icon ? (
+          <Box
+            component="span"
+            sx={{ display: "inline-flex", flexShrink: 0, color: colors.solid }}
+          >
+            {icon}
+          </Box>
+        ) : (
+          <Dot colors={colors} shape={meta.shape} size={8} />
+        )}
         <Typography
           component="span"
           noWrap

@@ -1,9 +1,8 @@
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, CircularProgress, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
 import { ShowComponent } from "src/components/show";
 import { AgentPromptOptimizerStatus } from "../FixMyAgentDrawer/common";
-import ContentSkeleton from "src/components/content-skeleton";
 
 const OptmizationLoaderComponent = ({
   optimizationStatus = "unknown",
@@ -42,7 +41,7 @@ const OptmizationLoaderComponent = ({
               justifyContent: "center",
             }}
           >
-            <ContentSkeleton variant="panel" />
+            <CircularProgress size={24} sx={{ color: "text.primary" }} />
           </Box>
 
           <Stack
@@ -87,7 +86,7 @@ const OptmizationLoaderComponent = ({
               justifyContent: "center",
             }}
           >
-            <ContentSkeleton variant="panel" />
+            <CircularProgress size={24} sx={{ color: "text.primary" }} />
           </Box>
 
           <Stack
