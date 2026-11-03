@@ -64849,7 +64849,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessCapabilityRecheckResponse: {
-      required: ["scope", "agent_version_id", "state"],
+      required: [
+        "scope",
+        "agent_version_id",
+        "state",
+        "needs_rebuild",
+        "selection",
+        "capabilities",
+      ],
       type: "object",
       properties: {
         scope: {
@@ -64865,9 +64872,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         state: {
           title: "State",
-          description: "started, or not_needed when the last check passed",
+          description:
+            "started (the agent preflight runs again), not_needed (it passed), or rechecked (read again now)",
           type: "string",
           minLength: 1,
+        },
+        needs_rebuild: {
+          description:
+            "World capabilities a build measured; only a new build reads them again.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        selection: {
+          $ref: "#/definitions/HarnessCapabilitySelection",
+        },
+        capabilities: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessCapabilityRecheckCount",
+          },
         },
       },
     },
@@ -96450,6 +96476,78 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessCapabilityRecheckCount: {
+      required: ["id", "status", "affected", "affected_scenarios"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        affected: {
+          title: "Affected",
+          type: "integer",
+        },
+        affected_scenarios: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    HarnessCapabilitySelection: {
+      required: [
+        "requested",
+        "eligible",
+        "blocked",
+        "untested",
+        "requirements_recorded",
+        "dropped",
+      ],
+      type: "object",
+      properties: {
+        requested: {
+          title: "Requested",
+          type: "integer",
+        },
+        eligible: {
+          title: "Eligible",
+          type: "integer",
+        },
+        blocked: {
+          title: "Blocked",
+          type: "integer",
+        },
+        untested: {
+          title: "Untested",
+          type: "integer",
+        },
+        requirements_recorded: {
+          title: "Requirements recorded",
+          type: "boolean",
+        },
+        dropped: {
+          description:
+            "Scenarios no longer in the suite; counted in none of the others.",
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+      },
+    },
     HarnessCapabilityRow: {
       required: [
         "id",
@@ -96553,51 +96651,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             type: "string",
             minLength: 1,
-          },
-        },
-      },
-    },
-    HarnessCapabilitySelection: {
-      required: [
-        "requested",
-        "eligible",
-        "blocked",
-        "untested",
-        "requirements_recorded",
-        "dropped",
-      ],
-      type: "object",
-      properties: {
-        requested: {
-          title: "Requested",
-          type: "integer",
-        },
-        eligible: {
-          title: "Eligible",
-          type: "integer",
-        },
-        blocked: {
-          title: "Blocked",
-          type: "integer",
-        },
-        untested: {
-          title: "Untested",
-          type: "integer",
-        },
-        requirements_recorded: {
-          title: "Requirements recorded",
-          type: "boolean",
-        },
-        dropped: {
-          description:
-            "Scenarios no longer in the suite; counted in none of the others.",
-          type: "array",
-          items: {
-            type: "object",
-            additionalProperties: {
-              type: "string",
-              "x-nullable": true,
-            },
           },
         },
       },

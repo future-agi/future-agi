@@ -18647,16 +18647,29 @@ export interface HarnessCapabilityRecheckApi {
   check?: string;
 }
 
+export interface HarnessCapabilityRecheckCountApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  status: string;
+  affected: number;
+  affected_scenarios: string[];
+}
+
 export interface HarnessCapabilityRecheckResponseApi {
   /** @minLength 1 */
   scope: string;
   /** @minLength 1 */
   agent_version_id: string;
   /**
-   * started, or not_needed when the last check passed
+   * started (the agent preflight runs again), not_needed (it passed), or rechecked (read again now)
    * @minLength 1
    */
   state: string;
+  /** World capabilities a build measured; only a new build reads them again. */
+  needs_rebuild: string[];
+  selection: HarnessCapabilitySelectionApi;
+  capabilities: HarnessCapabilityRecheckCountApi[];
 }
 
 export type HarnessComparePairApiBand =

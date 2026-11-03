@@ -37315,7 +37315,34 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesRespon
     state: zod
       .string()
       .min(1)
-      .describe("started, or not_needed when the last check passed"),
+      .describe(
+        "started (the agent preflight runs again), not_needed (it passed), or rechecked (read again now)",
+      ),
+    needs_rebuild: zod
+      .array(zod.string().min(1))
+      .describe(
+        "World capabilities a build measured; only a new build reads them again.",
+      ),
+    selection: zod.object({
+      requested: zod.number(),
+      eligible: zod.number(),
+      blocked: zod.number(),
+      untested: zod.number(),
+      requirements_recorded: zod.boolean(),
+      dropped: zod
+        .array(zod.record(zod.string(), zod.string()))
+        .describe(
+          "Scenarios no longer in the suite; counted in none of the others.",
+        ),
+    }),
+    capabilities: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        status: zod.string().min(1),
+        affected: zod.number(),
+        affected_scenarios: zod.array(zod.string().min(1)),
+      }),
+    ),
   });
 
 /**
