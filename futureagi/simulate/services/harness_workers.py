@@ -552,7 +552,7 @@ def record_call_workers(call_execution_id: str) -> dict[str, Any] | None:
         for one in ((call.provider_call_data or {}).get("livekit") or {}).get("tool_calls") or []
         if isinstance(one, dict)
     ]
-    traced_calls = [one for one in sealed if one.get("worker_id") or one.get("worker_label")]
+    traced_calls = [one for one in sealed if one.get("worker_id") or one.get("worker_label") or one.get("delegated_to")]
     if traces.project_id is None and not traced_calls:
         return None
     job = HostedHarnessJob.no_workspace_objects.filter(test_execution=call.test_execution).first()

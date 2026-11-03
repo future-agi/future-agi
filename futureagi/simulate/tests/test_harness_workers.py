@@ -204,6 +204,20 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(user, worksp
         reported = harness_workers.record_call_workers(str(call.id))
     assert [(one["worker_id"], one["tool"]) for one in reported["events"]] == [(f"{run.run_id}/order_lookup", "get_order")]
 
+    # A hand-off whose launcher the runtime could not name is still read, as the coordinator's.
+    call.provider_call_data = {"livekit": {"tool_calls": [
+        {"name": "start_async_task", "ok": True, "at": 1.0, "ended_at": 5.0, "delegated_to": "researcher", "result": "done"}
+    ]}}
+    call.save(update_fields=["provider_call_data"])
+    with patch("simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)), patch(
+        "tracer.services.clickhouse.v2.get_reader", side_effect=AssertionError("no spans to read")
+    ):
+        launched = harness_workers.record_call_workers(str(call.id))
+    assert [(one["type"], one["worker_id"], one.get("by")) for one in launched["events"]] == [
+        ("delegated", f"{run.run_id}/researcher", None),
+        ("returned", f"{run.run_id}/researcher", None),
+    ]
+
 
 @pytest.mark.django_db
 def test_a_declared_worker_not_seen_yet_gets_one_more_read_later():
