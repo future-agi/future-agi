@@ -5,12 +5,12 @@ import {
   AccordionSummary,
   Box,
   Button,
-  Card,
   Divider,
   Stack,
   Typography,
 } from "@mui/material";
 
+import Section from "src/components/section";
 import {
   humanBytes,
   humanDuration,
@@ -66,16 +66,14 @@ Field.propTypes = {
 
 function ReportSection({ title, children }) {
   return (
-    <Card
-      component="section"
-      variant="outlined"
-      sx={{ p: { xs: 2, sm: 3 }, borderRadius: 2, minWidth: 0 }}
-    >
-      <Typography component="h2" variant="h6" sx={{ mb: 1 }}>
-        {title}
-      </Typography>
-      {children}
-    </Card>
+    <Box component="section" sx={{ minWidth: 0 }}>
+      <Section variant="panel" sx={{ p: { xs: 2, sm: 3 } }}>
+        <Typography component="h2" variant="h6" sx={{ mb: 1 }}>
+          {title}
+        </Typography>
+        {children}
+      </Section>
+    </Box>
   );
 }
 ReportSection.propTypes = {
