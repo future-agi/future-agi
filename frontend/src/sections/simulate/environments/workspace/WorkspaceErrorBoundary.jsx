@@ -37,11 +37,11 @@ export default class WorkspaceErrorBoundary extends ReactComponent {
     return (
       <Box sx={{ height: "100%", minHeight: 420, display: "grid", placeItems: "center", p: 3 }}>
         <Stack spacing={1.5} alignItems="center" sx={{ maxWidth: 480, textAlign: "center" }}>
-          <Iconify icon="solar:danger-triangle-linear" width={28} sx={{ color: "error.main" }} />
-          <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold" }}>
+          <Iconify icon="solar:danger-triangle-linear" width={28} sx={{ color: "status.danger.fg" }} />
+          <Typography sx={{ typography: "s1_2", fontWeight: 600 }}>
             {WORKSPACE_COPY.crashed.title}
           </Typography>
-          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
             {WORKSPACE_COPY.crashed.body}
           </Typography>
           <Stack direction="row" spacing={1}>

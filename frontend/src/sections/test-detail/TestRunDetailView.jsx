@@ -1,4 +1,5 @@
-import { Alert, Box, Button, Paper, useTheme } from "@mui/material";
+import { Alert, Box, Button, useTheme } from "@mui/material";
+import Section from "src/components/section";
 import { useQuery } from "@tanstack/react-query";
 import React, {
   lazy,
@@ -132,18 +133,15 @@ const TestRunDetailView = () => {
         }}
       >
         {/* Header Section */}
-        <Paper
+        <Section
           sx={{
             paddingX: theme.spacing(2),
             paddingTop: theme.spacing(2),
-            borderRadius: 0,
-            boxShadow: "none",
-            backgroundColor: "background.paper",
-            flexShrink: 0, // Prevent header from shrinking
+            flexShrink: 0,
           }}
         >
           <TestRunDetailHeader />
-        </Paper>
+        </Section>
         {newExecutionId && (
           <Alert
             severity="info"

@@ -8,6 +8,7 @@ import { AuthGuard } from "src/auth/guard";
 import DashboardLayout from "src/layouts/dashboard";
 
 import { LoadingScreen } from "src/components/loading-screen";
+import EmptyContent from "src/components/empty-content";
 import { Events, getPageViewEvent, trackEvent } from "src/utils/Mixpanel";
 import HarnessToEnvironment from "../components/harness-to-environment";
 import RoleProtection from "../components/role-protection";
@@ -330,6 +331,12 @@ const WorkspaceExecutionDetail = lazyWithRetry(
   () =>
     import(
       "src/sections/simulate/environments/workspace/runs/WorkspaceExecutionDetail"
+    ),
+);
+const WorkspaceImprovementDetail = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/improvements/WorkspaceImprovementDetail"
     ),
 );
 const RunTestDetail = lazyWithRetry(
@@ -1165,9 +1172,7 @@ export const dashboardRoutes = (
         {
           path: "voice",
           element: (
-            <div style={{ padding: 32, color: "#888", textAlign: "center" }}>
-              Voice observability coming soon.
-            </div>
+            <EmptyContent title="Voice observability coming soon" />
           ),
         },
         {
@@ -1441,6 +1446,10 @@ export const dashboardRoutes = (
           path: "environments/:envId",
           element: <SimulateEnvironmentWorkspace />,
           children: [
+            {
+              path: "improvements/:fixId",
+              element: <WorkspaceImprovementDetail />,
+            },
             {
               path: "runs/:testId/:executionId",
               element: <WorkspaceExecutionDetail />,

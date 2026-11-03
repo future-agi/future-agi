@@ -43,6 +43,7 @@ from simulate.serializers.agent_fix import (
     AgentFixRunDetailSerializer,
     AgentFixRunListSerializer,
     AgentFixRunSerializer,
+    AgentFixShipSerializer,
 )
 from simulate.services import agent_fix_engine, agent_fix_models
 from simulate.services.agent_fix_github import open_pull_request
@@ -188,6 +189,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         fix_run = launch_fix_run(
             source_run,
             target_scenario_keys=data["target_scenario_keys"],
+            protected_scenario_keys=data["protected_scenario_keys"],
             surfaces=data["surfaces"],
             locked_paths=data["locked_paths"],
             budget_usd=data["budget_credits"] / 100,
@@ -248,8 +250,9 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         )
 
     @validated_request(
-        request_serializer=EmptyRequestSerializer,
+        request_serializer=AgentFixShipSerializer,
         responses={200: AgentFixMakeDefaultSerializer},
+        reject_unknown_fields=True,
     )
     @action(
         detail=True,
@@ -260,12 +263,17 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         candidate = self._candidate(request, pk, candidate_id)
         if candidate is None:
             return _not_found()
-        outcome = make_candidate_default(candidate, user=request.user)
+        outcome = make_candidate_default(
+            candidate,
+            user=request.user,
+            override_reason=request.validated_data["override_reason"],
+        )
         return Response({"outcome": outcome})
 
     @validated_request(
-        request_serializer=EmptyRequestSerializer,
+        request_serializer=AgentFixShipSerializer,
         responses={200: AgentFixPullRequestSerializer},
+        reject_unknown_fields=True,
     )
     @action(
         detail=True,
@@ -273,11 +281,17 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         url_path=r"candidates/(?P<candidate_id>[0-9a-f-]{36})/pull-request",
     )
     def pull_request(self, request, pk=None, candidate_id=None):
-        """A GitHub agent's winner, opened once as a pull request on its repository."""
+        """A GitHub agent's winner, or a candidate only its must-pass check refused with
+        the user's reason, opened once as a pull request on its repository."""
         candidate = self._candidate(request, pk, candidate_id)
         if candidate is None:
             return _not_found()
-        return Response({"pull_request_url": open_pull_request(candidate)})
+        url = open_pull_request(
+            candidate,
+            user=request.user,
+            override_reason=request.validated_data["override_reason"],
+        )
+        return Response({"pull_request_url": url})
 
     @swagger_auto_schema(
         responses={

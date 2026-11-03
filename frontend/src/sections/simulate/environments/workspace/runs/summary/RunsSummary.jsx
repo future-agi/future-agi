@@ -12,6 +12,7 @@ import { useRunsSummary } from "./useRunsSummary";
 import SummaryGraph from "./SummaryGraph";
 import SummaryLegend from "./SummaryLegend";
 import SummaryTable from "./SummaryTable";
+import { dataColor } from "../runs.constants";
 import { countCoveredScenarios } from "./summaryData";
 import RunCompare from "./RunCompare";
 import { COMPARE_COPY } from "../../workspace.constants";
@@ -131,10 +132,10 @@ export default function RunsSummary({
             value={graphRuns}
             onChange={(e) => setGraphRuns(Number(e.target.value))}
             inputProps={{ "aria-label": "Runs in graph" }}
-            sx={{ width: 150, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2", py: 0.5 } }}
+            sx={{ width: 150, flexShrink: 0 }}
           >
             {GRAPH_RUN_OPTIONS.map((n) => (
-              <MenuItem key={n} value={n} sx={{ typography: "s2", py: 0.5 }}>
+              <MenuItem key={n} value={n}>
                 Latest {n} {n === 1 ? "run" : "runs"}
               </MenuItem>
             ))}
@@ -151,15 +152,15 @@ export default function RunsSummary({
                     ? `All ${evals.length} evals`
                     : `${ids.length} of ${evals.length} evals`,
               }}
-              sx={{ width: 200, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2", py: 0.5 } }}
+              sx={{ width: 200, flexShrink: 0 }}
             >
               {evals.map((e) => {
                 const on = shown.some((x) => x.id === e.id);
                 return (
-                  <MenuItem key={e.id} value={e.id} sx={{ typography: "s2", py: 0.5 }}>
+                  <MenuItem key={e.id} value={e.id}>
                     <Checkbox size="small" checked={on} disabled={on && shown.length === 1} sx={{ p: 0.5, mr: 0.75 }} />
-                    <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: e.color, mr: 1, flexShrink: 0 }} />
-                    <ListItemText primaryTypographyProps={{ typography: "s2" }} primary={e.name} />
+                    <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: (t) => dataColor(t, e.colorIndex), mr: 1, flexShrink: 0 }} />
+                    <ListItemText primary={e.name} />
                   </MenuItem>
                 );
               })}
@@ -174,7 +175,7 @@ export default function RunsSummary({
           direction="row" alignItems="center" spacing={1}
           sx={{ px: 2.5, py: 1, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
         >
-          <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}>
+          <Typography sx={{ typography: "s1", fontWeight: 500 }}>
             Runs ({count})
           </Typography>
           <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
@@ -186,14 +187,14 @@ export default function RunsSummary({
                 {selected.length ? COMPARE_COPY.picked(selected.length) : COMPARE_COPY.pick}
               </Typography>
               {selected.length > 0 && (
-                <Button size="small" onClick={() => setSelected([])} sx={{ typography: "s2", flexShrink: 0 }}>
+                <Button size="small" onClick={() => setSelected([])} sx={{ flexShrink: 0 }}>
                   {COMPARE_COPY.clear}
                 </Button>
               )}
               <Button
                 variant="outlined" size="small" disabled={!comparable}
                 onClick={() => setComparing(true)}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0 }}
+                sx={{ flexShrink: 0 }}
               >
                 {COMPARE_COPY.compare}
               </Button>
@@ -202,16 +203,15 @@ export default function RunsSummary({
           <Button
             variant="outlined" size="small" onClick={() => onGo?.("evals")}
             startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-            sx={{ typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0 }}
+            sx={{ flexShrink: 0 }}
           >
-            Add Evals
+            Add evals
           </Button>
           <CustomTooltip show arrow size="small" title="Choosing a winner is coming soon">
             <span>
               <Button
                 variant="outlined" size="small" disabled
                 startIcon={<Iconify icon="solar:cup-star-linear" width={15} />}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
               >
                 Choose winner
               </Button>

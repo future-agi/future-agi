@@ -345,7 +345,7 @@ describe("DashboardDetailView — widget description (TH-7678)", () => {
     const { container } = render(<DashboardDetailView />);
     // The card header holds the title row and nothing else.
     const header = container.querySelector(
-      '[data-widget-id="w-1"] .MuiCardContent-root > div',
+      '[data-widget-id="w-1"] > div > div > div',
     );
     expect(header.children).toHaveLength(1);
   });
@@ -362,7 +362,7 @@ describe("DashboardDetailView — widget description (TH-7678)", () => {
     ];
     const { container } = render(<DashboardDetailView />);
     const header = container.querySelector(
-      '[data-widget-id="w-1"] .MuiCardContent-root > div',
+      '[data-widget-id="w-1"] > div > div > div',
     );
     expect(header.children).toHaveLength(1);
   });

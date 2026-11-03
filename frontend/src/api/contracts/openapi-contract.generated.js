@@ -27892,7 +27892,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           runtimeRequestValidation: true,
           runtimeResponseValidation: true,
           requestBody: {
-            $ref: "#/definitions/EmptyRequest",
+            $ref: "#/definitions/AgentFixShip",
           },
           queryParameters: {},
           responses: {
@@ -27929,7 +27929,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           runtimeRequestValidation: true,
           runtimeResponseValidation: true,
           requestBody: {
-            $ref: "#/definitions/EmptyRequest",
+            $ref: "#/definitions/AgentFixShip",
           },
           queryParameters: {},
           responses: {
@@ -49436,6 +49436,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxItems: 200,
           minItems: 1,
         },
+        protected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          default: [],
+          maxItems: 200,
+        },
         surfaces: {
           type: "array",
           items: {
@@ -49902,6 +49912,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/AgentFixRun",
           },
+        },
+      },
+    },
+    AgentFixShip: {
+      type: "object",
+      properties: {
+        override_reason: {
+          title: "Override reason",
+          type: "string",
+          default: "",
+          maxLength: 2000,
         },
       },
     },
@@ -90384,6 +90405,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           readOnly: true,
         },
+        override: {
+          $ref: "#/definitions/AgentFixOverride",
+        },
         pull_request_url: {
           title: "Pull request url",
           type: "string",
@@ -90488,6 +90512,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        protected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
         },
         held_back_scenario_keys: {
           type: "array",
@@ -112847,6 +112879,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    AgentFixOverride: {
+      required: ["allowed", "regressions", "reason", "by", "at"],
+      type: "object",
+      properties: {
+        allowed: {
+          title: "Allowed",
+          type: "boolean",
+        },
+        regressions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        at: {
+          title: "At",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
     },
     AgentPromptOptimiserGraphEvaluation: {
       type: "object",

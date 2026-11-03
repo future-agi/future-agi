@@ -20,7 +20,12 @@ const MiniImageRender = (props) => {
         style={{ display: "inline-block" }}
         onClick={() => setOpen(true)}
       />
-      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="lg">
+      <Dialog
+        open={open}
+        onClose={() => setOpen(false)}
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 960 } }}
+      >
         <DialogContent
           sx={{
             bgcolor: "background.paper",
@@ -69,7 +74,7 @@ export const RenderJSONString = memo(({ val, theme }) => {
         : "var(--bg-subtle)",
     textOverflow: "ellipsis",
     overflow: "hidden",
-    fontSize: "14px",
+    fontSize: "13px",
     lineHeight: "22px",
     whiteSpace: "nowrap",
     color: "var(--text-primary)",
@@ -166,7 +171,7 @@ const CustomJsonViewer = ({
       editable={false}
       valueTypes={[imageType]}
       // this set same as Typography s1 as it is used for normal text
-      sx={{ fontSize: "14px", lineHeight: "22px" }}
+      sx={{ fontSize: "13px", lineHeight: "22px" }}
       {...rest}
     />
   );

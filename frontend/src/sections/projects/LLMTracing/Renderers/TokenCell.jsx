@@ -9,13 +9,18 @@ const BreakdownTooltip = ({ promptTokens, completionTokens, totalTokens }) => (
     <Typography sx={{ fontSize: 13, fontWeight: 600, mb: 1 }}>
       Usage breakdown
     </Typography>
-    <BRow label="Input usage" value={promptTokens} icon="mdi:arrow-down" bold />
+    <BRow
+      label="Input usage"
+      value={promptTokens}
+      icon="solar:arrow-down-linear"
+      bold
+    />
     <BRow label="input" value={promptTokens} />
     <Box sx={{ my: 0.75 }} />
     <BRow
       label="Output usage"
       value={completionTokens}
-      icon="mdi:arrow-up"
+      icon="solar:arrow-up-linear"
       bold
     />
     <BRow label="output" value={completionTokens} />
@@ -122,7 +127,7 @@ const TokenCell = ({ value, data }) => {
             {fShortenNumber(promptTokens)}
           </Typography>
           <Iconify
-            icon="mdi:arrow-down"
+            icon="solar:arrow-down-linear"
             width={12}
             sx={{ color: "text.secondary" }}
           />
@@ -133,7 +138,7 @@ const TokenCell = ({ value, data }) => {
             {fShortenNumber(completionTokens)}
           </Typography>
           <Iconify
-            icon="mdi:arrow-up"
+            icon="solar:arrow-up-linear"
             width={12}
             sx={{ color: "text.secondary" }}
           />
@@ -158,6 +163,7 @@ const TokenCell = ({ value, data }) => {
       )}
       {hasBreakdown && (
         <Tooltip
+          classes={{ tooltip: "ds-hovercard" }}
           title={
             <BreakdownTooltip
               promptTokens={promptTokens}
@@ -168,7 +174,7 @@ const TokenCell = ({ value, data }) => {
           arrow
           placement="bottom"
           slotProps={{
-            tooltip: { sx: { maxWidth: 280, bgcolor: "grey.900", p: 1 } },
+            tooltip: { sx: { maxWidth: 280 } },
           }}
         >
           <Box
@@ -182,7 +188,7 @@ const TokenCell = ({ value, data }) => {
             }}
           >
             <Iconify
-              icon="mdi:information-outline"
+              icon="solar:info-circle-linear"
               width={14}
               color="text.secondary"
             />
