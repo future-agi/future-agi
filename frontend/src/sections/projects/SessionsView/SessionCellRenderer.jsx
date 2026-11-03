@@ -8,6 +8,7 @@ import CustomJsonViewer, {
 } from "src/components/custom-json-viewer/CustomJsonViewer";
 import { isJson } from "src/components/traceDetailDrawer/DrawerRightRenderer/getSpanData";
 import CustomTooltip from "src/components/tooltip";
+import { formatCost } from "../LLMTracing/formatters";
 
 const SHOW_TOOLTIPS = ["first_message", "last_message"];
 
@@ -86,23 +87,11 @@ const SessionCellRenderer = (params) => {
       );
     }
 
-    // total_cost column
+    // Format display only; the grid keeps the numeric value for sort/filter.
     if (colId === "total_cost") {
       return (
-        <Box
-          display="flex"
-          alignItems="center"
-          justifyContent={"flex-end"}
-          gap={1}
-        >
-          <Iconify
-            icon="mage:dollar"
-            color="text.primary"
-            height={16}
-            width={16}
-            sx={{ flexShrink: 0 }}
-          />
-          {value}
+        <Box display="flex" alignItems="center" justifyContent="flex-end">
+          {formatCost(value)}
         </Box>
       );
     }

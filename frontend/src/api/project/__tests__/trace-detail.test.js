@@ -1,7 +1,7 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { useGetTraceDetail } from "../trace-detail";
@@ -72,6 +72,56 @@ describe("useGetTraceDetail", () => {
     });
   });
 
+  it("retains the actual 503 error and retries the same bounded endpoint", async () => {
+    const error = { statusCode: 503, result: "Service unavailable" };
+    axios.get.mockRejectedValueOnce(error);
+    const { result } = renderHook(
+      () => useGetTraceDetail("trace-1", { projectId: "p" }),
+      { wrapper: createQueryWrapper() },
+    );
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toEqual(error);
+    expect(result.current.data).toBeUndefined();
+
+    const emptyTrace = { observation_spans: [] };
+    axios.get.mockResolvedValueOnce({ data: { result: emptyTrace } });
+    await act(async () => {
+      await result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(emptyTrace);
+    expect(result.current.error).toBeNull();
+    expect(axios.get).toHaveBeenCalledTimes(2);
+    expect(axios.get.mock.calls[1]).toEqual(axios.get.mock.calls[0]);
+  });
+
+  it("does not carry the old trace's spans or error into another trace identity", async () => {
+    let resolveOld;
+    axios.get.mockImplementation((url) =>
+      url.endsWith("trace-1/")
+        ? new Promise((resolve) => {
+            resolveOld = resolve;
+          })
+        : Promise.resolve({
+            data: {
+              result: { trace: { id: "trace-2" }, observation_spans: [] },
+            },
+          }),
+    );
+    const { result, rerender } = renderHook(
+      ({ traceId }) => useGetTraceDetail(traceId, { projectId: "p" }),
+      { wrapper: createQueryWrapper(), initialProps: { traceId: "trace-1" } },
+    );
+    await waitFor(() => expect(resolveOld).toEqual(expect.any(Function)));
+    rerender({ traceId: "trace-2" });
+    await waitFor(() => expect(result.current.data?.trace.id).toBe("trace-2"));
+    await act(async () => {
+      resolveOld({ data: { result: { trace: { id: "trace-1" } } } });
+    });
+    expect(result.current.data.trace.id).toBe("trace-2");
+    expect(result.current.isError).toBe(false);
+  });
+
   it("keeps one run's copy of a trace apart from the plain read in the cache", async () => {
     const wrapper = createQueryWrapper();
     renderHook(() => useGetTraceDetail("trace-1", { projectId: "p" }), {
@@ -79,7 +129,10 @@ describe("useGetTraceDetail", () => {
     });
     renderHook(
       () =>
-        useGetTraceDetail("trace-1", { projectId: "p", testExecutionId: "run-1" }),
+        useGetTraceDetail("trace-1", {
+          projectId: "p",
+          testExecutionId: "run-1",
+        }),
       { wrapper },
     );
 

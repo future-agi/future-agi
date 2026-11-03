@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
-import { addMonths, subMonths, format, parseISO, isValid } from "date-fns";
+import {
+  addDays,
+  addMonths,
+  subMonths,
+  format,
+  parseISO,
+  isValid,
+  startOfDay,
+  subMilliseconds,
+} from "date-fns";
 import Calendar from "./Calender.jsx";
 import { Box, Button, Divider, Popover } from "@mui/material";
 import { useForm } from "react-hook-form";
@@ -25,11 +34,19 @@ export default function CustomDateRangePicker({
   useEffect(() => {
     const justOpened = open && !prevOpenRef.current;
     prevOpenRef.current = open;
-    if (!justOpened || !value?.[0] || !value?.[1]) return;
+    if (!justOpened) return;
+    setRange({ start: null, end: null });
+    if (!value?.[0] || !value?.[1]) return;
     const start = new Date(value[0]);
     const end = new Date(value[1]);
-    if (!isValid(start) || !isValid(end)) return;
-    setRange({ start, end });
+    if (!isValid(start) || !isValid(end) || end <= start) return;
+    // Stored bounds are already half-open. Show the last covered calendar day,
+    // but keep the exact timestamps unless the user makes a new date selection.
+    setRange({
+      start: startOfDay(start),
+      end: startOfDay(subMilliseconds(end, 1)),
+      original: value,
+    });
     setCurrentDate1(start);
     setCurrentDate2(addMonths(start, 1));
   }, [open, value]);
@@ -48,47 +65,49 @@ export default function CustomDateRangePicker({
 
   const handleInputChange = (value, type) => {
     const parsedDate = parseISO(value);
-    if (!isValid(parsedDate)) return;
+    if (!isValid(parsedDate)) {
+      setRange((prev) => ({ ...prev, [type]: null, original: null }));
+      return;
+    }
 
     setRange((prev) => {
       if (type === "start") {
         if (prev.end && parsedDate > prev.end) {
           return { start: prev.end, end: parsedDate };
         }
-        return { ...prev, start: parsedDate };
+        return { ...prev, start: parsedDate, original: null };
       }
 
       if (type === "end") {
         if (prev.start && parsedDate < prev.start) {
           return { start: parsedDate, end: prev.start };
         }
-        return { ...prev, end: parsedDate };
+        return { ...prev, end: parsedDate, original: null };
       }
 
       return prev;
     });
   };
 
+  const isInvalidRange = Boolean(
+    range.start && range.end && range.start > range.end,
+  );
+  const isButtonActive =
+    isValid(range.start) && isValid(range.end) && !isInvalidRange;
+
   const handleCustomDate = () => {
-    if (!range.start || !range.end) {
-      alert("Please select both start and end dates.");
-      return;
-    }
-    if (range.start > range.end) {
-      alert("Start date cannot be after end date.");
-      return;
-    }
-    setDateFilter([
-      format(range.start, "yyyy-MM-dd HH:mm:ss"),
-      format(range.end, "yyyy-MM-dd HH:mm:ss"),
-    ]);
+    if (!isButtonActive) return;
+    // Calendar days are inclusive; the API's end is exclusive. Calendar
+    // arithmetic (not 24 hours) also covers the 23/25-hour DST days.
+    setDateFilter(
+      range.original || [
+        startOfDay(range.start).toISOString(),
+        addDays(startOfDay(range.end), 1).toISOString(),
+      ],
+    );
     setDateOption("Custom");
     onClose();
   };
-
-  const isInvalidRange = range.start && range.end && range.start > range.end;
-  const isButtonActive =
-    isValid(range.start) && isValid(range.end) && !isInvalidRange;
 
   return (
     <Popover
@@ -214,5 +233,7 @@ CustomDateRangePicker.propTypes = {
   anchorEl: PropType.any,
   setDateFilter: PropType.func,
   setDateOption: PropType.func,
-  value: PropType.arrayOf(PropType.instanceOf(Date)),
+  value: PropType.arrayOf(
+    PropType.oneOfType([PropType.instanceOf(Date), PropType.string]),
+  ),
 };
