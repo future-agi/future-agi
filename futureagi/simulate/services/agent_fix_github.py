@@ -1,20 +1,22 @@
-"""Ship a GitHub agent's winner as a pull request on its repository: the candidate's patch,
-applied to the commit the fix started from, on a branch of its own."""
+"""Ship a GitHub agent's winner, or a candidate only its must-pass check refused, as a pull
+request on its repository: the candidate's patch, applied to the commit the fix started
+from, on a branch of its own."""
 
 import re
 import tempfile
 from math import floor
 from pathlib import Path
 from textwrap import shorten
+from typing import Any
 
 import requests
 import structlog
 from django.conf import settings
 
 from simulate.models import AgentFixCandidate, HarnessAgentVersionRuntime
-from simulate.selectors.agent_fix import limited_validation
+from simulate.selectors.agent_fix import limited_validation, overridable_regressions
 from simulate.services.agent_fix_engine import load_object
-from simulate.services.agent_fix_runs import require_shippable
+from simulate.services.agent_fix_runs import record_override, require_shippable
 from simulate.services.harness_github import safe_repository, short_ref
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import (
@@ -35,9 +37,11 @@ _LIMITED_NOTE = (
 )
 
 
-def open_pull_request(candidate: AgentFixCandidate) -> str:
+def open_pull_request(
+    candidate: AgentFixCandidate, *, user: Any, override_reason: str = ""
+) -> str:
     """Open the candidate's pull request once and return its URL."""
-    require_shippable(candidate)
+    require_shippable(candidate, override_reason=override_reason)
     if candidate.pull_request_url:
         return candidate.pull_request_url
     fix_run = candidate.fix_run
@@ -74,6 +78,8 @@ def open_pull_request(candidate: AgentFixCandidate) -> str:
         )
     patch = load_object(candidate.patch_object_key) or b""
     branch = f"futureagi/fix-{str(fix_run.id)[:8]}-{candidate.attempt}"
+    # Before the push: the commit carries the reason, so a retry pushes the same commit.
+    record_override(candidate, reason=override_reason, user=user)
     title, body = _description(candidate)
     with GitHubAppTokenProvider.from_settings().credential(installation_id) as token:
         _push(repository, commit, branch, patch, candidate, title, body, token)
@@ -85,7 +91,7 @@ def open_pull_request(candidate: AgentFixCandidate) -> str:
             title,
             body,
             token,
-            draft=limited_validation(fix_run),
+            draft=limited_validation(fix_run) or bool(candidate.override_reason),
         )
     AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
         pull_request_url=url
@@ -116,8 +122,19 @@ def _evidence(verdict: dict) -> str:
     )
 
 
+def _override_note(candidate: AgentFixCandidate) -> str:
+    """What a candidate the must-pass check refused ships with, and the user's reason."""
+    checks = "\n".join(f"- `{check}`" for check in overridable_regressions(candidate))
+    reason = "\n".join(f"> {line}" for line in candidate.override_reason.splitlines())
+    return (
+        "**Known regression.** Fix my agent did not accept this change: these must-pass"
+        f" checks regressed.\n\n{checks}\n\nIt ships anyway, for this reason:\n\n{reason}"
+    )
+
+
 def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
-    """The title and body, which say so when too few cases were held back to verify it."""
+    """The title and body, which say so when too few cases were held back to verify it,
+    and when it ships with a known regression on the user's reason."""
     summary = candidate.summary.strip()
     first = summary.splitlines()[0] if summary else f"attempt {candidate.attempt}"
     verdict = candidate.verdict or {}
@@ -125,10 +142,12 @@ def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
         part for part in (_evidence(verdict), verdict.get("reason")) if part
     )
     limited = limited_validation(candidate.fix_run)
-    proof = "Checked" if limited else "Proven"
+    overridden = bool(candidate.override_reason)
+    proof = "Checked" if limited or overridden else "Proven"
     body = "\n\n".join(
         part
         for part in (
+            _override_note(candidate) if overridden else "",
             _LIMITED_NOTE if limited else "",
             summary,
             f"{proof} by Fix my agent: {reason}" if reason else "",
@@ -136,7 +155,15 @@ def _description(candidate: AgentFixCandidate) -> tuple[str, str]:
         )
         if part
     )
-    name = "Fix my agent (limited validation)" if limited else "Fix my agent"
+    marks = ", ".join(
+        mark
+        for mark, applies in (
+            ("limited validation", limited),
+            ("known regression", overridden),
+        )
+        if applies
+    )
+    name = f"Fix my agent ({marks})" if marks else "Fix my agent"
     return shorten(f"{name}: {first}", width=_TITLE_CHARS, placeholder="…"), body
 
 
