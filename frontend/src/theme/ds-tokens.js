@@ -416,8 +416,8 @@ export const dsTypography = {
     "fontWeight": 500
   },
   "body1": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px",
+    "fontSize": "0.75rem",
+    "lineHeight": "18px",
     "fontWeight": 400
   },
   "body2": {
@@ -472,8 +472,8 @@ export const dsTypography = {
     "fontWeight": 500
   },
   "body_md": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px",
+    "fontSize": "0.75rem",
+    "lineHeight": "18px",
     "fontWeight": 400
   },
   "body_sm": {
@@ -519,8 +519,8 @@ export const dsTypography = {
     "lineHeight": "18px"
   },
   "s1_2": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px"
+    "fontSize": "0.75rem",
+    "lineHeight": "18px"
   },
   "s2": {
     "fontSize": "0.6875rem",
@@ -543,8 +543,8 @@ export const dsTypography = {
     "lineHeight": "22px"
   },
   "m3": {
-    "fontSize": "0.8125rem",
-    "lineHeight": "20px"
+    "fontSize": "0.75rem",
+    "lineHeight": "18px"
   },
   "l1": {
     "fontSize": "1.5rem",

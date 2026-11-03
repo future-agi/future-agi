@@ -574,8 +574,8 @@ window.DS = {
      "use": "Section title, panel title, group heading."
     },
     "body-md": {
-     "size": 13,
-     "line": 20,
+     "size": 12,
+     "line": 18,
      "weight": 400,
      "tracking": "0",
      "use": "Paragraphs, input values, long text."
