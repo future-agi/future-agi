@@ -40,6 +40,7 @@ from tracer.services.clickhouse.query_builders.filters import (
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     _attribute_plan,
+    _values_fit_second_inline_budget,
     partition_span_filter_plans,
 )
 from tracer.services.clickhouse.query_builders.session_filters import (
@@ -1886,10 +1887,32 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 # The compiler proves this value witness exhaustive even when
                 # missing-key defaults and independent argMax fields matter.
                 # Otherwise retain its conservative necessary raw witness.
+                # This statement carries every plan's exact comparison plus
+                # one discovery witness. Individually small IN leaves can
+                # exceed max_query_size together, so apply the compiler's
+                # second-copy budget to their combined value payload too.
+                # Key presence widens discovery only; the latest-state
+                # predicates below still determine exact membership.
+                population_values = tuple(
+                    value
+                    for plan in witness_plans
+                    for param_name, param_value in plan.params.items()
+                    if param_name.startswith("latest_filter_param_")
+                    for value in (
+                        param_value
+                        if isinstance(param_value, (tuple, list))
+                        else (param_value,)
+                    )
+                    if isinstance(value, str)
+                )
                 predicate = (
-                    witness.raw_graph_value_witness_predicate
+                    witness.raw_population_witness_predicate
+                    if witness.raw_population_witness_predicate is not None
+                    else witness.raw_graph_value_witness_predicate
                     or witness.raw_witness_predicate
                 )
+                if not _values_fit_second_inline_budget(population_values):
+                    predicate = witness.raw_key_witness_predicate or predicate
                 witness_cte = f"""
         (SELECT groupUniqArray(assumeNotNull(trace_session_id))
          FROM {self.TABLE}

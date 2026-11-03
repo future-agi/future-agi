@@ -18,10 +18,12 @@ means the guard can fail, not that it cannot see.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 
 import pytest
 
+from tracer.serializers.trace_session import TraceSessionListQuerySerializer
 from tracer.services.clickhouse.query_builders import latest_filter_predicates
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     _CLICKHOUSE_MAX_QUERY_SIZE_BYTES,
@@ -30,6 +32,9 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     compile_span_filter_plans,
 )
 from tracer.services.clickhouse.v2.query_builders import trace_list as trace_list_module
+from tracer.services.clickhouse.v2.query_builders.session_list import (
+    SessionListQueryBuilderV2,
+)
 from tracer.services.clickhouse.v2.query_builders.span_list import (
     SpanListQueryBuilderV2,
 )
@@ -172,6 +177,23 @@ def _voice_classifier(builder) -> str:
     return _render_driver_sql(sql, params)
 
 
+def _session_builder(operation: str, value, *, typed: bool = False):
+    """Build the bounded Session preview path used by task selection."""
+
+    return SessionListQueryBuilderV2(
+        project_id=PROJECT,
+        filters=[_time_filter(), _attribute_filter(operation, value, typed=typed)],
+        page_number=0,
+        page_size=25,
+        bounded_internal_scan=True,
+    )
+
+
+def _session_candidate(builder) -> str:
+    sql, params = builder.build_candidate_page_query()
+    return _render_driver_sql(sql, params)
+
+
 def _literal(value: str) -> str:
     """The literal a statement carries: the lowercased value, driver-escaped."""
 
@@ -249,6 +271,83 @@ def test_span_classifier_carries_the_measured_values_once_and_parses():
     assert _fits(classifier)
     assert _copies(classifier, FIRST_VALUE) == 1
     assert _copies(classifier, SECOND_VALUE) == 1
+
+
+def test_session_candidate_with_measured_in_values_keeps_one_exact_copy():
+    """Session preview must not inline ~100 KiB values in its witness CTE twice."""
+
+    rendered = _session_candidate(
+        _session_builder("in", [FIRST_VALUE, SECOND_VALUE], typed=True)
+    )
+    assert _fits(rendered)
+    # The candidate CTE uses key/index presence for discovery; the exact
+    # comparison remains in the latest-state classifier once per value.
+    assert _copies(rendered, FIRST_VALUE) == 1
+    assert _copies(rendered, SECOND_VALUE) == 1
+
+
+def test_session_candidate_size_guard_catches_the_second_copy(monkeypatch):
+    """Negative control: restoring the old value witness exceeds max_query_size."""
+
+    monkeypatch.setattr(
+        latest_filter_predicates, "_MAX_TWICE_INLINED_VALUES_RENDERED_BYTES", 1 << 40
+    )
+    rendered = _session_candidate(
+        _session_builder("in", [FIRST_VALUE, SECOND_VALUE], typed=True)
+    )
+    assert _copies(rendered, FIRST_VALUE) == 2
+    assert _copies(rendered, SECOND_VALUE) == 2
+    assert not _fits(rendered)
+
+
+def test_session_candidate_combines_supported_large_leaves_under_parser_limit():
+    """The public serializer permits several large leaves in one request.
+
+    Each leaf stays below its individual config budget, but their exact
+    comparisons share one ClickHouse statement. The discovery witness must
+    therefore stand down its value copy based on the combined request budget.
+    """
+
+    first = [f"{index}{'x' * 16_383}" for index in range(6)]
+    second = [f"{index}{'y' * 16_383}" for index in range(6)]
+    filters = [
+        _time_filter(),
+        _attribute_filter("in", first, typed=True),
+        {
+            **_attribute_filter("in", second, typed=True),
+            "column_id": "other_key",
+        },
+        {
+            "column_id": "total_tokens",
+            "filter_config": {
+                "col_type": "SYSTEM_METRIC",
+                "filter_type": "number",
+                "filter_op": "greater_than",
+                "filter_value": 0,
+            },
+        },
+    ]
+    serializer = TraceSessionListQuerySerializer(
+        data={
+            "project_id": PROJECT,
+            "filters": json.dumps(filters),
+            "cursor_mode": False,
+            "page_size": 25,
+        }
+    )
+    assert serializer.is_valid(), serializer.errors
+    builder = SessionListQueryBuilderV2(
+        project_id=PROJECT,
+        filters=serializer.validated_data["filters"],
+        page_number=0,
+        page_size=25,
+        bounded_internal_scan=True,
+    )
+    assert builder.prefers_bounded_filter_page() is False
+    rendered = _session_candidate(builder)
+    assert _fits(rendered)
+    for value in [*first, *second]:
+        assert _copies(rendered, value) == 1
 
 
 def _span_discovery(builder) -> str:
