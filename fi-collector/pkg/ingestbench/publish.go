@@ -171,7 +171,7 @@ func headline(r Result, minSustained time.Duration, telemetry *TelemetryCheck) H
 	h := Headline{Status: "withheld", WithheldReasons: []string{}, OfferedSpansPerSecond: r.Config.Rate, SustainedSeconds: r.Config.Duration.Seconds(), MinSustainedSeconds: minSustained.Seconds(),
 		LoadWindowSeconds: r.LoadSeconds,
 		Definition:        "a pass at the offered rate, not a capacity: the offered spans/s is stated as sustained when every offered span was started, acknowledged and found stored by the exact-ID verification; the achieved figure is acknowledged spans / measured load window (load start to the completion of the last export)",
-		Rule:              "printed only for an executed run of at least the minimum duration with clean completion status whose verification completed with no missing, visible duplicate or unexpected span and no stored span of a refused request, that started and acknowledged all offered load, saw every sentinel and had no fault"}
+		Rule:              "printed only for an executed run of at least the minimum duration with clean completion status whose verification completed with no missing, visible duplicate or unexpected span and no stored span of a refused request, that started and acknowledged all offered load, saw every sentinel, recorded no application/direct-read error and had no fault"}
 	why := func(format string, args ...any) {
 		h.WithheldReasons = append(h.WithheldReasons, fmt.Sprintf(format, args...))
 	}
@@ -181,6 +181,18 @@ func headline(r Result, minSustained time.Duration, telemetry *TelemetryCheck) H
 	}
 	if r.Status != "measured-profile-complete" {
 		why("run status %q is not a clean measured-profile-complete result", r.Status)
+	}
+	// Imported receipts may retain a clean label despite recorded failures.
+	// Censored or unconfigured reads are not errors and remain diagnostic.
+	for _, p := range r.Reads {
+		if p.Errors > 0 {
+			why("application read %q recorded %d errors", p.Name, p.Errors)
+		}
+	}
+	for _, p := range r.DirectReads {
+		if p.Errors > 0 {
+			why("direct ClickHouse read %q (%s) recorded %d errors", p.Name, p.Phase, p.Errors)
+		}
 	}
 	if v.DuplicateRows != 0 {
 		why("storage holds %d visible duplicate expected rows", v.DuplicateRows)
@@ -209,7 +221,7 @@ func headline(r Result, minSustained time.Duration, telemetry *TelemetryCheck) H
 	if v.Complete && v.ContractViolation {
 		why("storage holds spans of requests the collector refused (%d whole-request rejected, %d beyond a partial rejection)", v.PersistedBy.RejectedButPersisted, v.PersistedBy.PartialExcess)
 	}
-	if r.Recovery != nil {
+	if r.Recovery != nil || len(r.Config.DeclaredFaults) > 0 {
 		why("the run injected or declared faults: a recovery case is not a throughput measurement")
 	}
 	if r.Lag.Unseen > 0 {
@@ -365,7 +377,11 @@ func notMeasured(r Result) []string {
 		out = append(out, "Collector backlog over time ("+orUnknown(r.Backlog.Status)+": pass --collector-health-url).")
 	}
 	if r.Recovery == nil {
-		out = append(out, "Recovery from a collector or storage fault (no fault in this run).")
+		detail := "no fault in this run"
+		if len(r.Config.DeclaredFaults) > 0 {
+			detail = "faults declared but no recovery measurements recorded"
+		}
+		out = append(out, "Recovery from a collector or storage fault ("+detail+").")
 	}
 	if !r.Clock.Start.Measured {
 		out = append(out, "Generator-to-ClickHouse clock offset.")
