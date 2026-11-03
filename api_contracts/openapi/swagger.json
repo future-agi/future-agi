@@ -50172,7 +50172,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/EmptyRequest"
+                            "$ref": "#/definitions/AgentFixShip"
                         }
                     }
                 ],
@@ -50252,14 +50252,14 @@
         "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/": {
             "post": {
                 "operationId": "simulate_api_agent-fix-runs_candidates_pull_request",
-                "description": "A GitHub agent's winner, opened once as a pull request on its repository.",
+                "description": "A GitHub agent's winner, or a candidate only its must-pass check refused with\nthe user's reason, opened once as a pull request on its repository.",
                 "parameters": [
                     {
                         "name": "data",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/EmptyRequest"
+                            "$ref": "#/definitions/AgentFixShip"
                         }
                     }
                 ],
@@ -124845,6 +124845,14 @@
                         "minLength": 1
                     }
                 },
+                "protected_scenario_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "default": []
+                },
                 "held_back_scenario_keys": {
                     "type": "array",
                     "items": {
@@ -124964,6 +124972,61 @@
                 }
             }
         },
+        "HarnessVersionPerson": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                }
+            },
+            "x-nullable": true
+        },
+        "AgentFixOverride": {
+            "required": [
+                "allowed",
+                "regressions",
+                "reason",
+                "by",
+                "at"
+            ],
+            "type": "object",
+            "properties": {
+                "allowed": {
+                    "title": "Allowed",
+                    "type": "boolean"
+                },
+                "regressions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "by": {
+                    "$ref": "#/definitions/HarnessVersionPerson"
+                },
+                "at": {
+                    "title": "At",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
         "AgentFixCandidate": {
             "required": [
                 "attempt",
@@ -125017,6 +125080,9 @@
                         "$ref": "#/definitions/AgentFixCheckRun"
                     },
                     "readOnly": true
+                },
+                "override": {
+                    "$ref": "#/definitions/AgentFixOverride"
                 },
                 "pull_request_url": {
                     "title": "Pull request url",
@@ -125261,6 +125327,16 @@
                     },
                     "maxItems": 200,
                     "minItems": 1
+                },
+                "protected_scenario_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "default": [],
+                    "maxItems": 200
                 },
                 "surfaces": {
                     "type": "array",
@@ -125753,6 +125829,17 @@
                         "$ref": "#/definitions/AgentFixEvalWarning"
                     },
                     "readOnly": true
+                }
+            }
+        },
+        "AgentFixShip": {
+            "type": "object",
+            "properties": {
+                "override_reason": {
+                    "title": "Override reason",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 2000
                 }
             }
         },
@@ -129030,25 +129117,6 @@
                     "$ref": "#/definitions/HarnessCompareVersions"
                 }
             }
-        },
-        "HarnessVersionPerson": {
-            "required": [
-                "id",
-                "name"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "name": {
-                    "title": "Name",
-                    "type": "string"
-                }
-            },
-            "x-nullable": true
         },
         "HarnessDraftItem": {
             "required": [

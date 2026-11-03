@@ -454,23 +454,6 @@ def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
     return list(results.values())
 
 
-def failing_sub_goals_by_scenario(
-    source_run: HostedHarnessJob, scenario_keys: list[str]
-) -> dict[str, list[str]]:
-    """The sub-goals that did not hold on each of the given scenarios of a finished run, in
-    the order the scenarios are given; a scenario where everything held maps to []."""
-    found = {one.key: one.failing_sub_goals for one in scenario_results(source_run)}
-    return {key: found.get(key, []) for key in scenario_keys}
-
-
-def failing_sub_goals(
-    source_run: HostedHarnessJob, scenario_keys: list[str]
-) -> list[str]:
-    """The sub-goals that did not hold on the given scenarios of a finished run."""
-    by_scenario = failing_sub_goals_by_scenario(source_run, scenario_keys)
-    return list(dict.fromkeys(name for names in by_scenario.values() for name in names))
-
-
 def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls
     plus every check run whose usage is sealed. ``committed_usd`` also holds a worst case for
@@ -581,6 +564,7 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         )
         .prefetch_related(
             "candidates__agent_version",
+            "candidates__override_by",
             Prefetch("check_runs", queryset=check_runs, to_attr="check_run_list"),
         )
     )
@@ -590,6 +574,43 @@ def limited_validation(fix_run: AgentFixRun) -> bool:
     """Whether too few cases were held back to call this fix verified, however it scored."""
     held_back = fix_run.request.get("held_back_scenario_keys") or []
     return len(held_back) < HELD_BACK_VERIFIED_MIN
+
+
+# The tiers the engine's final check records for a finalist, in order.
+VERDICT_TIERS = ("static", "target", "held-back", "must-pass", "repeats", "ceilings")
+
+
+def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
+    """The must-pass checks a refused candidate regressed on, as "scenario key: check",
+    when nothing else refused it: its verdict holds the final check's every tier, each one
+    passed but must-pass, and no check is on a case the user protected. Such a candidate
+    may ship on the user's reason; for any other the list is empty."""
+    if candidate.outcome != AgentFixCandidate.Outcome.REJECTED:
+        return []
+    verdict = candidate.verdict or {}
+    # Fail closed: a verdict missing a tier, or naming one twice, proves too little.
+    tiers = [
+        (tier.get("name"), tier.get("status")) for tier in verdict.get("tiers") or []
+    ]
+    # The frozen plan, not the verdict being checked, says whether the final check owed a
+    # held-back tier: the engine drops that tier when it froze no held-back case.
+    held_back = (candidate.fix_run.plan or {}).get("held_back")
+    if not isinstance(held_back, int) or isinstance(held_back, bool):
+        return []
+    expected = [
+        (name, "failed" if name == "must-pass" else "passed")
+        for name in VERDICT_TIERS
+        if held_back or name != "held-back"
+    ]
+    regressions = verdict.get("must_pass_regressions") or []
+    # The engine names a lost protected case only in prose, so every regression on a
+    # protected case counts as one: a protected case is never shipped regressed.
+    protected = candidate.fix_run.request.get("protected_scenario_keys") or []
+    if tiers != expected or any(
+        check.startswith(f"{key}: ") for check in regressions for key in protected
+    ):
+        return []
+    return list(regressions)
 
 
 def is_retryable(fix_run: AgentFixRun) -> bool:

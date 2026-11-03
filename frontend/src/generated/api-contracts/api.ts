@@ -96,6 +96,7 @@ import type {
   AgentFixRunApi,
   AgentFixRunDetailApi,
   AgentFixRunListApi,
+  AgentFixShipApi,
   AgentPlaygroundErrorResponseApi,
   AgentPlaygroundGraphsExecutionsListParams,
   AgentPlaygroundGraphsList200,
@@ -58150,7 +58151,7 @@ and ship its winner: the environment's default, or a GitHub pull request.
 export const simulateApiAgentFixRunsCandidatesMakeDefault = async (
   id: string,
   candidateId: string,
-  emptyRequestApi: EmptyRequestApi,
+  agentFixShipApi: AgentFixShipApi,
   options?: RequestInit,
 ): Promise<simulateApiAgentFixRunsCandidatesMakeDefaultResponse> => {
   return apiMutator<simulateApiAgentFixRunsCandidatesMakeDefaultResponse>(
@@ -58159,7 +58160,7 @@ export const simulateApiAgentFixRunsCandidatesMakeDefault = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(emptyRequestApi),
+      body: JSON.stringify(agentFixShipApi),
     },
   );
 };
@@ -58242,12 +58243,13 @@ export const getSimulateApiAgentFixRunsCandidatesPullRequestUrl = (
 };
 
 /**
- * A GitHub agent's winner, opened once as a pull request on its repository.
+ * A GitHub agent's winner, or a candidate only its must-pass check refused with
+the user's reason, opened once as a pull request on its repository.
  */
 export const simulateApiAgentFixRunsCandidatesPullRequest = async (
   id: string,
   candidateId: string,
-  emptyRequestApi: EmptyRequestApi,
+  agentFixShipApi: AgentFixShipApi,
   options?: RequestInit,
 ): Promise<simulateApiAgentFixRunsCandidatesPullRequestResponse> => {
   return apiMutator<simulateApiAgentFixRunsCandidatesPullRequestResponse>(
@@ -58256,7 +58258,7 @@ export const simulateApiAgentFixRunsCandidatesPullRequest = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(emptyRequestApi),
+      body: JSON.stringify(agentFixShipApi),
     },
   );
 };
