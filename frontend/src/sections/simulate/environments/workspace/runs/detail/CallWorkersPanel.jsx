@@ -118,12 +118,18 @@ function Line({ title, at, start, color, children }) {
       alignItems="baseline"
       justifyContent="space-between"
     >
+      {/* A long task stays a heading: three lines, the whole of it on hover. */}
       <Typography
+        title={typeof title === "string" ? title : undefined}
         sx={{
           typography: "s2",
           fontWeight: 600,
           color,
           wordBreak: "break-word",
+          display: "-webkit-box",
+          WebkitLineClamp: 3,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
         }}
       >
         {title}
