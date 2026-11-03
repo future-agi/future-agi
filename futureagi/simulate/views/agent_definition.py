@@ -41,9 +41,9 @@ from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
 from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
     is_masked,
-    keep_stored_websocket_headers,
-    keep_stored_websocket_url,
+    merge_websocket_secrets,
     resolve_api_key_for_version,
     resolve_stored_api_key,
     sync_provider_credentials,
@@ -762,14 +762,11 @@ class EditAgentDefinitionView(APIView):
                 "websocket_url",
                 "websocket_headers",
             ]
-            if "websocket_headers" in validated:
-                validated["websocket_headers"] = keep_stored_websocket_headers(
-                    validated["websocket_headers"], agent.websocket_headers
+            validated.update(
+                merge_websocket_secrets(
+                    validated, agent.websocket_url, agent.websocket_headers
                 )
-            if "websocket_url" in validated:
-                validated["websocket_url"] = keep_stored_websocket_url(
-                    validated["websocket_url"], agent.websocket_url
-                )
+            )
             changed_fields = []
             for field in update_fields:
                 if field == "api_key" and preserve_existing_api_key:
@@ -853,6 +850,8 @@ class EditAgentDefinitionView(APIView):
             return self._gm.not_found("Agent definition not found")
         except ObservabilityRefused as error:
             return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
+        except CredentialsNeedReentry as error:
+            return self._gm.bad_request(error.message)
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to update agent definition: {str(e)}"

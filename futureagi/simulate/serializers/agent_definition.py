@@ -12,7 +12,12 @@ from simulate.serializers.websocket_fields import (
     WebsocketHeadersField,
     WebsocketUrlField,
 )
-from simulate.services.agent_definition import is_masked, sync_provider_credentials
+from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
+    is_masked,
+    merge_websocket_secrets,
+    sync_provider_credentials,
+)
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 from tfc.permissions.utils import cached_is_read_only_user
@@ -53,6 +58,13 @@ def _extract_credentials_input(
         livekit_max_concurrency=validated_data.pop("livekit_max_concurrency", None),
         provider_was_provided="provider" in validated_data,
     )
+
+
+def _save_credentials(version, creds_input):
+    try:
+        sync_provider_credentials(version, creds_input)
+    except CredentialsNeedReentry as error:
+        raise serializers.ValidationError(error.message) from error
 
 
 class AgentDefinitionOperationSerializer(serializers.Serializer):
@@ -427,6 +439,17 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
                     }
                 )
 
+        if self.instance is not None:
+            try:
+                attrs.update(
+                    merge_websocket_secrets(
+                        attrs,
+                        self.instance.websocket_url,
+                        self.instance.websocket_headers,
+                    )
+                )
+            except CredentialsNeedReentry as error:
+                raise serializers.ValidationError(error.message) from error
         return attrs
 
     @transaction.atomic
@@ -445,7 +468,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
                 commit_message="Initial version",
                 status="draft",
             )
-        sync_provider_credentials(version, creds_input)
+        _save_credentials(version, creds_input)
         return instance
 
     @transaction.atomic
@@ -467,7 +490,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         creds_input.provider = instance.provider or creds_input.provider
         version = instance.active_version or instance.latest_version
         if version:
-            sync_provider_credentials(version, creds_input)
+            _save_credentials(version, creds_input)
         return instance
 
 
@@ -655,7 +678,7 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
         creds_input.provider = instance.provider or creds_input.provider
         version = instance.active_version or instance.latest_version
         if version:
-            sync_provider_credentials(version, creds_input)
+            _save_credentials(version, creds_input)
         return instance
 
     def to_representation(self, instance):

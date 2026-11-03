@@ -139,3 +139,141 @@ def test_stored_livekit_credentials_go_only_to_the_stored_server(
     assert response.status_code == 200, response.content
     sent_to = livekit_api.call_args.kwargs["url"]
     assert sent_to == STORED_LIVEKIT_URL.replace("wss://", "https://")
+
+
+def _edit(client, agent, **fields):
+    return client.put(
+        f"{AGENTS}{agent.id}/edit/",
+        {"agent_name": agent.agent_name, "agent_type": agent.agent_type, **fields},
+        format="json",
+    )
+
+
+def test_masked_headers_are_not_sent_to_a_new_host(
+    organization, workspace, socket_agent
+):
+    response = _edit(
+        _member_client(organization, workspace),
+        socket_agent,
+        websocket_url="https://someone-else.example/ws",
+        websocket_headers={"Authorization": MASKED_VALUE},
+    )
+
+    assert response.status_code == 400, response.content
+    assert "header values again" in str(response.data)
+    socket_agent.refresh_from_db()
+    assert socket_agent.websocket_url == SOCKET_URL
+    assert socket_agent.websocket_headers == HEADERS
+
+
+def test_a_masked_url_token_is_not_sent_to_a_new_host(
+    organization, workspace, socket_agent
+):
+    response = _edit(
+        _member_client(organization, workspace),
+        socket_agent,
+        websocket_url="https://someone-else.example/socket?token=********",
+    )
+
+    assert response.status_code == 400, response.content
+    socket_agent.refresh_from_db()
+    assert socket_agent.websocket_url == SOCKET_URL
+
+
+def test_editing_one_url_parameter_keeps_the_masked_token(
+    organization, workspace, socket_agent
+):
+    response = _edit(
+        _member_client(organization, workspace),
+        socket_agent,
+        websocket_url="https://agent.example.com/socket?token=********&region=eu",
+    )
+
+    assert response.status_code == 200, response.content
+    socket_agent.refresh_from_db()
+    assert socket_agent.websocket_url == (
+        "https://agent.example.com/socket?token=url-secret&region=eu"
+    )
+
+
+def test_the_operations_endpoint_keeps_masked_headers_too(
+    organization, workspace, socket_agent
+):
+    response = _member_client(organization, workspace).patch(
+        f"/simulate/api/agent-definition-operations/{socket_agent.id}/",
+        {"websocket_headers": {"Authorization": MASKED_VALUE, "X-Team": "sales"}},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.content
+    socket_agent.refresh_from_db()
+    assert socket_agent.websocket_headers == {
+        "Authorization": "Bearer ws-secret-token",
+        "X-Team": "sales",
+    }
+
+
+def test_a_new_livekit_server_needs_the_key_and_secret_again(
+    organization, workspace, livekit_agent
+):
+    client = _member_client(organization, workspace)
+    moved = {
+        "provider": "livekit",
+        "livekit_url": "wss://someone-else.example",
+        "livekit_agent_name": "support",
+    }
+
+    refused = _edit(
+        client,
+        livekit_agent,
+        **moved,
+        livekit_api_key=MASKED_VALUE,
+        livekit_api_secret=MASKED_VALUE,
+    )
+    retyped = _edit(
+        client,
+        livekit_agent,
+        **moved,
+        livekit_api_key="APInewkey456",
+        livekit_api_secret="new-secret-value-32-characters!!",
+    )
+
+    assert refused.status_code == 400, refused.content
+    assert "API key and secret again" in str(refused.data)
+    assert retyped.status_code == 200, retyped.content
+    creds = livekit_agent.active_version.credentials
+    creds.refresh_from_db()
+    assert creds.server_url == "wss://someone-else.example"
+    assert creds.get_api_key() == "APInewkey456"
+
+
+def test_another_organizations_agent_lends_no_credentials(
+    organization, workspace, livekit_agent
+):
+    from accounts.models.organization import Organization
+
+    stranger_org = Organization.objects.create(name="Elsewhere")
+    AgentDefinition.objects.filter(id=livekit_agent.id).update(
+        organization=stranger_org
+    )
+    fake_api = MagicMock()
+    fake_api.room.create_room = AsyncMock()
+    fake_api.room.delete_room = AsyncMock()
+    fake_api.aclose = AsyncMock()
+    livekit_api = MagicMock(return_value=fake_api)
+
+    with patch("livekit.api.LiveKitAPI", livekit_api):
+        _member_client(organization, workspace).post(
+            VALIDATE,
+            {
+                "livekit_url": "wss://someone-else.example",
+                "api_key": MASKED_VALUE,
+                "api_secret": MASKED_VALUE,
+                "agent_definition_id": str(livekit_agent.id),
+            },
+            format="json",
+        )
+
+    sent = livekit_api.call_args.kwargs
+    assert sent["api_key"] == MASKED_VALUE
+    assert sent["api_secret"] == MASKED_VALUE
