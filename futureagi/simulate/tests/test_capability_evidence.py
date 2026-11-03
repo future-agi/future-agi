@@ -331,10 +331,15 @@ def test_a_re_check_runs_a_failed_agent_preflight_again_and_leaves_a_passed_one(
 
     assert passed.status_code == 200 and passed.json()["state"] == "not_needed"
     assert started.status_code == 200, started.content
-    assert started.json() == {"scope": "agent", "agent_version_id": str(environment.agent_version_id), "state": "started"}
+    assert {key: started.json()[key] for key in ("scope", "agent_version_id", "state")} == {
+        "scope": "agent", "agent_version_id": str(environment.agent_version_id), "state": "started"
+    }
     runtime.refresh_from_db()
     assert runtime.preflight_status == "pending"
-    assert world.status_code == 409 and world.json()["error"] == "world_recheck_not_offered"
+    # The world re-check reads the contract again now and names what only a rebuild can read again.
+    assert world.status_code == 200 and world.json()["state"] == "rechecked", world.content
+    assert world.json()["selection"]["requested"] == 1
+    assert world.json()["needs_rebuild"] == []
     assert unknown.status_code == 400 and unknown.json()["error"] == "capability_unknown"
 
 
@@ -428,3 +433,84 @@ def test_the_report_goes_stale_once_a_newer_harness_release_certified_the_same_v
     assert row()["status"] == "supported"
     bundle("1.1")
     assert (row()["status"], row()["stale_because"]) == ("stale", "harness_version")
+
+
+def _ten_cases_four_refunding(user, workspace, storage, key):
+    environment, _ = _versioned_with_evidence(user, workspace, storage, key)
+    requirements = {
+        f"case-{number:02d}": {
+            "capabilities": ["start_health", "tool_routing"],
+            "tools": {"required": ["refund", "lookup"] if number <= 4 else ["lookup"]},
+        }
+        for number in range(1, 11)
+    }
+    catalogue = [*_CATALOGUE, {"id": "tool_routing", "label": "Tool routing", "depends_on": [], "fix_type": "tool_routing"}]
+    capabilities = {"start_health": {"finding": "passed", "checks": []}, "tool_routing": {"finding": "passed", "checks": []}}
+    HarnessCapabilityEvidence.no_workspace_objects.filter(job=environment).update(
+        catalogue=catalogue, scenario_requirements=requirements, capabilities=capabilities
+    )
+    version = environment.environment_version
+    version.documents = {**(version.documents or {}), "contract": _PRODUCTION_REFUND}
+    version.save(update_fields=["documents"])
+    return environment
+
+
+def test_four_of_ten_cases_are_affected_by_a_refund_tool_reaching_production_until_it_is_redirected(
+    user, workspace, storage
+):
+    from simulate.services.capability_evidence import environment_capability_report, recheck_capabilities
+
+    environment = _ten_cases_four_refunding(user, workspace, storage, "capability-four-of-ten")
+
+    report = environment_capability_report(environment)
+    routing = next(row for row in report["capabilities"] if row["id"] == "tool_routing")
+
+    assert (routing["status"], routing["affected"], routing["needed_by"]) == ("blocked", 4, 10)
+    assert routing["affected_scenarios"] == ["case-01", "case-02", "case-03", "case-04"]
+    assert routing["fix"]["type"] == "tool_routing" and routing["fix"]["recheck"]["available"] is True
+    assert (report["selection"]["requested"], report["selection"]["blocked"], report["selection"]["eligible"]) == (10, 4, 6)
+
+    # Redirect the refund tool: the payments service is now one the environment stands up itself.
+    version = environment.environment_version
+    contract = json.loads(json.dumps(_PRODUCTION_REFUND))
+    contract["dependencies"][0].update(engine="http", reached={"host": "payments"})
+    version.documents = {**version.documents, "contract": contract}
+    version.save(update_fields=["documents"])
+
+    after = recheck_capabilities(environment, "world", "tool_routing")
+
+    assert after["state"] == "rechecked" and after["needs_rebuild"] == []
+    routing_after = next(row for row in after["capabilities"] if row["id"] == "tool_routing")
+    assert (routing_after["status"], routing_after["affected"]) == ("supported", 0)
+    assert (after["selection"]["blocked"], after["selection"]["eligible"]) == (0, 10)
+
+
+def test_a_case_dropped_when_certified_is_shown_dropped_and_never_counted_as_blocked(user, workspace, storage):
+    from simulate.models import HarnessAssembledBundle
+    from simulate.services.capability_evidence import environment_capability_report
+
+    environment = _ten_cases_four_refunding(user, workspace, storage, "capability-dropped-once")
+    from simulate.models import HarnessSuiteMember
+
+    member = HarnessSuiteMember.no_workspace_objects.filter(suite_version=environment.suite_version).first()
+    evidence = HarnessCapabilityEvidence.no_workspace_objects.get(job=environment)
+    evidence.scenario_requirements = {**evidence.scenario_requirements, member.scenario_key: {
+        "capabilities": ["tool_routing"], "tools": {"required": ["refund"]}}}
+    evidence.save(update_fields=["scenario_requirements"])
+    HarnessAssembledBundle.no_workspace_objects.create(
+        job=environment,
+        organization=environment.organization,
+        agent_version=environment.agent_version,
+        environment_version=environment.environment_version,
+        suite_version=environment.suite_version,
+        assembly_key="sha256:dropped",
+        state=HarnessAssembledBundle.State.READY,
+        warnings=[{"code": "scenario_dropped", "keys": [member.scenario_key]}],
+    )
+
+    selection = environment_capability_report(environment, suite_version=environment.suite_version)["selection"]
+
+    assert {"key": member.scenario_key, "reason": "dropped when certified: the agent no longer has what it needs"} in (
+        selection["dropped"]
+    )
+    assert (selection["requested"], selection["blocked"]) == (0, 0)

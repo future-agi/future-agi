@@ -52,8 +52,9 @@ def _fix(entry: dict[str, Any], reading: dict[str, Any], status: str) -> dict[st
         "target": failed,
         "repair": _REPAIR.get(kind),
         "flips_when": reading.get("flips_when") or "a re-check of this capability passes",
-        # The world is read again only by a rebuild until a check-only job exists.
-        "recheck": {"scope": scope, "check": entry["id"], "available": scope == "agent"},
+        # What the current contract shows is read again at once; anything else a build measured needs a rebuild until
+        # a check-only job exists.
+        "recheck": {"scope": scope, "check": entry["id"], "available": scope == "agent" or reading.get("origin") == "contract"},
         "available": status != UNAVAILABLE,
     }
 

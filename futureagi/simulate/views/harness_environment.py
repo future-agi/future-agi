@@ -531,7 +531,15 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if job is None:
             return self._not_found()
         data = request.validated_data
-        return Response(recheck_capabilities(job, data["scope"], data.get("check"), request.query_params.get("agent_version_id")))
+        return Response(
+            recheck_capabilities(
+                job,
+                data["scope"],
+                data.get("check"),
+                request.query_params.get("agent_version_id"),
+                suite_version=job.suite_version,
+            )
+        )
 
     @validated_request(
         query_serializer=HarnessRunPlanQuerySerializer,

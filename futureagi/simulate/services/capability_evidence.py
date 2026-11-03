@@ -233,6 +233,7 @@ def structural_findings(contract: dict[str, Any] | None) -> dict[str, dict[str, 
     if unroutable:
         return {
             "tool_routing": {
+                "origin": "contract",
                 "finding": "failed",
                 "reason_code": "tool_unreachable",
                 "reason": "No reachable implementation for: " + ", ".join(unroutable),
@@ -245,6 +246,7 @@ def structural_findings(contract: dict[str, Any] | None) -> dict[str, dict[str, 
         named = sorted({name for names in live.values() for name in names})
         return {
             "tool_routing": {
+                "origin": "contract",
                 "finding": "failed",
                 "reason_code": "production_route",
                 "reason": ", ".join(f"{tool} reaches {', '.join(sorted(live[tool]))}" for tool in sorted(live))
@@ -399,6 +401,29 @@ def _picked(
     return picked, dropped
 
 
+def _certify_dropped(current: dict[str, str], environment_version: Any, suite_version: Any) -> list[str]:
+    """The scenarios certification dropped for this agent, environment and suite version (its `scenario_dropped`
+    warning on the ready bundle)."""
+    from simulate.models import HarnessAssembledBundle
+
+    if not current.get("agent_version_id") or environment_version is None or suite_version is None:
+        return []
+    warnings = (
+        HarnessAssembledBundle.no_workspace_objects.filter(
+            agent_version_id=current["agent_version_id"],
+            environment_version=environment_version,
+            suite_version=suite_version,
+            state=HarnessAssembledBundle.State.READY,
+        )
+        .order_by("-updated_at")
+        .values_list("warnings", flat=True)
+        .first()
+    )
+    return sorted(
+        {str(key) for one in warnings or [] if one.get("code") == "scenario_dropped" for key in one.get("keys") or []}
+    )
+
+
 def environment_capability_report(
     job: HostedHarnessJob,
     agent_version_id: Any = None,
@@ -411,6 +436,11 @@ def environment_capability_report(
     counted over the picked suite version's scenarios (or `keys` of them)."""
     evidence, rows, current = _environment_rows(job, agent_version_id, environment_version)
     picked, dropped = _picked(evidence.scenario_requirements if evidence is not None else {}, suite_version, keys)
+    # Dropped for a capability the agent lost is shown once, as dropped, never also as blocked.
+    for key in _certify_dropped(current, environment_version or job.environment_version, suite_version):
+        if key in picked:
+            del picked[key]
+            dropped.append({"key": key, "reason": "dropped when certified: the agent no longer has what it needs"})
     selection = {**affected_scenarios(rows, picked), "dropped": dropped}
     errored = HarnessCapabilityEvidence.no_workspace_objects.filter(
         job=job,
@@ -454,24 +484,54 @@ def scenario_capabilities(
     return out
 
 
-def recheck_capabilities(job: HostedHarnessJob, scope: str, check: str | None, agent_version_id: Any = None) -> dict[str, Any]:
-    """Read a capability again without a run. The agent side re-runs the agent version's preflight when it failed or
-    never finished (a passed one stands); the world side needs a new build until a check-only job is decided."""
+def recheck_capabilities(
+    job: HostedHarnessJob,
+    scope: str,
+    check: str | None,
+    agent_version_id: Any = None,
+    *,
+    suite_version: Any = None,
+    keys: list[str] | None = None,
+) -> dict[str, Any]:
+    """Read a capability again without a run, and return the counts as they now stand. The agent side re-runs the
+    agent version's preflight when it failed or never finished (a passed one stands). On the world side, what the
+    current contract shows is read again at once; anything a build measured needs a new build until a check-only job
+    is decided."""
     from simulate.services.harness_agent_versions import _RETRYABLE, _side_row, retry_preflight
     from simulate.services.hosted_harness import HostedHarnessError
 
     evidence, rows, current = _environment_rows(job, agent_version_id)
     if check and check not in {row["id"] for row in rows}:
         raise HostedHarnessError("capability_unknown", f"{check} is not a capability this report checks", status_code=400)
-    if scope == "world":
-        raise HostedHarnessError(
-            "world_recheck_not_offered",
-            "Checking the world again needs a new build for now; rebuild the environment to read it again",
-            status_code=409,
-        )
-    version = agent_version_of(job, current["agent_version_id"])
-    runtime = _side_row(version.id)
-    if runtime is None or runtime.preflight_status not in _RETRYABLE:
-        return {"scope": scope, "agent_version_id": str(version.id), "state": "not_needed"}
-    retry_preflight(version)
-    return {"scope": scope, "agent_version_id": str(version.id), "state": "started"}
+    state = "rechecked"
+    measured: list[str] = []
+    if scope in ("world", "all"):
+        contract = (job.environment_version.documents or {}).get("contract") if job.environment_version else None
+        held = structural_findings(contract)
+        measured = [
+            row["id"]
+            for row in rows
+            if row["status"] != "supported" and row["id"] not in held and (not check or row["id"] == check)
+            and (row.get("fix") or {}).get("recheck", {}).get("scope") == "world"
+        ]
+    if scope in ("agent", "all"):
+        version = agent_version_of(job, current["agent_version_id"])
+        runtime = _side_row(version.id)
+        if runtime is not None and runtime.preflight_status in _RETRYABLE:
+            retry_preflight(version)
+            state = "started"
+        elif scope == "agent":
+            state = "not_needed"
+    report = environment_capability_report(job, agent_version_id, suite_version=suite_version, keys=keys)
+    return {
+        "scope": scope,
+        "agent_version_id": report["agent_version_id"],
+        "state": state,
+        "needs_rebuild": measured,
+        "selection": report["selection"],
+        "capabilities": [
+            {"id": row["id"], "status": row["status"], "affected": row["affected"],
+             "affected_scenarios": row["affected_scenarios"]}
+            for row in report["capabilities"]
+        ],
+    }

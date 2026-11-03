@@ -828,10 +828,24 @@ class HarnessCapabilityQuerySerializer(serializers.Serializer):
     keys = serializers.ListField(child=serializers.CharField(), required=False)
 
 
+class HarnessCapabilityRecheckCountSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    status = serializers.CharField()
+    affected = serializers.IntegerField()
+    affected_scenarios = serializers.ListField(child=serializers.CharField())
+
+
 class HarnessCapabilityRecheckResponseSerializer(serializers.Serializer):
     scope = serializers.CharField()
     agent_version_id = serializers.CharField(allow_null=True)
-    state = serializers.CharField(help_text="started, or not_needed when the last check passed")
+    state = serializers.CharField(
+        help_text="started (the agent preflight runs again), not_needed (it passed), or rechecked (read again now)"
+    )
+    needs_rebuild = serializers.ListField(
+        child=serializers.CharField(), help_text="World capabilities a build measured; only a new build reads them again."
+    )
+    selection = HarnessCapabilitySelectionSerializer(help_text="The counts as they stand after the re-check.")
+    capabilities = HarnessCapabilityRecheckCountSerializer(many=True)
 
 
 class HarnessCapabilityReportSerializer(serializers.Serializer):
