@@ -13,6 +13,7 @@ from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core_evals.fi_evals.grounded.similarity import CosineSimilarity
 from agentic_eval.core_evals.fi_utils.exceptions import (
+    CodeEvalResultError,
     CodeEvalSetupError,
     NoOpenAiApiKeyException,
 )
@@ -1721,7 +1722,7 @@ def custom_code_eval(code, language=None, **kwargs):
 
     status = result.get("status")
     if status == "skip":
-        raise ValueError("Code eval function returned None (no result produced)")
+        raise CodeEvalResultError("Code eval function returned None (no result produced)")
     if status != "success":
         error_msg = result.get("data", "Unknown error in code eval")
         # Only the sandbox's own texts: an eval script can print any result.
@@ -1738,14 +1739,16 @@ def custom_code_eval(code, language=None, **kwargs):
         elif "score" in data:
             result_val = data["score"]
         else:
-            raise ValueError("Code eval dict return must include a 'result' or 'score' key")
+            raise CodeEvalResultError(
+                "Code eval dict return must include a 'result' or 'score' key"
+            )
         reason = data.get("reason", "Custom code eval completed")
         if isinstance(result_val, bool):
             return {"result": float(result_val), "reason": reason}
         elif isinstance(result_val, (int, float)):
             return {"result": float(min(max(result_val, 0), 1)), "reason": reason}
         else:
-            raise ValueError("Code eval result must be a boolean or number")
+            raise CodeEvalResultError("Code eval result must be a boolean or number")
 
     # Handle float/int return (score 0-1)
     if isinstance(data, (int, float)) and not isinstance(data, bool):
@@ -1759,7 +1762,7 @@ def custom_code_eval(code, language=None, **kwargs):
             "reason": f"Custom code eval {'passed' if data else 'failed'}",
         }
 
-    raise ValueError("Code eval must return a boolean, number, or dict result")
+    raise CodeEvalResultError("Code eval must return a boolean, number, or dict result")
 
 
 def _load_json(json_data: dict | str) -> dict:

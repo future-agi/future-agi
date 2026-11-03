@@ -339,8 +339,9 @@ def _responds_with_exception(handler):
 
 def test_eval_runs_show_exception_text_only_for_code_eval_setup_errors():
     """Where these views run an eval, which may raise anything, only a
-    CodeEvalSetupError's text reaches the response: its message is always one
-    of the backend's own (sandbox.SETUP_ERROR_MESSAGES)."""
+    CodeEvalSetupError's or CodeEvalResultError's text reaches the response:
+    their messages are always the backend's own (sandbox.SETUP_ERROR_MESSAGES
+    or the fixed code eval result texts)."""
     run_evals = set()
     for (view, _), method in zip(_TARGET_METHODS, _target_method_nodes(), strict=True):
         for node in ast.walk(method):
@@ -357,7 +358,8 @@ def test_eval_runs_show_exception_text_only_for_code_eval_setup_errors():
                 if handler.name and _responds_with_exception(handler):
                     assert (
                         isinstance(handler.type, ast.Name)
-                        and handler.type.id == "CodeEvalSetupError"
+                        and handler.type.id
+                        in {"CodeEvalSetupError", "CodeEvalResultError"}
                     ), f"{view}.{method.name} line {handler.lineno}"
     assert run_evals == {
         "TraceEvalView",

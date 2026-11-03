@@ -31,7 +31,10 @@ from agentic_eval.core.embeddings.serving_client import (
     SERVING_UNAVAILABLE_MESSAGE,
     serving_available,
 )
-from agentic_eval.core_evals.fi_utils.exceptions import CodeEvalSetupError
+from agentic_eval.core_evals.fi_utils.exceptions import (
+    CodeEvalResultError,
+    CodeEvalSetupError,
+)
 from model_hub.constants import (
     EVAL_PLAYGROUND_CURL_CODE,
     EVAL_PLAYGROUND_JS_CODE,
@@ -7417,6 +7420,12 @@ class EvalPlayGroundAPIView(APIView):
                     error_type=type(exc).__name__,
                 )
                 return self._gm.bad_request(str(exc))
+            except CodeEvalResultError as exc:
+                logger.warning(
+                    "eval_playground_code_eval_result_error",
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.bad_request(str(exc))
             except Exception as exc:
                 if UsageLimitExceeded is not None and isinstance(
                     exc, UsageLimitExceeded
@@ -8103,6 +8112,12 @@ class TestEvaluationTemplateAPIView(APIView):
             # As in the eval playground: the sandbox's setup hint is safe to show.
             logger.warning(
                 "evaluation_template_test_code_eval_setup_error",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request(str(exc))
+        except CodeEvalResultError as exc:
+            logger.warning(
+                "evaluation_template_test_code_eval_result_error",
                 error_type=type(exc).__name__,
             )
             return self._gm.bad_request(str(exc))
