@@ -140390,6 +140390,10 @@
                     "type": "object",
                     "x-nullable": true
                 },
+                "payload_omitted": {
+                    "title": "Payload omitted",
+                    "type": "boolean"
+                },
                 "at": {
                     "title": "At",
                     "type": "string",
@@ -140463,6 +140467,10 @@
                     "items": {
                         "$ref": "#/definitions/CallWorkerEvent"
                     }
+                },
+                "events_omitted": {
+                    "title": "Events omitted",
+                    "type": "integer"
                 },
                 "coordinator": {
                     "$ref": "#/definitions/CallWorkerCoordinator"

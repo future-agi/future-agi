@@ -54455,6 +54455,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/CallWorkerEvent",
           },
         },
+        events_omitted: {
+          title: "Events omitted",
+          type: "integer",
+        },
         coordinator: {
           $ref: "#/definitions/CallWorkerCoordinator",
         },
@@ -88935,6 +88939,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Output",
           type: "object",
           "x-nullable": true,
+        },
+        payload_omitted: {
+          title: "Payload omitted",
+          type: "boolean",
         },
         at: {
           title: "At",

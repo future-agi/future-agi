@@ -82,11 +82,11 @@ describe("CallWorkersPanel", () => {
     expect(
       screen.getByText("Coordinator · Returns coordinator"),
     ).toBeInTheDocument();
+    // What was seen, and no scope note when the call stayed within it.
     expect(
-      screen.getByText(
-        /one coordinator handing work to its workers one at a time/,
-      ),
+      screen.getByText("Seen: one level, one at a time"),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/Checked for one coordinator/)).toBeNull();
     expect(screen.getByText("Please refund order 1042")).toBeInTheDocument();
     expect(
       screen.getByText("Delegated to Order-lookup worker: inspect order 1042"),
@@ -221,5 +221,310 @@ describe("CallWorkersPanel", () => {
     expect(
       screen.getByText("Couldn't load this call's workers."),
     ).toBeInTheDocument();
+  });
+
+  describe("as a tree", () => {
+    const worker = (id, observed = true) => ({
+      worker_id: `r/${id}`,
+      id,
+      name: `${id} worker`,
+      observed,
+      undeclared: false,
+      instance_ids: [],
+    });
+    const at = (second) =>
+      `2026-10-31T12:00:${String(second).padStart(2, "0")}`;
+    const timeline = (workers, events) => ({
+      data: {
+        ...TIMELINE,
+        workers,
+        events: events.map((one, index) => ({
+          attribution: "reported",
+          ...one,
+          seq: index + 1,
+        })),
+      },
+      isLoading: false,
+      isError: false,
+    });
+    const depthOf = (text) =>
+      screen
+        .getByText(text, { exact: false })
+        .closest("[data-testid='hand-off']")
+        .getAttribute("data-depth");
+
+    it("nests a hand-off under the worker that made it, and says how deep the call went", () => {
+      result = timeline(
+        [worker("planner"), worker("search")],
+        [
+          {
+            type: "delegated",
+            worker_id: "r/planner",
+            by: null,
+            task: "plan the trip",
+            at: at(1),
+          },
+          {
+            type: "delegated",
+            worker_id: "r/search",
+            by: "r/planner",
+            task: "find hotels",
+            at: at(2),
+          },
+          {
+            type: "tool_call",
+            worker_id: "r/search",
+            tool: "hotels",
+            status: "ok",
+            at: at(3),
+          },
+          {
+            type: "returned",
+            worker_id: "r/search",
+            result: "two hotels",
+            at: at(4),
+          },
+          {
+            type: "returned",
+            worker_id: "r/planner",
+            result: "a plan",
+            at: at(5),
+          },
+        ],
+      );
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(depthOf("Delegated to planner worker")).toBe("1");
+      expect(depthOf("Delegated to search worker")).toBe("2");
+      expect(
+        screen
+          .getByText("Delegated to search worker", { exact: false })
+          .closest("[data-depth='1']"),
+      ).not.toBeNull();
+      expect(
+        screen.getByText("Seen: 2 levels deep, one at a time"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/Checked for one coordinator/),
+      ).toBeInTheDocument();
+    });
+
+    it("marks sibling hand-offs whose spans overlap as in parallel", () => {
+      result = timeline(
+        [worker("research"), worker("code"), worker("review")],
+        [
+          {
+            type: "delegated",
+            worker_id: "r/research",
+            task: "read",
+            at: at(1),
+          },
+          { type: "delegated", worker_id: "r/code", task: "write", at: at(2) },
+          {
+            type: "returned",
+            worker_id: "r/research",
+            result: "notes",
+            at: at(5),
+          },
+          { type: "returned", worker_id: "r/code", result: "patch", at: at(6) },
+          {
+            type: "delegated",
+            worker_id: "r/review",
+            task: "check",
+            at: at(7),
+          },
+          { type: "returned", worker_id: "r/review", result: "ok", at: at(8) },
+        ],
+      );
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(screen.getAllByText("in parallel")).toHaveLength(2);
+      expect(
+        screen.getByText("Seen: one level, 2 hand-offs in parallel"),
+      ).toBeInTheDocument();
+    });
+
+    it("summarises a large team in one line and colours by depth, not by worker", () => {
+      const team = Array.from({ length: 20 }, (_, index) =>
+        worker(`w${index}`, index < 15),
+      );
+      result = timeline(team, [
+        { type: "delegated", worker_id: "r/w0", task: "lead", at: at(1) },
+        {
+          type: "delegated",
+          worker_id: "r/w1",
+          by: "r/w0",
+          task: "help",
+          at: at(2),
+        },
+        { type: "returned", worker_id: "r/w1", result: "done", at: at(3) },
+        {
+          type: "delegated",
+          worker_id: "r/w2",
+          by: "r/w0",
+          task: "help",
+          at: at(4),
+        },
+        { type: "returned", worker_id: "r/w2", result: "done", at: at(5) },
+        { type: "returned", worker_id: "r/w0", result: "done", at: at(6) },
+      ]);
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(
+        screen.getByText("20 workers · 15 observed · 5 not observed"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("w3 worker")).toBeNull();
+      fireEvent.click(screen.getByText("Show all workers"));
+      const chip = (name) => screen.getByText(name).closest(".MuiChip-root");
+      expect(chip("w0 worker").className).toMatch(/colorInfo/);
+      expect(chip("w1 worker").className).toMatch(/colorSuccess/);
+      expect(chip("w2 worker").className).toMatch(/colorSuccess/);
+    });
+
+    it("says why a step's payload or later steps are missing when the record reached its limit", () => {
+      result = timeline(
+        [worker("a")],
+        [
+          { type: "delegated", worker_id: "r/a", task: "one", at: at(1) },
+          {
+            type: "tool_call",
+            worker_id: "r/a",
+            tool: "lookup",
+            status: "ok",
+            input: null,
+            output: null,
+            payload_omitted: true,
+            at: at(2),
+          },
+          { type: "returned", worker_id: "r/a", result: "x", at: at(3) },
+        ],
+      );
+      result.data.events_omitted = 12;
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      fireEvent.click(screen.getByText("a worker · lookup"));
+      expect(
+        screen.getAllByText(
+          "Not kept: this call's record reached its size limit",
+        ),
+      ).toHaveLength(2);
+      expect(
+        screen.getByText(
+          "12 more steps not shown: this call's record reached its size limit",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps a record from before hand-offs named their maker flat under the coordinator", () => {
+      result = timeline(
+        [worker("a"), worker("b")],
+        [
+          { type: "delegated", worker_id: "r/a", task: "one", at: at(1) },
+          { type: "returned", worker_id: "r/a", result: "x", at: at(2) },
+          { type: "delegated", worker_id: "r/b", task: "two", at: at(3) },
+          { type: "returned", worker_id: "r/b", result: "y", at: at(4) },
+        ],
+      );
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      expect(depthOf("Delegated to a worker")).toBe("1");
+      expect(depthOf("Delegated to b worker")).toBe("1");
+      expect(
+        screen.getByText("Seen: one level, one at a time"),
+      ).toBeInTheDocument();
+    });
+
+    it("renders a hundred workers three levels deep with a thousand steps, folding the deep levels", () => {
+      const team = Array.from({ length: 100 }, (_, index) =>
+        worker(`w${index}`),
+      );
+      const big = "x".repeat(2000);
+      const events = [];
+      let second = 0;
+      const stamp = () => {
+        second += 1;
+        return new Date(Date.UTC(2026, 9, 31, 12, 0, 0) + second * 100)
+          .toISOString()
+          .slice(0, 23);
+      };
+      for (let top = 0; top < 10; top += 1) {
+        const lead = `r/w${top}`;
+        events.push({
+          type: "delegated",
+          worker_id: lead,
+          task: "lead",
+          at: stamp(),
+        });
+        for (let mid = 0; mid < 3; mid += 1) {
+          const helper = `r/w${10 + top * 3 + mid}`;
+          events.push({
+            type: "delegated",
+            worker_id: helper,
+            by: lead,
+            task: "help",
+            at: stamp(),
+          });
+          for (let low = 0; low < 2; low += 1) {
+            const leaf = `r/w${40 + ((top * 6 + mid * 2 + low) % 60)}`;
+            events.push({
+              type: "delegated",
+              worker_id: leaf,
+              by: helper,
+              task: "do",
+              at: stamp(),
+            });
+            for (let call = 0; call < 10; call += 1)
+              events.push({
+                type: "tool_call",
+                worker_id: leaf,
+                tool: "t",
+                status: "ok",
+                input: { big },
+                output: big,
+                at: stamp(),
+              });
+            events.push({
+              type: "returned",
+              worker_id: leaf,
+              result: "leaf done",
+              at: stamp(),
+            });
+          }
+          for (let call = 0; call < 7; call += 1)
+            events.push({
+              type: "tool_call",
+              worker_id: helper,
+              tool: "t",
+              status: "ok",
+              input: { big },
+              output: big,
+              at: stamp(),
+            });
+          events.push({
+            type: "returned",
+            worker_id: helper,
+            result: "helper done",
+            at: stamp(),
+          });
+        }
+        events.push({
+          type: "returned",
+          worker_id: lead,
+          result: "lead done",
+          at: stamp(),
+        });
+      }
+      result = timeline(team, events);
+      const began = performance.now();
+      render(<CallWorkersPanel callExecutionId="c1" />);
+      const took = performance.now() - began;
+      expect(events.length).toBeGreaterThanOrEqual(1000);
+      expect(
+        screen.getByText("100 workers · 100 observed · 0 not observed"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Seen: 3 levels deep, one at a time"),
+      ).toBeInTheDocument();
+      // Levels one and two are open; level three shows its 60 headers folded, so its 600 steps are not in the page.
+      expect(screen.getAllByTestId("hand-off")).toHaveLength(100);
+      expect(screen.queryByText("leaf done")).toBeNull();
+      expect(screen.getAllByText(/ · t$/)).toHaveLength(210);
+      expect(took).toBeLessThan(3000);
+    });
   });
 });

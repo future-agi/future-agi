@@ -576,6 +576,8 @@ class CallWorkerEventSerializer(serializers.Serializer):
     # A tool call's arguments and result as recorded, cut with an ellipsis past 2,000 characters.
     input = serializers.JSONField(allow_null=True, required=False)
     output = serializers.JSONField(allow_null=True, required=False)
+    # True when the record's size limit was reached before this step, so its input and output were not kept.
+    payload_omitted = serializers.BooleanField(required=False)
     at = serializers.CharField(allow_null=True)
     attribution = serializers.ChoiceField(choices=("reported", "bound", "conflict", "unattributed"))
 
@@ -592,6 +594,8 @@ class CallWorkerTurnSerializer(serializers.Serializer):
 class CallWorkersResponseSerializer(serializers.Serializer):
     workers = CallWorkerSerializer(many=True)
     events = CallWorkerEventSerializer(many=True)
+    # Steps past the record's limit, left out after the ones shown.
+    events_omitted = serializers.IntegerField(required=False)
     # Each is null when it was not seen: the timeline shows it as Unknown.
     coordinator = CallWorkerCoordinatorSerializer(allow_null=True, required=False)
     request = CallWorkerTurnSerializer(allow_null=True, required=False)

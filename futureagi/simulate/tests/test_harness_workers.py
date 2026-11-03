@@ -1,5 +1,8 @@
 """A multi-agent call's workers, from the spans the app exported: who was delegated what, what each did, what came back."""
 
+import json
+import time
+
 import pytest
 
 from simulate.services.harness_workers import worker_timeline
@@ -492,6 +495,55 @@ def test_each_tool_call_keeps_its_input_and_output_and_a_long_one_is_cut():
     spans = worker_timeline(SPANS, DECLARED, run_key=RUN)
     by_tool = {one["tool"]: one for one in spans["events"] if one["type"] == "tool_call"}
     assert by_tool["get_order"]["input"] is None and by_tool["get_order"]["output"] is None
+
+
+def _team(leads, helpers, leaves, calls):
+    """A coordinator with `leads` workers, each handing to `helpers`, each to `leaves`, each making `calls` tool
+    calls with 2 KB inputs and outputs; distinct names, so every agent is its own worker."""
+    big = "y" * 2000
+    spans, count = [_span("root", None, "agent", "coordinator", "t0000")], [0]
+
+    def at():
+        count[0] += 1
+        return f"t{count[0]:04d}"
+
+    for lead in range(leads):
+        lead_id = f"l{lead}"
+        spans.append(_span(lead_id, "root", "agent", f"lead {lead}", at()))
+        for helper in range(helpers):
+            helper_id = f"{lead_id}h{helper}"
+            spans.append(_span(helper_id, lead_id, "agent", f"helper {lead}.{helper}", at()))
+            for leaf in range(leaves):
+                leaf_id = f"{helper_id}f{leaf}"
+                spans.append(_span(leaf_id, helper_id, "agent", f"leaf {lead}.{helper}.{leaf}", at()))
+                for call in range(calls):
+                    spans.append(_span(f"{leaf_id}c{call}", leaf_id, "tool", "lookup", at(), input=big, output=big))
+    return spans
+
+
+def test_a_large_team_s_record_stays_bounded_and_is_quick():
+    # 10 leads x 3 helpers x 3 leaves: 129 agents, 3 levels below the coordinator, 900 tool calls with 2 KB each way.
+    spans = _team(10, 3, 3, 10)
+    began = time.perf_counter()
+    timeline = worker_timeline(spans, [], run_key=RUN)
+    took = time.perf_counter() - began
+
+    calls = [one for one in timeline["events"] if one["type"] == "tool_call"]
+    assert len(calls) == 900 and timeline["events_omitted"] == 0
+    assert len(json.dumps(timeline)) < 600_000
+    # The first calls keep their input and output; past the size limit a call keeps its tool, worker and time.
+    assert calls[0]["input"] == "y" * 2000 and "payload_omitted" not in calls[0]
+    assert calls[-1]["input"] is None and calls[-1]["payload_omitted"] is True
+    assert calls[-1]["tool"] == "lookup" and calls[-1]["worker_id"] and calls[-1]["at"]
+    assert took < 2
+
+
+def test_a_record_past_its_step_limit_keeps_the_first_steps_and_counts_the_rest():
+    timeline = worker_timeline(_team(5, 2, 2, 120), [], run_key=RUN)
+
+    assert len(timeline["events"]) == 2000
+    assert timeline["events_omitted"] == 5 * 2 * 2 * 120 + 5 + 5 * 2 + 5 * 2 * 2 - 2000
+    assert [one["seq"] for one in timeline["events"][:3]] == [1, 2, 3]
 
 
 def test_the_caller_s_request_and_the_coordinator_s_reply_frame_the_hand_offs():

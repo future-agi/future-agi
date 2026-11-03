@@ -23872,6 +23872,7 @@ export interface CallWorkerEventApi {
   status?: string;
   input?: CallWorkerEventApiInput;
   output?: CallWorkerEventApiOutput;
+  payload_omitted?: boolean;
   /** @minLength 1 */
   at: string;
   attribution: CallWorkerEventApiAttribution;
@@ -23892,6 +23893,7 @@ export interface CallWorkerTurnApi {
 export interface CallWorkersResponseApi {
   workers: CallWorkerApi[];
   events: CallWorkerEventApi[];
+  events_omitted?: number;
   coordinator?: CallWorkerCoordinatorApi;
   request?: CallWorkerTurnApi;
   response?: CallWorkerTurnApi;

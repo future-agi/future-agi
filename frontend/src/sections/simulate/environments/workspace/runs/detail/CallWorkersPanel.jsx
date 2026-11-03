@@ -18,8 +18,14 @@ import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer
 import { useCallWorkers } from "src/api/simulate-environments/runDetail";
 import { CALL_WORKERS_COPY as C } from "./callTraces.constants";
 
-// One colour per worker, kept on its chip and its block.
-const WORKER_COLORS = ["info", "success", "warning", "secondary", "error"];
+// One colour per level of hand-off, so a deep or wide team stays readable; names tell workers apart.
+const DEPTH_COLORS = ["info", "success", "warning", "secondary", "error"];
+const depthColor = (depth) =>
+  DEPTH_COLORS[(Math.max(depth, 1) - 1) % DEPTH_COLORS.length];
+// Levels shown open at first; deeper hand-offs start folded.
+const OPEN_DEPTH = 2;
+// Worker chips shown one by one; a larger team is summarised.
+const MAX_CHIPS = 8;
 const MONO = "ui-monospace, Menlo, monospace";
 
 const seconds = (iso) => {
@@ -87,7 +93,7 @@ Line.propTypes = {
   children: PropTypes.node,
 };
 
-function Payload({ label, value }) {
+function Payload({ label, value, omitted }) {
   return (
     <Box>
       <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -95,7 +101,7 @@ function Payload({ label, value }) {
       </Typography>
       {value === null || value === undefined ? (
         <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-          {C.unknown}
+          {omitted ? C.payloadOmitted : C.unknown}
         </Typography>
       ) : typeof value === "object" ? (
         <CustomJsonViewer object={value} />
@@ -115,7 +121,11 @@ function Payload({ label, value }) {
     </Box>
   );
 }
-Payload.propTypes = { label: PropTypes.string, value: PropTypes.any };
+Payload.propTypes = {
+  label: PropTypes.string,
+  value: PropTypes.any,
+  omitted: PropTypes.bool,
+};
 
 // A tool call in the transcript's tool style; its input and output open on click.
 function ToolRow({ event, who, start }) {
@@ -161,8 +171,16 @@ function ToolRow({ event, who, start }) {
       </Stack>
       <Collapse in={open} unmountOnExit>
         <Stack spacing={0.75} sx={{ pt: 0.75, pl: 2.5 }}>
-          <Payload label={C.input} value={event.input} />
-          <Payload label={C.output} value={event.output} />
+          <Payload
+            label={C.input}
+            value={event.input}
+            omitted={event.payload_omitted}
+          />
+          <Payload
+            label={C.output}
+            value={event.output}
+            omitted={event.payload_omitted}
+          />
         </Stack>
       </Collapse>
     </Box>
@@ -234,12 +252,15 @@ Turn.propTypes = {
   start: PropTypes.string,
 };
 
-// A hand-off to one worker: what it was asked, its own calls, and what it returned.
-function HandOff({ block, worker, color, nameOf, start }) {
-  const [open, setOpen] = useState(true);
-  const name = worker?.name || C.unknown;
+// A hand-off to one worker: what it was asked, its own calls, the hand-offs it made in turn, and what it returned.
+function HandOff({ block, workers, nameOf, start }) {
+  const [open, setOpen] = useState(block.depth <= OPEN_DEPTH);
+  const name = workers[block.worker_id]?.name || C.unknown;
+  const color = depthColor(block.depth);
   return (
     <Box
+      data-testid="hand-off"
+      data-depth={block.depth}
       sx={{
         borderLeft: "2px solid",
         borderColor: `${color}.main`,
@@ -270,19 +291,38 @@ function HandOff({ block, worker, color, nameOf, start }) {
             title={`${C.delegated(name)}${block.delegated?.task ? `: ${block.delegated.task}` : ""}`}
             at={block.delegated?.at}
             start={start}
-          />
+          >
+            {block.parallel ? (
+              <Chip
+                size="small"
+                variant="outlined"
+                label={C.inParallel}
+                sx={{ height: 18, flexShrink: 0 }}
+              />
+            ) : null}
+          </Line>
         </Box>
       </Stack>
-      <Collapse in={open}>
+      <Collapse in={open} unmountOnExit>
         <Stack spacing={0.75} sx={{ pt: 0.75, pl: 2.5 }}>
-          {block.calls.map((event) => (
-            <ToolRow
-              key={event.seq}
-              event={event}
-              who={nameOf(event)}
-              start={start}
-            />
-          ))}
+          {block.items.map((item) =>
+            item.kind === "handoff" ? (
+              <HandOff
+                key={item.key}
+                block={item}
+                workers={workers}
+                nameOf={nameOf}
+                start={start}
+              />
+            ) : (
+              <ToolRow
+                key={item.key}
+                event={item.event}
+                who={nameOf(item.event)}
+                start={start}
+              />
+            ),
+          )}
           {block.returned ? (
             <Box>
               <Line
@@ -307,45 +347,182 @@ function HandOff({ block, worker, color, nameOf, start }) {
 }
 HandOff.propTypes = {
   block: PropTypes.object.isRequired,
-  worker: PropTypes.object,
-  color: PropTypes.string,
+  workers: PropTypes.object.isRequired,
   nameOf: PropTypes.func,
   start: PropTypes.string,
 };
 
-// Events in order, each hand-off gathering its worker's calls and its return; anything else stays on its own.
+const instant = (event) => seconds(event?.at);
+
+// Events in order, as a tree under the coordinator: each hand-off sits under the agent that made it (`by`), gathering
+// its worker's calls, the hand-offs it made and its return. Anything that cannot be placed stays at the top level.
 const arrange = (events) => {
-  const items = [];
-  const open = {};
+  const root = { items: [], depth: 0 };
+  const open = {}; // worker -> hand-offs not returned yet, latest last
+  const latest = {}; // worker -> its latest hand-off
+  const blocks = [];
+  const holder = (worker, at) => {
+    if (!worker) return root;
+    const waiting = open[worker] || [];
+    const containing = [...waiting]
+      .reverse()
+      .find((one) => at === null || one.from === null || one.from <= at);
+    return containing || latest[worker] || root;
+  };
   for (const event of events) {
+    const at = instant(event);
     if (event.type === "delegated") {
+      const parent = holder(event.by, at);
       const block = {
         kind: "handoff",
         key: event.seq,
         worker_id: event.worker_id,
         delegated: event,
-        calls: [],
+        items: [],
+        depth: parent.depth + 1,
+        from: at,
+        to: at,
       };
-      open[event.worker_id] = block;
-      items.push(block);
+      parent.items.push(block);
+      blocks.push(block);
+      (open[event.worker_id] ||= []).push(block);
+      latest[event.worker_id] = block;
     } else if (event.type === "returned") {
-      const block = open[event.worker_id];
+      const waiting = open[event.worker_id] || [];
+      const block = waiting.pop();
       if (block) {
         block.returned = event;
-        delete open[event.worker_id];
-      } else
-        items.push({
+        if (at !== null) block.to = Math.max(block.to ?? at, at);
+      } else {
+        const orphan = {
           kind: "handoff",
           key: event.seq,
           worker_id: event.worker_id,
-          calls: [],
+          items: [],
           returned: event,
-        });
-    } else if (event.worker_id && open[event.worker_id])
-      open[event.worker_id].calls.push(event);
-    else items.push({ kind: "call", key: event.seq, event });
+          depth: 1,
+          from: at,
+          to: at,
+        };
+        root.items.push(orphan);
+        blocks.push(orphan);
+      }
+    } else {
+      const waiting = event.worker_id ? open[event.worker_id] || [] : [];
+      const block = waiting[waiting.length - 1];
+      if (block) {
+        block.items.push({ kind: "call", key: event.seq, event });
+        if (at !== null) block.to = Math.max(block.to ?? at, at);
+      } else root.items.push({ kind: "call", key: event.seq, event });
+    }
   }
-  return items;
+  // A hand-off ends when it returned; a block still open ends with its last step, and its children's.
+  const close = (node) => {
+    for (const item of node.items)
+      if (item.kind === "handoff") {
+        close(item);
+        if (item.to !== null && node.to !== undefined)
+          node.to = node.to === null ? item.to : Math.max(node.to, item.to);
+      }
+  };
+  close(root);
+  // Siblings from the same agent whose spans overlap ran in parallel.
+  let parallel = 0;
+  const mark = (node) => {
+    const siblings = node.items.filter((item) => item.kind === "handoff");
+    siblings.forEach((one, index) => {
+      siblings.slice(index + 1).forEach((other) => {
+        if (
+          one.from !== null &&
+          other.from !== null &&
+          other.from < (one.to ?? one.from) &&
+          one.from < (other.to ?? other.from)
+        ) {
+          if (!one.parallel) parallel += 1;
+          if (!other.parallel) parallel += 1;
+          one.parallel = true;
+          other.parallel = true;
+        }
+      });
+      mark(one);
+    });
+  };
+  mark(root);
+  const depth = blocks.reduce((most, one) => Math.max(most, one.depth), 0);
+  const depthOf = {};
+  for (const one of blocks)
+    if (!(one.worker_id in depthOf)) depthOf[one.worker_id] = one.depth;
+  return { items: root.items, depth, parallel, depthOf };
+};
+
+function WorkerChips({ workers, depthOf }) {
+  const [shown, setShown] = useState(false);
+  const chips = workers.map((one) => (
+    <Chip
+      key={one.worker_id}
+      size="small"
+      variant={one.observed ? "soft" : "outlined"}
+      color={
+        one.worker_id in depthOf
+          ? depthColor(depthOf[one.worker_id])
+          : "default"
+      }
+      label={[
+        one.name,
+        !one.observed && C.notObserved,
+        one.undeclared && C.undeclared,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
+    />
+  ));
+  const row = (items) => (
+    <Stack
+      direction="row"
+      spacing={0.75}
+      flexWrap="wrap"
+      rowGap={0.75}
+      sx={{ mt: 0.75 }}
+    >
+      {items}
+    </Stack>
+  );
+  if (workers.length <= MAX_CHIPS) return row(chips);
+  const observed = workers.filter((one) => one.observed).length;
+  return (
+    <Box sx={{ mt: 0.75 }}>
+      <Stack direction="row" spacing={1} alignItems="center">
+        <Typography sx={{ typography: "s2" }}>
+          {C.workersSummary(
+            workers.length,
+            observed,
+            workers.length - observed,
+          )}
+        </Typography>
+        <Typography
+          component="button"
+          onClick={() => setShown((one) => !one)}
+          sx={{
+            typography: "s3",
+            color: "primary.main",
+            border: 0,
+            bgcolor: "transparent",
+            cursor: "pointer",
+            p: 0,
+          }}
+        >
+          {shown ? C.hideWorkers : C.showWorkers}
+        </Typography>
+      </Stack>
+      <Collapse in={shown} unmountOnExit>
+        {row(chips)}
+      </Collapse>
+    </Box>
+  );
+}
+WorkerChips.propTypes = {
+  workers: PropTypes.array.isRequired,
+  depthOf: PropTypes.object.isRequired,
 };
 
 /**
@@ -374,12 +551,6 @@ export default function CallWorkersPanel({ callExecutionId }) {
   const workers = Object.fromEntries(
     data.workers.map((one) => [one.worker_id, one]),
   );
-  const colorOf = Object.fromEntries(
-    data.workers.map((one, index) => [
-      one.worker_id,
-      WORKER_COLORS[index % WORKER_COLORS.length],
-    ]),
-  );
   const nameOf = (event) =>
     event.attribution === "unattributed"
       ? C.unknown
@@ -388,6 +559,7 @@ export default function CallWorkersPanel({ callExecutionId }) {
         : C.coordinator;
   const start = data.started_at;
   const hasHandOffs = data.events.some((one) => one.type === "delegated");
+  const tree = arrange(data.events);
 
   return (
     <Stack spacing={1.25} sx={{ p: 1.5 }}>
@@ -407,43 +579,29 @@ export default function CallWorkersPanel({ callExecutionId }) {
         <Typography sx={{ typography: "s2", fontWeight: 600 }}>
           {`${C.coordinator} · ${data.coordinator?.name || C.unknown}`}
         </Typography>
-        <Stack
-          direction="row"
-          spacing={0.75}
-          flexWrap="wrap"
-          rowGap={0.75}
-          sx={{ mt: 0.75 }}
-        >
-          {data.workers.map((one) => (
-            <Chip
-              key={one.worker_id}
-              size="small"
-              variant={one.observed ? "soft" : "outlined"}
-              color={colorOf[one.worker_id]}
-              label={[
-                one.name,
-                !one.observed && C.notObserved,
-                one.undeclared && C.undeclared,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            />
-          ))}
-        </Stack>
+        <WorkerChips workers={data.workers} depthOf={tree.depthOf} />
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>
-          {C.topology}
+          {tree.depth === 0
+            ? null
+            : tree.depth === 1 && !tree.parallel
+              ? C.seenFlat
+              : C.seen(tree.depth, tree.parallel)}
         </Typography>
+        {tree.depth > 1 || tree.parallel ? (
+          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            {C.scope}
+          </Typography>
+        ) : null}
       </Box>
       {hasHandOffs && (
         <Turn title={C.request} turn={data.request} start={start} />
       )}
-      {arrange(data.events).map((item) =>
+      {tree.items.map((item) =>
         item.kind === "handoff" ? (
           <HandOff
             key={item.key}
             block={item}
-            worker={workers[item.worker_id]}
-            color={colorOf[item.worker_id] || "info"}
+            workers={workers}
             nameOf={nameOf}
             start={start}
           />
@@ -456,6 +614,11 @@ export default function CallWorkersPanel({ callExecutionId }) {
           />
         ),
       )}
+      {data.events_omitted ? (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {C.eventsOmitted(data.events_omitted)}
+        </Typography>
+      ) : null}
       {hasHandOffs && (
         <Turn title={C.response} turn={data.response} agent start={start} />
       )}

@@ -24,6 +24,11 @@ _WORK_KINDS = {TOOL_KIND, "llm"}
 _NODE_ID = "graph.node.id"
 _SUMMARY_CHARS = 500
 _PAYLOAD_CHARS = 2000
+# The record is kept on the call and sent whole to the browser, so it stays bounded however large the team or the call:
+# the first steps up to a count, and tool inputs and outputs up to a total size. A step past the size keeps its tool,
+# worker and time, and says its payload was left out.
+_MAX_EVENTS = 2000
+_PAYLOAD_BUDGET = 256_000
 
 
 def _slug(name: str) -> str:
@@ -65,6 +70,23 @@ def _payload(value: Any) -> Any:
     if len(text) <= _PAYLOAD_CHARS:
         return value
     return text[:_PAYLOAD_CHARS].rstrip() + "…"
+
+
+def _bounded(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """The events a record keeps, and how many it left out."""
+    kept = events[:_MAX_EVENTS]
+    spent = 0
+    for event in kept:
+        for key in ("input", "output"):
+            if event.get(key) is None:
+                continue
+            size = len(json.dumps(event[key], default=str))
+            if spent + size > _PAYLOAD_BUDGET:
+                event[key] = None
+                event["payload_omitted"] = True
+            else:
+                spent += size
+    return kept, len(events) - len(kept)
 
 
 def _instant(value: Any) -> datetime | None:
@@ -365,9 +387,11 @@ def worker_timeline(
     turns = [one for one in turns if isinstance(one, Mapping)]
     handed_at = [moment for one in events if one["type"] == "delegated" and (moment := _instant(one["at"]))]
     closed_at = [moment for one in events if (moment := _instant(one["at"])) is not None]
+    shown, omitted = _bounded(events)
     return {
         "workers": sorted(workers.values(), key=lambda one: one["id"]),
-        "events": events,
+        "events": shown,
+        "events_omitted": omitted,
         "coordinator": {"name": coordinator} if coordinator else None,
         "request": _turn(turns, "user", before=min(handed_at)) if handed_at else None,
         "response": _turn(turns, "agent", after=max(closed_at)) if handed_at else None,
