@@ -22,6 +22,7 @@ export default function CustomDateRangePicker({
   setDateFilter,
   setDateOption,
   value,
+  rangeConvention = "half-open",
 }) {
   const { control } = useForm();
   const [range, setRange] = useState({ start: null, end: null });
@@ -39,17 +40,25 @@ export default function CustomDateRangePicker({
     if (!value?.[0] || !value?.[1]) return;
     const start = new Date(value[0]);
     const end = new Date(value[1]);
-    if (!isValid(start) || !isValid(end) || end <= start) return;
-    // Stored bounds are already half-open. Show the last covered calendar day,
-    // but keep the exact timestamps unless the user makes a new date selection.
+    if (
+      !isValid(start) ||
+      !isValid(end) ||
+      end < start ||
+      (rangeConvention === "half-open" && +end === +start)
+    )
+      return;
+    // Preserve exact stored timestamps until the user makes a date selection.
+    // Performance alone uses inclusive local dates; Observe uses half-open bounds.
     setRange({
       start: startOfDay(start),
-      end: startOfDay(subMilliseconds(end, 1)),
+      end: startOfDay(
+        rangeConvention === "inclusive-local" ? end : subMilliseconds(end, 1),
+      ),
       original: value,
     });
     setCurrentDate1(start);
     setCurrentDate2(addMonths(start, 1));
-  }, [open, value]);
+  }, [open, value, rangeConvention]);
 
   const handleSelectDate = (date) => {
     if (!range.start || (range.start && range.end)) {
@@ -97,13 +106,19 @@ export default function CustomDateRangePicker({
 
   const handleCustomDate = () => {
     if (!isButtonActive) return;
-    // Calendar days are inclusive; the API's end is exclusive. Calendar
-    // arithmetic (not 24 hours) also covers the 23/25-hour DST days.
+    // Performance's backend parses local timestamps and adds the day itself.
+    // Observe uses ISO instants with a calendar-day (not 24-hour) exclusive end.
     setDateFilter(
-      range.original || [
-        startOfDay(range.start).toISOString(),
-        addDays(startOfDay(range.end), 1).toISOString(),
-      ],
+      range.original ||
+        (rangeConvention === "inclusive-local"
+          ? [
+              format(range.start, "yyyy-MM-dd HH:mm:ss"),
+              format(range.end, "yyyy-MM-dd HH:mm:ss"),
+            ]
+          : [
+              startOfDay(range.start).toISOString(),
+              addDays(startOfDay(range.end), 1).toISOString(),
+            ]),
     );
     setDateOption("Custom");
     onClose();
@@ -233,6 +248,7 @@ CustomDateRangePicker.propTypes = {
   anchorEl: PropType.any,
   setDateFilter: PropType.func,
   setDateOption: PropType.func,
+  rangeConvention: PropType.oneOf(["half-open", "inclusive-local"]),
   value: PropType.arrayOf(
     PropType.oneOfType([PropType.instanceOf(Date), PropType.string]),
   ),

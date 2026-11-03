@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import {
   Badge,
   Box,
@@ -2053,7 +2054,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     if (!dates || dates.length < 2) return "Past 6M";
     try {
       const start = new Date(dates[0]);
-      const end = new Date(dates[1]);
+      const end = getDateRangeDisplayEnd(dates);
       if (isNaN(start.getTime()) || isNaN(end.getTime())) return "Past 6M";
       return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
     } catch {

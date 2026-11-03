@@ -40,6 +40,7 @@ import PerformanceTagDistribution from "./PerformanceTagDistribution";
 import PerformanceGraphDatapoints from "./PerformanceGraphDatapoints";
 import SaveReport from "./SaveReport";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 
 // const formatDate = (date) => format(date, "yyyy-MM-dd HH:mm:ss");
 
@@ -438,7 +439,7 @@ const Performance = () => {
 
   const getDateOptionTitle = (option, isSelected) => {
     if (option === "Custom" && isSelected)
-      return `${format(new Date(dateFilter[0]), "dd/MM/yyyy")} - ${format(new Date(dateFilter[1]), "dd/MM/yyyy")}`;
+      return `${format(new Date(dateFilter[0]), "dd/MM/yyyy")} - ${format(getDateRangeDisplayEnd(dateFilter, "inclusive-local"), "dd/MM/yyyy")}`;
 
     return option;
   };
@@ -528,6 +529,8 @@ const Performance = () => {
               open={isDatePickerOpen}
               onClose={() => setIsDatePickerOpen(false)}
               anchorEl={customDatePickerAnc?.current}
+              value={dateFilter}
+              rangeConvention="inclusive-local"
               setDateFilter={setDateFilter}
               setDateOption={setDateOption}
             />

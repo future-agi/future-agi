@@ -116,3 +116,38 @@ describe("date-only selections use half-open local calendar bounds", () => {
     expect(props.setDateFilter).not.toHaveBeenCalled();
   });
 });
+
+describe("explicit inclusive-local compatibility", () => {
+  it.each([
+    ["2026-11-02 00:00:00", "2026-11-02 00:00:00"],
+    ["2026-11-02 00:00:00", "2026-11-04 00:00:00"],
+    ["2026-11-02 11:12:13", "2026-11-04 12:13:14"],
+  ])("preserves untouched inclusive timestamps %s to %s", (start, end) => {
+    const props = pickerProps([start, end]);
+    render(
+      <CustomDateRangePicker {...props} rangeConvention="inclusive-local" />,
+    );
+    expect(screen.getByLabelText("End Date")).toHaveValue(end.slice(0, 10));
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(props.setDateFilter).toHaveBeenCalledExactlyOnceWith([start, end]);
+  });
+
+  it.each(["half-open", "inclusive-local"])(
+    "rejects reversed and cleared %s ranges",
+    (rangeConvention) => {
+      const props = pickerProps(["2026-11-04 00:00:00", "2026-11-02 00:00:00"]);
+      render(
+        <CustomDateRangePicker {...props} rangeConvention={rangeConvention} />,
+      );
+      expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+      selectDay("2026-11-02");
+      props.setDateFilter.mockClear();
+      fireEvent.change(screen.getByLabelText("Start Date"), {
+        target: { value: "" },
+      });
+      expect(screen.getByRole("button", { name: "Done" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      expect(props.setDateFilter).not.toHaveBeenCalled();
+    },
+  );
+});

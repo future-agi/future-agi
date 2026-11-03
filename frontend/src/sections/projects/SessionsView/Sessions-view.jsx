@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import { Box } from "@mui/material";
 import PropTypes from "prop-types";
 import {
@@ -179,7 +180,7 @@ export const getDateLabel = (dateFilter) => {
   if (!dates || dates.length < 2)
     return `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
   const start = new Date(dates[0]);
-  const end = new Date(dates[1]);
+  const end = getDateRangeDisplayEnd(dates);
   if (isNaN(start.getTime()) || isNaN(end.getTime()))
     return `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
   return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;

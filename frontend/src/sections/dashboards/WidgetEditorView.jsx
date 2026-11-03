@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import React, {
   useState,
   useEffect,
@@ -4945,7 +4946,7 @@ export default function WidgetEditorView() {
                     <Iconify icon="mdi:calendar-outline" width={15} />
                   )}
                   {p.value === "custom" && customDateRange
-                    ? `${format(customDateRange[0], "MMM dd")} - ${format(customDateRange[1], "MMM dd")}`
+                    ? `${format(customDateRange[0], "MMM dd")} - ${format(getDateRangeDisplayEnd(customDateRange), "MMM dd")}`
                     : p.label}
                 </Box>
               ))}
