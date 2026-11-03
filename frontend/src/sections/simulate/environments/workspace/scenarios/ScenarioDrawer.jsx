@@ -119,7 +119,7 @@ function ScenarioSheet({ row, env }) {
                   {listed[one.id]?.name || one.id}
                 </Box>
                 {listed[one.id]?.role ? ` · ${listed[one.id].role}` : ""}
-                {` · ${subActorWhen(one.trigger)}`}
+                {` · ${subActorWhen(one.trigger, listed[one.id]?.channel)}`}
               </Typography>
               {one.instruction && (
                 <Typography className="sd-val" sx={{ color: "text.secondary", whiteSpace: "pre-line" }}>
