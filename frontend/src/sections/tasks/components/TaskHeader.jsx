@@ -70,6 +70,7 @@ const TaskHeader = ({
   actions,
   nameEditable = true,
   backTo,
+  selectionSummary,
 }) => {
   const navigate = useNavigate();
   const { role } = useAuthContext();
@@ -98,6 +99,8 @@ const TaskHeader = ({
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
+        flexWrap: "wrap",
+        gap: 1,
         px: 2,
         py: 1.25,
         borderBottom: "1px solid",
@@ -163,7 +166,11 @@ const TaskHeader = ({
               <Typography
                 color="text.primary"
                 fontWeight={600}
-                sx={{ fontSize: "14px" }}
+                component="h1"
+                sx={{
+                  fontSize: "14px",
+                  overflowWrap: "anywhere",
+                }}
               >
                 {mode === "create" ? "Create Task" : name || "Untitled Task"}
               </Typography>
@@ -202,9 +209,19 @@ const TaskHeader = ({
       </Box>
 
       {actions && (
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            flexWrap: "wrap",
+          }}
+        >
           {actions}
         </Box>
+      )}
+      {selectionSummary && (
+        <Box sx={{ flexBasis: "100%", minWidth: 0 }}>{selectionSummary}</Box>
       )}
     </Box>
   );
@@ -219,6 +236,7 @@ TaskHeader.propTypes = {
   actions: PropTypes.node,
   nameEditable: PropTypes.bool,
   backTo: PropTypes.string,
+  selectionSummary: PropTypes.node,
 };
 
 export default TaskHeader;

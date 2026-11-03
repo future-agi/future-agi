@@ -18,6 +18,10 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { samplingStratumLabel } from "./samplingPolicyForm";
+import { samplingRequestError } from "./samplingRequestError";
+
+const NO_COHORT_MESSAGE =
+  "No sampling cohort exists for this task's current policy yet. It is created when the task first runs.";
 
 const number = (value, digits = 2) =>
   value === null || value === undefined
@@ -31,7 +35,7 @@ const percent = (value, digits = 1) =>
 const categoryLabel = (attribute, row) => {
   if (!row.present) return "(missing)";
   if (attribute === "slice" && row.value === "default")
-    return "All remaining contacts";
+    return "All other units";
   return row.value;
 };
 
@@ -95,7 +99,18 @@ export default function SamplingAuditPanel({ taskId }) {
         .get(endpoints.project.samplingAudit(), {
           params: { eval_task_id: taskId },
         })
-        .then((response) => response.data.result),
+        .then((response) => response.data.result)
+        .catch((error) => {
+          const status = error?.response?.status ?? error?.statusCode;
+          // A not-yet-frozen cohort is an expected empty state. Only this exact
+          // response is handled before QueryCache's global error notification.
+          if (
+            status === 404 &&
+            getSafeActionErrorMessage(error, "") === NO_COHORT_MESSAGE
+          )
+            return { noCohortMessage: NO_COHORT_MESSAGE };
+          throw error;
+        }),
     enabled: Boolean(taskId),
     retry: false,
   });
@@ -103,15 +118,21 @@ export default function SamplingAuditPanel({ taskId }) {
     return (
       <Skeleton variant="rounded" height={160} aria-label="Loading audit" />
     );
-  if (query.isError) {
+  const noCohortMessage = !query.isError && query.data?.noCohortMessage;
+  if (query.isError || noCohortMessage) {
     const status = query.error?.response?.status ?? query.error?.statusCode;
-    const message = getSafeActionErrorMessage(
-      query.error,
-      "The sampling audit could not be loaded.",
-    );
+    const message =
+      noCohortMessage ||
+      samplingRequestError(
+        query.error,
+        "audit",
+        "The sampling audit could not be loaded.",
+      );
     return (
       <Alert
-        severity={status === 404 || status === 409 ? "info" : "error"}
+        severity={
+          noCohortMessage || status === 404 || status === 409 ? "info" : "error"
+        }
         action={
           <Button size="small" onClick={() => query.refetch()}>
             Retry
@@ -141,8 +162,8 @@ export default function SamplingAuditPanel({ taskId }) {
         {summary.integrity === "ok"
           ? audit.mode === "live"
             ? "No sample-ratio mismatch detected at the configured threshold."
-            : "Quota and population counts match in every stratum; identical membership is not verified."
-          : `${summary.flagged_strata} stratum(s) need attention (see Check).`}
+            : "Quota and population counts match in every group; identical membership is not verified."
+          : `${summary.flagged_strata} group(s) need attention (see Check).`}
       </Alert>
       <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
         <Stat
@@ -159,15 +180,15 @@ export default function SamplingAuditPanel({ taskId }) {
         <Stat label="Weight CV" value={number(summary.weight_cv, 3)} />
         <Stat
           label="Unrepresented"
-          value={`${number(summary.unrepresented_population, 0)} units in ${summary.unrepresented_strata} strata`}
+          value={`${number(summary.unrepresented_population, 0)} units in ${summary.unrepresented_strata} groups`}
         />
       </Stack>
       <Box sx={{ overflowX: "auto" }}>
-        <Table size="small" aria-label="Sampling audit by stratum">
+        <Table size="small" aria-label="Sampling audit by group">
           <TableHead>
             <TableRow>
               {[
-                "Stratum",
+                "Group",
                 "Population (N)",
                 "Target",
                 "Achieved",
@@ -208,7 +229,7 @@ export default function SamplingAuditPanel({ taskId }) {
         <Box key={item.attribute}>
           <Typography variant="subtitle2">
             Balance on{" "}
-            {item.attribute === "slice" ? "slice" : `“${item.attribute}”`}
+            {item.attribute === "slice" ? "group rule" : `“${item.attribute}”`}
           </Typography>
           <Typography variant="caption" color="text.secondary" display="block">
             Chi-square {number(item.chi_square, 2)}
@@ -222,7 +243,10 @@ export default function SamplingAuditPanel({ taskId }) {
                 : "Weighted balance is not estimable without sampled units."}
           </Typography>
           <Box sx={{ overflowX: "auto" }}>
-            <Table size="small" aria-label={`Balance on ${item.attribute}`}>
+            <Table
+              size="small"
+              aria-label={`Balance on ${item.attribute === "slice" ? "group rule" : item.attribute}`}
+            >
               <TableHead>
                 <TableRow>
                   {[

@@ -1,7 +1,16 @@
 import React from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
+import userEvent from "@testing-library/user-event";
+import { enqueueSnackbar } from "notistack";
+import { handleError } from "src/utils/queryErrorHandler";
+
+vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "src/utils/test-utils";
+import { render, screen, within, waitFor } from "src/utils/test-utils";
 import axios from "src/utils/axios";
 import SamplingAuditPanel from "./SamplingAuditPanel";
 
@@ -16,7 +25,10 @@ const renderPanel = () =>
   render(
     <QueryClientProvider
       client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        new QueryClient({
+          defaultOptions: { queries: { retry: false } },
+          queryCache: new QueryCache({ onError: handleError }),
+        })
       }
     >
       <SamplingAuditPanel taskId="task-1" />
@@ -116,15 +128,77 @@ const CLOSED = {
   notes: ["Population per stratum is re-read at the cohort's freeze time."],
 };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  axios.get.mockReset();
+});
 
 describe("Sampling audit panel", () => {
+  it.each([
+    [14, "Too many audit requests. Try again in 14 seconds."],
+    [0, "Too many audit requests. Try again in 0 seconds."],
+    [undefined, "Too many audit requests. Please wait before trying again."],
+    [
+      "<script>14</script>",
+      "Too many audit requests. Please wait before trying again.",
+    ],
+  ])(
+    "keeps Retry and gives wait advice for audit throttling (%s)",
+    async (retryAfterSeconds, message) => {
+      axios.get
+        .mockRejectedValueOnce({
+          statusCode: 429,
+          retryAfterSeconds,
+          detail: "Check your policy",
+        })
+        .mockResolvedValueOnce({ data: { result: CLOSED } });
+      renderPanel();
+      expect(await screen.findByRole("alert")).toHaveTextContent(message);
+      expect(screen.getByRole("alert")).not.toHaveTextContent(/check.*policy/i);
+      await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+      expect(await screen.findByLabelText("Sampling audit")).toBeVisible();
+      expect(axios.get).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("handles only the expected no-cohort 404 inline without a duplicate global toast and retries", async () => {
+    const message =
+      "No sampling cohort exists for this task's current policy yet. It is created when the task first runs.";
+    axios.get
+      .mockRejectedValueOnce({ statusCode: 404, result: message })
+      .mockResolvedValueOnce({ data: { result: CLOSED } });
+    renderPanel();
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByRole("alert")).toHaveClass("MuiAlert-standardInfo");
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByLabelText("Sampling audit")).toBeVisible();
+    expect(axios.get).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([404, 409, 500])(
+    "still surfaces unexpected audit %s errors globally",
+    async (statusCode) => {
+      axios.get.mockRejectedValue({
+        statusCode,
+        result: "Unexpected audit failure",
+      });
+      renderPanel();
+      expect(await screen.findByRole("alert")).toBeVisible();
+      await waitFor(() => expect(enqueueSnackbar).toHaveBeenCalledTimes(1));
+      expect(enqueueSnackbar).toHaveBeenCalledWith(expect.any(String), {
+        variant: "error",
+      });
+      expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    },
+  );
+
   it("shows the frozen design, weights, shortage and balance read-only", async () => {
     axios.get.mockResolvedValue({ data: { result: CLOSED } });
     renderPanel();
     expect(
       await screen.findByText(
-        "Quota and population counts match in every stratum; identical membership is not verified.",
+        "Quota and population counts match in every group; identical membership is not verified.",
       ),
     ).toBeVisible();
     expect(axios.get).toHaveBeenCalledWith(
@@ -134,7 +208,7 @@ describe("Sampling audit panel", () => {
     expect(screen.getByText("3.9")).toBeVisible(); // Kish effective n
     expect(screen.getByText("1.523")).toBeVisible(); // design effect
     const strata = screen.getByRole("table", {
-      name: "Sampling audit by stratum",
+      name: "Sampling audit by group",
     });
     const rare = within(strata).getByText("rare · en").closest("tr");
     expect(
@@ -142,11 +216,11 @@ describe("Sampling audit panel", () => {
         .getAllByRole("cell")
         .map((cell) => cell.textContent),
     ).toEqual(["rare · en", "3", "5", "3", "2", "1", "1", "Exact"]);
-    expect(
-      within(strata).getByText("All remaining contacts · fr"),
-    ).toBeVisible();
-    const balance = screen.getByRole("table", { name: "Balance on slice" });
-    expect(within(balance).getByText("All remaining contacts")).toBeVisible();
+    expect(within(strata).getByText("All other units · fr")).toBeVisible();
+    const balance = screen.getByRole("table", {
+      name: "Balance on group rule",
+    });
+    expect(within(balance).getByText("All other units")).toBeVisible();
     // Population share and weighted share are equal: weights restore it.
     expect(within(balance).getAllByText("87%")).toHaveLength(2);
     expect(within(balance).getByText("50%")).toBeVisible();
@@ -194,7 +268,7 @@ describe("Sampling audit panel", () => {
     });
     renderPanel();
     expect(
-      await screen.findByText("1 stratum(s) need attention (see Check)."),
+      await screen.findByText("1 group(s) need attention (see Check)."),
     ).toBeVisible();
     expect(screen.getByText("Mismatch p=3.1e-6")).toBeVisible();
   });

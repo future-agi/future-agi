@@ -2,6 +2,8 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { render, screen } from "src/utils/test-utils";
+import { createTheme, getContrastRatio } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
 import SamplingPrecisionPlanner from "./SamplingPrecisionPlanner";
 import { applyCellQuotas } from "./samplingPrecisionPlan";
 import { defaultSamplingPolicy } from "./samplingPolicyForm";
@@ -15,10 +17,97 @@ const policy = () => ({
   ...defaultSamplingPolicy(),
   group_by: [{ source: "span", key: "group" }],
 });
-const open = async () =>
-  userEvent.click(screen.getByText("Precision planner · advisory"));
+const open = async () => userEvent.click(screen.getByText("Plan sample size"));
 
 describe("advisory precision planner", () => {
+  it.each(["light", "dark"])(
+    "keeps the shortfall advisory above 4.5:1 on production %s surfaces",
+    async (mode) => {
+      const theme = createTheme({ palette: palette(mode) });
+      render(
+        <SamplingPrecisionPlanner
+          policy={defaultSamplingPolicy()}
+          preview={{
+            strata: [
+              {
+                stratum: '["default",[]]',
+                eligible_units: 2,
+                selected_units: 1,
+              },
+            ],
+          }}
+          onApply={vi.fn()}
+        />,
+        { theme },
+      );
+      await open();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Suggest quotas" }),
+      );
+      const advisory = screen.getByRole("status");
+      const foreground = getComputedStyle(advisory).color;
+      for (const surface of [
+        theme.palette.background.paper,
+        theme.palette.background.default,
+      ]) {
+        expect(getContrastRatio(foreground, surface)).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      }
+      const apply = screen.getByRole("button", {
+        name: "Apply suggested quotas",
+      });
+      expect(apply).toBeEnabled();
+      expect(apply).toHaveAccessibleDescription(advisory.textContent);
+    },
+  );
+  it("warns beside Apply when budget 1 misses the requested 5 pp margin without increasing it", async () => {
+    const onApply = vi.fn();
+    const stratum = '["default",[]]';
+    render(
+      <SamplingPrecisionPlanner
+        policy={defaultSamplingPolicy()}
+        preview={{
+          strata: [{ stratum, eligible_units: 2, selected_units: 1 }],
+        }}
+        onApply={onApply}
+      />,
+    );
+    await open();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Suggest quotas" }),
+    );
+    const advisory = screen.getByRole("status");
+    expect(advisory).toHaveTextContent(
+      "This budget does not meet the requested 5 pp margin; this group needs 2 units.",
+    );
+    const apply = screen.getByRole("button", {
+      name: "Apply suggested quotas",
+    });
+    expect(apply).toHaveAccessibleDescription(advisory.textContent);
+    expect(apply).toBeEnabled();
+    expect(screen.getByLabelText("Total unit budget")).toHaveValue(1);
+    expect(
+      screen.getByText(
+        /Small samples may not support the normal approximation/,
+      ),
+    ).toBeVisible();
+    await userEvent.click(apply);
+    expect(onApply).toHaveBeenCalledWith(
+      expect.objectContaining({ cell_quotas: { [stratum]: 1 } }),
+    );
+    await userEvent.clear(screen.getByLabelText("Total unit budget"));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Total unit budget"), "2");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Suggest quotas" }),
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Apply suggested quotas" }),
+    ).toBeEnabled();
+  });
+
   it("shows minimum n and margins but changes no policy until Apply", async () => {
     const onApply = vi.fn();
     const original = policy();
@@ -34,7 +123,7 @@ describe("advisory precision planner", () => {
       screen.getByRole("columnheader", { name: "Minimum n for margin" }),
     ).toBeInTheDocument();
     const budget = screen.getByLabelText("Total unit budget");
-    const minimum = screen.getByLabelText("Per-cell minimum");
+    const minimum = screen.getByLabelText("Per-group minimum");
     await userEvent.clear(budget);
     await userEvent.type(budget, "16");
     await userEvent.clear(minimum);
@@ -116,7 +205,7 @@ describe("advisory precision planner", () => {
       screen.getAllByRole("spinbutton", { name: /Anticipated proportion/ }),
     ).toHaveLength(3);
     await userEvent.clear(
-      screen.getByLabelText("Anticipated proportion (%) for cell 1"),
+      screen.getByLabelText("Anticipated proportion (%) for group 1"),
     );
     await userEvent.click(
       screen.getByRole("button", { name: "Suggest quotas" }),
