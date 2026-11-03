@@ -507,8 +507,6 @@ def _resolve_resource(link):
             }
 
         elif link.resource_type == "dashboard":
-            from tracer.serializers.dashboard import DashboardDetailSerializer
-
             dashboard = _get_shared_dashboard(
                 link.resource_id,
                 link.organization,
@@ -516,9 +514,7 @@ def _resolve_resource(link):
             )
             if not dashboard:
                 return None
-            data = DashboardDetailSerializer(dashboard).data
-            data["widget_count"] = len(data.get("widgets", []))
-            return data
+            return _serialize_shared_dashboard(dashboard)
 
         elif link.resource_type == "project":
             project = _get_shared_project(
@@ -795,6 +791,96 @@ def _get_shared_dashboard(resource_id, organization, workspace):
         .filter(_workspace_scope_q(workspace, "workspace"))
         .first()
     )
+
+
+def _serialize_shared_dashboard(dashboard):
+    """The dashboard fields the read-only shared view renders, and no others.
+
+    Anyone holding a public link's token can read this payload. The in-app
+    ``DashboardDetailSerializer`` also carries the authors' accounts, the
+    workspace and each widget's full saved query (project ids, filter values,
+    eval and annotation ids), so a shared dashboard is built from an allowlist.
+    """
+    widgets = [
+        _serialize_shared_dashboard_widget(widget)
+        for widget in dashboard.widgets.filter(deleted=False).order_by(
+            "position", "created_at"
+        )
+    ]
+    return {
+        "name": dashboard.name,
+        "description": dashboard.description,
+        "widget_count": len(widgets),
+        "widgets": widgets,
+    }
+
+
+def _serialize_shared_dashboard_widget(widget):
+    from tracer.serializers.dashboard import (
+        DASHBOARD_CHART_TYPES,
+        DASHBOARD_TIME_RANGE_PRESETS,
+    )
+
+    query_config = _json_object(widget.query_config)
+    chart_config = _json_object(widget.chart_config)
+    metrics = query_config.get("metrics")
+    if not isinstance(metrics, list):
+        metrics = []
+    preset = _choice(
+        _json_object(query_config.get("time_range")).get("preset"),
+        DASHBOARD_TIME_RANGE_PRESETS,
+    ) or _choice(
+        _json_object(query_config.get("timeRange")).get("preset"),
+        DASHBOARD_TIME_RANGE_PRESETS,
+    )
+    return {
+        "id": str(widget.id),
+        "name": widget.name,
+        "description": widget.description,
+        "width": widget.width,
+        "height": widget.height,
+        "chart_config": {
+            "chart_type": _choice(chart_config.get("chart_type"), DASHBOARD_CHART_TYPES)
+        },
+        "query_config": {
+            "metrics": [
+                shared
+                for shared in map(_serialize_shared_dashboard_metric, metrics)
+                if shared is not None
+            ],
+            "time_range": {"preset": preset},
+        },
+    }
+
+
+def _serialize_shared_dashboard_metric(metric):
+    """A metric's label and aggregation; its ids, filters and source stay private."""
+    from tracer.constants.dashboard import DASHBOARD_AGGREGATIONS
+
+    if not isinstance(metric, dict):
+        return None
+    label = next(
+        (
+            metric[key]
+            for key in ("display_name", "displayName", "name")
+            if isinstance(metric.get(key), str) and metric[key]
+        ),
+        None,
+    )
+    if label is None:
+        return None
+    return {
+        "display_name": label,
+        "aggregation": _choice(metric.get("aggregation"), DASHBOARD_AGGREGATIONS),
+    }
+
+
+def _json_object(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _choice(value, choices):
+    return value if isinstance(value, str) and value in choices else None
 
 
 def _get_shared_project(resource_id, organization, workspace):

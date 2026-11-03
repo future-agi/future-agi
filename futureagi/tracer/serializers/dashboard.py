@@ -61,6 +61,17 @@ PROPERTY_CATALOG_METRIC_SOURCES = (
     "all",
 )
 DASHBOARD_GRANULARITIES = ("minute", "hour", "day", "week", "month")
+DASHBOARD_CHART_TYPES = (
+    "line",
+    "stacked_line",
+    "column",
+    "stacked_column",
+    "bar",
+    "stacked_bar",
+    "pie",
+    "table",
+    "metric",
+)
 DASHBOARD_TIME_RANGE_PRESETS = (
     "30m",
     "6h",
@@ -381,20 +392,9 @@ class DashboardWidgetSerializer(serializers.ModelSerializer):
     def validate_chart_config(self, value):
         if not isinstance(value, dict):
             raise serializers.ValidationError("chart_config must be a JSON object.")
-        valid_types = (
-            "line",
-            "stacked_line",
-            "column",
-            "stacked_column",
-            "bar",
-            "stacked_bar",
-            "pie",
-            "table",
-            "metric",
-        )
-        if "chart_type" in value and value["chart_type"] not in valid_types:
+        if "chart_type" in value and value["chart_type"] not in DASHBOARD_CHART_TYPES:
             raise serializers.ValidationError(
-                f"chart_type must be one of: {', '.join(valid_types)}"
+                f"chart_type must be one of: {', '.join(DASHBOARD_CHART_TYPES)}"
             )
         return value
 

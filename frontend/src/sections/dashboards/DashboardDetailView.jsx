@@ -54,6 +54,7 @@ import {
 } from "./constants";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { ConfirmDialog } from "src/components/custom-dialog";
+import { ShareDialog } from "src/components/share-dialog";
 import { useSnackbar } from "src/components/snackbar";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import WidgetChart from "./WidgetChart";
@@ -764,7 +765,7 @@ export default function DashboardDetailView() {
   // Widget context menu
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [menuWidget, setMenuWidget] = useState(null);
-  const [linkCopied, setLinkCopied] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
 
   // Width submenu
   const [widthMenuAnchor, setWidthMenuAnchor] = useState(null);
@@ -1296,22 +1297,15 @@ export default function DashboardDetailView() {
               {isRefreshing ? "Refreshing" : "Refresh"}
             </Button>
           )}
-          <Tooltip title={linkCopied ? "Copied!" : "Copy link to share"}>
+          {/* The page URL needs sign-in, so Share creates a token link. */}
+          <Tooltip title="Share dashboard">
             <IconButton
               size="small"
-              onClick={() => {
-                navigator.clipboard.writeText(window.location.href);
-                setLinkCopied(true);
-                setTimeout(() => setLinkCopied(false), 2000);
-              }}
-              sx={{
-                color: linkCopied ? "primary.main" : "text.secondary",
-              }}
+              aria-label="Share dashboard"
+              onClick={() => setShareDialogOpen(true)}
+              sx={{ color: "text.secondary" }}
             >
-              <Iconify
-                icon={linkCopied ? "mdi:check" : "mdi:share-variant-outline"}
-                width={18}
-              />
+              <Iconify icon="mdi:share-variant-outline" width={18} />
             </IconButton>
           </Tooltip>
           {!isReadOnly && (
@@ -1777,6 +1771,15 @@ export default function DashboardDetailView() {
           <ListItemText>Delete Dashboard</ListItemText>
         </MenuItem>
       </Menu>
+
+      {dashboardId && (
+        <ShareDialog
+          open={shareDialogOpen}
+          onClose={() => setShareDialogOpen(false)}
+          resourceType="dashboard"
+          resourceId={dashboardId}
+        />
+      )}
 
       <ConfirmDialog
         open={!!confirmDelete}

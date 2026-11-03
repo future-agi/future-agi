@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, screen, fireEvent } from "src/utils/test-utils";
 import DashboardDetailView from "../DashboardDetailView";
 import { DATE_PRESETS } from "../constants";
@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   deleteDashboard: { mutate: vi.fn(), isPending: false },
   widgets: [{ id: "w-1", name: "Tokens", position: 0, width: 12 }],
   widgetChartProps: null,
+  shareDialogProps: null,
   dashboardId: "dash-1",
   // Permission state the useCanEditDashboard mock returns; per-test controllable
   // so we can drive both the writer and viewer (read-only) paths.
@@ -71,6 +72,13 @@ vi.mock("../WidgetChart", () => ({
 
 vi.mock("src/components/snackbar", () => ({
   useSnackbar: () => ({ enqueueSnackbar: vi.fn() }),
+}));
+
+vi.mock("src/components/share-dialog", () => ({
+  ShareDialog: (props) => {
+    h.shareDialogProps = props;
+    return null;
+  },
 }));
 
 const openWidgetDeleteDialog = () => {
@@ -365,5 +373,76 @@ describe("DashboardDetailView — widget description (TH-7678)", () => {
       '[data-widget-id="w-1"] .MuiCardContent-root > div',
     );
     expect(header.children).toHaveLength(1);
+  });
+});
+
+describe("DashboardDetailView — share (#83)", () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  const originalClipboard = Object.getOwnPropertyDescriptor(
+    navigator,
+    "clipboard",
+  );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.canEdit = { ...WRITER };
+    h.shareDialogProps = null;
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    if (originalClipboard) {
+      Object.defineProperty(navigator, "clipboard", originalClipboard);
+    } else {
+      delete navigator.clipboard;
+    }
+  });
+
+  it("opens the share dialog for this dashboard instead of copying the page URL", () => {
+    render(<DashboardDetailView />);
+    expect(h.shareDialogProps?.open).toBeFalsy();
+
+    fireEvent.click(screen.getByRole("button", { name: /share/i }));
+
+    // The page URL is login-gated, so the button hands off to the share-link
+    // dialog, which mints a /shared/:token link for this dashboard.
+    expect(h.shareDialogProps).toMatchObject({
+      open: true,
+      resourceType: "dashboard",
+      resourceId: "dash-1",
+    });
+    expect(writeText).not.toHaveBeenCalled();
+
+    act(() => h.shareDialogProps.onClose());
+    expect(h.shareDialogProps.open).toBe(false);
+  });
+
+  it("shares the dashboard now on screen after navigating to another one", () => {
+    const view = render(<DashboardDetailView />);
+    h.dashboardId = "dash-2";
+    view.rerender(<DashboardDetailView />);
+
+    fireEvent.click(screen.getByRole("button", { name: /share/i }));
+    expect(h.shareDialogProps).toMatchObject({
+      open: true,
+      resourceType: "dashboard",
+      resourceId: "dash-2",
+    });
+  });
+
+  it("read-only viewers can share the dashboard too", () => {
+    h.canEdit = { ...VIEWER };
+    render(<DashboardDetailView />);
+
+    fireEvent.click(screen.getByRole("button", { name: /share/i }));
+    expect(h.shareDialogProps).toMatchObject({
+      open: true,
+      resourceType: "dashboard",
+      resourceId: "dash-1",
+    });
   });
 });
