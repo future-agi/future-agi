@@ -54,7 +54,7 @@ describe("WorldActorsPanel", () => {
           id: "colleague",
           name: "Jordan Taylor",
           side: "caller",
-          surface: "call.beside",
+          channel: "audio_mix",
         },
       ],
       source: "saved",

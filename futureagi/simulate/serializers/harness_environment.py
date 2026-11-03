@@ -1012,66 +1012,15 @@ class HarnessNudgeAnswerSerializer(serializers.Serializer):
     answer = serializers.ChoiceField(choices=("yes", "no"))
 
 
-class HarnessActorConstraintsSerializer(serializers.Serializer):
-    may_agree = serializers.ListField(child=serializers.CharField(), required=False)
-    private = serializers.ListField(child=serializers.CharField(), required=False)
-    escalate_when = serializers.ListField(child=serializers.CharField(), required=False)
-    stop_when = serializers.ListField(child=serializers.CharField(), required=False)
+class HarnessActorRecordField(serializers.DictField):
+    """One actor record, in the shape its environment's actor rules declare (`record_schemas` on the cast); checked
+    against those rules on write, so a field a newer release adds passes through unchanged."""
 
-
-class HarnessActorResponseTimingSerializer(serializers.Serializer):
-    kind = serializers.ChoiceField(choices=("immediate", "delayed"), required=False)
-    seconds = serializers.FloatField(required=False, min_value=0)
-
-
-class HarnessActorBehaviourSerializer(serializers.Serializer):
-    style = serializers.CharField(required=False, allow_blank=True)
-    response_timing = HarnessActorResponseTimingSerializer(required=False)
-
-
-class HarnessActorTriggerSerializer(serializers.Serializer):
-    kind = serializers.CharField(max_length=32)
-    seconds = serializers.FloatField(required=False, min_value=0)
-    tool = serializers.CharField(required=False, allow_blank=True, max_length=128)
-    on_call = serializers.IntegerField(required=False, min_value=1)
-    p = serializers.FloatField(required=False, min_value=0, max_value=1)
-
-
-class HarnessActorActivationSerializer(serializers.Serializer):
-    trigger = HarnessActorTriggerSerializer(required=False)
-    timeout_seconds = serializers.FloatField(required=False, min_value=0)
-    # `silent`, `decline`, or another actor's id who answers instead.
-    fallback = serializers.CharField(required=False, max_length=64)
-
-
-class HarnessActorSerializer(serializers.Serializer):
-    """One actor of an environment: who it is, what it knows and may do in the world, and when it comes in."""
-
-    id = serializers.RegexField(r"^[a-z0-9_]{1,64}$")
-    name = serializers.CharField(max_length=200)
-    kind = serializers.CharField(required=False, max_length=64)
-    side = serializers.ChoiceField(choices=("caller", "world"), required=False)
-    role = serializers.CharField(required=False, allow_blank=True, max_length=500)
-    parent = serializers.CharField(required=False, allow_null=True, max_length=64)
-    persona = serializers.DictField(child=serializers.JSONField(), required=False)
-    goal = serializers.CharField(required=False, allow_blank=True, max_length=2000)
-    constraints = HarnessActorConstraintsSerializer(required=False)
-    behaviour = HarnessActorBehaviourSerializer(required=False)
-    knowledge = serializers.ListField(child=serializers.DictField(child=serializers.JSONField()), required=False)
-    prompt = serializers.CharField(required=False, allow_blank=True, max_length=20000)
-    surface = serializers.CharField(required=False, max_length=64)
-    play = serializers.CharField(required=False, max_length=32)
-    permitted_actions = serializers.ListField(child=serializers.CharField(max_length=128), required=False)
-    identities = serializers.DictField(child=serializers.CharField(), required=False)
-    on_behalf_of = serializers.CharField(required=False, allow_null=True, max_length=64)
-    activation = HarnessActorActivationSerializer(required=False, allow_null=True)
-    loudness_ratio = serializers.FloatField(required=False, allow_null=True, min_value=0.01, max_value=1)
-    # Set by the server on every edit; ignored when sent.
-    provenance = serializers.DictField(child=serializers.JSONField(), required=False, read_only=True)
+    child = serializers.JSONField()
 
 
 class HarnessActorWriteSerializer(serializers.Serializer):
-    actor = HarnessActorSerializer()
+    actor = HarnessActorRecordField()
     # The draft revision the actors were read at; an edit made elsewhere since is refused.
     expected_revision = serializers.IntegerField(required=False, allow_null=True, min_value=0)
 
@@ -1082,9 +1031,11 @@ class HarnessActorDeleteQuerySerializer(serializers.Serializer):
 
 
 class HarnessActorListSerializer(serializers.Serializer):
-    actors = HarnessActorSerializer(many=True)
+    actors = serializers.ListField(child=HarnessActorRecordField())
     source = serializers.ChoiceField(choices=("draft", "saved"))
     revision = serializers.IntegerField()
+    # Each actor file's record schema, from the rules of the release that sealed the environment.
+    record_schemas = serializers.DictField(child=serializers.JSONField())
 
 
 class HarnessActorViewQuerySerializer(serializers.Serializer):

@@ -63857,13 +63857,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessActorList: {
-      required: ["actors", "source", "revision"],
+      required: ["actors", "source", "revision", "record_schemas"],
       type: "object",
       properties: {
         actors: {
           type: "array",
           items: {
-            $ref: "#/definitions/HarnessActor",
+            type: "object",
+            additionalProperties: {
+              type: "object",
+            },
           },
         },
         source: {
@@ -63874,6 +63877,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         revision: {
           title: "Revision",
           type: "integer",
+        },
+        record_schemas: {
+          title: "Record schemas",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+          },
         },
       },
     },
@@ -63913,7 +63923,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       type: "object",
       properties: {
         actor: {
-          $ref: "#/definitions/HarnessActor",
+          title: "Actor",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+          },
         },
         expected_revision: {
           title: "Expected revision",
@@ -94737,132 +94751,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessActor: {
-      required: ["id", "name"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          pattern: "^[a-z0-9_]{1,64}$",
-          minLength: 1,
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          maxLength: 200,
-          minLength: 1,
-        },
-        kind: {
-          title: "Kind",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-        },
-        side: {
-          title: "Side",
-          type: "string",
-          enum: ["caller", "world"],
-        },
-        role: {
-          title: "Role",
-          type: "string",
-          maxLength: 500,
-        },
-        parent: {
-          title: "Parent",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        persona: {
-          title: "Persona",
-          type: "object",
-          additionalProperties: {
-            type: "object",
-          },
-        },
-        goal: {
-          title: "Goal",
-          type: "string",
-          maxLength: 2000,
-        },
-        constraints: {
-          $ref: "#/definitions/HarnessActorConstraints",
-        },
-        behaviour: {
-          $ref: "#/definitions/HarnessActorBehaviour",
-        },
-        knowledge: {
-          type: "array",
-          items: {
-            type: "object",
-            additionalProperties: {
-              type: "object",
-            },
-          },
-        },
-        prompt: {
-          title: "Prompt",
-          type: "string",
-          maxLength: 20000,
-        },
-        surface: {
-          title: "Surface",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-        },
-        play: {
-          title: "Play",
-          type: "string",
-          maxLength: 32,
-          minLength: 1,
-        },
-        permitted_actions: {
-          type: "array",
-          items: {
-            type: "string",
-            maxLength: 128,
-            minLength: 1,
-          },
-        },
-        identities: {
-          title: "Identities",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-        on_behalf_of: {
-          title: "On behalf of",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        activation: {
-          $ref: "#/definitions/HarnessActorActivation",
-        },
-        loudness_ratio: {
-          title: "Loudness ratio",
-          type: "number",
-          maximum: 1,
-          minimum: 0.01,
-          "x-nullable": true,
-        },
-        provenance: {
-          title: "Provenance",
-          type: "object",
-          additionalProperties: {
-            type: "object",
-          },
-          readOnly: true,
-        },
-      },
-    },
     HarnessActorSeen: {
       required: ["input", "value", "source"],
       type: "object",
@@ -113875,71 +113763,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessActorActivation: {
-      type: "object",
-      properties: {
-        trigger: {
-          $ref: "#/definitions/HarnessActorTrigger",
-        },
-        timeout_seconds: {
-          title: "Timeout seconds",
-          type: "number",
-          minimum: 0,
-        },
-        fallback: {
-          title: "Fallback",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-        },
-      },
-      "x-nullable": true,
-    },
-    HarnessActorBehaviour: {
-      type: "object",
-      properties: {
-        style: {
-          title: "Style",
-          type: "string",
-        },
-        response_timing: {
-          $ref: "#/definitions/HarnessActorResponseTiming",
-        },
-      },
-    },
-    HarnessActorConstraints: {
-      type: "object",
-      properties: {
-        may_agree: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-        private: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-        escalate_when: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-        stop_when: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-      },
-    },
     HarnessAgentConfigChange: {
       type: "object",
       properties: {
@@ -122025,54 +121848,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-        },
-      },
-    },
-    HarnessActorTrigger: {
-      required: ["kind"],
-      type: "object",
-      properties: {
-        kind: {
-          title: "Kind",
-          type: "string",
-          maxLength: 32,
-          minLength: 1,
-        },
-        seconds: {
-          title: "Seconds",
-          type: "number",
-          minimum: 0,
-        },
-        tool: {
-          title: "Tool",
-          type: "string",
-          maxLength: 128,
-        },
-        on_call: {
-          title: "On call",
-          type: "integer",
-          minimum: 1,
-        },
-        p: {
-          title: "P",
-          type: "number",
-          maximum: 1,
-          minimum: 0,
-        },
-      },
-    },
-    HarnessActorResponseTiming: {
-      type: "object",
-      properties: {
-        kind: {
-          title: "Kind",
-          type: "string",
-          enum: ["immediate", "delayed"],
-        },
-        seconds: {
-          title: "Seconds",
-          type: "number",
-          minimum: 0,
         },
       },
     },
