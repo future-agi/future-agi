@@ -1,6 +1,7 @@
 package ingestbench
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -528,6 +529,9 @@ func Report(w io.Writer, r Result) error {
 	if err := ValidateResult(r); err != nil {
 		return err
 	}
+	// Flush returns the first output error, including earlier buffered writes.
+	out := bufio.NewWriter(w)
+	w = out
 	c := r.Counters
 	fmt.Fprintf(w, "OTLP ingestion measurement (%s)\nRun: %s  Environment: %s  Topology: %s\n", r.Status, r.Config.RunID, r.Config.Environment, r.Config.Topology)
 	fmt.Fprintf(w, "Wire path: %s%s\n", r.Config.Encoding, map[bool]string{true: " + gzip", false: ""}[r.Config.Gzip])
@@ -658,7 +662,7 @@ func Report(w io.Writer, r Result) error {
 	for _, note := range r.Limitations {
 		fmt.Fprintln(w, "- "+note)
 	}
-	return nil
+	return out.Flush()
 }
 
 func reportedBytes(n uint64) string {

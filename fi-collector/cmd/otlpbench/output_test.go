@@ -1,12 +1,38 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
+
+func TestReportCLIOutputFailureExitsOne(t *testing.T) {
+	p := repairPlan(t)
+	// A read-only descriptor gives a deterministic write failure without
+	// depending on platform-specific devices such as /dev/full.
+	stdout, err := os.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdout.Close()
+	c := repairProcess("report", p)
+	c.Stdout = stdout
+	var stderr bytes.Buffer
+	c.Stderr = &stderr
+	err = c.Run()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		t.Fatalf("report exit = %v, want exit 1; stderr: %s", err, stderr.String())
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("otlpbench:")) || !bytes.Contains(stderr.Bytes(), []byte("write")) {
+		t.Fatalf("missing output-error diagnostic: %s", stderr.String())
+	}
+}
 
 func TestOutputCommitRefusesLateCollisionAndRollsBack(t *testing.T) {
 	d := t.TempDir()
