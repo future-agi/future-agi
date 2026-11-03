@@ -3329,8 +3329,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             f"root_page.{array_column} AS {array_column}"
             for array_column, _key in self.PAGE_ATTRIBUTE_ARRAY_COLUMNS
         )
+        # CH25 inlines relational CTEs at every use. Materialize only this
+        # finite page's admitted (project, session) pairs, so the member seed
+        # and winner checks do not each rebuild the root replay plan.
         member_ctes = self._session_member_ctes(
-            session_source="resolved_roots",
+            session_source="hydration_member_scope",
             physical_time_scope=physical_time_scope,
             latest_time_scope=member_latest_time_scope,
             include_messages=True,
@@ -3409,6 +3412,16 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 {attributes["arrays"]}
             FROM resolved_roots
             GROUP BY session_id
+        ),
+        (
+            SELECT groupArray(tuple(project_id, session_id))
+            FROM (SELECT DISTINCT project_id, session_id FROM resolved_roots)
+        ) AS hydration_member_scope_rows,
+        hydration_member_scope AS (
+            SELECT
+                tupleElement(scope_row, 1) AS project_id,
+                tupleElement(scope_row, 2) AS session_id
+            FROM (SELECT arrayJoin(hydration_member_scope_rows) AS scope_row)
         ),
         {member_ctes},
         (

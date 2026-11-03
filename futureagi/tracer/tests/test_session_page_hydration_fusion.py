@@ -92,6 +92,11 @@ def test_page_hydration_reads_the_page_roots_once(cls):
     # its two consumers never repeat the member scan.
     assert sql.count("candidate_member_identities AS (") == 1
     assert sql.count(") AS member_rollup_rows") == 1
+    # A relational CTE alone does not reuse its root-admission work in CH25.
+    # Keep the finite, project-qualified scope behind a scalar subquery too.
+    assert sql.count(") AS hydration_member_scope_rows") == 1
+    assert "SELECT DISTINCT project_id, session_id FROM resolved_roots" in sql
+    assert "SELECT DISTINCT project_id, session_id FROM hydration_member_scope" in sql
     # The only content the member pass reads is the page's message inputs.
     assert sql.count("argMax(tuple(input),") == 2
     # The hydrations this replaces are gone, not merely unused.
