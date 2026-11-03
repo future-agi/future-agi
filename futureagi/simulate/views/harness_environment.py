@@ -369,7 +369,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         responses={200: HarnessActorViewSerializer},
         operation_id="simulate_api_harness-environments_actor_view",
     )
-    @action(detail=True, methods=["get"], url_path=r"actors/(?P<actor_id>[a-z0-9_]{1,64})")
+    @action(detail=True, methods=["get"], url_path=r"actors/(?P<actor_id>[^/]{1,64})")
     def actor_detail(self, request, pk=None, actor_id=None):
         """What one actor sees and may do, optionally in one scenario, and what it never sees."""
         from simulate.services.harness_actors import actor_view
