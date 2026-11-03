@@ -448,7 +448,7 @@ def test_a_question_is_checked_then_charged_and_added_to_the_run(
 
 @pytest.mark.django_db
 def test_a_preview_is_charged_with_its_tokens_and_ceiling_flag(
-    auth_client, observe_project, insight_enabled, emitted, monkeypatch
+    auth_client, observe_project, emitted, monkeypatch
 ):
     """Cloud's preview was charged at the unpriced ceiling, but its usage
     event neither said so nor carried the tokens to check it by."""

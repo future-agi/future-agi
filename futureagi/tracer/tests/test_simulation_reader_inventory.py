@@ -1721,6 +1721,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "one is passed, and a hidden project has no session row to pass it"
             ),
         ),
+        "CHSpanReader.source_arrivals_by_trace_ids": _READS_THE_IDS_IT_IS_GIVEN,
         "CHSpanReader.activity_by_trace_ids": filed(
             BY_ID_ALONE,
             why=(

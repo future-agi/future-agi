@@ -6,7 +6,6 @@ from tfc.temporal.common.client import start_workflow_sync
 from tfc.temporal.insights.types import InsightRunInput
 from tfc.temporal.insights.workflows import InsightReportWorkflow
 
-
 # The longest a report may run. A provider that hangs makes every model call
 # wait out its timeouts, so without a limit a report would keep running for
 # hours; Temporal closes it at this limit, and the report then reads as

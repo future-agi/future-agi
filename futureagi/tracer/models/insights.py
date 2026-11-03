@@ -123,6 +123,8 @@ class InsightRun(BaseModel):
     workflow_id = models.CharField(max_length=255, blank=True, default="")
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
+    # Oldest source contributing text or a reused taxonomy; never the run time.
+    source_created_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "tracer_insight_run"
@@ -130,6 +132,10 @@ class InsightRun(BaseModel):
         indexes = [
             models.Index(fields=["config", "created_at"]),
             models.Index(fields=["project", "status"]),
+            models.Index(
+                fields=["organization", "source_created_at"],
+                name="insight_run_org_source_idx",
+            ),
         ]
 
     def __str__(self):

@@ -117,6 +117,8 @@ class CHSpan:
     # Denormalized onto every span row so a caller gets trace context (e.g. the
     # cluster-RCA agent) without a separate PG read.
     trace_name: str = ""
+    # Ingestion/arrival time used by retention, not the displayed event time.
+    created_at: datetime | None = None
 
     @property
     def pk(self):
@@ -192,6 +194,7 @@ _READ_COLUMNS: tuple[str, ...] = (
     "semconv_source",
     "is_deleted",
     "trace_name",
+    "created_at",
 )
 
 _SELECT_SQL = ", ".join(_READ_COLUMNS)
@@ -379,6 +382,7 @@ _DATA_KEYS: tuple[str, ...] = (
     "semconv_source",
     "is_deleted",
     "trace_name",
+    "created_at",
 )
 
 # Allowlist for the ``columns`` projection arg: logical name (the CHSpan field)
@@ -1222,6 +1226,46 @@ class CHSpanReader:
         )
         return self._resolve_other(roots, "trace_session_id", "trace_session_id_remap")
 
+    def source_arrivals_by_trace_ids(
+        self,
+        trace_ids: list[str],
+        *,
+        project_id: str,
+        version_cutoff: int | None = None,
+    ) -> dict[str, datetime]:
+        """Earliest logical source arrival, including children, in bounded batches.
+
+        Resolve versions before taking the minimum. A snapshot cutoff includes
+        later tombstones, just like the evidence reader: deletion wins over an
+        old snapshot, while later live writes cannot replace its provenance.
+        """
+        result = {}
+        ids = list(dict.fromkeys(str(value) for value in trace_ids))
+        cutoff = ""
+        params = {"pid": str(project_id)}
+        if version_cutoff is not None:
+            params["cutoff"] = int(version_cutoff)
+            cutoff = " AND (_version <= %(cutoff)s OR is_deleted = 1)"
+        sql = (
+            "SELECT trace_id, min(arrival) FROM ("
+            " SELECT trace_id, argMax(created_at, _version) AS arrival,"
+            " argMax(is_deleted, _version) AS latest_deleted FROM spans"
+            " WHERE project_id = %(pid)s AND trace_id IN %(ids)s"
+            f"{cutoff} GROUP BY {_SORTING_KEY}"
+            ") WHERE latest_deleted = 0 GROUP BY trace_id"
+        )
+        for start in range(0, len(ids), self._ACTIVITY_BATCH):
+            rows = self._client.query(
+                sql,
+                parameters={
+                    **params,
+                    "ids": tuple(ids[start : start + self._ACTIVITY_BATCH]),
+                },
+                settings={},
+            ).result_rows
+            result.update((str(trace_id), arrival) for trace_id, arrival in rows)
+        return result
+
     # ─── What a trace did between its input and output (Insights) ────────────
     _ACTIVITY_KEYS: tuple[str, ...] = (
         "trace_id",
@@ -1238,6 +1282,7 @@ class CHSpanReader:
         "images",
         "audio",
         "in_trace",
+        "created_at",
     )
     # Trace ids bound into one statement (about 40 bytes each, inlined).
     _ACTIVITY_BATCH = 1000
@@ -1274,8 +1319,8 @@ class CHSpanReader:
             "SELECT trace_id, id, name, observation_type, start_time, status,"
             " status_head, input_head, output_head, input_chars, output_chars,"
             f" images, audio, countIf({shown}) OVER (PARTITION BY trace_id)"
-            " AS in_trace FROM ("
-            " SELECT trace_id, id, name, observation_type, start_time, status,"
+            " AS in_trace, created_at FROM ("
+            " SELECT trace_id, id, name, observation_type, start_time, created_at, status,"
             " substringUTF8(status_message, 1, 300) AS status_head,"
             " substringUTF8(input, 1, %(chars)s) AS input_head,"
             " substringUTF8(output, 1, %(chars)s) AS output_head,"

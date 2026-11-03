@@ -162,6 +162,7 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 from tracer.services.eval_tiles import (
     build_eval_rollup,
     count_column_metadata,
@@ -1178,15 +1179,16 @@ def _trace_session_queryset_for_request(request):
 
 def _soft_delete_trace_tree(traces):
     now = timezone.now()
-    trace_ids = [trace.id for trace in traces if trace]
+    traces = [trace for trace in traces if trace]
+    trace_ids = [trace.id for trace in traces]
     if not trace_ids:
         return []
 
     ObservationSpan.no_workspace_objects.filter(trace_id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
-    EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids).update(
-        deleted=True, deleted_at=now
+    soft_delete_eval_results(
+        EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids)
     )
     try:
         from tracer.models.trace_annotation import TraceAnnotation
@@ -1200,6 +1202,15 @@ def _soft_delete_trace_tree(traces):
     Trace.no_workspace_objects.filter(id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
+    from tracer.services.analysis_retention import retire_analysis_sources
+
+    for project_id in sorted({trace.project_id for trace in traces}):
+        selected = [trace for trace in traces if trace.project_id == project_id]
+        retire_analysis_sources(
+            project_id=project_id,
+            trace_ids=[trace.id for trace in selected],
+            session_ids=[trace.session_id for trace in selected if trace.session_id],
+        )
     return [str(trace_id) for trace_id in trace_ids]
 
 

@@ -162,6 +162,15 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			billed = float64(units)
 			cost, ok = db.QueryCost(model, units)
 		}
+	case "search":
+		// A search has no model: the price table lists it under
+		// "<search provider>/search", per request.
+		priceHint = queryPriceHint
+		if rc.SearchResponse != nil && rc.SearchRequest != nil {
+			model = rc.SearchRequest.SearchProvider + "/search"
+			billed = 1
+			cost, ok = db.QueryCost(model, 1)
+		}
 	case "ocr":
 		priceHint = pagePriceHint
 		if pages := ocrPages(rc.OCRResponse); pages > 0 {

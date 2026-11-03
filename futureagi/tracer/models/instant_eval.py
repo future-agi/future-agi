@@ -105,6 +105,10 @@ class InstantEvalRow(models.Model):
     # Position in the sample's hash order: 0 is read first.
     sample_rank = models.IntegerField(default=0)
     time = models.DateTimeField(null=True, blank=True)
+    # Earliest contributing source arrival; event time above remains unchanged.
+    source_created_at = models.DateTimeField(null=True, blank=True)
+    # Server-read owning session aliases; NULL means unproven legacy lineage.
+    source_session_ids = models.JSONField(null=True, blank=True, editable=False)
     end_user_id = models.UUIDField(null=True, blank=True)
     user_label = models.CharField(max_length=255, blank=True, default="")
     model = models.CharField(max_length=255, blank=True, default="")
@@ -134,6 +138,9 @@ class InstantEvalRow(models.Model):
             ),
             models.Index(
                 fields=["task", "sample_rank"], name="instant_row_task_rank_idx"
+            ),
+            models.Index(
+                fields=["source_created_at", "task"], name="instant_row_source_idx"
             ),
         ]
 

@@ -959,31 +959,27 @@
 - UI POST and stored task retain the custom predicate
 - completed task has exactly the matching span in PG and CH, with mock verdict and usage
 
-### EVAL-E2E-006 — Jev models are listed and saved on a Community stack without a licence
+### EVAL-E2E-006 — a task run opens its trace in a drawer from the Usage tab
 
-**Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install  
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:171`  
+**Goal:** Open the trace behind an eval task result without leaving the task Usage tab  
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:25`  
 **Tags:** —
 
 **User steps:**
 
-1. open the evaluator create page on the LLM-As-A-Judge tab
-2. open the model picker and read the Jev group
-3. read each Jev row's plan tooltip label
-4. save a Turing-model evaluator through the create API, then switch it to jev-latest through the update API
-5. create a Jev evaluator through the create API
+1. seed a trace and run an eval task over it through the mock judge
+2. open the task Usage tab and click its run
+3. read the run panel Trace ID and Span ID
+4. click Open trace and read the drawer
+5. press Esc to close the drawer, then Esc again to close the run panel
 
 **Backend state verified:**
 
-- the capabilities API allows jev_models and still denies turing_models for the actor org
-- the provider-status API lists TypeSafe with no key
-- the update to jev-latest answers 200 and the PG template row holds jev-latest in model and config with the validated noul mapping
-- create-v2 with jev-latest answers 200 and stores one row with model jev-latest
-
-**Browser observations:**
-
-- the picker lists exactly Jev 1.13 (pinned) then Jev latest, below FutureAGI Models
-- both Jev rows are enabled, prompt for a TypeSafe API key and carry an empty plan tooltip (a locked row carries "Not included in your plan")
+- the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored
+- the Usage runs response carries only the completed run, with the seeded trace and span IDs
+- the run panel shows the seeded trace and span IDs
+- the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open
+- the first Esc closes only the drawer and the second closes the run panel
 
 ### EVAL-E2E-007 — choosing a Jev model without a TypeSafe key opens the keys drawer on TypeSafe
 
@@ -1075,6 +1071,32 @@
 
 - the publish request carries jev-latest, percentage and the four levels
 - after reload Scoring is selected and the four levels read back in order
+
+### EVAL-E2E-011 — Jev models are listed and saved on a Community stack without a licence
+
+**Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install  
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:171`  
+**Tags:** —
+
+**User steps:**
+
+1. open the evaluator create page on the LLM-As-A-Judge tab
+2. open the model picker and read the Jev group
+3. read each Jev row's plan tooltip label
+4. save a Turing-model evaluator through the create API, then switch it to jev-latest through the update API
+5. create a Jev evaluator through the create API
+
+**Backend state verified:**
+
+- the capabilities API allows jev_models and still denies turing_models for the actor org
+- the provider-status API lists TypeSafe with no key
+- the update to jev-latest answers 200 and the PG template row holds jev-latest in model and config with the validated noul mapping
+- create-v2 with jev-latest answers 200 and stores one row with model jev-latest
+
+**Browser observations:**
+
+- the picker lists exactly Jev 1.13 (pinned) then Jev latest, below FutureAGI Models
+- both Jev rows are enabled, prompt for a TypeSafe API key and carry an empty plan tooltip (a locked row carries "Not included in your plan")
 
 ## gateway
 

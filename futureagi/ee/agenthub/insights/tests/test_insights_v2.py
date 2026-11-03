@@ -513,10 +513,16 @@ class TestReadUnitsV2:
         assert "error" in out["19"] and "error" in out["20"]
         assert "77" not in out
 
-    def test_reader_uncertainty_and_incomplete_units_survive_ingestion(self, monkeypatch):
+    def test_reader_uncertainty_and_incomplete_units_survive_ingestion(
+        self, monkeypatch
+    ):
         uncertain = unit_result("17")
         uncertain["verification"] = {
-            "status": "incomplete", "checks": 1, "held": 0, "rejected": 0, "calls": 1
+            "status": "incomplete",
+            "checks": 1,
+            "held": 0,
+            "rejected": 0,
+            "calls": 1,
         }
         uncertain["decisive_unread"] = True
         uncertain["forced"] = {"decisive_unread": "failure_check_unverified"}
@@ -542,6 +548,15 @@ class TestPipelineV2:
         ``prebuilt.failing`` (pk -> the builder's code); ``prebuilt.calls``
         are the keys of each pre-build, ``prebuilt.order`` what happened."""
         state = SimpleNamespace(calls=[], failing={}, order=[])
+        from django.core.cache import cache
+
+        # These are protocol-only synthetic runs. Authoritative PG cancellation
+        # with Redis unavailable is exercised in test_analysis_retention.
+        monkeypatch.setattr(
+            pipeline,
+            "stop_requested",
+            lambda run_id: bool(cache.get(pipeline.STOP_KEY.format(run_id))),
+        )
 
         def prebuild(run, rows, *, stage, pool=None, ttl_s=0.0):
             keys = [str(row.pk) for row in rows]

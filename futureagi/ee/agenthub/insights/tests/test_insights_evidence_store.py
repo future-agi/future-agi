@@ -182,6 +182,9 @@ def world(monkeypatch):
         span("T2", "root", output="other trace"),
     ]
     state = SimpleNamespace(run=make_run(), builds=0, analytics=FakeClickHouse(rows))
+    # Storage protocol tests use synthetic runs; real PG retirement/epoch races
+    # (including late get/put) are covered in test_analysis_retention.
+    monkeypatch.setattr(broker, "_snapshot_generation", lambda run, row: 0)
     units = {"17": "T1", "18": "T2", "19": "T9", "21": "T1"}
 
     def analytics():

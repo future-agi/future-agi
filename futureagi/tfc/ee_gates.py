@@ -266,6 +266,83 @@ def _voice_sim_code_unavailable_response() -> Response:
     )
 
 
+class RetentionPolicyUnavailable(RuntimeError):
+    pass
+
+
+def trace_retention_cutoff(organization_id, *, now=None):
+    """The Cloud org's trace cutoff, or None for self-hosted/unlimited.
+
+    A failed Cloud policy lookup must not become unlimited retention.
+    Call once per materialization/settlement operation, not once per unit.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from tfc.capabilities import service as capability_service
+    from tfc.licensing.types import DeploymentLocation
+
+    if capability_service.get_deployment_location() != DeploymentLocation.CLOUD:
+        return None
+    from ee.usage.services.entitlements import Entitlements
+
+    try:
+        days = Entitlements.get_retention_days(
+            str(organization_id), "traces", use_cache=False
+        )
+    except Exception as exc:
+        import structlog
+
+        structlog.get_logger(__name__).warning(
+            "analysis_retention_policy_unavailable",
+            organization_id=str(organization_id),
+            exc_info=True,
+        )
+        raise RetentionPolicyUnavailable(
+            "Data retention could not be checked. Please retry."
+        ) from exc
+    return (now or timezone.now()) - timedelta(days=days) if days > 0 else None
+
+
+def forget_analysis_evidence(run_id) -> None:
+    """Cancel expired work without billing and remove its snapshot evidence."""
+    import structlog
+    from django.core.cache import cache
+
+    from tfc.ee_loader import has_ee
+
+    if not has_ee("ee.agenthub.insights"):
+        return
+    from ee.agenthub.insights.pipeline import STOP_KEY, STOP_KEY_TTL_S, _forget_evidence
+    from tfc.temporal.common.client import cancel_workflow_sync
+    from tfc.temporal.insights.client import workflow_id_for
+    from tracer.models.insights import InsightRun
+
+    logger = structlog.get_logger(__name__)
+    try:
+        cache.set(STOP_KEY.format(run_id), True, timeout=STOP_KEY_TTL_S)
+    except Exception:
+        # The worker also checks the run's database state before queued calls.
+        logger.warning(
+            "analysis_retention_stop_signal_failed", run_id=str(run_id), exc_info=True
+        )
+    workflow_id = (
+        InsightRun._base_manager.filter(id=run_id)
+        .values_list("workflow_id", flat=True)
+        .first()
+    )
+    try:
+        cancel_workflow_sync(workflow_id or workflow_id_for(run_id))
+    except Exception:
+        logger.warning(
+            "analysis_retention_workflow_cancel_failed",
+            run_id=str(run_id),
+            exc_info=True,
+        )
+    _forget_evidence(run_id)
+
+
 def _is_oss() -> bool:
     """True when the deployment is OSS (ee/ stripped or DeploymentMode.is_oss).
 

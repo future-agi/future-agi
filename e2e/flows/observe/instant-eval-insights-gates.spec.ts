@@ -9,7 +9,7 @@ import { flowAnnotation } from '../../lib/flow-meta';
 // and Insights are oss_locked (futureagi/tfc/capabilities/registry.py), so the
 // capability service denies both with LICENSE_MISSING
 // (tfc/capabilities/service.py _check_self_hosted_ee), the same answer the stack
-// gives turing_models in EVAL-E2E-006. Nothing is stubbed: the capabilities read,
+// gives turing_models in EVAL-E2E-011. Nothing is stubbed: the capabilities read,
 // the gate, the menu and the 402 are the stack's own.
 
 // tracer/urls.py; ProjectSerializer requires model_type (ALERT-E2E-002 seeds the same body).

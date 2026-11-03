@@ -1390,6 +1390,52 @@ func TestDecisionModelsListing(t *testing.T) {
 	expectNoCalls(t, g)
 }
 
+func TestDecisionModelsListingRespectsKeyAccess(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		providers []string
+		models    []string
+		want      []string
+	}{
+		{"unrestricted", nil, nil, []string{"openai/gpt-6-luna", "typesafe/jev-1.13.0", "typesafe/jev-latest"}},
+		{"provider", []string{"typesafe"}, nil, []string{"typesafe/jev-1.13.0", "typesafe/jev-latest"}},
+		{"model", nil, []string{"typesafe/jev-latest"}, []string{"typesafe/jev-latest"}},
+		{"provider and model", []string{"typesafe"}, []string{"typesafe/jev-latest", "openai/gpt-6-luna"}, []string{"typesafe/jev-latest"}},
+		{"disjoint access", []string{"typesafe"}, []string{"openai/gpt-6-luna"}, []string{}},
+		{"unconfigured provider", []string{"perplexity-decider"}, nil, []string{}},
+		// Auth checks the requested name exactly; a bare-name grant must not
+		// advertise a qualified ID that would be refused when submitted.
+		{"bare name is not a qualified grant", nil, []string{"jev-latest"}, []string{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			g := newDecisionGateway(t, decisionGatewayOptions{
+				config: func(cfg *config.Config, _ string) {
+					cfg.Auth.Keys[0].Providers = tt.providers
+					cfg.Auth.Keys[0].Models = tt.models
+				},
+			})
+			rr := g.do(t, http.MethodGet, "/v1/decisions/models", keyByok, "")
+			if rr.Code != http.StatusOK {
+				t.Fatalf("list status %d: %s", rr.Code, rr.Body.String())
+			}
+			var response struct {
+				Data []decisionModel `json:"data"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			ids := make([]string, 0, len(response.Data))
+			for _, entry := range response.Data {
+				ids = append(ids, entry.ID)
+			}
+			if mustJSON(ids) != mustJSON(tt.want) {
+				t.Fatalf("listed %v, want %v", ids, tt.want)
+			}
+			expectNoCalls(t, g)
+		})
+	}
+}
+
 // The listing reads a provider's decision format from its config; a call
 // reads it from the provider built. The two agree for every api_format, the
 // provider IDs that name a System One vendor, and an org provider layered onto

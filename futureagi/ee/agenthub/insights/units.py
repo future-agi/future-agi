@@ -27,6 +27,7 @@ import structlog
 
 # Attribute keys known to hold a recording or image URL.
 from ee.agenthub.insights.evidence import _MEDIA_ATTRIBUTES
+from tracer.services.analysis_retention import retained_spans
 
 # A span's text is read as Instant eval reads it: one parser for both.
 from tracer.services.instant_eval_rows import message_text as _message_text
@@ -84,6 +85,8 @@ class UnitText:
     user_id: str = ""
     session_id: str = ""
     time: datetime | None = None
+    # Earliest copied source, independent of the user unit's displayed last activity.
+    source_created_at: datetime | None = None
     metrics: dict = field(default_factory=dict)
     # The unit's last answer: its (last) trace's root output.
     output: str = ""
@@ -475,6 +478,21 @@ def _turns_text(turns: list[_Turn], budget: int) -> str:
     return "\n\n".join(out)
 
 
+def _first_arrival(spans, arrivals, activity=None) -> datetime | None:
+    stamps = [getattr(span, "created_at", None) for span in spans]
+    stamps += [arrivals.get(str(span.trace_id)) for span in spans]
+    stamps += [
+        row.get("created_at")
+        for span in spans
+        for row in (activity or {}).get(str(span.trace_id), [])
+    ]
+    if not stamps or not all(isinstance(value, datetime) for value in stamps):
+        return None
+    from tracer.services.analysis_retention import source_time
+
+    return min(source_time(value) for value in stamps)
+
+
 def _span_metrics(spans) -> dict:
     latencies = [s.latency_ms for s in spans if s.latency_ms]
     return {
@@ -496,12 +514,19 @@ def load_traces(
     *,
     keep_empty: bool = False,
     read_steps: bool = True,
+    version_cutoff: int | None = None,
 ) -> dict[str, UnitText]:
     from tracer.services.clickhouse.v2 import get_reader
 
     with get_reader() as reader:
         roots = reader.roots_by_trace_ids(
             [str(t) for t in trace_ids], project_id=str(project_id)
+        )
+        roots = retained_spans(project_id, roots)
+        arrivals = reader.source_arrivals_by_trace_ids(
+            [str(span.trace_id) for span in roots],
+            project_id=str(project_id),
+            version_cutoff=version_cutoff,
         )
         activity = _activity(reader, project_id, roots, read_steps)
     latest = {str(s.trace_id): s for s in roots}
@@ -529,7 +554,20 @@ def load_traces(
             user_id=user,
             session_id=str(span.trace_session_id or ""),
             time=span.start_time,
-            metrics={**_span_metrics([span]), "turns": 1},
+            source_created_at=_first_arrival([span], arrivals, activity),
+            metrics={
+                **_span_metrics([span]),
+                "turns": 1,
+                "source_created_at": _first_arrival(
+                    [span], arrivals, activity
+                ).isoformat()
+                if _first_arrival([span], arrivals, activity)
+                else None,
+                "source_trace_ids": [str(span.trace_id)],
+                "source_session_ids": [str(span.trace_session_id)]
+                if span.trace_session_id
+                else [],
+            },
             output=text_out,
         )
     return units
@@ -541,12 +579,19 @@ def load_sessions(
     *,
     keep_empty: bool = False,
     read_steps: bool = True,
+    version_cutoff: int | None = None,
 ) -> dict[str, UnitText]:
     from tracer.services.clickhouse.v2 import get_reader
 
     with get_reader() as reader:
         roots = reader.roots_by_session_ids(
             [str(s) for s in session_ids], project_id=str(project_id)
+        )
+        roots = retained_spans(project_id, roots)
+        arrivals = reader.source_arrivals_by_trace_ids(
+            [str(span.trace_id) for span in roots],
+            project_id=str(project_id),
+            version_cutoff=version_cutoff,
         )
         activity = _activity(reader, project_id, roots, read_steps)
     by_session: dict[str, dict[str, object]] = defaultdict(dict)
@@ -593,8 +638,16 @@ def load_sessions(
             user_id=user or "",
             session_id=session_id,
             time=first.start_time,
+            source_created_at=_first_arrival(spans, arrivals, activity),
             metrics={
                 **_span_metrics(spans),
+                "source_created_at": _first_arrival(
+                    spans, arrivals, activity
+                ).isoformat()
+                if _first_arrival(spans, arrivals, activity)
+                else None,
+                "source_trace_ids": [str(span.trace_id) for span in spans],
+                "source_session_ids": [session_id],
                 "turns": len(spans),
                 "duration_s": max(0.0, (end - first.start_time).total_seconds()),
             },
@@ -618,6 +671,7 @@ def load_users(
     until: datetime | None = None,
     *,
     read_steps: bool = True,
+    version_cutoff: int | None = None,
 ) -> dict[str, UnitText]:
     from tracer.services.clickhouse.v2 import get_reader
 
@@ -627,6 +681,12 @@ def load_users(
             project_id=str(project_id),
             since=since,
             until=until,
+        )
+        roots = retained_spans(project_id, roots)
+        arrivals = reader.source_arrivals_by_trace_ids(
+            [str(span.trace_id) for span in roots],
+            project_id=str(project_id),
+            version_cutoff=version_cutoff,
         )
         by_user: dict[str, dict[str, object]] = defaultdict(dict)
         for span in roots:
@@ -694,8 +754,22 @@ def load_users(
             label=label,
             user_id=label,
             time=spans[-1].start_time,
+            source_created_at=_first_arrival(spans, arrivals, activity),
             metrics={
                 **_span_metrics(spans),
+                "source_created_at": _first_arrival(
+                    spans, arrivals, activity
+                ).isoformat()
+                if _first_arrival(spans, arrivals, activity)
+                else None,
+                "source_trace_ids": [str(span.trace_id) for span in spans],
+                "source_session_ids": list(
+                    dict.fromkeys(
+                        str(span.trace_session_id)
+                        for span in spans
+                        if span.trace_session_id
+                    )
+                ),
                 "sessions": len(ordered),
                 "turns": len(spans),
                 "active_days": len(active_days),
@@ -716,16 +790,32 @@ def load_units(
     *,
     keep_empty: bool = False,
     read_steps: bool = True,
+    version_cutoff: int | None = None,
 ) -> dict[str, UnitText]:
     """Each unit's text and metrics. ``keep_empty`` keeps units whose roots
     hold no input or output (users always are); ``read_steps=False`` leaves
     out their steps (a v2 run reads them itself)."""
     if unit == "sessions":
         return load_sessions(
-            project_id, unit_ids, keep_empty=keep_empty, read_steps=read_steps
+            project_id,
+            unit_ids,
+            keep_empty=keep_empty,
+            read_steps=read_steps,
+            version_cutoff=version_cutoff,
         )
     if unit == "users":
-        return load_users(project_id, unit_ids, since, until, read_steps=read_steps)
+        return load_users(
+            project_id,
+            unit_ids,
+            since,
+            until,
+            read_steps=read_steps,
+            version_cutoff=version_cutoff,
+        )
     return load_traces(
-        project_id, unit_ids, keep_empty=keep_empty, read_steps=read_steps
+        project_id,
+        unit_ids,
+        keep_empty=keep_empty,
+        read_steps=read_steps,
+        version_cutoff=version_cutoff,
     )

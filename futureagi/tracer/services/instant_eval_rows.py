@@ -411,7 +411,7 @@ def _aware(value) -> datetime | None:
 # a failed tool call is a child span.
 _FACET_SQL = {
     "sessions": (
-        "SELECT toString(trace_session_id) AS rid, min(start_time) AS t, "
+        "SELECT toString(trace_session_id) AS rid, min(start_time) AS t, min(created_at) AS source_created_at, "
         "anyIf(end_user_id, end_user_id IS NOT NULL) AS uid, "
         "uniqExactIf(trace_id, parent_span_id = '' OR parent_span_id IS NULL) AS turns, "
         "dateDiff('millisecond', min(start_time), max(coalesce(end_time, start_time))) AS dur, "
@@ -423,24 +423,27 @@ _FACET_SQL = {
         "groupUniqArrayIf(trace_id, parent_span_id = '' OR parent_span_id IS NULL) AS traces, "
         "minIf(start_time, model != '') AS m_at, "
         "minIf(start_time, parent_span_id = '' OR parent_span_id IS NULL) AS raw_at "
+        ", groupUniqArrayIf(toString(trace_session_id), isNotNull(trace_session_id)) AS source_session_ids "
         "FROM spans WHERE project_id = %(pid)s AND is_deleted = 0 "
         "AND toString(trace_session_id) IN %(ids)s {window} GROUP BY trace_session_id"
     ),
     "traces": (
-        "SELECT trace_id AS rid, minIf(start_time, parent_span_id = '' OR parent_span_id IS NULL) AS t, "
+        "SELECT trace_id AS rid, minIf(start_time, parent_span_id = '' OR parent_span_id IS NULL) AS t, min(created_at) AS source_created_at, "
         "anyIf(end_user_id, end_user_id IS NOT NULL) AS uid, toUInt64(0) AS turns, "
         "maxIf(latency_ms, parent_span_id = '' OR parent_span_id IS NULL) AS dur, "
         "max(status = 'ERROR') AS err, argMinIf(model, start_time, model != '') AS m, "
         "argMinIf(substring(if(attrs_string['input.value'] != '', attrs_string['input.value'], input), 1, %(raw)s), "
         "start_time, parent_span_id = '' OR parent_span_id IS NULL) AS raw, '' AS tid, '' AS kind, '' AS name "
+        ", groupUniqArrayIf(toString(trace_session_id), isNotNull(trace_session_id)) AS source_session_ids "
         "FROM spans WHERE project_id = %(pid)s AND is_deleted = 0 "
         "AND trace_id IN %(ids)s {window} GROUP BY trace_id"
     ),
     "spans": (
-        "SELECT id AS rid, any(start_time) AS t, any(end_user_id) AS uid, toUInt64(0) AS turns, "
+        "SELECT id AS rid, any(start_time) AS t, min(created_at) AS source_created_at, any(end_user_id) AS uid, toUInt64(0) AS turns, "
         "any(latency_ms) AS dur, max(status = 'ERROR') AS err, any(model) AS m, "
         "any(substring(if(attrs_string['input.value'] != '', attrs_string['input.value'], input), 1, %(raw)s)) AS raw, "
         "any(trace_id) AS tid, any(observation_type) AS kind, any(name) AS name "
+        ", groupUniqArrayIf(toString(trace_session_id), isNotNull(trace_session_id)) AS source_session_ids "
         "FROM spans WHERE project_id = %(pid)s AND is_deleted = 0 "
         "AND id IN %(ids)s {window} GROUP BY id"
     ),
@@ -555,6 +558,9 @@ def _merged(parts: list[dict]) -> dict:
     return {
         **parts[0],
         "uid": next((r["uid"] for r in parts if r["uid"]), None),
+        "source_created_at": min(_naive_utc(r["source_created_at"]) for r in parts)
+        if all(r.get("source_created_at") for r in parts)
+        else None,
         "turns": len({trace for r in parts for trace in r["traces"]}),
         "dur": _ms(t_end) - _ms(parts[0]["t"]),
         "err": max(r["err"] for r in parts),
@@ -569,6 +575,14 @@ def _merged(parts: list[dict]) -> dict:
             else ""
         ),
     }
+
+
+class FacetRows(dict):
+    """Server-read facets with the source deletion epoch captured before the read."""
+
+    def __init__(self, *, source_generation: int):
+        super().__init__()
+        self.source_generation = source_generation
 
 
 def read_facets(
@@ -593,6 +607,9 @@ def read_facets(
     over a month reads each day about once. Every span a row reads starts
     inside its batch's bounds, so its facets are what a read of the whole
     window gives."""
+    from tracer.services.analysis_retention import deleted_source_ids, source_generation
+
+    generation = source_generation(project_id)
     askers, aliases = _resolve(row_type, list(dict.fromkeys(str(i) for i in ids)))
     raw_ids = list(aliases)
     window, params_window = _facet_window(start, end)
@@ -638,8 +655,56 @@ def read_facets(
         )
         for row in rows:
             parts[aliases[str(row["rid"])]].append(row)
-    out: dict[str, dict] = {}
+    out = FacetRows(source_generation=generation)
+    raw_trace_ids = (
+        [str(row.get("tid") or rid) for rid, values in parts.items() for row in values]
+        if row_type != "sessions"
+        else [
+            str(trace_id)
+            for values in parts.values()
+            for row in values
+            for trace_id in row.get("traces", [])
+        ]
+    )
+    # Trace/span copies also belong to sessions. Resolve their owning ids to
+    # the same remap groups as session reads before consulting PG tombstones.
+    owning_sessions = {
+        str(sid)
+        for rows in parts.values()
+        for row in rows
+        for sid in row.get("source_session_ids", [])
+        if sid
+    }
+    session_aliases = (
+        aliases
+        if row_type == "sessions"
+        else (_resolve("sessions", list(owning_sessions))[1] if owning_sessions else {})
+    )
+    session_groups = defaultdict(set)
+    for alias, canonical in session_aliases.items():
+        session_groups[canonical].update((alias, canonical))
+    deleted_traces, deleted_sessions = deleted_source_ids(
+        project_id,
+        raw_trace_ids,
+        [*owning_sessions, *session_aliases, *session_aliases.values()],
+        sessions_resolved=True,
+    )
     for survivor, rows in parts.items():
+        source_ids = (
+            {str(trace_id) for row in rows for trace_id in row.get("traces", [])}
+            if row_type == "sessions"
+            else {str(row.get("tid") or survivor) for row in rows}
+        )
+        session_ids = {
+            str(sid) for row in rows for sid in row.get("source_session_ids", []) if sid
+        }
+        if row_type == "sessions":
+            session_ids.update((survivor, *askers[survivor]))
+        expanded = set(session_ids)
+        for sid in session_ids:
+            expanded.update(session_groups.get(session_aliases.get(sid, sid), ()))
+        if source_ids & deleted_traces or expanded & deleted_sessions:
+            continue
         row = _merged(rows)
         text = excerpt_of(row.get("raw"))
         if row_type == "spans":
@@ -652,6 +717,10 @@ def read_facets(
         duration = row.get("dur")
         facets = {
             "time": _aware(row.get("t")),
+            "source_created_at": _aware(row.get("source_created_at")),
+            "source_session_ids": sorted(
+                session_ids | {session_aliases.get(sid, sid) for sid in session_ids}
+            ),
             "end_user_id": str(row["uid"]) if row.get("uid") else None,
             "model": str(row.get("m") or "")[:255],
             "turns": (
@@ -690,8 +759,23 @@ def write_rows(
 ) -> int:
     """Store the rows a run reads with their facets, in sample order. A row
     already stored keeps its place (the unique index ignores it)."""
-    from tracer.models.instant_eval import InstantEvalRow
+    from tfc.ee_gates import trace_retention_cutoff
+    from tracer.models.eval_task import EvalTask
+    from tracer.models.instant_eval import InstantEvalRow, InstantEvalRun
+    from tracer.services.analysis_retention import _retire_instant_task, source_time
 
+    task = EvalTask._base_manager.select_related("project").get(id=task_id)
+    if task.deleted:
+        return 0
+    cutoff = trace_retention_cutoff(task.project.organization_id)
+    if cutoff is not None and any(
+        (stamp := source_time(facets[row_id].get("source_created_at"))) is None
+        or stamp < cutoff
+        for row_id, _ in ranked
+        if row_id in facets
+    ):
+        _retire_instant_task(task_id, organization_id=task.project.organization_id)
+        return 0
     row_type = ROW_TYPE[unit]
     objs = [
         InstantEvalRow(
@@ -700,6 +784,8 @@ def write_rows(
             unit=row_type,
             sample_rank=rank,
             time=f["time"],
+            source_created_at=f.get("source_created_at"),
+            source_session_ids=f.get("source_session_ids"),
             end_user_id=f["end_user_id"],
             user_label=f["user_label"],
             model=f["model"],
@@ -712,8 +798,29 @@ def write_rows(
         for row_id, rank in ranked
         if (f := facets.get(row_id)) is not None
     ]
-    for chunk in _chunks(objs, _WRITE_BATCH):
-        InstantEvalRow.objects.bulk_create(chunk, ignore_conflicts=True)
+    from tracer.models.project import Project
+
+    with transaction.atomic():
+        project = Project._base_manager.select_for_update(
+            no_key=True, of=("self",)
+        ).get(id=task.project_id)
+        if project.deleted or (
+            getattr(facets, "source_generation", 0)
+            != project.analysis_source_generation
+        ):
+            _retire_instant_task(task_id, organization_id=project.organization_id)
+            return 0
+        run = (
+            InstantEvalRun.objects.select_for_update(of=("self",))
+            .filter(eval_task_id=task_id)
+            .first()
+        )
+        if (
+            run is not None and run.cancelled_at is not None
+        ) or EvalTask._base_manager.filter(pk=task_id, deleted=True).exists():
+            return 0
+        for chunk in _chunks(objs, _WRITE_BATCH):
+            InstantEvalRow.objects.bulk_create(chunk, ignore_conflicts=True)
     if len(objs) >= ANALYZE_AFTER:
         analyze("tracer_instant_eval_row")
     return len(objs)
@@ -787,7 +894,9 @@ def extend_run(run) -> int:
     ranked = [(rid, rank_base + i) for i, rid in enumerate(ranked_ids)]
     with transaction.atomic():
         added = write_rows(task.id, run.unit, ranked, facets)
-        type(run).objects.filter(id=run.id).update(hash_cursor=str(cursor))
+        type(run).objects.filter(id=run.id, cancelled_at__isnull=True).update(
+            hash_cursor=str(cursor)
+        )
     logger.info(
         "instant_eval_rows_written",
         task_id=str(task.id),

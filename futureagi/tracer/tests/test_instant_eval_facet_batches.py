@@ -252,6 +252,11 @@ def test_every_users_label_is_found_however_many_users_a_read_has(monkeypatch):
     """The label lookup can't parse a statement for more than about 2,000
     users, and comes back empty; a read of 3,000 users still labels them all."""
     uids = [str(uuid.uuid4()) for _ in range(3000)]
+    # This test isolates label batching, not the remote remap dictionary.
+    monkeypatch.setattr(
+        rows, "_resolve", lambda kind, ids: ({i: [i] for i in ids}, {i: i for i in ids})
+    )
+    monkeypatch.setattr(rows, "_user_survivors", lambda ids: {i: i for i in ids})
     monkeypatch.setattr(
         rows,
         "_ch",

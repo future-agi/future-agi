@@ -21,7 +21,7 @@ from __future__ import annotations
 import uuid
 
 import structlog
-from django.db import connection
+from django.db import connection, transaction
 
 from tracer.services.instant_eval_rows import ANALYZE_AFTER, analyze
 
@@ -79,6 +79,21 @@ def is_instant_task(task_id) -> bool:
     return found
 
 
+def _lock_retained_run(task_id) -> bool:
+    from tracer.models.instant_eval import InstantEvalRun
+
+    return (
+        InstantEvalRun.objects.select_for_update(of=("self",))
+        .filter(
+            eval_task_id=task_id,
+            eval_task__deleted=False,
+        )
+        .first()
+        is not None
+    )
+
+
+@transaction.atomic
 def record_answer(entry_id) -> int:
     """Copy one entry's settled answer onto its run's row, if the entry
     belongs to an Instant eval run. A no-op for every other task."""
@@ -91,7 +106,7 @@ def record_answer(entry_id) -> int:
         )
         found = cur.fetchone()
         task_id = _uuid(found[0]) if found and found[0] else None
-        if not task_id or not found[1]:
+        if not task_id or not found[1] or not _lock_retained_run(task_id):
             return 0
         cur.execute(
             "INSERT INTO tracer_instant_eval_answer "
@@ -108,8 +123,11 @@ def record_answer(entry_id) -> int:
         return cur.rowcount
 
 
+@transaction.atomic
 def _copy(cur, task_id, entry_ids) -> int:
     """Copy the settled answers of these entries (one task's) onto its rows."""
+    if not _lock_retained_run(task_id):
+        return 0
     label, confidence = _label_sql()
     cur.execute(
         "INSERT INTO tracer_instant_eval_answer "

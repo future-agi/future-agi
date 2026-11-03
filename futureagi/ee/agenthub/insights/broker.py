@@ -432,6 +432,79 @@ def _text(value):
     return _clean(value)
 
 
+def _snapshot_generation(run, row) -> int:
+    """Read authoritative liveness before serving or publishing raw evidence."""
+    from tfc.ee_gates import RetentionPolicyUnavailable
+    from tracer.models.insights import InsightUnit
+    from tracer.services.analysis_retention import (
+        AnalysisSourceExpired,
+        deleted_source_ids,
+        require_retained_source,
+    )
+
+    current = (
+        InsightUnit.objects.using("default")
+        .filter(
+            pk=row.pk,
+            run_id=run.id,
+            run__deleted=False,
+            run__project__deleted=False,
+            run__status__in=("running", "completed"),
+        )
+        .values(
+            "unit_id",
+            "session_id",
+            "metrics",
+            "run__unit",
+            "run__organization_id",
+            "run__source_created_at",
+            "run__project_id",
+            "run__project__analysis_source_generation",
+        )
+        .first()
+    )
+    if current is None:
+        raise BrokerError(404, "unit_not_found")
+    try:
+        require_retained_source(
+            current["run__organization_id"], current["run__source_created_at"]
+        )
+    except AnalysisSourceExpired:
+        raise BrokerError(404, "unit_not_found") from None
+    except RetentionPolicyUnavailable:
+        raise BrokerError(503, "retention_unavailable") from None
+    metrics = current["metrics"] or {}
+    traces = list(metrics.get("source_trace_ids") or [])
+    sessions = list(metrics.get("source_session_ids") or [])
+    if current["run__unit"] == "traces":
+        traces.append(current["unit_id"])
+    elif current["run__unit"] == "sessions":
+        sessions.append(current["unit_id"])
+    if current["session_id"]:
+        sessions.append(current["session_id"])
+    if any(deleted_source_ids(current["run__project_id"], traces, sessions)):
+        raise BrokerError(404, "unit_not_found")
+    return current["run__project__analysis_source_generation"]
+
+
+def _check_snapshot_generation(run, row, generation) -> None:
+    try:
+        if _snapshot_generation(run, row) != generation:
+            raise BrokerError(404, "unit_not_found")
+    except Exception:
+        # get() may remember bytes after retirement's first forget(), just as
+        # put() may publish them late. Re-delete both forms outside row locks.
+        try:
+            evidence_store.delete_run(run.id, budget_s=2.0)
+        except Exception:
+            logger.warning(
+                "insight_late_evidence_cleanup_failed",
+                run_id=str(run.id),
+                exc_info=True,
+            )
+        raise
+
+
 def snapshot(run, row) -> Cached:
     """The unit's snapshot from the run's evidence store. Built here, once
     however many calls ask for it meanwhile, only when the store lacks it
@@ -439,6 +512,7 @@ def snapshot(run, row) -> Cached:
     shared one only while the run runs (a unit the worker could not store).
     A question's units were stored before it was asked (``prebuild``), so a
     completed run's missing unit is not found."""
+    generation = _snapshot_generation(run, row)
     key = str(row.pk)
     try:
         store = evidence_store.current()
@@ -446,6 +520,7 @@ def snapshot(run, row) -> Cached:
     except evidence_store.EvidenceStoreUnavailable as unavailable:
         raise BrokerError(503, unavailable.code) from None
     if cached is not None:
+        _check_snapshot_generation(run, row, generation)
         return cached
     if store.shared and run.status != "running":
         raise BrokerError(404, "unit_not_found")
@@ -453,6 +528,7 @@ def snapshot(run, row) -> Cached:
         f"{run.id}/{key}",
         lambda: _build_and_store(run, row, store, wait_s=SLOT_WAIT_S, remember=True),
     )
+    _check_snapshot_generation(run, row, generation)
     return built
 
 
@@ -515,13 +591,15 @@ def _build_and_store(
     take it. ``remember`` keeps it in memory too, so a unit the store could
     not take is not built again here. A document that cannot be stored at
     all fails that unit alone (500 internal_error)."""
+    generation = _snapshot_generation(run, row)
     key = str(row.pk)
     built = evidence_store.recall(run.id, key) or _build(run, row, wait_s)
+    _check_snapshot_generation(run, row, generation)
     try:
-        return built, store.put(run.id, key, built, remember=remember)
+        size = store.put(run.id, key, built, remember=remember)
     except evidence_store.EvidenceStoreUnavailable:
         logger.warning("insight_evidence_store_unavailable", run_id=str(run.id))
-        return built, None
+        size = None
     except Exception as exc:
         # The type only: the document being encoded is customer content.
         logger.error(
@@ -530,6 +608,9 @@ def _build_and_store(
             error=type(exc).__name__,
         )
         raise BrokerError(500, "internal_error") from None
+    finally:
+        _check_snapshot_generation(run, row, generation)
+    return built, size
 
 
 # ─── Building ahead of the agent ────────────────────────────────────────────
@@ -623,8 +704,7 @@ def prebuild(run, rows, *, stage: str, ttl_s: float = 0.0, pool=None) -> Prebuil
         from ee.agenthub.insights.llm import InsightModelError
 
         raise InsightModelError(
-            "The Insights evidence store is unavailable right now. "
-            "Try again shortly.",
+            "The Insights evidence store is unavailable right now. Try again shortly.",
             unavailable=True,
         )
     return Prebuilt(ready, failed)
@@ -636,8 +716,7 @@ def _not_configured(refused):
 
     logger.error("insight_evidence_store_misconfigured", reason=refused.reason)
     return InsightModelError(
-        "Insights can't read this report's items: its evidence store is not "
-        "configured."
+        "Insights can't read this report's items: its evidence store is not configured."
     )
 
 
@@ -647,8 +726,13 @@ def _prebuild_one(store, run, row, stage: str) -> tuple[str, int, str | None]:
     EvidenceStoreUnavailable when the unit is not stored: the store did not
     take it, or it had no turn to be built."""
     key = str(row.pk)
-    if store.has(run.id, key):
-        return "reused", 0, None
+    try:
+        generation = _snapshot_generation(run, row)
+        if store.has(run.id, key):
+            _check_snapshot_generation(run, row, generation)
+            return "reused", 0, None
+    except BrokerError as refused:
+        return "failed", 0, refused.code
     # The worker's pre-builds are bounded per batch (PREBUILD_WORKERS); a
     # question's, on a web pod, by the broker's own turns there.
     wait_s = SLOT_WAIT_S if stage == "ask" else None
@@ -660,6 +744,7 @@ def _prebuild_one(store, run, row, stage: str) -> tuple[str, int, str | None]:
 
     try:
         _, size = _once(f"{run.id}/{key}", work)
+        _check_snapshot_generation(run, row, generation)
     except BrokerError as refused:
         if refused.code == "broker_busy":
             raise evidence_store.EvidenceStoreUnavailable() from None

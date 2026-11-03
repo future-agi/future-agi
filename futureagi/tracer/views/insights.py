@@ -20,8 +20,6 @@ A run reads a sample of a scope: the rows of a Traces, Sessions or Users view
 does, or rows handed over by id (a selection).
 """
 
-from datetime import timedelta
-
 import structlog
 from django.core.cache import cache
 from django.db.models import Count, Q
@@ -33,6 +31,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.authentication import workspace_read_only
+from tfc.ee_gates import RetentionPolicyUnavailable, trace_retention_cutoff
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer, EmptyRequestSerializer
 from tfc.utils.general_methods import GeneralMethods
@@ -48,6 +47,8 @@ from tracer.serializers.filters import SessionFilterListField
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_users as users_service
 from tracer.services.insight_lost_runs import settle_lost_runs
+from tracer.services.insight_runs import ACTIVE_RUN_WINDOW as ACTIVE_RUN_WINDOW
+from tracer.services.insight_runs import active_report_run, reserve_report_run
 from tracer.services.user_filter_capabilities import (
     validate_users_filter_capabilities,
 )
@@ -66,9 +67,6 @@ ERROR_RESPONSES = {
 }
 
 RUNS_PER_HOUR = 30
-# A run older than this is no longer in flight: its workflow is started with
-# a limit no longer than this (tfc/temporal/insights/client.py RUN_TIMEOUT).
-ACTIVE_RUN_WINDOW = timedelta(hours=2)
 DRAFTS_PER_HOUR = 60
 MAX_POPULATION = 20000
 DEFAULT_SAMPLE = 300
@@ -1386,18 +1384,7 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
             ).first()
             if config is None:
                 return self._gm.not_found("Report not found")
-            # One run per report at a time: a second "Run again" joins the run
-            # in flight instead of racing it (a run stuck for hours doesn't block).
-            active = (
-                InsightRun.objects.filter(
-                    config=config,
-                    status__in=["pending", "running"],
-                    deleted=False,
-                    created_at__gte=timezone.now() - ACTIVE_RUN_WINDOW,
-                )
-                .order_by("-created_at")
-                .first()
-            )
+            active = active_report_run(config)
             if active is not None:
                 # A run whose workflow is gone isn't one to join.
                 settle_lost_runs([active])
@@ -1411,6 +1398,10 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
             spec = data["config"]
             unit = spec["unit"]
             size = spec.get("sample_size") or data.get("sample_size") or DEFAULT_SAMPLE
+        try:
+            retention_cutoff = trace_retention_cutoff(org.id)
+        except RetentionPolicyUnavailable as exc:
+            return self._gm.custom_error_response(503, str(exc), code="retention_policy_unavailable")
         population = data.get("population")
         resolved = None
         if not population:
@@ -1473,11 +1464,7 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
             return refused
         if not _spend("run", org.id, RUNS_PER_HOUR):
             return _rate_limited(self._gm)
-        if config is not None:
-            if scope:
-                config.scope = scope
-                config.save(update_fields=["scope", "updated_at"])
-        else:
+        if config is None:
             config = InsightConfig.objects.create(
                 project=project,
                 organization=org,
@@ -1493,24 +1480,37 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
                 scope=scope,
                 sample_size=size,
             )
-        rediscover = bool(data.get("reset_taxonomy")) and bool(
-            (config.taxonomy or {}).get("subs")
-        )
-        run = pipeline.create_run(
-            config=config,
-            scope=scope,
-            population=population,
-            sample_size=data.get("sample_size") or config.sample_size,
-            user=request.user,
-            population_size=resolved.count if resolved is not None else None,
-            discover=rediscover,
-            engine=engine,
-        )
-        _start(run)
-        if rediscover and run.status != "failed":
-            # The discovery run is under way: its categories replace these.
-            config.taxonomy = {}
-            config.save(update_fields=["taxonomy", "updated_at"])
+
+        def create(locked: InsightConfig) -> InsightRun:
+            if scope:
+                locked.scope = scope
+                locked.save(update_fields=["scope", "updated_at"])
+            return pipeline.create_run(
+                config=locked,
+                scope=scope,
+                population=population,
+                sample_size=data.get("sample_size") or locked.sample_size,
+                user=request.user,
+                population_size=resolved.count if resolved is not None else None,
+                discover=bool(data.get("reset_taxonomy")),
+                engine=engine,
+                retention_cutoff=retention_cutoff,
+            )
+
+        try:
+            reservation = reserve_report_run(config, create)
+        except InsightConfig.DoesNotExist:
+            return self._gm.not_found("Report not found")
+        config, run = reservation.config, reservation.run
+        if reservation.created:
+            # The reservation is committed before Temporal can start its worker.
+            _start(run)
+            if data.get("reset_taxonomy") and run.status != "failed":
+                # A quick worker or a simultaneous edit may have replaced the
+                # taxonomy already; never erase that newer value.
+                InsightConfig.objects.filter(
+                    id=config.id, taxonomy=config.taxonomy
+                ).update(taxonomy={}, updated_at=timezone.now())
         return self._gm.success_response({"run_id": run.id, "config_id": config.id})
 
 

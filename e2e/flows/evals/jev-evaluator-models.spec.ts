@@ -10,7 +10,7 @@ import { flowAnnotation } from '../../lib/flow-meta';
 // jev_gate_for_template). Jev is bring-your-own-key: running one needs the org's
 // TypeSafe key, which this stack doesn't have, and nothing here calls TypeSafe.
 //
-// EVAL-E2E-006 and 007 stub nothing: the picker, the saves and the keys drawer
+// EVAL-E2E-011 and 007 stub nothing: the picker, the saves and the keys drawer
 // are the stack's own.
 //
 // EVAL-E2E-008..010 save real jev-latest templates with one fake, in one helper:
@@ -168,10 +168,10 @@ function expectPublishedJev(row: TemplateRow, versions: VersionRow[],
 
 const choiceRow = (name: Locator) => name.locator('xpath=ancestor::div[.//*[@role="combobox"]][1]');
 
-test('EVAL-E2E-006: Jev models are listed and saved on a Community stack without a licence', {
+test('EVAL-E2E-011: Jev models are listed and saved on a Community stack without a licence', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'EVAL-E2E-006', area: 'evals',
+    id: 'EVAL-E2E-011', area: 'evals',
     userGoal: 'See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install',
     steps: ['open the evaluator create page on the LLM-As-A-Judge tab',
       'open the model picker and read the Jev group', "read each Jev row's plan tooltip label",

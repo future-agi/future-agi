@@ -15,6 +15,10 @@ import Iconify from "src/components/iconify";
 import { useErrorFeedTrends } from "src/api/errorFeed/error-feed";
 import { useSharedIssue } from "../sharedIssueContext";
 
+const TRENDS_WINDOW_DAYS = 14;
+// The API's value for a metric with nothing to measure in the window.
+const NO_DATA = "—";
+
 // ── Events over time — dual-axis area + bars ────────────────────────────────
 function EventsLineChart({ eventsData }) {
   const chartRef = useRef(null);
@@ -190,7 +194,7 @@ function ScoreTrends({ scoreTrends }) {
   if (!scoreTrends?.length) {
     return (
       <Typography fontSize="11px" color="text.disabled" sx={{ py: 1 }}>
-        No eval scores recorded for this cluster yet.
+        No eval scores in the last {TRENDS_WINDOW_DAYS} days.
       </Typography>
     );
   }
@@ -534,25 +538,32 @@ function MetricCards({ metrics }) {
             >
               {m.value}
             </Typography>
-            <Stack direction="row" alignItems="center" gap={0.4} mt={0.5}>
-              <Iconify icon={badgeIcon} width={12} sx={{ color: badgeColor }} />
-              <Typography
-                fontSize="11px"
-                fontWeight={600}
-                sx={{ color: badgeColor }}
-              >
-                {m.delta > 0 ? "+" : ""}
-                {typeof m.delta === "number"
-                  ? Math.abs(m.delta) < 1
-                    ? m.delta.toFixed(2)
-                    : m.delta
-                  : m.delta}
-                {m.unit}
-              </Typography>
-              <Typography fontSize="11px" color="text.disabled">
-                vs prev period
-              </Typography>
-            </Stack>
+            {/* "—" means nothing to measure in the window, so there is no delta. */}
+            {m.value !== NO_DATA && (
+              <Stack direction="row" alignItems="center" gap={0.4} mt={0.5}>
+                <Iconify
+                  icon={badgeIcon}
+                  width={12}
+                  sx={{ color: badgeColor }}
+                />
+                <Typography
+                  fontSize="11px"
+                  fontWeight={600}
+                  sx={{ color: badgeColor }}
+                >
+                  {m.delta > 0 ? "+" : ""}
+                  {typeof m.delta === "number"
+                    ? Math.abs(m.delta) < 1
+                      ? m.delta.toFixed(2)
+                      : m.delta
+                    : m.delta}
+                  {m.unit}
+                </Typography>
+                <Typography fontSize="11px" color="text.disabled">
+                  vs prev period
+                </Typography>
+              </Stack>
+            )}
           </Box>
         );
       })}
@@ -565,7 +576,9 @@ MetricCards.propTypes = { metrics: PropTypes.array.isRequired };
 export default function TrendsTab({ error }) {
   const clusterId = error?.cluster_id;
   const shared = useSharedIssue();
-  const fetched = useErrorFeedTrends(shared ? null : clusterId);
+  const fetched = useErrorFeedTrends(shared ? null : clusterId, {
+    days: TRENDS_WINDOW_DAYS,
+  });
   const data = shared ? shared.trends : fetched.data;
   const isLoading = shared ? false : fetched.isLoading;
 
@@ -593,6 +606,10 @@ export default function TrendsTab({ error }) {
 
   return (
     <Stack gap={2}>
+      <Typography fontSize="11px" color="text.disabled">
+        Last {TRENDS_WINDOW_DAYS} days
+      </Typography>
+
       {/* Top metrics */}
       {data.metrics?.length > 0 && <MetricCards metrics={data.metrics} />}
 
@@ -610,7 +627,10 @@ export default function TrendsTab({ error }) {
 
       {/* Activity heatmap */}
       {hasHeatmapData && (
-        <SectionCard title="Activity Heatmap (errors by hour)" icon="mdi:grid">
+        <SectionCard
+          title="Activity Heatmap (errors by hour, last 30 days)"
+          icon="mdi:grid"
+        >
           <ActivityHeatmap data={data.activity_heatmap} />
         </SectionCard>
       )}

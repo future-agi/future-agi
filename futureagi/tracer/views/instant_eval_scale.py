@@ -55,6 +55,7 @@ from tracer.models.eval_task import (
 )
 from tracer.models.instant_eval import InstantEvalRow, InstantEvalRun
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
+from tracer.models.project import Project
 from tracer.serializers.filters import SessionFilterListField
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_summary as summary_service
@@ -742,9 +743,16 @@ def _active_runs(org):
 
 
 def _busy_response(gm, runs):
-    """429 naming the runs already in flight."""
+    """Count organization-wide, but name only runs visible in this workspace."""
+    visible_projects = set(
+        Project.objects.filter(id__in=[run.project_id for run in runs]).values_list(
+            "id", flat=True
+        )
+    )
     described = []
     for run in runs:
+        if run.project_id not in visible_projects:
+            continue
         name = (run.eval_task.name or "").removeprefix(f"{INSTANT_TASK_PREFIX} · ")
         who = run.created_by.name if run.created_by else "someone"
         described.append(
@@ -763,9 +771,11 @@ def _busy_response(gm, runs):
     )
     message = (
         f"Your organization already has {len(runs)} Instant eval "
-        f"run{'s' if len(runs) != 1 else ''} in progress, the most it runs at once: {names}. "
-        "Pause or cancel one, or wait for it to finish."
+        f"run{'s' if len(runs) != 1 else ''} in progress, the most it runs at once."
     )
+    if names:
+        message += f" Visible runs: {names}."
+    message += " Pause or cancel a run you can access, or wait for one to finish."
     return gm.custom_error_response(
         429,
         {"message": message, "error_code": "INSTANT_EVAL_BUSY", "runs": described},

@@ -32,8 +32,7 @@ from functools import partial
 
 import structlog
 from django.db import transaction
-from django.db.models import DateTimeField, F, Value
-from django.db.models.functions import Coalesce
+from django.db.models import F
 from django.utils import timezone
 
 from ee.agenthub.insights import agent as insight_agent
@@ -52,6 +51,17 @@ from ee.agenthub.insights.llm import (
 )
 from ee.agenthub.insights.stats import compare_runs, measure
 from ee.agenthub.insights.units import load_units
+from tracer.services.analysis_retention import (
+    EXPIRED_MESSAGE,
+    POLICY_UNREAD,
+    AnalysisSourceExpired,
+    oldest_source,
+    require_retained_lineage,
+    require_retained_source,
+    retire_insight_runs,
+    source_generation,
+    taxonomy_source_time,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -94,6 +104,15 @@ def _require_running(run) -> None:
     if run.status != "running":
         logger.warning("insight_stage_run_not_running", run_id=str(run.id))
         raise InsightRunNotRunning()
+
+
+def _require_retained(run, started_at) -> None:
+    try:
+        require_retained_source(run.organization_id, started_at)
+        require_retained_lineage(run)
+    except AnalysisSourceExpired as exc:
+        retire_insight_runs([run.id], organization_id=run.organization_id)
+        raise InsightRunNotRunning() from exc
 
 
 def _aware(value):
@@ -196,7 +215,7 @@ def add_spend(run_id, spend: Spend) -> None:
         return
     with transaction.atomic():
         run = (
-            InsightRun.no_workspace_objects.select_for_update()
+            InsightRun.no_workspace_objects.select_for_update(of=("self",))
             .filter(id=run_id)
             .first()
         )
@@ -209,22 +228,35 @@ def add_spend(run_id, spend: Spend) -> None:
 def set_progress(
     run, stage: str, done: int | None = None, total: int | None = None, **extra
 ):
-    progress = dict(run.progress or {})
-    progress.update(
-        {
-            "stage": stage,
-            "stage_index": STAGES.index(stage),
-            "updated_at": timezone.now().isoformat(),
-        }
-    )
-    if done is not None:
-        progress["done"] = done
-    if total is not None:
-        progress["total"] = total
-    progress.update(extra)
-    run.progress = progress
-    run.stage = stage
-    run.save(update_fields=["progress", "stage", "updated_at"])
+    InsightRun, _ = _models()
+    with transaction.atomic():
+        current = (
+            InsightRun.no_workspace_objects.select_for_update(of=("self",))
+            .filter(id=run.id)
+            .first()
+        )
+        if (
+            current is None
+            or current.status == "failed"
+            or (current.status == "completed" and stage != "done")
+        ):
+            raise InsightRunNotRunning()
+        progress = dict(current.progress or {})
+        progress.update(
+            {
+                "stage": stage,
+                "stage_index": STAGES.index(stage),
+                "updated_at": timezone.now().isoformat(),
+            }
+        )
+        if done is not None:
+            progress["done"] = done
+        if total is not None:
+            progress["total"] = total
+        progress.update(extra)
+        current.progress, current.stage = progress, stage
+        current.save(update_fields=["progress", "stage", "updated_at"])
+        run.progress, run.stage = progress, stage
 
 
 def create_run(
@@ -237,6 +269,7 @@ def create_run(
     population_size: int | None = None,
     discover: bool = False,
     engine: dict | None = None,
+    retention_cutoff=POLICY_UNREAD,
 ):
     """Create a run with its sampled units; the workflow does the rest.
 
@@ -248,6 +281,10 @@ def create_run(
     ("Rediscover categories"). ``engine`` is the engine the run is pinned to
     (``agent.resolve_engine``), asked of the agent when not given."""
     InsightRun, InsightUnit = _models()
+    if retention_cutoff is POLICY_UNREAD:
+        from tfc.ee_gates import trace_retention_cutoff
+
+        retention_cutoff = trace_retention_cutoff(config.organization_id)
     seen, unique = set(), []
     for entry in population:
         unit_id = str(entry.get("id") or "").strip()
@@ -259,6 +296,17 @@ def create_run(
     total = len(unique) if population_size is None else population_size
     taxonomy = config.taxonomy or {}
     classify = bool(taxonomy.get("subs")) and not discover
+    inherited_source = None
+    expired_taxonomy = False
+    if classify:
+        try:
+            inherited_source = taxonomy_source_time(taxonomy)
+            require_retained_source(
+                config.organization_id, inherited_source, cutoff=retention_cutoff
+            )
+        except AnalysisSourceExpired:
+            expired_taxonomy = True
+            taxonomy, classify, inherited_source = {}, False, None
     # Asked of the agent before anything is written: one that can't answer
     # refuses the run rather than start it on an engine nobody chose.
     engine = engine or insight_agent.resolve_engine()
@@ -266,6 +314,11 @@ def create_run(
     if not (isinstance(models, dict) and models.get("fast")):
         models = {"fast": model_for(FAST), "thinking": model_for(THINKING)}
     with transaction.atomic():
+        if expired_taxonomy:
+            type(config)._base_manager.filter(
+                id=config.id, taxonomy=config.taxonomy
+            ).update(taxonomy={})
+            config.taxonomy = {}
         run = InsightRun.objects.create(
             config=config,
             project=config.project,
@@ -293,6 +346,7 @@ def create_run(
             },
             population_size=total,
             sample_size=len(sampled),
+            source_created_at=inherited_source,
             taxonomy_mode="classify" if classify else "discover",
             models_used={
                 "fast": str(models.get("fast") or ""),
@@ -332,18 +386,10 @@ def prepare(run_id: str) -> list[int]:
     """Load text and metrics; returns the unit pks ready for extraction."""
     InsightRun, InsightUnit = _models()
     now = timezone.now()
-    # Started (or this stage retried) only while it is still to run: a run
-    # failed before its workflow got here stays failed.
-    started = InsightRun.objects.filter(
-        id=run_id, status__in=["pending", "running"]
-    ).update(
-        status="running",
-        started_at=Coalesce("started_at", Value(now, output_field=DateTimeField())),
-        updated_at=now,
-    )
     run = InsightRun.objects.get(id=run_id)
-    if not started:
-        _require_running(run)
+    if run.status not in ("pending", "running"):
+        raise InsightRunNotRunning()
+    generation = source_generation(run.project_id)
     engine = insight_agent.pinned(run.settings)
     # A model setup no call can get through (a licence the managed service
     # won't activate) fails the run now, before anything is read. The agent
@@ -351,7 +397,6 @@ def prepare(run_id: str) -> list[int]:
     # engine's; a call the agent's run still makes here is refused on its own.
     if not insight_agent.is_omega(engine):
         check_setup()
-    set_progress(run, "reading", 0, run.sample_size)
     units = list(InsightUnit.objects.filter(run=run))
     window = (run.scope or {}).get("window") or []
     since = _parse_time(window[0]) if len(window) == 2 else None
@@ -359,6 +404,15 @@ def prepare(run_id: str) -> list[int]:
     # A v2 unit is read whole by the agent: one whose root has no input or
     # output of its own may still hold everything in its spans.
     v2 = insight_agent.is_v2(engine)
+    read_options = {}
+    if v2:
+        from ee.agenthub.insights.evidence import version_of
+
+        read_options = {
+            "keep_empty": True,
+            "read_steps": False,
+            "version_cutoff": version_of(run.created_at),
+        }
     loaded = {}
     ids = [u.unit_id for u in units]
     for start in range(0, len(ids), 200):
@@ -369,10 +423,11 @@ def prepare(run_id: str) -> list[int]:
                 ids[start : start + 200],
                 since,
                 until,
-                **({"keep_empty": True, "read_steps": False} if v2 else {}),
+                **read_options,
             )
         )
     ready = []
+    source_times = []
     for unit in units:
         text = loaded.get(unit.unit_id)
         if text is None or not (v2 or text.content.strip()):
@@ -387,23 +442,60 @@ def prepare(run_id: str) -> list[int]:
             unit.user_id = (text.user_id or unit.user_id)[:255]
             unit.session_id = (text.session_id or "")[:255]
             unit.time = _aware(text.time) or unit.time
+            source_times.append(_aware(text.source_created_at))
             unit.metrics = text.metrics
             ready.append(unit.pk)
-    InsightUnit.objects.bulk_update(
-        units,
-        [
-            "status",
-            "error",
-            "content",
-            "excerpt",
-            "label",
-            "user_id",
-            "session_id",
-            "time",
-            "metrics",
-        ],
-        batch_size=200,
-    )
+    earliest = oldest_source(run.source_created_at, *source_times)
+    if ready:
+        # An unknown source timestamp cannot establish finite-retention eligibility.
+        _require_retained(run, earliest if all(source_times) else None)
+    from tracer.models.project import Project
+
+    try:
+        with transaction.atomic():
+            project = Project._base_manager.select_for_update(
+                no_key=True, of=("self",)
+            ).get(id=run.project_id)
+            if project.deleted or project.analysis_source_generation != generation:
+                raise AnalysisSourceExpired(EXPIRED_MESSAGE)
+            current = (
+                InsightRun.no_workspace_objects.select_for_update(of=("self",))
+                .filter(id=run_id)
+                .first()
+            )
+            if current is None or current.status not in ("pending", "running"):
+                raise InsightRunNotRunning()
+            InsightUnit.objects.bulk_update(
+                units,
+                [
+                    "status",
+                    "error",
+                    "content",
+                    "excerpt",
+                    "label",
+                    "user_id",
+                    "session_id",
+                    "time",
+                    "metrics",
+                ],
+                batch_size=200,
+            )
+            current.status = "running"
+            current.started_at = current.started_at or now
+            current.source_created_at = oldest_source(
+                current.source_created_at, earliest
+            )
+            current.save(
+                update_fields=[
+                    "status",
+                    "started_at",
+                    "source_created_at",
+                    "updated_at",
+                ]
+            )
+    except AnalysisSourceExpired as exc:
+        retire_insight_runs([run_id], organization_id=run.organization_id)
+        raise InsightRunNotRunning() from exc
     set_progress(run, "summarising", 0, len(ready))
     return ready
 
@@ -429,9 +521,12 @@ def _save_read(run_id, units: list, spend: Spend) -> bool:
     recorded but not charged (``_record_spend``). False when the run no
     longer runs."""
     InsightRun, InsightUnit = _models()
+    current = InsightRun.no_workspace_objects.filter(id=run_id).first()
+    if current is not None and current.status == "running":
+        _require_retained(current, current.source_created_at)
     with transaction.atomic():
         run = (
-            InsightRun.no_workspace_objects.select_for_update()
+            InsightRun.no_workspace_objects.select_for_update(of=("self",))
             .filter(id=run_id)
             .first()
         )
@@ -760,15 +855,30 @@ def organise(run_id: str) -> dict:
         sub_id = sub_of.get(key, "")
         unit.sub_category_id = sub_id
         unit.category_id = parent_of.get(sub_id, "") or ""
-    InsightUnit.objects.bulk_update(
-        units, ["category_id", "sub_category_id"], batch_size=200
-    )
-    result = dict(run.result or {})
-    result["taxonomy"] = {"tops": tops, "subs": subs}
-    result["clustering"] = info
-    run.result = result
-    run.analysed_count = len(units)
-    run.save(update_fields=["result", "analysed_count", "taxonomy_mode", "updated_at"])
+    _require_retained(run, run.source_created_at)
+    with transaction.atomic():
+        current = (
+            InsightRun.no_workspace_objects.select_for_update(of=("self",))
+            .filter(id=run_id)
+            .first()
+        )
+        if current is None:
+            raise InsightRunNotRunning()
+        _require_running(current)
+        InsightUnit.objects.bulk_update(
+            units, ["category_id", "sub_category_id"], batch_size=200
+        )
+        result = dict(current.result or {})
+        result["taxonomy"] = {"tops": tops, "subs": subs}
+        result["clustering"] = info
+        current.result = result
+        current.analysed_count = len(units)
+        current.taxonomy_mode = run.taxonomy_mode
+        current.save(
+            update_fields=["result", "analysed_count", "taxonomy_mode", "updated_at"]
+        )
+        run.result = result
+        run.analysed_count = len(units)
     # Under the run's lock: a run stopped while it grouped records it,
     # uncharged.
     add_spend(run_id, spend)
@@ -879,13 +989,18 @@ def _previous_result(run) -> dict | None:
             created_at__lt=run.created_at,
         )
         .order_by("-created_at")
-        .values("id", "result", "finished_at")
+        .values("id", "result", "finished_at", "source_created_at")
         .first()
     )
     if not row or not (row["result"] or {}).get("categories"):
         return None
+    try:
+        require_retained_source(run.organization_id, row["source_created_at"])
+    except AnalysisSourceExpired:
+        return None
     return {
         "id": row["id"],
+        "source_created_at": row["source_created_at"],
         "result": row["result"],
         "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
     }
@@ -902,24 +1017,48 @@ def _settle_written(run, taxonomy) -> None:
     when the report's question or lens changed while the run was under way:
     its categories answer the old one, and the edit applies from the next
     run."""
+    InsightRun, _ = _models()
+    from tracer.models.insights import InsightConfig
+
+    run = (
+        InsightRun.no_workspace_objects.using("default")
+        .filter(id=run.id, status="completed")
+        .first()
+    )
+    if run is None:
+        return
+    _require_retained(run, run.source_created_at)
     charged = billing.charge_run(run)
-    _record_cost(run, charged)
-    set_progress(run, "done")
-    config = run.config
-    s = run.settings or {}
-    if (
-        run.taxonomy_mode == "discover"
-        and not (config.taxonomy or {}).get("subs")
-        and _asks(config.lens, config.question)
-        == _asks(s.get("lens", "usage"), s.get("question"))
-    ):
-        config.taxonomy = {
-            "tops": taxonomy["tops"],
-            "subs": taxonomy["subs"],
-            "source_run_id": str(run.id),
-            "frozen_at": timezone.now().isoformat(),
-        }
-        config.save(update_fields=["taxonomy", "updated_at"])
+    with transaction.atomic():
+        config = (
+            InsightConfig.no_workspace_objects.select_for_update(of=("self",))
+            .filter(id=run.config_id)
+            .first()
+        )
+        current = (
+            InsightRun.no_workspace_objects.select_for_update(of=("self",))
+            .filter(id=run.id)
+            .first()
+        )
+        if config is None or current is None or current.status != "completed":
+            return
+        require_retained_lineage(current)
+        _record_cost(current, charged)
+        set_progress(current, "done")
+        s = current.settings or {}
+        if (
+            current.taxonomy_mode == "discover"
+            and not (config.taxonomy or {}).get("subs")
+            and _asks(config.lens, config.question)
+            == _asks(s.get("lens", "usage"), s.get("question"))
+        ):
+            config.taxonomy = {
+                "tops": taxonomy["tops"],
+                "subs": taxonomy["subs"],
+                "source_run_id": str(current.id),
+                "frozen_at": timezone.now().isoformat(),
+            }
+            config.save(update_fields=["taxonomy", "updated_at"])
 
 
 def _record_cost(run, charged: float) -> None:
@@ -983,6 +1122,9 @@ def finish(run_id: str) -> dict:
     # into the saved categories is compared.
     previous = _previous_result(run) if run.taxonomy_mode == "classify" else None
     if previous:
+        run.source_created_at = oldest_source(
+            run.source_created_at, previous["source_created_at"]
+        )
         changes = compare_runs(result, previous["result"])
         if changes:
             changes.update(
@@ -1028,9 +1170,11 @@ def finish(run_id: str) -> dict:
             "error": "unavailable",
         }
     result["engine"] = insight_agent.pinned(run.settings)
+    _require_retained(run, run.source_created_at)
     now = timezone.now()
     values = {
         "result": result,
+        "source_created_at": run.source_created_at,
         "cost_usd": F("cost_usd") + spend.cost_usd,
         "status": "completed",
         "finished_at": now,
@@ -1041,7 +1185,30 @@ def finish(run_id: str) -> dict:
     # Completed only while it still runs: a run failed while its report was
     # being written stays failed and uncharged, with what the writing spent
     # added to it.
-    completed = InsightRun.objects.filter(id=run_id, status="running").update(**values)
+    from tracer.models.insights import InsightConfig
+
+    try:
+        with transaction.atomic():
+            InsightConfig._base_manager.select_for_update(of=("self",)).get(
+                id=run.config_id
+            )
+            current = (
+                InsightRun.no_workspace_objects.select_for_update(of=("self",))
+                .filter(id=run_id, status="running")
+                .first()
+            )
+            if current is not None:
+                # Previous-report text was loaded before model work; explicit
+                # source deletion may have retired it while that work ran.
+                require_retained_lineage(current, result=result)
+            completed = (
+                InsightRun.objects.filter(id=run_id, status="running").update(**values)
+                if current is not None
+                else 0
+            )
+    except AnalysisSourceExpired as exc:
+        retire_insight_runs([run_id], organization_id=run.organization_id)
+        raise InsightRunNotRunning() from exc
     _log_spend(run_id, "write", spend)
     _forget_evidence(run_id)
     if not completed:
@@ -1078,7 +1245,7 @@ def fail(run_id: str, message: str, code: str = "") -> None:
     now = timezone.now()
     with transaction.atomic():
         run = (
-            InsightRun.no_workspace_objects.select_for_update()
+            InsightRun.no_workspace_objects.select_for_update(of=("self",))
             .filter(id=run_id)
             .exclude(status="failed")
             .first()
@@ -1120,7 +1287,7 @@ def stop(run_id, message: str) -> bool:
     InsightRun, _ = _models()
     with transaction.atomic():
         run = (
-            InsightRun.no_workspace_objects.select_for_update()
+            InsightRun.no_workspace_objects.select_for_update(of=("self",))
             .filter(id=run_id, status__in=["pending", "running"])
             .first()
         )
@@ -1152,6 +1319,19 @@ def stop_requested(run_id) -> bool:
     from django.core.cache import cache
 
     try:
-        return bool(cache.get(STOP_KEY.format(run_id)))
+        if cache.get(STOP_KEY.format(run_id)):
+            return True
     except Exception:
-        return False
+        logger.warning("insight_stop_cache_unavailable", run_id=str(run_id))
+    InsightRun, _ = _models()
+    try:
+        return (
+            not InsightRun.no_workspace_objects.using("default")
+            .filter(id=run_id, status="running")
+            .exists()
+        )
+    except Exception:
+        logger.warning(
+            "insight_stop_state_unavailable", run_id=str(run_id), exc_info=True
+        )
+        return True

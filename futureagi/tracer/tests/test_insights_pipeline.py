@@ -1,6 +1,8 @@
 """The built-in Insights engine's stages, run in the workflow's order on a
 real database: prepare -> extract -> retry the failed -> organise -> finish.
 
+Database fixtures are committed: extraction workers check authoritative run
+liveness on their own connections, including when Redis is unavailable.
 Only the edges are faked: the unit text ClickHouse would return, the
 embeddings and the model's replies. A first run discovers categories and
 freezes them on the report; later runs classify into them, with leftovers
@@ -309,7 +311,7 @@ def units_of(run):
     return {u.unit_id: u for u in InsightUnit.objects.filter(run=run)}
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_a_first_run_reads_groups_and_freezes_its_categories(
     report, user, model, loaded
 ):
@@ -391,7 +393,7 @@ def test_a_first_run_reads_groups_and_freezes_its_categories(
     assert config.taxonomy["tops"] == taxonomy["tops"]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_later_runs_classify_into_the_frozen_categories(report, user, model, loaded):
     config = report
     first, _, _ = run_report(
@@ -465,7 +467,7 @@ def test_later_runs_classify_into_the_frozen_categories(report, user, model, loa
     assert InsightRun.objects.filter(config=config, status="completed").count() == 3
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_a_v2_unit_keeps_its_conversation_to_show(report, user, monkeypatch):
     """The agent reads a v2 unit itself; what prepare keeps is for the
     example panel, so it is the unit's turns, not only its last answer."""
@@ -476,8 +478,17 @@ def test_a_v2_unit_keeps_its_conversation_to_show(report, user, monkeypatch):
     asked = []
 
     def load_units(
-        unit, project_id, unit_ids, since, until, *, keep_empty=False, read_steps=True
+        unit,
+        project_id,
+        unit_ids,
+        since,
+        until,
+        *,
+        keep_empty=False,
+        read_steps=True,
+        version_cutoff=None,
     ):
+        assert version_cutoff is not None
         asked.append((keep_empty, read_steps))
         return {
             unit_ids[0]: UnitText(
@@ -514,7 +525,7 @@ def test_a_v2_unit_keeps_its_conversation_to_show(report, user, monkeypatch):
     assert units["spans-only-0"].content == ""
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_a_retried_finish_does_not_write_or_charge_the_report_twice(
     report, user, model, loaded, monkeypatch
 ):
@@ -565,7 +576,7 @@ def test_a_retried_finish_does_not_write_or_charge_the_report_twice(
     assert report.taxonomy["source_run_id"] == str(run.id)
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_a_rediscovered_run_is_not_compared_with_the_last_one(
     report, user, model, loaded
 ):
@@ -603,7 +614,7 @@ def start_run(config, user, unit_ids):
     return run
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_a_question_edited_mid_run_applies_from_the_next_run(
     report, user, model, loaded
 ):
@@ -639,7 +650,7 @@ def test_a_question_edited_mid_run_applies_from_the_next_run(
     assert "changes" not in following.result
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize(
     "edit",
     [{"lens": "usage"}, {"question": "Why do customers give up?"}],
@@ -670,7 +681,7 @@ def test_a_discovery_run_keeps_its_categories_off_a_report_asking_something_else
     assert following.taxonomy_mode == "discover"
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_a_classify_run_without_categories_to_sort_into_discovers(
     report, user, model, loaded
 ):
@@ -692,7 +703,7 @@ def test_a_classify_run_without_categories_to_sort_into_discovers(
     assert "changes" not in run.result
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_finish_never_completes_or_charges_a_run_failed_meanwhile(
     report, user, model, loaded, monkeypatch
 ):
@@ -730,7 +741,7 @@ def test_finish_never_completes_or_charges_a_run_failed_meanwhile(
     assert not (report.taxonomy or {}).get("subs")
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_a_failed_run_is_never_started_or_read_again(report, user, model, loaded):
     """A run failed before its workflow got to it is not revived by
     prepare; one failed mid-way makes no more model calls; and the workflow
@@ -771,7 +782,7 @@ def test_a_failed_run_is_never_started_or_read_again(report, user, model, loaded
     assert model.calls == calls
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize(
     "errors, expected",
     [
@@ -818,7 +829,7 @@ def _setup_error():
     return InsightModelSetupError("Insights couldn't use the models.", LICENSE)
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("workers", [1, pipeline.EXTRACT_WORKERS])
 def test_a_setup_error_stops_the_run_after_the_first_unit(
     report, user, model, loaded, monkeypatch, workers
@@ -855,7 +866,7 @@ def test_a_setup_error_stops_the_run_after_the_first_unit(
     assert run.progress["error_code"] == "license"
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_a_licence_that_cannot_activate_fails_the_run_before_it_reads(
     report, user, model, loaded, monkeypatch
 ):
@@ -880,7 +891,7 @@ def test_a_licence_that_cannot_activate_fails_the_run_before_it_reads(
     assert sum(model.calls.values()) == 0
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_a_stopped_run_fails_once_and_reads_no_further_units(
     report, user, model, loaded, monkeypatch
 ):
@@ -964,7 +975,7 @@ def charged(monkeypatch):
     return calls
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_what_a_stop_left_uncharged_stays_out_of_the_run_the_page_reads(
     auth_client, report, user
 ):
@@ -985,7 +996,7 @@ def test_what_a_stop_left_uncharged_stays_out_of_the_run_the_page_reads(
     assert detail["settings"]["lens"] == run.settings["lens"]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_a_stopped_run_is_charged_the_units_it_read_and_no_more(
     report, user, model, loaded, monkeypatch, charged
 ):
@@ -1056,7 +1067,7 @@ def test_a_stopped_run_is_charged_the_units_it_read_and_no_more(
     assert pipeline.SPENT_AFTER_STOP not in other.settings
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_progress_and_spend_move_as_each_unit_returns(
     report, user, model, loaded, monkeypatch
 ):
@@ -1100,7 +1111,7 @@ def test_progress_and_spend_move_as_each_unit_returns(
     assert seen == [(1, 0.01), (2, 0.02), (3, 0.03)]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_a_stop_between_agent_calls_charges_the_first_call_only(
     report, user, model, loaded, monkeypatch, charged
 ):

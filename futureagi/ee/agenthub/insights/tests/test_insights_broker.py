@@ -119,6 +119,9 @@ def world(monkeypatch):
         broker, "_load_run", lambda run_id: state.run if run_id == RUN_ID else None
     )
     monkeypatch.setattr(broker, "_load_unit", load_unit)
+    # This module isolates storage/protocol edges from PG. The authoritative
+    # deletion/epoch guard is exercised with real rows in test_analysis_retention.
+    monkeypatch.setattr(broker, "_snapshot_generation", lambda run, row: 0)
     monkeypatch.setattr(broker, "_analytics", analytics)
     monkeypatch.setattr(broker, "_lookup_ids", lambda kind, key: [key])
 

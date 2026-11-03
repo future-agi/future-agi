@@ -249,6 +249,7 @@ def spans(session_id: str, turns, *, user: str = "cust_001"):
                 trace_session_id=session_id,
                 end_user_id=user,
                 start_time=at,
+                created_at=at,
                 end_time=at + timedelta(seconds=3),
                 status="UNSET",
                 status_message="",
@@ -321,6 +322,7 @@ def _step(
         "name": name,
         "observation_type": kind,
         "start_time": start,
+        "created_at": start,
         "status": status,
         "status_message": message,
         "input": raw_in[:read],
@@ -359,6 +361,21 @@ class FakeReader:
 
     def roots_by_end_user_ids(self, user_ids, *, project_id, since, until):
         return [r for r in self.roots if r.end_user_id in user_ids]
+
+    def source_arrivals_by_trace_ids(
+        self, trace_ids, *, project_id, version_cutoff=None
+    ):
+        return {
+            trace_id: min(
+                [row.created_at for row in self.roots if row.trace_id == trace_id]
+                + [
+                    row["created_at"]
+                    for row in self.steps
+                    if row["trace_id"] == trace_id
+                ]
+            )
+            for trace_id in trace_ids
+        }
 
     def activity_by_trace_ids(
         self, trace_ids, *, project_id, media_patterns, field_chars

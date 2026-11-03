@@ -27,6 +27,7 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.services.eval_tasks.entries import soft_delete_eval_results
 
 logger = structlog.get_logger(__name__)
 
@@ -72,6 +73,18 @@ def soft_delete_projects(projects: QuerySet[Project], project_type: str) -> list
         return project_ids
 
     with transaction.atomic():
+        # Match analysis materialization's project -> config/run lock order.
+        list(
+            projects.order_by("pk")
+            .select_for_update(no_key=True, of=("self",))
+            .values_list("pk", flat=True)
+        )
+        list(
+            InsightConfig._base_manager.filter(project__in=projects)
+            .order_by("pk")
+            .select_for_update(of=("self",))
+            .values_list("pk", flat=True)
+        )
         now = timezone.now()
         if project_type == "experiment":
             ProjectVersion.objects.filter(project__in=projects).update(
@@ -93,8 +106,8 @@ def soft_delete_projects(projects: QuerySet[Project], project_type: str) -> list
             deleted=True, deleted_at=now
         )
         eval_configs = CustomEvalConfig.objects.filter(project__in=projects)
-        EvalLogger.objects.filter(custom_eval_config__in=eval_configs).update(
-            deleted=True, deleted_at=now
+        soft_delete_eval_results(
+            EvalLogger.objects.filter(custom_eval_config__in=eval_configs)
         )
         eval_configs.update(deleted=True, deleted_at=now)
         projects.update(deleted=True, deleted_at=now)
@@ -141,10 +154,23 @@ def _retire_instant_eval_and_insights(projects: QuerySet[Project], now) -> list[
         updated_at=now,
     )
     InsightUnit.objects.filter(run__in=runs).delete()
-    runs.update(result={}, deleted=True, deleted_at=now, updated_at=now)
-    InsightConfig._base_manager.filter(project__in=projects).update(
-        deleted=True, deleted_at=now, updated_at=now
+    runs.update(
+        result={},
+        settings={},
+        progress={},
+        deleted=True,
+        deleted_at=now,
+        updated_at=now,
     )
+    InsightConfig._base_manager.filter(project__in=projects).update(
+        taxonomy={}, deleted=True, deleted_at=now, updated_at=now
+    )
+    from functools import partial
+
+    from tracer.services.analysis_retention import _forget_evidence
+
+    for run_id in runs.values_list("pk", flat=True).iterator(chunk_size=200):
+        transaction.on_commit(partial(_forget_evidence, str(run_id)))
     return [str(task_id) for task_id in active]
 
 

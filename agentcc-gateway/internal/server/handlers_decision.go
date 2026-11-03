@@ -218,8 +218,12 @@ func (h *Handlers) DecisionModels(w http.ResponseWriter, r *http.Request) {
 		entries = h.registryDecisionModels()
 	} else {
 		h.peekKeyOrgID(rc)
-		if orgID, orgCfg := h.resolveOrgConfig(rc); orgID != "" && orgCfg != nil && rc.Metadata["key_type"] != "internal" {
+		key := h.lookupRequestKey(rc)
+		if orgID, orgCfg := h.resolveOrgConfig(rc); orgID != "" && orgCfg != nil && key != nil && key.KeyType != "internal" {
 			entries = h.orgDecisionModels(orgCfg)
+			entries = slices.DeleteFunc(entries, func(entry decisionModel) bool {
+				return !key.CanAccessProvider(entry.Provider) || !key.CanAccessModel(entry.ID)
+			})
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
