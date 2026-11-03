@@ -27,7 +27,7 @@ var KnownProviders = map[string]ProviderPreset{
 	"perplexity":  {BaseURL: "https://api.perplexity.ai", APIFormat: "openai", PathPrefix: "/v1"},
 	"cerebras":    {BaseURL: "https://api.cerebras.ai", APIFormat: "openai", PathPrefix: "/v1"},
 	"xai":         {BaseURL: "https://api.x.ai", APIFormat: "openai", PathPrefix: "/v1"},
-	"huggingface": {BaseURL: "https://api-inference.huggingface.co", APIFormat: "openai", PathPrefix: "/v1"},
+	"huggingface": {BaseURL: "https://router.huggingface.co", APIFormat: "openai", PathPrefix: "/v1"},
 	"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai", PathPrefix: "/v1"},
 	"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai", PathPrefix: "/v1"},
 	"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai", PathPrefix: "/v1"},
