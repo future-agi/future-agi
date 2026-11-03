@@ -26,7 +26,9 @@ const CallLogSideDrawerChild = ({ data }) => {
   const { currentLeftTab, setCurrentLeftTab } = useCallLogsSideDrawerStore();
   const [annotationSidebarOpen, setAnnotationSidebarOpen] = useState(false);
   const [addLabelDrawerOpen, setAddLabelDrawerOpen] = useState(false);
-  const annotationCovered = useDrawerCovered(annotationSidebarOpen);
+  const annotationCovered = useDrawerCovered(annotationSidebarOpen, {
+    overlay: true,
+  });
   const queryClient = useQueryClient();
   const { agentDefinitionId: urlAgentDefinitionId, observeId } = useParams();
   const resolvedProjectId = observeId || data?.projectId;

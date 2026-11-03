@@ -634,7 +634,9 @@ const TestDetailSideDrawerChild = ({
     totalCountIsLowerBound: navigationTotalCountIsLowerBound,
   });
 
-  const covered = useDrawerCovered(annotationSidebarOpen);
+  const covered = useDrawerCovered(annotationSidebarOpen, {
+    overlay: true,
+  });
 
   if (!data || isFetching === "initial") {
     return null;

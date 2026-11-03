@@ -20,20 +20,26 @@ const subscribe = (l) => {
 };
 const topId = () => (stack.length ? stack[stack.length - 1] : null);
 
-/** True while a drawer opened after this one is still open. */
-export function useDrawerCovered(open) {
+/**
+ * True while a drawer opened after this one is still open.
+ * `overlay: true` is for side panels opened from a drawer to work on what it
+ * shows (annotate, label): they stay out of the stack, so the drawer they were
+ * opened from stays visible beside them.
+ */
+export function useDrawerCovered(open, { overlay = false } = {}) {
   const id = useId();
+  const registered = Boolean(open) && !overlay;
   useEffect(() => {
-    if (!open) return undefined;
+    if (!registered) return undefined;
     stack = [...stack.filter((x) => x !== id), id];
     emit();
     return () => {
       stack = stack.filter((x) => x !== id);
       emit();
     };
-  }, [open, id]);
+  }, [registered, id]);
   const top = useSyncExternalStore(subscribe, topId, topId);
-  return !!open && top !== null && top !== id;
+  return registered && top !== null && top !== id;
 }
 
 /* Merged into the drawer's root `sx` (a Drawer, or a Dialog laid out as a

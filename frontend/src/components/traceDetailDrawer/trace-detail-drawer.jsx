@@ -67,7 +67,9 @@ const TraceDetailDrawerChild = ({
   const [showRightSection] = useState(false);
   const [annotateRunDrawerOpen, setAnnotateRunDrawerOpen] = useState(null);
   const [annotationSidebarOpen, setAnnotationSidebarOpen] = useState(false);
-  const annotationCovered = useDrawerCovered(annotationSidebarOpen);
+  const annotationCovered = useDrawerCovered(annotationSidebarOpen, {
+    overlay: true,
+  });
   const [actionToDataset, setActionToDataset] = useState(false);
   const [configureAnnotationsDrawerOpen, setConfigureAnnotationsDrawerOpen] =
     useState(false);

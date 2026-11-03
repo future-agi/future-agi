@@ -254,7 +254,7 @@ const AnnotateDrawer = ({
       notes: spanAnnotationData?.notes?.[0]?.notes ?? "",
     };
   }, [spanAnnotationData]);
-  const covered = useDrawerCovered(open);
+  const covered = useDrawerCovered(open, { overlay: true });
   return (
     <Drawer
       anchor="right"

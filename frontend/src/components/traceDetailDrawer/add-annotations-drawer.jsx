@@ -236,7 +236,7 @@ const AddAnnotationsDrawer = ({
   projectId,
   onAnnotationChanges,
 }) => {
-  const covered = useDrawerCovered(open);
+  const covered = useDrawerCovered(open, { overlay: true });
   return (
     <Drawer
       anchor="right"

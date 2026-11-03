@@ -45,7 +45,7 @@ const pinnedSelectCellSx = { ...pinnedBodyCellSx("left"), pl: 1.5, verticalAlign
 
 // Height of the sticky column-header row, set on its cells. The group headers
 // pin at this offset so they rest just under it, not on top.
-const HEAD_OFFSET = TABLE_HEADER_HEIGHT;
+const HEAD_OFFSET = TABLE_HEADER_HEIGHT.default;
 
 const WIDTHS_KEY = "simulate:scenario-table:column-widths";
 const DEFAULT_WIDTHS = { Scenario: 280, Persona: 200, Situation: 320, "Sub-goals": 260, "Ideal outcome": 320 };

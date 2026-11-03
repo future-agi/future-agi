@@ -850,7 +850,9 @@ const TraceDetailDrawerV2 = ({
     drawerTabs.find((t) => t.id === activeDrawerTab)?.tabType === "imagine";
 
   const covered = useDrawerCovered(open);
-  const annotateCovered = useDrawerCovered(Boolean(annotateDrawerOpen));
+  const annotateCovered = useDrawerCovered(Boolean(annotateDrawerOpen), {
+    overlay: true,
+  });
 
   return (
     // A persistent drawer renders in place, not in a portal. Opened from
