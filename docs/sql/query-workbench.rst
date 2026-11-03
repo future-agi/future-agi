@@ -385,7 +385,11 @@ Apply Django migrations through ``tracer/0122_sql_payload_expiry_index`` using
 the normal bootstrap job. The additive payload-expiry index is built concurrently;
 legacy retained payloads with zero byte accounting are repaired in 1,000-row
 batches. Rollback removes only the index, not audit records or result bodies.
-Install the locked backend dependencies before starting workers.
+Install the locked backend dependencies before starting workers. When upgrading
+from a build that ran SQL activities on ``exact_aggregation``, stop new SQL
+submissions and drain those short-lived executions before replacing workers;
+already-scheduled activities retain their old queue. Start the new SQL worker
+before admitting submissions through the new backend.
 
 Interactive SQL uses a dedicated two-slot ``sql_workbench`` activity worker in
 Standalone, Distributed Compose and Helm, separate from the single-slot exact
