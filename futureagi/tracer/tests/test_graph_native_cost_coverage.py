@@ -495,11 +495,14 @@ def test_winner_reversal_tombstone_partition_and_direct_dispatch(
             exact_snapshot=True,
             observe_type="span",
         )
+        # The filter parser is the source of the half-open naive-UTC bounds;
+        # partition cuts must use that same caller datetime contract.
+        builder.start_date, builder.end_date = builder.parse_time_range(builder.filters)
         batches = []
         for offset in (0, 1):
             sql, params = builder.build_exact_span_partition(
-                partition_start=START + timedelta(hours=offset),
-                partition_end=START + timedelta(hours=offset + 1),
+                partition_start=builder.start_date + timedelta(hours=offset),
+                partition_end=builder.start_date + timedelta(hours=offset + 1),
             )
             result = analytics.execute_ch_query(sql, params)
             batches.append((result.data, result.columns))

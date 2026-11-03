@@ -317,9 +317,11 @@ def test_summary_proof_crosses_bucket_and_partition_boundaries(native_graph_db):
         batches.append((result.data, result.columns))
     rows, columns = exact_graph_reads._merge_exact_trace_contribution_rows(batches)
     metrics = builder.format_result(rows, columns)
-    assert [p["value"] for p in metrics["cost"]] == [0.0, 1.25]
-    assert [p["cost_coverage"] for p in metrics["cost"]] == [EMPTY, ONE]
-    assert [p["traffic"] for p in metrics["traffic"]] == [1, 1]
+    # Graph series retain the pre-existing inclusive zero-fill end bucket.
+    # The half-open row filter keeps that boundary bucket empty (not billable).
+    assert [p["value"] for p in metrics["cost"]] == [0.0, 1.25, 0]
+    assert [p["cost_coverage"] for p in metrics["cost"]] == [EMPTY, ONE, EMPTY]
+    assert [p["traffic"] for p in metrics["traffic"]] == [1, 1, 0]
     trace_builder = TimeSeriesQueryBuilder(
         project_id=PROJECT,
         filters=FILTERS,
