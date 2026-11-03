@@ -161,7 +161,11 @@ function SummaryRow({ row, evals, onOpenRun, selected, selectable, onToggleSelec
 
       <NumCell
         value={
-          row.passRate != null ? `${row.passRate}%` : row.tasks ? "No score" : DASH
+          row.passRate != null
+            ? `${row.passRate}%`
+            : row.status === "no_score"
+              ? "No score"
+              : DASH
         }
         bold
       />
