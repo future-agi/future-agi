@@ -1518,6 +1518,8 @@ class TestUserApi:
         protected=(),
         held_back=True,
         tiers=None,
+        plan_held_back=None,
+        plan=True,
     ):
         """A finished fix whose candidate the verdict refused at the ``failed`` tiers, on an
         agent of this source kind. A failed screen skips the tiers after it; the final
@@ -1535,7 +1537,21 @@ class TestUserApi:
                 "held_back_scenario_keys": [f"held-{n}" for n in range(4)]
                 if held_back
                 else [],
+            },
+            # The comparison the engine froze; plan_held_back overrides its held-back count.
+            plan={
+                "target": 4,
+                "held_back": (4 if held_back else 0)
+                if plan_held_back is None
+                else plan_held_back,
+                "must_pass": 2,
+                "protected": len(protected),
+                "max_candidates": 3,
+                "repeats": 3,
+                "baseline_spread_pts": 0,
             }
+            if plan
+            else None,
         )
         fix_run.refresh_from_db()
         candidate = _candidate(fix_run)
@@ -1734,6 +1750,41 @@ class TestUserApi:
         )
         override = self._override(auth_client, fix_run)
         assert (override["allowed"], override["regressions"]) == (False, [])
+
+    def test_a_verdict_missing_both_the_held_back_tier_and_rate_cannot_ship(
+        self, auth_client, source_run, github
+    ):
+        # The verdict looks like a fix without held-back cases, but the plan froze 4.
+        fix_run, candidate = self._vetoed(
+            source_run, "github", held_back=False, plan_held_back=4
+        )
+
+        response, calls = self._ship(
+            auth_client, fix_run, candidate, [], override_reason=self.REASON
+        )
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            422,
+            "fix_candidate_not_proven",
+            [],
+        )
+        assert self._override(auth_client, fix_run)["allowed"] is False
+
+    def test_a_fix_without_its_frozen_plan_cannot_ship_a_refusal(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._vetoed(source_run, "github", plan=False)
+
+        response, calls = self._ship(
+            auth_client, fix_run, candidate, [], override_reason=self.REASON
+        )
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            422,
+            "fix_candidate_not_proven",
+            [],
+        )
+        assert self._override(auth_client, fix_run)["allowed"] is False
 
     def test_a_winner_ships_as_before_and_takes_no_reason(
         self, auth_client, source_run, github

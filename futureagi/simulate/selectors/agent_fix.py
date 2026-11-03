@@ -464,12 +464,11 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
     tiers = [
         (tier.get("name"), tier.get("status")) for tier in verdict.get("tiers") or []
     ]
-    request = candidate.fix_run.request
-    # The engine drops the held-back tier, and reports no held-back rate, when the fix
-    # has no held-back case it can score.
-    held_back = bool(request.get("held_back_scenario_keys")) and (
-        verdict.get("held_back_pass_rate") is not None
-    )
+    # The frozen plan, not the verdict being checked, says whether the final check owed a
+    # held-back tier: the engine drops that tier when it froze no held-back case.
+    held_back = (candidate.fix_run.plan or {}).get("held_back")
+    if not isinstance(held_back, int) or isinstance(held_back, bool):
+        return []
     expected = [
         (name, "failed" if name == "must-pass" else "passed")
         for name in VERDICT_TIERS
@@ -478,7 +477,7 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
     regressions = verdict.get("must_pass_regressions") or []
     # The engine names a lost protected case only in prose, so every regression on a
     # protected case counts as one: a protected case is never shipped regressed.
-    protected = request.get("protected_scenario_keys") or []
+    protected = candidate.fix_run.request.get("protected_scenario_keys") or []
     if tiers != expected or any(
         check.startswith(f"{key}: ") for check in regressions for key in protected
     ):
