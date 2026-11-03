@@ -25,8 +25,8 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.models import TestExecution as Execution
-from simulate.pydantic_schemas.agent_fix import MAX_MINUTES_MAX, Surface
-from simulate.selectors.agent_fix import default_max_minutes
+from simulate.pydantic_schemas.agent_fix import MAX_MINUTES_MAX, EngineBrief, Surface
+from simulate.selectors.agent_fix import default_max_minutes, engine_brief
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_agents import VersionedSourceAgent
 from simulate.services.agent_fix_runs import close_fix_run
@@ -51,6 +51,7 @@ from simulate.tests.test_agent_fix_services import (
     _check,
     _executions,
     _fix_run,
+    _receipts,
     _run,
     _runtime,
     _tree,
@@ -178,6 +179,32 @@ class TestEngineAuthentication:
 
         assert response.status_code == 200, response.content
         assert response.json()["fix_run_id"] == str(fix_run.id)
+
+    def test_the_brief_round_trips_with_the_records_the_engine_reads(
+        self, api_client, source_run
+    ):
+        _receipts(
+            source_run, {KEYS[0]: {"refunded": False}, KEYS[1]: {"refunded": True}}
+        )
+        fix_run = _armed(_fix_run(source_run))
+
+        body = _engine(api_client, "get", fix_run, "brief/").json()
+
+        assert EngineBrief.model_validate(body) == engine_brief(fix_run)
+        # Every field the engine's toRecord() reads from a check record.
+        assert [set(one) for one in body["source_failures"]] == [
+            {
+                "scenario_key",
+                "trial",
+                "status",
+                "error",
+                "sub_goals",
+                "reasons",
+                "transcript",
+                "failure",
+                "duration_s",
+            }
+        ]
 
     @pytest.mark.parametrize(
         ("sent", "code"),

@@ -1421,6 +1421,13 @@ class TestBrief:
     def test_carries_the_source_runs_failed_trials_with_their_transcripts(
         self, source_run
     ):
+        _receipts(
+            source_run,
+            {
+                KEYS[0]: {"refunded": False, "greeted": True},
+                KEYS[1]: {"refunded": True},
+            },
+        )
         failed = _executions(source_run).get(source_scenario__scenario_key=KEYS[0])
         for at, role, text in ((2, "assistant", "no refund"), (1, "user", "refund?")):
             CallTranscript.objects.create(
@@ -1454,6 +1461,25 @@ class TestBrief:
         brief = engine_brief(fix_run)
 
         assert [one.scenario_key for one in brief.source_failures] == [KEYS[1]]
+
+    def test_carries_a_scenarios_first_judged_failed_trial_only(self, environment):
+        # The engine reads one judged trial per scenario, a failing one first.
+        run = _run(environment, keys=[KEYS[0]], key="three-trials", trials=3)
+        passed, unjudged, failed = sorted(
+            _executions(run), key=lambda one: one.trial_index
+        )
+        for execution, held in (
+            (passed, {"refunded": True}),
+            (unjudged, {"refunded": False, "greeted": None}),
+            (failed, {"refunded": False}),
+        ):
+            _receipt(execution.call_execution, KEYS[0], held)
+
+        brief = engine_brief(_fix_run(run))
+
+        assert [(one.trial, one.status) for one in brief.source_failures] == [
+            (failed.trial_index, "ok")
+        ]
 
     def test_a_fix_with_no_failed_searched_trial_carries_none(self, source_run):
         fix_run = _fix_run(source_run)

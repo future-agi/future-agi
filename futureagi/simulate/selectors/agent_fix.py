@@ -173,31 +173,32 @@ def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
 def source_failures(
     source_run: HostedHarnessJob, request: FixRequest
 ) -> list[CheckRecord]:
-    """The source run's trials that failed a sub-goal on the targets the engine searches, as
-    check records. The held-back targets stay out, as they do from everything it reads."""
+    """The source run's evidence on each target the engine searches: the first trial it
+    judged in full that failed a sub-goal, as a check record. The engine reads one such
+    trial a scenario, so the brief holds at most one record for each. The held-back targets
+    stay out, as they do from everything the engine reads."""
     searched = set(request.target_scenario_keys) - set(request.held_back_scenario_keys)
-    failed = []
+    found: dict[str, tuple[Any, CheckRecord]] = {}
     for execution in (
         HostedHarnessExecution.no_workspace_objects.filter(
             job=source_run, source_scenario__scenario_key__in=searched
         )
         .select_related("source_scenario", "call_execution")
-        .order_by("execution_key")
+        .order_by("trial_index", "execution_key")
     ):
+        key = execution.source_scenario.scenario_key
         receipt = (execution.call_execution.call_metadata or {}).get(
             "hosted_harness_receipt"
         )
-        if isinstance(receipt, Mapping) and False in judged_sub_goals(receipt).values():
-            failed.append((execution, receipt))
-    transcripts = _transcripts(execution.call_execution_id for execution, _ in failed)
+        if key in found or not isinstance(receipt, Mapping):
+            continue
+        record = _record(key, execution.trial_index, receipt, "")
+        if record.status == "ok" and False in record.sub_goals.values():
+            found[key] = (execution.call_execution_id, record)
+    transcripts = _transcripts(call_id for call_id, _ in found.values())
     return [
-        _record(
-            execution.source_scenario.scenario_key,
-            execution.trial_index,
-            receipt,
-            transcripts.get(execution.call_execution_id, ""),
-        )
-        for execution, receipt in failed
+        record.model_copy(update={"transcript": transcripts.get(call_id, "")})
+        for call_id, record in found.values()
     ]
 
 
