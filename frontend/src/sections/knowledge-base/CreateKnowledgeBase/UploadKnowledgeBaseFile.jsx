@@ -99,7 +99,7 @@ const UploadKnowledgeBaseFile = ({ control, handleShowSdkInfo, isPending }) => {
         heading="Choose a file or drag & drop it here"
         description={[
           "Add documents up to 5 MB each (1 GB total storage).",
-          "File formats supported: PDF, DOCX, RTF, TXT",
+          "File formats supported: PDF, DOCX, RTF, TXT, images (PNG, JPG, JPEG, WEBP, GIF, SVG, BMP)",
         ]}
         actionButton={
           <Button
@@ -125,6 +125,7 @@ const UploadKnowledgeBaseFile = ({ control, handleShowSdkInfo, isPending }) => {
             [".docx"],
           "text/plain": [".txt"],
           "text/rtf": [".rtf"],
+          "image/*": [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".bmp"],
         }}
         maxSize={MAX_FILE_SIZE}
         minSize={1}
