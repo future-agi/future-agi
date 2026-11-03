@@ -375,18 +375,32 @@ def finish_acceptance(checkout, *, failure, deactivate):
     This is the existing teardown, NOT part of the read-only admission sampler.
     On an otherwise successful test every teardown/evidence error still fails.
     """
+    from .real_automatic import setup_failure_metadata
     result = dict(envelope(), original_failure=failure_category(failure), errors=[],
                   deactivation='pending', cleanup='skipped')
+    original_setup = setup_failure_metadata(failure)
+    if original_setup is not None:
+        result['original_setup'] = original_setup
     first = None
     def attempt(stage, function):
         nonlocal first
         try:
-            function()
+            value = function()
+            if stage == 'deactivation' and isinstance(value, dict):
+                result['deactivation_details'] = value
             return True
         except Exception as error:
             if first is None:
                 first = error
-            result['errors'].append(dict(stage=stage, category=failure_category(error)))
+            entry = dict(stage=stage, category=failure_category(error))
+            setup = setup_failure_metadata(error)
+            if setup is not None:
+                entry['setup'] = setup
+            if stage == 'deactivation':
+                details = getattr(error, 'deactivation_metadata', None)
+                if isinstance(details, dict):
+                    result['deactivation_details'] = details
+            result['errors'].append(entry)
             return False
     attempt('diagnostics', lambda: checkout.collect_diagnostics(failure))
     attempt('logs', checkout.collect_logs)

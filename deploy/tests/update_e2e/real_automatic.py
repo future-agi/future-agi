@@ -32,18 +32,179 @@ def native_ci():
     return sys.platform == 'linux' and os.environ.get('GITHUB_ACTIONS') == 'true'
 
 
+BIN_UPDATE_SECONDS = 600
+
+
+def setup_reason_codes():
+    from deploy.update.contracts import ReasonCode
+    from deploy.update.scheduler_install import ActivationReason
+    # Fixed non-enum codes emitted by enrollment/_setup, not arbitrary CLI text.
+    return {code.value for code in ReasonCode} | {code.value for code in ActivationReason} | {
+        'setup_prerequisite_unavailable', 'control_changed', 'control_paused'}
+
+
+def setup_failure_metadata(error):
+    """Bounded projection; even a malformed/unknown command never exports stdout."""
+    raw = getattr(error, 'setup_metadata', None)
+    if not isinstance(raw, dict):
+        return None
+    closed = dict(setup_state={'incomplete'}, scheduler_state={'active', 'incomplete', 'removed', 'retained', 'unchanged'},
+                  policy_state={'enabled', 'disabled', 'paused', 'manual'}, reason=setup_reason_codes())
+    result = {key: raw.get(key) if isinstance(raw.get(key), str) and raw[key] in values else 'unknown'
+              for key, values in closed.items()}
+    code = raw.get('returncode')
+    result['returncode'] = code if type(code) is int and -255 <= code <= 255 else None
+    return result
+
+
 class SetupIncomplete(RuntimeError):
     """Setup's own closed refusal code; no other setup output leaves the private log."""
-    def __init__(self, name, reason):
+    def __init__(self, name, reason, *, returncode=None, scheduler_state='unknown', policy_state='unknown'):
+        if reason not in setup_reason_codes():
+            raise ValueError('unknown setup reason')
         self.reason = reason
+        self.setup_metadata = dict(returncode=returncode, setup_state='incomplete',
+                                   scheduler_state=scheduler_state, policy_state=policy_state, reason=reason)
+        self.setup_metadata = setup_failure_metadata(self)
         super().__init__(name + ' failed: setup incomplete: ' + reason)
 
 
-def setup_failure(name, stdout):
-    match = re.search(rb'^Setup incomplete: ([a-z_]{1,80})\. ', stdout or b'', re.M)
-    if match is None:
-        return RuntimeError(name + " failed; see private command logs")
-    return SetupIncomplete(name, match.group(1).decode())
+def setup_failure(name, stdout, returncode=None):
+    """Recognize exactly one canonical refusal, never pick a reason from noise.
+
+    Exception-form embeds its reason; result-form requires its own exact Reason
+    line. Duplicate/conflicting headers or reasons and unknown state tokens all
+    fail closed, including a plausible busy token beside malformed evidence.
+    """
+    unknown = RuntimeError(name + " failed; see private command logs")
+    unknown.setup_metadata = dict(returncode=returncode)
+    unknown.setup_metadata = setup_failure_metadata(unknown)
+    if not isinstance(stdout, bytes) or len(stdout) > 65536:
+        return unknown
+    lines = stdout.splitlines()
+    # setup_summary emits this disclosure before both canonical refusal forms.
+    # Only its exact bytes are explanatory; changed/unknown Setup lines fail closed.
+    explanation = (b'Setup installs no packages, Docker/global permissions or source code, and runs no migrations itself. '
+                   b'Missing prerequisites leave setup incomplete.')
+    headers = [line for line in lines if line.lstrip().startswith(b'Setup') and line != explanation]
+    reasons = [line for line in lines if line.lstrip().startswith(b'Reason')]
+    if len(headers) != 1:
+        return unknown
+    # The exception-form explanation is opaque; only its closed header token is retained.
+    exception = re.fullmatch(rb'Setup incomplete: ([a-z_]{1,80})\. .*', headers[0])
+    states = re.fullmatch(rb'Setup incomplete; scheduler=(active|incomplete|removed|retained|unchanged); '
+                          rb'policy=(enabled|disabled|paused|manual)\.', headers[0])
+    if exception and not reasons:
+        reason, scheduler, policy = exception.group(1), 'unknown', 'unknown'
+    elif states and len(reasons) == 1:
+        match = re.fullmatch(rb'Reason: ([a-z_]{1,80})', reasons[0])
+        if match is None:
+            return unknown
+        reason, scheduler, policy = match.group(1), states.group(1).decode(), states.group(2).decode()
+    else:
+        return unknown
+    reason = reason.decode()
+    if reason not in setup_reason_codes():
+        return unknown
+    return SetupIncomplete(name, reason, returncode=returncode, scheduler_state=scheduler, policy_state=policy)
+
+
+def deactivation_retry_state(root):
+    """Noncreating, lock-free sample, NOT authority to remove scheduler assets.
+
+    Require explicit disable and a stable typed state/control pair around a
+    no-follow journal absence check in the existing private directory. A
+    missing parent, unreadable/changed evidence or any journal leaf refuses.
+    Every subsequent real CLI removal still takes runner.lock and checks pending.
+    """
+    from deploy.update.host_facts import selected_store
+    from deploy.update.receipt import JOURNAL, StateDir
+    result = dict(control='unknown', active_attempt='unknown', journal='unknown', state='unavailable')
+    try:
+        store = selected_store(root)
+        control = store.read_control()
+        result['control'] = 'disabled' if control.enabled_override is False else 'not_disabled'
+        current = store.read_state()
+        result['active_attempt'] = 'absent' if current.active_attempt_id is None else 'present'
+        with StateDir(store.checkout).private_directory() as directory:
+            try:
+                os.stat(JOURNAL, dir_fd=directory, follow_symlinks=False)
+            except FileNotFoundError:
+                result['journal'] = 'absent'
+            else:
+                result['journal'] = 'present'
+        if control != store.read_control() or current != store.read_state():
+            result['state'] = 'changed'
+        elif result['control'] != 'disabled':
+            result['state'] = 'not_disabled'
+        elif result['active_attempt'] != 'absent' or result['journal'] != 'absent':
+            result['state'] = 'pending'
+        else:
+            result['state'] = 'disabled_idle'
+    except Exception:
+        pass  # No exception text/paths, and no guessing that unreadable means idle.
+    return result
+
+
+def deactivate_acceptance(checkout, *, deadline, clock=time.monotonic, sleep=time.sleep):
+    """One teardown operation, at most the existing CLI budget AND job remainder.
+
+    Only an actually captured, unique setup scheduler_busy may be reinvoked.
+    No tick/recovery/manager retry, policy rewrite or cleanup is performed here.
+    This handles a future observed contention, not an inferred historical cause.
+    """
+    started = clock()
+    end = min(started + BIN_UPDATE_SECONDS, deadline)
+    evidence = dict(calls=0, busy_count=0, first_reason=None, last_reason=None,
+                    elapsed_seconds=0, state='pending', guard=None, last_setup=None)
+    last_failure = None
+    def remaining():
+        left = end - clock()
+        if left <= 0:
+            evidence['state'] = 'budget_exhausted'
+            raise last_failure if last_failure is not None else TimeoutError('deactivation budget exhausted')
+        return left
+    def guard():
+        evidence['guard'] = deactivation_retry_state(checkout.root)
+        if evidence['guard']['state'] != 'disabled_idle':
+            evidence['state'] = 'guard_refused'
+            raise last_failure
+    try:
+        while True:
+            remaining()
+            if last_failure is not None:
+                guard()  # Recheck after sleeping, immediately before the new CLI call.
+            timeout = remaining()
+            evidence['calls'] += 1
+            try:
+                checkout.bin_update('setup', '--deactivate', '--yes', timeout=timeout)
+            except Exception as error:
+                last_failure = error
+                details = setup_failure_metadata(error)
+                evidence['last_setup'] = details
+                reason = details['reason'] if details else 'unknown'
+                if evidence['first_reason'] is None:
+                    evidence['first_reason'] = reason
+                evidence['last_reason'] = reason
+                if not (isinstance(error, SetupIncomplete) and reason == 'scheduler_busy'
+                        and details['returncode'] == 3):
+                    evidence['state'] = 'failed'
+                    raise
+                evidence['busy_count'] += 1
+                remaining()
+                guard()  # Disabled/no pending work must be established BEFORE waiting too.
+                sleep(min(2, remaining()))  # Same ordinary two-second acceptance polling cadence.
+            else:
+                # A late completion is not permission for partial cleanup past the job budget.
+                last_failure = None
+                remaining()
+                evidence['state'] = 'succeeded'
+                evidence['elapsed_seconds'] = max(0, clock() - started)
+                return evidence
+    except Exception as error:
+        evidence['elapsed_seconds'] = max(0, clock() - started)
+        error.deactivation_metadata = evidence
+        raise
 READINESS_SECONDS = 4200
 CRON_PERIOD_SECONDS = 300
 FAULT_SEAM = 'post-migration-stop-v1'  # Defined ONLY in deploy/tests, never in shipped runtime.
@@ -293,8 +454,14 @@ def command_refusal(checkout, result):
         return None
     try:
         name = 'command-{:04d}.stderr'.format(checkout.sequence)
-        tokens = re.findall(rb'^bin/update: ([a-z_]{1,80})$', (checkout.evidence/name).read_bytes()[-65536:], re.M)
-        return tokens[-1].decode() if tokens else 'unclassified'
+        # reporting init emits fixed guidance before main's canonical reason.
+        explanation = (b'bin/update: reporting init incomplete; retry with the same directory after resolving '
+                       b'the refusal; do not remove foreign content or rebind')
+        lines = [line for line in (checkout.evidence/name).read_bytes()[-65536:].splitlines()
+                 if line.startswith(b'bin/update:') and line != explanation]
+        match = re.fullmatch(rb'bin/update: ([a-z_]{1,80})', lines[0]) if len(lines) == 1 else None
+        token = match.group(1).decode() if match else None
+        return token if token in setup_reason_codes() else 'unclassified'
     except (OSError, AttributeError, TypeError, ValueError):
         return 'unavailable'
 
@@ -824,7 +991,7 @@ class ProductHarness:
                 self.docker('pull', service['image'], timeout=1800)
         return self.boot_source()
 
-    def bin_update(self, *args, check=True, timeout=600):
+    def bin_update(self, *args, check=True, timeout=BIN_UPDATE_SECONDS):
         # Tests may enroll/deactivate, never drive scheduler run/tick/apply.
         if not args or args[0] not in ('setup', 'reporting'):
             raise ValueError('acceptance may only call one-time setup/deactivation or status reporting')
@@ -844,10 +1011,12 @@ class ProductHarness:
                 self.env['PYTHON'] = previous
         if check and result.returncode:
             # A CI run cannot be inspected afterwards: keep the refusal code.
-            failure = setup_failure('command-{:04d}'.format(self.sequence), result.stdout)
+            failure = setup_failure('command-{:04d}'.format(self.sequence), result.stdout, result.returncode)
             if type(failure) is RuntimeError:
+                metadata = setup_failure_metadata(failure)
                 failure = RuntimeError('command-{:04d} failed ({}); see private command logs'.format(
                     self.sequence, command_refusal(self, result)))
+                failure.setup_metadata = metadata
             raise failure
         return result
 
@@ -1511,8 +1680,10 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
             code = getattr(failure, 'reason_code', None)
             if isinstance(code, ReasonCode):
                 result['reason_code'] = code.value
-            if isinstance(failure, SetupIncomplete):
-                result['setup_reason'] = failure.reason
+            setup = setup_failure_metadata(failure)
+            if setup is not None:
+                result['setup'] = setup
+                result['setup_reason'] = setup['reason']
         runner = ProcessSupervisor(AutomationPolicy(), docker_context=CONTEXT,
                                    environment=self.env, output_limit=65536, grace_seconds=.2)
         runner.deadline = time.monotonic()+30

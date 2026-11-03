@@ -24,7 +24,7 @@ from deploy.tests.update_e2e.real_automatic import (
     acceptance_policy, acceptance_reserve_seconds, policy_cli_arguments,
     pending_migration_names, read_attempt_ledger, read_event_records, scheduler_wait_budget,
     replacement_tolerant, scheduler_history, setup_timeout_seconds,
-    data_usage, command_refusal)
+    data_usage, command_refusal, deactivate_acceptance)
 from deploy.tests.update_e2e.admission_diagnostics import (
     collect_admission_diagnostics, completed_admission_block, finish_acceptance)
 from deploy.update.baseline import BaselineStore
@@ -339,7 +339,7 @@ class AutomaticLifecycleE2E(unittest.TestCase):
         finally:
             def deactivate():
                 if enrolled or selected_store(checkout.root).path.exists():
-                    checkout.bin_update('setup', '--deactivate', '--yes')
+                    return deactivate_acceptance(checkout, deadline=deadline)
             # A failed deactivation retains the stack/recovery source, while
             # independently recording (never masking) the original failure.
             finish_acceptance(checkout, failure=failure, deactivate=deactivate)

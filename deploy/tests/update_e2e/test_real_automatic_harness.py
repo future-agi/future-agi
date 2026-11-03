@@ -301,6 +301,458 @@ class NativeLauncherTests(unittest.TestCase):
             self.assertEqual(str(raised.exception), 'command-0060 failed (ownership_unconfirmed); see private command logs')
 
 
+def setup_output(reason='scheduler_busy', scheduler='incomplete', policy='disabled'):
+    return ('Setup incomplete; scheduler=' + scheduler + '; policy=' + policy + '.\nReason: ' + reason + '\n').encode()
+
+
+class SetupFailureTests(unittest.TestCase):
+    def test_both_canonical_forms_and_closed_vocabulary(self):
+        for reason in ('scheduler_busy', 'automatic_recovery_pending', 'scheduler_foreign_state',
+                       'configuration_changed', 'setup_prerequisite_unavailable', 'control_changed', 'control_paused'):
+            for output in (setup_output(reason), ('Setup incomplete: ' + reason +
+                    '. Unattended work was not activated by this action.\n').encode()):
+                with self.subTest(reason=reason, output=output):
+                    error = real.setup_failure('command-0092', output, 3)
+                    self.assertIsInstance(error, real.SetupIncomplete)
+                    self.assertEqual(error.reason, reason)
+                    details = real.setup_failure_metadata(error)
+                    self.assertEqual((details['reason'], details['returncode'], details['setup_state']),
+                                     (reason, 3, 'incomplete'))
+                    expected = ('incomplete', 'disabled') if b'; scheduler=' in output else ('unknown', 'unknown')
+                    self.assertEqual((details['scheduler_state'], details['policy_state']), expected)
+
+    def test_ambiguous_malformed_or_unknown_output_stays_unknown_without_secrets(self):
+        exception = b'Setup incomplete: scheduler_busy. Unattended work was not activated by this action.\n'
+        outputs = [b'Reason: scheduler_busy\n', setup_output('private_token'), setup_output('PRIVATE-TOKEN'),
+                   setup_output() + b'Reason: scheduler_foreign_state\n', setup_output() + b'Reason: scheduler_busy\n',
+                   setup_output() + b'Reason:private_token\n', setup_output() * 2, exception * 2,
+                   exception + b'Reason: scheduler_busy\n', setup_output(scheduler='private_token'),
+                   setup_output(policy='private_token'), setup_output().replace(b'incomplete;', b'active;'),
+                   setup_output().replace(b'\nReason:', b'\n Reason:'), setup_output().split(b'Reason:')[0],
+                   exception + setup_output(), b'private_token\n', b'X' * 65537 + setup_output()]
+        for output in outputs:
+            with self.subTest(output=output[:100]):
+                error = real.setup_failure('command-0092', output, 3)
+                self.assertIs(type(error), RuntimeError)
+                self.assertEqual(real.setup_failure_metadata(error), dict(returncode=3, setup_state='unknown',
+                    scheduler_state='unknown', policy_state='unknown', reason='unknown'))
+                self.assertNotIn('private_token', str(error) + json.dumps(error.setup_metadata))
+        self.assertIsNone(real.setup_failure_metadata(real.setup_failure('command', b'', 10**100))['returncode'])
+
+    def test_actual_setup_output_contract_without_host_actions(self):
+        import contextlib
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from deploy.update import __main__ as cli, enrollment
+        from deploy.update.contracts import ReasonCode
+        from deploy.update.runner_state import StoreError
+        store = Mock()
+        store.read_registration.side_effect = StoreError()
+        cases = [(enrollment.SetupResult('incomplete', 'incomplete', 'disabled', reason, action='PRIVATE-TOKEN'), reason)
+                 for reason in ('scheduler_busy', 'scheduler_foreign_state', 'scheduler_manager_unavailable')]
+        cases += [(enrollment.SetupResult('incomplete', 'retained', 'disabled', 'automatic_recovery_pending'),
+                   'automatic_recovery_pending'), (StoreError(ReasonCode.CONFIGURATION_CHANGED), 'configuration_changed'),
+                  (OSError('PRIVATE-TOKEN'), 'setup_prerequisite_unavailable')]
+        for outcome, reason in cases:
+            out = io.StringIO()
+            kwargs = {'side_effect': outcome} if isinstance(outcome, Exception) else {'return_value': outcome}
+            with self.subTest(reason=reason), patch.object(enrollment, 'setup_automation', **kwargs), \
+                    contextlib.redirect_stdout(out):
+                code = cli._setup(SimpleNamespace(yes=True, deactivate=True), store)
+            self.assertEqual(code, 3)
+            failure = real.setup_failure('command', out.getvalue().encode(), code)
+            self.assertIsInstance(failure, real.SetupIncomplete)
+            self.assertEqual(failure.reason, reason)
+            self.assertNotIn('PRIVATE-TOKEN', str(failure) + json.dumps(failure.setup_metadata))
+
+    def enrollment_output(self, mode, outcome):
+        import contextlib
+        from types import SimpleNamespace
+        from deploy.update import __main__ as cli, enrollment
+        from deploy.update.runner_state import RunnerStateStore
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / '.env').write_text('')
+            store = RunnerStateStore(root, root / '.env')
+            options = SimpleNamespace(yes=True, mode=mode, docker_context='private-token-context')
+            if mode == 'apply':
+                options.backup_destination = str(root / 'PRIVATE-TOKEN-backups')
+            out = io.StringIO()
+            kwargs = {'side_effect': outcome} if isinstance(outcome, Exception) else {'return_value': outcome}
+            # Only the host action is stubbed: _setup, setup_summary and configuration
+            # retrieval/rendering are real, with an unregistered private checkout.
+            with patch.object(enrollment, 'setup_automation', **kwargs) as setup, contextlib.redirect_stdout(out):
+                code = cli._setup(options, store)
+            setup.assert_called_once_with(store, options)
+            self.assertEqual(code, 3)
+            output = out.getvalue().encode()
+            self.assertIn(b'One-time host setup: mode=' + mode.encode(), output)
+            self.assertIn(b'private-token-context', output)
+            return output, code
+
+    def assert_enrollment_reason(self, output, code, reason):
+        failure = real.setup_failure('command', output, code)
+        self.assertIsInstance(failure, real.SetupIncomplete)
+        self.assertEqual(failure.reason, reason)
+        self.assertEqual(failure.setup_metadata['returncode'], 3)
+        public = str(failure) + json.dumps(real.setup_failure_metadata(failure))
+        for private in ('PRIVATE-TOKEN', 'private-token-context', 'Private backups', 'Docker target'):
+            self.assertNotIn(private, public)
+
+    def test_actual_enrollment_result_summary_preserves_closed_reason(self):
+        from deploy.update.enrollment import SetupResult
+        for mode in ('apply', 'notify'):
+            for reason in ('scheduler_busy', 'scheduler_foreign_state', 'scheduler_manager_unavailable'):
+                with self.subTest(mode=mode, reason=reason):
+                    output, code = self.enrollment_output(mode, SetupResult(
+                        'incomplete', 'incomplete', 'disabled', reason, action='PRIVATE-TOKEN /private/action'))
+                    self.assertIn(b'PRIVATE-TOKEN /private/action', output)
+                    self.assert_enrollment_reason(output, code, reason)
+
+    def test_actual_enrollment_exception_summary_preserves_closed_reason(self):
+        from deploy.update.contracts import ReasonCode
+        from deploy.update.runner_state import StoreError
+        for mode in ('apply', 'notify'):
+            for outcome, reason in ((StoreError(ReasonCode.CONFIGURATION_CHANGED), 'configuration_changed'),
+                                    (OSError('PRIVATE-TOKEN'), 'setup_prerequisite_unavailable')):
+                with self.subTest(mode=mode, reason=reason):
+                    output, code = self.enrollment_output(mode, outcome)
+                    self.assert_enrollment_reason(output, code, reason)
+
+    def test_actual_enrollment_summary_rejects_changed_explanation_and_ambiguous_records(self):
+        from deploy.update.enrollment import SetupResult
+        for mode in ('apply', 'notify'):
+            output, code = self.enrollment_output(mode, SetupResult('incomplete', 'incomplete', 'disabled', 'scheduler_busy'))
+            header = b'Setup incomplete; scheduler=incomplete; policy=disabled.\n'
+            mutations = [output.replace(b'Setup installs no packages,', b'Setup installs PRIVATE-TOKEN,'),
+                         output.replace(b'Missing prerequisites leave setup incomplete.', b'Missing prerequisites leave setup incomplete. PRIVATE-TOKEN'),
+                         output.replace(b'Setup installs', b' Setup installs'),
+                         output + b'Setup PRIVATE-TOKEN\n', output + header,
+                         output + b'Setup incomplete: scheduler_foreign_state. Refused.\n',
+                         output + b'Reason: scheduler_busy\n', output + b'Reason: scheduler_foreign_state\n',
+                         output.replace(b'Reason: scheduler_busy', b'Reason: PRIVATE-TOKEN'),
+                         output.replace(b'Reason: scheduler_busy', b'Reason:scheduler_busy'),
+                         output + b'Reason PRIVATE-TOKEN\n']
+            for index, changed in enumerate(mutations):
+                with self.subTest(mode=mode, mutation=index):
+                    failure = real.setup_failure('command', changed, code)
+                    self.assertIs(type(failure), RuntimeError)
+                    self.assertEqual(real.setup_failure_metadata(failure), dict(returncode=3, setup_state='unknown',
+                        scheduler_state='unknown', policy_state='unknown', reason='unknown'))
+                    public = str(failure) + json.dumps(failure.setup_metadata)
+                    self.assertNotIn('PRIVATE-TOKEN', public)
+                    self.assertNotIn('private-token-context', public)
+
+    def test_actual_reporting_init_refusal_keeps_unique_closed_reason(self):
+        import contextlib
+        from types import SimpleNamespace
+        from deploy.update import __main__ as cli
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / '.env').write_text('')
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = cli.main(['--root', str(root), 'reporting', 'init', '--directory', str(root / 'PRIVATE-TOKEN')])
+            self.assertEqual(code, 2)
+            self.assertEqual(stdout.getvalue(), '')
+            self.assertFalse((root / 'PRIVATE-TOKEN').exists())
+            output = stderr.getvalue().encode()
+            self.assertEqual(len(output.splitlines()), 2)
+            self.assertTrue(output.endswith(b'bin/update: scheduler_unregistered\n'))
+            checkout = SimpleNamespace(evidence=root, sequence=92)
+            leaf = root / 'command-0092.stderr'
+            leaf.write_bytes(output)
+            self.assertEqual(real.command_refusal(checkout, SimpleNamespace(returncode=code)), 'scheduler_unregistered')
+            mutations = [output.replace(b'reporting init incomplete;', b'reporting init PRIVATE-TOKEN;'),
+                         output.replace(b'do not remove foreign content or rebind\n', b'do not remove foreign content or rebind PRIVATE-TOKEN\n'),
+                         output + b'bin/update: PRIVATE-TOKEN\n',
+                         output + b'bin/update: scheduler_unregistered\n',
+                         output + b'bin/update: scheduler_busy\n',
+                         output.replace(b'bin/update: scheduler_unregistered\n', b'bin/update: private_token\n'),
+                         output.replace(b'bin/update: scheduler_unregistered\n', b'bin/update:scheduler_unregistered\n')]
+            for index, changed in enumerate(mutations):
+                with self.subTest(mutation=index):
+                    leaf.write_bytes(changed)
+                    self.assertEqual(real.command_refusal(checkout, SimpleNamespace(returncode=code)), 'unclassified')
+            # Even a closed busy token alongside the real guidance is stderr-only,
+            # not the canonical stdout setup refusal needed for a teardown retry.
+            leaf.write_bytes(output.replace(b'scheduler_unregistered', b'scheduler_busy'))
+            harness = real.ProductHarness(real.HOME / 'fixture', Path.cwd(), 'fagi-upd-e2e-real-unit')
+            harness.evidence, harness.sequence = root, 92
+            with patch.object(real, 'native_ci', return_value=False), patch.object(harness, 'command',
+                    return_value=real.subprocess.CompletedProcess([], 3, b'PRIVATE-TOKEN')) as command, \
+                    patch.object(real, 'deactivation_retry_state') as guard, \
+                    patch.object(real.time, 'sleep') as sleep:
+                with self.assertRaises(RuntimeError) as raised:
+                    real.deactivate_acceptance(harness, deadline=10000, clock=lambda: 0, sleep=sleep)
+            self.assertIs(type(raised.exception), RuntimeError)
+            self.assertEqual(raised.exception.setup_metadata['reason'], 'unknown')
+            self.assertNotIn('PRIVATE-TOKEN', str(raised.exception) + json.dumps(raised.exception.deactivation_metadata))
+            command.assert_called_once()
+            guard.assert_not_called()
+            sleep.assert_not_called()
+
+    def test_readonly_diagnostics_preserve_closed_setup_metadata_not_output(self):
+        from unittest.mock import Mock
+        harness = real.ProductHarness(real.HOME / 'fixture', Path.cwd(), 'fagi-upd-e2e-real-unit')
+        for output, reason in ((setup_output(), 'scheduler_busy'), (b'Reason: private_token\n', 'unknown')):
+            failure = real.setup_failure('command-0092', output, 3)
+            runner = Mock(side_effect=OSError('PRIVATE-TOKEN'))
+            with patch('deploy.update.processes.ProcessSupervisor', return_value=runner), patch.object(harness, 'record'):
+                result = harness.collect_diagnostics(failure)
+            self.assertEqual(result['setup']['reason'], reason)
+            self.assertEqual(result['setup']['returncode'], 3)
+            self.assertNotIn('PRIVATE-TOKEN', json.dumps(result))
+            self.assertNotIn('private_token', json.dumps(result))
+
+    def test_stderr_reason_is_closed_unique_and_never_authorizes_retry(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            harness = real.ProductHarness(real.HOME / 'fixture', Path.cwd(), 'fagi-upd-e2e-real-unit')
+            harness.evidence, harness.sequence = Path(directory), 92
+            leaf = harness.evidence / 'command-0092.stderr'
+            for output in (b'bin/update: private_token\n', b'bin/update: scheduler_busy\nbin/update: scheduler_busy\n'):
+                leaf.write_bytes(output)
+                self.assertEqual(real.command_refusal(harness, SimpleNamespace(returncode=3)), 'unclassified')
+            leaf.write_bytes(b'bin/update: scheduler_busy\n')
+            with patch.object(real, 'native_ci', return_value=False), patch.object(harness, 'command',
+                    return_value=real.subprocess.CompletedProcess([], 3, b'private_token')):
+                with self.assertRaises(RuntimeError) as raised:
+                    harness.bin_update('setup', '--deactivate', '--yes')
+            self.assertIs(type(raised.exception), RuntimeError)
+            self.assertEqual(raised.exception.setup_metadata['reason'], 'unknown')
+
+
+class DeactivationTests(unittest.TestCase):
+    def setUp(self):
+        from unittest.mock import Mock
+        from deploy.tests.test_update_runner_state import registration, NOW
+        from deploy.update.runner_state import RunnerStateStore
+        temporary = tempfile.TemporaryDirectory(dir=real.HOME)
+        self.addCleanup(temporary.cleanup)
+        self.h = real.ProductHarness(Path(temporary.name), Path.cwd(), 'fagi-upd-e2e-real-unit')
+        self.h.root.mkdir(mode=0o700)
+        (self.h.root / '.env').write_text('')
+        self.store = RunnerStateStore(self.h.root, self.h.root / '.env')
+        self.store.register(registration(self.store))
+        self.store.change_control('disable', NOW)
+        self.now = 0
+        self.sleeps, self.timeouts = [], []
+        self.h.cleanup, self.h.collect_logs, self.h.collect_diagnostics, self.h.record = [Mock() for _ in range(4)]
+        self.addCleanup(patch.stopall)
+        patch.object(real, 'native_ci', return_value=False).start()
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+    def commands(self, outcomes, durations=None):
+        from unittest.mock import Mock
+        outcomes = iter(outcomes)
+        durations = iter(durations or [])
+        def command(args, **kwargs):
+            self.assertEqual(args[1:], ['setup', '--deactivate', '--yes'])
+            self.timeouts.append(kwargs['timeout'])
+            self.now += next(durations, 0)
+            value = next(outcomes)
+            if isinstance(value, Exception):
+                raise value
+            return real.subprocess.CompletedProcess(args, 0 if value is None else 3, value or b'')
+        self.h.command = Mock(side_effect=command)
+
+    def finish(self, failure=None, deadline=10000):
+        from deploy.tests.update_e2e.admission_diagnostics import finish_acceptance
+        return finish_acceptance(self.h, failure=failure, deactivate=lambda: real.deactivate_acceptance(
+            self.h, deadline=deadline, clock=lambda: self.now, sleep=self.sleep))
+
+    def evidence(self):
+        name, result = self.h.record.call_args.args
+        self.assertEqual(name, 'teardown-diagnostics.json')
+        return result
+
+    def test_explicit_busy_disabled_idle_then_success(self):
+        self.commands([setup_output(), None], [10, 5])
+        result = self.finish()
+        self.assertEqual(self.timeouts, [600, 588])
+        self.assertEqual(self.sleeps, [2])
+        self.h.cleanup.assert_called_once()
+        details = result['deactivation_details']
+        self.assertEqual((details['calls'], details['busy_count'], details['state'], details['elapsed_seconds']),
+                         (2, 1, 'succeeded', 17))
+        self.assertEqual((details['first_reason'], details['last_reason']), ('scheduler_busy', 'scheduler_busy'))
+        self.assertEqual(details['last_setup']['policy_state'], 'disabled')
+        self.assertEqual(details['guard']['state'], 'disabled_idle')
+
+    def test_foreign_pending_manager_drift_unknown_and_timeout_never_retry_or_cleanup(self):
+        errors = [setup_output(reason) for reason in ('automatic_recovery_pending', 'scheduler_foreign_state',
+            'scheduler_configuration_changed', 'scheduler_manager_unavailable', 'scheduler_command_failed',
+            'ownership_unconfirmed', 'private_token')]
+        errors += [setup_output() + b'Reason: scheduler_foreign_state\n',
+                   real.subprocess.TimeoutExpired(['private_command'], 600, output=b'PRIVATE-TOKEN'),
+                   RuntimeError('PRIVATE-TOKEN')]
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                self.commands([error])
+                with self.assertRaises(Exception):
+                    self.finish()
+                self.h.command.assert_called_once()
+                self.h.cleanup.assert_not_called()
+                self.assertEqual(self.sleeps, [])
+                self.assertEqual(self.evidence()['deactivation_details']['state'], 'failed')
+                self.assertNotIn('PRIVATE-TOKEN', json.dumps(self.evidence()))
+                self.assertNotIn('private_token', json.dumps(self.evidence()))
+
+    def test_busy_then_terminal_error_never_retries_that_error_or_masks_original(self):
+        for outcome, reason in ((setup_output('automatic_recovery_pending'), 'automatic_recovery_pending'),
+                                (setup_output('scheduler_foreign_state'), 'scheduler_foreign_state'),
+                                (real.subprocess.TimeoutExpired(['private'], 100, output=b'PRIVATE-TOKEN'), 'unknown')):
+            with self.subTest(reason=reason):
+                self.now, self.sleeps, self.timeouts = 0, [], []
+                self.commands([setup_output(), outcome, None])
+                original = AssertionError('original')
+                with self.assertRaises(AssertionError) as raised:
+                    try:
+                        raise original
+                    finally:
+                        self.finish(failure=original)
+                self.assertIs(raised.exception, original)
+                self.assertEqual(self.h.command.call_count, 2)
+                self.assertEqual(self.sleeps, [2])
+                details = self.evidence()['deactivation_details']
+                self.assertEqual((details['first_reason'], details['last_reason']), ('scheduler_busy', reason))
+                self.assertEqual(details['busy_count'], 1)
+                self.assertNotIn('PRIVATE-TOKEN', json.dumps(self.evidence()))
+                self.h.cleanup.assert_not_called()
+
+    def test_busy_without_setup_exit_code_three_does_not_retry(self):
+        from unittest.mock import Mock
+        self.h.command = Mock(return_value=real.subprocess.CompletedProcess([], 2, setup_output()))
+        with self.assertRaises(real.SetupIncomplete):
+            self.finish()
+        self.h.command.assert_called_once()
+        self.assertEqual(self.sleeps, [])
+        self.h.cleanup.assert_not_called()
+
+    def test_guard_refuses_enabled_missing_malformed_and_pending_evidence(self):
+        from dataclasses import replace
+        from deploy.tests.test_update_runner_state import NOW
+        from deploy.update.receipt import StateDir
+        journal = StateDir(self.h.root).journal_path
+        control_path, state_path = self.store.path / 'control.json', self.store.path / 'state.json'
+        control_raw, state_raw = control_path.read_bytes(), state_path.read_bytes()
+        def active():
+            state = self.store.read_state()
+            self.store.save_state(replace(state, active_attempt_id='private-attempt', active_operation_token='private-token'), expected_generation=state.generation)
+        mutations = [lambda: self.store.change_control('enable', NOW), control_path.unlink,
+                     lambda: control_path.write_text('{}'), state_path.unlink, lambda: state_path.write_text('{}'),
+                     active, lambda: journal.write_text('{}'), lambda: journal.write_text('malformed'),
+                     lambda: journal.symlink_to(self.h.root / 'missing'), lambda: os.mkfifo(journal)]
+        for mutate in mutations:
+            with self.subTest(mutation=mutations.index(mutate)):
+                mutate()
+                self.commands([setup_output()])
+                with self.assertRaises(real.SetupIncomplete):
+                    self.finish()
+                self.h.command.assert_called_once()
+                self.assertEqual(self.sleeps, [])
+                self.h.cleanup.assert_not_called()
+                self.assertEqual(self.evidence()['deactivation_details']['state'], 'guard_refused')
+                control_path.write_bytes(control_raw); state_path.write_bytes(state_raw)
+                control_path.chmod(0o600); state_path.chmod(0o600)
+                if os.path.lexists(journal):
+                    journal.unlink()
+
+    def test_guard_does_not_probe_or_bypass_runner_lock_and_requires_explicit_disable(self):
+        from dataclasses import replace
+        control = self.store.read_control()
+        with self.store.runner_lock():
+            self.assertEqual(real.deactivation_retry_state(self.h.root)['state'], 'disabled_idle')
+        with patch('deploy.update.host_facts.selected_store', return_value=self.store), \
+                patch.object(self.store, 'read_control', return_value=replace(control, enabled_override=None)):
+            self.assertEqual(real.deactivation_retry_state(self.h.root)['state'], 'not_disabled')
+
+    def test_missing_directories_are_not_created_or_treated_as_idle(self):
+        before = sorted(str(p) for p in self.h.root.rglob('*'))
+        sample = real.deactivation_retry_state(self.h.root / 'missing')
+        self.assertEqual(sample['state'], 'unavailable')
+        self.assertEqual(sorted(str(p) for p in self.h.root.rglob('*')), before)
+
+    def test_changed_evidence_and_new_pending_after_sleep_stop_before_reinvoke(self):
+        from dataclasses import replace
+        with patch('deploy.update.host_facts.selected_store', return_value=self.store):
+            state = self.store.read_state()
+            with patch.object(self.store, 'read_state', side_effect=[state, replace(state, generation=state.generation+1)]):
+                self.assertEqual(real.deactivation_retry_state(self.h.root)['state'], 'changed')
+        self.commands([setup_output(), None])
+        def sleep(seconds):
+            self.sleep(seconds)
+            state = self.store.read_state()
+            self.store.save_state(replace(state, active_attempt_id='new-attempt', active_operation_token='private-token'), expected_generation=state.generation)
+        with self.assertRaises(real.SetupIncomplete):
+            real.deactivate_acceptance(self.h, deadline=10000, clock=lambda: self.now, sleep=sleep)
+        self.h.command.assert_called_once()
+        self.assertEqual(self.sleeps, [2])
+
+    def test_total_budget_not_reset_and_exhaustion_retains_stack(self):
+        self.commands([setup_output()] * 3, [200, 200, 196])
+        with self.assertRaises(real.SetupIncomplete) as raised:
+            self.finish()
+        self.assertEqual(self.timeouts, [600, 398, 196])
+        self.assertEqual(self.sleeps, [2, 2])
+        details = self.evidence()['deactivation_details']
+        self.assertEqual((details['busy_count'], details['elapsed_seconds'], details['state']), (3, 600, 'budget_exhausted'))
+        self.assertEqual(raised.exception.reason, 'scheduler_busy')
+        self.h.cleanup.assert_not_called()
+
+    def test_job_deadline_caps_calls_and_final_sleep(self):
+        self.commands([setup_output()] * 2, [5, 2])
+        with self.assertRaises(real.SetupIncomplete):
+            self.finish(deadline=10)
+        self.assertEqual(self.timeouts, [10, 3])
+        self.assertEqual(self.sleeps, [2, 1])
+        self.assertEqual(self.evidence()['deactivation_details']['elapsed_seconds'], 10)
+        self.h.cleanup.assert_not_called()
+
+    def test_expired_budget_does_not_start_cli_or_cleanup(self):
+        self.commands([None])
+        with self.assertRaises(TimeoutError):
+            self.finish(deadline=0)
+        self.h.command.assert_not_called()
+        self.h.cleanup.assert_not_called()
+
+    def test_late_success_is_not_permission_for_partial_cleanup(self):
+        self.commands([None], [601])
+        with self.assertRaises(TimeoutError):
+            self.finish()
+        self.assertEqual(self.evidence()['deactivation_details']['state'], 'budget_exhausted')
+        self.h.cleanup.assert_not_called()
+
+    def test_bounded_observations_and_original_failure_survives_exhaustion(self):
+        self.commands([setup_output()] * 300)
+        original = AssertionError('PRIVATE-TOKEN original')
+        with self.assertRaises(AssertionError) as raised:
+            try:
+                raise original
+            finally:
+                self.finish(failure=original)
+        self.assertIs(raised.exception, original)
+        self.h.cleanup.assert_not_called()
+        evidence = self.evidence()
+        self.assertEqual(evidence['deactivation_details']['busy_count'], 300)
+        self.assertLess(len(json.dumps(evidence)), 2000)
+        self.assertNotIn('PRIVATE-TOKEN', json.dumps(evidence))
+        self.assertEqual(evidence['errors'][0]['setup']['reason'], 'scheduler_busy')
+
+    def test_original_setup_failure_and_deactivation_metadata_both_survive(self):
+        original = real.setup_failure('command-0001', setup_output('configuration_changed'), 3)
+        self.commands([setup_output('scheduler_foreign_state')])
+        result = self.finish(failure=original)
+        self.assertEqual(result['original_setup']['reason'], 'configuration_changed')
+        self.assertEqual(result['errors'][0]['setup']['reason'], 'scheduler_foreign_state')
+        self.assertEqual(result['deactivation_details']['last_setup']['returncode'], 3)
+        self.h.cleanup.assert_not_called()
+
+
 class ArchiveTests(unittest.TestCase):
     def make_archive(self, root, names=(".", "./payload")):
         path = Path(root) / "fixture.tar"
