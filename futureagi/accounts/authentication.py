@@ -104,12 +104,35 @@ class ViewerReadOnly(PermissionDenied):
         super().__init__(viewer_denied_message(action), code=VIEWER_READ_ONLY_CODE)
 
 
+WORKSPACE_WRITE_DENIED = "Write access denied to this workspace"
+_VIEWER_REASON_PREFIX = "/simulate/"
+
+
 def viewer_denied(action):
     def mark(handler):
         handler._viewer_denied_action = action
+        schema = getattr(handler, "_swagger_auto_schema", None)
+        if isinstance(schema, dict) and "responses" in schema:
+            from tfc.utils.api_serializers import ViewerReadOnlyErrorSerializer
+
+            handler._swagger_auto_schema = {
+                **schema,
+                "responses": {
+                    403: ViewerReadOnlyErrorSerializer,
+                    **schema["responses"],
+                },
+            }
         return handler
 
     return mark
+
+
+def workspace_write_denied(request) -> PermissionDenied:
+    """The refusal of a write the user's role doesn't allow: simulation routes say
+    what a Viewer tried; every other route keeps its original response."""
+    if request.path.startswith(_VIEWER_REASON_PREFIX):
+        return ViewerReadOnly(_viewer_denied_action(request))
+    return PermissionDenied(WORKSPACE_WRITE_DENIED)
 
 
 def _viewer_denied_action(request):
@@ -337,7 +360,7 @@ class APIKeyAuthentication(BaseAuthentication):
             and not should_skip_write_check
         ):
             if not self._can_write_to_workspace(user, workspace):
-                raise ViewerReadOnly(_viewer_denied_action(request))
+                raise workspace_write_denied(request)
 
         # Per-request attributes (safe, no race condition)
         request.workspace = workspace

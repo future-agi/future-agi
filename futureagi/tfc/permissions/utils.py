@@ -11,12 +11,15 @@ from tfc.middleware.workspace_context import (
     get_current_user,
     get_current_workspace,
 )
+from tfc.utils.api_errors import ApiErrorCode
+from tfc.utils.error_codes import get_error_message
 
-VIEWER_READ_ONLY_CODE = "viewer_read_only"
+VIEWER_READ_ONLY_CODE = ApiErrorCode.VIEWER_READ_ONLY.value
 
 
 def viewer_denied_message(action=None):
-    action = action or "make changes in this workspace"
+    if not action:
+        return get_error_message("VIEWER_READ_ONLY")
     return f"Viewers can't {action}. Ask a workspace admin for the Member role."
 
 

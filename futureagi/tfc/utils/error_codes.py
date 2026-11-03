@@ -107,6 +107,10 @@ err_dict = {
     "DATASET_LIMIT_CHECK_FAILED": [
         "Could not verify your plan's dataset limit. Please try again in a moment."
     ],
+    "VIEWER_READ_ONLY": [
+        "Viewers can't make changes in this workspace. "
+        "Ask a workspace admin for the Member role."
+    ],
     "DATASET_NAME_MISSING": ["Dataset name is required for Hugging Face datasets."],
     "DATASET_EXIST_IN_ORG": [
         "A dataset with this name already exists in your organization."
