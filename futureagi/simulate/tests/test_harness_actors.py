@@ -200,6 +200,10 @@ def test_an_actor_is_replaced_and_removed_in_the_draft_and_its_id_never_changes(
     replaced = auth_client.put(
         url, {"actor": {**MANAGER, "goal": "Approve fast"}}, format="json"
     )
+    # A replace without an id keeps the one in the address; a create without one is refused.
+    unnamed = {key: value for key, value in MANAGER.items() if key != "id"}
+    kept = auth_client.put(url, {"actor": unnamed}, format="json")
+    anonymous = auth_client.post(f"{BASE}/{environment.id}/actors/", {"actor": unnamed}, format="json")
     removed = auth_client.delete(url)
     missing = auth_client.delete(url)
 
@@ -208,6 +212,8 @@ def test_an_actor_is_replaced_and_removed_in_the_draft_and_its_id_never_changes(
         replaced.status_code == 200
         and replaced.json()["actors"][0]["goal"] == "Approve fast"
     )
+    assert kept.status_code == 200
+    assert (anonymous.status_code, anonymous.json()["error"]) == (400, "actor_id_missing")
     assert removed.status_code == 200 and removed.json()["actors"] == []
     assert (missing.status_code, missing.json()["error"]) == (404, "actor_not_found")
     # Removing the only actor leaves nothing to review: no empty actors.json, so no draft.

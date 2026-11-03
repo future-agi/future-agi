@@ -415,7 +415,12 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         else:
             actor = dict(request.validated_data["actor"])
             revision = request.validated_data.get("expected_revision")
-            given = actor.pop("id")
+            given = actor.pop("id", None) or actor_id
+            if not given:
+                return Response(
+                    {"error": "actor_id_missing", "message": "give the actor an id"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             if actor_id is None:
                 actor_id = given
             elif given != actor_id:
