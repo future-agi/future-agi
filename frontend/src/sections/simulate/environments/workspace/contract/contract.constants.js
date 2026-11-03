@@ -132,6 +132,9 @@ export const CONTRACT_COPY = {
     wants: "Wants",
     mayDo: "May do",
     nothing: "Nothing in the world",
+    notInWorld: "not an action of this world",
+    inUse: (name, count) =>
+      `${name} is in ${count === 1 ? "1 scenario" : `${count} scenarios`}. Take them out of ${count === 1 ? "it" : "those scenarios"} first, by editing the scenario or asking the builder chat.`,
     showView: "What they see",
     hideView: "Hide what they see",
     sees: "Sees",
@@ -174,6 +177,10 @@ export const CONTRACT_COPY = {
       idHelp:
         "Made from the name; change it now if you like. 1 to 64 lowercase letters, digits or underscores. It never changes once saved.",
       idTaken: (name) => `Already used by ${name}; choose another id`,
+      idInvalid:
+        "Use 1 to 64 lowercase letters, digits or underscores, such as sam_lee",
+      permittedUnknown: (ids) =>
+        `${ids.join(", ")} ${ids.length === 1 ? "is not an action" : "are not actions"} of this world, so a run cannot use ${ids.length === 1 ? "it" : "them"}; remove ${ids.length === 1 ? "it" : "them"} or pick from the list`,
       idFixed:
         "Fixed once saved, so scenarios and past runs keep pointing at this actor.",
       name: "Name",

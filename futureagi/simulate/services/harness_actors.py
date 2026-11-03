@@ -375,7 +375,8 @@ def write_actor_edit(
         if using:
             raise _error(
                 "actor_in_use",
-                f"{actor_id} takes part in {', '.join(using)}; take it out of them first",
+                f"{before.get('name') or actor_id} is in {len(using)} scenario{'' if len(using) == 1 else 's'} "
+                f"({', '.join(using)}); take them out of {'it' if len(using) == 1 else 'those'} first",
                 409,
             )
         actors.pop(index)
