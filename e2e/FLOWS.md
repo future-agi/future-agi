@@ -962,20 +962,23 @@
 ### EVAL-E2E-006 — a task run opens its trace in a drawer from the Usage tab
 
 **Goal:** Open the trace behind an eval task result without leaving the task Usage tab  
-**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:25`  
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:36`  
 **Tags:** —
 
 **User steps:**
 
-1. seed a trace and run an eval task over it through the mock judge
-2. open the task Usage tab and click its run
-3. read the run panel Trace ID and Span ID
-4. click Open trace and read the drawer
-5. press Esc to close the drawer, then Esc again to close the run panel
+1. seed the same native two-span trace and run the same eval task via the managed mock judge
+2. verify the task and exact PG child/root outcomes
+3. wait for the completed child's exact CDC mirror row, then verify its run/task/span identity and unique verdict
+4. open Usage and click the exact successful run
+5. read the seeded Trace ID and Span ID in the run panel
+6. open the trace drawer on the evaluated child and its Evals tab
+7. press Esc to close only the drawer, then Esc to close the run panel
 
 **Backend state verified:**
 
 - the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored
+- the completed evaluation's exact run, task, span and verdict reach the ClickHouse mirror before drawer navigation
 - the Usage runs response carries only the completed run, with the seeded trace and span IDs
 - the run panel shows the seeded trace and span IDs
 - the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open
