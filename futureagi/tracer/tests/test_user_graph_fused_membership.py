@@ -397,6 +397,18 @@ class _UniqExact:
         return len(self.values)
 
 
+class _SumIf:
+    def __init__(self):
+        self.total = 0
+
+    def step(self, value, include):
+        if include and value is not None:
+            self.total += value
+
+    def finalize(self):
+        return self.total
+
+
 def _sqlite_metric_sql(sql):
     # Exercise the generated fused-window/member reduction against the same
     # explicitly pre-replayed latest_spans/remap fixture. The CH-only monetary
@@ -423,13 +435,22 @@ def _sqlite_metric_sql(sql):
     # real generated output-membership predicate (curated live dimension for
     # fused, independently declared selected users for two-stage) and execute
     # it against the same end_users/remap relations as the oracle.
+    canonical_user = (
+        "if(id_remap.survivor_id IS NULL "
+        f"OR id_remap.survivor_id = toUUID('{NIL}'), "
+        "rs.end_user_id, id_remap.survivor_id)"
+    )
     query = (
         "WITH graph_monetary_spans AS ("
-        "SELECT rs.*, 1 AS graph_cost_known, 0 AS graph_cost_unknown, "
+        f"SELECT {canonical_user} AS end_user_id, rs.trace_id, rs.start_time, "
+        "rs.latency_ms, rs.cost, rs.total_tokens, rs.prompt_tokens, "
+        "rs.completion_tokens, rs.status, rs.user_member_match_0, "
+        "rs.user_member_match_1, 1 AS graph_cost_known, "
+        "0 AS graph_cost_unknown, "
         f"toUInt8(ifNull(({output_match}), 0)) AS graph_output_match "
         "FROM latest_spans AS rs "
-        "LEFT JOIN eu_survivor_map AS eu_remap "
-        "ON rs.end_user_id = eu_remap.any_id)\n" + tail
+        "LEFT JOIN eu_survivor_map AS id_remap "
+        "ON rs.end_user_id = id_remap.any_id)\n" + tail
     )
     return (
         query.replace(" FINAL", "")
@@ -511,6 +532,7 @@ def test_generated_sql_fused_window_matches_declared_users_and_nested_metrics(
         db.create_function("greatest", 2, max)
         db.create_aggregate("countIf", 1, _CountIf)
         db.create_aggregate("uniqExact", 1, _UniqExact)
+        db.create_aggregate("sumIf", 2, _SumIf)
         db.executescript("""
             CREATE TABLE latest_spans(end_user_id TEXT, trace_id TEXT, start_time TEXT,
                 latency_ms REAL, cost REAL, total_tokens REAL, prompt_tokens REAL,
