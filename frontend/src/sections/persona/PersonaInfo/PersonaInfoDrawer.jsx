@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import React from "react";
 import PersonaInfo from "./PersonaInfo";
 import Iconify from "src/components/iconify";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const PersonaInfoDrawer = ({
   open,
@@ -17,8 +18,14 @@ const PersonaInfoDrawer = ({
     }
     onClose();
   };
+  const covered = useDrawerCovered(open);
   return (
-    <Drawer anchor="right" open={open} onClose={onClose}>
+    <Drawer
+      anchor="right"
+      open={open}
+      onClose={onClose}
+      sx={coveredDrawerSx(covered)}
+    >
       <Box sx={{ width: 640, height: "100vh", position: "relative" }}>
         <IconButton
           onClick={onClose}

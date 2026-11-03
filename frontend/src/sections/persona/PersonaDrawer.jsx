@@ -10,6 +10,7 @@ import PropTypes from "prop-types";
 import React, { useState } from "react";
 import PersonaListView from "./PersonaListView";
 import Iconify from "src/components/iconify";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { Collapse } from "@mui/material";
 import PersonaCreateEditForm from "./PersonaCreateEdit/PersonaCreateEditForm";
 
@@ -177,8 +178,15 @@ const PersonaDrawer = ({
     setCreateEditOpen(false);
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
-    <Drawer anchor="right" open={open} onClose={handleDrawerClose}>
+    <Drawer
+      anchor="right"
+      open={open}
+      onClose={handleDrawerClose}
+      sx={coveredDrawerSx(covered)}
+    >
       <Collapse
         in={createEditOpen && open}
         unmountOnExit

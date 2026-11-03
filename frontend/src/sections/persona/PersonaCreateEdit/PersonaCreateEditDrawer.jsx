@@ -10,6 +10,7 @@ import PropTypes from "prop-types";
 import React from "react";
 import PersonaCreateEditForm from "./PersonaCreateEditForm";
 import Iconify from "src/components/iconify";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { ShowComponent } from "src/components/show";
 import { personaCreationTypes } from "../common";
 import SvgColor from "src/components/svg-color";
@@ -27,8 +28,14 @@ const PersonaCreateEditDrawer = ({
   const handleClose = () => {
     onClose();
   };
+  const covered = useDrawerCovered(open);
   return (
-    <Drawer anchor="right" open={open} onClose={onClose}>
+    <Drawer
+      anchor="right"
+      open={open}
+      onClose={onClose}
+      sx={coveredDrawerSx(covered)}
+    >
       <Box sx={{ width: "640px", height: "100vh", position: "relative" }}>
         <IconButton
           onClick={handleClose}

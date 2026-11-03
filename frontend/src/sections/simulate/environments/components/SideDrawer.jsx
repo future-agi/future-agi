@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { Drawer, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 /**
  * The shared right-side drawer, matching the ones in Datasets.
@@ -17,6 +18,7 @@ import Iconify from "src/components/iconify";
  * `background.paper`, keeping the theme's side borders and its drawer shadow.
  */
 export default function SideDrawer({ open, onClose, width = 480, keepMounted = false, children }) {
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
@@ -33,6 +35,7 @@ export default function SideDrawer({ open, onClose, width = 480, keepMounted = f
           backgroundColor: "background.paper",
           backgroundImage: "none",
         },
+        ...coveredDrawerSx(covered),
       }}
       ModalProps={{
         keepMounted,

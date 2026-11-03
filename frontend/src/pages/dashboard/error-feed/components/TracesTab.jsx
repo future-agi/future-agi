@@ -19,6 +19,7 @@ import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2"
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2/VoiceDetailDrawerV2";
 import { statusColors } from "src/utils/runStatus";
 import { ROW_HEIGHT } from "src/theme/sizes";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const EMPTY_AGG = {
   total_traces: 0,
@@ -281,6 +282,8 @@ export default function TracesTab({ error }) {
     drawerTraceId,
     { enabled: isVoiceProject && !!drawerTraceId, projectId },
   );
+  // The trace branch registers inside TraceDetailDrawerV2.
+  const voiceCovered = useDrawerCovered(isVoiceProject && !!drawerTraceId);
 
   const agg = data?.aggregates ?? EMPTY_AGG;
   const rows = useMemo(() => data?.traces ?? [], [data]);
@@ -349,6 +352,7 @@ export default function TracesTab({ error }) {
           variant="persistent"
           open={!!drawerTraceId}
           onClose={() => setDrawerTraceId(null)}
+          sx={coveredDrawerSx(voiceCovered)}
           PaperProps={{
             sx: {
               width: "auto",

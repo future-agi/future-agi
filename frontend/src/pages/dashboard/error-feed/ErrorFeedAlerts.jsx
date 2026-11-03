@@ -31,6 +31,7 @@ import {
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import Iconify from "src/components/iconify";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import SvgColor from "src/components/svg-color";
 import Section from "src/components/section";
 import StatusBadge from "src/components/status-badge/StatusBadge";
@@ -1054,6 +1055,8 @@ export default function ErrorFeedAlerts() {
   const save = useSaveErrorFeedAlert();
   const remove = useDeleteErrorFeedAlert();
   const test = useTestErrorFeedAlert();
+  const ruleDrawerOpen = createOpen || Boolean(editing);
+  const ruleDrawerCovered = useDrawerCovered(ruleDrawerOpen);
 
   return (
     <Box
@@ -1404,11 +1407,12 @@ export default function ErrorFeedAlerts() {
       </Box>
       <Drawer
         anchor="right"
-        open={createOpen || Boolean(editing)}
+        open={ruleDrawerOpen}
         onClose={() => {
           setCreateOpen(false);
           setEditing(null);
         }}
+        sx={coveredDrawerSx(ruleDrawerCovered)}
         PaperProps={{
           sx: { width: 560, maxWidth: "100vw", overflow: "hidden" },
         }}
