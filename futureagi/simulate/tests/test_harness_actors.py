@@ -470,11 +470,23 @@ def test_the_checks_and_the_view_follow_the_rules_the_environment_was_sealed_wit
         and "mood" in listed["record_schemas"]["actors.json"]["properties"]
     )
     assert (loud.status_code, loud.json()["error"]) == (400, "actor_invalid")
+    assert (
+        "coworker's loudness_ratio: 0.8 is greater than the maximum of 0.5."
+        in loud.json()["message"]
+    )
     assert "scenario.rubric" in view["never_sees"]
     # A bundle sealed before any release declared its rules is checked by the first declared ones.
     refused = _add(auth_client, earlier, {**MANAGER, "mood": "patient"})
     assert (refused.status_code, refused.json()["error"]) == (400, "actor_invalid")
     assert "manager has no mood in actors.json" in refused.json()["message"]
+    # An optional field's limit is named, not "not valid under any of the given schemas".
+    too_loud = _add(
+        auth_client, earlier, {"id": "coworker", "name": "Sam", "loudness_ratio": 5}
+    )
+    assert (
+        "coworker's loudness_ratio: 5 is greater than the maximum of 1."
+        in too_loud.json()["message"]
+    )
     assert _add(auth_client, earlier, MANAGER).status_code == 200
     earlier_view = auth_client.get(f"{BASE}/{earlier.id}/actors/manager/").json()
     assert "scenario.solution" in earlier_view["never_sees"]

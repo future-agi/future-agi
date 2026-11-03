@@ -113,6 +113,17 @@ def read_actors(environment: HostedHarnessJob) -> dict[str, Any]:
     }
 
 
+def _reason(error: jsonschema.ValidationError) -> str:
+    """The specific rule a value broke. An optional field's schema allows null as well, so its own error only says
+    no branch matched; the branch that is not null names the limit."""
+    branches = [
+        one
+        for one in error.context or ()
+        if not (one.validator == "type" and one.validator_value == "null")
+    ]
+    return (jsonschema.exceptions.best_match(branches) if branches else error).message
+
+
 def actor_problems(actors: list[dict[str, Any]], rules: dict[str, Any]) -> list[str]:
     """Each record checked against the rules of the release that sealed the environment; one sentence each, with
     the fix. What an actor should do is never judged."""
@@ -143,7 +154,7 @@ def actor_problems(actors: list[dict[str, Any]], rules: dict[str, Any]) -> list[
         }
         for error in jsonschema.Draft202012Validator(schema).iter_errors(checked):
             where = ".".join(str(part) for part in error.absolute_path) or "the record"
-            problems.append(f"{actor_id}'s {where}: {error.message}.")
+            problems.append(f"{actor_id}'s {where}: {_reason(error)}.")
         if actor_id in rules.get("reserved_ids", []):
             problems.append(f"{actor_id!r} is reserved; give the actor another id.")
         for path, also in (rules.get("references") or {}).items():
