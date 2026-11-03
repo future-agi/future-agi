@@ -765,6 +765,23 @@ def test_app_urls_have_working_defaults_in_both_setups() -> None:
         assert "FUTURE_AGI_CLOUD_API_URL" not in env
 
 
+def test_hosted_harness_parallelism_reaches_both_backend_setups() -> None:
+    envs = [
+        _compose(STANDALONE_COMPOSE)["services"]["app"]["environment"],
+        _compose(DISTRIBUTED_COMPOSE)["x-backend-env"],
+    ]
+    expected = {
+        "HARNESS_PARALLELISM_ENABLED": "${HARNESS_PARALLELISM_ENABLED:-false}",
+        "HARNESS_MAX_WORLD_SLOTS": "${HARNESS_MAX_WORLD_SLOTS:-8}",
+        "HARNESS_PARALLEL_SNAPSHOT_DIGESTS": (
+            "${HARNESS_PARALLEL_SNAPSHOT_DIGESTS:-}"
+        ),
+        "HARNESS_RESOURCE_PROFILES": "${HARNESS_RESOURCE_PROFILES:-[]}",
+    }
+    for env in envs:
+        assert {key: env[key] for key in expected} == expected
+
+
 # Keys the Standalone app sets otherwise than Distributed's x-backend-env,
 # each with why. Every other key the two share must be equal, so a change to
 # one setup's backend environment reaches the other.
