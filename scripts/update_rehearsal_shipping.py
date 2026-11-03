@@ -892,7 +892,10 @@ class ShippingRehearsal:
             return
         from deploy.update.docker_host import bounded_installation
         inst = bounded_installation(self.installation, 15)
-        inst.runner.max_output = 65536
+        # One `docker inspect` covers all three containers, and a failing
+        # healthcheck's log alone can approach 20 KB; 64 KB refused every sample
+        # taken while the target migrated. Stored logs stay bounded below.
+        inst.runner.max_output = 1024 * 1024
         sample = dict(monotonic=time.monotonic(), containers={})
         try:
             rows = inst.containers()
@@ -911,7 +914,7 @@ class ShippingRehearsal:
                     exit_code=state.get('ExitCode'), restart_count=record['RestartCount'])
                 logs = inst.docker_run('logs', '--timestamps', '--tail', '60', record['Id'], check=False)
                 self._diagnostic_data['product_logs'][service] = dict(
-                    stdout=self._redact(logs.stdout), stderr=self._redact(logs.stderr))
+                    stdout=self._redact(logs.stdout)[-65536:], stderr=self._redact(logs.stderr)[-65536:])
                 if service == 'app' and state.get('Running'):
                     result = inst.docker_run('exec', record['Id'], 'cat', '/run/futureagi/status.json', check=False)
                     if result.returncode == 0:

@@ -21,6 +21,12 @@ Counter contract (all byte counters are bytes):
   first start and must match Docker's reported path once running. Hardlinks are counted
   once. Unrelated filesystem activity cannot offset owned growth. Symlinks,
   special files, filesystem-device crossings, omitted roots, or unreadable roots refuse.
+* Live stores remove entries while a sample walks them (Postgres spill files,
+  recycled WAL segments, ClickHouse temporary parts, rotated logs). An entry that
+  vanishes before it is observed contributes nothing to that sample; one that
+  vanishes after it was observed keeps its observed allocation. A renamed entry
+  can therefore be missed, or seen under both names, in one sample. Every entry
+  that is observed still passes the device, symlink, type and identity checks.
 * wal_bytes: allocated st_blocks * 512 for regular files directly in the exact
   Postgres volume's pg_wal directory; no WAL contents are read.
 * temp_bytes: allocated st_blocks * 512 for Postgres base/<db>/pgsql_tmp and
@@ -858,13 +864,42 @@ def _root_id(fd: int) -> str:
     return "%d:%d" % (info.st_dev, info.st_ino)
 
 
+def _listed_stat(entry: os.DirEntry) -> Optional[os.stat_result]:
+    """lstat a listed entry; None when it vanished after the directory listing."""
+    try:
+        return entry.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+
+
+def _open_listed_dir(name: str, directory_fd: int) -> Optional[int]:
+    """Open a listed directory without following links; None when it vanished."""
+    try:
+        return os.open(name, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                       | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+    except FileNotFoundError:
+        return None
+
+
+def _observed_entry_unchanged(directory_fd: int, name: str, before: os.stat_result) -> None:
+    """Refuse a replaced entry; one removed after it was observed keeps its count."""
+    try:
+        after = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    _need((before.st_dev, before.st_ino, before.st_mode) == (after.st_dev, after.st_ino, after.st_mode),
+          "resource_reader_failed")
+
+
 def _allocated_files(directory_fd: int, *, recurse: bool, counter: list[int]) -> int:
     total = 0
     with os.scandir(directory_fd) as entries:
         for entry in entries:
             counter[0] += 1
             _need(counter[0] <= MAX_SCAN_ENTRIES, "resource_reader_failed")
-            before = entry.stat(follow_symlinks=False)
+            before = _listed_stat(entry)
+            if before is None:
+                continue
             _need(before.st_dev == os.fstat(directory_fd).st_dev and not stat_is_symlink(before.st_mode),
                   "resource_reader_failed")
             if is_regular(before.st_mode):
@@ -872,9 +907,13 @@ def _allocated_files(directory_fd: int, *, recurse: bool, counter: list[int]) ->
                 _need(type(blocks) is int and blocks >= 0, "resource_reader_failed")
                 total += blocks * 512
             elif is_directory(before.st_mode) and recurse:
-                child = os.open(entry.name, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-                                | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+                child = _open_listed_dir(entry.name, directory_fd)
+                if child is None:
+                    continue
                 try:
+                    opened = os.fstat(child)
+                    _need((opened.st_dev, opened.st_ino, opened.st_mode)
+                          == (before.st_dev, before.st_ino, before.st_mode), "resource_reader_failed")
                     total += _allocated_files(child, recurse=True, counter=counter)
                 finally:
                     os.close(child)
@@ -884,9 +923,7 @@ def _allocated_files(directory_fd: int, *, recurse: bool, counter: list[int]) ->
                 continue
             else:
                 _need(False, "resource_reader_failed")
-            after = os.stat(entry.name, dir_fd=directory_fd, follow_symlinks=False)
-            _need((before.st_dev, before.st_ino, before.st_mode) == (after.st_dev, after.st_ino, after.st_mode),
-                  "resource_reader_failed")
+            _observed_entry_unchanged(directory_fd, entry.name, before)
     _need(0 <= total <= MAX_COUNTER, "resource_reader_failed")
     return total
 
@@ -915,11 +952,14 @@ def _owned_allocated_tree(directory_fd: int, counter: list[int],
         for entry in entries:
             counter[0] += 1
             _need(counter[0] <= MAX_SCAN_ENTRIES, "resource_reader_failed")
-            before = entry.stat(follow_symlinks=False)
+            before = _listed_stat(entry)
+            if before is None:
+                continue
             _need(before.st_dev == device, "resource_reader_failed")
             if is_directory(before.st_mode):
-                child = os.open(entry.name, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-                                | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+                child = _open_listed_dir(entry.name, directory_fd)
+                if child is None:
+                    continue
                 try:
                     opened = os.fstat(child)
                     _need((opened.st_dev, opened.st_ino, opened.st_mode)
@@ -932,9 +972,7 @@ def _owned_allocated_tree(directory_fd: int, counter: list[int],
                 # upper layers contain Unix sockets/FIFOs. Count their allocated
                 # inodes without opening them or following any link target.
                 total += _allocated_inode(before, seen)
-            after = os.stat(entry.name, dir_fd=directory_fd, follow_symlinks=False)
-            _need((before.st_dev, before.st_ino, before.st_mode)
-                  == (after.st_dev, after.st_ino, after.st_mode), "resource_reader_failed")
+            _observed_entry_unchanged(directory_fd, entry.name, before)
             _need(total <= MAX_COUNTER, "resource_reader_failed")
     _need(0 <= total <= MAX_COUNTER, "resource_reader_failed")
     return total
@@ -953,12 +991,12 @@ def _owned_log_bytes(path: str, *, counter: list[int], seen: set[tuple[int, int]
                     continue
                 counter[0] += 1
                 _need(counter[0] <= MAX_SCAN_ENTRIES, "resource_reader_failed")
-                before = entry.stat(follow_symlinks=False)
+                before = _listed_stat(entry)
+                if before is None:
+                    continue  # rotated away after the listing
                 _need(before.st_dev == device and is_regular(before.st_mode), "resource_reader_failed")
                 total += _allocated_inode(before, seen)
-                after = os.stat(entry.name, dir_fd=parent_fd, follow_symlinks=False)
-                _need((before.st_dev, before.st_ino, before.st_mode)
-                      == (after.st_dev, after.st_ino, after.st_mode), "resource_reader_failed")
+                _observed_entry_unchanged(parent_fd, entry.name, before)
                 _need(total <= MAX_COUNTER, "resource_reader_failed")
         return total
     finally:
@@ -992,8 +1030,9 @@ def _postgres_resource_bytes(root_fd: int, counter: list[int]) -> tuple[int, int
                 if database.name == 'pgsql_tmp':
                     # Ordinary sort/hash spill files use base/pgsql_tmp, not a
                     # database-OID child. Shared file sets can add subdirectories.
-                    temp_fd = os.open(database.name, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0)
-                                      | getattr(os, 'O_NOFOLLOW', 0), dir_fd=base_fd)
+                    temp_fd = _open_listed_dir(database.name, base_fd)
+                    if temp_fd is None:
+                        continue
                     try:
                         temp += _allocated_files(temp_fd, recurse=True, counter=counter)
                     finally:

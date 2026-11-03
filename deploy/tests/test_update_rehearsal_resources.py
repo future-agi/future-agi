@@ -81,6 +81,41 @@ class FixedSampler(resources.NormalBootstrapEnvelopeSampler):
         return {}
 
 
+class VanishingScandir:
+    """os.scandir that removes chosen paths after listing, like a live store.
+
+    Postgres removes spill files and recycles WAL segments while a sample walks
+    them; native qualification of tracer/0119 at reference scale hit exactly this.
+    """
+
+    def __init__(self, doomed):
+        self.doomed = {str(path) for path in doomed}
+        self.real = os.scandir
+
+    def __call__(self, fd):
+        listed = list(self.real(fd))
+        directory = os.readlink("/proc/self/fd/%d" % fd) if os.path.exists("/proc/self/fd") else None
+        if directory is None:
+            import fcntl
+            directory = fcntl.fcntl(fd, getattr(fcntl, "F_GETPATH", 50), b"\0" * 1024).rstrip(b"\0").decode()
+        for entry in listed:
+            path = os.path.join(directory, entry.name)
+            if os.path.realpath(path) in self.doomed:
+                if os.path.isdir(path):
+                    import shutil
+                    shutil.rmtree(path)
+                else:
+                    os.unlink(path)
+
+        class Listing:
+            def __enter__(self):
+                return iter(listed)
+
+            def __exit__(self, *exc):
+                return False
+        return Listing()
+
+
 class ResourceEnvelopeTests(unittest.TestCase):
     def test_postgres_global_and_database_spill_directories_are_measured(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -97,6 +132,106 @@ class ResourceEnvelopeTests(unittest.TestCase):
                 os.close(fd)
             self.assertEqual(wal, paths[0].stat().st_blocks*512)
             self.assertEqual(temporary_bytes, sum(path.stat().st_blocks*512 for path in paths[1:]))
+
+    def test_entries_removed_after_listing_are_not_counted_and_do_not_refuse(self):
+        with tempfile.TemporaryDirectory(dir=str(Path.home())) as temporary:
+            root = Path(os.path.realpath(temporary))
+            for name in ('pg_wal', 'base/pgsql_tmp/doomed.fileset', 'base/1/pgsql_tmp'):
+                (root/name).mkdir(parents=True)
+            kept = [root/'pg_wal/000000010000000000000002', root/'base/pgsql_tmp/pgsql_tmp71.0']
+            doomed = [root/'pg_wal/000000010000000000000001', root/'base/pgsql_tmp/pgsql_tmp71.1',
+                      root/'base/pgsql_tmp/doomed.fileset/spill']
+            for path in kept + doomed:
+                path.write_bytes(b'x'*8192)
+            expected_wal = kept[0].stat().st_blocks*512
+            expected_temp = kept[1].stat().st_blocks*512
+            gone = doomed[:2] + [root/'base/pgsql_tmp/doomed.fileset']
+            fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                with patch.object(resources.os, 'scandir', VanishingScandir(gone)):
+                    wal, temporary_bytes = resources._postgres_resource_bytes(fd, [0])
+            finally:
+                os.close(fd)
+            self.assertEqual((wal, temporary_bytes), (expected_wal, expected_temp))
+
+    def test_whole_store_walk_skips_removed_entries_and_global_spill_directory(self):
+        with tempfile.TemporaryDirectory(dir=str(Path.home())) as temporary:
+            root = Path(os.path.realpath(temporary))
+            (root/'base/pgsql_tmp').mkdir(parents=True)
+            (root/'base/pgsql_tmp/spill').write_bytes(b'x'*8192)
+            (root/'kept').write_bytes(b'k'*8192)
+            expected = sum(path.lstat().st_blocks*512 for path in (root, root/'base', root/'kept'))
+            fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                with patch.object(resources.os, 'scandir', VanishingScandir([root/'base/pgsql_tmp'])):
+                    total = resources._owned_allocated_tree(fd, [0], set())
+            finally:
+                os.close(fd)
+            self.assertEqual(total, expected)
+            fd = os.open(root/'base', os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                with patch.object(resources.os, 'scandir', VanishingScandir([])):
+                    # base/pgsql_tmp itself vanished between listing and open.
+                    with patch.object(resources, '_open_listed_dir', return_value=None):
+                        self.assertEqual(resources._allocated_files(fd, recurse=True, counter=[0]), 0)
+            finally:
+                os.close(fd)
+
+    def test_entry_removed_after_it_was_observed_keeps_its_count_but_a_replaced_one_refuses(self):
+        with tempfile.TemporaryDirectory(dir=str(Path.home())) as temporary:
+            root = Path(os.path.realpath(temporary))
+            spill = root/'pgsql_tmp71.0'
+            spill.write_bytes(b'x'*8192)
+            expected = spill.stat().st_blocks*512
+            real_stat = os.stat
+            fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                def removed(name, *args, **kwargs):
+                    if name == spill.name and kwargs.get('dir_fd') == fd:
+                        raise FileNotFoundError(name)
+                    return real_stat(name, *args, **kwargs)
+                with patch.object(resources.os, 'stat', side_effect=removed):
+                    self.assertEqual(resources._allocated_files(fd, recurse=False, counter=[0]), expected)
+                    self.assertEqual(resources._owned_allocated_tree(fd, [0], set()),
+                                     root.lstat().st_blocks*512 + expected)
+
+                replacement = root/'replacement'
+                replacement.write_bytes(b'y')
+                def replaced(name, *args, **kwargs):
+                    if name == spill.name and kwargs.get('dir_fd') == fd:
+                        return real_stat(replacement)
+                    return real_stat(name, *args, **kwargs)
+                with patch.object(resources.os, 'stat', side_effect=replaced):
+                    with self.assertRaisesRegex(resources.ResourceObservationError, 'resource_reader_failed'):
+                        resources._allocated_files(fd, recurse=False, counter=[0])
+                    with self.assertRaisesRegex(resources.ResourceObservationError, 'resource_reader_failed'):
+                        resources._owned_allocated_tree(fd, [0], set())
+            finally:
+                os.close(fd)
+
+    def test_rotated_log_removed_after_listing_is_skipped(self):
+        with tempfile.TemporaryDirectory(dir=str(Path.home())) as temporary:
+            root = Path(os.path.realpath(temporary))
+            leaf = root/'container-json.log'
+            leaf.write_bytes(b'l'*8192)
+            (root/'container-json.log.1').write_bytes(b'r'*8192)
+            with patch.object(resources.os, 'scandir', VanishingScandir([root/'container-json.log.1'])):
+                self.assertEqual(resources._owned_log_bytes(str(leaf), counter=[0], seen=set()),
+                                 leaf.stat().st_blocks*512)
+
+    def test_listed_symlink_still_refuses(self):
+        with tempfile.TemporaryDirectory(dir=str(Path.home())) as temporary:
+            root = Path(os.path.realpath(temporary))
+            (root/'outside').write_bytes(b'x')
+            link_parent = root/'linked'
+            link_parent.mkdir()
+            (link_parent/'link').symlink_to(root/'outside')
+            fd = os.open(link_parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                with self.assertRaisesRegex(resources.ResourceObservationError, 'resource_reader_failed'):
+                    resources._allocated_files(fd, recurse=True, counter=[0])
+            finally:
+                os.close(fd)
 
     def test_owned_footprint_counts_link_and_special_inodes_without_following_or_opening(self):
         with tempfile.TemporaryDirectory() as temporary:
