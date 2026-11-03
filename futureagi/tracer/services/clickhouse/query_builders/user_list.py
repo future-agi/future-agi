@@ -2610,6 +2610,54 @@ class UserListQueryBuilder(BaseQueryBuilder):
             pagination = ""
             total_count_select = "0 AS total_count"
 
+        candidate_selection = f"""
+            SELECT
+                *,
+                {total_count_select}
+            FROM base_rows
+            {final_filter}
+            {order_by}
+            {pagination}
+        """
+        candidate_ctes = f"candidate_users AS ({candidate_selection})"
+        if self.end_user_id or (
+            pagination and self.params["limit" if paginated else "max_rows"] >= 0
+        ):
+            # A limited page is bounded; an exact curated end_user_id also
+            # yields at most one canonical GROUP BY end_user_id row. The user
+            # metrics endpoint uses that latter path without pagination.
+            # A tuple keeps nullable members; never array-materialize all users.
+            candidate_columns = (
+                "user_id",
+                "total_cost",
+                "known_cost_fact_count",
+                "unknown_cost_fact_count",
+                "complete_cost",
+                "total_tokens",
+                "input_tokens",
+                "output_tokens",
+                "num_traces",
+                "activated_at",
+                "last_active",
+                "project_id",
+                "user_id_type",
+                "user_id_hash",
+                "end_user_id",
+                "total_count",
+            )
+            candidate_projection = ",\n".join(
+                f"tupleElement(candidate_user_row, {index}) AS {column}"
+                for index, column in enumerate(candidate_columns, 1)
+            )
+            candidate_ctes = f"""(
+            SELECT groupArray(tuple({", ".join(candidate_columns)}))
+            FROM ({candidate_selection})
+        ) AS candidate_user_rows,
+        candidate_users AS (
+            SELECT {candidate_projection}
+            FROM (SELECT arrayJoin(candidate_user_rows) AS candidate_user_row)
+        )"""
+
         eu_map = _touched_survivor_map_subquery(
             remap_table="end_user_id_remap",
             candidate_cte="filtered_end_users_raw",
@@ -2762,15 +2810,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
             FROM filtered_end_users AS eu
             INNER JOIN exact_usage AS xu ON xu.end_user_id = eu.end_user_id
         ),
-        candidate_users AS (
-            SELECT
-                *,
-                {total_count_select}
-            FROM base_rows
-            {final_filter}
-            {order_by}
-            {pagination}
-        ),
+        {candidate_ctes},
         expanded_candidate_user_ids AS (
             SELECT any_id AS end_user_id
             FROM eu_survivor_map

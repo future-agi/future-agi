@@ -12,7 +12,11 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from conftest import _ch_test_owned_database, _open_ch_test_http_client
+from conftest import (
+    _ch_test_native_client,
+    _ch_test_owned_database,
+    _open_ch_test_http_client,
+)
 from tracer.serializers.trace import UsersTableRowSerializer
 from tracer.services.clickhouse.query_builders.user_list import UserListQueryBuilder
 from tracer.services.clickhouse.v2.query_builders.user_list import (
@@ -389,6 +393,70 @@ CASES = [
         _coverage("complete", 2.5, 2, 0),
         id="equal-valued-independent-requests",
     ),
+    pytest.param(
+        [{"name": "pydantic_ai.agent.run", "observation_type": "agent"}],
+        _coverage("complete", 0, 1, 0),
+        id="summary-only-known-zero",
+    ),
+    pytest.param(
+        [
+            {
+                "id": "parent",
+                "name": "pydantic_ai.agent.run",
+                "observation_type": "agent",
+                "attrs_string": {**UNKNOWN, "fi.usage.scope": "turn"},
+            },
+            {"parent_span_id": "parent"},
+        ],
+        _coverage("complete", 0, 1, 0),
+        id="unknown-wrapper-known-zero-child",
+    ),
+    pytest.param(
+        [
+            {
+                "id": "parent",
+                "name": "pydantic_ai.agent.run",
+                "observation_type": "agent",
+            },
+            {
+                "id": "parent",
+                "name": "pydantic_ai.agent.run",
+                "observation_type": "agent",
+                "service_name": "another-physical-key",
+                "attrs_string": {},
+            },
+            {"parent_span_id": "parent"},
+        ],
+        _coverage("complete", 0, 1, 0),
+        id="same-wrapper-id-different-known-flags",
+    ),
+    pytest.param(
+        [
+            {
+                "id": "parent",
+                "name": "pydantic_ai.agent.run",
+                "observation_type": "agent",
+            },
+            {"id": "parent", "service_name": "independent-physical-key"},
+            {"parent_span_id": "parent"},
+        ],
+        # Preserve the existing fact count: only the wrapper is subtracted.
+        # Counting on billable_usage_spans would also lose the colliding LLM.
+        _coverage("complete", 0, 2, 0),
+        id="known-fact-id-collides-with-proven-wrapper",
+    ),
+    pytest.param(
+        [
+            {"id": "shared-id", "cost": 1.25},
+            {
+                "id": "shared-id",
+                "service_name": "independent-physical-key",
+                "cost": 1.25,
+            },
+        ],
+        _coverage("complete", 2.5, 2, 0),
+        id="same-id-independent-physical-keys",
+    ),
 ]
 
 
@@ -694,3 +762,100 @@ def test_alias_membership_keeps_coverage_and_foreign_org_is_empty(users_cost_cli
 def test_half_present_internal_companion_is_not_treated_as_legacy(count_field):
     with pytest.raises(KeyError):
         UserListQueryBuilder.format_rows([{"total_cost": 0, count_field: 1}])
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "limit,offset,max_rows",
+    [(2, 0, None), (1, 1, None), (1, 10, None), (0, 0, None), (None, None, 2)],
+)
+def test_bounded_compatibility_rows_keep_types_nulls_order_and_count(
+    users_cost_client, limit, offset, max_rows
+):
+    client = users_cost_client
+    project, organization = uuid4(), uuid4()
+    for label, spec in (
+        ("zero", {}),
+        ("known", {"cost": 1.25}),
+        ("unknown", {"attrs_string": UNKNOWN, "end_time": None}),
+    ):
+        user = uuid4()
+        _seed_user(client, project, organization, user, label)
+        _seed_spans(client, project, user, [spec])
+    kwargs = {
+        "organization_id": str(organization),
+        "project_ids": [str(project)],
+        "filters": [_DATE_FILTER],
+        "sort_params": [{"column_id": "total_cost", "direction": "desc"}],
+    }
+    # With no limit the original relational path is retained, independently of
+    # the bounded tuple round trip. Never derive the expected count from it.
+    reference_sql, reference_params = UserListQueryBuilderV2(**kwargs).build()
+    reference = client.query(reference_sql, parameters=reference_params)
+    assert len(reference.result_rows) == 3
+    sql, params = UserListQueryBuilderV2(
+        **kwargs, limit=limit, offset=offset, max_rows=max_rows
+    ).build()
+    result = client.query(sql, parameters=params)
+    paginated = limit is not None and offset is not None
+    expected = (
+        reference.result_rows[offset : offset + limit]
+        if paginated
+        else reference.result_rows[:max_rows]
+    )
+    assert result.result_rows == [
+        (*row[:-1], 3 if paginated else 0) for row in expected
+    ]
+    # HTTP omits columns even for an independent SELECT WHERE 0 on this
+    # transport. Retain the HTTP row oracle, but use native metadata for empty
+    # results as well as populated rows; do not mistake headers for lost rows.
+    with _ch_test_native_client(database=client.database) as native:
+        reference_rows, reference_columns = native.execute(
+            reference_sql, reference_params, with_column_types=True
+        )
+        rows, columns = native.execute(sql, params, with_column_types=True)
+    assert columns[:-1] == reference_columns[:-1]
+    assert columns[-1] == (
+        "total_count", "UInt64" if paginated else reference_columns[-1][1]
+    )
+    assert dict(columns)["known_cost_fact_count"] == "Int64"
+    expected_native = (
+        reference_rows[offset : offset + limit]
+        if paginated
+        else reference_rows[:max_rows]
+    )
+    assert rows == [(*row[:-1], 3 if paginated else 0) for row in expected_native]
+
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("present", [False, True])
+def test_exact_user_compatibility_retains_empty_and_unknown_rows(
+    users_cost_client, present
+):
+    client = users_cost_client
+    project, organization, known, unknown = uuid4(), uuid4(), uuid4(), uuid4()
+    _seed_user(client, project, organization, known, "known")
+    _seed_spans(client, project, known, [{"cost": 1.25}])
+    _seed_user(client, project, organization, unknown, "unknown")
+    _seed_spans(client, project, unknown, [{"attrs_string": UNKNOWN, "end_time": None}])
+    target = unknown if present else uuid4()
+    builder = UserListQueryBuilderV2(
+        organization_id=str(organization),
+        project_ids=[str(project)],
+        end_user_id=str(target),
+        filters=[_DATE_FILTER],
+    )
+    sql, params = builder.build()
+    rows = list(client.query(sql, parameters=params).named_results())
+    if not present:
+        assert rows == []
+        return
+    assert len(rows) == 1
+    assert str(rows[0]["end_user_id"]) == str(unknown)
+    assert rows[0]["complete_cost"] is None
+    assert rows[0]["last_active"] is None
+    assert rows[0]["total_count"] == 0
+    result = builder.format_rows(rows)["table"][0]
+    assert result["user_id"] == "unknown"
+    assert result["cost_coverage"] == _coverage("unknown", 0, 0, 1)
