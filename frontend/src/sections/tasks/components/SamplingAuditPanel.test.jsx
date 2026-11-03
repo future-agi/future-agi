@@ -227,8 +227,10 @@ describe("Sampling audit panel", () => {
     expect(
       screen.getByText(/No weighted imbalance above the threshold/),
     ).toBeVisible();
-    // Advisory only: no control in the panel edits the policy or cohort.
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    // The only action reloads server truth; none edits the policy or cohort.
+    expect(screen.getAllByRole("button")).toEqual([
+      screen.getByRole("button", { name: "Refresh sampling audit" }),
+    ]);
     // Never collides with the cohort-sampling flow's preview table locator.
     expect(
       screen.queryByRole("columnheader", { name: /eligible units/i }),

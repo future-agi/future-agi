@@ -152,6 +152,9 @@ const TaskDetailPage = () => {
         eval_task_id: taskId,
       }),
     onSuccess: (_data, { mode }) => {
+      // A fresh run archives/replaces the cohort. Do not leave its old audit
+      // visible while the current cohort is being fetched or has not frozen.
+      queryClient.resetQueries({ queryKey: ["samplingAudit", taskId] });
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
       queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar(
@@ -195,6 +198,7 @@ const TaskDetailPage = () => {
       queryClient.setQueryData(["taskDetails", taskId], ctx.prev);
   };
   const reconcileStatus = () => {
+    queryClient.invalidateQueries({ queryKey: ["samplingAudit", taskId] });
     queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
     queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
   };

@@ -149,6 +149,14 @@ export default function SamplingAuditPanel({ taskId }) {
     <Stack spacing={2} aria-label="Sampling audit">
       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
         <Typography variant="subtitle1">Sampling audit</Typography>
+        <Button
+          size="small"
+          onClick={() => query.refetch()}
+          disabled={query.isFetching}
+          aria-label="Refresh sampling audit"
+        >
+          {query.isFetching ? "Refreshing…" : "Refresh"}
+        </Button>
         <Chip size="small" label={`${audit.mode} window`} />
         <Chip size="small" label={`unit: ${audit.sampling_unit}`} />
         <Chip size="small" label={`coordination: ${audit.coordination}`} />
