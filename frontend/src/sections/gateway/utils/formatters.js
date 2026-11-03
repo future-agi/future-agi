@@ -74,3 +74,13 @@ export function formatTokens(value) {
   if (Number.isNaN(num)) return "0";
   return num.toLocaleString();
 }
+
+export const UNPRICED_TOOLTIP =
+  "No price is set for this model, so this request was recorded without a cost and isn't counted against budgets. Add a price for the model to track it.";
+
+export function isUnpriced(log) {
+  if (!log) return false;
+  if (log.metadata?.cost_source !== "unpriced") return false;
+  const num = Number(log.cost);
+  return Number.isNaN(num) || num <= 0;
+}

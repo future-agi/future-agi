@@ -20,7 +20,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import useRequestLogs from "./hooks/useRequestLogs";
-import { formatCost } from "../utils/formatters";
+import { formatCost, isUnpriced, UNPRICED_TOOLTIP } from "../utils/formatters";
 import { REQUEST_TAG } from "../constants/requestTags";
 import {
   BUILTIN_COLUMNS,
@@ -152,7 +152,23 @@ function renderBuiltinCell(colKey, log, ctx) {
     case "cost":
       return (
         <TableCell>
-          <Typography variant="body2">{formatCost(log.cost)}</Typography>
+          {isUnpriced(log) ? (
+            <Tooltip title={UNPRICED_TOOLTIP} placement="top" arrow>
+              <Chip
+                label="Unpriced"
+                size="small"
+                variant="outlined"
+                sx={{
+                  height: 20,
+                  fontSize: "0.75rem",
+                  color: "text.secondary",
+                  borderColor: "divider",
+                }}
+              />
+            </Tooltip>
+          ) : (
+            <Typography variant="body2">{formatCost(log.cost)}</Typography>
+          )}
         </TableCell>
       );
     case "totalTokens":
