@@ -37217,10 +37217,16 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesParams = zod.object({
 export const SimulateApiHarnessEnvironmentsCapabilitiesQueryParams = zod.object(
   {
     agent_version_id: zod.string().uuid().optional(),
+    environment_version_id: zod.string().uuid().optional(),
+    suite_version_id: zod.string().uuid().optional(),
+    keys: zod.array(zod.string().min(1)).optional(),
   },
 );
 
 export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
+  evidence_unreadable: zod
+    .boolean()
+    .describe("The build's evidence could not be read; all is Untested."),
   environment_version_id: zod.string().min(1),
   agent_version_id: zod.string().min(1),
   catalog_version: zod.string().min(1),
@@ -37243,7 +37249,28 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
       stale_because: zod.string().min(1),
       reason_code: zod.string().min(1),
       reason: zod.string().min(1),
-      fix: zod.string().min(1),
+      fix: zod.object({
+        type: zod.string().min(1),
+        text: zod.string(),
+        target: zod
+          .array(zod.string().min(1))
+          .describe("The tools, fields or checks it names."),
+        repair: zod
+          .string()
+          .min(1)
+          .describe("The screen that repairs it: agent.tools, agent.source..."),
+        flips_when: zod.string().min(1),
+        recheck: zod.object({
+          scope: zod.enum(["agent", "world"]),
+          check: zod.string().min(1),
+          available: zod
+            .boolean()
+            .describe(
+              "False for the world: a rebuild reads it again until a check-only job exists.",
+            ),
+        }),
+        available: zod.boolean(),
+      }),
       fix_type: zod.string().min(1),
       needed_by: zod.number(),
       affected: zod.number(),
@@ -37256,10 +37283,40 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
     blocked: zod.number(),
     untested: zod.number(),
     requirements_recorded: zod.boolean(),
+    dropped: zod
+      .array(zod.record(zod.string(), zod.string()))
+      .describe(
+        "Scenarios no longer in the suite; counted in none of the others.",
+      ),
   }),
   rules_version: zod.string().min(1),
   computed_at: zod.string().min(1),
 });
+
+/**
+ * Check the agent again (its preflight, when it failed or never finished) so the report reads it anew; the
+world is checked again only by a new build for now. Starts no run.
+ */
+export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesBody =
+  zod.object({
+    scope: zod.enum(["agent", "world", "all"]),
+    check: zod.string().min(1).optional(),
+  });
+
+export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse =
+  zod.object({
+    scope: zod.string().min(1),
+    agent_version_id: zod.string().min(1),
+    state: zod
+      .string()
+      .min(1)
+      .describe("started, or not_needed when the last check passed"),
+  });
 
 /**
  * Two runs of this environment, scenario by scenario; against defaults to
