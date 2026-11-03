@@ -202,6 +202,7 @@ function RunTraceTableStub({
   evalActions,
   rerunDisabledReason,
   onRerunScenarios,
+  onRerunInRun,
 }) {
   useEffect(() => {
     onQueryChange?.(TABLE_QUERY);
@@ -233,6 +234,7 @@ function RunTraceTableStub({
           rerun ticked
         </button>
       )}
+      {onRerunInRun && <span>rerun-in-run</span>}
       <button
         type="button"
         onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
@@ -252,6 +254,7 @@ RunTraceTableStub.propTypes = {
   evalActions: PropTypes.object,
   rerunDisabledReason: PropTypes.string,
   onRerunScenarios: PropTypes.func,
+  onRerunInRun: PropTypes.func,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
 vi.mock("../CallDrawer", () => ({
@@ -621,6 +624,23 @@ describe("RunDetail", () => {
     expect(
       screen.queryByRole("button", { name: "Stop simulation" }),
     ).toBeNull();
+  });
+
+  it("offers no Re-run or Debug failures on a fix's check run", () => {
+    stubTickable = false;
+    const fixRun = { id: "fix-1", label: "c2-target" };
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, fixRun },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail({ onStartRun: vi.fn() });
+
+    expect(screen.queryByRole("button", { name: /Run again/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "rerun ticked" })).toBeNull();
+    expect(screen.queryByText("rerun-in-run")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Debug failures" })).toBeNull();
+    stubTickable = true;
   });
 
   it("shows Cancelling in the header while a stopped run winds down", () => {

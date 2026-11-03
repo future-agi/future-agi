@@ -157,7 +157,7 @@ export default function RunDetail({
 
   const status = identity?.runState;
   // A fix's check run is not one of the user's runs: it has no run number, and
-  // the fix, not the user, stops it.
+  // only the fix acts on it, so it offers no Stop, Re-run or Debug failures.
   const fixRun = identity?.fixRun ?? null;
   // A live run has no final results yet, so its header actions wait for it to
   // finish. Stop simulation is the exception and stays in its own control.
@@ -356,7 +356,7 @@ export default function RunDetail({
         >
           {exporting ? "Exporting…" : "Export"}
         </Button>
-        {hasTickableCalls === false && (
+        {hasTickableCalls === false && !fixRun && (
           <Button
             variant="outlined"
             size="small"
@@ -379,17 +379,19 @@ export default function RunDetail({
             Run again
           </Button>
         )}
-        <Button
-          variant="contained"
-          color="primary"
-          size="small"
-          onClick={() => setDebugging(true)}
-          disabled={live}
-          startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
-          sx={{ typography: "s2", fontWeight: 700 }}
-        >
-          Debug failures
-        </Button>
+        {!fixRun && (
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={() => setDebugging(true)}
+            disabled={live}
+            startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
+            sx={{ typography: "s2", fontWeight: 700 }}
+          >
+            Debug failures
+          </Button>
+        )}
       </Stack>
       {creditBanner}
 
@@ -464,11 +466,11 @@ export default function RunDetail({
               // refilled in place) or as a new simulation, through the same
               // start as any run: that one opens the new run.
               onRerunScenarios={
-                onStartRun
+                onStartRun && !fixRun
                   ? (keys, trials) => onStartRun(keys, trials, rerunOptions)
                   : null
               }
-              onRerunInRun={rerunInRun.mutate}
+              onRerunInRun={fixRun ? null : rerunInRun.mutate}
               onTickableChange={setHasTickableCalls}
               runTrials={identity?.trials || 1}
               rerunDisabledReason={
