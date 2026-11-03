@@ -18,9 +18,11 @@ view wraps.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from tracer.services.clickhouse.query_builders.trace_usage import (
+    CaptureCoverage,
+    capture_coverage_from_counts,
     is_repeated_usage_summary,
 )
 
@@ -38,6 +40,35 @@ class TraceDetail(TypedDict):
     observation_spans: list[dict[str, Any]]
     summary: dict[str, Any]
     graph: dict[str, Any]
+    capture_coverage: NotRequired[CaptureCoverage]
+
+
+def compute_trace_capture_coverage(
+    spans_tree: list[dict[str, Any]],
+) -> CaptureCoverage | None:
+    """Inspect the already-selected tree without copying content or summaries.
+
+    The readers own identity and latest-live selection. In particular, equal
+    child totals neither identify requests nor prove complete source capture.
+    """
+    pending = list(spans_tree)
+    source_summary_present = False
+    request_count = 0
+    while pending:
+        entry = pending.pop()
+        span = entry.get("observation_span") or entry.get("observationSpan") or {}
+        attrs = span.get("span_attributes") or {}
+        nonadditive = attrs.get("fi.usage.contribution") == "none"
+        source_summary_present |= (
+            nonadditive and attrs.get("fi.usage.scope") == "turn"
+        )
+        if not nonadditive and span.get("observation_type") == "llm":
+            request_count += 1
+        pending.extend(entry.get("children", []))
+    return capture_coverage_from_counts(
+        source_summary_present=source_summary_present,
+        request_count=request_count,
+    )
 
 
 def compute_trace_summary_and_graph(
@@ -99,14 +130,13 @@ def compute_trace_summary_and_graph(
 
     for item in all_spans:
         sp = item["span"]
-        if not item["usage_summary"]:
+        attrs = sp.get("span_attributes") or {}
+        if not item["usage_summary"] and attrs.get("fi.usage.contribution") != "none":
             total_tokens += sp.get("total_tokens") or 0
             total_prompt += sp.get("prompt_tokens") or 0
             total_completion += sp.get("completion_tokens") or 0
-            attrs = sp.get("span_attributes") or {}
             if (
-                attrs.get("fi.usage.contribution") != "none"
-                and attrs.get("fi.cost.kind") == "unknown"
+                attrs.get("fi.cost.kind") == "unknown"
                 and (
                     (sp.get("total_tokens") or 0) > 0
                     or (sp.get("prompt_tokens") or 0) > 0
@@ -184,9 +214,13 @@ class TraceDetailHandler:
             }
         )
         summary, graph = compute_trace_summary_and_graph(observation_spans_response)
-        return {
+        result: TraceDetail = {
             "trace": trace_data,
             "observation_spans": observation_spans_response,
             "summary": summary,
             "graph": graph,
         }
+        capture = compute_trace_capture_coverage(observation_spans_response)
+        if capture is not None:
+            result["capture_coverage"] = capture
+        return result

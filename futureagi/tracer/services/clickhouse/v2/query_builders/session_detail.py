@@ -7,12 +7,14 @@ ID, or a tombstone must still participate in FINAL before membership is tested.
 """
 
 from tracer.services.clickhouse.query_builders.trace_usage import (
+    source_summary_sql,
     usage_aggregate_sql,
     usage_coverage_sql,
 )
 
 _LIVE_SESSION_SPANS = f"""
-    SELECT *, {usage_coverage_sql(attrs="spans.attrs_string", prefix="spans.")} AS usage_coverage
+    SELECT *, {usage_coverage_sql(attrs="spans.attrs_string", prefix="spans.")} AS usage_coverage,
+        {source_summary_sql(attrs="spans.attrs_string")} AS source_summary_present
     FROM spans FINAL
     PREWHERE project_id = %(project_id)s
       AND (observation_type, service_name, toStartOfHour(start_time), trace_id, id) IN (
@@ -57,10 +59,12 @@ def build_session_detail_aggregate_query(project_id, session_group_ids):
                CAST(NULL, 'Nullable(Float64)'), sum(usage_cost)) AS total_cost,
             sum(usage_total_tokens) AS total_tokens,
             count() AS total_traces,
-            toString(argMaxIfMerge(user_state)) AS end_user_id
+            toString(argMaxIfMerge(user_state)) AS end_user_id,
+            max(usage_source_summary_present) AS source_summary_present,
+            sum(usage_request_count) AS observed_request_count
         FROM (
             SELECT trace_id, min(start_time) AS trace_start, max(end_time) AS trace_end,
-                {usage_aggregate_sql(prefix="live_session_spans.", coverage="live_session_spans.usage_coverage")},
+                {usage_aggregate_sql(prefix="live_session_spans.", coverage="live_session_spans.usage_coverage", source_summary="live_session_spans.source_summary_present")},
                 argMaxIfState(end_user_id,
                     tuple(start_time, trace_id, id, observation_type, service_name),
                     isNotNull(end_user_id)

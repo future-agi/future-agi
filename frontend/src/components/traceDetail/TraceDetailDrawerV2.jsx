@@ -22,6 +22,7 @@ import { useCreatePromptDraft } from "src/api/develop/prompt";
 import { getOutputFormatFromCatalogType } from "src/sections/develop-detail/RunPrompt/common";
 import logger from "src/utils/logger";
 import DrawerHeader from "./DrawerHeader";
+import { CaptureCoverageNotice } from "./TraceDetailPanel";
 import DrawerToolbar from "./DrawerToolbar";
 import TraceDisplayPanel, { DEFAULT_VIEW_CONFIG } from "./TraceDisplayPanel";
 import {
@@ -1166,6 +1167,10 @@ const TraceDetailDrawerV2 = ({
         </Box>
       )}
 
+      {!isError && !isLoading && (
+        <CaptureCoverageNotice coverage={data?.capture_coverage} />
+      )}
+
       {/* Main content area */}
       <Box
         data-drawer-content
@@ -1411,9 +1416,11 @@ const TraceDetailDrawerV2 = ({
                         )}
                       </Typography>
                       <Typography variant="caption">
-                        {formatTokenCount(summary.total_tokens)} tokens
+                        {formatTokenCount(summary.total_tokens)}{" "}
+                        {data?.capture_coverage ? "observed tokens" : "tokens"}
                       </Typography>
                       <Typography variant="caption">
+                        {data?.capture_coverage && "Observed cost: "}
                         {formatCost(summary.total_cost)}
                       </Typography>
                     </Box>

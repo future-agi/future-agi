@@ -26,6 +26,7 @@ import { useParams } from "react-router";
 import { useTraceDrawerStore } from "./useTraceDrawerStore";
 import { formatMs } from "src/utils/utils";
 import InlineAnnotator from "src/components/InlineAnnotator";
+import { CaptureCoverageNotice } from "src/components/traceDetail/TraceDetailPanel";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { formatCost } from "../LLMTracing/formatters";
 
@@ -77,6 +78,7 @@ const TracesDrawer = ({
   } = useInfiniteQuery({
     queryKey: [
       "traceSession",
+      "capture-coverage-v1",
       activeSessionId,
       userIdForUserMode,
       currentWorkspaceId,
@@ -131,6 +133,8 @@ const TracesDrawer = ({
 
   const sessionMetadata =
     _traceDetail?.pages[0]?.data?.result?.session_metadata;
+  const captureCoverage =
+    _traceDetail?.pages[0]?.data?.result?.capture_coverage;
   const traceDetail =
     _traceDetail?.pages?.reduce((acc, page) => {
       logger.debug({ page });
@@ -288,7 +292,7 @@ const TracesDrawer = ({
                       sx={{ color: "text.primary" }}
                       fontWeight={"fontWeightRegular"}
                     >
-                      Total Cost:{" "}
+                      {captureCoverage ? "Observed Cost: " : "Total Cost: "}
                       {sessionMetadata?.total_cost == null
                         ? "N/A"
                         : formatCost(sessionMetadata.total_cost)}
@@ -417,6 +421,7 @@ const TracesDrawer = ({
               </>
             )}
           </Box>
+          <CaptureCoverageNotice coverage={captureCoverage} />
           <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
             <Tabs
               value={activeTab}

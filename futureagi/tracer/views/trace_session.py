@@ -127,6 +127,9 @@ from tracer.services.clickhouse.query_builders.eval_status import (
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
 )
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    capture_coverage_from_counts,
+)
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
     ReadDeadlineExceeded,
@@ -1182,6 +1185,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         )
 
         agg = agg_result.data[0] if agg_result.data else {}
+        capture = capture_coverage_from_counts(
+            source_summary_present=bool(agg.get("source_summary_present")),
+            request_count=int(agg.get("observed_request_count", 0)),
+        )
+        capture_fields = {"capture_coverage": capture} if capture is not None else {}
         session_start = agg.get("session_start")
         session_end = agg.get("session_end")
         duration = 0
@@ -1249,6 +1257,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.success_response(
                 {
                     "session_metadata": session_metadata,
+                    **capture_fields,
                     "response": [],
                     "next": False,
                 }
@@ -1376,6 +1385,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         return self._gm.success_response(
             {
                 "session_metadata": session_metadata,
+                **capture_fields,
                 "response": response,
                 "next": has_next,
             }

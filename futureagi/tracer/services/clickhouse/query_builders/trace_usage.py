@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 USAGE_COLUMNS = ("cost", "total_tokens", "prompt_tokens", "completion_tokens")
 SUMMARY_NAME = "pydantic_ai.agent.run"
@@ -58,7 +58,51 @@ def usage_coverage_sql(*, attrs: str, prefix: str = "") -> str:
     )
 
 
-def usage_aggregate_sql(*, prefix: str = "", coverage: str | None = None) -> str:
+class CaptureCoverage(TypedDict):
+    """Read-side shape; CaptureCoverageSerializer owns the public contract."""
+
+    scope: Literal["observed_requests"]
+    source_summary_present: bool
+    request_count: int
+    coverage_unknown: bool
+
+
+def capture_coverage_from_counts(
+    *, source_summary_present: bool, request_count: int
+) -> CaptureCoverage | None:
+    """Qualify observed usage, never infer missing requests or completeness.
+
+    Omit for legacy reads without a source-summary witness. Counts describe
+    selected latest-live LLM spans, not provider requests certified by a ledger.
+    """
+    if not source_summary_present:
+        return None
+    return {
+        "scope": "observed_requests",
+        "source_summary_present": True,
+        "request_count": request_count,
+        "coverage_unknown": True,
+    }
+
+
+def source_summary_sql(*, attrs: str) -> str:
+    """One scalar witness, not source totals or arbitrary attribute content.
+
+    Native normalization marks these summaries before moving their usage to
+    fi.source.summary.*. Presence says nothing about capture completeness.
+    """
+    return (
+        f"({attrs}['fi.usage.contribution'] = 'none' "
+        f"AND {attrs}['fi.usage.scope'] = 'turn')"
+    )
+
+
+def usage_aggregate_sql(
+    *,
+    prefix: str = "",
+    coverage: str | None = None,
+    source_summary: str | None = None,
+) -> str:
     """Aggregate light, latest-live span rows of ONE (project, trace) group.
 
     Callers must project id, parent_span_id, name, observation_type and all four
@@ -66,11 +110,15 @@ def usage_aggregate_sql(*, prefix: str = "", coverage: str | None = None) -> str
     explicitly projected usage_coverage_sql tuple; callers without that column
     keep the legacy numeric behavior. Physical replacement and tenant/membership
     scoping belong to the caller. No content/attribute payload is retained. The
-    array is shared by the four reducers in CH, with two additional flags only.
+    array is shared by the four reducers in CH. Optional source_summary adds
+    one scalar witness and an observed LLM count; it does not alter the existing
+    two-flag coverage tuple, numeric reducers or callers that omit it.
     """
     fields = ["id", "parent_span_id", "name", "observation_type", *USAGE_COLUMNS]
     values = ", ".join(f"{prefix}{field}" for field in fields)
     values += f", {coverage or 'tuple(0, 0)'}"
+    if source_summary is not None:
+        values += f", {source_summary}"
     # Fixed layout: identity, parent, name, kind, cost, total, prompt, completion,
     # (nonadditive, unknown billable cost). Siblings are never deduplicated.
     same_children = " AND ".join(
@@ -101,4 +149,11 @@ def usage_aggregate_sql(*, prefix: str = "", coverage: str | None = None) -> str
         f"arraySum(s -> s.{index}, billable_usage_spans) AS usage_{column}"
         for index, column in enumerate(USAGE_COLUMNS[1:], 6)
     )
+    if source_summary is not None:
+        projections.extend(
+            [
+                "arrayExists(s -> s.10, usage_spans) AS usage_source_summary_present",
+                "arrayCount(s -> s.4 = 'llm', billable_usage_spans) AS usage_request_count",
+            ]
+        )
     return ",\n".join(projections)

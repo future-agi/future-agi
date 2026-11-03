@@ -245,3 +245,95 @@ def test_component_only_unknown_cost_in_other_reader_aggregates(cost_client, sur
     assert result["total_tokens"] == 120
     assert result["prompt_tokens"] == prompt
     assert result["completion_tokens"] == completion
+
+
+@pytest.mark.parametrize("source_usd", [None, 17.0])
+@pytest.mark.parametrize("late_day", [0, 1])
+def test_native_source_summary_parent_late_children_and_replay(
+    cost_client, source_usd, late_day
+):
+    """Real latest-live session query, including project scope and tombstones."""
+    from tracer.services.clickhouse.query_builders.trace_usage import (
+        capture_coverage_from_counts,
+    )
+    from tracer.services.clickhouse.v2.query_builders.session_detail import (
+        build_session_detail_aggregate_query,
+    )
+
+    project, session, trace = uuid4(), uuid4(), str(uuid4())
+    root_id = "0000000000000001"
+    raw_summary = {
+        "fi.source.summary.gen_ai.usage.input_tokens": 42925.0,
+        "fi.source.summary.gen_ai.usage.output_tokens": 146.0,
+    }
+    if source_usd is not None:
+        raw_summary["fi.source.summary.gen_ai.cost.total"] = source_usd
+    root = {
+        "id": root_id, "parent_span_id": "", "name": "invoke_agent",
+        "observation_type": "agent", "start_time": START,
+        "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+        "cost": 0.0, "attrs_string": {
+            **NONADDITIVE, "fi.normalization.profile": "github-copilot-cli-1.0.98",
+        }, "attrs_number": raw_summary, "is_deleted": 0,
+    }
+    children = [
+        {**root, "id": sid, "parent_span_id": root_id, "name": "chat",
+         "observation_type": "llm", "start_time": START + timedelta(days=late_day),
+         "prompt_tokens": prompt, "completion_tokens": completion,
+         "total_tokens": prompt + completion, "attrs_string": UNKNOWN, "attrs_number": {}}
+        for sid, prompt, completion in [
+            ("0000000000000002", 14095, 61),
+            ("0000000000000003", 14370, 52),
+            ("0000000000000004", 14460, 33),
+        ]
+    ]
+    hook = {**root, "id": "0000000000000005", "parent_span_id": root_id,
+            "name": "execute_hook", "observation_type": "tool",
+            "attrs_string": UNKNOWN, "attrs_number": {}}
+    columns = ["project_id", "trace_session_id", "trace_id", "end_time", "_version", *root]
+
+    def insert(spans, version, selected_project=project):
+        rows = []
+        for span in spans:
+            values = {"project_id": selected_project, "trace_session_id": session,
+                      "trace_id": trace, "end_time": span["start_time"] + timedelta(seconds=1),
+                      "_version": version, **span}
+            rows.append([values[column] for column in columns])
+        cost_client.insert("spans", rows, column_names=columns)
+
+    def read_usage(expected_tokens, expected_count, expected_cost):
+        sql, params = build_session_detail_aggregate_query(str(project), [str(session)])
+        rows = list(cost_client.query(sql, parameters=params).named_results())
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["total_tokens"] == expected_tokens
+        assert row["total_cost"] == expected_cost
+        assert row["total_traces"] == 1
+        assert capture_coverage_from_counts(
+            source_summary_present=bool(row["source_summary_present"]),
+            request_count=row["observed_request_count"],
+        ) == {"scope": "observed_requests", "source_summary_present": True,
+              "request_count": expected_count, "coverage_unknown": True}
+
+    insert([root], 1)
+    insert(children, 1, selected_project=uuid4())
+    read_usage(0, 0, 0.0)
+    insert([*children, hook], 1)
+    read_usage(43071, 3, None)
+    insert([root, *children, hook], 2)
+    read_usage(43071, 3, None)
+    stored = list(cost_client.query(
+        "SELECT id, attrs_number FROM spans FINAL WHERE project_id = %(project)s "
+        "AND trace_id = %(trace)s AND id = %(id)s AND is_deleted = 0",
+        parameters={"project": str(project), "trace": trace, "id": root_id},
+    ).named_results())
+    assert stored == [{"id": root_id, "attrs_number": raw_summary}]
+    insert([{**children[0], "is_deleted": 1}], 3)
+    read_usage(28915, 2, None)
+    # The source witness follows the same latest physical winner; a historical
+    # marker must not survive a newer unmarked root or a deleted source root.
+    insert([{**root, "attrs_string": {}, "attrs_number": {}}], 4)
+    sql, params = build_session_detail_aggregate_query(str(project), [str(session)])
+    row = list(cost_client.query(sql, parameters=params).named_results())[0]
+    assert not row["source_summary_present"]
+    assert row["observed_request_count"] == 2
