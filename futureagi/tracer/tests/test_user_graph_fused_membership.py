@@ -405,12 +405,31 @@ def _sqlite_metric_sql(sql):
     monetary, after_monetary = _cte(sql, "graph_monetary_spans")
     assert "groupArrayIf(tuple(" in monetary
     assert "AS graph_cost_flags" in monetary
-    assert "AS graph_output_match" in monetary
+    match_marker = "toUInt8(ifNull(("
+    assert match_marker in monetary
+    expression_start = monetary.index(match_marker) + len("toUInt8(ifNull(")
+    depth = 0
+    expression_end = None
+    for offset in range(expression_start, len(monetary)):
+        depth += (monetary[offset] == "(") - (monetary[offset] == ")")
+        if depth == 0:
+            expression_end = offset
+            break
+    assert expression_end is not None
+    output_match = monetary[expression_start + 1 : expression_end]
     tail = sql[after_monetary:].split("SETTINGS", 1)[0].lstrip(" ,\n")
+    # The fixture already is the explicitly latest-live relation and carries
+    # the compact flags the graph-membership cases precompile. Preserve the
+    # real generated output-membership predicate (curated live dimension for
+    # fused, independently declared selected users for two-stage) and execute
+    # it against the same end_users/remap relations as the oracle.
     query = (
         "WITH graph_monetary_spans AS ("
-        "SELECT latest_spans.*, 1 AS graph_cost_known, "
-        "0 AS graph_cost_unknown, 1 AS graph_output_match FROM latest_spans)\n" + tail
+        "SELECT rs.*, 1 AS graph_cost_known, 0 AS graph_cost_unknown, "
+        f"toUInt8(ifNull(({output_match}), 0)) AS graph_output_match "
+        "FROM latest_spans AS rs "
+        "LEFT JOIN eu_survivor_map AS eu_remap "
+        "ON rs.end_user_id = eu_remap.any_id)\n" + tail
     )
     return (
         query.replace(" FINAL", "")
@@ -485,6 +504,7 @@ def test_generated_sql_fused_window_matches_declared_users_and_nested_metrics(
         db.row_factory = sqlite3.Row
         db.create_function("if", 3, lambda condition, yes, no: yes if condition else no)
         db.create_function("toUUID", 1, lambda value: value)
+        db.create_function("toUInt8", 1, int)
         db.create_function("isNotNull", 1, lambda value: value is not None)
         db.create_function("notEmpty", 1, lambda value: bool(value))
         db.create_function("toStartOfDay", 1, lambda value: value[:10])
