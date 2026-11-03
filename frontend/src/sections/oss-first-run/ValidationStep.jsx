@@ -11,14 +11,15 @@ import {
   Stack,
   Typography,
   Link,
-  Collapse,
   Divider,
   IconButton,
-  Tooltip,
+  ButtonBase,
   useTheme,
 } from "@mui/material";
 import LoadingButton from "@mui/lab/LoadingButton";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
+import { ROW_HEIGHT } from "src/theme/sizes";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { statusColors } from "src/utils/runStatus";
 import { useSetupChecks } from "src/api/ossSetup/oss-setup";
@@ -50,6 +51,10 @@ const REVALIDATE_MIN_SPIN_MS = 900;
 const STALL_TIMEOUT_MS = 60000;
 
 const PANEL_MAX_WIDTH = 460;
+
+// The list scrolls inside the card past this many rows, so the page doesn't.
+// The half row peeking out says there is more below.
+const VISIBLE_ROWS = 4.5;
 
 const SUPPORT_EMAIL = "support@futureagi.com";
 
@@ -117,7 +122,7 @@ export default function ValidationStep({
   authenticated = false,
 }) {
   const theme = useTheme();
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [revealCount, setRevealCount] = useState(0);
   const [pollInterval, setPollInterval] = useState(FAST_POLL_MS);
   const [revalidating, setRevalidating] = useState(false);
@@ -127,6 +132,7 @@ export default function ValidationStep({
   const lastSignature = useRef(null);
   const stalledSince = useRef(null);
   const spinTimer = useRef(null);
+  const rowsRef = useRef(null);
 
   const { data, isError, refetch, errorUpdatedAt } = useSetupChecks(mode, {
     refetchInterval: pollInterval,
@@ -250,6 +256,32 @@ export default function ValidationStep({
     [checks, revealCount],
   );
 
+  // Every row shows while the checks reveal. After that the passing ones fold
+  // into the summary line, leaving only what needs a look (or is optional);
+  // expanding adds them underneath, so those rows stay where they were.
+  const showAll = expanded || stillRevealing;
+  const visibleChecks = useMemo(() => {
+    if (stillRevealing) return displayChecks;
+    const rest = displayChecks.filter((check) => check.status !== PASSED);
+    if (!expanded) return rest;
+    return [
+      ...rest,
+      ...displayChecks.filter((check) => check.status === PASSED),
+    ];
+  }, [displayChecks, expanded, stillRevealing]);
+
+  // Follow the newest row inside the card only: scrollIntoView would move the
+  // page too.
+  useEffect(() => {
+    const list = rowsRef.current;
+    const row = list?.children[revealCount - 1];
+    if (!stillRevealing || !row) return;
+    list.scrollTop = Math.max(
+      0,
+      row.offsetTop + row.offsetHeight - list.clientHeight,
+    );
+  }, [revealCount, stillRevealing]);
+
   const counts = useMemo(() => {
     const c = { passed: 0, warning: 0, failed: 0, optional: 0 };
     resolved.forEach((check) => {
@@ -349,7 +381,7 @@ export default function ValidationStep({
   };
 
   const renderHead = (
-    <Stack sx={{ mb: 2.5 }}>
+    <Stack sx={{ mb: 2 }}>
       <Typography
         variant="l2"
         component="h1"
@@ -360,7 +392,7 @@ export default function ValidationStep({
       </Typography>
       <Typography
         variant="s1_2"
-        sx={{ color: "text.secondary", maxWidth: PANEL_MAX_WIDTH, mt: 1 }}
+        sx={{ color: "text.secondary", maxWidth: PANEL_MAX_WIDTH, mt: 0.75 }}
       >
         We&apos;re running through your onboard systems now. Re-run anything
         that needs attention. The{" "}
@@ -413,7 +445,8 @@ export default function ValidationStep({
         spacing={1.5}
         sx={{
           px: 1.5,
-          py: 1,
+          py: 0.5,
+          minHeight: check.detail ? ROW_HEIGHT.twoLine : ROW_HEIGHT.default,
           borderTop: "1px solid",
           borderColor: failed ? roleColors("danger").border : "border.subtle",
           bgcolor: failed ? roleColors("danger").bg : "transparent",
@@ -450,10 +483,11 @@ export default function ValidationStep({
         </Stack>
 
         {canRerun && (
-          <Tooltip title="Re-run pre-flight">
+          <CustomTooltip show title="Re-run pre-flight" size="small" arrow>
             <span>
               <IconButton
                 size="small"
+                aria-label="Re-run pre-flight"
                 disabled={rerunDisabled}
                 onClick={handleRevalidate}
                 sx={{ color: "text.primary", flexShrink: 0 }}
@@ -461,7 +495,7 @@ export default function ValidationStep({
                 <Iconify icon="solar:refresh-linear" width={16} sx={spinSx} />
               </IconButton>
             </span>
-          </Tooltip>
+          </CustomTooltip>
         )}
 
         <StatusBadge
@@ -484,11 +518,19 @@ export default function ValidationStep({
         maxWidth: PANEL_MAX_WIDTH,
       }}
     >
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1.5}
-        sx={{ px: 1.5, py: 1.5 }}
+      <ButtonBase
+        aria-expanded={showAll}
+        disabled={stillRevealing || !checks.length}
+        onClick={() => setExpanded((v) => !v)}
+        sx={{
+          width: "100%",
+          gap: 1.5,
+          px: 1.5,
+          py: 1.25,
+          justifyContent: "flex-start",
+          textAlign: "left",
+          "&:hover": { bgcolor: "action.hover" },
+        }}
       >
         <Box
           sx={{
@@ -505,7 +547,7 @@ export default function ValidationStep({
         >
           <Iconify icon={summaryIcon.icon} width={16} />
         </Box>
-        <Stack sx={{ flex: 1 }}>
+        <Stack sx={{ flex: 1, minWidth: 0 }}>
           <Typography
             variant="s1_2"
             fontWeight="fontWeightSemiBold"
@@ -517,21 +559,31 @@ export default function ValidationStep({
             {summary}
           </Typography>
         </Stack>
-        <IconButton size="small" onClick={() => setExpanded((v) => !v)}>
+        {checks.length > 0 && (
           <Iconify
             icon={
-              expanded
+              showAll
                 ? "solar:alt-arrow-up-linear"
                 : "solar:alt-arrow-down-linear"
             }
             width={20}
+            sx={{ color: "text.secondary", flexShrink: 0 }}
           />
-        </IconButton>
-      </Stack>
+        )}
+      </ButtonBase>
 
-      <Collapse in={expanded}>
-        {displayChecks.map(renderRow)}
+      <Box
+        ref={rowsRef}
+        sx={{
+          position: "relative",
+          maxHeight: ROW_HEIGHT.default * VISIBLE_ROWS,
+          overflowY: "auto",
+        }}
+      >
+        {visibleChecks.map(renderRow)}
+      </Box>
 
+      {expanded && (
         <Stack
           direction="row"
           alignItems="center"
@@ -557,7 +609,7 @@ export default function ValidationStep({
             {revalidating ? "Re-running…" : "Re-run pre-flight"}
           </Typography>
         </Stack>
-      </Collapse>
+      )}
     </Box>
   );
 
@@ -710,7 +762,6 @@ export default function ValidationStep({
               fullWidth
               variant="outlined"
               onClick={() => onSwitchMode(LAUNCH_MODE.EXPERIMENT)}
-              
             >
               Continue with Test flight
             </LoadingButton>
