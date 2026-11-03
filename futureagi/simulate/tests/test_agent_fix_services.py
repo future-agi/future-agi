@@ -1,6 +1,7 @@
 """Fix my agent: starting a fix, the engine's calls, closing it, and taking a candidate."""
 
 import io
+import re
 import subprocess
 import tarfile
 from contextlib import ExitStack
@@ -23,6 +24,7 @@ from simulate.models import (
     HostedHarnessExecution,
     HostedHarnessJob,
 )
+from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
     CandidateUpdate,
@@ -1371,6 +1373,194 @@ class TestCheckRunStatus:
             status = check_run_status(run)
 
         assert len(status.records) == status.total == 10
+
+
+# The engine's reading of a transcript line (rejection.mjs): "<role>: <text>"; a line
+# without a role continues the message before it.
+ENGINE_ROLE_LINE = re.compile(
+    r"^(user|assistant|system|tool_calls|tool_call_result|unknown): ?(.*)$"
+)
+
+
+def _engine_messages(transcript):
+    messages = []
+    for text in transcript.split("\n"):
+        if match := ENGINE_ROLE_LINE.match(text):
+            messages.append([match[1], match[2]])
+        else:
+            assert messages, f"the first line has no role: {text!r}"
+            messages[-1][1] += f"\n{text}"
+    return [tuple(one) for one in messages]
+
+
+def _chat(call, *rows):
+    """Store a chat trial's rows as hosted ingestion does, one at a time: (role, items) or
+    (role, items, tool_calls)."""
+    run_test = call.test_execution.run_test
+    return [
+        ChatMessageModel.no_workspace_objects.create(
+            call_execution=call,
+            role=role,
+            content=items,
+            messages=[str(item.get("content") or "") for item in items],
+            tool_calls=calls[0] if calls else [],
+            session_id=f"alk-chat-{call.id}",
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+        )
+        for role, items, *calls in rows
+    ]
+
+
+def _finished_trials(source_run, trials=1):
+    run = _check(_fix_run(source_run), trials=trials)
+    executions = sorted(_executions(run), key=lambda one: one.trial_index)
+    for execution in executions:
+        _receipt(execution.call_execution, KEYS[0], {"refunded": True})
+    HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(state="completed")
+    run.refresh_from_db()
+    return run, [execution.call_execution for execution in executions]
+
+
+LOOKUP = {
+    "id": "call-1",
+    "type": "function",
+    "function": {"name": "lookup", "arguments": '{"order": 7}'},
+}
+
+
+class TestChatTranscripts:
+    def test_a_chat_trial_reads_as_role_lines_in_order(self, source_run):
+        run, [call] = _finished_trials(source_run)
+        _chat(
+            call,
+            ("user", [{"role": "user", "content": "hi"}]),
+            ("assistant", [{"role": "assistant", "content": "hello\nhow can I help"}]),
+        )
+        # One exchange's rows share a time; its agent row was stored first here.
+        answer, ask = _chat(
+            call,
+            (
+                "assistant",
+                [
+                    {
+                        "role": "assistant",
+                        "content": "checking",
+                        "tool_calls": [LOOKUP],
+                    },
+                    {
+                        "role": "assistant",
+                        "kind": "tool_call_result",
+                        "content": "paid",
+                    },
+                    {"role": "assistant", "content": "refunded"},
+                ],
+            ),
+            ("user", [{"role": "user", "content": "refund order 7"}]),
+        )
+        ChatMessageModel.no_workspace_objects.filter(id__in=[answer.id, ask.id]).update(
+            created_at=timezone.now()
+        )
+
+        [record] = check_run_status(run).records
+
+        assert record.transcript == (
+            "user: hi\n"
+            "assistant: hello\n"
+            "how can I help\n"
+            "user: refund order 7\n"
+            "assistant: checking\n"
+            'tool_calls: [{"name":"lookup","arguments":{"order":7}}]\n'
+            "tool_call_result: paid\n"
+            "assistant: refunded"
+        )
+
+    def test_a_tool_row_reads_as_a_tool_call_result(self, source_run):
+        run, [call] = _finished_trials(source_run)
+        _chat(
+            call,
+            ("assistant", [{"content": "let me look"}], [LOOKUP]),
+            ("tool", [{"content": "order 7: paid"}]),
+            ("assistant", [{"kind": "tool_calls", "content": 'refund({"order": 7})'}]),
+        )
+
+        [record] = check_run_status(run).records
+
+        assert record.transcript == (
+            "assistant: let me look\n"
+            'tool_calls: [{"name":"lookup","arguments":{"order":7}}]\n'
+            "tool_call_result: order 7: paid\n"
+            'tool_calls: refund({"order": 7})'
+        )
+
+    def test_a_voice_trial_still_reads_its_call_transcript(self, source_run):
+        run, [voice, chat] = _finished_trials(source_run, trials=2)
+        CallTranscript.objects.create(
+            call_execution=voice, speaker_role="user", content="spoken"
+        )
+        for call in (voice, chat):
+            _chat(call, ("user", [{"content": "typed"}]))
+
+        by_trial = {one.trial: one.transcript for one in check_run_status(run).records}
+
+        assert sorted(by_trial.values()) == ["user: spoken", "user: typed"]
+        voice_trial = HostedHarnessExecution.no_workspace_objects.get(
+            call_execution=voice
+        ).trial_index
+        assert by_trial[voice_trial] == "user: spoken"
+
+    def test_a_chat_transcript_keeps_the_cap(self, source_run):
+        run, [call] = _finished_trials(source_run)
+        _chat(
+            call,
+            ("user", [{"content": "hi"}]),
+            ("assistant", [{"content": "a" * TRANSCRIPT_CHARS}]),
+        )
+
+        [record] = check_run_status(run).records
+
+        assert record.transcript.startswith("user: hi\nassistant: aaa")
+        assert len(record.transcript) == TRANSCRIPT_CHARS
+
+    def test_every_line_reads_with_the_engines_parser(self, source_run):
+        run, [call] = _finished_trials(source_run)
+        _chat(
+            call,
+            ("user", [{"content": "hi"}]),
+            (
+                "assistant",
+                [
+                    {"content": "two\nlines", "tool_calls": [LOOKUP]},
+                    {"kind": "tool_call_result", "content": "paid\nin full"},
+                ],
+            ),
+            ("tool", [{"content": "done"}]),
+        )
+
+        [record] = check_run_status(run).records
+
+        assert _engine_messages(record.transcript) == [
+            ("user", "hi"),
+            ("assistant", "two\nlines"),
+            ("tool_calls", '[{"name":"lookup","arguments":{"order":7}}]'),
+            ("tool_call_result", "paid\nin full"),
+            ("tool_call_result", "done"),
+        ]
+
+    def test_many_chat_trials_read_their_messages_in_one_query(
+        self, source_run, django_assert_num_queries
+    ):
+        run, calls = _finished_trials(source_run, trials=5)
+        for call in calls:
+            _chat(
+                call, ("user", [{"content": "hi"}]), ("assistant", [{"content": "ok"}])
+            )
+
+        # The executions, the last attempt, the call transcripts and the chat rows.
+        with django_assert_num_queries(4):
+            status = check_run_status(run)
+
+        assert {one.transcript for one in status.records} == {"user: hi\nassistant: ok"}
 
 
 class TestBrief:

@@ -1,5 +1,6 @@
 """Reads for "Fix my agent": the engine's brief, a check run's results, the run list."""
 
+import json
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
@@ -9,6 +10,7 @@ from typing import Any
 
 from django.conf import settings
 from django.db.models import (
+    Case,
     Count,
     DecimalField,
     Exists,
@@ -22,6 +24,7 @@ from django.db.models import (
     Subquery,
     Sum,
     Value,
+    When,
 )
 from django.db.models.functions import Coalesce
 
@@ -35,6 +38,7 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessScenario,
 )
+from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
@@ -339,16 +343,82 @@ def _record(
     )
 
 
+# The engine's speaker for a chat row's role.
+_CHAT_SPEAKERS = {
+    ChatMessageModel.RoleChoices.USER: "user",
+    ChatMessageModel.RoleChoices.ASSISTANT: "assistant",
+    ChatMessageModel.RoleChoices.TOOL: "tool_call_result",
+}
+# Chat ingestion means one exchange's rows to share a time, its user turn first.
+_USER_TURN_FIRST = Case(
+    When(role=ChatMessageModel.RoleChoices.USER, then=Value(0)), default=Value(1)
+)
+
+
 def _transcripts(call_ids: Iterable[Any]) -> dict[Any, str]:
+    """Each call's conversation as "<role>: <text>" lines, the way the engine reads them: a
+    voice call's CallTranscript rows, else a chat call's ChatMessage rows."""
+    ids = list(call_ids)
     lines: dict[Any, list[str]] = {}
     rows = CallTranscript.no_workspace_objects.filter(
-        call_execution_id__in=list(call_ids)
+        call_execution_id__in=ids
     ).order_by("call_execution_id", "start_time_ms", "created_at")
     for row in rows.values_list("call_execution_id", "speaker_role", "content"):
         lines.setdefault(row[0], []).append(f"{row[1]}: {row[2]}")
+    if chats := [one for one in ids if one not in lines]:
+        messages = ChatMessageModel.no_workspace_objects.filter(
+            call_execution_id__in=chats
+        ).order_by("call_execution_id", "created_at", _USER_TURN_FIRST)
+        for call_id, *row in messages.values_list(
+            "call_execution_id", "role", "messages", "content", "tool_calls"
+        ):
+            lines.setdefault(call_id, []).extend(_chat_lines(*row))
     return {
         call_id: "\n".join(turns)[:TRANSCRIPT_CHARS] for call_id, turns in lines.items()
     }
+
+
+def _chat_lines(role: str, messages: Any, content: Any, tool_calls: Any) -> list[str]:
+    """One chat row as transcript lines. Hosted chat folds an exchange's agent side into one
+    row: each item is its text, a call it made (``tool_calls``) or a call's result
+    (``tool_call_result``), in order. A text with calls is followed by a line of them."""
+    speaker = _CHAT_SPEAKERS.get(role, "unknown")
+    items = [item for item in content or [] if isinstance(item, Mapping)] or [
+        {"content": text} for text in messages or []
+    ]
+    lines = []
+    for item in items:
+        text = str(item.get("content") or "")
+        if item.get("kind") in ("tool_calls", "tool_call_result"):
+            lines.append(f"{item['kind']}: {text}")
+            continue
+        if text:
+            lines.append(f"{speaker}: {text}")
+        if item.get("tool_calls"):
+            lines.append(f"tool_calls: {_calls_json(item['tool_calls'])}")
+    if tool_calls:
+        lines.append(f"tool_calls: {_calls_json(tool_calls)}")
+    return lines
+
+
+def _calls_json(calls: Any) -> str:
+    """Tool calls as compact JSON of their names and arguments, from either the OpenAI
+    shape (``function.name``, arguments as a JSON string) or a flat one."""
+    named = []
+    for call in calls if isinstance(calls, list) else []:
+        if not isinstance(call, Mapping):
+            continue
+        function = call.get("function")
+        function = function if isinstance(function, Mapping) else call
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                # Arguments that are not JSON are shown as the model sent them.
+                pass
+        named.append({"name": function.get("name"), "arguments": arguments})
+    return json.dumps(named, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
 def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
