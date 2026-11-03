@@ -26729,7 +26729,7 @@ export interface SamplingWindowApi {
    * Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).
    * @minLength 1
    */
-  end?: string;
+  end?: string | null;
 }
 
 export type SamplingPredicateApiSource =
@@ -26895,6 +26895,273 @@ export interface EvalTaskCreateResultApi {
 export interface EvalTaskCreateResponseApi {
   status?: boolean;
   result: EvalTaskCreateResultApi;
+}
+
+export type EvalTaskDetailsResultApiStatus =
+  (typeof EvalTaskDetailsResultApiStatus)[keyof typeof EvalTaskDetailsResultApiStatus];
+
+export const EvalTaskDetailsResultApiStatus = {
+  pending: "pending",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+  paused: "paused",
+  deleted: "deleted",
+  "": "",
+} as const;
+
+/**
+ * Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.
+ */
+export type EvalTaskDetailsResultApiFiltersAppliedDatePreset =
+  (typeof EvalTaskDetailsResultApiFiltersAppliedDatePreset)[keyof typeof EvalTaskDetailsResultApiFiltersAppliedDatePreset];
+
+export const EvalTaskDetailsResultApiFiltersAppliedDatePreset = {
+  "30m": "30m",
+  "6h": "6h",
+  today: "today",
+  yesterday: "yesterday",
+  "7d": "7d",
+  "30d": "30d",
+  "3m": "3m",
+  "6m": "6m",
+  "12m": "12m",
+  custom: "custom",
+} as const;
+
+export type EvalTaskDetailsResultApiFiltersAppliedFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof EvalTaskDetailsResultApiFiltersAppliedFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof EvalTaskDetailsResultApiFiltersAppliedFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const EvalTaskDetailsResultApiFiltersAppliedFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type EvalTaskDetailsResultApiFiltersAppliedSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof EvalTaskDetailsResultApiFiltersAppliedSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof EvalTaskDetailsResultApiFiltersAppliedSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const EvalTaskDetailsResultApiFiltersAppliedSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type EvalTaskDetailsEvalApiMapping = { [key: string]: JsonValueApi };
+
+export type EvalTaskDetailsEvalApiConfig = { [key: string]: JsonValueApi };
+
+export interface EvalTaskDetailsEvalApi {
+  id: string;
+  name: string | null;
+  template_id: string | null;
+  templateId: string | null;
+  mapping: EvalTaskDetailsEvalApiMapping;
+  model: string | null;
+  config: EvalTaskDetailsEvalApiConfig;
+  error_localizer: boolean;
+  evalType: string | null;
+  templateType: string | null;
+  outputType: string | null;
+}
+
+export type EvalTaskDetailsSamplingPolicyApiSamplingUnit =
+  (typeof EvalTaskDetailsSamplingPolicyApiSamplingUnit)[keyof typeof EvalTaskDetailsSamplingPolicyApiSamplingUnit];
+
+export const EvalTaskDetailsSamplingPolicyApiSamplingUnit = {
+  span: "span",
+  trace: "trace",
+  session: "session",
+  user: "user",
+  attribute: "attribute",
+} as const;
+
+export type EvalTaskDetailsSamplingPolicyApiMissingId =
+  (typeof EvalTaskDetailsSamplingPolicyApiMissingId)[keyof typeof EvalTaskDetailsSamplingPolicyApiMissingId];
+
+export const EvalTaskDetailsSamplingPolicyApiMissingId = {
+  exclude: "exclude",
+  row: "row",
+} as const;
+
+export type EvalTaskDetailsSamplingPolicyApiMode =
+  (typeof EvalTaskDetailsSamplingPolicyApiMode)[keyof typeof EvalTaskDetailsSamplingPolicyApiMode];
+
+export const EvalTaskDetailsSamplingPolicyApiMode = {
+  closed: "closed",
+  live: "live",
+} as const;
+
+/**
+ * independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.
+ */
+export type EvalTaskDetailsSamplingPolicyApiCoordination =
+  (typeof EvalTaskDetailsSamplingPolicyApiCoordination)[keyof typeof EvalTaskDetailsSamplingPolicyApiCoordination];
+
+export const EvalTaskDetailsSamplingPolicyApiCoordination = {
+  independent: "independent",
+  project: "project",
+} as const;
+
+/**
+ * Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.
+ */
+export type EvalTaskDetailsSamplingPolicyApiCellQuotas = {
+  [key: string]: number;
+};
+
+export interface EvalTaskDetailsSamplingPolicyApi {
+  /**
+   * @minimum 1
+   * @maximum 1
+   */
+  version: number;
+  sampling_unit: EvalTaskDetailsSamplingPolicyApiSamplingUnit;
+  unit_attribute?: SamplingAttributeApi;
+  missing_id?: EvalTaskDetailsSamplingPolicyApiMissingId;
+  mode?: EvalTaskDetailsSamplingPolicyApiMode;
+  window: SamplingWindowApi;
+  strata?: SamplingRuleApi[];
+  group_by?: SamplingAttributeApi[];
+  default?: SamplingRuleApi;
+  /** Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule. */
+  cell_quotas?: EvalTaskDetailsSamplingPolicyApiCellQuotas;
+  /** independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks. */
+  coordination?: EvalTaskDetailsSamplingPolicyApiCoordination;
+  /**
+   * Project coordination only: a named PRN panel; different panels draw independent numbers.
+   * @maxLength 64
+   */
+  panel?: string;
+  /**
+   * Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.
+   * @minimum 0
+   * @maximum 100
+   */
+  prn_start?: number;
+}
+
+export type EvalTaskDetailsResultApiRunType =
+  (typeof EvalTaskDetailsResultApiRunType)[keyof typeof EvalTaskDetailsResultApiRunType];
+
+export const EvalTaskDetailsResultApiRunType = {
+  continuous: "continuous",
+  historical: "historical",
+  "": "",
+} as const;
+
+export type EvalTaskDetailsResultApiRowType =
+  (typeof EvalTaskDetailsResultApiRowType)[keyof typeof EvalTaskDetailsResultApiRowType];
+
+export const EvalTaskDetailsResultApiRowType = {
+  spans: "spans",
+  traces: "traces",
+  sessions: "sessions",
+  voiceCalls: "voiceCalls",
+} as const;
+
+export type EvalTaskDetailsResultApiFiltersAppliedFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: EvalTaskDetailsResultApiFiltersAppliedFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type EvalTaskDetailsResultApiFiltersAppliedFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: EvalTaskDetailsResultApiFiltersAppliedFiltersItemFilterConfig;
+};
+
+export type EvalTaskDetailsResultApiFiltersAppliedSpanAttributesFiltersItemFilterConfig =
+  {
+    /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+    filter_type: string;
+    /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+    filter_op: string;
+    /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+    filter_value?: unknown;
+    /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+    col_type?: string;
+    /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+    attribute_value_types?: EvalTaskDetailsResultApiFiltersAppliedSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem[];
+  };
+
+export type EvalTaskDetailsResultApiFiltersAppliedSpanAttributesFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: EvalTaskDetailsResultApiFiltersAppliedSpanAttributesFiltersItemFilterConfig;
+};
+
+export type EvalTaskDetailsResultApiFiltersApplied = {
+  /** Project scope for the evaluation task. */
+  project_id?: string;
+  /**
+   * Half-open [start, end) ISO timestamps, normalized to UTC.
+   * @minItems 2
+   * @maxItems 2
+   */
+  date_range?: string[];
+  /** Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced. */
+  date_preset?: EvalTaskDetailsResultApiFiltersAppliedDatePreset;
+  /** Exclusive lower-bound ISO timestamp for legacy task filters, normalized to UTC. */
+  created_at?: string;
+  /** Trace session id(s) to constrain the task. */
+  session_id?: string[];
+  /** Trace id(s) to constrain linked-source tasks. */
+  trace_id?: string[];
+  /** Observation span id(s) to constrain linked-source tasks. */
+  span_id?: string[];
+  /** Observation span type(s), for example llm, tool, or chain. */
+  observation_type?: string[];
+  filters?: EvalTaskDetailsResultApiFiltersAppliedFiltersItem[];
+  span_attributes_filters?: EvalTaskDetailsResultApiFiltersAppliedSpanAttributesFiltersItem[];
+};
+
+export interface EvalTaskDetailsResultApi {
+  id: string;
+  name: string | null;
+  project_id: string;
+  project_name: string | null;
+  status: EvalTaskDetailsResultApiStatus | null;
+  filters_applied: EvalTaskDetailsResultApiFiltersApplied | null;
+  created_at: string;
+  evals_applied: EvalTaskDetailsEvalApi[];
+  spans_limit: number | null;
+  sampling_rate: number | null;
+  sampling_policy: EvalTaskDetailsSamplingPolicyApi | null;
+  last_run: string | null;
+  run_type: EvalTaskDetailsResultApiRunType | null;
+  row_type: EvalTaskDetailsResultApiRowType;
+}
+
+export interface EvalTaskDetailsResponseApi {
+  status?: boolean;
+  result: EvalTaskDetailsResultApi;
 }
 
 export interface EvalTaskUsageStatsApi {
@@ -38242,24 +38509,7 @@ export type TracerEvalTaskList200 = {
 };
 
 export type TracerEvalTaskGetEvalDetailsParams = {
-  /**
-   * A one-based page number. Deep pages whose offset exceeds 50000 are rejected.
-   * @minimum 1
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   * @minimum 1
-   * @maximum 100
-   */
-  limit?: number;
-};
-
-export type TracerEvalTaskGetEvalDetails200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: EvalTaskApi[];
+  eval_id: string;
 };
 
 export type TracerEvalTaskGetEvalTaskLogsParams = {

@@ -57631,483 +57631,367 @@ export const TracerEvalTaskCreateResponse = zod.object({
   }),
 });
 
-export const tracerEvalTaskGetEvalDetailsQueryLimitDefault = 10;
-export const tracerEvalTaskGetEvalDetailsQueryLimitMax = 100;
-
 export const TracerEvalTaskGetEvalDetailsQueryParams = zod.object({
-  page: zod
-    .number()
-    .min(1)
-    .optional()
-    .describe(
-      "A one-based page number. Deep pages whose offset exceeds 50000 are rejected.",
-    ),
-  limit: zod
-    .number()
-    .min(1)
-    .max(tracerEvalTaskGetEvalDetailsQueryLimitMax)
-    .default(tracerEvalTaskGetEvalDetailsQueryLimitDefault)
-    .describe("Number of results to return per page."),
+  eval_id: zod.string().uuid(),
 });
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemNameMax = 255;
+export const tracerEvalTaskGetEvalDetailsResponseStatusDefault = true;
+export const tracerEvalTaskGetEvalDetailsResponseResultFiltersAppliedDateRangeMin = 2;
+export const tracerEvalTaskGetEvalDetailsResponseResultFiltersAppliedDateRangeMax = 2;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDateRangeMin = 2;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDateRangeMax = 2;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyVersionMax = 1;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDefault = {};
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingRateMax = 100;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyUnitAttributeSourceDefault = `span`;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyUnitAttributeKeyMax = 200;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyVersionMax = 1;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyMissingIdDefault = `exclude`;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyModeDefault = `closed`;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyUnitAttributeSourceDefault = `span`;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyUnitAttributeKeyMax = 200;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemNameMax = 80;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyMissingIdDefault = `exclude`;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyModeDefault = `closed`;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemFiltersItemSourceDefault = `span`;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemFiltersItemKeyMax = 200;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemNameMax = 80;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemFiltersItemOpDefault = `in`;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemFiltersItemValuesMax = 100;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemFiltersItemSourceDefault = `span`;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemFiltersItemKeyMax = 200;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemRateMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemRateMax = 100;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemFiltersItemOpDefault = `in`;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemFiltersItemValuesMax = 100;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemTargetNMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemTargetNMax = 1000000;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemRateMin = 0;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemRateMax = 100;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemMinNMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemMinNMax = 1000000;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemTargetNMin = 0;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemTargetNMax = 1000000;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemMaxNMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemMaxNMax = 1000000;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemMinNMin = 0;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemMinNMax = 1000000;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemRareBelowMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemRareBelowMax = 1000000;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemMaxNMin = 0;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemMaxNMax = 1000000;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyGroupByItemSourceDefault = `span`;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyGroupByItemKeyMax = 200;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemRareBelowMin = 0;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemRareBelowMax = 1000000;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultNameMax = 80;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyGroupByItemSourceDefault = `span`;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyGroupByItemKeyMax = 200;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultFiltersItemSourceDefault = `span`;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultFiltersItemKeyMax = 200;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultNameMax = 80;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultFiltersItemOpDefault = `in`;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultFiltersItemValuesMax = 100;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultFiltersItemSourceDefault = `span`;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultFiltersItemKeyMax = 200;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultRateMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultRateMax = 100;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultFiltersItemOpDefault = `in`;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultFiltersItemValuesMax = 100;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultTargetNMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultTargetNMax = 1000000;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultRateMin = 0;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultRateMax = 100;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultMinNMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultMinNMax = 1000000;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultTargetNMin = 0;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultTargetNMax = 1000000;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultMaxNMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultMaxNMax = 1000000;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultMinNMin = 0;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultMinNMax = 1000000;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultRareBelowMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultRareBelowMax = 1000000;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultMaxNMin = 0;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultMaxNMax = 1000000;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyCellQuotasMaxOne = 1000000;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultRareBelowMin = 0;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultRareBelowMax = 1000000;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyPanelMax = 64;
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyCellQuotasMinOne = 0;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyCellQuotasMaxOne = 1000000;
-
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyPanelMax = 64;
-
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyPrnStartMin = 0;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyPrnStartMax = 100;
-
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSpansLimitMax = 1000000;
-
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemRowTypeDefault = `spans`;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyPrnStartMax = 100;
 
 export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
-  count: zod.number(),
-  next: zod.string().url().optional(),
-  previous: zod.string().url().optional(),
-  results: zod.array(
-    zod.object({
-      id: zod.string().uuid().optional(),
-      project: zod.string().uuid(),
-      name: zod
-        .string()
-        .min(1)
-        .max(tracerEvalTaskGetEvalDetailsResponseResultsItemNameMax),
-      filters: zod
-        .object({
-          project_id: zod
-            .string()
-            .optional()
-            .describe("Project scope for the evaluation task."),
-          date_range: zod
-            .array(zod.string())
-            .min(
-              tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDateRangeMin,
-            )
-            .max(
-              tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDateRangeMax,
-            )
-            .optional()
-            .describe(
-              "Half-open [start, end) ISO timestamps, normalized to UTC.",
-            ),
-          date_preset: zod
-            .enum([
-              "30m",
-              "6h",
-              "today",
-              "yesterday",
-              "7d",
-              "30d",
-              "3m",
-              "6m",
-              "12m",
-              "custom",
-            ])
-            .optional()
-            .describe(
-              "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.",
-            ),
-          created_at: zod
-            .string()
-            .optional()
-            .describe(
-              "Exclusive lower-bound ISO timestamp for legacy task filters, normalized to UTC.",
-            ),
-          session_id: zod
-            .array(zod.string())
-            .optional()
-            .describe("Trace session id(s) to constrain the task."),
-          trace_id: zod
-            .array(zod.string())
-            .optional()
-            .describe("Trace id(s) to constrain linked-source tasks."),
-          span_id: zod
-            .array(zod.string())
-            .optional()
-            .describe(
-              "Observation span id(s) to constrain linked-source tasks.",
-            ),
-          observation_type: zod
-            .array(zod.string())
-            .optional()
-            .describe(
-              "Observation span type(s), for example llm, tool, or chain.",
-            ),
-          filters: zod
-            .array(
-              zod.object({
-                column_id: zod
-                  .string()
-                  .describe("Column or attribute id to filter on."),
-                property_id: zod
-                  .string()
-                  .optional()
-                  .describe(
-                    "Optional stable namespaced Property Registry identity.",
-                  ),
-                display_name: zod
-                  .string()
-                  .optional()
-                  .describe("Optional UI label for chips and saved views."),
-                source: zod
-                  .string()
-                  .optional()
-                  .describe(
-                    "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
-                  ),
-                output_type: zod
-                  .string()
-                  .optional()
-                  .describe(
-                    "Optional metric output type metadata used by eval and annotation filters.",
-                  ),
-                filter_config: zod.object({
-                  filter_type: zod
-                    .string()
-                    .describe(
-                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
-                    ),
-                  filter_op: zod
-                    .string()
-                    .describe(
-                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
-                    ),
-                  filter_value: zod
-                    .unknown()
-                    .optional()
-                    .describe(
-                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
-                    ),
-                  col_type: zod
-                    .string()
-                    .optional()
-                    .describe(
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
-                    ),
-                  attribute_value_types: zod
-                    .array(zod.enum(["string", "number", "boolean"]))
-                    .optional()
-                    .describe(
-                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
-                    ),
-                }),
-              }),
-            )
-            .optional(),
-          span_attributes_filters: zod
-            .array(
-              zod.object({
-                column_id: zod
-                  .string()
-                  .describe("Column or attribute id to filter on."),
-                property_id: zod
-                  .string()
-                  .optional()
-                  .describe(
-                    "Optional stable namespaced Property Registry identity.",
-                  ),
-                display_name: zod
-                  .string()
-                  .optional()
-                  .describe("Optional UI label for chips and saved views."),
-                source: zod
-                  .string()
-                  .optional()
-                  .describe(
-                    "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
-                  ),
-                output_type: zod
-                  .string()
-                  .optional()
-                  .describe(
-                    "Optional metric output type metadata used by eval and annotation filters.",
-                  ),
-                filter_config: zod.object({
-                  filter_type: zod
-                    .string()
-                    .describe(
-                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
-                    ),
-                  filter_op: zod
-                    .string()
-                    .describe(
-                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
-                    ),
-                  filter_value: zod
-                    .unknown()
-                    .optional()
-                    .describe(
-                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
-                    ),
-                  col_type: zod
-                    .string()
-                    .optional()
-                    .describe(
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
-                    ),
-                  attribute_value_types: zod
-                    .array(zod.enum(["string", "number", "boolean"]))
-                    .optional()
-                    .describe(
-                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
-                    ),
-                }),
-              }),
-            )
-            .optional(),
-        })
-        .default(tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDefault),
-      sampling_rate: zod
-        .number()
-        .min(1)
-        .max(tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingRateMax),
-      sampling_policy: zod
-        .object({
-          version: zod
-            .number()
-            .min(1)
-            .max(
-              tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyVersionMax,
-            ),
-          sampling_unit: zod.enum([
-            "span",
-            "trace",
-            "session",
-            "user",
-            "attribute",
-          ]),
-          unit_attribute: zod
-            .object({
-              source: zod
-                .enum(["span", "resource", "metadata"])
-                .default(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyUnitAttributeSourceDefault,
-                ),
-              key: zod
+  status: zod
+    .boolean()
+    .default(tracerEvalTaskGetEvalDetailsResponseStatusDefault),
+  result: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().nullable(),
+    project_id: zod.string().uuid(),
+    project_name: zod.string().nullable(),
+    status: zod
+      .enum([
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "paused",
+        "deleted",
+        "",
+      ])
+      .nullable(),
+    filters_applied: zod
+      .object({
+        project_id: zod
+          .string()
+          .optional()
+          .describe("Project scope for the evaluation task."),
+        date_range: zod
+          .array(zod.string())
+          .min(
+            tracerEvalTaskGetEvalDetailsResponseResultFiltersAppliedDateRangeMin,
+          )
+          .max(
+            tracerEvalTaskGetEvalDetailsResponseResultFiltersAppliedDateRangeMax,
+          )
+          .optional()
+          .describe(
+            "Half-open [start, end) ISO timestamps, normalized to UTC.",
+          ),
+        date_preset: zod
+          .enum([
+            "30m",
+            "6h",
+            "today",
+            "yesterday",
+            "7d",
+            "30d",
+            "3m",
+            "6m",
+            "12m",
+            "custom",
+          ])
+          .optional()
+          .describe(
+            "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.",
+          ),
+        created_at: zod
+          .string()
+          .optional()
+          .describe(
+            "Exclusive lower-bound ISO timestamp for legacy task filters, normalized to UTC.",
+          ),
+        session_id: zod
+          .array(zod.string())
+          .optional()
+          .describe("Trace session id(s) to constrain the task."),
+        trace_id: zod
+          .array(zod.string())
+          .optional()
+          .describe("Trace id(s) to constrain linked-source tasks."),
+        span_id: zod
+          .array(zod.string())
+          .optional()
+          .describe("Observation span id(s) to constrain linked-source tasks."),
+        observation_type: zod
+          .array(zod.string())
+          .optional()
+          .describe(
+            "Observation span type(s), for example llm, tool, or chain.",
+          ),
+        filters: zod
+          .array(
+            zod.object({
+              column_id: zod
                 .string()
-                .min(1)
-                .max(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyUnitAttributeKeyMax,
+                .describe("Column or attribute id to filter on."),
+              property_id: zod
+                .string()
+                .optional()
+                .describe(
+                  "Optional stable namespaced Property Registry identity.",
                 ),
-            })
-            .optional(),
-          missing_id: zod
-            .enum(["exclude", "row"])
-            .default(
-              tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyMissingIdDefault,
-            ),
-          mode: zod
-            .enum(["closed", "live"])
-            .default(
-              tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyModeDefault,
-            ),
-          window: zod.object({
-            start: zod
-              .string()
-              .min(1)
-              .describe("Inclusive ISO 8601 UTC event time."),
-            end: zod
-              .string()
-              .min(1)
-              .optional()
-              .describe(
-                "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
-              ),
-          }),
-          strata: zod
-            .array(
-              zod.object({
-                name: zod
+              display_name: zod
+                .string()
+                .optional()
+                .describe("Optional UI label for chips and saved views."),
+              source: zod
+                .string()
+                .optional()
+                .describe(
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+                ),
+              output_type: zod
+                .string()
+                .optional()
+                .describe(
+                  "Optional metric output type metadata used by eval and annotation filters.",
+                ),
+              filter_config: zod.object({
+                filter_type: zod
                   .string()
-                  .min(1)
-                  .max(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemNameMax,
-                  )
-                  .optional(),
-                filters: zod
-                  .array(
-                    zod.object({
-                      source: zod
-                        .enum(["span", "resource", "metadata"])
-                        .default(
-                          tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemFiltersItemSourceDefault,
-                        ),
-                      key: zod
-                        .string()
-                        .min(1)
-                        .max(
-                          tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemFiltersItemKeyMax,
-                        ),
-                      op: zod
-                        .enum([
-                          "in",
-                          "not_in",
-                          "exists",
-                          "missing",
-                          "gt",
-                          "gte",
-                          "lt",
-                          "lte",
-                        ])
-                        .default(
-                          tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemFiltersItemOpDefault,
-                        ),
-                      values: zod
-                        .array(
-                          zod
-                            .object({})
-                            .passthrough()
-                            .describe("Any valid JSON value."),
-                        )
-                        .max(
-                          tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemFiltersItemValuesMax,
-                        )
-                        .optional(),
-                    }),
-                  )
-                  .optional(),
-                rate: zod
-                  .number()
-                  .min(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemRateMin,
-                  )
-                  .max(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemRateMax,
-                  )
+                  .describe(
+                    "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  ),
+                filter_op: zod
+                  .string()
+                  .describe(
+                    "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  ),
+                filter_value: zod
+                  .unknown()
                   .optional()
                   .describe(
-                    "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                    "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
                   ),
-                target_n: zod
-                  .number()
-                  .min(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemTargetNMin,
-                  )
-                  .max(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemTargetNMax,
-                  )
-                  .optional(),
-                min_n: zod
-                  .number()
-                  .min(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemMinNMin,
-                  )
-                  .max(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemMinNMax,
-                  )
-                  .optional(),
-                max_n: zod
-                  .number()
-                  .min(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemMaxNMin,
-                  )
-                  .max(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemMaxNMax,
-                  )
-                  .optional(),
-                rare_below: zod
-                  .number()
-                  .min(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemRareBelowMin,
-                  )
-                  .max(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemRareBelowMax,
-                  )
-                  .optional(),
-              }),
-            )
-            .optional(),
-          group_by: zod
-            .array(
-              zod.object({
-                source: zod
-                  .enum(["span", "resource", "metadata"])
-                  .default(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyGroupByItemSourceDefault,
-                  ),
-                key: zod
+                col_type: zod
                   .string()
-                  .min(1)
-                  .max(
-                    tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyGroupByItemKeyMax,
+                  .optional()
+                  .describe(
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  ),
+                attribute_value_types: zod
+                  .array(zod.enum(["string", "number", "boolean"]))
+                  .optional()
+                  .describe(
+                    "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
                   ),
               }),
-            )
-            .optional(),
-          default: zod
-            .object({
+            }),
+          )
+          .optional(),
+        span_attributes_filters: zod
+          .array(
+            zod.object({
+              column_id: zod
+                .string()
+                .describe("Column or attribute id to filter on."),
+              property_id: zod
+                .string()
+                .optional()
+                .describe(
+                  "Optional stable namespaced Property Registry identity.",
+                ),
+              display_name: zod
+                .string()
+                .optional()
+                .describe("Optional UI label for chips and saved views."),
+              source: zod
+                .string()
+                .optional()
+                .describe(
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+                ),
+              output_type: zod
+                .string()
+                .optional()
+                .describe(
+                  "Optional metric output type metadata used by eval and annotation filters.",
+                ),
+              filter_config: zod.object({
+                filter_type: zod
+                  .string()
+                  .describe(
+                    "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  ),
+                filter_op: zod
+                  .string()
+                  .describe(
+                    "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  ),
+                filter_value: zod
+                  .unknown()
+                  .optional()
+                  .describe(
+                    "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  ),
+                col_type: zod
+                  .string()
+                  .optional()
+                  .describe(
+                    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  ),
+                attribute_value_types: zod
+                  .array(zod.enum(["string", "number", "boolean"]))
+                  .optional()
+                  .describe(
+                    "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  ),
+              }),
+            }),
+          )
+          .optional(),
+      })
+      .nullable(),
+    created_at: zod.string().datetime({ offset: true }),
+    evals_applied: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        name: zod.string().nullable(),
+        template_id: zod.string().uuid().nullable(),
+        templateId: zod.string().uuid().nullable(),
+        mapping: zod.record(
+          zod.string(),
+          jsonValueSchema.describe("Any valid JSON value."),
+        ),
+        model: zod.string().nullable(),
+        config: zod.record(
+          zod.string(),
+          jsonValueSchema.describe("Any valid JSON value."),
+        ),
+        error_localizer: zod.boolean(),
+        evalType: zod.string().nullable(),
+        templateType: zod.string().nullable(),
+        outputType: zod.string().nullable(),
+      }),
+    ),
+    spans_limit: zod.number().nullable(),
+    sampling_rate: zod.number().nullable(),
+    sampling_policy: zod
+      .object({
+        version: zod
+          .number()
+          .min(1)
+          .max(
+            tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyVersionMax,
+          ),
+        sampling_unit: zod.enum([
+          "span",
+          "trace",
+          "session",
+          "user",
+          "attribute",
+        ]),
+        unit_attribute: zod
+          .object({
+            source: zod
+              .enum(["span", "resource", "metadata"])
+              .default(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyUnitAttributeSourceDefault,
+              ),
+            key: zod
+              .string()
+              .min(1)
+              .max(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyUnitAttributeKeyMax,
+              ),
+          })
+          .optional(),
+        missing_id: zod
+          .enum(["exclude", "row"])
+          .default(
+            tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyMissingIdDefault,
+          ),
+        mode: zod
+          .enum(["closed", "live"])
+          .default(
+            tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyModeDefault,
+          ),
+        window: zod.object({
+          start: zod
+            .string()
+            .min(1)
+            .describe("Inclusive ISO 8601 UTC event time."),
+          end: zod
+            .string()
+            .min(1)
+            .nullish()
+            .describe(
+              "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
+            ),
+        }),
+        strata: zod
+          .array(
+            zod.object({
               name: zod
                 .string()
                 .min(1)
                 .max(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultNameMax,
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemNameMax,
                 )
                 .optional(),
               filters: zod
@@ -58116,13 +58000,13 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
                     source: zod
                       .enum(["span", "resource", "metadata"])
                       .default(
-                        tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultFiltersItemSourceDefault,
+                        tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemFiltersItemSourceDefault,
                       ),
                     key: zod
                       .string()
                       .min(1)
                       .max(
-                        tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultFiltersItemKeyMax,
+                        tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemFiltersItemKeyMax,
                       ),
                     op: zod
                       .enum([
@@ -58136,17 +58020,12 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
                         "lte",
                       ])
                       .default(
-                        tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultFiltersItemOpDefault,
+                        tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemFiltersItemOpDefault,
                       ),
                     values: zod
-                      .array(
-                        zod
-                          .object({})
-                          .passthrough()
-                          .describe("Any valid JSON value."),
-                      )
+                      .array(jsonValueSchema.describe("Any valid JSON value."))
                       .max(
-                        tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultFiltersItemValuesMax,
+                        tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemFiltersItemValuesMax,
                       )
                       .optional(),
                   }),
@@ -58155,10 +58034,10 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
               rate: zod
                 .number()
                 .min(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultRateMin,
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemRateMin,
                 )
                 .max(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultRateMax,
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemRateMax,
                 )
                 .optional()
                 .describe(
@@ -58167,116 +58046,202 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
               target_n: zod
                 .number()
                 .min(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultTargetNMin,
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemTargetNMin,
                 )
                 .max(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultTargetNMax,
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemTargetNMax,
                 )
                 .optional(),
               min_n: zod
                 .number()
                 .min(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultMinNMin,
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemMinNMin,
                 )
                 .max(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultMinNMax,
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemMinNMax,
                 )
                 .optional(),
               max_n: zod
                 .number()
                 .min(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultMaxNMin,
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemMaxNMin,
                 )
                 .max(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultMaxNMax,
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemMaxNMax,
                 )
                 .optional(),
               rare_below: zod
                 .number()
                 .min(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultRareBelowMin,
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemRareBelowMin,
                 )
                 .max(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultRareBelowMax,
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyStrataItemRareBelowMax,
                 )
                 .optional(),
-            })
-            .optional(),
-          cell_quotas: zod
-            .record(
-              zod.string(),
-              zod
-                .number()
-                .min(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyCellQuotasMinOne,
-                )
-                .max(
-                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyCellQuotasMaxOne,
+            }),
+          )
+          .optional(),
+        group_by: zod
+          .array(
+            zod.object({
+              source: zod
+                .enum(["span", "resource", "metadata"])
+                .default(
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyGroupByItemSourceDefault,
                 ),
-            )
-            .optional()
-            .describe(
-              "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
-            ),
-          coordination: zod
-            .enum(["independent", "project"])
-            .optional()
-            .describe(
-              "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
-            ),
-          panel: zod
-            .string()
-            .max(
-              tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyPanelMax,
-            )
-            .optional()
-            .describe(
-              "Project coordination only: a named PRN panel; different panels draw independent numbers.",
-            ),
-          prn_start: zod
-            .number()
-            .min(
-              tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyPrnStartMin,
-            )
-            .max(
-              tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyPrnStartMax,
-            )
-            .optional()
-            .describe(
-              "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
-            ),
-        })
-        .optional(),
-      last_run: zod.string().datetime({ offset: true }).optional(),
-      spans_limit: zod
-        .number()
-        .min(1)
-        .max(tracerEvalTaskGetEvalDetailsResponseResultsItemSpansLimitMax)
-        .optional(),
-      run_type: zod.enum(["continuous", "historical"]),
-      row_type: zod
-        .enum(["spans", "traces", "sessions", "voiceCalls"])
-        .default(tracerEvalTaskGetEvalDetailsResponseResultsItemRowTypeDefault),
-      status: zod
-        .enum([
-          "pending",
-          "running",
-          "completed",
-          "failed",
-          "paused",
-          "deleted",
-        ])
-        .optional(),
-      start_time: zod.string().datetime({ offset: true }).optional(),
-      end_time: zod.string().datetime({ offset: true }).optional(),
-      created_at: zod.string().datetime({ offset: true }).optional(),
-      updated_at: zod.string().datetime({ offset: true }).optional(),
-      evals_details: zod.object({}).passthrough().optional(),
-      evals: zod.array(zod.string().uuid()),
-      failed_spans: zod.object({}).passthrough().optional(),
-      progress: zod.string().optional(),
-    }),
-  ),
+              key: zod
+                .string()
+                .min(1)
+                .max(
+                  tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyGroupByItemKeyMax,
+                ),
+            }),
+          )
+          .optional(),
+        default: zod
+          .object({
+            name: zod
+              .string()
+              .min(1)
+              .max(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultNameMax,
+              )
+              .optional(),
+            filters: zod
+              .array(
+                zod.object({
+                  source: zod
+                    .enum(["span", "resource", "metadata"])
+                    .default(
+                      tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultFiltersItemSourceDefault,
+                    ),
+                  key: zod
+                    .string()
+                    .min(1)
+                    .max(
+                      tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultFiltersItemKeyMax,
+                    ),
+                  op: zod
+                    .enum([
+                      "in",
+                      "not_in",
+                      "exists",
+                      "missing",
+                      "gt",
+                      "gte",
+                      "lt",
+                      "lte",
+                    ])
+                    .default(
+                      tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultFiltersItemOpDefault,
+                    ),
+                  values: zod
+                    .array(jsonValueSchema.describe("Any valid JSON value."))
+                    .max(
+                      tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultFiltersItemValuesMax,
+                    )
+                    .optional(),
+                }),
+              )
+              .optional(),
+            rate: zod
+              .number()
+              .min(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultRateMin,
+              )
+              .max(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultRateMax,
+              )
+              .optional()
+              .describe(
+                "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+              ),
+            target_n: zod
+              .number()
+              .min(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultTargetNMin,
+              )
+              .max(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultTargetNMax,
+              )
+              .optional(),
+            min_n: zod
+              .number()
+              .min(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultMinNMin,
+              )
+              .max(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultMinNMax,
+              )
+              .optional(),
+            max_n: zod
+              .number()
+              .min(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultMaxNMin,
+              )
+              .max(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultMaxNMax,
+              )
+              .optional(),
+            rare_below: zod
+              .number()
+              .min(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultRareBelowMin,
+              )
+              .max(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyDefaultRareBelowMax,
+              )
+              .optional(),
+          })
+          .optional(),
+        cell_quotas: zod
+          .record(
+            zod.string(),
+            zod
+              .number()
+              .min(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyCellQuotasMinOne,
+              )
+              .max(
+                tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyCellQuotasMaxOne,
+              ),
+          )
+          .optional()
+          .describe(
+            "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+          ),
+        coordination: zod
+          .enum(["independent", "project"])
+          .optional()
+          .describe(
+            "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+          ),
+        panel: zod
+          .string()
+          .max(tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyPanelMax)
+          .optional()
+          .describe(
+            "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+          ),
+        prn_start: zod
+          .number()
+          .min(
+            tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyPrnStartMin,
+          )
+          .max(
+            tracerEvalTaskGetEvalDetailsResponseResultSamplingPolicyPrnStartMax,
+          )
+          .optional()
+          .describe(
+            "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+          ),
+      })
+      .nullable(),
+    last_run: zod.string().datetime({ offset: true }).nullable(),
+    run_type: zod.enum(["continuous", "historical", ""]).nullable(),
+    row_type: zod.enum(["spans", "traces", "sessions", "voiceCalls"]),
+  }),
 });
 
 export const tracerEvalTaskGetEvalTaskLogsQueryLimitDefault = 10;

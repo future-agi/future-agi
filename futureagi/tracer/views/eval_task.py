@@ -72,6 +72,8 @@ from tracer.serializers.eval_task import (
     EditEvalTaskSerializer,
     EvalTaskCreateResponseSerializer,
     EvalTaskDeleteRequestSerializer,
+    EvalTaskDetailsQuerySerializer,
+    EvalTaskDetailsResponseSerializer,
     EvalTaskIdQuerySerializer,
     EvalTaskListQuerySerializer,
     EvalTaskListWithProjectNameQuerySerializer,
@@ -3221,21 +3223,21 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
         return update_fields
 
     @validated_request(
+        query_serializer=EvalTaskDetailsQuerySerializer,
         responses={
+            200: EvalTaskDetailsResponseSerializer,
             400: ApiErrorResponseSerializer,
             404: ApiErrorResponseSerializer,
             422: ApiErrorResponseSerializer,
             503: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
-        }
+        },
     )
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get"], pagination_class=None)
     @_bounded_eval_task_read
     def get_eval_details(self, request, *args, **kwargs):
         try:
-            eval_id = self.request.query_params.get("eval_id")
-            if not eval_id:
-                return self._gm.bad_request("eval_id is required")
+            eval_id = str(request.validated_query_data["eval_id"])
 
             queryset = (
                 self._scope_eval_task_queryset(EvalTask.objects)

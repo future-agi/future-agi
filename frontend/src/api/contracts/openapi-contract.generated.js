@@ -34544,52 +34544,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/eval-task/get_eval_details/": {
       get: {
         operationId: "tracer_eval-task_get_eval_details",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
-          page: {
-            required: false,
+          eval_id: {
+            required: true,
             schema: {
-              type: "integer",
-              minimum: 1,
-            },
-          },
-          limit: {
-            required: false,
-            schema: {
-              type: "integer",
-              minimum: 1,
-              maximum: 100,
-              default: 10,
+              type: "string",
+              format: "uuid",
             },
           },
         },
         responses: {
           200: {
-            required: ["count", "results"],
-            type: "object",
-            properties: {
-              count: {
-                type: "integer",
-              },
-              next: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              previous: {
-                type: "string",
-                format: "uri",
-                "x-nullable": true,
-              },
-              results: {
-                type: "array",
-                items: {
-                  $ref: "#/definitions/EvalTask",
-                },
-              },
-            },
+            $ref: "#/definitions/EvalTaskDetailsResponse",
           },
           400: {
             $ref: "#/definitions/ApiErrorResponse",
@@ -61501,6 +61470,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             format: "uuid",
           },
+        },
+      },
+    },
+    EvalTaskDetailsResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/EvalTaskDetailsResult",
         },
       },
     },
@@ -94856,6 +94839,315 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EvalTaskDetailsResult: {
+      required: [
+        "id",
+        "name",
+        "project_id",
+        "project_name",
+        "status",
+        "filters_applied",
+        "created_at",
+        "evals_applied",
+        "spans_limit",
+        "sampling_rate",
+        "sampling_policy",
+        "last_run",
+        "run_type",
+        "row_type",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          "x-nullable": true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        project_name: {
+          title: "Project name",
+          type: "string",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "pending",
+            "running",
+            "completed",
+            "failed",
+            "paused",
+            "deleted",
+            "",
+          ],
+          "x-nullable": true,
+        },
+        filters_applied: {
+          title: "Filters applied",
+          type: "object",
+          "x-nullable": true,
+          properties: {
+            project_id: {
+              type: "string",
+              "x-nullable": true,
+              description: "Project scope for the evaluation task.",
+            },
+            date_range: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              minItems: 2,
+              maxItems: 2,
+              description:
+                "Half-open [start, end) ISO timestamps, normalized to UTC.",
+            },
+            date_preset: {
+              type: "string",
+              enum: [
+                "30m",
+                "6h",
+                "today",
+                "yesterday",
+                "7d",
+                "30d",
+                "3m",
+                "6m",
+                "12m",
+                "custom",
+              ],
+              description:
+                "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.",
+            },
+            created_at: {
+              type: "string",
+              description:
+                "Exclusive lower-bound ISO timestamp for legacy task filters, normalized to UTC.",
+            },
+            session_id: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description: "Trace session id(s) to constrain the task.",
+            },
+            trace_id: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description: "Trace id(s) to constrain linked-source tasks.",
+            },
+            span_id: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description:
+                "Observation span id(s) to constrain linked-source tasks.",
+            },
+            observation_type: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description:
+                "Observation span type(s), for example llm, tool, or chain.",
+            },
+            filters: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  column_id: {
+                    type: "string",
+                    description: "Column or attribute id to filter on.",
+                  },
+                  property_id: {
+                    type: "string",
+                    description:
+                      "Optional stable namespaced Property Registry identity.",
+                  },
+                  display_name: {
+                    type: "string",
+                    description: "Optional UI label for chips and saved views.",
+                  },
+                  source: {
+                    type: "string",
+                    description:
+                      "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+                  },
+                  output_type: {
+                    type: "string",
+                    description:
+                      "Optional metric output type metadata used by eval and annotation filters.",
+                  },
+                  filter_config: {
+                    type: "object",
+                    properties: {
+                      filter_type: {
+                        type: "string",
+                        description:
+                          "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                      },
+                      filter_op: {
+                        type: "string",
+                        description:
+                          "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                      },
+                      filter_value: {
+                        description:
+                          "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                      },
+                      col_type: {
+                        type: "string",
+                        description:
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      },
+                      attribute_value_types: {
+                        type: "array",
+                        items: {
+                          type: "string",
+                          enum: ["string", "number", "boolean"],
+                          "x-nullable": true,
+                        },
+                        description:
+                          "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                      },
+                    },
+                    required: ["filter_type", "filter_op"],
+                    additionalProperties: false,
+                  },
+                },
+                required: ["column_id", "filter_config"],
+                additionalProperties: false,
+              },
+            },
+            span_attributes_filters: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  column_id: {
+                    type: "string",
+                    description: "Column or attribute id to filter on.",
+                  },
+                  property_id: {
+                    type: "string",
+                    description:
+                      "Optional stable namespaced Property Registry identity.",
+                  },
+                  display_name: {
+                    type: "string",
+                    description: "Optional UI label for chips and saved views.",
+                  },
+                  source: {
+                    type: "string",
+                    description:
+                      "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+                  },
+                  output_type: {
+                    type: "string",
+                    description:
+                      "Optional metric output type metadata used by eval and annotation filters.",
+                  },
+                  filter_config: {
+                    type: "object",
+                    properties: {
+                      filter_type: {
+                        type: "string",
+                        description:
+                          "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                      },
+                      filter_op: {
+                        type: "string",
+                        description:
+                          "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                      },
+                      filter_value: {
+                        description:
+                          "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                      },
+                      col_type: {
+                        type: "string",
+                        description:
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      },
+                      attribute_value_types: {
+                        type: "array",
+                        items: {
+                          type: "string",
+                          enum: ["string", "number", "boolean"],
+                          "x-nullable": true,
+                        },
+                        description:
+                          "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                      },
+                    },
+                    required: ["filter_type", "filter_op"],
+                    additionalProperties: false,
+                  },
+                },
+                required: ["column_id", "filter_config"],
+                additionalProperties: false,
+              },
+            },
+          },
+          additionalProperties: false,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        evals_applied: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvalTaskDetailsEval",
+          },
+        },
+        spans_limit: {
+          title: "Spans limit",
+          type: "integer",
+          "x-nullable": true,
+        },
+        sampling_rate: {
+          title: "Sampling rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        sampling_policy: {
+          $ref: "#/definitions/EvalTaskDetailsSamplingPolicy",
+        },
+        last_run: {
+          title: "Last run",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        run_type: {
+          title: "Run type",
+          type: "string",
+          enum: ["continuous", "historical", ""],
+          "x-nullable": true,
+        },
+        row_type: {
+          title: "Row type",
+          type: "string",
+          enum: ["spans", "traces", "sessions", "voiceCalls"],
+        },
+      },
+    },
     EvalTaskMessageResult: {
       required: ["message"],
       type: "object",
@@ -114752,6 +115044,172 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+    },
+    EvalTaskDetailsEval: {
+      required: [
+        "id",
+        "name",
+        "template_id",
+        "templateId",
+        "mapping",
+        "model",
+        "config",
+        "error_localizer",
+        "evalType",
+        "templateType",
+        "outputType",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          "x-nullable": true,
+        },
+        template_id: {
+          title: "Template id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        templateId: {
+          title: "Templateid",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        mapping: {
+          title: "Mapping",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          "x-nullable": true,
+        },
+        config: {
+          title: "Config",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        error_localizer: {
+          title: "Error localizer",
+          type: "boolean",
+        },
+        evalType: {
+          title: "Evaltype",
+          type: "string",
+          "x-nullable": true,
+        },
+        templateType: {
+          title: "Templatetype",
+          type: "string",
+          "x-nullable": true,
+        },
+        outputType: {
+          title: "Outputtype",
+          type: "string",
+          "x-nullable": true,
+        },
+      },
+    },
+    EvalTaskDetailsSamplingPolicy: {
+      required: ["version", "sampling_unit", "window"],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          maximum: 1,
+          minimum: 1,
+        },
+        sampling_unit: {
+          title: "Sampling unit",
+          type: "string",
+          enum: ["span", "trace", "session", "user", "attribute"],
+        },
+        unit_attribute: {
+          $ref: "#/definitions/SamplingAttribute",
+        },
+        missing_id: {
+          title: "Missing id",
+          type: "string",
+          enum: ["exclude", "row"],
+          default: "exclude",
+        },
+        mode: {
+          title: "Mode",
+          type: "string",
+          enum: ["closed", "live"],
+          default: "closed",
+        },
+        window: {
+          $ref: "#/definitions/SamplingWindow",
+        },
+        strata: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SamplingRule",
+          },
+        },
+        group_by: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SamplingAttribute",
+          },
+        },
+        default: {
+          $ref: "#/definitions/SamplingRule",
+        },
+        cell_quotas: {
+          title: "Cell quotas",
+          description:
+            "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            maximum: 1000000,
+            minimum: 0,
+          },
+        },
+        coordination: {
+          title: "Coordination",
+          description:
+            "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+          type: "string",
+          enum: ["independent", "project"],
+        },
+        panel: {
+          title: "Panel",
+          description:
+            "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+          type: "string",
+          maxLength: 64,
+        },
+        prn_start: {
+          title: "Prn start",
+          description:
+            "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+          type: "number",
+          maximum: 100,
+          minimum: 0,
+        },
+      },
+      "x-nullable": true,
     },
     EvalTaskUsageAggregationMetadata: {
       required: [
