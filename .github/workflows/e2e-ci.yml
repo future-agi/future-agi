@@ -361,9 +361,9 @@ jobs:
       # backend change that breaks the SDKs fails here, before a release:
       # python/tests/platform calls every operation of the generated client,
       # src/platform/__tests__/live.test.ts covers the TypeScript transport.
-      # The SDK ref is the branch of this PR's name when the SDK repo has one,
-      # else the base branch (dev or main). They run after the Playwright
-      # suite whatever its result, on a stack that booted.
+      # Resolve a full SDK commit with the required live suites. Explicit refs
+      # fail closed; defaults lacking the harness use the pinned bootstrap from
+      # SDK PR #35. Both suites still run after Playwright on a booted stack.
       - name: Resolve the futureagi-sdk ref
         id: sdk-ref
         if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
@@ -372,18 +372,8 @@ jobs:
           HEAD_REF: ${{ github.head_ref || github.ref_name }}
           BASE_REF: ${{ github.base_ref || github.ref_name }}
         run: |
-          repo=https://github.com/future-agi/futureagi-sdk.git
-          for candidate in "$SDK_REF_INPUT" "$HEAD_REF" "$BASE_REF" dev main; do
-            [ -n "$candidate" ] || continue
-            if git ls-remote --exit-code --heads --tags "$repo" "$candidate" >/dev/null 2>&1 \
-               || echo "$candidate" | grep -Eq '^[0-9a-fA-F]{7,40}$'; then
-              echo "ref=$candidate" >> "$GITHUB_OUTPUT"
-              echo "futureagi-sdk ref: $candidate"
-              exit 0
-            fi
-          done
-          echo "::error::no futureagi-sdk ref among: $SDK_REF_INPUT $HEAD_REF $BASE_REF dev main"
-          exit 1
+          python3 -I .github/scripts/test_resolve_sdk_test_ref.py
+          python3 -I .github/scripts/resolve-sdk-test-ref.py
 
       - name: Check out futureagi-sdk
         if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
