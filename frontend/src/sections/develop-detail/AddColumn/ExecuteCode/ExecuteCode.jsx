@@ -17,6 +17,7 @@ import { useExecuteCodeStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import useRerunDependentColumns from "../../DataTab/useRerunDependentColumns";
 
 const getDefaultValue = () => {
   return {
@@ -55,6 +56,7 @@ export const ExecuteCodeChild = ({
   });
 
   const { dataset } = useParams();
+  const promptToRerunDependents = useRerunDependentColumns(dataset);
   useEffect(() => {
     if (initialData) {
       reset(initialData);
@@ -88,9 +90,10 @@ export const ExecuteCodeChild = ({
         data,
       ),
     onSuccess: () => {
-      enqueueSnackbar("API Call column updated successfully", {
+      enqueueSnackbar("Execute Code column updated successfully", {
         variant: "success",
       });
+      promptToRerunDependents(editId);
       refreshGrid();
       onClose();
     },
