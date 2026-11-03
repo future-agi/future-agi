@@ -58,10 +58,6 @@ vi.mock("./RequestDetailDrawer", () => ({
   default: () => null,
 }));
 
-vi.mock("./FilterPanel", () => ({
-  default: () => null,
-}));
-
 vi.mock("src/utils/axios", () => ({
   default: { get: vi.fn() },
   endpoints: { gateway: { requestLogExport: "/export" } },
