@@ -238,7 +238,8 @@ def test_relational_leaves_have_independent_session_membership_and_keep_all_root
     assert membership.count("> 0") == 2
     sessions = _cte(sql, "sessions")
     assert "FROM resolved_root_sessions" in sessions
-    assert "sum(total_tokens) AS total_tokens" in sessions
+    assert "max(member_total_tokens) AS total_tokens" in sessions
+    assert "FROM member_trace_usage" in sql
     assert "(resolved_root_sessions.project_id, session_id) IN" in sessions
     assert "trace_id IN" not in sessions
     assert "%(session_relational_trace_ids)s" not in sql
@@ -415,7 +416,8 @@ def test_native_user_membership_and_raw_metric_intersect_without_value_collision
     assert "raw-token-value" in params.values()
     assert "matching_user_sessions AS" in sql
     assert "mapContains(attrs_string" in _cte(sql, "latest_candidate_scalar_spans")
-    assert "sum(total_tokens) AS total_tokens" in _cte(sql, "sessions")
+    assert "max(member_total_tokens) AS total_tokens" in _cte(sql, "sessions")
+    assert "FROM member_trace_usage" in sql
     assert "HAVING total_tokens >" in _cte(sql, "sessions")
     assert builder.supports_candidate_cursor_page()
 

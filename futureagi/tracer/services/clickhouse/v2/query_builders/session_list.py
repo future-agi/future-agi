@@ -38,6 +38,7 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
 
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
     _COST_ATTRIBUTE_MAP = "attrs_string"
+    _INPUT_LENGTH_SQL = "input_length"
     _COST_AGGREGATE = SessionListQueryBuilder._COST_AGGREGATE.replace(
         "span_attr_str", "attrs_string"
     )

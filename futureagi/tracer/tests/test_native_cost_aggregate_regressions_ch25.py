@@ -188,6 +188,12 @@ def test_native_cost_aggregate_completeness(
         assert last_end == START + timedelta(seconds=1)
         actual_cost = result["cost"]
     else:
+        # Session usage excludes explicit nonadditive summaries, even if a
+        # stored legacy row still carries their copied numeric token values.
+        expected_tokens = sum(
+            span["total_tokens"] for span in spans
+            if span["attrs_string"].get("fi.usage.contribution") != "none"
+        )
         builder = SessionListQueryBuilderV2(project_id=str(project), filters=[{
             "column_id": "created_at",
             "filter_config": {

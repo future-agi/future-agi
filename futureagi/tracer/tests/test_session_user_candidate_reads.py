@@ -528,7 +528,8 @@ def test_session_aggregate_filter_and_sort_use_narrow_exact_candidate_shape():
 
     assert builder.supports_candidate_first_page() is True
     assert "argMax(tuple(total_tokens), _version).1 AS latest_total_tokens" in sql
-    assert "sum(total_tokens) AS total_tokens" in sql
+    assert "max(member_total_tokens) AS total_tokens" in sql
+    assert "sum(usage_total_tokens) AS member_total_tokens" in sql
     assert "HAVING total_tokens > %(having_" in sql
     assert "ORDER BY total_tokens DESC, session_id DESC" in sql
     assert 10 in params.values()

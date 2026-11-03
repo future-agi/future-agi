@@ -46,7 +46,10 @@ from tracer.services.clickhouse.query_builders.session_filters import (
     SESSION_ID_FILTER_COLS,
     build_session_id_filter_clause,
 )
-from tracer.services.clickhouse.query_builders.trace_usage import usage_aggregate_sql
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    usage_aggregate_sql,
+    usage_coverage_sql,
+)
 from tracer.services.clickhouse.v2.id_remap_sql import (
     bounded_survivor_map_subquery,
     remap_left_join,
@@ -98,6 +101,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     # names into a v2-only deployment.
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilder
     _COST_ATTRIBUTE_MAP = "span_attr_str"
+    # The CDC mirror has no materialized content length; CH25 overrides this.
+    _INPUT_LENGTH_SQL = "lengthUTF8(input)"
     # A numeric zero from an unpriced native request is a storage placeholder,
     # not a verified zero charge. Ignore non-additive parent summaries.
     _COST_AGGREGATE = (
@@ -105,6 +110,14 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         "span_attr_str['fi.usage.contribution'] != 'none') > 0, "
         "CAST(NULL, 'Nullable(Float64)'), sum(cost))"
     )
+
+    def project_where(self, table_alias: str = "") -> str:
+        """CDC column vocabulary; the v2 SQL boundary rewrites the tombstone."""
+        prefix = f"{table_alias}." if table_alias else ""
+        return (
+            f"WHERE {self.project_filter_sql(table_alias)} "
+            f"AND {prefix}_peerdb_is_deleted = 0"
+        )
 
     def _physical_identity_fields(self) -> tuple[tuple[str, str], ...]:
         """Legacy replacement key; v2 overrides expressions and key aliases."""
@@ -227,8 +240,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         "min(start_time) AS session_start, "
         "max(end_time) AS session_end, "
         "dateDiff('second', min(start_time), max(end_time)) AS duration, "
-        f"{_COST_AGGREGATE} AS total_cost, "
-        "sum(total_tokens) AS total_tokens, "
+        "max(session_usage_cost) AS total_cost, "
+        "max(session_usage_tokens) AS total_tokens, "
         "uniqExact(trace_id) AS traces_count"
     )
 
@@ -1755,25 +1768,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 ]
             )
         if needs_cost:
-            latest_metric_columns.append(
-                "argMax(tuple(cost), _peerdb_version).1 AS latest_cost"
-            )
-            resolved_metric_columns.extend(
-                [
-                    "latest_cost AS cost",
-                    f"latest_span_attr_str AS {self._COST_ATTRIBUTE_MAP}",
-                ]
-            )
-            latest_metric_columns.append(
-                f"argMax({self._COST_ATTRIBUTE_MAP}, _peerdb_version) AS latest_span_attr_str"
-            )
-            session_metric_columns.append(f"{self._COST_AGGREGATE} AS total_cost")
+            session_metric_columns.append("max(member_total_cost) AS total_cost")
         if needs_tokens:
-            latest_metric_columns.append(
-                "argMax(tuple(total_tokens), _peerdb_version).1 AS latest_total_tokens"
-            )
-            resolved_metric_columns.append("latest_total_tokens AS total_tokens")
-            session_metric_columns.append("sum(total_tokens) AS total_tokens")
+            session_metric_columns.append("max(member_total_tokens) AS total_tokens")
         if needs_traces or include_trace_id:
             resolved_metric_columns.append("trace_id")
         if needs_traces:
@@ -1846,8 +1843,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         # silently lost it.  Root evidence is safe to narrow by the same token:
         # a root the slice cannot see is a root below the floor, which puts the
         # session's true start below every row the slice can publish.  Session
-        # aggregates (cost, tokens, traces, duration, the messages, the
-        # org-scope project count) are computed from roots too, and the FLOOR
+        # metadata (traces, duration, messages and the org-scope project count)
+        # is computed from roots too, and the FLOOR
         # stays consistent with them for the same reason: a set it truncates
         # belongs to a session whose true start is below it.  The CEILING does
         # not - it drops roots ABOVE the cursor from a session that still
@@ -2050,6 +2047,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             # the session's complete live root set. Other routes are unchanged.
             combined_scalar_roots = (
                 self.project_ids is None
+                and not (needs_cost or needs_tokens)
                 and not candidate_full_state
                 and not include_trace_id
                 and not additional_root_ctes
@@ -2468,6 +2466,27 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             org_project_evidence_select = (
                 ", any(resolved_root_sessions.project_id) AS project_id"
             )
+        usage_ctes = ""
+        usage_join = ""
+        if needs_cost or needs_tokens:
+            usage_ctes = (
+                ","
+                + self._session_member_ctes(
+                    session_source="resolved_root_sessions",
+                    physical_time_scope=span_time_scope,
+                    latest_time_scope=latest_time_scope,
+                )
+                + """,
+        session_usage AS (
+            SELECT project_id, member_session_id AS session_id,
+                if(countIf(isNull(usage_cost)) > 0,
+                   CAST(NULL, 'Nullable(Float64)'), sum(usage_cost)) AS member_total_cost,
+                sum(usage_total_tokens) AS member_total_tokens
+            FROM member_trace_usage
+            GROUP BY project_id, member_session_id
+        )"""
+            )
+            usage_join = "LEFT JOIN session_usage USING (project_id, session_id)"
         return f"""
         {ts_map_ctes}
         {candidate_session_cte}
@@ -2517,7 +2536,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         {scalar_filter_ctes}
         {additional_root_ctes}
         {relational_membership_cte}
-        {org_project_count_cte},
+        {org_project_count_cte}
+        {usage_ctes},
         sessions AS (
             SELECT
                 session_id,
@@ -2526,6 +2546,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 {org_project_count_select}
                 {org_project_evidence_select}
             FROM resolved_root_sessions
+            {usage_join}
             {org_project_count_join}
             WHERE 1 = 1
               {session_predicate}
@@ -2780,8 +2801,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         enrichment columns for every session. It replays the direct-write
         schema-specific physical replacement identity with
         latest-wins tombstone semantics. When membership or ordering depends on
-        aggregate/message metrics, only those narrow root columns are computed
-        before the page; full content/attribute enrichment remains page-scoped.
+        aggregate/message metrics, only their narrow columns are computed before
+        the page. Usage replays live member spans, not root-only placeholders;
+        full content/attribute enrichment remains page-scoped.
         """
 
         if not self.supports_candidate_first_page():
@@ -2821,9 +2843,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         Most of this statement turns on root EXISTENCE: a session is a
         candidate because it has a live root, and it ranks by the earliest one.
         Some predicates are not like that.  ``duration`` is a ``dateDiff`` over
-        the min and max of a session's whole live-root set, ``total_cost`` and
-        ``total_tokens`` are sums over it, ``traces_count`` a ``uniqExact``,
-        and ``first_message``/``last_message`` an ``argMin``/``argMax`` -
+        the min and max of a session's whole live-root set, ``traces_count`` a
+        ``uniqExact``, and ``first_message``/``last_message`` an
+        ``argMin``/``argMax``. Cost and tokens join the full-window member usage;
+        they retain this conservative whole-root admission gate too -
         ``_build_having_clauses`` turns any of them into a ``HAVING`` over
         ``resolved_root_sessions``.  The org-scope identity-collision guard is
         the same shape with its comparison in Python: ``uniqExact(project_id)``
@@ -3119,6 +3142,125 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 expanded.append(entry)
         return expanded
 
+    def _session_member_ctes(
+        self,
+        *,
+        session_source: str,
+        physical_time_scope: str,
+        latest_time_scope: str,
+        include_messages: bool = False,
+    ) -> str:
+        """Replay light member state for scoped sessions, then reduce per trace.
+
+        Selection and hydration share the physical winner, coverage flags and
+        summary accounting. The relation stays in ClickHouse; no period-wide
+        member array or Python aggregation is needed. CDC nullable numeric
+        values become zero only AFTER winner selection, matching sum's legacy
+        null semantics; separate coverage flags keep unknown cost nullable.
+        Content is read only by hydration's finite message-key lookup (the CDC
+        schema lacks lengths).
+        """
+        identity_select = self._physical_identity_select_sql()
+        identity_names = self._physical_identity_names_sql()
+        group_by = self._physical_group_by_sql()
+        resolved_session = resolved_id_expr("latest_trace_session_id", "member_remap")
+        coverage = usage_coverage_sql(attrs=self._COST_ATTRIBUTE_MAP)
+        message_length = (
+            f", argMax(tuple({self._INPUT_LENGTH_SQL}), _peerdb_version).1 AS latest_input_length"
+            if include_messages
+            else ""
+        )
+        message_rank = (
+            """,
+                (latest_parent_span_id IS NULL OR latest_parent_span_id = '') AS latest_is_root,
+                multiIf(
+                    latest_is_root AND latest_input_length > 0, 0,
+                    latest_observation_type = 'llm' AND latest_input_length > 0, 1,
+                    latest_is_root, 2, 3
+                ) AS message_rank"""
+            if include_messages
+            else ""
+        )
+        message_aggregates = (
+            f""",
+                minIf(latest_start_time, latest_is_root) AS trace_root_start,
+                countIf(latest_is_root) > 0 AS trace_has_root,
+                argMinIf(tuple({identity_names}),
+                    tuple(message_rank, latest_start_time, id),
+                    message_rank < 3) AS trace_message_key"""
+            if include_messages
+            else ""
+        )
+        return f"""
+        member_session_scope AS (
+            SELECT DISTINCT project_id, session_id FROM {session_source}
+        ),
+        candidate_member_identities AS (
+            SELECT DISTINCT {identity_select}
+            FROM {self.TABLE}
+            PREWHERE {self.project_filter_sql()}{physical_time_scope}
+              AND (project_id, trace_session_id) IN (
+                  SELECT project_id, session_id FROM member_session_scope
+                  UNION ALL
+                  SELECT scope.project_id, remap.any_id
+                  FROM member_session_scope AS scope
+                  INNER JOIN ts_survivor_map AS remap
+                      ON scope.session_id = remap.survivor_id
+              )
+        ),
+        session_members AS (
+            SELECT
+                {resolved_session} AS member_session_id,
+                {identity_names},
+                id AS latest_id,
+                latest_parent_span_id,
+                latest_name,
+                latest_observation_type,
+                ifNull(latest_members.latest_prompt_tokens, 0) AS latest_prompt_tokens,
+                ifNull(latest_members.latest_completion_tokens, 0) AS latest_completion_tokens,
+                latest_start_time,
+                ifNull(latest_members.latest_cost, 0) AS latest_cost,
+                ifNull(latest_members.latest_total_tokens, 0) AS latest_total_tokens,
+                latest_usage_coverage
+                {message_rank}
+            FROM (
+                SELECT
+                    {identity_select},
+                    argMax(start_time, _peerdb_version) AS latest_start_time,
+                    argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id,
+                    argMax(tuple(trace_session_id), _peerdb_version).1 AS latest_trace_session_id,
+                    argMax(tuple(observation_type), _peerdb_version).1 AS latest_observation_type,
+                    argMax(tuple(name), _peerdb_version).1 AS latest_name,
+                    argMax(tuple(prompt_tokens), _peerdb_version).1 AS latest_prompt_tokens,
+                    argMax(tuple(completion_tokens), _peerdb_version).1 AS latest_completion_tokens,
+                    argMax(tuple(cost), _peerdb_version).1 AS latest_cost,
+                    argMax(tuple(total_tokens), _peerdb_version).1 AS latest_total_tokens,
+                    argMax({coverage}, _peerdb_version) AS latest_usage_coverage,
+                    argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
+                    {message_length}
+                FROM {self.TABLE}
+                PREWHERE {self.project_filter_sql()}{physical_time_scope}
+                  AND ({group_by}) IN (
+                      SELECT {identity_names} FROM candidate_member_identities
+                  )
+                GROUP BY {group_by}
+            ) AS latest_members
+            LEFT JOIN ts_survivor_map AS member_remap
+                ON latest_trace_session_id = member_remap.any_id
+            WHERE latest_is_deleted = 0{latest_time_scope}
+              AND (project_id, {resolved_session}) IN (
+                  SELECT project_id, session_id FROM member_session_scope
+              )
+        ),
+        member_trace_usage AS (
+            SELECT project_id, member_session_id, trace_id,
+                {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage")}
+                {message_aggregates}
+            FROM session_members
+            GROUP BY project_id, member_session_id, trace_id
+        )
+        """
+
     def build_page_hydration_query(
         self, session_ids: list[str]
     ) -> tuple[str, dict[str, Any]]:
@@ -3158,9 +3300,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         # remap so a page read cannot materialize the tenant-global bridge.
         ts_map_ctes = self._candidate_survivor_map_ctes(params, ids)
         resolved_session = resolved_id_expr("latest_trace_session_id", "ts_remap")
-        resolved_member_session = resolved_id_expr(
-            "latest_trace_session_id", "member_remap"
-        )
         physical_time_scope = self._physical_time_scope_sql()
         latest_time_scope = self._latest_time_scope_sql(
             params, param_prefix="build_page_hydration_query_latest_time"
@@ -3175,6 +3314,12 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         attribute_columns = ",\n            ".join(
             f"root_page.{array_column} AS {array_column}"
             for array_column, _key in self.PAGE_ATTRIBUTE_ARRAY_COLUMNS
+        )
+        member_ctes = self._session_member_ctes(
+            session_source="resolved_roots",
+            physical_time_scope=physical_time_scope,
+            latest_time_scope=member_latest_time_scope,
+            include_messages=True,
         )
         query = f"""
         WITH
@@ -3219,6 +3364,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         resolved_roots AS (
             SELECT
                 {resolved_session} AS session_id,
+                project_id,
                 trace_id,
                 latest_start_time AS start_time,
                 latest_end_time AS end_time,
@@ -3250,73 +3396,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             FROM resolved_roots
             GROUP BY session_id
         ),
-        candidate_member_identities AS (
-            SELECT DISTINCT {identity_select}
-            FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
-              AND (
-                  trace_session_id IN %(candidate_session_ids)s
-                  OR trace_session_id IN (
-                      SELECT any_id
-                      FROM ts_survivor_map
-                      WHERE survivor_id IN %(candidate_session_ids)s
-                  )
-              )
-        ),
-        session_members AS (
-            SELECT
-                {resolved_member_session} AS member_session_id,
-                {identity_names},
-                id AS latest_id,
-                latest_parent_span_id,
-                latest_name,
-                latest_observation_type,
-                latest_prompt_tokens,
-                latest_completion_tokens,
-                latest_start_time,
-                latest_cost,
-                latest_total_tokens,
-                (latest_cost_attrs['fi.cost.kind'] = 'unknown' AND
-                 latest_cost_attrs['fi.usage.contribution'] != 'none' AND
-                 (latest_total_tokens > 0 OR latest_prompt_tokens > 0 OR
-                  latest_completion_tokens > 0 OR latest_observation_type = 'llm' OR
-                  latest_cost_attrs['fi.usage.scope'] = 'turn')) AS latest_cost_unknown,
-                (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
-                    AS latest_is_root,
-                multiIf(
-                    latest_is_root AND latest_input_length > 0, 0,
-                    latest_observation_type = 'llm' AND latest_input_length > 0, 1,
-                    latest_is_root, 2,
-                    3
-                ) AS message_rank
-            FROM (
-                SELECT
-                    {identity_select},
-                    argMax(start_time, _peerdb_version) AS latest_start_time,
-                    argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id,
-                    argMax(tuple(trace_session_id), _peerdb_version).1 AS latest_trace_session_id,
-                    argMax(tuple(observation_type), _peerdb_version).1 AS latest_observation_type,
-                    argMax(tuple(name), _peerdb_version).1 AS latest_name,
-                    argMax(tuple(prompt_tokens), _peerdb_version).1 AS latest_prompt_tokens,
-                    argMax(tuple(completion_tokens), _peerdb_version).1 AS latest_completion_tokens,
-                    argMax(tuple(cost), _peerdb_version).1 AS latest_cost,
-                    argMax({self._COST_ATTRIBUTE_MAP}, _peerdb_version) AS latest_cost_attrs,
-                    argMax(tuple(total_tokens), _peerdb_version).1 AS latest_total_tokens,
-                    argMax(tuple(input_length), _peerdb_version).1 AS latest_input_length,
-                    argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
-                FROM {self.TABLE}
-                PREWHERE {self.project_filter_sql()}{physical_time_scope}
-                  AND ({group_by}) IN (
-                      SELECT {identity_names}
-                      FROM candidate_member_identities
-                  )
-                GROUP BY {group_by}
-            ) AS latest_members
-            LEFT JOIN ts_survivor_map AS member_remap
-                ON latest_trace_session_id = member_remap.any_id
-            WHERE latest_is_deleted = 0{member_latest_time_scope}
-              AND {resolved_member_session} IN %(candidate_session_ids)s
-        ),
+        {member_ctes},
         (
             SELECT groupArray(tuple(
                 member_session_id, member_total_cost, member_total_tokens,
@@ -3325,29 +3405,14 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             FROM (
                 SELECT
                     member_session_id,
-                    if(countIf(isNull(trace_cost)) > 0,
-                       CAST(NULL, 'Nullable(Float64)'), sum(trace_cost)) AS member_total_cost,
-                    sum(trace_tokens) AS member_total_tokens,
+                    if(countIf(isNull(usage_cost)) > 0,
+                       CAST(NULL, 'Nullable(Float64)'), sum(usage_cost)) AS member_total_cost,
+                    sum(usage_total_tokens) AS member_total_tokens,
                     argMinIf(trace_message_key, tuple(trace_root_start, trace_id),
                         trace_has_root) AS first_message_key,
                     argMaxIf(trace_message_key, tuple(trace_root_start, trace_id),
                         trace_has_root) AS last_message_key
-                FROM (
-                    SELECT
-                        member_session_id,
-                        trace_id,
-                        {usage_aggregate_sql(prefix="latest_")},
-                        if(countIf(latest_cost_unknown) > 0,
-                           CAST(NULL, 'Nullable(Float64)'), usage_cost) AS trace_cost,
-                        usage_total_tokens AS trace_tokens,
-                        minIf(latest_start_time, latest_is_root) AS trace_root_start,
-                        countIf(latest_is_root) > 0 AS trace_has_root,
-                        argMinIf(tuple({identity_names}),
-                            tuple(message_rank, latest_start_time, id),
-                            message_rank < 3) AS trace_message_key
-                    FROM session_members
-                    GROUP BY member_session_id, trace_id
-                )
+                FROM member_trace_usage
                 GROUP BY member_session_id
             )
         ) AS member_rollup_rows,
@@ -3632,6 +3697,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             params,
             time_where=time_where,
             filter_fragment=filter_fragment,
+            include_usage=False,
         )
 
         query = f"""
@@ -3654,7 +3720,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         params = dict(self.params)
         params.update(extra_params)
 
-        having_clauses = self._build_having_clauses()
+        having_clauses = self._build_having_clauses(params=params)
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
         having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
@@ -3691,8 +3757,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             SELECT
                 trace_session_id,
                 dateDiff('second', min(start_time), max(end_time)) AS duration,
-                {self._COST_AGGREGATE} AS total_cost,
-                sum(total_tokens) AS total_tokens,
+                max(session_usage_cost) AS total_cost,
+                max(session_usage_tokens) AS total_tokens,
                 uniqExact(trace_id) AS traces_count
                 {message_select}
             {from_where}
@@ -3989,6 +4055,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         *,
         time_where: str,
         filter_fragment: str,
+        include_usage: bool = True,
     ) -> str:
         """Return the ``FROM … WHERE …`` clause for a session aggregation query.
 
@@ -3997,11 +4064,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         remap-aware membership subquery; this selects sessions without shrinking
         their aggregate rows. Span predicates remain on the inner root-span scan.
 
-        GATE B: pre-flip every span's id lives in the remap ``old_id`` column, so
-        NO span matches a ``new_id`` → ``resolved_id_expr`` (zero-uuid-guarded,
-        NOT a COALESCE) returns each span's own id and the LEFT JOIN(s) add
-        nothing → the wrapped scan is a transparent pass-through, byte-identical
-        (result-set) to the committed bare scan.
+        Root metadata remains separate from member usage: after physical
+        replacement collapse, each session joins one child-aware rollup. Taking
+        its maximum during root aggregation preserves the value without adding
+        it once per root. Unfiltered counts omit this extra relation entirely.
         """
         base_predicates = f"""{self.project_where()}
           AND trace_session_id IS NOT NULL
@@ -4009,20 +4075,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
           AND (parent_span_id IS NULL OR parent_span_id = '')
           {time_where}
           {filter_fragment}"""
-
         resolved_session_clause = self._build_resolved_session_clause(params)
         user_membership_clause = self._build_session_user_membership_clause(params)
-
-        # `trace_session_id` resolution is UNCONDITIONAL (closes the browse split);
-        # User membership is resolved in a separate session-id subquery so
-        # selecting a user does not shrink the session's displayed aggregates.
-        ts_join = remap_left_join(
-            "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
-        )
         resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
-
-        # Inner scan projects only columns required by session aggregation.
-        scan_cols = list(self._SESSION_SCAN_COLS)
+        scan_cols = ["project_id", *self._SESSION_SCAN_COLS]
         if self._needs_message_aggregates():
             scan_cols.append("input")
         outer_select = [f"{resolved_ts} AS trace_session_id"] + [
@@ -4031,22 +4087,56 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         outer_clauses = [
             c for c in (resolved_session_clause, user_membership_clause) if c
         ]
-
-        inner_cols = ", ".join(scan_cols)
-        outer_select_sql = ",\n                ".join(outer_select)
-        where_clause = (
-            f"\n        WHERE {' AND '.join(outer_clauses)}" if outer_clauses else ""
+        where_clause = f"WHERE {' AND '.join(outer_clauses)}" if outer_clauses else ""
+        if not include_usage:
+            return f"""FROM (
+                SELECT {", ".join(outer_select)}
+                FROM (
+                    SELECT {", ".join(scan_cols)}
+                    FROM {self.TABLE} FINAL
+                    {base_predicates}
+                ) AS rs
+                {remap_left_join("rs.trace_session_id", "trace_session_id_remap", "ts_remap")}
+            ) {where_clause}"""
+        member_ctes = self._session_member_ctes(
+            session_source="legacy_member_sessions",
+            physical_time_scope=self._physical_time_scope_sql(),
+            latest_time_scope=self._latest_time_scope_sql(
+                params, param_prefix="session_aggregate_member_time"
+            ),
         )
         return f"""FROM (
-            SELECT
-                {outer_select_sql}
-            FROM (
-                SELECT {inner_cols}
-                FROM {self.TABLE}
-                {base_predicates}
-            ) AS rs
-            {ts_join}
-        ){where_clause}"""
+            WITH
+            ts_survivor_map AS ({survivor_map_subquery("trace_session_id_remap")}),
+            legacy_roots AS (
+                SELECT {", ".join(outer_select)}
+                FROM (
+                    SELECT {", ".join(scan_cols)}
+                    FROM {self.TABLE} FINAL
+                    {base_predicates}
+                ) AS rs
+                LEFT JOIN ts_survivor_map AS ts_remap
+                    ON rs.trace_session_id = ts_remap.any_id
+            ),
+            legacy_member_sessions AS (
+                SELECT DISTINCT project_id, trace_session_id AS session_id
+                FROM legacy_roots
+                {where_clause}
+            ),
+            {member_ctes},
+            legacy_usage AS (
+                SELECT project_id, member_session_id AS trace_session_id,
+                    if(countIf(isNull(usage_cost)) > 0,
+                       CAST(NULL, 'Nullable(Float64)'), sum(usage_cost)) AS session_usage_cost,
+                    sum(usage_total_tokens) AS session_usage_tokens
+                FROM member_trace_usage
+                GROUP BY project_id, member_session_id
+            )
+            SELECT roots.*, session_usage_cost, session_usage_tokens
+            FROM legacy_roots AS roots
+            LEFT JOIN legacy_usage USING (project_id, trace_session_id)
+            {where_clause}
+        )"""
 
     def _build_having_clauses(self, *, params: dict[str, Any] | None = None) -> str:
         """Build HAVING clause fragments for aggregate-level filters."""
