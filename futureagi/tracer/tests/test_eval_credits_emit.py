@@ -9,6 +9,13 @@ session-level evals with the right shape:
 
 These three paths used to charge legacy billing only; this verifies the
 new emit hits all of them.
+
+In OSS builds, root ``conftest`` installs ``ee.usage.*`` patch-target stubs
+(``BillingConfig``, ``UsageEvent``, ``token_usage_properties``, still with
+``__spec__=None`` so ``has_ee`` / ``is_oss`` don't flip). This file mocks
+``emit`` and ``BillingConfig.get_eval_per_run_fee`` so the dual-write path
+is exercised without a real EE install. The ``amount`` assertion runs only
+when real ``ee/`` is present — against the stub it would be tautological.
 """
 
 from __future__ import annotations
@@ -20,12 +27,24 @@ import pytest
 import model_hub.tasks  # noqa: F401
 
 from evaluations.engine.runner import EvalResult
+from tfc.constants.api_calls import APICallTypeChoices
+from tfc.ee_loader import has_ee
 
 
 PROMPT_TOKENS = 100
 COMPLETION_TOKENS = 50
 TOTAL_TOKENS = PROMPT_TOKENS + COMPLETION_TOKENS
 RAW_COST_USD = 0.12345
+
+_EE_PRESENT = has_ee("ee.usage")
+
+_CREDIT_EVENT_TYPES = {
+    APICallTypeChoices.TURING_LARGE_EVALUATOR.value,
+    APICallTypeChoices.TURING_SMALL_EVALUATOR.value,
+    APICallTypeChoices.TURING_FLASH_EVALUATOR.value,
+    APICallTypeChoices.PROTECT_EVALUATOR.value,
+    APICallTypeChoices.PROTECT_FLASH_EVALUATOR.value,
+}
 
 
 def _build_result():
@@ -92,16 +111,7 @@ def captured_emit(monkeypatch):
 
 def _credit_event(captured):
     """Pick the ai_credits emit, ignoring tracing/observe events fired elsewhere."""
-    from ee.usage.models.usage import APICallTypeChoices
-
-    credit_event_types = {
-        APICallTypeChoices.TURING_LARGE_EVALUATOR.value,
-        APICallTypeChoices.TURING_SMALL_EVALUATOR.value,
-        APICallTypeChoices.TURING_FLASH_EVALUATOR.value,
-        APICallTypeChoices.PROTECT_EVALUATOR.value,
-        APICallTypeChoices.PROTECT_FLASH_EVALUATOR.value,
-    }
-    matches = [e for e in captured if e.event_type in credit_event_types]
+    matches = [e for e in captured if e.event_type in _CREDIT_EVENT_TYPES]
     assert matches, f"No ai_credits event emitted. Captured: {[e.event_type for e in captured]}"
     assert len(matches) == 1, f"Expected one ai_credits event, got {len(matches)}"
     return matches[0]
@@ -112,6 +122,22 @@ def _assert_token_properties(props):
     assert props["completion_tokens"] == COMPLETION_TOKENS
     assert props["total_tokens"] == TOTAL_TOKENS
     assert props["raw_cost_usd"] == str(RAW_COST_USD)
+
+
+def _assert_credit_amount(event):
+    """Assert amount against real BillingConfig math when ee is present.
+
+    On OSS, root conftest stubs ``BillingConfig.calculate_ai_credits`` as
+    ``cost * 100``. Comparing emit amount to that stub is tautological
+    (stub-vs-stub), so the amount check is EE-only. OSS still covers
+    event_type / org_id / source / source_id / target_type / token props.
+    """
+    if not _EE_PRESENT:
+        return
+    from ee.usage.services.config import BillingConfig
+
+    expected_credits = BillingConfig.get().calculate_ai_credits(RAW_COST_USD)
+    assert event.amount == expected_credits
 
 
 @pytest.mark.django_db
@@ -126,8 +152,6 @@ def test_span_eval_emits_ai_credits_with_tokens(
     stub_cost_log,
     captured_emit,
 ):
-    from ee.usage.models.usage import APICallTypeChoices
-    from ee.usage.services.config import BillingConfig
     from tracer.utils.eval import OBSERVE, _execute_evaluation
 
     _execute_evaluation(
@@ -139,11 +163,10 @@ def test_span_eval_emits_ai_credits_with_tokens(
     )
 
     event = _credit_event(captured_emit)
-    expected_credits = BillingConfig.get().calculate_ai_credits(RAW_COST_USD)
 
     assert event.event_type == APICallTypeChoices.TURING_LARGE_EVALUATOR.value
     assert event.org_id == str(organization.id)
-    assert event.amount == expected_credits
+    _assert_credit_amount(event)
     props = event.properties
     assert props["source"] == "tracer"
     assert props["source_id"] == str(custom_eval_config.eval_template.id)
@@ -163,8 +186,6 @@ def test_trace_eval_emits_ai_credits_with_tokens(
     stub_cost_log,
     captured_emit,
 ):
-    from ee.usage.models.usage import APICallTypeChoices
-    from ee.usage.services.config import BillingConfig
     from tracer.utils.eval import _execute_evaluation_for_trace
 
     _execute_evaluation_for_trace(
@@ -176,11 +197,10 @@ def test_trace_eval_emits_ai_credits_with_tokens(
     )
 
     event = _credit_event(captured_emit)
-    expected_credits = BillingConfig.get().calculate_ai_credits(RAW_COST_USD)
 
     assert event.event_type == APICallTypeChoices.TURING_LARGE_EVALUATOR.value
     assert event.org_id == str(organization.id)
-    assert event.amount == expected_credits
+    _assert_credit_amount(event)
     props = event.properties
     assert props["source"] == "tracer"
     assert props["source_id"] == str(custom_eval_config.eval_template.id)
@@ -199,8 +219,6 @@ def test_session_eval_emits_ai_credits_with_tokens(
     stub_cost_log,
     captured_emit,
 ):
-    from ee.usage.models.usage import APICallTypeChoices
-    from ee.usage.services.config import BillingConfig
     from tracer.utils.eval import _execute_evaluation_for_session
 
     _execute_evaluation_for_session(
@@ -211,11 +229,10 @@ def test_session_eval_emits_ai_credits_with_tokens(
     )
 
     event = _credit_event(captured_emit)
-    expected_credits = BillingConfig.get().calculate_ai_credits(RAW_COST_USD)
 
     assert event.event_type == APICallTypeChoices.TURING_LARGE_EVALUATOR.value
     assert event.org_id == str(organization.id)
-    assert event.amount == expected_credits
+    _assert_credit_amount(event)
     props = event.properties
     assert props["source"] == "tracer"
     assert props["source_id"] == str(custom_eval_config.eval_template.id)
@@ -253,14 +270,5 @@ def test_eval_failure_does_not_emit_ai_credits(
         run_params={"input": "hello", "output": "world"},
     )
 
-    from ee.usage.models.usage import APICallTypeChoices
-
-    credit_event_types = {
-        APICallTypeChoices.TURING_LARGE_EVALUATOR.value,
-        APICallTypeChoices.TURING_SMALL_EVALUATOR.value,
-        APICallTypeChoices.TURING_FLASH_EVALUATOR.value,
-        APICallTypeChoices.PROTECT_EVALUATOR.value,
-        APICallTypeChoices.PROTECT_FLASH_EVALUATOR.value,
-    }
-    credit_events = [e for e in captured_emit if e.event_type in credit_event_types]
+    credit_events = [e for e in captured_emit if e.event_type in _CREDIT_EVENT_TYPES]
     assert credit_events == []

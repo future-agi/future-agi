@@ -21,7 +21,10 @@ from tracer.serializers.feed import (
     FeedStatsSerializer,
 )
 from tracer.utils import feed as feed_service
-from tracer.views.feed._permissions import resolve_requested_project_ids
+from tracer.views.feed._permissions import (
+    ErrorFeedLicenseRequired,
+    resolve_requested_project_ids,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -33,7 +36,7 @@ ERROR_RESPONSES = {
 }
 
 
-class FeedListView(APIView):
+class FeedListView(ErrorFeedLicenseRequired, APIView):
     """GET /tracer/feed/issues/ — paginated cluster list with filters/sort."""
 
     permission_classes = [IsAuthenticated]
@@ -79,7 +82,7 @@ class FeedListView(APIView):
         return self._gm.success_response(data)
 
 
-class FeedStatsView(APIView):
+class FeedStatsView(ErrorFeedLicenseRequired, APIView):
     """GET /tracer/feed/issues/stats/ — top stats bar totals."""
 
     permission_classes = [IsAuthenticated]

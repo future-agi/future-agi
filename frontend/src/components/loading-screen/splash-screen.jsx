@@ -1,28 +1,33 @@
-import React from "react";
-import { m } from "framer-motion";
+import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { useState, useEffect } from "react";
 import Box from "@mui/material/Box";
-import { alpha, useTheme } from "@mui/material/styles";
+import Typography from "@mui/material/Typography";
 import SvgColor from "../svg-color";
 
-// ----------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Splash screen: the mark, the name and one thin indeterminate line.
+//
+// It waits a moment before showing, so a fast load never flashes it, and the
+// line holds still when the person prefers reduced motion.
+// ---------------------------------------------------------------------------
+
+const SHOW_AFTER_MS = 300;
 
 export default function SplashScreen({ sx, ...other }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const [mounted, setMounted] = useState(false);
+  const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
+    const id = setTimeout(() => setVisible(true), SHOW_AFTER_MS);
+    return () => clearTimeout(id);
   }, []);
 
-  if (!mounted) {
-    return null;
-  }
+  if (!visible) return null;
 
   return (
     <Box
+      role="status"
+      aria-live="polite"
+      aria-label="Loading"
       sx={{
         right: 0,
         width: 1,
@@ -33,74 +38,47 @@ export default function SplashScreen({ sx, ...other }) {
         position: "absolute",
         alignItems: "center",
         justifyContent: "center",
+        flexDirection: "column",
+        gap: 1.5,
         bgcolor: "background.default",
         ...sx,
       }}
       {...other}
     >
-      <>
-        <m.div
-          animate={{
-            scale: [1, 0.9, 0.9, 1, 1],
-            opacity: [1, 0.48, 0.48, 1, 1],
-          }}
-          transition={{
-            duration: 2,
-            ease: "easeInOut",
-            repeatDelay: 1,
-            repeat: Infinity,
-          }}
-        >
-          <SvgColor
-            src="/favicon/logo.svg"
-            sx={{
-              height: 24,
-              width: 24,
-              color: isDark ? "#D4D4D8" : "primary.main",
-            }}
-          />
-        </m.div>
-
+      <SvgColor
+        src="/favicon/logo.svg"
+        sx={{ width: 32, height: 32, color: "primary.main" }}
+      />
+      <Typography variant="m1" fontWeight={600} color="text.primary">
+        Future AGI
+      </Typography>
+      <Box
+        sx={{
+          width: 96,
+          height: 2,
+          mt: 0.5,
+          borderRadius: "2px",
+          overflow: "hidden",
+          bgcolor: "divider",
+        }}
+      >
         <Box
-          component={m.div}
-          animate={{
-            scale: [1.6, 1, 1, 1.6, 1.6],
-            rotate: [270, 0, 0, 270, 270],
-            opacity: [0.25, 1, 1, 1, 0.25],
-            borderRadius: ["25%", "25%", "50%", "50%", "25%"],
-          }}
-          transition={{ ease: "linear", duration: 3.2, repeat: Infinity }}
           sx={{
-            width: 100,
-            height: 100,
-            position: "absolute",
-            border: (theme) =>
-              `solid 3px ${alpha(isDark ? "#D4D4D8" : theme.palette.primary.dark, 0.24)}`,
+            width: "40%",
+            height: 1,
+            bgcolor: "primary.main",
+            animation: "splash-line 1.4s ease-in-out infinite",
+            "@keyframes splash-line": {
+              "0%": { transform: "translateX(-100%)" },
+              "100%": { transform: "translateX(250%)" },
+            },
+            "@media (prefers-reduced-motion: reduce)": {
+              animation: "none",
+              transform: "translateX(75%)",
+            },
           }}
         />
-
-        <Box
-          component={m.div}
-          animate={{
-            scale: [1, 1.2, 1.2, 1, 1],
-            rotate: [0, 270, 270, 0, 0],
-            opacity: [1, 0.25, 0.25, 0.25, 1],
-            borderRadius: ["25%", "25%", "50%", "50%", "25%"],
-          }}
-          transition={{
-            ease: "linear",
-            duration: 3.2,
-            repeat: Infinity,
-          }}
-          sx={{
-            width: 120,
-            height: 120,
-            position: "absolute",
-            border: (theme) =>
-              `solid 8px ${alpha(isDark ? "#D4D4D8" : theme.palette.primary.dark, 0.24)}`,
-          }}
-        />
-      </>
+      </Box>
     </Box>
   );
 }

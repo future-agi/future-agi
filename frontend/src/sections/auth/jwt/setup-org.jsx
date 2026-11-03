@@ -8,6 +8,7 @@ import {
   styled,
   MobileStepper,
   Button,
+  Alert,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSnackbar } from "src/components/snackbar";
@@ -18,6 +19,7 @@ import PropTypes from "prop-types";
 import { paths } from "src/routes/paths";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
 import RightSectionAuth from "./RightSectionAuth";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { Controller, useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import RadioField from "src/components/RadioField/RadioField";
@@ -30,7 +32,7 @@ import {
   ROLE_OPTIONS,
 } from "./constants";
 import { organizationSchema, userDataSchema } from "./zodSchema";
-import { generateNameFromEmail } from "./common";
+import { generateNameFromEmail, redirectAfterOrgSetup } from "./common";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import SvgColor from "src/components/svg-color";
 import { useSearchParams } from "react-router-dom";
@@ -130,7 +132,7 @@ const MemberRow = React.memo(
               size="small"
               label="Role"
               showClear={false}
-              sx={{ flex: 1.5, minWidth: 110, borderRadius: 0.5 }}
+              sx={{ flex: 1.5, minWidth: 110, borderRadius: "4px" }}
               options={roleOptions}
             />
           )}
@@ -172,7 +174,14 @@ MemberRow.propTypes = {
   onRemove: PropTypes.func,
 };
 
-const useOrganizationInitialData = (isOwner) => {
+const placeholderMembers = (seed) =>
+  seed
+    ? [{ email: "", name: "", organization_role: "Owner", disabled: false }]
+    : [];
+
+// Never seed on self-hosted: the member block is hidden there, so a seeded row
+// with an empty email fails validation with nothing on screen to fix.
+const useOrganizationInitialData = (isOwner, seedPlaceholderMember = true) => {
   const { enqueueSnackbar } = useSnackbar();
   const [isLoading, setIsLoading] = useState(true);
   const [initialData, setInitialData] = useState(null);
@@ -192,14 +201,7 @@ const useOrganizationInitialData = (isOwner) => {
                 organization_role: member.organization_role,
                 disabled: true,
               }))
-            : [
-                {
-                  email: "",
-                  name: "",
-                  organization_role: "Owner",
-                  disabled: false,
-                },
-              ];
+            : placeholderMembers(seedPlaceholderMember);
 
         setInitialData({
           orgName: orgDetails.org_name,
@@ -211,14 +213,7 @@ const useOrganizationInitialData = (isOwner) => {
         });
         setInitialData({
           orgName: "",
-          members: [
-            {
-              email: "",
-              name: "",
-              organization_role: "Owner",
-              disabled: false,
-            },
-          ],
+          members: placeholderMembers(seedPlaceholderMember),
         });
       } finally {
         setIsLoading(false);
@@ -236,6 +231,8 @@ const useOrganizationInitialData = (isOwner) => {
 
 const SetupOrganization = ({ getStarted = false }) => {
   const queryClient = useQueryClient();
+  const [inviteEmailWarnings, setInviteEmailWarnings] = useState([]);
+  const [hasInviteErrors, setHasInviteErrors] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const activeStep = parseInt(searchParams.get("step") || "0", 10);
   // Where to land once org setup finishes — honor an internal `returnTo`
@@ -256,8 +253,12 @@ const SetupOrganization = ({ getStarted = false }) => {
   const { enqueueSnackbar } = useSnackbar();
   const { user } = useAuthContext();
   const isOwner = user?.organization_role === "Owner";
+  // Confirmed reads only — a failed deployment-info probe must not hide the
+  // invite step from a cloud user.
+  const { isOSS: ossMode, isSuccess: modeConfirmed } = useDeploymentMode();
+  const isOSS = modeConfirmed && ossMode;
   const { initialData, isLoading: isFetchingInitialData } =
-    useOrganizationInitialData(isOwner);
+    useOrganizationInitialData(isOwner, !isOSS);
 
   const { data: invitesData, refetch: refetchInvites } = useQuery({
     queryKey: ["owner-org-invites"],
@@ -433,6 +434,24 @@ const SetupOrganization = ({ getStarted = false }) => {
     return { prefilledMembers: prefilled, newMembers: newOnes };
   }, [fields]);
 
+  const continueToDashboard = () => {
+    if (returnTo) {
+      localStorage.setItem("initial-render", "done");
+      localStorage.removeItem("redirectUrl");
+    }
+    redirectAfterOrgSetup(returnTo || paths.dashboard.getstarted);
+  };
+
+  const mergeInviteWarnings = (members = []) =>
+    Array.from(
+      new Map(
+        [
+          ...inviteEmailWarnings,
+          ...members.filter((member) => member.invite_email_warning),
+        ].map((member) => [member.id, member]),
+      ).values(),
+    );
+
   const { mutate: createOrg, isPending: isCreating } = useMutation({
     mutationFn: async (data) => {
       const membersToSend = data.members
@@ -456,11 +475,14 @@ const SetupOrganization = ({ getStarted = false }) => {
       );
 
       if (response.status === 200 || response.status === 201) {
-        const message =
-          response.data?.result?.created_members?.length === 0
-            ? "Organization Setup Successfully."
-            : "Invite sent successfully.";
-        enqueueSnackbar(message, { variant: "success" });
+        const members = response.data?.result?.created_members || [];
+        if (mergeInviteWarnings(members).length === 0) {
+          const message =
+            members.length === 0
+              ? "Organization Setup Successfully."
+              : "Invite sent successfully.";
+          enqueueSnackbar(message, { variant: "success" });
+        }
       } else {
         const errors = response.data?.result?.errors;
         if (Array.isArray(errors) && errors.length > 0) {
@@ -481,7 +503,7 @@ const SetupOrganization = ({ getStarted = false }) => {
     },
     meta: { errorHandled: true },
 
-    onSuccess: (_, variables) => {
+    onSuccess: (response, variables) => {
       refetchInvites();
       const membersToTrack = variables?.members?.filter(
         (m) => !m?.disabled && m?.email?.trim(),
@@ -506,24 +528,28 @@ const SetupOrganization = ({ getStarted = false }) => {
 
       orgForm.reset();
 
-      if (!getStarted) {
-        // After creating org during onboarding, redirect to get-started
-        if (returnTo) {
-          localStorage.setItem("initial-render", "done");
-          localStorage.removeItem("redirectUrl");
-        }
-        window.location.href = returnTo || paths.dashboard.getstarted;
+      setHasInviteErrors(false);
+      const warnings = mergeInviteWarnings(
+        response.data?.result?.created_members,
+      );
+      if (warnings.length > 0) {
+        // A hard redirect would erase a toast before the user can act on it.
+        setInviteEmailWarnings(warnings);
+      } else if (!getStarted) {
+        continueToDashboard();
       }
     },
 
     onError: (error) => {
-      const apiErrors = error?.result?.errors || [];
+      const result = error?.result;
+      const apiErrors = result?.errors || [];
       const members = orgForm.getValues("members");
+      setInviteEmailWarnings(mergeInviteWarnings(result?.created_members));
+      setHasInviteErrors(true);
       if (!apiErrors.length) {
-        enqueueSnackbar(error?.result || "Something went wrong.", {
+        enqueueSnackbar(result?.message || result || "Something went wrong.", {
           variant: "error",
         });
-        orgForm.reset();
         return;
       }
 
@@ -532,7 +558,7 @@ const SetupOrganization = ({ getStarted = false }) => {
       );
 
       if (hasMemberErrors) {
-        queryClient.invalidateQueries("owner-org-invites");
+        queryClient.invalidateQueries({ queryKey: ["owner-org-invites"] });
 
         const errorEmails = apiErrors
           .map((err) => err.email?.trim().toLowerCase())
@@ -564,9 +590,11 @@ const SetupOrganization = ({ getStarted = false }) => {
           });
         }, 0);
 
-        enqueueSnackbar("Some users already exist in another organisation", {
-          variant: "error",
-        });
+        enqueueSnackbar(
+          result?.message ||
+            "Some members could not be added. Correct the errors and try again.",
+          { variant: "error" },
+        );
       } else {
         apiErrors.forEach((err, index) => {
           enqueueSnackbar(err.error || "Something went wrong", {
@@ -588,10 +616,34 @@ const SetupOrganization = ({ getStarted = false }) => {
     };
     createOrg(processedData);
   });
+  const renderInviteWarnings = () => (
+    <Stack spacing={2}>
+      <Typography variant="subtitle1">Members added</Typography>
+      {inviteEmailWarnings.map((member) => (
+        <Alert severity="warning" key={member.id}>
+          <strong>{member.email}</strong>: {member.invite_email_warning}
+        </Alert>
+      ))}
+      {!hasInviteErrors && (
+        <Button
+          variant="contained"
+          onClick={
+            getStarted ? () => setInviteEmailWarnings([]) : continueToDashboard
+          }
+        >
+          {getStarted ? "Done" : "Continue to dashboard"}
+        </Button>
+      )}
+    </Stack>
+  );
+
   const renderOrgSetup = () => (
     <Box>
       <form onSubmit={handleOrgSubmit} style={{ width: "100%" }}>
         <Stack spacing={2} sx={{ mx: "auto", pb: getStarted ? "16px" : "0" }}>
+          {hasInviteErrors &&
+            inviteEmailWarnings.length > 0 &&
+            renderInviteWarnings()}
           {!getStarted && (
             <FormTextFieldV2
               control={orgForm.control}
@@ -603,115 +655,126 @@ const SetupOrganization = ({ getStarted = false }) => {
               fullWidth
               sx={{
                 "& .MuiOutlinedInput-root": {
-                  borderRadius: 0.5,
+                  borderRadius: "4px",
                   bgcolor: "background.paper",
                 },
               }}
             />
           )}
 
-          <Typography variant="m2" fontWeight="fontWeightMedium">
-            Invite people to collaborate in FutureAGI
-          </Typography>
+          {/* Hidden on self-hosted: invites need email delivery, so teammates
+              are added later from inside the product. */}
+          {!isOSS && (
+            <>
+              <Typography variant="m2" fontWeight="fontWeightMedium">
+                Invite people to collaborate in FutureAGI
+              </Typography>
 
-          <Box
-            sx={{
-              width: "100%",
-              height: getStarted ? "250px" : "220px",
-              bgcolor: "background.paper",
-              overflowY: "auto",
-              scrollbarWidth: "none",
-              scrollBehavior: "auto",
-              "&::-webkit-scrollbar": {
-                display: "none",
-              },
-              msOverflowStyle: "none",
-            }}
-          >
-            {/* Prefilled members */}
-            {prefilledMembers.length > 0 && (
-              <Box mt={2}>
-                {prefilledMembers.map((member) => {
+              <Box
+                sx={{
+                  width: "100%",
+                  height: getStarted ? "250px" : "220px",
+                  bgcolor: "background.paper",
+                  overflowY: "auto",
+                  scrollbarWidth: "none",
+                  scrollBehavior: "auto",
+                  "&::-webkit-scrollbar": {
+                    display: "none",
+                  },
+                  msOverflowStyle: "none",
+                }}
+              >
+                {/* Prefilled members */}
+                {prefilledMembers.length > 0 && (
+                  <Box mt={2}>
+                    {prefilledMembers.map((member) => {
+                      const originalIndex = fields.findIndex(
+                        (f) => f.id === member.id,
+                      );
+                      return (
+                        <MemberRow
+                          key={member.id}
+                          member={member}
+                          index={originalIndex}
+                          getStarted={getStarted}
+                          editable={false}
+                          control={orgForm.control}
+                        />
+                      );
+                    })}
+                  </Box>
+                )}
+
+                {/* Invited members from API */}
+                {invitesData?.results?.length > 0 && (
+                  <Box mt={2}>
+                    {invitesData.results.map((member) => (
+                      <MemberRow
+                        key={`invite-${member.id}`}
+                        member={member}
+                        getStarted={getStarted}
+                        editable={false}
+                      />
+                    ))}
+                  </Box>
+                )}
+
+                {newMembers.map((member) => {
                   const originalIndex = fields.findIndex(
                     (f) => f.id === member.id,
                   );
                   return (
-                    <MemberRow
-                      key={member.id}
-                      member={member}
-                      index={originalIndex}
-                      getStarted={getStarted}
-                      editable={false}
-                      control={orgForm.control}
-                    />
+                    <Box mt={2} key={member.id}>
+                      <MemberRow
+                        member={member}
+                        index={originalIndex}
+                        getStarted={getStarted}
+                        editable
+                        control={orgForm.control}
+                        onRemove={removeMember}
+                        errors={
+                          orgForm.formState.errors.members?.[originalIndex]
+                        }
+                      />
+                    </Box>
                   );
                 })}
-              </Box>
-            )}
 
-            {/* Invited members from API */}
-            {invitesData?.results?.length > 0 && (
-              <Box mt={2}>
-                {invitesData.results.map((member) => (
-                  <MemberRow
-                    key={`invite-${member.id}`}
-                    member={member}
-                    getStarted={getStarted}
-                    editable={false}
-                  />
-                ))}
-              </Box>
-            )}
+                <Box sx={{ mt: 2 }}>
+                  <Typography
+                    variant={getStarted ? "body2" : "s1.2"}
+                    sx={{
+                      color: "primary.main",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      border: "1px solid",
+                      borderColor: "primary.main",
+                      borderRadius: getStarted ? 1 : 0.5,
+                      padding: "4px 10px",
+                      transition: "all 0.2s",
+                      fontWeight: !getStarted && 500,
+                      "&:hover": { bgcolor: "action.hover" },
+                    }}
+                    onClick={addMember}
+                    disable={!getStarted && memberToadd?.length > 3}
+                  >
+                    <SvgColor
+                      src="/assets/icons/ic_add.svg"
+                      width={15}
+                      height={15}
+                      sx={{ mr: 1 }}
+                    />
 
-            {newMembers.map((member) => {
-              const originalIndex = fields.findIndex((f) => f.id === member.id);
-              return (
-                <Box mt={2} key={member.id}>
-                  <MemberRow
-                    member={member}
-                    index={originalIndex}
-                    getStarted={getStarted}
-                    editable
-                    control={orgForm.control}
-                    onRemove={removeMember}
-                    errors={orgForm.formState.errors.members?.[originalIndex]}
-                  />
+                    {getStarted ? "Add members" : "Add"}
+                  </Typography>
                 </Box>
-              );
-            })}
-
-            <Box sx={{ mt: 2 }}>
-              <Typography
-                variant={getStarted ? "body2" : "s1.2"}
-                sx={{
-                  color: "primary.main",
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  border: "1px solid",
-                  borderColor: "primary.main",
-                  borderRadius: getStarted ? 1 : 0.5,
-                  padding: "4px 10px",
-                  transition: "all 0.2s",
-                  fontWeight: !getStarted && 500,
-                  "&:hover": { bgcolor: "action.hover" },
-                }}
-                onClick={addMember}
-                disable={!getStarted && memberToadd?.length > 3}
-              >
-                <SvgColor
-                  src="/assets/icons/ic_add.svg"
-                  width={15}
-                  height={15}
-                  sx={{ mr: 1 }}
-                />
-
-                {getStarted ? "Add members" : "Add"}
-              </Typography>
-            </Box>
-          </Box>
+              </Box>
+            </>
+          )}
 
           <LoadingButton
+            size="large"
             fullWidth
             type="submit"
             color="primary"
@@ -719,7 +782,6 @@ const SetupOrganization = ({ getStarted = false }) => {
             disabled={!IsOrgFormValid}
             loading={isFetchingInitialData || isCreating}
             sx={{
-              borderRadius: 0.5,
               mx: getStarted && "auto",
               maxWidth: "100%",
             }}
@@ -739,7 +801,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                 width: "414px",
               }}
               color="primary.main"
-              fontSize={"15px"}
+              fontSize={"13px"}
               fontWeight="fontWeightMedium"
             >
               Skip for now
@@ -759,7 +821,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -770,7 +832,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -809,7 +871,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   helperText={error?.message}
                   sx={{
                     backgroundColor: "background.neutral",
-                    borderRadius: 0.5,
+                    borderRadius: "4px",
                   }}
                 />
               )}
@@ -833,7 +895,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -844,7 +906,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -868,7 +930,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               ))}
             </Stack>
             <LoadingButton
-              sx={{ borderRadius: 0.5 }}
+              size="large"
               variant="contained"
               loading={isSavingUserData}
               disabled={isSavingUserData || (!roleValue && !customRoleValue)}
@@ -910,7 +972,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -921,7 +983,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -930,7 +992,9 @@ const SetupOrganization = ({ getStarted = false }) => {
                 Make the collaboration seamless
               </Typography>
             </Box>
-            {renderOrgSetup()}
+            {inviteEmailWarnings.length > 0 && !hasInviteErrors
+              ? renderInviteWarnings()
+              : renderOrgSetup()}
           </Stack>
         );
       default:
@@ -943,7 +1007,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.primary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -954,7 +1018,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               <Typography
                 fontWeight={"fontWeightSemiBold"}
                 sx={{
-                  fontSize: "28px",
+                  fontSize: "24px",
                   color: "text.secondary",
                   fontFamily: "Inter",
                   lineHeight: "36px",
@@ -963,14 +1027,18 @@ const SetupOrganization = ({ getStarted = false }) => {
                 Make the collaboration seamless
               </Typography>
             </Box>
-            {renderOrgSetup()}
+            {inviteEmailWarnings.length > 0 && !hasInviteErrors
+              ? renderInviteWarnings()
+              : renderOrgSetup()}
           </Stack>
         );
     }
   };
 
   if (getStarted) {
-    return renderOrgSetup();
+    return inviteEmailWarnings.length > 0 && !hasInviteErrors
+      ? renderInviteWarnings()
+      : renderOrgSetup();
   }
 
   return (

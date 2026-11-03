@@ -296,7 +296,7 @@ export default function NodeDrawer({
 
   // Delete node — follows the same pattern as useBaseNodeActions.handleDeleteClick
   const handleDeleteNode = useCallback(async () => {
-    if (!activeNode || isWorkflowRunning) return;
+    if (!activeNode || isWorkflowRunning || isReadOnly) return;
     setShowDeleteDialog(false);
 
     const nodeId = activeNode.id;
@@ -324,7 +324,7 @@ export default function NodeDrawer({
     try {
       await deleteNodeApi({
         graphId: agent?.id,
-        versionId: agent?.versionId,
+        versionId: agent?.version_id,
         nodeId,
       });
     } catch {
@@ -334,6 +334,7 @@ export default function NodeDrawer({
   }, [
     activeNode,
     isWorkflowRunning,
+    isReadOnly,
     deleteNode,
     onClose,
     ensureDraft,
@@ -403,41 +404,42 @@ export default function NodeDrawer({
             >
               <NodeCard node={NODE_TYPE_CONFIG[activeNode?.type]} readOnly />
               <Stack direction="row" spacing={0.25} alignItems="center">
-                <CustomTooltip
-                  show
-                  title="Delete node"
-                  size="small"
-                  arrow
-                  placement="bottom"
-                >
-                  <span>
-                    <IconButton
+                {!isReadOnly && (
+                  <>
+                    <CustomTooltip
+                      show
+                      title="Delete node"
                       size="small"
-                      aria-label="Delete node"
-                      onClick={() => setShowDeleteDialog(true)}
-                      disabled={isWorkflowRunning}
-                      sx={{
-                        color: "red.500",
-                        "&:hover": {
-                          bgcolor: (theme) =>
-                            theme.palette.mode === "dark"
-                              ? "rgba(255,70,70,0.08)"
-                              : "red.50",
-                        },
-                      }}
+                      arrow
+                      placement="bottom"
                     >
-                      <SvgColor
-                        src="/assets/icons/ic_delete.svg"
-                        sx={{ height: 18, width: 18 }}
-                      />
-                    </IconButton>
-                  </span>
-                </CustomTooltip>
-                <Divider
-                  orientation="vertical"
-                  flexItem
-                  sx={{ mx: 0.25, height: 20, alignSelf: "center" }}
-                />
+                      <span>
+                        <IconButton
+                          size="small"
+                          aria-label="Delete node"
+                          onClick={() => setShowDeleteDialog(true)}
+                          disabled={isWorkflowRunning}
+                          sx={{
+                            color: "status.danger.fg",
+                            "&:hover": {
+                              bgcolor: "status.danger.bg",
+                            },
+                          }}
+                        >
+                          <SvgColor
+                            src="/assets/icons/ic_delete.svg"
+                            sx={{ height: 18, width: 18 }}
+                          />
+                        </IconButton>
+                      </span>
+                    </CustomTooltip>
+                    <Divider
+                      orientation="vertical"
+                      flexItem
+                      sx={{ mx: 0.25, height: 20, alignSelf: "center" }}
+                    />
+                  </>
+                )}
                 <CustomTooltip
                   show
                   title="Close"
@@ -509,7 +511,6 @@ export default function NodeDrawer({
             variant="contained"
             color="error"
             onClick={handleDiscard}
-            sx={{ paddingX: "24px" }}
           >
             Discard
           </Button>
@@ -528,7 +529,6 @@ export default function NodeDrawer({
             variant="contained"
             color="error"
             onClick={handleDeleteNode}
-            sx={{ paddingX: "24px" }}
           >
             Delete
           </Button>

@@ -59,8 +59,8 @@ def serialize_evaluator_config(
     eval_configs: List[Any],
     issues: List[Dict[str, Any]],
     use_synthetic: bool = True,
-    simulator_model: str = "gemini-2.5-flash",
-    customer_model: str = "gemini-2.5-flash",
+    simulator_model: str = "gemini-3.7-flash",
+    customer_model: str = "gemini-3.7-flash",
     max_parallel_evals: int = 5,
     use_issues: bool = True,
     use_evals: bool = True,
@@ -176,8 +176,8 @@ def _reconstruct_evaluator(config: Dict[str, Any]):
         user_eval_configs=eval_config_proxies,
         issues=config.get("issues", []),
         use_synthetic=config.get("use_synthetic", True),
-        simulator_model=config.get("simulator_model", "gemini-2.5-flash"),
-        customer_model=config.get("customer_model", "gemini-2.5-flash"),
+        simulator_model=config.get("simulator_model", "gemini-3.7-flash"),
+        customer_model=config.get("customer_model", "gemini-3.7-flash"),
         max_parallel_evals=config.get("max_parallel_evals", 5),
         use_issues=config.get("use_issues", True),
         use_evals=config.get("use_evals", True),
@@ -285,17 +285,16 @@ def _cancel_running_scenario_workflows(
     )
 
     try:
-        from tfc.temporal.common.client import get_client_sync
-
-        client = get_client_sync()
+        from tfc.temporal.common.client import cancel_workflow_sync
 
         for workflow_id in remaining_workflow_ids:
             try:
-                handle = client.get_workflow_handle(workflow_id)
-                # Cancel the workflow (non-blocking)
-                # Note: This returns immediately; actual cancellation is async
-                handle.cancel()
-                logger.debug(f"[EVAL_CLEANUP] Canceled workflow {workflow_id}")
+                if cancel_workflow_sync(workflow_id):
+                    logger.debug(f"[EVAL_CLEANUP] Canceled workflow {workflow_id}")
+                else:
+                    logger.warning(
+                        f"[EVAL_CLEANUP] Workflow was not canceled: {workflow_id}"
+                    )
             except Exception as e:
                 # Best effort - log but don't fail
                 logger.warning(

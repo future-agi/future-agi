@@ -5,9 +5,8 @@ import uuid
 from decimal import Decimal
 
 import structlog
-from django.db import close_old_connections
-
 from accounts.models.organization import Organization
+from django.db import close_old_connections
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
@@ -42,9 +41,7 @@ def _canonical_playground_output(value, response, template, api_call_log_row):
         model=response.get("model"),
         metadata=response.get("metadata"),
         output_type=template.config.get("output"),
-        log_id=(
-            str(api_call_log_row.log_id) if api_call_log_row is not None else None
-        ),
+        log_id=(str(api_call_log_row.log_id) if api_call_log_row is not None else None),
         ground_truth_examples=response.get("ground_truth_examples"),
         warnings=response.get("warnings") or None,
     ).model_dump()
@@ -66,11 +63,32 @@ def run_eval_func(
 ):
     api_call_log_row = None
     try:
-        # Block agent-type evals in OSS mode — AgentEvaluator requires ee/
+        # Agent-type evals need the ee/ AgentEvaluator. Gate via the
+        # capability service: self-hosted runs them on any user-keyed model
+        # (turing/protect model choice is licensed separately by the turing
+        # gates), so only a capability denial — or genuinely absent ee code
+        # before the service is configured — blocks here.
         if getattr(template, "eval_type", "") == "agent":
-            from tfc.ee_loader import _is_oss_mode
+            try:
+                from tfc.capabilities import service as capability_service
 
-            if _is_oss_mode():
+                if capability_service.is_configured():
+                    decision = capability_service.check(
+                        "agentic_eval",
+                        org_id=str(org.id) if org is not None else None,
+                    )
+                    denied = not decision.allowed
+                else:
+                    from tfc.ee_loader import has_ee
+
+                    denied = not has_ee("ee.evals")
+            except Exception:
+                # A permission check must fail closed. Do not fall back to
+                # has_ee() (True on every build shipping ee/) — that would
+                # silently allow. Deny and log with the stack trace.
+                logger.exception("agentic_eval_capability_check_failed")
+                denied = True
+            if denied:
                 raise ValueError(
                     "Agent evaluations are not available on OSS. "
                     "Use LLM-as-a-Judge or Code evaluations instead."

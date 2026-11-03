@@ -25,7 +25,7 @@ from tfc.deployment_telemetry.schema import MAX_PAYLOAD_BYTES
 
 logger = structlog.get_logger(__name__)
 
-# Must match the receiver's ee.usage.services.deployment_telemetry.SIGNATURE_HEADER
+# Must match the receiver's ee.cloud.telemetry.deployment_telemetry.SIGNATURE_HEADER
 # (request.META "HTTP_X_FAGI_TELEMETRY_SIGNATURE"). A contract test asserts
 # the two sides compute the same signature for the same body+secret.
 SIGNATURE_HEADER = "X-FAGI-Telemetry-Signature"

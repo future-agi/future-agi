@@ -65,7 +65,6 @@ export const EvaluationCellRender = (props) => {
               bgcolor: "background.paper",
               border: "1px solid",
               borderColor: "divider",
-              borderRadius: "8px",
               position: "absolute",
               right: "-6px",
               "&:hover": {

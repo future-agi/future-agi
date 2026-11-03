@@ -77,14 +77,19 @@ from adapter import (                                     # noqa: E402
 
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
-structlog.configure(
-    processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.add_log_level,
-        structlog.processors.JSONRenderer(),
-    ],
-)
 log = structlog.get_logger("backfill")
+
+
+def _configure_logging() -> None:
+    """Configure structlog for CLI runs. Called from main(), not at import, so
+    importing this module never mutates the process's global structlog config."""
+    structlog.configure(
+        processors=[
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.add_log_level,
+            structlog.processors.JSONRenderer(),
+        ],
+    )
 
 
 # ─── PG query (single source of truth for what gets pulled) ───────────────────
@@ -619,6 +624,7 @@ def _cmd_status(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_logging()
     args = _build_argparser().parse_args(argv)
 
     if args.status:

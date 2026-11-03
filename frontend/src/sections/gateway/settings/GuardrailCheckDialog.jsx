@@ -206,9 +206,13 @@ const GuardrailCheckDialog = ({
     onClose();
   };
 
-  const displayName = (checkName || "")
-    .replace(/-/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  // Use the label so the title matches the list — deriving it from the slug
+  // mangles acronyms ("presidio-pii" -> "Presidio Pii").
+  const displayName =
+    providerMeta?.label ||
+    (checkName || "")
+      .replace(/-/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
 
   const renderProviderField = (field) => {
     const {
@@ -421,7 +425,13 @@ const GuardrailCheckDialog = ({
   const hideConfidence = providerMeta?.hideConfidence === true;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>
         Configure: {displayName}
         {providerMeta?.description && (

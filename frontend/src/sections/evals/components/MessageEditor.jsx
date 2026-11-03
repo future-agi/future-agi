@@ -54,6 +54,7 @@ const MessageEditor = ({
   modelSelectorDisabled,
   model,
   onModelChange,
+  openModelMenuSignal = 0,
   // Falcon AI: the parent renders the AI bar node (shown at the top of
   // the box when open) and passes the trigger handler for the bottom-bar
   // icon. aiOpen hides the trigger while the bar is open, matching agent.
@@ -236,11 +237,7 @@ const MessageEditor = ({
                   }}
                 >
                   {ROLES.map((r) => (
-                    <MenuItem
-                      key={r.value}
-                      value={r.value}
-                      sx={{ fontSize: "13px" }}
-                    >
+                    <MenuItem key={r.value} value={r.value}>
                       {r.label}
                     </MenuItem>
                   ))}
@@ -252,9 +249,9 @@ const MessageEditor = ({
                       size="small"
                       onClick={() => handleRemoveMessage(i)}
                       disabled={disabled}
-                      sx={{ p: 0.25, opacity: 0.5, "&:hover": { opacity: 1 } }}
+                      sx={{ opacity: 0.5, "&:hover": { opacity: 1 } }}
                     >
-                      <Iconify icon="mdi:close" width={14} />
+                      <Iconify icon="solar:close-linear" width={14} />
                     </IconButton>
                   )}
                 </Box>
@@ -306,6 +303,7 @@ const MessageEditor = ({
                 showMode={false}
                 showPlus={false}
                 disabled={modelSelectorDisabled ?? disabled}
+                openModelMenuSignal={openModelMenuSignal}
               />
             </Box>
           ) : (
@@ -319,8 +317,6 @@ const MessageEditor = ({
                 onClick={onFalconClick}
                 disabled={disabled}
                 sx={{
-                  width: 32,
-                  height: 32,
                   flexShrink: 0,
                   "&:hover": { backgroundColor: "background.aiHover" },
                 }}
@@ -340,12 +336,10 @@ const MessageEditor = ({
         <Button
           size="small"
           variant="outlined"
-          startIcon={<Iconify icon="mdi:plus" width={14} />}
+          startIcon={<Iconify icon="solar:add-linear" width={14} />}
           onClick={handleAddMessage}
           disabled={disabled}
           sx={{
-            textTransform: "none",
-            fontSize: "13px",
             borderColor: "divider",
             color: "text.secondary",
             "&:hover": { borderColor: "text.secondary" },
@@ -373,6 +367,7 @@ MessageEditor.propTypes = {
   datasetJsonSchemas: PropTypes.object,
   disabled: PropTypes.bool,
   modelSelectorDisabled: PropTypes.bool,
+  openModelMenuSignal: PropTypes.number,
   aiBar: PropTypes.node,
   onFalconClick: PropTypes.func,
   aiOpen: PropTypes.bool,

@@ -9,17 +9,18 @@ import {
   Link,
   Slider,
   Tab,
-  Tabs,
   TextField,
   Typography,
 } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
 import { useSnackbar } from "notistack";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 
 import { useCreateEval } from "../hooks/useCreateEval";
@@ -43,9 +44,10 @@ import {
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
-const ERROR_LOCALIZER_OSS_TOOLTIP =
-  "Error Localization is not available on self-hosted (OSS) deployments.";
+const ERROR_LOCALIZER_LOCKED_TOOLTIP =
+  "Error Localization isn't enabled for this workspace.";
 
 const EVAL_TYPE_TABS = [
   { value: "agent", label: "Agents" },
@@ -57,40 +59,56 @@ const EVAL_TAGS = [
   {
     value: "red_teaming",
     label: "Red Teaming",
-    icon: "mdi:shield-alert-outline",
+    icon: "solar:shield-warning-linear",
   },
   {
     value: "retrieval_systems",
     label: "Retrieval Systems",
-    icon: "mdi:database-search-outline",
+    icon: "solar:database-linear",
   },
   {
     value: "harmful_objects",
     label: "Harmful Objects",
-    icon: "mdi:alert-octagon-outline",
+    icon: "solar:danger-circle-linear",
   },
   {
     value: "chatbot_behaviors",
     label: "Chatbot behaviors",
-    icon: "mdi:robot-outline",
+    icon: "solar:bot-linear",
   },
   {
     value: "output_format",
     label: "Output Format",
-    icon: "mdi:format-list-bulleted",
+    icon: "solar:list-linear",
   },
-  { value: "nlp_metrics", label: "NLP Metrics", icon: "mdi:chart-bar" },
-  { value: "data_leakage", label: "Data Leakage", icon: "mdi:leak" },
+  { value: "nlp_metrics", label: "NLP Metrics", icon: "solar:chart-2-linear" },
+  {
+    value: "data_leakage",
+    label: "Data Leakage",
+    icon: "solar:waterdrop-linear",
+  },
   {
     value: "output_validation",
     label: "Output Validation",
-    icon: "mdi:check-decagram-outline",
+    icon: "solar:check-circle-linear",
   },
-  { value: "image", label: "Image", icon: "mdi:image-outline" },
-  { value: "audio", label: "Audio", icon: "mdi:volume-high" },
-  { value: "medical", label: "Medical", icon: "mdi:medical-bag" },
-  { value: "finance", label: "Finance", icon: "mdi:currency-usd" },
-  { value: "agents", label: "Agents", icon: "mdi:robot-excited-outline" },
+  { value: "image", label: "Image", icon: "solar:gallery-linear" },
+  { value: "audio", label: "Audio", icon: "solar:volume-loud-linear" },
+  { value: "medical", label: "Medical", icon: "solar:medical-kit-linear" },
+  {
+    value: "finance",
+    label: "Finance",
+    icon: "solar:dollar-minimalistic-linear",
+  },
+  { value: "agents", label: "Agents", icon: "solar:bot-linear" },
+  { value: "compliance", label: "Compliance", icon: "solar:scale-linear" },
+  { value: "insurance", label: "Insurance", icon: "solar:shield-linear" },
+  { value: "sales", label: "Sales", icon: "solar:hand-shake-linear" },
+  {
+    value: "tools",
+    label: "Tools",
+    icon: "solar:settings-minimalistic-linear",
+  },
 ];
 
 const extractSelectedTools = (tools) => {
@@ -148,21 +166,33 @@ const EvalCreatePage = () => {
   const canEditEvals =
     RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const { enqueueSnackbar } = useSnackbar();
-  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
+  // Fail closed while capabilities load (both flags true) so we never flash
+  // Turing models or agent evals as available before the fetch resolves.
+  const { locked: fagiLocked } = useFeatureLocked(CAPABILITY.TURING_MODELS);
+  const { locked: agentEvalLocked, isLoading: capabilitiesLoading } =
+    useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
+  // Confirmed denial (loaded AND not allowed). Seed defaults raw and only
+  // strip them on confirmed denial — seeding off `locked` (which is true
+  // while loading) would blank the default model / flip the eval type for
+  // entitled cloud/EE users too, and never restore it.
+  const fagiModelsDenied = fagiLocked && !capabilitiesLoading;
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const testPlaygroundRef = useRef(null);
 
   // Mode: single or composite
   const [mode, setMode] = useState("single");
+  const isComposite = mode === "composite";
 
   // --- Single eval state ---
   const [name, setName] = useState("");
-  const [evalType, setEvalType] = useState(isOSS ? "llm" : "agent");
+  const [evalType, setEvalType] = useState("agent");
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
   const [model, setModel] = useState("turing_large");
+  const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
@@ -176,7 +206,8 @@ const EvalCreatePage = () => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
-  const errorLocalizerActive = errorLocalizerEnabled && !isOSS;
+  const errorLocalizerActive =
+    errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
   const [tags, setTags] = useState([]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
@@ -252,15 +283,21 @@ const EvalCreatePage = () => {
 
   const evalTypeDefaulted = useRef(false);
   useEffect(() => {
-    if (deploymentModeLoading || evalTypeDefaulted.current) return;
+    if (capabilitiesLoading || evalTypeDefaulted.current) return;
     evalTypeDefaulted.current = true;
-    setEvalType(isOSS ? "llm" : "agent");
-  }, [deploymentModeLoading, isOSS]);
+    setEvalType(agentEvalLocked ? "llm" : "agent");
+  }, [capabilitiesLoading, agentEvalLocked]);
+
+  // Drop the seeded Turing default only once denial is confirmed, so entitled
+  // users keep "turing_large" through the capabilities fetch.
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
+  }, [fagiModelsDenied, model]);
 
   // Load existing draft from URL, or create a new one
   const draftLoaded = useRef(false);
   useEffect(() => {
-    if (deploymentModeLoading) return;
+    if (capabilitiesLoading) return;
     if (draftCreating.current) return;
 
     // If URL has a draft ID, load its config
@@ -326,7 +363,7 @@ const EvalCreatePage = () => {
             endpoints.develop.eval.createEvalTemplateV2,
             {
               is_draft: true,
-              eval_type: isOSS ? "llm" : "agent",
+              eval_type: agentEvalLocked ? "llm" : "agent",
               output_type: "pass_fail",
               model: "turing_large",
               pass_threshold: 0.5,
@@ -342,7 +379,7 @@ const EvalCreatePage = () => {
         }
       })();
     }
-  }, [deploymentModeLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [capabilitiesLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save config to draft (debounced, skip initial load)
   const autoSaveTimer = useRef(null);
@@ -434,22 +471,24 @@ const EvalCreatePage = () => {
 
   // --- Save handlers ---
   const handleSaveSingle = useCallback(async () => {
-    if (isOSS && evalType === "agent") {
+    if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
     }
-    if (isOSS && evalType !== "code" && FAGI_MODEL_VALUES.has(model)) {
+    if (fagiLocked && evalType !== "code" && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
-        "Turing models are not available in OSS. Please select your own model.",
+        "Turing models aren't enabled for this workspace. Please select your own model.",
         { variant: "error" },
       );
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
     if (!draftId) {
@@ -471,15 +510,9 @@ const EvalCreatePage = () => {
       enqueueSnackbar("Evaluation saved successfully", { variant: "success" });
       navigate(`/dashboard/evaluations/${draftId}`);
     } catch (error) {
-      const message =
-        error?.response?.data?.result ||
-        error?.message ||
-        "Failed to save evaluation";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
-        {
-          variant: "error",
-        },
+        getSafeActionErrorMessage(error, "Failed to save evaluation"),
+        { variant: "error" },
       );
     }
   }, [
@@ -491,7 +524,8 @@ const EvalCreatePage = () => {
     updateDraft,
     enqueueSnackbar,
     navigate,
-    isOSS,
+    agentEvalLocked,
+    fagiLocked,
     evalType,
     model,
   ]);
@@ -530,15 +564,12 @@ const EvalCreatePage = () => {
       });
       navigate(`/dashboard/evaluations/${result.id}`);
     } catch (error) {
-      const message =
-        error?.response?.data?.result ||
-        error?.message ||
-        "Failed to create composite evaluation";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
-        {
-          variant: "error",
-        },
+        getSafeActionErrorMessage(
+          error,
+          "Failed to create composite evaluation",
+        ),
+        { variant: "error" },
       );
     }
   }, [
@@ -560,6 +591,11 @@ const EvalCreatePage = () => {
     // needed since the composite hasn't been (and won't be) saved as a
     // single-eval draft. Single evals still need their draft up to date
     // so the playground sees the latest instructions/code/config.
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
     if (mode === "single" && !draftId) {
       enqueueSnackbar("Draft not ready yet, please wait", {
         variant: "warning",
@@ -583,14 +619,19 @@ const EvalCreatePage = () => {
       }
       setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
     } catch (error) {
-      const message =
-        error?.response?.data?.result || error?.message || "Failed to run test";
-      handleTestResult(false, message);
+      handleTestResult(
+        false,
+        getSafeActionErrorMessage(error, "Failed to run test"),
+      );
       setIsTesting(false);
     }
   }, [
     mode,
+    isComposite,
     draftId,
+    fagiLocked,
+    evalType,
+    model,
     buildUpdatePayload,
     updateDraft,
     handleTestResult,
@@ -656,8 +697,7 @@ const EvalCreatePage = () => {
   const canSave =
     canEditEvals && (mode === "single" ? canSaveSingle : canSaveComposite);
 
-
-  if (deploymentModeLoading) {
+  if (capabilitiesLoading) {
     return null;
   }
 
@@ -699,12 +739,9 @@ const EvalCreatePage = () => {
               variant="caption"
               sx={{
                 fontFamily: "monospace",
-                fontSize: "10px",
+                fontSize: "12px",
                 color: "text.disabled",
-                backgroundColor: (t) =>
-                  t.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.05)"
-                    : "action.hover",
+                backgroundColor: "action.hover",
                 px: 0.75,
                 py: 0.25,
                 borderRadius: "4px",
@@ -746,80 +783,10 @@ const EvalCreatePage = () => {
                 <Typography variant="subtitle1" fontWeight={600}>
                   Eval details
                 </Typography>
-                <Tabs
-                  value={mode}
-                  onChange={handleModeChange}
-                  TabIndicatorProps={{ style: { display: "none" } }}
-                  sx={{
-                    minHeight: 28,
-                    "& .MuiTab-root": {
-                      minHeight: 28,
-                      px: 1.5,
-                      py: 0,
-                      mr: "0px !important",
-                      textTransform: "none",
-                      fontSize: "13px",
-                      borderRadius: "6px",
-                    },
-                    border: "1px solid",
-                    borderColor: "divider",
-                    p: "2px",
-                    borderRadius: "8px",
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.04)"
-                        : "background.neutral",
-                  }}
-                >
-                  <Tab
-                    value="single"
-                    label="Single"
-                    sx={{
-                      bgcolor:
-                        mode === "single"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
-                          : "transparent",
-                      boxShadow:
-                        mode === "single"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
-                          : "none",
-                      borderRadius: "6px",
-                      fontWeight: mode === "single" ? 600 : 400,
-                      color:
-                        mode === "single" ? "text.primary" : "text.disabled",
-                    }}
-                  />
-                  <Tab
-                    value="composite"
-                    label="Composite"
-                    sx={{
-                      bgcolor:
-                        mode === "composite"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
-                          : "transparent",
-                      boxShadow:
-                        mode === "composite"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
-                          : "none",
-                      borderRadius: "6px",
-                      fontWeight: mode === "composite" ? 600 : 400,
-                      color:
-                        mode === "composite" ? "text.primary" : "text.disabled",
-                    }}
-                  />
-                </Tabs>
+                <SegmentedTabs value={mode} onChange={handleModeChange}>
+                  <Tab value="single" label="Single" />
+                  <Tab value="composite" label="Composite" />
+                </SegmentedTabs>
               </Box>
 
               {mode === "single" ? (
@@ -835,7 +802,7 @@ const EvalCreatePage = () => {
                       Eval Name
                       <Box
                         component="span"
-                        sx={{ color: "error.main", ml: 0.25 }}
+                        sx={{ color: "status.danger.fg", ml: 0.25 }}
                       >
                         *
                       </Box>
@@ -857,46 +824,22 @@ const EvalCreatePage = () => {
                   </Box>
 
                   {/* Eval Type Toggle — pill tabs (same as EvalAccordion Text/Image/Audio) */}
-                  <Tabs
+                  <SegmentedTabs
                     value={evalType}
                     onChange={(_, val) => {
-                      if (isOSS && val === "agent") {
+                      if (agentEvalLocked && val === "agent") {
                         enqueueSnackbar(
-                          "Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable.",
+                          "Agent evaluations aren't enabled for this workspace.",
                           { variant: "info" },
                         );
                         return;
                       }
                       setEvalType(val);
                     }}
-                    variant="standard"
-                    scrollButtons={false}
-                    TabIndicatorProps={{ style: { display: "none" } }}
-                    sx={{
-                      minHeight: 28,
-                      "& .MuiTabs-scroller": { overflow: "visible !important" },
-                      "& .MuiTab-root": {
-                        minHeight: 28,
-                        px: 1.5,
-                        py: 0,
-                        mr: "0px !important",
-                        textTransform: "none",
-                        fontSize: "13px",
-                        borderRadius: "6px",
-                      },
-                      border: "1px solid",
-                      borderColor: "divider",
-                      p: "2px",
-                      borderRadius: "8px",
-                      width: "fit-content",
-                      bgcolor: (theme) =>
-                        theme.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.04)"
-                          : "background.neutral",
-                    }}
+                    sx={{ width: "fit-content" }}
                   >
                     {EVAL_TYPE_TABS.map((tab) => {
-                      const locked = isOSS && tab.value === "agent";
+                      const locked = agentEvalLocked && tab.value === "agent";
                       return (
                         <Tab
                           key={tab.value}
@@ -907,7 +850,7 @@ const EvalCreatePage = () => {
                                 show
                                 type=""
                                 arrow
-                                title="Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable."
+                                title="Agent evaluations aren't enabled for this workspace."
                               >
                                 <Box
                                   sx={{
@@ -918,7 +861,7 @@ const EvalCreatePage = () => {
                                 >
                                   {tab.label}
                                   <Iconify
-                                    icon="mdi:lock-outline"
+                                    icon="solar:lock-linear"
                                     width={14}
                                   />
                                 </Box>
@@ -927,33 +870,10 @@ const EvalCreatePage = () => {
                               tab.label
                             )
                           }
-                          sx={{
-                            bgcolor:
-                              evalType === tab.value
-                                ? (theme) =>
-                                    theme.palette.mode === "dark"
-                                      ? "rgba(255,255,255,0.12)"
-                                      : "background.paper"
-                                : "transparent",
-                            boxShadow:
-                              evalType === tab.value
-                                ? (theme) =>
-                                    theme.palette.mode === "dark"
-                                      ? "none"
-                                      : "0 1px 3px rgba(0,0,0,0.08)"
-                                : "none",
-                            borderRadius: "6px",
-                            fontWeight: evalType === tab.value ? 600 : 400,
-                            opacity: locked ? 0.6 : 1,
-                            color:
-                              evalType === tab.value
-                                ? "text.primary"
-                                : "text.disabled",
-                          }}
                         />
                       );
                     })}
-                  </Tabs>
+                  </SegmentedTabs>
 
                   {/* ═══ Tab-specific content ═══ */}
 
@@ -964,6 +884,7 @@ const EvalCreatePage = () => {
                       onChange={setInstructions}
                       model={model}
                       onModelChange={setModel}
+                      openModelMenuSignal={openModelMenuSignal}
                       placeholder="You are a helpful assistant"
                       templateFormat={templateFormat}
                       onTemplateFormatChange={setTemplateFormat}
@@ -994,6 +915,7 @@ const EvalCreatePage = () => {
                           format render inline in LLMPromptEditor's top
                           bar, matching the agent InstructionEditor. */}
                       <LLMPromptEditor
+                        openModelMenuSignal={openModelMenuSignal}
                         messages={messages}
                         onMessagesChange={(msgs) => {
                           setMessages(msgs);
@@ -1093,22 +1015,22 @@ const EvalCreatePage = () => {
                     />
                   )}
 
-                  {/* Error Localization — LLM/Agent only. Code evals don't
-                      produce model traces for the localizer to introspect. */}
-                  {evalType !== "code" && (
+                  {/* LLM/Agent only — code evals don't produce model traces for
+                      the localizer to introspect. */}
+                  {errorLocalizerAvailable && evalType !== "code" && (
                     <Box>
                       <CustomTooltip
-                        show={isOSS}
+                        show={agentEvalLocked}
                         type=""
                         arrow
-                        title={ERROR_LOCALIZER_OSS_TOOLTIP}
+                        title={ERROR_LOCALIZER_LOCKED_TOOLTIP}
                       >
                         <Box sx={{ display: "inline-flex" }}>
                           <FormControlLabel
                             control={
                               <Checkbox
                                 checked={errorLocalizerActive}
-                                disabled={isOSS}
+                                disabled={agentEvalLocked}
                                 onChange={(e) =>
                                   setErrorLocalizerEnabled(e.target.checked)
                                 }
@@ -1188,11 +1110,7 @@ const EvalCreatePage = () => {
                                   : [...prev, tag.value],
                               )
                             }
-                            sx={{
-                              fontSize: "12px",
-                              cursor: "pointer",
-                              "& .MuiChip-icon": { fontSize: "14px" },
-                            }}
+                            sx={{ cursor: "pointer" }}
                           />
                         );
                       })}
@@ -1306,7 +1224,7 @@ const EvalCreatePage = () => {
                 {testError && (
                   <Typography
                     variant="caption"
-                    color="error.main"
+                    color="status.danger.fg"
                     sx={{ mr: "auto", fontSize: "12px", maxWidth: 300 }}
                     noWrap
                   >
@@ -1323,13 +1241,13 @@ const EvalCreatePage = () => {
                     }}
                   >
                     <Iconify
-                      icon="mdi:check-circle"
+                      icon="solar:check-circle-bold"
                       width={16}
-                      sx={{ color: "success.main" }}
+                      sx={{ color: "status.success.fg" }}
                     />
                     <Typography
                       variant="caption"
-                      color="success.main"
+                      color="status.success.fg"
                       sx={{ fontSize: "12px" }}
                     >
                       Test completed
@@ -1425,12 +1343,11 @@ const EvalCreatePage = () => {
                               <CircularProgress size={14} />
                             ) : (
                               <Iconify
-                                icon="mdi:play-circle-outline"
+                                icon="solar:play-circle-linear"
                                 width={16}
                               />
                             )
                           }
-                          sx={{ textTransform: "none" }}
                         >
                           {isTesting ? "Testing..." : "Test Evaluation"}
                         </Button>
@@ -1497,12 +1414,8 @@ const EvalCreatePage = () => {
                           }
                           disabled={saveDisabled}
                           startIcon={
-                            <Iconify
-                              icon="mdi:content-save-outline"
-                              width={16}
-                            />
+                            <Iconify icon="solar:diskette-linear" width={16} />
                           }
-                          sx={{ textTransform: "none" }}
                         >
                           {isLoading ? "Saving..." : "Save Evaluation"}
                         </Button>

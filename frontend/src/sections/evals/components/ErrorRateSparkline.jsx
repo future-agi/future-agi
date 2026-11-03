@@ -2,6 +2,7 @@ import { Box, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { format, subDays } from "date-fns";
+import { seriesColor } from "src/theme/data-colors";
 
 /**
  * SVG line sparkline for error rate (0-100%).
@@ -23,8 +24,10 @@ const ErrorRateSparkline = ({ dailyValues = [], height = 28 }) => {
   const hasData = useMemo(() => days.some((d) => d.value > 0), [days]);
 
   const hovered = hoveredIdx !== null ? days[hoveredIdx] : null;
-  const isDark = theme.palette.mode === "dark";
-  const baselineColor = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)";
+  const baselineColor = theme.palette.divider;
+  const gradientTop = theme.palette.status.danger.solid;
+  const gradientMid = seriesColor(theme, 0);
+  const gradientBottom = seriesColor(theme, 1);
 
   const svgWidth = 140;
   const svgHeight = height;
@@ -97,16 +100,24 @@ const ErrorRateSparkline = ({ dailyValues = [], height = 28 }) => {
           style={{ display: "block" }}
         >
           <defs>
-            {/* Vertical gradient: muted rose at top (100%) → lavender (50%) → light blue at bottom (0%) */}
+            {/* Vertical gradient: red at top (100%) → purple (50%) → blue at bottom (0%) */}
             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#e8a0a0" stopOpacity="0.9" />
-              <stop offset="50%" stopColor="#c4b5fd" stopOpacity="0.55" />
-              <stop offset="100%" stopColor="#93c5fd" stopOpacity="0.4" />
+              <stop offset="0%" stopColor={gradientTop} stopOpacity="0.9" />
+              <stop offset="50%" stopColor={gradientMid} stopOpacity="0.55" />
+              <stop
+                offset="100%"
+                stopColor={gradientBottom}
+                stopOpacity="0.4"
+              />
             </linearGradient>
             <linearGradient id={fillGradientId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#e8a0a0" stopOpacity="0.1" />
-              <stop offset="40%" stopColor="#c4b5fd" stopOpacity="0.04" />
-              <stop offset="100%" stopColor="#93c5fd" stopOpacity="0.01" />
+              <stop offset="0%" stopColor={gradientTop} stopOpacity="0.1" />
+              <stop offset="40%" stopColor={gradientMid} stopOpacity="0.04" />
+              <stop
+                offset="100%"
+                stopColor={gradientBottom}
+                stopOpacity="0.01"
+              />
             </linearGradient>
           </defs>
 
@@ -179,7 +190,7 @@ const ErrorRateSparkline = ({ dailyValues = [], height = 28 }) => {
       >
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             color: hovered ? "text.secondary" : "transparent",
             lineHeight: 1,
             whiteSpace: "nowrap",
@@ -189,7 +200,7 @@ const ErrorRateSparkline = ({ dailyValues = [], height = 28 }) => {
         </Typography>
         <Typography
           sx={{
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 500,
             color: hovered ? getValueColor(hovered.value) : "transparent",
             lineHeight: 1,

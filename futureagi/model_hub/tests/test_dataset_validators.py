@@ -118,18 +118,16 @@ class TestValidateAndConvertCellValue:
         assert '"key"' in result
 
     def test_array_invalid_json(self):
-        # `parse_json_safely` invokes `json_repair` on structurally-broken
-        # arrays like `"[1, 2,"` and returns the repaired list.
+        # Structurally incomplete input (doesn't end with `]`) is rejected
+        # by parse_json_safely's looks_structured guard.
         result, error = validate_and_convert_cell_value("[1, 2,", "array")
-        assert error is None
-        assert result == "[1, 2]"
+        assert error is not None
 
     def test_json_malformed_repaired(self):
-        # `json_repair` also fixes malformed JSON objects missing a value
-        # after the key.
+        # Structurally incomplete input (doesn't end with `}`) is rejected
+        # by parse_json_safely's looks_structured guard.
         result, error = validate_and_convert_cell_value('{"key":', "json")
-        assert error is None
-        assert '"key"' in result
+        assert error is not None
 
     def test_image_type_blocked_mentions_dashboard(self):
         # image case gets an extra substring check the shared harness above

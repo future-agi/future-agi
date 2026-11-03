@@ -5,7 +5,17 @@ import uuid
 
 import numpy as np
 import pandas as pd
+import requests
 import structlog
+from accounts.models import User
+from accounts.utils import get_request_organization
+from agentic_eval.core.embeddings.embedding_manager import (
+    EmbeddingManager,
+)
+from agentic_eval.core.embeddings.serving_client import (
+    SERVING_UNAVAILABLE_MESSAGE,
+    require_serving,
+)
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Case, CharField, Q, Value, When
@@ -14,17 +24,6 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import serializers, viewsets
-from rest_framework.decorators import action
-from rest_framework.exceptions import MethodNotAllowed, NotFound
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
-
-from accounts.models import User
-from accounts.utils import get_request_organization
-from agentic_eval.core.embeddings.embedding_manager import (
-    EmbeddingManager,
-)
 
 # from ee.agenthub.feedback_agent_updated.utils import RAG
 from model_hub.models import AnnotationTask
@@ -57,6 +56,11 @@ from model_hub.serializers.develop_annotations import (
 )
 from model_hub.utils.auto_annotate import generate_annotations_task
 from model_hub.utils.utils import corpus_builder
+from rest_framework import serializers, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import MethodNotAllowed, NotFound
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 from tfc.constants.levels import Level
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.api_contracts import validated_request
@@ -441,7 +445,7 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
             label = AnnotationsLabels.all_objects.get(
                 pk=pk,
                 deleted=True,
-                organization=request.user.organization,
+                organization=get_request_organization(request),
             )
         except AnnotationsLabels.DoesNotExist:
             return self._gm.not_found("Label not found or not archived.")
@@ -2002,12 +2006,28 @@ class AnnotationSummaryView(APIView):
             if len(texts) < 2:
                 continue  # need at least 2 texts for similarity
 
+            # Cached probe: fails fast instead of timing out per row.
+            require_serving()
+
             # ✅ Use SimilarityCalculator
             sim_result = self.calculate_similarity(texts, texts)
 
             row_sims.append(sim_result)
 
         return round(np.mean(row_sims), 2) if row_sims else None
+
+    def text_agreement(self, df):
+        """``(cosine_similarity, note)`` for a text label.
+
+        The similarity needs embeddings from model serving, which the default
+        install runs only with the ``ml`` profile. Without it the metric is
+        left out with a note, and the rest of the summary is still returned.
+        """
+        try:
+            return self.avg_semantic_similarity(df), None
+        except (ConnectionError, requests.exceptions.ConnectionError) as e:
+            logger.info("annotation_similarity_skipped", error=str(e))
+            return None, SERVING_UNAVAILABLE_MESSAGE
 
     def build_counts_matrix(self, df, categories):
         """
@@ -2080,11 +2100,12 @@ class AnnotationSummaryView(APIView):
                 except ImportError:
                     Entitlements = None
 
-                feat_check = Entitlements.check_feature(
-                    str(organization.id), "has_agreement_metrics"
-                )
-                if not feat_check.allowed:
-                    return self._gm.forbidden_response(feat_check.reason)
+                if Entitlements is not None:
+                    feat_check = Entitlements.check_feature(
+                        str(organization.id), "has_agreement_metrics"
+                    )
+                    if not feat_check.allowed:
+                        return self._gm.forbidden_response(feat_check.reason)
             except ImportError:
                 pass
 
@@ -2245,12 +2266,16 @@ class AnnotationSummaryView(APIView):
                             max_len = corpus.get("max_len")
                             avg_len = corpus.get("avg_len")
 
-                        cosine_similarity = self.avg_semantic_similarity(text_metrics)
+                        cosine_similarity, similarity_note = self.text_agreement(
+                            text_metrics
+                        )
                         if cosine_similarity is not None and pd.notna(
                             cosine_similarity
                         ):
                             agreements.append(cosine_similarity)
                         r["cosine_similarity"] = cosine_similarity
+                        if similarity_note:
+                            r["cosine_similarity_note"] = similarity_note
                         r["len_range"] = f"{min_len}-{max_len}"
                         r["avg_len"] = avg_len
                         r["vocab_size"] = len(vocab)

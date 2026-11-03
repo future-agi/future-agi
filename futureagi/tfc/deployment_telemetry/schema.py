@@ -3,7 +3,7 @@
 SINGLE SOURCE OF TRUTH for the registration/heartbeat payload shape, the
 size/volume caps, and the email-domain derivation. This module's body is
 **vendored verbatim** into the receiver repo at
-``ee/usage/deployment_telemetry_schema.py`` (only the module docstring,
+``ee/cloud/telemetry/schema.py`` (only the module docstring,
 which names each copy's role, differs). A contract test
 (``test_schema_contract``) asserts every public constant in the two copies
 agrees and that a payload built here validates on the receiver, so a cap or
@@ -83,7 +83,6 @@ HEARTBEAT_FIELDS = frozenset(
 )
 
 USER_FIELDS = frozenset({"email", "domain"})
-
 
 def derive_domain(email: str) -> str:
     """Return the lowercased domain part of an email address.

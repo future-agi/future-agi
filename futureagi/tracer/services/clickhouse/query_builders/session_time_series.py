@@ -14,11 +14,14 @@ for sessions as it does for traces — same metric IDs, same response
 shape — but the numbers reflect session-level aggregation.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
-from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+from tracer.services.clickhouse.query_builders.filters import (
+    ClickHouseFilterBuilder,
+    build_numeric_filter_predicate,
+)
 from tracer.services.clickhouse.query_builders.session_filters import (
     SESSION_ID_FILTER_COLS,
     build_session_id_filter_clause,
@@ -68,7 +71,11 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
 
-        filter_builder = ClickHouseFilterBuilder(table=self.TABLE)
+        filter_builder = ClickHouseFilterBuilder(
+            table=self.TABLE,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
         span_filters = self._extract_span_filters()
         extra_where, extra_params = filter_builder.translate(span_filters)
         self.params.update(extra_params)
@@ -95,9 +102,7 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
         )
         resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
         session_id_clause = self._build_session_id_clause(resolved_ts)
-        session_id_fragment = (
-            f"WHERE {session_id_clause}" if session_id_clause else ""
-        )
+        session_id_fragment = f"WHERE {session_id_clause}" if session_id_clause else ""
 
         # Two-level aggregation:
         # Inner: per-session aggregates from ALL spans in the session
@@ -194,23 +199,17 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
             filter_value = config.get("filter_value", config.get("filterValue"))
             ch_col = self.SESSION_FILTER_MAP[col_id]
 
-            op_map = {
-                "equals": "=",
-                "not_equals": "!=",
-                "greater_than": ">",
-                "less_than": "<",
-                "greater_than_or_equal": ">=",
-                "less_than_or_equal": "<=",
-            }
-            op = op_map.get(filter_op)
-            if op is None:
-                conditions.append("0 = 1")
-                continue
-
             param_counter += 1
             param_name = f"having_{param_counter}"
-            self.params[param_name] = filter_value
-            conditions.append(f"{ch_col} {op} %({param_name})s")
+            conditions.append(
+                build_numeric_filter_predicate(
+                    ch_col,
+                    filter_op,
+                    filter_value,
+                    param_prefix=param_name,
+                    params=self.params,
+                )
+            )
 
         return " AND ".join(conditions)
 
@@ -281,3 +280,184 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
             "avg_traces_per_session": avg_traces_data,
             "total_cost": total_cost_sum_data,
         }
+
+
+# One rollup graph answers ONE metric. Each entry is
+# (per-session merge state, outer aggregate expression, result column). The
+# session key and ``minMerge(first_seen)`` are always read — the outer window
+# predicate binds ``session_start`` — and the outer ``count() AS traffic_count``
+# is always projected because ``format_system_metric_graph`` reads the traffic
+# series for every metric's ``primary_traffic``. Everything else is only read
+# when the requested metric needs it; in particular the ``latency_q`` t-digest
+# state, by far the widest column on ``spans_per_session``, is read only for
+# ``latency``.
+_ROLLUP_METRIC_PLAN: dict[str, tuple[str, str, str]] = {
+    "traffic": ("", "count()", "traffic_count"),
+    "session_count": ("", "count()", "session_count"),
+    "cost": (
+        "sumMerge(sps.cost_sum) AS session_total_cost",
+        "avg(session_total_cost)",
+        "avg_cost",
+    ),
+    "total_cost": (
+        "sumMerge(sps.cost_sum) AS session_total_cost",
+        "sum(session_total_cost)",
+        "total_cost_sum",
+    ),
+    "tokens": (
+        "sumMerge(sps.total_tokens_sum) AS session_total_tokens",
+        "sum(session_total_tokens)",
+        "total_tokens",
+    ),
+    "total_tokens": (
+        "sumMerge(sps.total_tokens_sum) AS session_total_tokens",
+        "sum(session_total_tokens)",
+        "total_tokens",
+    ),
+    "prompt_tokens": (
+        "sumMerge(sps.prompt_tokens_sum) AS session_prompt_tokens",
+        "sum(session_prompt_tokens)",
+        "prompt_tokens",
+    ),
+    "input_tokens": (
+        "sumMerge(sps.prompt_tokens_sum) AS session_prompt_tokens",
+        "sum(session_prompt_tokens)",
+        "prompt_tokens",
+    ),
+    "completion_tokens": (
+        "sumMerge(sps.completion_tokens_sum) AS session_completion_tokens",
+        "sum(session_completion_tokens)",
+        "completion_tokens",
+    ),
+    "output_tokens": (
+        "sumMerge(sps.completion_tokens_sum) AS session_completion_tokens",
+        "sum(session_completion_tokens)",
+        "completion_tokens",
+    ),
+    "error_rate": (
+        "countIfMerge(sps.error_count) AS session_error_count",
+        "countIf(session_error_count > 0) * 100.0 / greatest(count(), 1)",
+        "error_rate",
+    ),
+    "avg_duration": (
+        "maxMerge(sps.last_seen) AS session_end",
+        "avg(dateDiff('second', session_start, coalesce(session_end, session_start)))",
+        "avg_duration",
+    ),
+    "latency": (
+        "(quantilesTDigestMerge(0.5, 0.95, 0.99)(sps.latency_q))[1] AS session_latency",
+        "avg(session_latency)",
+        "avg_latency",
+    ),
+}
+
+
+class SessionRollupTimeSeriesQueryBuilder(SessionTimeSeriesQueryBuilder):
+    """Build an interactive date-only graph from retained session states.
+
+    This deliberately does not resolve ``trace_session_id_remap``. A global
+    remap join defeats the purpose of the row-reduced fast path on projects
+    with billions of spans. The response is consequently labelled as a
+    materialized-rollup estimate by the dispatcher rather than exact data.
+
+    The statement is metric-driven: only the aggregate states the requested
+    ``metric_id`` consumes are merged, so a traffic or session-count graph
+    never pays for the per-session t-digest. ``format_result`` still returns
+    every metric key; the ones this statement did not compute default to zero
+    and the dispatcher reads only the requested one.
+    """
+
+    ROLLUP_TABLE = "spans_per_session"
+
+    def __init__(
+        self,
+        project_id: str,
+        filters: list[dict] | None = None,
+        interval: str = "day",
+        metric_id: str = "session_count",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(project_id, filters=filters, interval=interval, **kwargs)
+        normalized = str(metric_id or "").strip().lower()
+        if normalized not in _ROLLUP_METRIC_PLAN:
+            raise ValueError(f"session rollup graphs cannot answer {metric_id!r}")
+        self.metric_id = normalized
+
+    @property
+    def result_columns(self) -> frozenset[str]:
+        """Columns this statement projects, for the dispatcher's shape check."""
+
+        return frozenset(
+            {"time_bucket", "traffic_count", _ROLLUP_METRIC_PLAN[self.metric_id][2]}
+        )
+
+    def build(self) -> tuple[str, dict[str, Any]]:
+        if any(
+            (item.get("column_id") or item.get("columnId"))
+            not in {"created_at", "start_time"}
+            or self.is_datetime_complement_filter(item)
+            for item in self.filters
+        ):
+            raise ValueError(
+                "session rollup graphs accept only positive datetime filters"
+            )
+        self.start_date, self.end_date = self.parse_time_range(
+            self.filters,
+            strict=True,
+        )
+        self.params["start_date"] = self.start_date
+        self.params["end_date"] = self.end_date
+        rollup_scan_start = self.start_date.replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        rollup_scan_end = self.end_date.replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        if rollup_scan_end < self.end_date:
+            rollup_scan_end += timedelta(hours=1)
+        self.params["rollup_scan_start"] = rollup_scan_start
+        self.params["rollup_scan_end"] = rollup_scan_end
+        bucket_fn = self.time_bucket_expr(self.interval)
+        query = self._rollup_query(bucket_fn=bucket_fn)
+        return query, self.params
+
+    def _rollup_query(
+        self,
+        *,
+        bucket_fn: str,
+    ) -> str:
+        _state, outer_expr, result_column = _ROLLUP_METRIC_PLAN[self.metric_id]
+        metric_column = (
+            ""
+            if result_column == "traffic_count"
+            else f",\n            {outer_expr} AS {result_column}"
+        )
+        source = self._rollup_session_source()
+        return f"""
+        SELECT
+            {bucket_fn}(session_start) AS time_bucket,
+            count() AS traffic_count{metric_column}
+        FROM ({source}) AS sessions
+        WHERE session_start >= %(start_date)s
+          AND session_start < %(end_date)s
+        GROUP BY time_bucket
+        ORDER BY time_bucket
+        """
+
+    def _rollup_session_source(self) -> str:
+        state = _ROLLUP_METRIC_PLAN[self.metric_id][0]
+        metric_state = f",\n                {state}" if state else ""
+        return f"""
+            SELECT
+                sps.trace_session_id AS session_id,
+                minMerge(sps.first_seen) AS session_start{metric_state}
+            FROM {self.ROLLUP_TABLE} AS sps
+            PREWHERE sps.project_id = toUUID(%(project_id)s)
+              AND sps.hour_first_seen >= %(rollup_scan_start)s
+              AND sps.hour_first_seen < %(rollup_scan_end)s
+            GROUP BY session_id
+        """

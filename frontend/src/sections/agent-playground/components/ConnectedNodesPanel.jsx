@@ -32,7 +32,7 @@ function ConnectedNodeItem({ node }) {
           sx={{
             width: 24,
             height: 24,
-            borderRadius: 0.5,
+            borderRadius: "4px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -62,7 +62,7 @@ function ConnectedNodeItem({ node }) {
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ mt: 0.25, display: "block", fontSize: "0.65rem" }}
+            sx={{ mt: 0.25, display: "block", fontSize: "0.75rem" }}
           >
             {node.outputLabel}
           </Typography>
@@ -112,7 +112,7 @@ export default function ConnectedNodesPanel({ connectedNodes }) {
         variant="caption"
         fontWeight="fontWeightBold"
         color="text.secondary"
-        sx={{ mb: 1, textTransform: "uppercase", letterSpacing: 0.5 }}
+        sx={{ mb: 1, textTransform: "none", letterSpacing: 0.5 }}
       >
         Inputs
       </Typography>

@@ -16,6 +16,12 @@ function makeTheme(mode = "light") {
       blue: { 500: "#2196f3" },
       black: { 200: "#e0e0e0", 400: "#9e9e9e" },
       background: { paper: "#fff" },
+      border: { default: mode === "dark" ? "#9e9e9e" : "#e0e0e0" },
+      status: {
+        danger: { solid: "#f44336", bg: "#fff5f5" },
+        success: { solid: "#4caf50", bg: "#e8f5e9" },
+        info: { solid: "#2196f3", bg: "#e3f2fd" },
+      },
     },
   });
 }
@@ -119,7 +125,7 @@ describe("useBaseNodeStyles", () => {
       isError: true,
       isIdleState: false,
     });
-    // Light mode: red[50]
+    // danger.bg
     expect(result.current.backgroundColor).toContain("fff5f5");
   });
 

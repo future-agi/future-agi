@@ -1,3 +1,4 @@
+import SelectionBar from "src/components/selection-bar";
 import {
   Box,
   Button,
@@ -5,11 +6,9 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Divider,
   InputAdornment,
   TextField,
   Typography,
-  styled,
 } from "@mui/material";
 import React, {
   useCallback,
@@ -21,8 +20,9 @@ import React, {
 import { Helmet } from "react-helmet-async";
 import GridTable from "./GridTable";
 import { getWorkspaceQueryOptions } from "./getWorkspaceQueryOptions";
-import { useQueryClient, useMutation } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { useQueryClient } from "@tanstack/react-query";
+import { fDateTimeLocal } from "src/utils/format-time";
+import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 import AllActionForm from "./AllActionForm";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
@@ -30,7 +30,7 @@ import logger from "src/utils/logger";
 import PropTypes from "prop-types";
 import { useNavigate } from "react-router";
 import { APP_CONSTANTS } from "src/utils/constants";
-import axiosInstance, { endpoints } from "src/utils/axios";
+import { useCreateWorkspace } from "src/api/workspaces/create";
 import { useSnackbar } from "notistack";
 import { useOrganization } from "src/contexts/OrganizationContext";
 
@@ -67,31 +67,6 @@ const selectionColumnDef = {
   headerComponent: SelectionHeader,
 };
 
-const StyledBox = styled(Box)(({ theme }) => ({
-  gap: "12px",
-  display: "flex",
-  alignItems: "center",
-  padding: "0px 16px",
-  borderRadius: theme.shape.borderRadius,
-  border: "1px solid",
-  borderColor: theme.palette.action.hover,
-}));
-
-const StyledTypography = styled(Typography)(({ theme }) => ({
-  color: theme.palette.primary.main,
-  fontWeight: theme.typography["fontWeightMedium"], // "500",
-  ...theme.typography["s1"],
-}));
-
-const StyledButton = styled(Button)(({ theme }) => ({
-  color: theme.palette.text.primary,
-  fontWeight: theme.typography["fontWeightRegular"], // "500",
-  ...theme.typography["s1"],
-  "&:hover": {
-    backgroundColor: theme.palette.action.hover,
-  },
-}));
-
 const WorkSpaceManagement = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -107,9 +82,7 @@ const WorkSpaceManagement = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
 
-  const createMutation = useMutation({
-    mutationFn: (payload) =>
-      axiosInstance.post(endpoints.workspaces.create, payload),
+  const createMutation = useCreateWorkspace({
     onSuccess: () => {
       enqueueSnackbar("Workspace created", { variant: "success" });
       setCreateOpen(false);
@@ -129,7 +102,7 @@ const WorkSpaceManagement = () => {
     if (!newWorkspaceName.trim()) return;
     createMutation.mutate({
       name: newWorkspaceName.trim(),
-      displayName: newWorkspaceName.trim(),
+      display_name: newWorkspaceName.trim(),
       emails: [],
       role: "workspace_admin", // Backend expects lowercase with underscore, not "Workspace Admin"
     });
@@ -153,19 +126,27 @@ const WorkSpaceManagement = () => {
         headerName: "Start date",
         field: "start_data",
         flex: 1,
-        valueFormatter: (params) =>
-          params?.value
-            ? format(new Date(params?.value), "dd/MM/yyyy, h:mm aaa")
-            : "",
+        valueFormatter: (params) => fDateTimeLocal(params.value),
+        cellRenderer: (params) => (
+          <LocalDateTime
+            value={params.value}
+            withTime
+            emptyText="No start date recorded"
+          />
+        ),
       },
       {
         headerName: "Last updated date",
         field: "last_update_date",
         flex: 1,
-        valueFormatter: (params) =>
-          params?.value
-            ? format(new Date(params?.value), "dd/MM/yyyy, h:mm aaa")
-            : "",
+        valueFormatter: (params) => fDateTimeLocal(params.value),
+        cellRenderer: (params) => (
+          <LocalDateTime
+            value={params.value}
+            withTime
+            emptyText="No update date recorded"
+          />
+        ),
       },
     ],
     [],
@@ -359,7 +340,8 @@ const WorkSpaceManagement = () => {
                 <InputAdornment position="start">
                   <Iconify
                     // @ts-ignore
-                    icon="eva:search-fill"
+                    icon="solar:magnifier-linear"
+                    width={16}
                     sx={{ color: "text.disabled" }}
                   />
                 </InputAdornment>
@@ -368,52 +350,17 @@ const WorkSpaceManagement = () => {
           />
           <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
             {(selectedAll || toggledNodes.length > 0) && (
-              <StyledBox>
-                <Box sx={{ display: "flex", alignItems: "center" }}>
-                  <StyledTypography>{selectedCount} Selected</StyledTypography>
-                </Box>
-                <Divider
-                  orientation="vertical"
-                  flexItem
-                  sx={{ height: "24px", alignSelf: "center" }}
-                />
-                <StyledButton
-                  variant="text"
-                  size="small"
-                  onClick={() => setInviteOpen(true)}
-                  startIcon={
-                    <Iconify
-                      // @ts-ignore
-                      icon="solar:share-linear"
-                      sx={{ color: "text.primary" }}
-                    />
-                  }
-                  sx={{
-                    padding: 0,
-                    minWidth: 0,
-                    color: "text.primary",
-                  }}
-                >
-                  Share invite
-                </StyledButton>
-                <Divider
-                  orientation="vertical"
-                  flexItem
-                  sx={{ height: "24px", alignSelf: "center" }}
-                />
-                <StyledButton
-                  variant="text"
-                  size="small"
-                  onClick={() => unCheckedHandler()}
-                  sx={{
-                    padding: 0,
-                    minWidth: 0,
-                    color: "text.primary",
-                  }}
-                >
-                  Cancel
-                </StyledButton>
-              </StyledBox>
+              <SelectionBar
+                count={selectedCount}
+                onCancel={() => unCheckedHandler()}
+                actions={[
+                  {
+                    label: "Share invite",
+                    icon: "solar:share-linear",
+                    onClick: () => setInviteOpen(true),
+                  },
+                ]}
+              />
             )}
             {canCreateWorkspace && (
               <Button
@@ -424,7 +371,7 @@ const WorkSpaceManagement = () => {
                 startIcon={
                   <Iconify
                     // @ts-ignore
-                    icon="mingcute:add-line"
+                    icon="solar:add-linear"
                   />
                 }
               >
@@ -479,7 +426,8 @@ const WorkSpaceManagement = () => {
           setCreateOpen(false);
           setNewWorkspaceName("");
         }}
-        maxWidth="sm"
+        maxWidth={false}
+        PaperProps={{ sx: { maxWidth: 720 } }}
         fullWidth
       >
         <DialogTitle>Create New Workspace</DialogTitle>

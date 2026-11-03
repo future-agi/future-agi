@@ -1,6 +1,6 @@
 import React, { memo } from "react";
 import { Handle, Position } from "@xyflow/react";
-import { alpha, Box, IconButton, Stack, Typography } from "@mui/material";
+import { Box, IconButton, Stack, Typography, ButtonBase } from "@mui/material";
 import SvgColor from "src/components/svg-color";
 import CustomTooltip from "src/components/tooltip";
 import PropTypes from "prop-types";
@@ -34,7 +34,7 @@ const BaseNode = ({
   const outputPort = ports?.find((p) => p.direction === PORT_DIRECTION.OUTPUT);
   const outputPortLabel = outputPort?.display_name;
   const typeConfig = NODE_TYPE_CONFIG[type] ?? {};
-  const iconColor = typeConfig.color ?? "orange.500";
+  const iconColor = typeConfig.color ?? "status.warning.fg";
   const accessibleNodeLabel = label || typeConfig.title || type;
 
   const state = useBaseNodeState({ id, data });
@@ -133,7 +133,7 @@ const BaseNode = ({
             sx={{
               width: 20,
               height: 20,
-              borderRadius: 0.5,
+              borderRadius: "4px",
               border: "1px solid",
               borderColor: "divider",
               display: "flex",
@@ -159,7 +159,7 @@ const BaseNode = ({
           >
             {label}
           </Typography>
-          {!preview && !isWorkflowRunning && (
+          {!preview && !isWorkflowRunning && !isReadOnly && (
             <CustomTooltip
               show
               title="Delete node"
@@ -181,17 +181,13 @@ const BaseNode = ({
                   className="node-delete-btn"
                   aria-label={`Delete canvas node: ${accessibleNodeLabel}`}
                   sx={{
-                    color: "red.500",
+                    color: "status.danger.fg",
                     bgcolor: "background.paper",
-                    borderRadius: 0.5,
                     border: "1px solid",
-                    borderColor: "red.500",
+                    borderColor: "status.danger.solid",
                     p: 0.5,
                     "&:hover": {
-                      bgcolor: (theme) =>
-                        theme.palette.mode === "dark"
-                          ? alpha(theme.palette.red[800], 0.3)
-                          : "red.50",
+                      bgcolor: "status.danger.bg",
                     },
                   }}
                   onClick={handleDeleteClick}
@@ -241,7 +237,8 @@ const BaseNode = ({
 
       {/* Add button — only shown when node has no outgoing edges */}
       {!preview && !isWorkflowRunning && !isReadOnly && !hasOutgoingEdge && (
-        <Box
+        <ButtonBase
+          component="div"
           ref={addButtonRef}
           onClick={handleAddClick}
           sx={{
@@ -253,18 +250,16 @@ const BaseNode = ({
             height: 24,
             borderRadius: "50%",
             border: "1px solid",
-            borderColor: "blue.500",
+            borderColor: "status.info.solid",
             backgroundColor: "background.paper",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            cursor: "pointer",
             transition: "all 0.2s",
             "&:hover": {
-              borderColor: "blue.600",
+              borderColor: "status.info.solid",
               borderStyle: "solid",
-              bgcolor: (theme) =>
-                theme.palette.mode === "dark" ? "black.800" : "blue.100",
+              bgcolor: "action.hover",
             },
             opacity: isWorkflowRunning ? 0.6 : 1,
             pointerEvents: isWorkflowRunning ? "none" : "auto",
@@ -276,10 +271,10 @@ const BaseNode = ({
             sx={{
               width: 20,
               height: 20,
-              bgcolor: "blue.500",
+              bgcolor: "status.info.solid",
             }}
           />
-        </Box>
+        </ButtonBase>
       )}
 
       {!preview && (

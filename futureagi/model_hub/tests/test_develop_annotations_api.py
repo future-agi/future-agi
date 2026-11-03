@@ -13,15 +13,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from rest_framework import status
-
-# TestAnnotationSummaryView tests don't mock the EE entitlement, so they get
-# 403 in non-EE test environments. See PLAN.md. The legacy ``Annotations``
-# model is still exposed through generated frontend contracts, so these tests
-# lock its supported fallback behavior while unified ``Score`` remains the
-# canonical annotation store.
-from rest_framework.test import APIClient
-
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
 from model_hub.models import AIModel, AnnotationTask
@@ -33,6 +24,14 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from rest_framework import status
+
+# TestAnnotationSummaryView tests don't mock the EE entitlement, so they get
+# 403 in non-EE test environments. See PLAN.md. The legacy ``Annotations``
+# model is still exposed through generated frontend contracts, so these tests
+# lock its supported fallback behavior while unified ``Score`` remains the
+# canonical annotation store.
+from rest_framework.test import APIClient
 from tfc.middleware.workspace_context import set_workspace_context
 
 
@@ -497,7 +496,14 @@ class TestAnnotationsViewSet:
     def test_create_annotation_required_label_requires_entitlement(
         self, auth_client, dataset, user, annotation_label
     ):
-        """Required labels are plan-gated and should fail cleanly."""
+        """A required-label capability denial propagates cleanly as 402.
+
+        required_labels is free self-hosted (not oss_locked), so simulate a
+        cloud-plan denial by patching the gate — this still covers the view
+        calling the gate and mapping FeatureUnavailable to 402.
+        """
+        from tfc.ee_gating import EEFeature, FeatureUnavailable
+
         payload = {
             "name": "Required Label Annotation",
             "dataset": str(dataset.id),
@@ -505,7 +511,13 @@ class TestAnnotationsViewSet:
             "labels": [{"id": str(annotation_label.id), "required": True}],
             "responses": 1,
         }
-        response = auth_client.post("/model-hub/annotations/", payload, format="json")
+        with patch(
+            "tfc.ee_gating.check_ee_feature",
+            side_effect=FeatureUnavailable(EEFeature.REQUIRED_LABELS),
+        ):
+            response = auth_client.post(
+                "/model-hub/annotations/", payload, format="json"
+            )
         assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
 
     def test_retrieve_annotation(self, auth_client, annotation):
@@ -549,11 +561,17 @@ class TestAnnotationsViewSet:
             ],
             "responses": 1,
         }
-        response = auth_client.put(
-            f"/model-hub/annotations/{annotation.id}/",
-            payload,
-            format="json",
-        )
+        from tfc.ee_gating import EEFeature, FeatureUnavailable
+
+        with patch(
+            "tfc.ee_gating.check_ee_feature",
+            side_effect=FeatureUnavailable(EEFeature.REQUIRED_LABELS),
+        ):
+            response = auth_client.put(
+                f"/model-hub/annotations/{annotation.id}/",
+                payload,
+                format="json",
+            )
         assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
 
     def test_partial_update_preserves_labels_and_assignees(
@@ -1299,11 +1317,10 @@ class TestUserViewSet:
         """A deliberately removed org member (inactive OrganizationMembership) is
         rejected even if a stale active WorkspaceMembership lingers — the gate
         fails closed and never lets workspace drift resurrect access (TH-6156)."""
-        from rest_framework.exceptions import NotFound
-
         from accounts.models.organization_membership import OrganizationMembership
         from accounts.models.workspace import WorkspaceMembership
         from model_hub.views.develop_annotations import UserViewSet
+        from rest_framework.exceptions import NotFound
         from tfc.constants.levels import Level
         from tfc.constants.roles import OrganizationRoles
 
@@ -1345,10 +1362,9 @@ class TestUserViewSet:
         """A workspace-only requester whose only membership is in a soft-deleted
         (or deactivated) workspace is rejected — a dead workspace's stale
         membership must not authorize (TH-6156)."""
-        from rest_framework.exceptions import NotFound
-
         from accounts.models.workspace import Workspace, WorkspaceMembership
         from model_hub.views.develop_annotations import UserViewSet
+        from rest_framework.exceptions import NotFound
         from tfc.constants.levels import Level
         from tfc.constants.roles import OrganizationRoles
 

@@ -1,8 +1,6 @@
 import React, { useState } from "react";
 import PropTypes from "prop-types";
 import {
-  Card,
-  CardContent,
   Typography,
   Box,
   Stack,
@@ -10,6 +8,7 @@ import {
   Divider,
   IconButton,
 } from "@mui/material";
+import Section from "src/components/section";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import { useRemoveProvider } from "./hooks/useGatewayConfig";
@@ -25,7 +24,7 @@ const ProviderConfigView = ({ config, orgConfig, gatewayId }) => {
 
   if (!providers || Object.keys(providers).length === 0) {
     return (
-      <Card sx={{ p: 4 }}>
+      <Section variant="panel" sx={{ p: 4 }}>
         <Box
           display="flex"
           justifyContent="center"
@@ -36,7 +35,7 @@ const ProviderConfigView = ({ config, orgConfig, gatewayId }) => {
             No provider configuration available.
           </Typography>
         </Box>
-      </Card>
+      </Section>
     );
   }
 
@@ -48,105 +47,101 @@ const ProviderConfigView = ({ config, orgConfig, gatewayId }) => {
   return (
     <Stack spacing={2}>
       {entries.map(([name, providerConfig]) => (
-        <Card key={name}>
-          <CardContent>
-            <Stack
-              direction="row"
-              justifyContent="space-between"
-              alignItems="center"
-              mb={1.5}
-            >
-              <Typography variant="h6">{name}</Typography>
-              <Stack direction="row" spacing={0.5}>
-                <IconButton
-                  size="small"
-                  onClick={() =>
-                    setEditTarget({ name, config: providerConfig })
-                  }
-                  title="Edit provider"
-                >
-                  <Iconify icon="mdi:pencil-outline" width={18} />
-                </IconButton>
-                <IconButton
-                  size="small"
-                  color="error"
-                  onClick={() => setDeleteTarget(name)}
-                  title="Remove provider"
-                >
-                  <Iconify icon="mdi:delete-outline" width={18} />
-                </IconButton>
-              </Stack>
+        <Section variant="panel" key={name}>
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            alignItems="center"
+            mb={1.5}
+          >
+            <Typography variant="h6">{name}</Typography>
+            <Stack direction="row" spacing={0.5}>
+              <IconButton
+                size="small"
+                onClick={() => setEditTarget({ name, config: providerConfig })}
+                title="Edit provider"
+              >
+                <Iconify icon="solar:pen-linear" width={20} />
+              </IconButton>
+              <IconButton
+                size="small"
+                color="error"
+                onClick={() => setDeleteTarget(name)}
+                title="Remove provider"
+              >
+                <Iconify icon="solar:trash-bin-trash-linear" width={20} />
+              </IconButton>
             </Stack>
+          </Stack>
 
-            <Stack spacing={1}>
-              <InfoLine
-                label="Base URL"
-                value={
-                  providerConfig.base_url ?? providerConfig.baseUrl ?? "\u2014"
-                }
-              />
-              <InfoLine
-                label="API Format"
-                value={
-                  providerConfig.api_format ??
-                  providerConfig.apiFormat ??
-                  "\u2014"
-                }
-              />
-              <InfoLine
-                label="API Key"
-                value={
-                  "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (configured)"
-                }
-                mono={false}
-              />
-              <InfoLine
-                label="Timeout"
-                value={
-                  providerConfig.default_timeout ??
-                  providerConfig.defaultTimeout ??
-                  "\u2014"
-                }
-              />
-              <InfoLine
-                label="Max Concurrent"
-                value={
-                  providerConfig.max_concurrent ??
-                  providerConfig.maxConcurrent ??
-                  "\u2014"
-                }
-              />
-              <InfoLine
-                label="Connection Pool"
-                value={
-                  providerConfig.conn_pool_size ??
-                  providerConfig.connPoolSize ??
-                  "\u2014"
-                }
-              />
+          <Stack spacing={1}>
+            <InfoLine
+              label="Base URL"
+              value={
+                providerConfig.base_url ?? providerConfig.baseUrl ?? "\u2014"
+              }
+            />
+            <InfoLine
+              label="API Format"
+              value={
+                providerConfig.api_format ??
+                providerConfig.apiFormat ??
+                "\u2014"
+              }
+            />
+            <InfoLine
+              label="API Key"
+              value={
+                "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (configured)"
+              }
+              mono={false}
+            />
+            <InfoLine
+              label="Timeout"
+              value={
+                providerConfig.default_timeout ??
+                providerConfig.defaultTimeout ??
+                "\u2014"
+              }
+            />
+            <InfoLine
+              label="Max Concurrent"
+              value={
+                providerConfig.max_concurrent ??
+                providerConfig.maxConcurrent ??
+                "\u2014"
+              }
+            />
+            <InfoLine
+              label="Connection Pool"
+              value={
+                providerConfig.conn_pool_size ??
+                providerConfig.connPoolSize ??
+                "\u2014"
+              }
+            />
 
-              <Divider sx={{ my: 1 }} />
+            <Divider sx={{ my: 1 }} />
 
-              <Box>
-                <Typography variant="subtitle2" mb={0.5}>
-                  Models
+            <Box>
+              <Typography variant="subtitle2" mb={0.5}>
+                Models
+              </Typography>
+              {Array.isArray(providerConfig.models) &&
+              providerConfig.models.length > 0 ? (
+                <Stack direction="row" flexWrap="wrap" gap={0.5}>
+                  {providerConfig.models.map((m) => (
+                    <Chip key={m} label={m} size="small" variant="outlined" />
+                  ))}
+                </Stack>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  No models configured
                 </Typography>
-                {Array.isArray(providerConfig.models) &&
-                providerConfig.models.length > 0 ? (
-                  <Stack direction="row" flexWrap="wrap" gap={0.5}>
-                    {providerConfig.models.map((m) => (
-                      <Chip key={m} label={m} size="small" variant="outlined" />
-                    ))}
-                  </Stack>
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    No models configured
-                  </Typography>
-                )}
-              </Box>
-            </Stack>
-          </CardContent>
-        </Card>
+              )}
+            </Box>
+          </Stack>
+        </Section>
       ))}
       <ConfirmDialog
         open={Boolean(deleteTarget)}

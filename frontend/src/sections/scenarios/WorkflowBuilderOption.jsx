@@ -84,7 +84,7 @@ const WorkflowBuilderOption = ({ control }) => {
               fieldName="config.generateGraph"
               label="Auto Generate Graph"
               labelPlacement="start"
-              labelStyle={{ fontSize: "14px", fontWeight: "fontWeightMedium" }}
+              labelStyle={{ fontSize: "13px", fontWeight: "fontWeightMedium" }}
             />
           </Box>
         </CustomTooltip>

@@ -12,6 +12,7 @@ from simulate.services.agent_definition import is_masked, sync_provider_credenti
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 from tracer.models.observability_provider import ProviderChoices
+from tracer.services.observability_switch import observability_is_on
 
 # LiveKit URLs are valid in either WebSocket form (wss://, ws://) or HTTP
 # form (https://, http://). The frontend stores whatever the user typed
@@ -101,6 +102,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
             "agent_type",
             "contact_number",
             "inbound",
+            "target_speaks_first",
             "description",
             "assistant_id",
             "provider",
@@ -219,6 +221,17 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         if value:  # inbound True → no extra checks
             return value
 
+        # LiveKit reaches an outbound target over WebRTC (managed dispatch) with
+        # no Bearer api_key/assistant_id — its credentials are livekit_api_key/
+        # secret. The provider-aware object-level ``validate`` owns LiveKit's
+        # requirements; this field-level check would otherwise wrongly demand
+        # api_key/assistant_id for an outbound WebRTC agent.
+        provider = (self.initial_data or {}).get("provider") or getattr(
+            self.instance, "provider", None
+        )
+        if str(provider or "").strip().lower() in ("livekit", "livekit_bridge"):
+            return value
+
         # outbound: require api_key and assistant_id from incoming data or existing instance
         api_key = (self.initial_data or {}).get("api_key") or getattr(
             self.instance, "api_key", None
@@ -252,9 +265,9 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         if observability_enabled_raw is not None:
             observability_enabled_effective = bool(observability_enabled_raw)
         else:
-            obs_provider = getattr(self.instance, "observability_provider", None)
-            observability_enabled_effective = bool(
-                getattr(obs_provider, "enabled", False)
+            # A deleted row or project counts as off.
+            observability_enabled_effective = (
+                self.instance is not None and observability_is_on(self.instance)
             )
 
         # Voice agents: match UI requirements for creation
@@ -452,6 +465,7 @@ class AgentDefinitionListSerializer(serializers.ModelSerializer):
             "agent_type",
             "contact_number",
             "inbound",
+            "target_speaks_first",
             "description",
             "assistant_id",
             "provider",

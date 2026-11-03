@@ -3,12 +3,12 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
-  Paper,
   Skeleton,
   Stack,
   Typography,
   useTheme,
 } from "@mui/material";
+import Section from "src/components/section";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 
@@ -74,9 +74,7 @@ const FeatureGateOverlay = ({
         sx={{
           display: "block",
           width: "100%",
-          height: "100%",
-          minHeight,
-          objectFit: "cover",
+          height: "auto",
           objectPosition: "top center",
         }}
       />
@@ -145,16 +143,13 @@ const FeatureGateOverlay = ({
           p: 3,
         }}
       >
-        <Paper
-          elevation={12}
+        <Section
+          variant="panel"
           sx={{
             width: "100%",
             maxWidth: maxCardWidth,
             p: 3.5,
-            borderRadius: 2,
             bgcolor: "background.paper",
-            border: "1px solid",
-            borderColor: "divider",
           }}
         >
           <Stack spacing={2.5}>
@@ -164,11 +159,11 @@ const FeatureGateOverlay = ({
                   alignSelf: "flex-start",
                   px: 1,
                   py: 0.25,
-                  borderRadius: 0.75,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: "0.04em",
-                  textTransform: "uppercase",
+                  borderRadius: "4px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  letterSpacing: 0,
+                  textTransform: "none",
                   color: "primary.main",
                   bgcolor: alpha(theme.palette.primary.main, 0.1),
                   border: "1px solid",
@@ -180,7 +175,7 @@ const FeatureGateOverlay = ({
             )}
 
             {title && (
-              <Typography variant="h5" fontWeight="fontWeightBold">
+              <Typography variant="h5" fontWeight={600}>
                 {title}
               </Typography>
             )}
@@ -196,7 +191,7 @@ const FeatureGateOverlay = ({
                 <Typography
                   variant="overline"
                   color="text.disabled"
-                  sx={{ fontWeight: 700 }}
+                  sx={{ fontWeight: 600 }}
                 >
                   What to do next
                 </Typography>
@@ -217,7 +212,7 @@ const FeatureGateOverlay = ({
                         alignItems: "center",
                         justifyContent: "center",
                         fontSize: 12,
-                        fontWeight: 700,
+                        fontWeight: 600,
                         color: "primary.main",
                         bgcolor: alpha(theme.palette.primary.main, 0.1),
                         border: "1px solid",
@@ -282,7 +277,7 @@ const FeatureGateOverlay = ({
               </Stack>
             )}
           </Stack>
-        </Paper>
+        </Section>
       </Box>
     </Box>
   );
