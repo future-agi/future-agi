@@ -49,6 +49,8 @@ export const readable = (value) => {
   try {
     parsed = JSON.parse(value);
   } catch {
+    // A conversation cut off before its last message has no answer to show.
+    if (/^\s*\{\s*"messages"\s*:/.test(value)) return null;
     return repr ? repr[1] : value;
   }
   const pick = (one) => {

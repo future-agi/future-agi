@@ -728,5 +728,10 @@ describe("readable", () => {
       "Refund order #1043 in full",
     );
     expect(readable('{"order_id": 1043}')).toBe('{"order_id": 1043}');
+    expect(
+      readable(
+        '{"messages": ["content=\'Build a limiter\' additional_kwargs={}", "content=\'\' addi…',
+      ),
+    ).toBe(null);
   });
 });
