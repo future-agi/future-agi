@@ -1,12 +1,17 @@
+import importlib
 import uuid
 from types import SimpleNamespace
 
 import pytest
+from django.apps import apps as django_apps
 from django.test import RequestFactory
 from django.urls import resolve
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.request import Request
+from rest_framework.test import APIClient
 
 from accounts.authentication import APIKeyAuthentication, ViewerReadOnly
+from accounts.models import OrgApiKey
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
@@ -137,10 +142,104 @@ def test_a_scoped_viewer_with_no_workspace_cannot_write(organization):
         APIKeyAuthentication()._set_workspace_context(request, user)
 
 
-def test_a_scoped_member_with_no_workspace_can_still_write(organization):
+def test_a_scoped_member_with_no_workspace_is_told_to_get_one(organization):
     user = _org_only_user(organization, Level.MEMBER, OrganizationRoles.MEMBER)
-    request = _scoped_write(organization)
 
-    APIKeyAuthentication()._set_workspace_context(request, user)
+    with pytest.raises(PermissionDenied) as raised:
+        APIKeyAuthentication()._set_workspace_context(_scoped_write(organization), user)
 
-    assert request.workspace is None
+    assert not isinstance(raised.value, ViewerReadOnly)
+    assert "add you to a workspace" in str(raised.value.detail)
+
+
+def test_a_scoped_admin_still_writes(organization):
+    user = _org_only_user(organization, Level.ADMIN, OrganizationRoles.ADMIN)
+
+    APIKeyAuthentication()._set_workspace_context(_scoped_write(organization), user)
+
+
+def test_a_removed_members_own_key_reads_nothing(organization, workspace):
+    member = _make_workspace_user(
+        organization,
+        workspace,
+        org_role=OrganizationRoles.MEMBER,
+        org_level=Level.MEMBER,
+        ws_role=OrganizationRoles.WORKSPACE_MEMBER,
+        ws_level=Level.WORKSPACE_MEMBER,
+        prefix="removed-key",
+    )
+    key = OrgApiKey.objects.create(
+        name="left behind", organization=organization, type="user", user=member
+    )
+    OrganizationMembership.no_workspace_objects.filter(user=member).update(
+        is_active=False
+    )
+    WorkspaceMembership.no_workspace_objects.filter(user=member).update(
+        is_active=False, deleted=True
+    )
+    client = APIClient()
+    client.credentials(HTTP_X_API_KEY=key.api_key, HTTP_X_SECRET_KEY=key.secret_key)
+
+    response = client.get("/simulate/agent-definitions/")
+
+    assert response.status_code == 403, response.content
+    assert "not a member of this organization" in str(response.data)
+
+
+def _lower_self_granted_admins():
+    module = importlib.import_module(
+        "accounts.migrations.0029_lower_self_granted_default_workspace_admins"
+    )
+    module.lower_self_granted_admins(django_apps, None)
+
+
+@pytest.mark.parametrize(
+    ("level", "role", "expected"),
+    [
+        (Level.VIEWER, OrganizationRoles.MEMBER_VIEW_ONLY, "workspace_viewer"),
+        (Level.MEMBER, OrganizationRoles.MEMBER, "workspace_member"),
+        (Level.ADMIN, OrganizationRoles.ADMIN, "workspace_admin"),
+    ],
+)
+def test_the_migration_lowers_self_granted_admin_memberships(
+    organization, workspace, level, role, expected
+):
+    default = Workspace.objects.filter(
+        organization=organization, is_default=True
+    ).first() or Workspace.objects.create(
+        name="Default Workspace",
+        organization=organization,
+        is_default=True,
+        is_active=True,
+        created_by=workspace.created_by,
+    )
+    user = _org_only_user(organization, level, role)
+    WorkspaceMembership.no_workspace_objects.create(
+        workspace=default, user=user, role="workspace_admin", level=8, invited_by=user
+    )
+
+    _lower_self_granted_admins()
+
+    row = WorkspaceMembership.no_workspace_objects.get(workspace=default, user=user)
+    assert row.role == expected
+
+
+def test_the_migration_keeps_an_admin_membership_someone_granted(
+    organization, workspace
+):
+    granter = _org_only_user(organization, Level.ADMIN, OrganizationRoles.ADMIN)
+    user = _org_only_user(
+        organization, Level.VIEWER, OrganizationRoles.MEMBER_VIEW_ONLY
+    )
+    row = WorkspaceMembership.no_workspace_objects.create(
+        workspace=workspace,
+        user=user,
+        role="workspace_admin",
+        level=8,
+        invited_by=granter,
+    )
+
+    _lower_self_granted_admins()
+
+    row.refresh_from_db()
+    assert row.role == "workspace_admin"

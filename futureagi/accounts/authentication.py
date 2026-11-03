@@ -297,6 +297,18 @@ class APIKeyAuthentication(BaseAuthentication):
             request.organization = None
             return
 
+        org_level = user.get_membership_level(organization)
+        if org_level is None:
+            logger.warning(
+                "access_denied",
+                reason="not_an_organization_member",
+                user_id=str(user.id),
+                organization_id=str(organization.id),
+                path=request.path,
+                method=request.method,
+            )
+            raise PermissionDenied("You're not a member of this organization.")
+
         # --- Step 2: Resolve workspace within that org ---
         workspace = self._get_requested_workspace(request, user, organization)
 
@@ -336,11 +348,22 @@ class APIKeyAuthentication(BaseAuthentication):
             and not should_skip_write_check
         ):
             if workspace is None:
-                level = user.get_membership_level(organization)
-                can_write = level is not None and level >= Level.MEMBER
+                can_write = org_level >= Level.ADMIN
             else:
                 can_write = self._can_write_to_workspace(user, workspace)
             if not can_write:
+                logger.info(
+                    "access_denied",
+                    reason="read_only" if workspace else "no_workspace",
+                    user_id=str(user.id),
+                    organization_id=str(organization.id),
+                    path=request.path,
+                    method=request.method,
+                )
+                if workspace is None and org_level >= Level.MEMBER:
+                    raise PermissionDenied(
+                        "Ask an admin to add you to a workspace before making changes."
+                    )
                 raise ViewerReadOnly(_viewer_denied_action(request))
 
         # Per-request attributes (safe, no race condition)
@@ -632,7 +655,7 @@ class APIKeyAuthentication(BaseAuthentication):
         check would fail.
         """
         org_level = user.get_membership_level(organization)
-        if org_level is None or org_level < Level.VIEWER:
+        if org_level is None:
             return None
         try:
             default_workspace = Workspace.objects.get(
@@ -676,7 +699,7 @@ class APIKeyAuthentication(BaseAuthentication):
                 create_workspace_membership(
                     workspace=default_workspace,
                     user=user,
-                    role=Level.to_ws_role(org_level),
+                    role=Level.to_ws_role(Level.get_default_ws_level(org_level)),
                     invited_by=user,
                 )
             except IntegrityError:
