@@ -356,6 +356,28 @@ func TestConvertErrorStatus(t *testing.T) {
 	}
 }
 
+// TestConvertSpanEvents pins span_events fidelity: flat-attribute shape as
+// the Django ingest path stores it, literal HTML, JSON-literal scalars,
+// ISO timestamps the frontend pretty-prints. Regression guard for the
+// silent attribute drop where spanEventsJSON emitted only name+timestamp.
+func TestConvertSpanEvents(t *testing.T) {
+	traces := buildOTLPSpan()
+	sp := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	ev := sp.Events().AppendEmpty()
+	ev.SetName("exception")
+	ev.SetTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000001, 250_000_000).UTC()))
+	attrs := ev.Attributes()
+	attrs.PutStr("exception.type", "ValueError")
+	attrs.PutStr("exception.message", "<bad> input & stuff")
+	attrs.PutInt("retry.count", 3)
+	attrs.PutBool("exception.escaped", true)
+	rows, _ := Convert(traces)
+	want := `[{"name":"exception","attributes":{"exception.escaped":true,"exception.message":"<bad> input & stuff","exception.type":"ValueError","retry.count":3},"timestamp":"2023-11-14T22:13:21.250000"}]`
+	if got := rows[0]["span_events"]; got != want {
+		t.Errorf("span_events:\n got %v\nwant %v", got, want)
+	}
+}
+
 func TestConvertLatencyClampedForOverflow(t *testing.T) {
 	traces := buildOTLPSpan()
 	sp := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
