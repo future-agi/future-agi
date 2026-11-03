@@ -96,7 +96,7 @@ export default function InsightsDateSelector({ dates, onDateChange }) {
         size="small"
       >
         <ToggleButton onClick={datePopover.onOpen} key="custom" value="custom">
-          <Iconify icon="uil:calender" />
+          <Iconify icon="solar:calendar-linear" />
           {selectedTab === "custom" ? selectedDateRange : "Custom"}
         </ToggleButton>
         <ToggleButton key="today" value="today">

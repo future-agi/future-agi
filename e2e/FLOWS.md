@@ -235,6 +235,26 @@
 - Continue routes to /auth/jwt/login, not /auth/jwt/register
 - signing in as the owner returns a token pair from POST /accounts/token/ and moves on to organization setup
 
+### AUTH-E2E-004 — fresh signup seeds demo traces visible in Observe
+
+**Goal:** A new user signs up with their own password and can inspect the seeded demo trace in Observe  
+**Spec:** `flows/auth/signup-demo-traces.spec.ts:28`  
+**Tags:** —
+
+**User steps:**
+
+1. complete first-run checks if required
+2. sign up with a unique email and a user-supplied password
+3. complete role and organization onboarding
+4. see both demo datasets
+5. open the Observe demo project
+6. open its single demo trace and inspect the span tree
+
+**Backend state verified:**
+
+- the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
+- ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
+
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session  
@@ -959,12 +979,34 @@
 - UI POST and stored task retain the custom predicate
 - completed task has exactly the matching span in PG and CH, with mock verdict and usage
 
+### EVAL-E2E-006 — a task run opens its trace in a drawer from the Usage tab
+
+**Goal:** Open the trace behind an eval task result without leaving the task Usage tab  
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:25`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a trace and run an eval task over it through the mock judge
+2. open the task Usage tab and click its run
+3. read the run panel Trace ID and Span ID
+4. click Open trace and read the drawer
+5. press Esc to close the drawer, then Esc again to close the run panel
+
+**Backend state verified:**
+
+- the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored
+- the Usage runs response carries only the completed run, with the seeded trace and span IDs
+- the run panel shows the seeded trace and span IDs
+- the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open
+- the first Esc closes only the drawer and the second closes the run panel
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
 
 **Goal:** A platform engineer finds the gateway requests one application made, out of everything the org sent  
-**Spec:** `flows/gateway/request-log-tags.spec.ts:44`  
+**Spec:** `flows/gateway/request-log-tags.spec.ts:43`  
 **Tags:** —
 
 **User steps:**

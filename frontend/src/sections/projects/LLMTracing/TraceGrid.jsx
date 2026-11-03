@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import PropTypes from "prop-types";
@@ -10,6 +10,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import useFitHeight from "src/hooks/use-fit-height";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { readQuery, endpoints } from "src/utils/axios";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
@@ -113,6 +114,8 @@ const TraceGrid = React.forwardRef(
       enabled = true,
       showErrors = false,
       compareType,
+      // Only the visible grid of a primary/compare pair renders the drawer.
+      hideDetailDrawer = false,
     },
     gridRef,
   ) => {
@@ -123,12 +126,12 @@ const TraceGrid = React.forwardRef(
         headerColumnBorder: false,
         wrapperBorder: { width: 0 },
         wrapperBorderRadius: 0,
-        rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+        rowBorder: { width: 1, color: theme.palette.border.subtle },
         headerFontSize: "13px",
         headerFontWeight: 500,
         headerBackgroundColor: "transparent",
         headerTextColor: theme.palette.text.primary,
-        rowHoverColor: "rgba(120,87,252,0.04)",
+        rowHoverColor: theme.palette.action.hover,
       }),
       [theme.palette.text.primary],
     );
@@ -182,6 +185,8 @@ const TraceGrid = React.forwardRef(
     const loadingRequestRef = useRef(0);
     const preserveRowsDuringNextRefreshRef = useRef(false);
     const gridElementRef = useRef(null);
+    /* Fill to the bottom of the window from wherever the grid starts. */
+    const fitHeight = useFitHeight(gridElementRef);
     const {
       beginPageLoad,
       endUnknown,
@@ -897,7 +902,7 @@ const TraceGrid = React.forwardRef(
       <Box
         ref={gridElementRef}
         sx={{
-          height: "calc(100vh - 270px)",
+          height: fitHeight ? `${fitHeight}px` : "calc(100vh - 270px)",
           display: "flex",
           flexDirection: "column",
         }}
@@ -929,7 +934,7 @@ const TraceGrid = React.forwardRef(
           className={`clean-data-table ${continuationNotice ? "ag-grid-cursor-paused" : ""} ${shouldDisable ? "ag-grid-disabled" : ""}`}
           theme={agTheme}
           animateRows={false}
-          headerHeight={40}
+          headerHeight={32}
           ref={gridRef}
           rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
           columnDefs={columnDefs}
@@ -958,16 +963,8 @@ const TraceGrid = React.forwardRef(
             isGridReadPending || continuationNotice
               ? null
               : NoRowsOverlay(
-                  <Typography
-                    sx={{
-                      fontSize: 14,
-                      fontWeight: 400,
-                      color: "text.secondary",
-                    }}
-                  >
-                    {readMessageRef.current ||
-                      (showErrors ? "No error found" : "No traces found")}
-                  </Typography>,
+                  readMessageRef.current ||
+                    (showErrors ? "No error found" : "No traces found"),
                 )
           }
           onSortChanged={({ api }) => {
@@ -1016,7 +1013,7 @@ const TraceGrid = React.forwardRef(
               (!activeTraceProjectId ||
                 params.data.project_id === activeTraceProjectId)
             ) {
-              return { backgroundColor: "rgba(120, 87, 252, 0.08)" };
+              return { backgroundColor: theme.palette.action.selected };
             }
             return null;
           }}
@@ -1038,7 +1035,9 @@ const TraceGrid = React.forwardRef(
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
-        <LLMTracingTraceDetailDrawer refreshGrid={refreshGrid} />
+        {!hideDetailDrawer && (
+          <LLMTracingTraceDetailDrawer refreshGrid={refreshGrid} />
+        )}
         <NumberQuickFilterPopover
           open={Boolean(openQuickFilter)}
           filterData={openQuickFilter}
@@ -1060,6 +1059,7 @@ TraceGrid.propTypes = {
   setFilterOpen: PropTypes.func,
   setLoading: PropTypes.func,
   compareType: PropTypes.string,
+  hideDetailDrawer: PropTypes.bool,
   projectId: PropTypes.string,
   cellHeight: PropTypes.string,
   hasEvalFilter: PropTypes.bool,

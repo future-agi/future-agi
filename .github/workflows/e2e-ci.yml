@@ -17,6 +17,10 @@ on:
         type: choice
         options: [distributed, standalone]
         default: standalone
+      sdk-ref:
+        description: "futureagi-sdk branch, tag or SHA for the SDK live suites. Default: the branch named like this one, else the base branch"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -335,6 +339,7 @@ jobs:
           echo "E2E_SAML_PYTHON=$RUNNER_TEMP/saml-idp/bin/python" >> "$GITHUB_ENV"
 
       - name: Boot the e2e stack
+        id: boot
         run: bin/e2e up
 
       - name: Run E2E suite
@@ -350,6 +355,102 @@ jobs:
           # A job that dies before the suite runs has no report; the real
           # failure is upstream and must not be buried by an upload error.
           if-no-files-found: warn
+
+      # --- SDK live suites -------------------------------------------------
+      # The futureagi-sdk repository's E2E tests against this stack, so a
+      # backend change that breaks the SDKs fails here, before a release:
+      # python/tests/platform calls every operation of the generated client,
+      # src/platform/__tests__/live.test.ts covers the TypeScript transport.
+      # The SDK ref is the branch of this PR's name when the SDK repo has one,
+      # else the base branch (dev or main). They run after the Playwright
+      # suite whatever its result, on a stack that booted.
+      - name: Resolve the futureagi-sdk ref
+        id: sdk-ref
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        env:
+          SDK_REF_INPUT: ${{ inputs.sdk-ref }}
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+          BASE_REF: ${{ github.base_ref || github.ref_name }}
+        run: |
+          repo=https://github.com/future-agi/futureagi-sdk.git
+          for candidate in "$SDK_REF_INPUT" "$HEAD_REF" "$BASE_REF" dev main; do
+            [ -n "$candidate" ] || continue
+            if git ls-remote --exit-code --heads --tags "$repo" "$candidate" >/dev/null 2>&1 \
+               || echo "$candidate" | grep -Eq '^[0-9a-fA-F]{7,40}$'; then
+              echo "ref=$candidate" >> "$GITHUB_OUTPUT"
+              echo "futureagi-sdk ref: $candidate"
+              exit 0
+            fi
+          done
+          echo "::error::no futureagi-sdk ref among: $SDK_REF_INPUT $HEAD_REF $BASE_REF dev main"
+          exit 1
+
+      - name: Check out futureagi-sdk
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/futureagi-sdk
+          ref: ${{ steps.sdk-ref.outputs.ref }}
+          path: futureagi-sdk
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        with:
+          python-version: "3.12"
+
+      - name: Install the Python SDK and sign up an account on the stack
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        working-directory: futureagi-sdk
+        run: |
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -e ./python pytest pyyaml
+          # Writes futureagi-sdk/.env.local, which both suites read. :8100 is
+          # BACKEND_PORT in both e2e/stack/e2e.env and standalone-e2e.env.
+          python sdkgen/local_api_key.py --signup --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
+
+      - name: Python SDK live suite
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        working-directory: futureagi-sdk
+        env:
+          FI_E2E_REQUIRED: "1"
+        run: PYTHONPATH=python pytest -q python/tests/platform
+
+      - name: TypeScript SDK live suite
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        working-directory: futureagi-sdk/typescript/futureagi
+        env:
+          FI_E2E_REQUIRED: "1"
+        run: |
+          npx --yes pnpm@8.15.0 install --ignore-workspace --frozen-lockfile --ignore-scripts
+          npx --yes pnpm@8.15.0 run test:live
+
+      - name: SDK operation names match the MCP tools (warning only)
+        # The SDK catalog records, per operation, the MCP tool it corresponds
+        # to; the tool list itself is generated here (scripts/generate-mcp-tools.py).
+        # A tool added or renamed here that the SDK catalog does not know yet is
+        # reported as a warning, never a failure: the SDK calls the REST endpoints,
+        # not the tools, so a name gap breaks no SDK call, and the SDK's own CI
+        # enforces parity at the backend release it is pinned to
+        # (futureagi-sdk: sdkgen/check_mcp_parity.py). A tool this tree gained
+        # since that release shows up here first, as the reminder to add its
+        # catalog entry.
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'EOF'
+          import json, yaml
+          tools = {t["name"] for t in json.load(open("futureagi/mcp_server/catalog/tools.generated.json"))["tools"]}
+          catalog = yaml.safe_load(open("futureagi-sdk/sdkgen/catalog/operations.yaml"))["operations"]
+          sdk = {(e["surfaces"]["mcp"].get("name") or e["id"].replace(".", "_"))
+                 for e in catalog if e.get("surfaces", {}).get("mcp") not in (None, False)}
+          if tools - sdk:
+              print(f"::warning title=MCP tools without an SDK catalog entry::{', '.join(sorted(tools - sdk))} (add them to futureagi-sdk/sdkgen/catalog/operations.yaml)")
+          if sdk - tools:
+              print(f"::warning title=SDK catalog entries without an MCP tool::{', '.join(sorted(sdk - tools))}")
+          if tools == sdk:
+              print(f"{len(tools)} MCP tools, same names in the SDK catalog")
+          EOF
 
       - name: Dump stack state on failure
         if: failure()

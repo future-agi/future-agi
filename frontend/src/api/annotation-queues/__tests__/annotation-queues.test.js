@@ -1372,6 +1372,7 @@ describe("Annotation Queues API", () => {
               },
             ]),
           },
+          timeout: 15000,
         },
       );
     });
@@ -1409,6 +1410,7 @@ describe("Annotation Queues API", () => {
             ]),
             project_id: "project-1",
           },
+          timeout: 15000,
         },
       );
     });

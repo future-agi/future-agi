@@ -1,13 +1,7 @@
 import React, { useState, useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
-import {
-  Box,
-  CircularProgress,
-  Drawer,
-  IconButton,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Drawer, IconButton, Stack, Typography } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import {
@@ -17,6 +11,7 @@ import {
 } from "src/sections/projects/LLMTracing/formatters";
 import SpanTreeTimeline from "./SpanTreeTimeline";
 import SpanDetailPane from "./SpanDetailPane";
+import ContentSkeleton from "src/components/content-skeleton";
 
 const PANEL_WIDTH = "60vw";
 
@@ -51,12 +46,15 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
     setSelectedSpanId((prev) => (prev === spanId ? null : spanId));
   }, []);
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={onClose}
       variant="persistent"
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           width: PANEL_WIDTH,
@@ -103,27 +101,26 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
           <IconButton
             size="small"
             onClick={() => navigator.clipboard.writeText(traceId)}
-            sx={{ p: 0.25 }}
           >
-            <Iconify icon="mdi:content-copy" width={14} />
+            <Iconify icon="solar:copy-linear" width={14} />
           </IconButton>
         </Stack>
 
         <Stack direction="row" spacing={0.5}>
           <IconButton size="small">
-            <Iconify icon="mdi:printer-outline" width={18} />
+            <Iconify icon="solar:printer-linear" width={20} />
           </IconButton>
           <IconButton size="small">
-            <Iconify icon="mdi:download-outline" width={18} />
+            <Iconify icon="solar:download-minimalistic-linear" width={20} />
           </IconButton>
           <IconButton size="small">
-            <Iconify icon="mdi:share-outline" width={18} />
+            <Iconify icon="solar:share-linear" width={20} />
           </IconButton>
           <IconButton size="small">
-            <Iconify icon="mdi:arrow-expand" width={18} />
+            <Iconify icon="solar:full-screen-linear" width={20} />
           </IconButton>
           <IconButton size="small" onClick={onClose}>
-            <Iconify icon="mdi:close" width={18} />
+            <Iconify icon="solar:close-linear" width={20} />
           </IconButton>
         </Stack>
       </Stack>
@@ -142,7 +139,7 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
         }}
       >
         <Stack direction="row" alignItems="center" spacing={1}>
-          <Iconify icon="mdi:link-variant" width={16} color="primary.main" />
+          <Iconify icon="solar:link-linear" width={16} color="primary.main" />
           <Typography
             variant="body2"
             sx={{ fontSize: 13, fontWeight: 600, color: "primary.main" }}
@@ -191,7 +188,11 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
             borderRadius: 1,
           }}
         >
-          <Iconify icon="mdi:magnify" width={16} color="text.disabled" />
+          <Iconify
+            icon="solar:magnifier-linear"
+            width={16}
+            color="text.disabled"
+          />
           <Typography
             variant="body2"
             sx={{ fontSize: 13, color: "text.disabled" }}
@@ -212,7 +213,7 @@ const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
               justifyContent: "center",
             }}
           >
-            <CircularProgress size={32} />
+            <ContentSkeleton variant="panel" />
           </Box>
         ) : (
           <>
