@@ -114,9 +114,12 @@ export default function FixMyAgentDrawer({
   }, [analysis, requestError, citedCalls]);
 
   // Once diagnosed, the header counts what the diagnosis counts, so they agree.
+  // Before that only the run's failing count shows: it holds errored calls, which
+  // the run's measured count leaves out, so the two can read as "19 of 18".
   const failing = view.summary?.brokenCalls ?? stats?.failed ?? 0;
-  const measured =
-    view.summary?.measuredCalls ?? stats?.measured ?? stats?.total ?? 0;
+  const countLine = view.summary
+    ? `${failing} failing of ${view.summary.measuredCalls} measured`
+    : `${failing} failing`;
 
   // The primary path out of the diagnosis: start a fix from this run. Shown once
   // the diagnosis has finished, to orgs that have Fix my agent switched on.
@@ -167,7 +170,7 @@ export default function FixMyAgentDrawer({
               Debug failures
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {failing} failing of {measured} measured
+              {countLine}
             </Typography>
           </Box>
         </Stack>
@@ -245,8 +248,6 @@ FixMyAgentDrawer.propTypes = {
   executionId: PropTypes.string,
   stats: PropTypes.shape({
     failed: PropTypes.number,
-    measured: PropTypes.number,
-    total: PropTypes.number,
   }),
   onLaunch: PropTypes.func,
   onViewCalls: PropTypes.func,

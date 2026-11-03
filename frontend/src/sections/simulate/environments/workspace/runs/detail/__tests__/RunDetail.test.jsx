@@ -100,7 +100,8 @@ vi.mock(
 // names the run it was opened for.
 vi.mock("../../../improvements/LaunchFixDialog", () => ({
   // eslint-disable-next-line react/prop-types
-  default: ({ open, sourceRunId }) => (open ? <div>{`launch-fix:${sourceRunId}`}</div> : null),
+  default: ({ open, sourceRunId }) =>
+    open ? <div>{`launch-fix:${sourceRunId}`}</div> : null,
 }));
 
 function AddEvaluationDrawerStub({ open, executionId }) {
@@ -495,7 +496,12 @@ describe("RunDetail", () => {
     const user = userEvent.setup();
     renderDetail({
       initialEntries: [
-        { pathname: "/run", state: { backTo: "/dashboard/simulate/environments/env-1/improvements/fix-1" } },
+        {
+          pathname: "/run",
+          state: {
+            backTo: "/dashboard/simulate/environments/env-1/improvements/fix-1",
+          },
+        },
       ],
     });
     await user.click(screen.getByRole("button", { name: "Back" }));
@@ -1099,6 +1105,32 @@ describe("RunDetail", () => {
 
     // The run reports 4 failing, but the diagnosis measured 3 broken of 12.
     expect(screen.getByText("3 failing of 12 measured")).toBeInTheDocument();
+  });
+
+  it("gives no measured count until the diagnosis has one", async () => {
+    // The run's failing count holds errored calls; its measured count does not.
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, failed: 19, measured: 18 },
+      isLoading: false,
+    });
+    useDebugAnalysis.mockReturnValue(
+      debugHook({
+        ...ANALYSIS,
+        status: "running",
+        isWorking: true,
+        summary: null,
+        goals: [],
+        oneOffs: [],
+      }),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+    expect(screen.getByText("19 failing")).toBeInTheDocument();
+    expect(screen.queryByText(/failing of/)).toBeNull();
   });
 
   it("folds long tails into one row so the rows still add up", async () => {
