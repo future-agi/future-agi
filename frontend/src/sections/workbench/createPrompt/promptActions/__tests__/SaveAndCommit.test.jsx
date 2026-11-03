@@ -132,7 +132,9 @@ describe.each(["light", "dark"])("SaveAndCommit in %s mode", (mode) => {
       const { onClose, invalidate } = renderDialog();
       await user.type(getMessage(), "Save the revised instructions");
       expect(getCommitButton()).toBeEnabled();
-      await user.click(screen.getByRole("button", { name: action, exact: true }));
+      await user.click(
+        screen.getByRole("button", { name: action, exact: true }),
+      );
 
       await waitFor(() =>
         expect(axios.post).toHaveBeenCalledExactlyOnceWith(COMMIT_URL, {
@@ -159,7 +161,9 @@ describe.each(["light", "dark"])("SaveAndCommit in %s mode", (mode) => {
         [{ queryKey: ["prompt-latest-version", "prompt-123"] }],
       ]);
 
-      await user.click(screen.getByRole("button", { name: "Reopen commit dialog" }));
+      await user.click(
+        screen.getByRole("button", { name: "Reopen commit dialog" }),
+      );
       expect(getMessage()).toHaveValue("");
       expect(getCommitButton()).toBeDisabled();
       expect(getDefaultButton()).toBeDisabled();
@@ -171,19 +175,25 @@ describe.each(["light", "dark"])("SaveAndCommit in %s mode", (mode) => {
     const user = userEvent.setup();
     const failedSave = deferredSave();
     const retry = deferredSave();
-    axios.post.mockReturnValueOnce(failedSave.promise).mockReturnValueOnce(retry.promise);
+    axios.post
+      .mockReturnValueOnce(failedSave.promise)
+      .mockReturnValueOnce(retry.promise);
     const { onClose, invalidate } = renderDialog(true);
     await user.type(getMessage(), "Keep this message for retry");
     const activeColor = getComputedStyle(getCommitButton()).color;
     await user.click(getCommitButton());
     await waitFor(() => expect(getCommitButton()).toBeDisabled());
-    await act(async () => failedSave.reject(new Error("Synthetic save failure")));
+    await act(async () =>
+      failedSave.reject(new Error("Synthetic save failure")),
+    );
 
     await waitFor(() => expect(getCommitButton()).toBeEnabled());
     expect(getDefaultButton()).toBeEnabled();
     expect(getMessage()).toHaveValue("Keep this message for retry");
     expect(getComputedStyle(getCommitButton()).color).toBe(activeColor);
-    expect(getCommitButton()).toHaveStyle({ color: palette(mode).text.primary });
+    expect(getCommitButton()).toHaveStyle({
+      color: palette(mode).text.primary,
+    });
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
     expect(invalidate).not.toHaveBeenCalled();
@@ -192,12 +202,15 @@ describe.each(["light", "dark"])("SaveAndCommit in %s mode", (mode) => {
     await user.click(getCommitButton());
     await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
     expect(axios.post.mock.calls).toEqual(
-      [1, 2].map(() => [COMMIT_URL, {
-        message: "Keep this message for retry",
-        set_default: true,
-        is_draft: false,
-        version_name: "v1",
-      }]),
+      [1, 2].map(() => [
+        COMMIT_URL,
+        {
+          message: "Keep this message for retry",
+          set_default: true,
+          is_draft: false,
+          version_name: "v1",
+        },
+      ]),
     );
     expect(getCommitButton()).toBeDisabled();
     await act(async () => retry.resolve({ data: { result: {} } }));
