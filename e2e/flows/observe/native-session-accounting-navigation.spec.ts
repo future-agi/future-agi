@@ -117,19 +117,21 @@ test(
         for (const session of sessions) {
           const members = cases.filter((c) => c.session === session.external_session_id);
           const cost = members.some((c) => c.cost === null) ? null : members.reduce((n, c) => n + c.cost!, 0);
-          // SessionCellRenderer renders numeric value verbatim (dollar is an icon),
-          // and null as empty text; do not invent TraceGrid CostCell formatting here.
+          // Literal UI expectations are independent of the shared formatter;
+          // the API assertion separately protects the underlying numeric value.
+          const labels: Record<string, string> = {
+            'copilot-known-1': '$0.60', 'copilot-known-2': '$0.60',
+            'copilot-zero': '$0.00', 'copilot-unknown': '-',
+            'gemini-known': '$0.50', 'gemini-unknown': '-', legacy: '$0.05',
+          };
+          const label = members.length === 2 ? '$1.20' : labels[members[0].key];
+          expect(typeof label).toBe('string');
           const cell = page.locator(`.ag-row[row-id="${session.trace_session_id}"] [col-id="total_cost"]:visible`);
-          await expect(cell).toBeVisible({ timeout: UI_READY });
-          const value = await cell.innerText();
-          if (cost === null) expect(value, session.external_session_id).toBe('');
-          else {
-            expect(value.length).toBeGreaterThan(0);
-            expect(Number(value), session.external_session_id).toBeCloseTo(cost, 8);
-          }
-          expect(sessionList.table.find((s) => s.session_id === session.trace_session_id)!.total_traces_count).toBe(
-            members.length,
-          );
+          await expect(cell).toHaveText(label, { timeout: UI_READY });
+          const row = sessionList.table.find((s) => s.session_id === session.trace_session_id)!;
+          if (cost === null) expect(row.total_cost).toBeNull();
+          else expect(row.total_cost).toBeCloseTo(cost, 8);
+          expect(row.total_traces_count).toBe(members.length);
         }
         await shot(page, testInfo, 'sessions-grid-costs-all');
       });
