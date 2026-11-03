@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from simulate.services import harness_workers
 from simulate.services.harness_workers import worker_timeline
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
@@ -217,6 +218,17 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(user, worksp
         ("delegated", f"{run.run_id}/researcher", None),
         ("returned", f"{run.run_id}/researcher", None),
     ]
+
+    # One agent calling tools, no worker declared and no hand-off: nothing is kept on the call.
+    single = [_span("root", None, "agent", "coordinator", "t0000"), _span("c1", "root", "tool", "lookup", "t0001")]
+    call.provider_call_data, call.call_metadata = {}, {}
+    call.save(update_fields=["provider_call_data", "call_metadata"])
+    with patch("simulate.services.run_traces_v3.list_run_traces", return_value=_traced()), patch(
+        "tracer.services.clickhouse.v2.get_reader", return_value=_Reader(single)
+    ), patch.object(harness_workers, "declared_workers", return_value=[]):
+        assert harness_workers.record_call_workers(str(call.id)) is None
+    call.refresh_from_db()
+    assert harness_workers.WORKERS_KEY not in call.call_metadata
 
 
 @pytest.mark.django_db
@@ -624,8 +636,8 @@ def test_a_large_team_s_record_stays_bounded_and_is_quick():
     took = time.perf_counter() - began
 
     calls = [one for one in timeline["events"] if one["type"] == "tool_call"]
-    assert len(calls) == 900 and timeline["events_omitted"] == 0
-    assert len(json.dumps(timeline)) < 600_000
+    assert len(timeline["events"]) <= harness_workers._MAX_EVENTS
+    assert len(json.dumps(timeline)) < harness_workers._PAYLOAD_BUDGET + 300 * harness_workers._MAX_EVENTS
     # The first calls keep their input and output; past the size limit a call keeps its tool, worker and time.
     assert calls[0]["input"] == "y" * 2000 and "payload_omitted" not in calls[0]
     assert calls[-1]["input"] is None and calls[-1]["payload_omitted"] is True
@@ -636,8 +648,8 @@ def test_a_large_team_s_record_stays_bounded_and_is_quick():
 def test_a_record_past_its_step_limit_keeps_the_first_steps_and_counts_the_rest():
     timeline = worker_timeline(_team(5, 2, 2, 120), [], run_key=RUN)
 
-    assert len(timeline["events"]) == 2000
-    assert timeline["events_omitted"] == 5 * 2 * 2 * 120 + 5 + 5 * 2 + 5 * 2 * 2 - 2000
+    assert len(timeline["events"]) == harness_workers._MAX_EVENTS
+    assert timeline["events_omitted"] == 5 * 2 * 2 * 120 + 5 + 5 * 2 + 5 * 2 * 2 - harness_workers._MAX_EVENTS
     assert [one["seq"] for one in timeline["events"][:3]] == [1, 2, 3]
 
 

@@ -29,8 +29,8 @@ _PAYLOAD_CHARS = 2000
 # The record is kept on the call and sent whole to the browser, so it stays bounded however large the team or the call:
 # the first steps up to a count, and tool inputs and outputs up to a total size. A step past the size keeps its tool,
 # worker and time, and says its payload was left out.
-_MAX_EVENTS = 2000
-_PAYLOAD_BUDGET = 256_000
+_MAX_EVENTS = 500
+_PAYLOAD_BUDGET = 64_000
 
 
 def _slug(name: str) -> str:
@@ -550,7 +550,7 @@ def _call_turns(call: Any, sealed: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 def record_call_workers(call_execution_id: str) -> dict[str, Any] | None:
     """Read one call's spans and its runtime-attributed tool calls, and keep its worker timeline on the call; None
-    when the agent reports neither to us.
+    when the agent reports neither to us, or the call has no worker and handed no work out.
     Returns the stored timeline, so the caller can decide on a second read."""
     from django.utils import timezone
 
@@ -588,6 +588,8 @@ def record_call_workers(call_execution_id: str) -> dict[str, Any] | None:
         ),
         "collected_at": timezone.now().isoformat(),
     }
+    if not timeline["workers"] and not any(one["type"] in ("delegated", "transferred") for one in timeline["events"]):
+        return None
 
     def keep(metadata: dict) -> bool:
         metadata[WORKERS_KEY] = timeline
