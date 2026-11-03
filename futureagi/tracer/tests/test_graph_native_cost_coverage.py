@@ -507,9 +507,20 @@ def test_winner_reversal_tombstone_partition_and_direct_dispatch(
             result = analytics.execute_ch_query(sql, params)
             batches.append((result.data, result.columns))
         rows, columns = exact_graph_reads._merge_exact_trace_contribution_rows(batches)
+        # The existing formatter includes the empty end-boundary bucket;
+        # it carries no monetary facts or subtotal from the half-open query.
         assert [
             p["cost_coverage"] for p in builder.format_result(rows, columns)["cost"]
-        ] == [expected, UNKNOWN]
+        ] == [
+            expected,
+            UNKNOWN,
+            {
+                "status": "complete",
+                "known_subtotal": 0.0,
+                "known_fact_count": 0,
+                "unknown_fact_count": 0,
+            },
+        ]
     finally:
         client.execute("SYSTEM START MERGES spans")
 

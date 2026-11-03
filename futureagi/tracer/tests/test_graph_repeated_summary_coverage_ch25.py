@@ -337,8 +337,8 @@ def test_summary_proof_crosses_bucket_and_partition_boundaries(native_graph_db):
         [(result.data, result.columns)]
     )
     trace_metrics = trace_builder.format_result(rows, columns)
-    assert [p["cost_coverage"] for p in trace_metrics["cost"]] == [EMPTY, ONE]
-    assert [p["value"] for p in trace_metrics["cost"]] == [0.0, 1.25]
+    assert [p["cost_coverage"] for p in trace_metrics["cost"]] == [EMPTY, ONE, EMPTY]
+    assert [p["value"] for p in trace_metrics["cost"]] == [0.0, 1.25, 0]
 
 
 def test_candidate_filter_does_not_hide_summary_children(native_graph_db):
