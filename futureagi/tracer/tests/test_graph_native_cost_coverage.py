@@ -17,7 +17,10 @@ from tracer.services.clickhouse.query_builders.time_series import TimeSeriesQuer
 from tracer.services.clickhouse.v2.query_builders.user_time_series import (
     UserDetailTimeSeriesQueryBuilderV2,
 )
-from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import _REMAP_DDL, _SPANS_DDL
+from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import (
+    _REMAP_DDL,
+    _SPANS_DDL,
+)
 
 START = datetime(2026, 10, 20, 12, tzinfo=UTC)
 END = START + timedelta(hours=2)
@@ -61,6 +64,7 @@ def test_partition_merge_sums_counts_and_subtotal_before_mean():
 @pytest.mark.unit
 def test_user_detail_http_publishes_typed_companion_without_retyping_cost(monkeypatch):
     from contextlib import nullcontext
+
     from tracer.views import project as views
 
     analytics = SimpleNamespace(supports_per_query_read_settings=True,
@@ -142,11 +146,13 @@ class NativeAnalytics:
 
 
 def insert_span(client, *, span_id, cost=0.0, attrs=None, tokens=120, kind="llm",
-                version=1, deleted=0, start=START, project=PROJECT, parent="", trace=None, user=USER):
+                version=1, deleted=0, start=START, project=PROJECT, parent="", trace=None, user=USER,
+                name="chat", prompt_tokens=None, completion_tokens=0, service=""):
     row = {"project_id": project, "end_user_id": user, "trace_id": trace or span_id,
-           "id": span_id, "parent_span_id": parent, "name": "chat", "observation_type": kind,
-           "start_time": start, "cost": cost, "total_tokens": tokens,
-           "prompt_tokens": tokens, "completion_tokens": 0, "attrs_string": attrs or {},
+           "id": span_id, "parent_span_id": parent, "name": name, "observation_type": kind,
+           "service_name": service, "start_time": start, "cost": cost, "total_tokens": tokens,
+           "prompt_tokens": tokens if prompt_tokens is None else prompt_tokens,
+           "completion_tokens": completion_tokens, "attrs_string": attrs or {},
            "_version": version, "is_deleted": deleted}
     client.execute(f"INSERT INTO spans ({', '.join(row)}) VALUES", [tuple(row.values())])
 

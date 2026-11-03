@@ -26,6 +26,9 @@ from datetime import datetime, timedelta
 from typing import Any, Literal, TypedDict
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.graph_monetary_usage import (
+    graph_monetary_rows_sql,
+)
 from tracer.services.clickhouse.query_builders.hourly_aggregate_states import (
     ERROR_RATE_MERGE_EXPRESSION,
     hourly_aggregate_state_source,
@@ -526,6 +529,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         scan_end_param: str,
         candidate_trace_ids_param: str | None = None,
         candidate_span_predicate: str = "",
+        candidate_partition: bool = False,
         with_version: bool = False,
     ) -> str:
         """Collapse physical versions to one narrow current-row tuple.
@@ -543,7 +547,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "start_time",
             "toInt64(latency_ms)",
             "toInt64(total_tokens)",
-            "if(attrs_string['fi.usage.contribution'] = 'none', 0, cost)",
+            "cost",
             "toInt64(prompt_tokens)",
             "toInt64(completion_tokens)",
             "status",
@@ -559,8 +563,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "status",
             "is_deleted",
         ]
-        scalar_expressions.append(graph_cost_flags_sql())
-        scalar_aliases.append("graph_cost_flags")
+        scalar_expressions.extend(("id", "parent_span_id", "name", "observation_type", graph_cost_flags_sql()))
+        scalar_aliases.extend(("id", "parent_span_id", "name", "observation_type", "graph_cost_flags"))
         if with_version:
             scalar_expressions.append("_version")
             scalar_aliases.append("_version")
@@ -597,25 +601,29 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                       GROUP BY trace_id
                   )"""
         candidate_span_fragment = ""
-        if candidate_span_predicate:
-            # Only the immutable full key crosses this boundary. Replay every
-            # version, including clears/tombstones, before exact graph truth.
-            identity = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+        if candidate_span_predicate or candidate_partition:
+            seed_start = "graph_partition_start" if candidate_partition else scan_start_param
+            seed_end = "graph_partition_end" if candidate_partition else scan_end_param
+            # Keep the whole candidate trace: an unselected child can prove
+            # that a selected Pydantic wrapper repeats usage. Filters still run
+            # on the winning row, after monetary classification.
             candidate_span_fragment = f"""
-                  AND ({identity}) IN (
-                      SELECT {identity}
+                  AND (project_id, trace_id) IN (
+                      SELECT project_id, trace_id
                       FROM {self.RAW_TABLE}
                       PREWHERE {self.project_filter_sql()}
-                        AND start_time >= %({scan_start_param})s
-                        AND start_time < %({scan_end_param})s
-                      WHERE ({candidate_span_predicate})
+                        AND start_time >= %({seed_start})s
+                        AND start_time < %({seed_end})s
+                      WHERE ({candidate_span_predicate or '1 = 1'})
                   )"""
-        return f"""(
+        latest_source = f"""(
             SELECT
+                project_id,
                 trace_id,
 {projected_scalars}
             FROM (
                 SELECT
+                    project_id,
                     trace_id,
                     argMax(
                         tuple(
@@ -637,6 +645,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             ) AS graph_physical_versions
             WHERE tupleElement(graph_latest_row, {tombstone_index}) = 0
         ) AS graph_latest_spans"""
+        monetary_rows = graph_monetary_rows_sql(
+            source=latest_source, columns=tuple(scalar_aliases),
+            child_condition="start_time >= %(start_date)s AND start_time < %(end_date)s",
+        )
+        return f"({monetary_rows}) AS graph_monetary_spans"
 
     def _raw_scalar_source(
         self,
@@ -989,12 +1002,24 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 candidate_plan.params, filter_index="span_seed",
             )
             self.params.update(candidate_params)
+        # A summary and its child can occupy different partitions. Seed only
+        # traces touching this partition, then replay their full request window
+        # for the proof; exact_row_filter still owns the output partition.
+        snapshot_start = self.start_date.replace(minute=0, second=0, microsecond=0)
+        snapshot_end = self.end_date.replace(minute=0, second=0, microsecond=0)
+        if snapshot_end < self.end_date:
+            snapshot_end += timedelta(hours=1)
+        self.params.update(
+            graph_partition_snapshot_start=snapshot_start,
+            graph_partition_snapshot_end=snapshot_end,
+        )
         latest_source = self._exact_latest_scalar_source(
             row_predicates=exact_filter_plan.predicates,
             contribution_predicates=exact_filter_plan.contribution_predicates,
-            scan_start_param="graph_partition_start",
-            scan_end_param="graph_partition_end",
+            scan_start_param="graph_partition_snapshot_start",
+            scan_end_param="graph_partition_snapshot_end",
             candidate_span_predicate=candidate_predicate,
+            candidate_partition=True,
         )
         bucket_fn = self.time_bucket_expr(self.interval)
         query = f"""
@@ -1039,8 +1064,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         so this is emitted as an explicit pruning subquery rather than a named
         shared-scan claim. Neither route uses ``FINAL`` or sampling.
 
-        For a filtered trace graph the raw scan immediately collapses rows to
-        ``(trace_id, output bucket)``. Attribute/Map/JSON columns are consumed
+        The latest scalar source first proves monetary summaries with two
+        events per live row, grouped by immediate-parent identity. A filtered
+        trace graph then collapses those rows to ``(trace_id, output bucket)``. Attribute/Map/JSON columns are consumed
         by local ``max(predicate)`` aggregates and never cross that boundary.
         A second compact aggregation computes each trace's any-sibling flags
         and packs its exact additive bucket states; the outer query merges

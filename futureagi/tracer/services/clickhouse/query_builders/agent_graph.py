@@ -22,6 +22,9 @@ from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
     compile_exact_graph_row_predicates,
 )
+from tracer.services.clickhouse.query_builders.graph_monetary_usage import (
+    graph_monetary_rows_sql,
+)
 from tracer.services.clickhouse.query_builders.time_series import (
     graph_cost_coverage,
     graph_cost_flags_sql,
@@ -94,7 +97,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             "end_time",
             "toFloat64(latency_ms)",
             "toInt64(total_tokens)",
-            "toFloat64(if(attrs_string['fi.usage.contribution'] = 'none', 0, cost))",
+            "toFloat64(cost)",
             "status",
             "toUInt8(is_deleted)",
         ]
@@ -111,8 +114,8 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             "status",
             "is_deleted",
         ]
-        expressions.append(graph_cost_flags_sql())
-        aliases.append("graph_cost_flags")
+        expressions.extend(("toInt64(prompt_tokens)", "toInt64(completion_tokens)", graph_cost_flags_sql()))
+        aliases.extend(("prompt_tokens", "completion_tokens", "graph_cost_flags"))
         for index, predicate in enumerate(row_predicates):
             expressions.append(f"toUInt8(ifNull(({predicate}), 0))")
             aliases.append(f"graph_row_match_{index}")
@@ -225,6 +228,16 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                 "\n                  AND toStartOfHour(start_time) < toDateTime64(%(end_date)s, 6, 'UTC')"
             )
 
+        monetary_rows = graph_monetary_rows_sql(
+            source="graph_latest_spans", child_condition=output_window,
+            columns=(
+                "id", "parent_span_id", "name", "observation_type", "start_time", "end_time",
+                "latency_ms", "total_tokens", "cost", "status", "prompt_tokens", "completion_tokens",
+                "graph_cost_flags",
+                *(f"graph_row_match_{index}" for index in range(len(plan.predicates))),
+                *(f"graph_contribution_match_{index}" for index in range(len(plan.contribution_predicates))),
+            ),
+        )
         span_tuple = self._span_tuple("")
         # Tuple indexes in ``graph_spans``:
         #   1 id, 2 parent id, 3 name, 4 type, 5 start-us, 6 end-us,
@@ -288,10 +301,12 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         query = f"""
         WITH graph_latest_spans AS (
             SELECT
+                project_id,
                 trace_id,
 {projection_sql}
             FROM (
                 SELECT
+                    project_id,
                     trace_id,
                     argMax(
                         tuple(
@@ -312,6 +327,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             ) AS graph_physical_versions
             WHERE tupleElement(graph_latest_row, {tombstone_index}) = 0
         ),
+        graph_monetary_spans AS ({monetary_rows}),
         graph_traces AS (
             SELECT
                 trace_id,
@@ -320,7 +336,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
                     {contribution_condition}
                 ) AS graph_spans
 {trace_projection}
-            FROM graph_latest_spans
+            FROM graph_monetary_spans
             GROUP BY trace_id
             HAVING {trace_having_sql}
         ),

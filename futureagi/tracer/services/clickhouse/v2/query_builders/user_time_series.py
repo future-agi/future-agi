@@ -10,6 +10,9 @@ from tracer.services.clickhouse.query_builders.base import (
     BaseQueryBuilder,
     _unix_microseconds,
 )
+from tracer.services.clickhouse.query_builders.graph_monetary_usage import (
+    graph_monetary_rows_sql,
+)
 from tracer.services.clickhouse.query_builders.time_series import (
     graph_cost_coverage_series,
     graph_cost_flags_sql,
@@ -86,6 +89,8 @@ USER_GRAPH_SPAN_COLUMNS: tuple[str, ...] = (
     "prompt_tokens",
     "completion_tokens",
     "status",
+    "parent_span_id",
+    "name",
 )
 _LATEST_STATE = "latest_state"
 
@@ -133,6 +138,8 @@ def _latest_spans_argmax_cte(
     return f"""
     {cte_name} AS (
         SELECT
+            project_id,
+            observation_type,
             trace_id,
             id,
             {reduced}
@@ -454,11 +461,7 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
             # predicate over the whole-row snapshot.
             trace_flags = "".join(
                 ",\n                    countIf("
-                + (
-                    f"rs.user_member_match_{index}"
-                    if closed_projection
-                    else predicate
-                )
+                + f"rs.user_member_match_{index}"
                 + f") AS user_member_trace_{index}"
                 for index, predicate in enumerate(self.user_membership_plan.predicates)
             )
@@ -466,6 +469,35 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                 f",\n                sum(user_member_trace_{index}) AS user_member_bucket_{index}"
                 for index in range(len(self.user_membership_plan.predicates))
             )
+
+        member_columns = tuple(
+            f"user_member_match_{index}" for index in range(len(member_predicates))
+        )
+        member_projection = "".join(
+            f", {f'rs.{column}' if closed_projection else predicate} AS {column}"
+            for column, predicate in zip(member_columns, member_predicates, strict=True)
+        )
+        monetary_rows = graph_monetary_rows_sql(
+            source=f"""(
+                SELECT rs.project_id, rs.trace_id, rs.id, rs.parent_span_id,
+                    rs.name, rs.observation_type, rs.start_time,
+                    {resolved_eu} AS end_user_id,
+                    rs.latency_ms, rs.total_tokens, rs.cost,
+                    rs.prompt_tokens, rs.completion_tokens, rs.status,
+                    {cost_flags} AS graph_cost_flags,
+                    toUInt8(ifNull(({where_clause}), 0)) AS graph_output_match
+                    {member_projection}
+                FROM latest_spans AS rs
+                LEFT JOIN eu_survivor_map AS id_remap
+                    ON rs.end_user_id = id_remap.any_id
+            ) AS graph_user_population""",
+            columns=(
+                "id", "parent_span_id", "name", "observation_type", "start_time",
+                "end_user_id", "latency_ms", "total_tokens", "cost", "prompt_tokens",
+                "completion_tokens", "status", "graph_cost_flags", "graph_output_match",
+                *member_columns,
+            ),
+        )
 
         # Latency is the pooled mean of every live span of the bucket's user
         # traces: each level carries a latency sum and a count, and only the
@@ -488,24 +520,22 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                 count() AS user_traces{bucket_flags}
             FROM (
                 SELECT
-                    {resolved_eu} AS end_user_id,
+                    rs.end_user_id AS end_user_id,
                     rs.trace_id AS trace_id,
                     min(rs.start_time) AS min_start,
                     sum(rs.latency_ms) AS span_latency_sum,
                     count(rs.latency_ms) AS span_latency_count,
                     sum(rs.total_tokens) AS span_total_tokens,
-                    sumIf(rs.cost, tupleElement({cost_flags}, 1) OR tupleElement({cost_flags}, 2)) AS span_total_cost,
-                    sumIf(rs.cost, tupleElement({cost_flags}, 1)) AS span_cost_known_subtotal,
-                    countIf(tupleElement({cost_flags}, 1)) AS span_known_cost_fact_count,
-                    countIf(tupleElement({cost_flags}, 2)) AS span_unknown_cost_fact_count,
+                    sum(rs.cost) AS span_total_cost,
+                    sumIf(rs.cost, rs.graph_cost_flags.1) AS span_cost_known_subtotal,
+                    countIf(rs.graph_cost_flags.1) AS span_known_cost_fact_count,
+                    countIf(rs.graph_cost_flags.2) AS span_unknown_cost_fact_count,
                     sum(rs.prompt_tokens) AS span_prompt_tokens,
                     sum(rs.completion_tokens) AS span_completion_tokens,
                     max(if(rs.status = 'ERROR', 1, 0)) AS span_has_error{trace_flags}
-                FROM latest_spans AS rs
-                LEFT JOIN eu_survivor_map AS id_remap
-                    ON rs.end_user_id = id_remap.any_id
+                FROM graph_monetary_spans AS rs
                 WHERE rs.end_user_id IS NOT NULL
-                  AND {where_clause}
+                  AND rs.graph_output_match
                 GROUP BY end_user_id, trace_id
             )
             GROUP BY time_bucket, end_user_id
@@ -538,7 +568,8 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
         query = f"""
         WITH
         {latest_spans_cte},
-        eu_survivor_map AS ({eu_map})
+        eu_survivor_map AS ({eu_map}),
+        graph_monetary_spans AS ({monetary_rows})
         SELECT
             time_bucket,
             sum(user_latency_sum) / greatest(sum(user_latency_count), 1) AS avg_latency,
@@ -643,22 +674,42 @@ class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
         ts_resolved = resolved_id_expr("rs.trace_session_id", "ts_remap")
         target_eu_resolved = resolved_id_expr("eu.end_user_id", "target_eu_remap")
 
-        # Raw target-user discovery is only a superset of physical identities.
-        # Replay every version in each identity hour before applying mutable
-        # time/user/liveness predicates; service/type siblings remain distinct.
+        # Target-user discovery seeds traces, not contributions. Replay every
+        # version in their identity hours, including other children needed for
+        # summary proof; apply mutable user selection after monetary projection.
+        # Service/type siblings remain distinct.
         latest_rows = latest_physical_span_rows_sql(
             table=self.TABLE,
             project_predicate=f"""{self.project_filter_sql()}
-                AND (project_id, observation_type, service_name,
-                     toStartOfHour(start_time), trace_id, id) IN (
-                    SELECT project_id, observation_type, service_name,
-                           start_hour, trace_id, id FROM candidate_span_identities
+                AND (project_id, trace_id) IN (
+                    SELECT project_id, trace_id FROM candidate_user_trace_ids
                 )""",
             start_hour="toStartOfHour(toDateTime64(%(start_date)s, 6, 'UTC'))",
             end_hour="toDateTime64(%(end_date)s, 6, 'UTC')",
             mutable_columns=("start_time", "is_deleted", "end_user_id", "trace_session_id"),
         )
 
+        monetary_rows = graph_monetary_rows_sql(
+            source=f"""(
+                SELECT rs.project_id, rs.trace_id, rs.id, rs.parent_span_id,
+                    rs.name, rs.observation_type, rs.start_time,
+                    {eu_resolved} AS end_user_id,
+                    {ts_resolved} AS trace_session_id,
+                    rs.cost, rs.total_tokens, rs.prompt_tokens, rs.completion_tokens,
+                    {graph_cost_flags_sql(prefix="rs.")} AS graph_cost_flags,
+                    toUInt8(ifNull(({where_clause}), 0)) AS graph_output_match
+                FROM latest_spans AS rs
+                LEFT JOIN eu_survivor_map AS eu_remap
+                    ON rs.end_user_id = eu_remap.any_id
+                LEFT JOIN ts_survivor_map AS ts_remap
+                    ON rs.trace_session_id = ts_remap.any_id
+            ) AS graph_user_detail_population""",
+            columns=(
+                "id", "parent_span_id", "name", "observation_type", "start_time",
+                "end_user_id", "trace_session_id", "cost", "total_tokens",
+                "prompt_tokens", "completion_tokens", "graph_cost_flags", "graph_output_match",
+            ),
+        )
         query = f"""
         WITH
         eu_survivor_map AS ({eu_map}),
@@ -682,14 +733,8 @@ class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
             UNION DISTINCT
             SELECT end_user_id FROM target_end_user
         ),
-        candidate_span_identities AS (
-            SELECT DISTINCT
-                project_id,
-                observation_type,
-                service_name,
-                toStartOfHour(start_time) AS start_hour,
-                trace_id,
-                id
+        candidate_user_trace_ids AS (
+            SELECT DISTINCT project_id, trace_id
             FROM {self.TABLE}
             PREWHERE {self.project_filter_sql()}
               AND toDate(start_time) BETWEEN
@@ -706,7 +751,6 @@ class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
             WHERE is_deleted = 0
               AND start_time >= %(start_date)s
               AND start_time < %(end_date)s
-              AND end_user_id IN (SELECT end_user_id FROM expanded_target_end_user_ids)
         ),
         candidate_trace_session_ids AS (
             SELECT DISTINCT trace_session_id
@@ -715,7 +759,8 @@ class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
               AND trace_session_id !=
                   toUUID('00000000-0000-0000-0000-000000000000')
         ),
-        ts_survivor_map AS ({ts_map})
+        ts_survivor_map AS ({ts_map}),
+        graph_monetary_spans AS ({monetary_rows})
         SELECT
             {bucket_fn}(start_time) AS time_bucket,
             uniqExactIf(
@@ -724,30 +769,15 @@ class UserDetailTimeSeriesQueryBuilderV2(V2RewriteMixin, BaseQueryBuilder):
                 AND trace_session_id != toUUID('00000000-0000-0000-0000-000000000000')
             ) AS session_count,
             uniqExact(trace_id) AS trace_count,
-            sum(ifNull(cost, 0)) AS cost,
-            sumIf(cost, graph_cost_flags.1) AS cost_known_subtotal,
+            sum(ifNull(graph_money.cost, 0)) AS cost,
+            sumIf(graph_money.cost, graph_money.graph_cost_flags.1) AS cost_known_subtotal,
             countIf(graph_cost_flags.1) AS known_cost_fact_count,
             countIf(graph_cost_flags.2) AS unknown_cost_fact_count,
             sum(ifNull(prompt_tokens, 0)) AS input_tokens,
             sum(ifNull(completion_tokens, 0)) AS output_tokens
-        FROM (
-            SELECT
-                {eu_resolved} AS end_user_id,
-                rs.trace_id AS trace_id,
-                {ts_resolved} AS trace_session_id,
-                rs.start_time AS start_time,
-                if(rs.attrs_string['fi.usage.contribution'] = 'none', 0, rs.cost) AS cost,
-                {graph_cost_flags_sql(prefix="rs.")} AS graph_cost_flags,
-                rs.prompt_tokens AS prompt_tokens,
-                rs.completion_tokens AS completion_tokens
-            FROM latest_spans AS rs
-            LEFT JOIN eu_survivor_map AS eu_remap
-                ON rs.end_user_id = eu_remap.any_id
-            LEFT JOIN ts_survivor_map AS ts_remap
-                ON rs.trace_session_id = ts_remap.any_id
-            WHERE {where_clause}
-        )
+        FROM graph_monetary_spans AS graph_money
         WHERE end_user_id IN (SELECT end_user_id FROM target_end_user)
+          AND graph_output_match
         GROUP BY time_bucket
         ORDER BY time_bucket
         """

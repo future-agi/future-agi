@@ -1176,7 +1176,9 @@ def test_fused_attribute_flags_are_evaluated_on_the_winning_version(
     assert "FROM spans FINAL" not in query
     assert "FROM end_users " not in query
     flat = " ".join(query.split())
-    assert f"status, {predicate}), _version) AS latest_state" in flat
+    projected = (*user_time_series.USER_GRAPH_SPAN_COLUMNS,
+                 user_time_series.graph_cost_flags_sql(), predicate)
+    assert f"argMax(tuple({', '.join(projected)}), _version) AS latest_state" in flat
     assert "countIf(rs.user_member_match_0) AS user_member_trace_0" in query
 
     rows = _execute(ch_client, query, params)
