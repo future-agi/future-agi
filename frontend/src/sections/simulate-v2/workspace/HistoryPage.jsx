@@ -229,10 +229,11 @@ export default function HistoryPage({
               {m.label}
             </Typography>
             <Typography
+              noWrap
+              title={String(m.value)}
               sx={{
-                fontSize: 22,
+                typography: "m1",
                 fontWeight: 600,
-                lineHeight: 1.2,
                 mt: 0.5,
                 fontFamily: /^v\d|@/.test(String(m.value)) ? MONO : undefined,
               }}
