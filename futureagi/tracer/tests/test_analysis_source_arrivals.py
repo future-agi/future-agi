@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from conftest import _open_ch_test_http_client
 from tracer.services.clickhouse.v2.span_reader import (
     _DATA_KEYS,
     CHSpanReader,
@@ -73,19 +74,15 @@ def test_activity_projects_and_hydrates_child_arrival():
 
 @pytest.mark.integration
 def test_real_ch_arrival_uses_logical_versions_children_cutoff_and_project_scope():
-    # Explicit opt-in; never use a developer's default ClickHouse endpoint.
-    if os.environ.get("FI_LIVE_CH_TESTS") != "1":
-        pytest.skip("isolated ClickHouse opt-in required")
-    import clickhouse_connect
-
-    host, database = os.environ["CH25_HOST"], os.environ["CH25_DATABASE"]
-    assert host in {"127.0.0.1", "localhost"} and database.startswith("test_")
-    client = clickhouse_connect.get_client(
-        host=host,
-        port=int(os.environ["CH25_HTTP_PORT"]),
-        username=os.environ.get("CH25_USER", "default"),
-        password=os.environ["CH25_PASSWORD"],
-        database=database,
+    database = os.environ.get("CH25_DATABASE") or os.environ.get("CH_DATABASE")
+    if not database:
+        pytest.skip("no test ClickHouse configured")
+    if not database.startswith("test_"):
+        pytest.fail("arrival provenance requires a test_* ClickHouse database")
+    # The shared guard resolves the port without a default, rejects unsafe
+    # targets and proves CI's opted-in sidecar identity before any DDL.
+    client = _open_ch_test_http_client(
+        database=database, connect_timeout=5, send_receive_timeout=30
     )
     table = "arrival_" + uuid4().hex
     project, other = str(uuid4()), str(uuid4())
@@ -93,10 +90,10 @@ def test_real_ch_arrival_uses_logical_versions_children_cutoff_and_project_scope
     now = datetime(2026, 11, 3, tzinfo=UTC)
     child = now - timedelta(days=40)
     ancient = now - timedelta(days=400)
-    client.command(
-        f"CREATE TABLE {table} (project_id UUID, observation_type String, service_name String, start_time DateTime64(6, 'UTC'), trace_id String, id String, created_at DateTime64(6, 'UTC'), _version UInt64, is_deleted UInt8) ENGINE=ReplacingMergeTree(_version, is_deleted) ORDER BY (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id)"
-    )
     try:
+        client.command(
+            f"CREATE TABLE {table} (project_id UUID, observation_type String, service_name String, start_time DateTime64(6, 'UTC'), trace_id String, id String, created_at DateTime64(6, 'UTC'), _version UInt64, is_deleted UInt8) ENGINE=ReplacingMergeTree(_version, is_deleted) ORDER BY (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id)"
+        )
         client.command(f"SYSTEM STOP MERGES {table}")
         rows = [
             [project, "agent", "svc", event, "imported", "root", now, 1, 0],
@@ -150,5 +147,7 @@ def test_real_ch_arrival_uses_logical_versions_children_cutoff_and_project_scope
             "future": ancient,
         }
     finally:
-        client.command(f"DROP TABLE {table}")
-        client.close()
+        try:
+            client.command(f"DROP TABLE IF EXISTS {table}")
+        finally:
+            client.close()
