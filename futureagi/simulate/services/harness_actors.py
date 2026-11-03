@@ -131,15 +131,16 @@ def world_actions(
 def read_actors(environment: HostedHarnessJob) -> dict[str, Any]:
     """The cast the next run would use (the draft's when there is one, else the saved version's), with what an actor
     can be given: the record schemas, the world's actions and the call channels."""
+    from simulate.services.harness_versioning.versions import suite_documents
+
     environment_files, suite_files, draft = _sides(environment)
     rules = actor_rules(environment_files)
+    documents = suite_documents(suite_files)
     return {
         "actors": [
             {
                 **one,
-                "scenarios": len(
-                    _scenarios_using(suite_files, str(one.get("id") or ""))
-                ),
+                "scenarios": len(_scenarios_using(documents, str(one.get("id") or ""))),
             }
             for one in _cast(environment_files)
         ],
@@ -310,12 +311,10 @@ def actor_problems(actors: list[dict[str, Any]], rules: dict[str, Any]) -> list[
     return problems
 
 
-def _scenarios_using(suite_files: dict[str, bytes], actor_id: str) -> list[str]:
-    from simulate.services.harness_versioning.versions import suite_documents
-
+def _scenarios_using(documents: list[dict[str, Any]], actor_id: str) -> list[str]:
     return sorted(
         str(scenario.get("scenario_key") or scenario.get("name") or "")
-        for scenario in suite_documents(suite_files)
+        for scenario in documents
         if any(
             isinstance(one, dict) and one.get("id") == actor_id
             for one in [
@@ -337,6 +336,8 @@ def write_actor_edit(
 ) -> dict[str, Any]:
     """Create, replace or delete one actor in the environment draft. `expected_revision` is the draft revision the
     caller read; an edit made elsewhere since is refused rather than overwritten."""
+    from simulate.services.harness_versioning.versions import suite_documents
+
     environment_files, suite_files, draft = _sides(environment)
     current_revision = draft.revision if draft is not None else 0
     if expected_revision is not None and expected_revision != current_revision:
@@ -373,7 +374,7 @@ def write_actor_edit(
                 f"{actor_id} is not an actor of this environment",
                 404,
             )
-        using = _scenarios_using(suite_files, actor_id)
+        using = _scenarios_using(suite_documents(suite_files), actor_id)
         if using:
             raise _error(
                 "actor_in_use",
