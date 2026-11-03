@@ -97049,6 +97049,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "affects",
         "sources",
         "depends_on",
+        "graded",
+        "revalidate",
       ],
       type: "object",
       properties: {
@@ -97071,6 +97073,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "contract_field",
             "sub_goal",
             "actor",
+            "world_state",
             "source",
             "scenario",
             "file",
@@ -97138,7 +97141,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         sources: {
           description:
-            "Where the change came from, latest first: who, through what, when.",
+            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
           type: "array",
           items: {
             type: "object",
@@ -97156,6 +97159,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        graded: {
+          title: "Graded",
+          description: "The change alters what trials are graded on.",
+          type: "boolean",
+        },
+        revalidate: {
+          description:
+            "The scenarios to prove again once this change is saved.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        rows: {
+          description:
+            "A world state change: rows added, removed and changed per table; null when it cannot be read.",
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+          "x-nullable": true,
         },
       },
     },
@@ -99273,6 +99303,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "contract_field",
             "sub_goal",
             "actor",
+            "world_state",
             "source",
             "scenario",
             "file",

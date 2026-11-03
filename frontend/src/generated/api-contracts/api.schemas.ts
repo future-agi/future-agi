@@ -18815,6 +18815,7 @@ export const HarnessReviewChangeApiKind = {
   contract_field: "contract_field",
   sub_goal: "sub_goal",
   actor: "actor",
+  world_state: "world_state",
   source: "source",
   scenario: "scenario",
   file: "file",
@@ -18846,6 +18847,8 @@ export type HarnessReviewChangeApiAffects = { [key: string]: unknown };
 
 export type HarnessReviewChangeApiSourcesItem = { [key: string]: string };
 
+export type HarnessReviewChangeApiRowsItem = { [key: string]: string };
+
 export interface HarnessReviewChangeApi {
   /** @minLength 1 */
   id: string;
@@ -18867,10 +18870,16 @@ export interface HarnessReviewChangeApi {
   decision: HarnessReviewChangeApiDecision;
   /** The scenario keys this change touches, or `all`. */
   affects: HarnessReviewChangeApiAffects;
-  /** Where the change came from, latest first: who, through what, when. */
+  /** Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row). */
   sources: HarnessReviewChangeApiSourcesItem[];
   /** Changes this one needs; accepting it means accepting them. */
   depends_on: string[];
+  /** The change alters what trials are graded on. */
+  graded: boolean;
+  /** The scenarios to prove again once this change is saved. */
+  revalidate: string[];
+  /** A world state change: rows added, removed and changed per table; null when it cannot be read. */
+  rows?: HarnessReviewChangeApiRowsItem[];
 }
 
 export interface HarnessReviewCountsApi {
@@ -18908,6 +18917,7 @@ export const HarnessReviewDecisionApiKind = {
   contract_field: "contract_field",
   sub_goal: "sub_goal",
   actor: "actor",
+  world_state: "world_state",
   source: "source",
   scenario: "scenario",
   file: "file",

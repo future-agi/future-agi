@@ -37867,6 +37867,7 @@ export const SimulateApiHarnessEnvironmentsDraftsDraftsReviewResponse =
           "contract_field",
           "sub_goal",
           "actor",
+          "world_state",
           "source",
           "scenario",
           "file",
@@ -37887,12 +37888,24 @@ export const SimulateApiHarnessEnvironmentsDraftsDraftsReviewResponse =
         sources: zod
           .array(zod.record(zod.string(), zod.string()))
           .describe(
-            "Where the change came from, latest first: who, through what, when.",
+            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
           ),
         depends_on: zod
           .array(zod.string().min(1))
           .describe(
             "Changes this one needs; accepting it means accepting them.",
+          ),
+        graded: zod
+          .boolean()
+          .describe("The change alters what trials are graded on."),
+        revalidate: zod
+          .array(zod.string().min(1))
+          .describe("The scenarios to prove again once this change is saved."),
+        rows: zod
+          .array(zod.record(zod.string(), zod.string()))
+          .optional()
+          .describe(
+            "A world state change: rows added, removed and changed per table; null when it cannot be read.",
           ),
       }),
     ),
@@ -37936,6 +37949,7 @@ export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsBody
             "contract_field",
             "sub_goal",
             "actor",
+            "world_state",
             "source",
             "scenario",
             "file",
@@ -37970,6 +37984,7 @@ export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResp
           "contract_field",
           "sub_goal",
           "actor",
+          "world_state",
           "source",
           "scenario",
           "file",
@@ -37990,12 +38005,24 @@ export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResp
         sources: zod
           .array(zod.record(zod.string(), zod.string()))
           .describe(
-            "Where the change came from, latest first: who, through what, when.",
+            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
           ),
         depends_on: zod
           .array(zod.string().min(1))
           .describe(
             "Changes this one needs; accepting it means accepting them.",
+          ),
+        graded: zod
+          .boolean()
+          .describe("The change alters what trials are graded on."),
+        revalidate: zod
+          .array(zod.string().min(1))
+          .describe("The scenarios to prove again once this change is saved."),
+        rows: zod
+          .array(zod.record(zod.string(), zod.string()))
+          .optional()
+          .describe(
+            "A world state change: rows added, removed and changed per table; null when it cannot be read.",
           ),
       }),
     ),
