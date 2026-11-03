@@ -378,12 +378,13 @@ const LiveMetricsTab = ({
               val(overview?.error_rate) != null
                 ? `${Number(val(overview.error_rate)).toFixed(1)}%`
                 : "0%",
-            hint:
-              Number(val(overview?.error_rate) ?? 0) > 5
-                ? "Above 5%"
-                : undefined,
-            hintRole:
-              Number(val(overview?.error_rate) ?? 0) > 5 ? "danger" : undefined,
+            // Only judged once there's traffic; "0%" with no requests isn't healthy.
+            ...(Number(val(overview?.total_requests) ?? 0) > 0 && {
+              hint:
+                Number(val(overview.error_rate)) > 5 ? "Above 5%" : "Under 5%",
+              hintRole:
+                Number(val(overview.error_rate)) > 5 ? "danger" : "success",
+            }),
             onClick: () => navigate("/dashboard/gateway/analytics?tab=errors"),
           },
           {

@@ -316,8 +316,11 @@ const GatewayOverviewSection = () => {
               val(overview?.error_rate) != null
                 ? `${Number(val(overview.error_rate)).toFixed(1)}%`
                 : "0%",
-            hint: errorRate > 5 ? "Above 5%" : undefined,
-            hintRole: errorRate > 5 ? "danger" : undefined,
+            // Only judged once there's traffic; "0%" with no requests isn't healthy.
+            ...(requestCount > 0 && {
+              hint: errorRate > 5 ? "Above 5%" : "Under 5%",
+              hintRole: errorRate > 5 ? "danger" : "success",
+            }),
             onClick: () => navigate("/dashboard/gateway/analytics/errors"),
           },
         ]}
