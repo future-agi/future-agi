@@ -126979,12 +126979,37 @@
                 }
             }
         },
+        "HarnessWorldAction": {
+            "required": [
+                "action",
+                "tool",
+                "description"
+            ],
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tool": {
+                    "title": "Tool",
+                    "type": "string"
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                }
+            }
+        },
         "HarnessActorList": {
             "required": [
                 "actors",
                 "source",
                 "revision",
-                "record_schemas"
+                "record_schemas",
+                "actions",
+                "channels"
             ],
             "type": "object",
             "properties": {
@@ -127011,6 +127036,19 @@
                     "title": "Record schemas",
                     "type": "object",
                     "additionalProperties": true
+                },
+                "actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessWorldAction"
+                    }
+                },
+                "channels": {
+                    "title": "Channels",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -127620,7 +127658,7 @@
                 },
                 "changes": {
                     "title": "Changes",
-                    "description": "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+                    "description": "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
                     "type": "object",
                     "additionalProperties": {
                         "type": "integer"

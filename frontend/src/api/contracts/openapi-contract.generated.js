@@ -63857,7 +63857,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessActorList: {
-      required: ["actors", "source", "revision", "record_schemas"],
+      required: [
+        "actors",
+        "source",
+        "revision",
+        "record_schemas",
+        "actions",
+        "channels",
+      ],
       type: "object",
       properties: {
         actors: {
@@ -63880,6 +63887,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Record schemas",
           type: "object",
           additionalProperties: true,
+        },
+        actions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessWorldAction",
+          },
+        },
+        channels: {
+          title: "Channels",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+          },
         },
       },
     },
@@ -94745,6 +94765,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessWorldAction: {
+      required: ["action", "tool", "description"],
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          minLength: 1,
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+      },
+    },
     HarnessActorSeen: {
       required: ["input", "value", "source"],
       type: "object",
@@ -95601,7 +95640,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         changes: {
           title: "Changes",
           description:
-            "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+            "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
           type: "object",
           additionalProperties: {
             type: "integer",

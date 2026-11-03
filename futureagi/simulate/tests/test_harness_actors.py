@@ -5,11 +5,15 @@ import json
 import pytest
 
 from simulate.services.harness_versioning import archives
+from simulate.services.harness_versioning.versions import record_authoring
+from simulate.tests import test_harness_versioning_record as record_tests
+from simulate.tests.test_harness_amend_archive import NAMES
 from simulate.tests.test_harness_versioning_api import _versioned
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
-from simulate.tests.test_harness_versioning_rollback import _built
+from simulate.tests.test_harness_versioning_record import _authoring
+from simulate.tests.test_harness_versioning_rollback import _rows
 
 pytestmark = pytest.mark.django_db
 
@@ -29,6 +33,31 @@ MANAGER = {
         "fallback": "decline",
     },
 }
+
+
+# A world with a CRM service, as a discount-approval environment has: each tool calls a route the world names as an
+# action an actor can be given.
+CRM_CONTRACT = {
+    "agent": "sales",
+    "tools": [
+        {"name": name, "description": f"{name.replace('_', ' ')} on a deal"}
+        for name in ("request_approval", "approve_discount", "reject_discount")
+    ],
+    "tool_entrypoints": [
+        {"tool": name, "service": "tools-api", "endpoint": f"crm/{name}"}
+        for name in ("request_approval", "approve_discount", "reject_discount")
+    ],
+}
+
+
+def _built(user, workspace, key, contract=CRM_CONTRACT):
+    """Built to E1/S1 (two scenarios) by a build that sealed its bundle; `contract=None` is a world whose tools all
+    run inside the agent."""
+    environment = record_tests._environment(user, workspace, key)
+    record_authoring(environment, _authoring(contract=contract), origin="authoring")
+    environment.refresh_from_db()
+    _rows(environment)
+    return environment
 
 
 @pytest.fixture(autouse=True)
@@ -62,6 +91,13 @@ def test_a_manager_added_to_the_draft_reads_back_and_the_saved_version_waits_for
 ):
     # With an agent runtime, so the save can prepare the environment's bundle.
     environment = _versioned(user, workspace, "actors-done-when", storage)
+    record_authoring(
+        environment,
+        _authoring(names=NAMES[:1], contract=CRM_CONTRACT),
+        origin="manual",
+        user=user,
+    )
+    environment.refresh_from_db()
     saved_before = environment.environment_version_id
 
     added = _add(
@@ -135,12 +171,17 @@ def test_edits_are_refused_when_stale_repeated_or_structurally_wrong(
         auth_client, environment, {"id": "coworker", "name": "Sam", "parent": "nobody"}
     )
     agent = _add(auth_client, environment, {"id": "agent", "name": "Agent"})
+    bad_id = _add(auth_client, environment, {"id": "Bad Id", "name": "X"})
 
     assert (stale.status_code, stale.json()["error"]) == (409, "draft_changed")
     assert (again.status_code, again.json()["error"]) == (409, "actor_exists")
     assert (orphan.status_code, orphan.json()["error"]) == (400, "actor_invalid")
     assert "not another listed actor" in orphan.json()["message"]
     assert (agent.status_code, agent.json()["error"]) == (400, "actor_invalid")
+    assert (
+        "The id 'Bad Id' is not valid; use 1 to 64 lowercase letters, digits or underscores."
+        in bad_id.json()["message"]
+    )
     assert [
         one["id"]
         for one in auth_client.get(f"{BASE}/{environment.id}/actors/").json()["actors"]
@@ -301,6 +342,10 @@ def test_an_actor_edit_shows_in_review_as_that_actor_added_changed_or_removed(
         changed.diff["actors"]["added"] == ["manager"]
         and changed.diff["actors"]["changed"] == []
     )
+    # The save bar counts the actor change.
+    listed = auth_client.get(f"{BASE}/{environment.id}/drafts/").json()
+    listed = listed.get("result", listed)
+    assert listed["environment"]["changes"]["actors"] == 1
     # Against the saved version the actor is still new; only a saved actor can read as changed.
     from simulate.services.harness_versioning import hashing
 
@@ -456,7 +501,9 @@ def test_the_checks_and_the_view_follow_the_rules_the_environment_was_sealed_wit
     }
     later = record_tests._environment(user, workspace, "actors-later-release")
     record_authoring(
-        later, _authoring(**{"actor_rules.json": json.dumps(rules)}), origin="authoring"
+        later,
+        _authoring(contract=CRM_CONTRACT, **{"actor_rules.json": json.dumps(rules)}),
+        origin="authoring",
     )
     earlier = _built(user, workspace, "actors-earlier-release")
 
@@ -495,3 +542,125 @@ def test_the_checks_and_the_view_follow_the_rules_the_environment_was_sealed_wit
     earlier_view = auth_client.get(f"{BASE}/{earlier.id}/actors/manager/").json()
     assert "scenario.solution" in earlier_view["never_sees"]
     assert "scenario.rubric" not in earlier_view["never_sees"]
+
+
+def test_an_actor_is_given_only_actions_the_world_has_and_is_told_which(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_versioning.versions import record_authoring
+    from simulate.tests import test_harness_versioning_record as record_tests
+    from simulate.tests.test_harness_versioning_record import _authoring
+
+    contract = {
+        "agent": "sales",
+        "tools": [
+            {
+                "name": "request_approval",
+                "description": "Ask a manager to approve a discount",
+            },
+            {"name": "approve_discount", "description": "Approve a pending discount"},
+            {"name": "read_notes", "description": "Read the agent's own notes"},
+        ],
+        "tool_entrypoints": [
+            {"tool": "request_approval", "endpoint": "crm/request_approval"},
+            {"tool": "approve_discount", "endpoint": "/crm/approve_discount/"},
+            {"tool": "read_notes", "mode": "import", "endpoint": ""},
+        ],
+    }
+    world = record_tests._environment(user, workspace, "actors-world-actions")
+    record_authoring(world, _authoring(contract=contract), origin="authoring")
+    in_process = _built(user, workspace, "actors-no-world-actions", contract=None)
+
+    listed = auth_client.get(f"{BASE}/{world.id}/actors/").json()
+    listed = listed.get("result", listed)
+    manager = {
+        "id": "manager",
+        "name": "Priya",
+        "permitted_actions": ["crm.approve_discount"],
+        "activation": {"trigger": {"kind": "on_tool", "tool": "crm.request_approval"}},
+    }
+    added = _add(auth_client, world, manager)
+    wrong = auth_client.put(
+        f"{BASE}/{world.id}/actors/manager/",
+        {"actor": {**manager, "permitted_actions": ["refunds.approve"]}},
+        format="json",
+    )
+    nowhere = _add(auth_client, in_process, {**manager, "activation": None})
+
+    # A tool with no route runs inside the agent and is no world action.
+    assert listed["actions"] == [
+        {
+            "action": "crm.approve_discount",
+            "tool": "approve_discount",
+            "description": "Approve a pending discount",
+        },
+        {
+            "action": "crm.request_approval",
+            "tool": "request_approval",
+            "description": "Ask a manager to approve a discount",
+        },
+    ]
+    assert set(listed["channels"]) == {"audio_mix", "audio_handoff", "ivr"}
+    assert added.status_code == 200, added.content
+    assert (wrong.status_code, wrong.json()["error"]) == (400, "actor_invalid")
+    assert (
+        "refunds.approve is not an action of this environment; choose from crm.approve_discount, crm.request_approval."
+        in wrong.json()["message"]
+    )
+    assert (
+        "this environment has no world actions, because its tools run inside the agent"
+        in nowhere.json()["message"]
+    )
+
+
+def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is_never_stored(
+    user, workspace, storage, auth_client
+):
+    from simulate.services import harness_actors
+    from simulate.services.harness_versioning.drafts import edit_sides
+
+    # As the builder chat might have written it: actions a world whose tools run inside the agent does not have.
+    in_process = _built(user, workspace, "actors-kept-values-world", contract=None)
+    files = edit_sides(in_process)["environment"]
+    rules = harness_actors.actor_rules(files)
+    renamed = {**MANAGER, "name": "Priya R."}
+    assert harness_actors._new_choices(MANAGER, renamed, files, rules) == []
+    assert harness_actors._new_choices(None, MANAGER, files, rules) != []
+
+    environment = _built(user, workspace, "actors-kept-values")
+    sub_actor = {
+        "id": "colleague",
+        "name": "Jordan",
+        "side": "caller",
+        "channel": "audio_mix",
+    }
+    added = _add(auth_client, environment, sub_actor)
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+    listed = listed.get("result", listed)
+    [colleague] = [one for one in listed["actors"] if one["id"] == "colleague"]
+    resent = auth_client.put(
+        f"{BASE}/{environment.id}/actors/colleague/",
+        {"actor": colleague},
+        format="json",
+    )
+    bad_channel = auth_client.put(
+        f"{BASE}/{environment.id}/actors/colleague/",
+        {"actor": {**sub_actor, "channel": "smoke_signal"}},
+        format="json",
+    )
+
+    assert added.status_code == 200, added.content
+    assert colleague["scenarios"] == 0
+    assert resent.status_code == 200, resent.content
+    stored = json.loads(edit_sides(environment)["environment"]["sub_actors.json"])[
+        "sub_actors"
+    ]
+    assert "scenarios" not in stored[0]
+    assert (bad_channel.status_code, bad_channel.json()["error"]) == (
+        400,
+        "actor_invalid",
+    )
+    assert (
+        "colleague's channel 'smoke_signal' is not one of: audio_mix, audio_handoff, ivr."
+        in bad_channel.json()["message"]
+    )

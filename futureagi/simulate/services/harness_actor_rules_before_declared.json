@@ -87,6 +87,17 @@
   "acyclic": [
     "parent"
   ],
+  "world_actions": {
+    "from": "tool_entrypoints",
+    "route": "endpoint",
+    "tool": "tool",
+    "separator": "."
+  },
+  "channels": {
+    "audio_mix": "a voice near the person that speaks up whenever it has something to say, which the agent may hear",
+    "audio_handoff": "someone who takes the phone from the person for a few turns, then hands it back",
+    "ivr": "a phone menu on the person's own line that answers a call the agent places, before the person, and puts the call through to them"
+  },
   "formats": {
     "actors.json": "futureagi.actors.v1"
   },
@@ -234,6 +245,7 @@
       },
       "properties": {
         "id": {
+          "description": "1 to 64 lowercase letters, digits or underscores",
           "pattern": "^[a-z0-9_]{1,64}$",
           "title": "Id",
           "type": "string"

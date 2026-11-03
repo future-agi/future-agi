@@ -696,7 +696,7 @@ class HarnessDraftItemSerializer(HarnessVersionSerializer):
         child=serializers.IntegerField(),
         help_text=(
             "Counts against the parent: added, removed and changed for the suite;"
-            " tools, rules, sub_goals and world_files for the environment."
+            " actors, tools, rules, sub_goals and world_files for the environment."
         ),
     )
 
@@ -1015,18 +1015,29 @@ class HarnessNudgeAnswerSerializer(serializers.Serializer):
 
 class HarnessActorRecordField(JsonObjectRequestField):
     """One actor record, in the shape its environment's actor rules declare (`record_schemas` on the cast); checked
-    against those rules on write, so a field a newer release adds passes through unchanged."""
+    against those rules on write, so a field a newer release adds passes through unchanged.
+    """
 
 
 class HarnessActorWriteSerializer(serializers.Serializer):
     actor = HarnessActorRecordField()
     # The draft revision the actors were read at; an edit made elsewhere since is refused.
-    expected_revision = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    expected_revision = serializers.IntegerField(
+        required=False, allow_null=True, min_value=0
+    )
 
 
 class HarnessActorDeleteQuerySerializer(serializers.Serializer):
     # The draft revision the actors were read at; an edit made elsewhere since is refused.
     expected_revision = serializers.IntegerField(required=False, min_value=0)
+
+
+class HarnessWorldActionSerializer(serializers.Serializer):
+    """One action the world lets an actor take, named as the world names it, with the tool behind it."""
+
+    action = serializers.CharField()
+    tool = serializers.CharField(allow_blank=True)
+    description = serializers.CharField(allow_blank=True)
 
 
 class HarnessActorListSerializer(serializers.Serializer):
@@ -1035,6 +1046,9 @@ class HarnessActorListSerializer(serializers.Serializer):
     revision = serializers.IntegerField()
     # Each actor file's record schema, from the rules of the release that sealed the environment.
     record_schemas = JsonObjectRequestField()
+    # What an actor can be given here: the world's actions, and the call channels a sub-actor speaks on.
+    actions = HarnessWorldActionSerializer(many=True)
+    channels = serializers.DictField(child=serializers.CharField(allow_blank=True))
 
 
 class HarnessActorViewQuerySerializer(serializers.Serializer):

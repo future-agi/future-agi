@@ -18011,11 +18011,22 @@ export const HarnessActorListApiSource = {
 
 export type HarnessActorListApiRecordSchemas = { [key: string]: unknown };
 
+export type HarnessActorListApiChannels = { [key: string]: string };
+
+export interface HarnessWorldActionApi {
+  /** @minLength 1 */
+  action: string;
+  tool: string;
+  description: string;
+}
+
 export interface HarnessActorListApi {
   actors: HarnessActorListApiActorsItem[];
   source: HarnessActorListApiSource;
   revision: number;
   record_schemas: HarnessActorListApiRecordSchemas;
+  actions: HarnessWorldActionApi[];
+  channels: HarnessActorListApiChannels;
 }
 
 export type HarnessActorWriteApiActor = { [key: string]: unknown };
@@ -18174,7 +18185,7 @@ export type HarnessDraftItemApiSource = { [key: string]: unknown };
 export type HarnessDraftItemApiPreflightReport = { [key: string]: unknown };
 
 /**
- * Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.
+ * Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.
  */
 export type HarnessDraftItemApiChanges = { [key: string]: number };
 
@@ -18236,7 +18247,7 @@ export interface HarnessDraftItemApi {
    * @minLength 1
    */
   default_label: string | null;
-  /** Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment. */
+  /** Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment. */
   changes: HarnessDraftItemApiChanges;
 }
 

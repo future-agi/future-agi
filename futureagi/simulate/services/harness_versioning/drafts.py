@@ -799,7 +799,9 @@ def edit_sides(environment: HostedHarnessJob) -> dict[str, dict[str, bytes]]:
         "environment_version", "suite_version"
     ).get(id=environment.id)
     return {
-        piece: _piece_files(head, piece, fresh_draft(head, piece) or getattr(head, f"{piece}_version"))
+        piece: _piece_files(
+            head, piece, fresh_draft(head, piece) or getattr(head, f"{piece}_version")
+        )
         for piece in DRAFT_PIECES
     }
 
@@ -1417,7 +1419,11 @@ def _changes(draft: Any, piece: str) -> dict[str, int]:
     rules = contract.get("rules") or {}
     sub_goals = diff.get("sub_goals") or {}
     files = diff.get("files") or {}
+    actors = diff.get("actors") or {}
     return {
+        "actors": size(
+            actors.get("added"), actors.get("removed"), actors.get("changed")
+        ),
         "tools": size(tools.get("added"), tools.get("removed"), tools.get("changed")),
         "rules": size(rules.get("added"), rules.get("removed")),
         "sub_goals": size(

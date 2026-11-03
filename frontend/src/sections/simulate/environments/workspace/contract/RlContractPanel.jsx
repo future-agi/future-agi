@@ -148,16 +148,21 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
         )}
       </SectionCard>
 
-      {env.subActors?.length > 0 && (
+      {/* With versioning the cast is edited below, sub-actors included; without it they are listed read-only. */}
+      {env.versioning?.enabled && env.id ? (
         <Box sx={{ mb: 2 }}>
-          <SubActorsPanel subActors={env.subActors} />
+          <WorldActorsPanel
+            envId={env.id}
+            locked={locked}
+            callerSide={env.surface === "voice" || env.subActors?.length > 0}
+          />
         </Box>
-      )}
-
-      {env.versioning?.enabled && env.id && (
-        <Box sx={{ mb: 2 }}>
-          <WorldActorsPanel envId={env.id} locked={locked} />
-        </Box>
+      ) : (
+        env.subActors?.length > 0 && (
+          <Box sx={{ mb: 2 }}>
+            <SubActorsPanel subActors={env.subActors} />
+          </Box>
+        )
       )}
 
       {/*

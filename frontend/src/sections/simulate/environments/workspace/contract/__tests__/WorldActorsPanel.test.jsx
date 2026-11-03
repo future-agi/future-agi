@@ -30,64 +30,130 @@ const MANAGER = {
   permitted_actions: ["crm.approve_discount"],
 };
 
+const ACTIONS = [
+  {
+    action: "crm.approve_discount",
+    tool: "approve_discount",
+    description: "Approve a pending discount",
+  },
+  {
+    action: "crm.request_approval",
+    tool: "request_approval",
+    description: "Ask a manager to approve",
+  },
+];
+const CHANNELS = {
+  audio_mix: "a voice near the person",
+  audio_handoff: "takes the phone",
+  ivr: "a phone menu",
+};
+const cast = (actors, extra = {}) => ({
+  actors,
+  source: "draft",
+  revision: 3,
+  actions: ACTIONS,
+  channels: CHANNELS,
+  ...extra,
+});
+// Open an MUI select by its label and pick an option by its text.
+const choose = (label, option) => {
+  fireEvent.mouseDown(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("option", { name: option }));
+};
+
 describe("WorldActorsPanel", () => {
   beforeEach(() => {
     mutate.mockReset();
-    actorsData = { actors: [MANAGER], source: "draft", revision: 3 };
+    actorsData = cast([MANAGER]);
   });
 
-  it("lists the cast with what each may do and says the changes are unsaved", () => {
+  it("lists the cast with what each may do, when they come in, and says the changes are unsaved", () => {
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.getByText("Actors (1)")).toBeInTheDocument();
     expect(screen.getByText(/Priya Raman/)).toBeInTheDocument();
     expect(
-      screen.getByText("May do: crm.approve_discount"),
+      screen.getByText(
+        "May do: crm.approve_discount · Comes in: From the start · If they do not answer: Nothing happens",
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText(/Unsaved changes/)).toBeInTheDocument();
   });
 
-  it("leaves the caller's side to the Sub-actors panel", () => {
-    actorsData = {
-      actors: [
-        MANAGER,
-        {
-          id: "colleague",
-          name: "Jordan Taylor",
-          side: "caller",
-          channel: "audio_mix",
-        },
-      ],
-      source: "saved",
-      revision: 0,
-    };
-    render(<WorldActorsPanel envId="env-1" />);
-    expect(screen.getByText("Actors (1)")).toBeInTheDocument();
-    expect(screen.queryByText(/Jordan Taylor/)).toBeNull();
+  it("lists people on the caller's side apart from the world, with their channel and scenarios", () => {
+    actorsData = cast([
+      MANAGER,
+      {
+        id: "colleague",
+        name: "Jordan Taylor",
+        side: "caller",
+        channel: "audio_mix",
+        scenarios: 2,
+      },
+    ]);
+    render(<WorldActorsPanel envId="env-1" callerSide />);
+    expect(screen.getByText("Actors (2)")).toBeInTheDocument();
+    expect(screen.getByText("On the caller's side")).toBeInTheDocument();
+    expect(
+      screen.getByText("Heard nearby · In 2 scenarios"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("In the world")).toBeInTheDocument();
   });
 
-  it("opens what an actor sees and never sees", () => {
+  it("shows what an actor sees and never sees in plain words", () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByText(/Priya Raman/));
-    expect(screen.getByText("actor.goal: Approve fast")).toBeInTheDocument();
-    expect(screen.getByText("scenario.solution")).toBeInTheDocument();
+    expect(
+      screen.getByText("What they want: Approve fast"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Grader material: solution")).toBeInTheDocument();
   });
 
-  it("adds an actor to the draft at the revision it was read at", () => {
-    actorsData = { actors: [], source: "saved", revision: 0 };
+  it("adds someone in the world with every field, picking actions from the environment's own list", () => {
+    actorsData = cast([], { source: "saved", revision: 0 });
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByText("Add actor"));
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    for (const label of [
+      "Id",
+      "Name",
+      "Role",
+      "Kind",
+      "Brought in by",
+      "What they want",
+      "May agree to (one per line)",
+      "Keeps to themselves (one per line)",
+      "Hands over when (one per line)",
+      "Is done when (one per line)",
+      "What they know (one per line)",
+      "How they behave",
+      "Answers",
+      "World actions they may take",
+      "Comes in",
+      "Waits (seconds)",
+      "If they do not answer",
+    ])
+      expect(screen.getByLabelText(label)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Id"), {
       target: { value: "manager" },
     });
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Priya" },
     });
-    fireEvent.change(screen.getByLabelText(/World actions they may take/), {
-      target: { value: "crm.approve_discount, crm.reject_discount" },
+    fireEvent.change(screen.getByLabelText("Is done when (one per line)"), {
+      target: { value: "She has decided" },
     });
-    fireEvent.change(screen.getByLabelText(/Comes in when the agent calls/), {
-      target: { value: "crm.request_approval" },
+    fireEvent.change(screen.getByLabelText("What they know (one per line)"), {
+      target: { value: "The limit is 25%" },
     });
+    choose("Answers", "After a delay");
+    fireEvent.change(screen.getByLabelText("Seconds"), {
+      target: { value: "5" },
+    });
+    fireEvent.mouseDown(screen.getByLabelText("World actions they may take"));
+    expect(screen.getByText("Approve a pending discount")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("option", { name: /crm.approve_discount/ }),
+    );
+    choose("Comes in", "When the agent calls crm.request_approval");
     fireEvent.click(screen.getByText("Save to draft"));
     const [change] = mutate.mock.calls[0];
     expect(change.op).toBe("create");
@@ -95,12 +161,65 @@ describe("WorldActorsPanel", () => {
     expect(change.actor).toMatchObject({
       id: "manager",
       name: "Priya",
-      permitted_actions: ["crm.approve_discount", "crm.reject_discount"],
+      kind: "person",
+      parent: null,
+      constraints: { stop_when: ["She has decided"] },
+      knowledge: [{ kind: "facts", text: "The limit is 25%" }],
+      behaviour: { response_timing: { kind: "delayed", seconds: 5 } },
+      permitted_actions: ["crm.approve_discount"],
       activation: {
         trigger: { kind: "on_tool", tool: "crm.request_approval" },
         fallback: "silent",
       },
     });
+  });
+
+  it("says plainly when the environment has no world actions to give", () => {
+    actorsData = cast([], { actions: [] });
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    expect(
+      screen.getByText(
+        /its tools run inside the agent, so no one in the world can act here/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("adds someone on the caller's side with a channel and its loudness", () => {
+    actorsData = cast([]);
+    render(<WorldActorsPanel envId="env-1" callerSide />);
+    fireEvent.click(screen.getByText("Add someone on the caller's side"));
+    expect(screen.queryByLabelText("World actions they may take")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Id"), {
+      target: { value: "colleague" },
+    });
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Jordan" },
+    });
+    fireEvent.change(screen.getByLabelText("How loud, next to the caller"), {
+      target: { value: "0.5" },
+    });
+    fireEvent.click(screen.getByText("Save to draft"));
+    expect(mutate.mock.calls[0][0].actor).toMatchObject({
+      id: "colleague",
+      name: "Jordan",
+      side: "caller",
+      channel: "audio_mix",
+      loudness_ratio: 0.5,
+    });
+  });
+
+  it("opens a fresh form for the next actor after a save", () => {
+    mutate.mockImplementation((_change, options) => options?.onSuccess?.());
+    actorsData = cast([]);
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.change(screen.getByLabelText("Role"), {
+      target: { value: "store manager" },
+    });
+    fireEvent.click(screen.getByText("Save to draft"));
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    expect(screen.getByLabelText("Role")).toHaveValue("");
   });
 
   it("keeps an actor's trigger when only another field is edited", () => {
@@ -133,7 +252,7 @@ describe("WorldActorsPanel", () => {
     });
     unmount();
     render(<WorldActorsPanel envId="env-1" locked />);
-    expect(screen.queryByText("Add actor")).toBeNull();
+    expect(screen.queryByText("Add someone in the world")).toBeNull();
     expect(screen.queryByText("Remove")).toBeNull();
   });
 });

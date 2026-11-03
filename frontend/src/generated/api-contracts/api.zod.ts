@@ -36034,6 +36034,14 @@ export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
   source: zod.enum(["draft", "saved"]),
   revision: zod.number(),
   record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
 });
 
 /**
@@ -36058,6 +36066,14 @@ export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
   source: zod.enum(["draft", "saved"]),
   revision: zod.number(),
   record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
 });
 
 /**
@@ -36114,6 +36130,14 @@ export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
   source: zod.enum(["draft", "saved"]),
   revision: zod.number(),
   record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
 });
 
 /**
@@ -36138,6 +36162,14 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
   source: zod.enum(["draft", "saved"]),
   revision: zod.number(),
   record_schemas: zod.record(zod.string(), zod.unknown()),
+  actions: zod.array(
+    zod.object({
+      action: zod.string().min(1),
+      tool: zod.string(),
+      description: zod.string(),
+    }),
+  ),
+  channels: zod.record(zod.string(), zod.string()),
 });
 
 /**
@@ -36392,7 +36424,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
       changes: zod
         .record(zod.string(), zod.number())
         .describe(
-          "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+          "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
         ),
     })
     .nullable(),
@@ -36497,7 +36529,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
       changes: zod
         .record(zod.string(), zod.number())
         .describe(
-          "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+          "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
         ),
     })
     .nullable(),
@@ -36602,7 +36634,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
       changes: zod
         .record(zod.string(), zod.number())
         .describe(
-          "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+          "Counts against the parent: added, removed and changed for the suite; actors, tools, rules, sub_goals and world_files for the environment.",
         ),
     }),
   ),

@@ -102,26 +102,116 @@ def _value_at(record: dict[str, Any], path: str) -> Any:
     return value
 
 
+def world_actions(
+    files: dict[str, bytes], rules: dict[str, Any]
+) -> list[dict[str, str]]:
+    """The actions the world lets an actor take, named as the sealing release names them: each tool entrypoint's
+    route, with the tool and what it does. A tool that runs inside the agent has no route and is no world action.
+    """
+    naming = rules.get("world_actions") or {}
+    raw = files.get("contract.json")
+    contract = json.loads(raw.decode("utf-8")) if raw else {}
+    about = {
+        str(one.get("name")): str(one.get("description") or "")
+        for one in contract.get("tools") or []
+    }
+    actions = {}
+    for entry in contract.get(naming.get("from", "tool_entrypoints")) or []:
+        route = str(entry.get(naming.get("route", "endpoint")) or "").strip("/")
+        if not route:
+            continue
+        tool = str(entry.get(naming.get("tool", "tool")) or "")
+        actions[route.replace("/", naming.get("separator", "."))] = {
+            "tool": tool,
+            "description": about.get(tool, ""),
+        }
+    return [{"action": name, **one} for name, one in sorted(actions.items())]
+
+
 def read_actors(environment: HostedHarnessJob) -> dict[str, Any]:
-    """The cast the next run would use: the draft's when there is one, else the saved version's."""
-    environment_files, _, draft = _sides(environment)
+    """The cast the next run would use (the draft's when there is one, else the saved version's), with what an actor
+    can be given: the record schemas, the world's actions and the call channels."""
+    environment_files, suite_files, draft = _sides(environment)
+    rules = actor_rules(environment_files)
     return {
-        "actors": _cast(environment_files),
+        "actors": [
+            {
+                **one,
+                "scenarios": len(
+                    _scenarios_using(suite_files, str(one.get("id") or ""))
+                ),
+            }
+            for one in _cast(environment_files)
+        ],
         "source": "draft" if draft is not None else "saved",
         "revision": draft.revision if draft is not None else 0,
-        "record_schemas": actor_rules(environment_files)["records"],
+        "record_schemas": rules["records"],
+        "actions": world_actions(environment_files, rules),
+        "channels": rules.get("channels") or {},
     }
 
 
+def _new_choices(
+    before: dict[str, Any] | None,
+    after: dict[str, Any],
+    files: dict[str, bytes],
+    rules: dict[str, Any],
+) -> list[str]:
+    """An action, trigger or channel this edit adds must be one the environment has. Values already on the record are
+    kept as they are, so an actor written elsewhere can still be edited."""
+    before = before or {}
+    actor_id = str(after.get("id") or "")
+    problems = []
+    if _is_sub_actor(after):
+        channels = rules.get("channels") or {}
+        if (
+            after.get("channel") != before.get("channel")
+            and channels
+            and after.get("channel") not in channels
+        ):
+            problems.append(
+                f"{actor_id}'s channel {after.get('channel')!r} is not one of: {', '.join(channels)}."
+            )
+        return problems
+    known = [one["action"] for one in world_actions(files, rules)]
+    old = set(before.get("permitted_actions") or [])
+    added = [
+        one
+        for one in after.get("permitted_actions") or []
+        if one not in old and one not in known
+    ]
+    tool = ((after.get("activation") or {}).get("trigger") or {}).get("tool")
+    old_tool = ((before.get("activation") or {}).get("trigger") or {}).get("tool")
+    if tool and tool != old_tool and tool not in known:
+        added.append(tool)
+    if added and not known:
+        problems.append(
+            f"{actor_id} cannot be given {', '.join(added)}: this environment has no world actions, because its tools "
+            "run inside the agent. Leave them empty."
+        )
+    elif added:
+        problems.append(
+            f"{', '.join(added)} is not an action of this environment; choose from {', '.join(known)}."
+        )
+    return problems
+
+
 def _reason(error: jsonschema.ValidationError) -> str:
-    """The specific rule a value broke. An optional field's schema allows null as well, so its own error only says
-    no branch matched; the branch that is not null names the limit."""
+    """The rule a value broke, in the words its schema gives. An optional field's schema allows null as well, so its
+    own error only says no branch matched; the branch that is not null names the limit.
+    """
     branches = [
         one
         for one in error.context or ()
         if not (one.validator == "type" and one.validator_value == "null")
     ]
-    return (jsonschema.exceptions.best_match(branches) if branches else error).message
+    broken = jsonschema.exceptions.best_match(branches) if branches else error
+    described = (
+        broken.schema.get("description") if isinstance(broken.schema, dict) else None
+    )
+    if broken.validator == "pattern" and described:
+        return f"{broken.instance!r} is not valid; use {described}"
+    return broken.message
 
 
 def actor_problems(actors: list[dict[str, Any]], rules: dict[str, Any]) -> list[str]:
@@ -154,7 +244,9 @@ def actor_problems(actors: list[dict[str, Any]], rules: dict[str, Any]) -> list[
         }
         for error in jsonschema.Draft202012Validator(schema).iter_errors(checked):
             where = ".".join(str(part) for part in error.absolute_path) or "the record"
-            problems.append(f"{actor_id}'s {where}: {_reason(error)}.")
+            # A bad id cannot name its own actor, so the sentence names the field instead.
+            subject = "The id" if where == "id" else f"{actor_id}'s {where}:"
+            problems.append(f"{subject} {_reason(error)}.")
         if actor_id in rules.get("reserved_ids", []):
             problems.append(f"{actor_id!r} is reserved; give the actor another id.")
         for path, also in (rules.get("references") or {}).items():
@@ -221,6 +313,9 @@ def write_actor_edit(
         )
     actors = _cast(environment_files)
     index = next((i for i, one in enumerate(actors) if one.get("id") == actor_id), None)
+    before = actors[index] if index is not None else None
+    # The scenario count is read-side only; it is never written into a record.
+    body = {name: value for name, value in (body or {}).items() if name != "scenarios"}
     if op == "create":
         if index is not None:
             raise _error(
@@ -256,6 +351,13 @@ def write_actor_edit(
         raise _error("actor_op_unknown", f"unknown change {op!r}", 400)
     rules = actor_rules(environment_files)
     problems = actor_problems(actors, rules)
+    if op != "delete":
+        problems += _new_choices(
+            before,
+            next(one for one in actors if one.get("id") == actor_id),
+            environment_files,
+            rules,
+        )
     if problems:
         raise _error("actor_invalid", " ".join(problems), 400)
     world = [one for one in actors if not _is_sub_actor(one)]
