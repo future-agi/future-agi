@@ -34,7 +34,7 @@ from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.saml_credential import SamlCredentialInvalid, validate_saml_credential
 from accounts.services.workspace_membership import create_workspace_membership
-from tfc.constants.roles import OrganizationRoles
+from tfc.constants.levels import Level
 from tfc.ee_gating import is_oss
 from tfc.permissions.utils import VIEWER_READ_ONLY_CODE, viewer_denied_message
 from tfc.utils.api_errors import (
@@ -314,29 +314,33 @@ class APIKeyAuthentication(BaseAuthentication):
         # These paths are excluded from workspace write checks because they:
         # - Don't modify workspace data (switch operations, profile updates)
         # - Or need to be accessible regardless of workspace role
-        excluded_paths = [
-            "workspace/switch/",
-            "organizations/switch/",
-            "update-user-full-name",  # Users can always update their own profile
-            "onboarding/",  # Users can always update their own onboarding profile
-            "logout/",  # Users can always invalidate their own access token
-            "2fa/",  # Users can always manage their own second factor state
-            "passkey/",  # Users can always manage their own passkey challenges
-            "passkeys/",  # Users can always manage their own passkey records
-        ]
+        excluded_paths = (
+            "/accounts/workspace/switch/",
+            "/accounts/organizations/switch/",
+            "/accounts/update-user-full-name/",  # Users can always update their own profile
+            "/accounts/onboarding/",  # Users can always update their own onboarding profile
+            "/accounts/logout/",  # Users can always invalidate their own access token
+            "/accounts/2fa/",  # Users can always manage their own second factor state
+            "/accounts/passkey/",  # Users can always manage their own passkey challenges
+            "/accounts/passkeys/",  # Users can always manage their own passkey records
+        )
 
         should_skip_write_check = (
             _is_workspace_write_exempt_view(request)
-            or any(excluded_path in request.path for excluded_path in excluded_paths)
+            or request.path.startswith(excluded_paths)
             or _is_annotation_queue_role_scoped_write_path(request.path)
         )
 
         if (
             request.method in ["POST", "PUT", "PATCH", "DELETE"]
-            and workspace
             and not should_skip_write_check
         ):
-            if not self._can_write_to_workspace(user, workspace):
+            if workspace is None:
+                level = user.get_membership_level(organization)
+                can_write = level is not None and level >= Level.MEMBER
+            else:
+                can_write = self._can_write_to_workspace(user, workspace)
+            if not can_write:
                 raise ViewerReadOnly(_viewer_denied_action(request))
 
         # Per-request attributes (safe, no race condition)
@@ -623,9 +627,13 @@ class APIKeyAuthentication(BaseAuthentication):
         """Get or create the default workspace for an organization.
 
         Also ensures the user has a WorkspaceMembership for the workspace,
-        creating one (as workspace_admin) if missing.  Without a membership
-        the next request's ``_user_has_workspace_access`` check would fail.
+        creating one at the role their organization level grants if missing.
+        Without a membership the next request's ``_user_has_workspace_access``
+        check would fail.
         """
+        org_level = user.get_membership_level(organization)
+        if org_level is None or org_level < Level.VIEWER:
+            return None
         try:
             default_workspace = Workspace.objects.get(
                 organization=organization, is_default=True, is_active=True
@@ -668,7 +676,7 @@ class APIKeyAuthentication(BaseAuthentication):
                 create_workspace_membership(
                     workspace=default_workspace,
                     user=user,
-                    role=OrganizationRoles.WORKSPACE_ADMIN,
+                    role=Level.to_ws_role(org_level),
                     invited_by=user,
                 )
             except IntegrityError:
