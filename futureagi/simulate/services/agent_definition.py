@@ -1,3 +1,6 @@
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
 from django.conf import settings
 
 from simulate.models import AgentDefinition, AgentVersion
@@ -17,6 +20,44 @@ def is_masked(value: str) -> bool:
     if len(value) == 11 and value[4:7] == "...":
         return True
     return False
+
+
+def mask_websocket_headers(headers: Any) -> Any:
+    if not isinstance(headers, dict):
+        return headers
+    return dict.fromkeys(headers, MASKED_VALUE)
+
+
+def mask_websocket_url(url: str | None) -> str | None:
+    if not url:
+        return url
+    parts = urlsplit(url)
+    netloc = parts.netloc
+    if "@" in netloc:
+        netloc = f"{MASKED_VALUE}@{netloc.rsplit('@', 1)[1]}"
+    query = urlencode(
+        [
+            (name, MASKED_VALUE)
+            for name, _ in parse_qsl(parts.query, keep_blank_values=True)
+        ],
+        safe="*",
+    )
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+
+
+def keep_stored_websocket_headers(incoming: Any, stored: Any) -> Any:
+    if not isinstance(incoming, dict) or not isinstance(stored, dict):
+        return incoming
+    return {
+        name: (stored[name] if value == MASKED_VALUE and name in stored else value)
+        for name, value in incoming.items()
+    }
+
+
+def keep_stored_websocket_url(incoming: str | None, stored: str | None) -> str | None:
+    if incoming and stored and incoming == mask_websocket_url(stored):
+        return stored
+    return incoming
 
 
 def _has_credential_fields(data: ProviderCredentialsInput) -> bool:

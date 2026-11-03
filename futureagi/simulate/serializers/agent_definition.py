@@ -8,6 +8,10 @@ from rest_framework import serializers
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import AgentTypeChoices
+from simulate.serializers.websocket_fields import (
+    WebsocketHeadersField,
+    WebsocketUrlField,
+)
 from simulate.services.agent_definition import is_masked, sync_provider_credentials
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
@@ -93,6 +97,18 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
     )
     livekit_api_secret = serializers.CharField(
         write_only=True, required=False, allow_blank=True
+    )
+    websocket_url = WebsocketUrlField(
+        max_length=500,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="WebSocket URL for real-time communication with the agent",
+    )
+    websocket_headers = WebsocketHeadersField(
+        required=False,
+        allow_null=True,
+        help_text="Headers to be sent to the websocket server",
     )
 
     class Meta:
@@ -460,6 +476,16 @@ class AgentDefinitionListSerializer(serializers.ModelSerializer):
 
     latest_version = serializers.SerializerMethodField()
     latest_version_id = serializers.SerializerMethodField()
+    websocket_url = WebsocketUrlField(
+        read_only=True,
+        allow_null=True,
+        help_text="WebSocket URL for real-time communication with the agent",
+    )
+    websocket_headers = WebsocketHeadersField(
+        read_only=True,
+        allow_null=True,
+        help_text="Headers to be sent to the websocket server",
+    )
 
     class Meta:
         model = AgentDefinition

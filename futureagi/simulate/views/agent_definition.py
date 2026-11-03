@@ -42,6 +42,8 @@ from simulate.serializers.response.agent_version import (
 )
 from simulate.services.agent_definition import (
     is_masked,
+    keep_stored_websocket_headers,
+    keep_stored_websocket_url,
     resolve_api_key_for_version,
     resolve_stored_api_key,
     sync_provider_credentials,
@@ -760,6 +762,14 @@ class EditAgentDefinitionView(APIView):
                 "websocket_url",
                 "websocket_headers",
             ]
+            if "websocket_headers" in validated:
+                validated["websocket_headers"] = keep_stored_websocket_headers(
+                    validated["websocket_headers"], agent.websocket_headers
+                )
+            if "websocket_url" in validated:
+                validated["websocket_url"] = keep_stored_websocket_url(
+                    validated["websocket_url"], agent.websocket_url
+                )
             changed_fields = []
             for field in update_fields:
                 if field == "api_key" and preserve_existing_api_key:
