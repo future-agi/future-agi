@@ -23,7 +23,8 @@ _MAX_BYTES = 2 * 1024 * 1024
 
 
 def _archive_json(body: bytes, name: str) -> tuple[dict[str, Any], str] | None:
-    """One sealed generic-harness JSON document and its digest, or None when the build wrote none."""
+    """One sealed generic-harness JSON document and its digest, or None when the build wrote none; ValueError when it
+    wrote one that is not a JSON object."""
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         for member in archive.getmembers():
             path = Path(member.name)
@@ -42,8 +43,11 @@ def _archive_json(body: bytes, name: str) -> tuple[dict[str, Any], str] | None:
             try:
                 document = json.loads(raw.decode("utf-8"))
             except (UnicodeDecodeError, ValueError):
-                return None
-            return (document, hashlib.sha256(raw).hexdigest()) if isinstance(document, dict) else None
+                document = None
+            if not isinstance(document, dict):
+                logger.warning("capability_document_unreadable", name=name)
+                raise ValueError(f"{name} is not a JSON object")
+            return document, hashlib.sha256(raw).hexdigest()
     return None
 
 
@@ -77,7 +81,11 @@ def record_capability_evidence(job: HostedHarnessJob, body: bytes) -> HarnessCap
         if found is None:
             return None
         document, digest = found
-        requirements = _archive_json(body, REQUIREMENTS_FILE)
+        try:
+            requirements = _archive_json(body, REQUIREMENTS_FILE)
+        except ValueError:
+            # Unreadable needs leave every scenario untested; the evidence itself still stands.
+            requirements = None
         row, _ = HarnessCapabilityEvidence.no_workspace_objects.update_or_create(
             job=job,
             origin=HarnessCapabilityEvidence.Origin.CERTIFICATION,
@@ -92,12 +100,31 @@ def record_capability_evidence(job: HostedHarnessJob, body: bytes) -> HarnessCap
                 "capabilities": document.get("capabilities") or {},
                 "artefacts": [{"kind": "capability_evidence", "path": EVIDENCE_FILE, "sha256": digest}],
                 "scenario_requirements": (requirements[0].get("scenarios") or {}) if requirements else {},
+                "capture_status": HarnessCapabilityEvidence.CaptureStatus.COMPLETE,
+                "capture_error": None,
                 "captured_at": timezone.now(),
             },
         )
         return row
-    except Exception:  # noqa: BLE001 - evidence is a report, never a reason to fail a build
+    except Exception as exc:  # noqa: BLE001 - evidence is a report, never a reason to fail a build
         logger.exception("capability_evidence_not_recorded", job_id=str(job.id))
+        # Kept as an errored capture, so the report says the build's evidence could not be read rather than none.
+        try:
+            HarnessCapabilityEvidence.no_workspace_objects.update_or_create(
+                job=job,
+                origin=HarnessCapabilityEvidence.Origin.CERTIFICATION,
+                defaults={
+                    "organization_id": job.organization_id,
+                    "workspace_id": job.workspace_id,
+                    "agent_version_id": job.agent_version_id,
+                    "environment_version_id": job.environment_version_id,
+                    "capture_status": HarnessCapabilityEvidence.CaptureStatus.ERRORED,
+                    "capture_error": type(exc).__name__,
+                    "captured_at": timezone.now(),
+                },
+            )
+        except Exception:  # noqa: BLE001 - the build still never fails for its report
+            logger.exception("capability_evidence_error_not_recorded", job_id=str(job.id))
         return None
 
 
@@ -155,6 +182,10 @@ def affected_scenarios(rows: list[dict[str, Any]], requirements: dict[str, Any])
         row["affected_scenarios"] = []
     counts = {"requested": 0, "eligible": 0, "blocked": 0, "untested": 0}
     for key, value in sorted((requirements or {}).items()):
+        if value is None:
+            counts["requested"] += 1
+            counts["untested"] += 1
+            continue
         tools = set(((value or {}).get("tools") or {}).get("required") or [])
         states = set()
         for capability in (value or {}).get("capabilities") or []:
@@ -176,27 +207,56 @@ def affected_scenarios(rows: list[dict[str, Any]], requirements: dict[str, Any])
     return {**counts, "requirements_recorded": bool(requirements)}
 
 
+def _provisionable(dependency: dict[str, Any]) -> bool:
+    """The environment stands up its own copy of a dependency only when it knows the engine and how the agent reaches
+    it (the same rule the build uses)."""
+    reached = dependency.get("reached") or {}
+    seam = any(reached.get(name) for name in ("dsn_env", "config_key", "host", "port", "database", "loader_module"))
+    return bool(dependency.get("engine")) and seam
+
+
 def structural_findings(contract: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     """What the current contract alone shows cannot work, with no run: a tool the build recorded as unreachable, or
-    a service-backed tool that names no service, cannot be routed to the world."""
-    unroutable = [
+    a service-backed tool that names no service, cannot be routed to the world; a tool that uses a dependency the
+    environment cannot stand up reaches the real one, so it would run live."""
+    unroutable = sorted(
         str(entry.get("tool") or "")
         for entry in (contract or {}).get("tool_entrypoints") or []
         if isinstance(entry, dict)
         and (entry.get("mode") == "unreachable" or (entry.get("mode") == "service" and not entry.get("service")))
-    ]
-    if not unroutable:
-        return {}
-    return {
-        "tool_routing": {
-            "finding": "failed",
-            "reason_code": "tool_unreachable",
-            "reason": "No reachable implementation for: " + ", ".join(sorted(unroutable)),
-            "fix": "Bind each listed tool to its implementation in the agent's source, or to a service the "
-            "environment runs, then rebuild",
-            "checks": [{"target": tool, "result": "failed"} for tool in sorted(unroutable)],
+    )
+    live: dict[str, list[str]] = {}
+    for dependency in (contract or {}).get("dependencies") or []:
+        if isinstance(dependency, dict) and not _provisionable(dependency):
+            for tool in dependency.get("used_by") or []:
+                live.setdefault(str(tool), []).append(str(dependency.get("name") or ""))
+    if unroutable:
+        return {
+            "tool_routing": {
+                "finding": "failed",
+                "reason_code": "tool_unreachable",
+                "reason": "No reachable implementation for: " + ", ".join(unroutable),
+                "fix": "Bind each listed tool to its implementation in the agent's source, or to a service the "
+                "environment runs, then rebuild",
+                "checks": [{"target": tool, "result": "failed"} for tool in unroutable],
+            }
         }
-    }
+    if live:
+        named = sorted({name for names in live.values() for name in names})
+        return {
+            "tool_routing": {
+                "finding": "failed",
+                "reason_code": "production_route",
+                "reason": ", ".join(f"{tool} reaches {', '.join(sorted(live[tool]))}" for tool in sorted(live))
+                + " outside the test world, so it would run live",
+                "fix": "Redirect " + ", ".join(sorted(live)) + " to the test world: record how the agent reaches "
+                + ", ".join(named) + " (an environment variable, config key or host) so the environment runs its own "
+                "copy, then rebuild",
+                "flips_when": "every listed tool reaches a copy the environment runs",
+                "checks": [{"target": tool, "result": "failed"} for tool in sorted(live)],
+            }
+        }
+    return {}
 
 
 def preflight_findings(report: dict[str, Any] | None, status: str) -> dict[str, dict[str, Any]]:
@@ -209,6 +269,7 @@ def preflight_findings(report: dict[str, Any] | None, status: str) -> dict[str, 
     labels = ", ".join(str(check.get("label") or check.get("id")) for check in failed) or "agent preflight"
     return {
         "start_health": {
+            "origin": "preflight",
             "finding": "failed",
             "reason_code": str(failed[0].get("id")) if failed else str((report or {}).get("error") or "preflight_failed"),
             "reason": f"Agent preflight failed: {labels}" + (f" (missing {', '.join(missing)})" if missing else ""),
@@ -218,12 +279,49 @@ def preflight_findings(report: dict[str, Any] | None, status: str) -> dict[str, 
     }
 
 
+def agent_version_of(job: HostedHarnessJob, agent_version_id: Any) -> Any:
+    """One of this environment's agent versions, or `version_not_found`: a version id never reads another workspace's
+    agent."""
+    from simulate.models import AgentVersion
+    from simulate.services.harness_versioning.read import version_not_found
+
+    definition = getattr(job.agent_version, "agent_definition_id", None) if job.agent_version_id else None
+    version = AgentVersion.no_workspace_objects.filter(
+        id=agent_version_id, organization_id=job.organization_id, agent_definition_id=definition
+    ).first() if definition else None
+    if version is None:
+        raise version_not_found()
+    return version
+
+
+def _current_harness_version(agent_version_id: str, environment_version: Any) -> str | None:
+    """The harness release that last certified this agent and environment version, from its ready bundle; None when
+    none is cached, so only a known release is compared."""
+    from simulate.models import HarnessAssembledBundle
+
+    if not agent_version_id or environment_version is None:
+        return None
+    certificate = (
+        HarnessAssembledBundle.no_workspace_objects.filter(
+            agent_version_id=agent_version_id,
+            environment_version=environment_version,
+            state=HarnessAssembledBundle.State.READY,
+        )
+        .order_by("-updated_at")
+        .values_list("certificate", flat=True)
+        .first()
+    )
+    return str(((certificate or {}).get("compiler") or {}).get("version") or "") or None
+
+
 def _environment_rows(
     job: HostedHarnessJob, agent_version_id: Any = None, environment_version: Any = None
 ) -> tuple[HarnessCapabilityEvidence | None, list[dict[str, Any]], dict[str, str]]:
     """An environment's latest build evidence and one status row per capability, for an agent version and an
     environment version (the environment's own when none is named): Stale once the environment version is another
     one or the agent is not the one it was checked with."""
+    if agent_version_id:
+        agent_version_id = agent_version_of(job, agent_version_id).id
     version = environment_version or job.environment_version
     evidence = (
         HarnessCapabilityEvidence.no_workspace_objects.filter(
@@ -238,6 +336,9 @@ def _environment_rows(
         "environment_version_id": str(getattr(version, "id", None) or ""),
         "agent_version_id": str(agent_version_id or job.agent_version_id or ""),
     }
+    harness_version = _current_harness_version(current["agent_version_id"], version)
+    if harness_version:
+        current["harness_version"] = harness_version
     document = (
         {
             "inputs": {
@@ -268,13 +369,56 @@ def _environment_rows(
     return evidence, rows, current
 
 
+def _picked(
+    requirements: dict[str, Any], suite_version: Any, keys: list[str] | None
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """The recorded needs of the scenarios asked about: the picked suite version's members (all of the recorded ones
+    when none is picked), narrowed to `keys`; and those recorded but no longer in the suite, apart, as dropped."""
+    if suite_version is None:
+        members = set(requirements)
+    else:
+        from simulate.models import HarnessSuiteMember
+
+        members = set(
+            HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite_version).values_list("scenario_key", flat=True)
+        )
+    if keys:
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        unknown = sorted(set(keys) - members)
+        if unknown:
+            raise HostedHarnessError(
+                "selection_invalid", "Not scenarios of that suite version", status_code=400, details={"keys": unknown}
+            )
+        members &= set(keys)
+    # None for a scenario whose needs were never recorded: it is untested, never eligible.
+    picked = {key: requirements.get(key) for key in sorted(members)}
+    dropped = [
+        {"key": key, "reason": "no longer in the suite"} for key in sorted(set(requirements) - members) if not keys
+    ]
+    return picked, dropped
+
+
 def environment_capability_report(
-    job: HostedHarnessJob, agent_version_id: Any = None, environment_version: Any = None
+    job: HostedHarnessJob,
+    agent_version_id: Any = None,
+    environment_version: Any = None,
+    *,
+    suite_version: Any = None,
+    keys: list[str] | None = None,
 ) -> dict[str, Any]:
-    """The capability report for an environment, an agent version and an environment version (see `_environment_rows`)."""
+    """The capability report for an environment, an agent version and an environment version (see `_environment_rows`),
+    counted over the picked suite version's scenarios (or `keys` of them)."""
     evidence, rows, current = _environment_rows(job, agent_version_id, environment_version)
-    selection = affected_scenarios(rows, evidence.scenario_requirements if evidence is not None else {})
+    picked, dropped = _picked(evidence.scenario_requirements if evidence is not None else {}, suite_version, keys)
+    selection = {**affected_scenarios(rows, picked), "dropped": dropped}
+    errored = HarnessCapabilityEvidence.no_workspace_objects.filter(
+        job=job,
+        origin=HarnessCapabilityEvidence.Origin.CERTIFICATION,
+        capture_status=HarnessCapabilityEvidence.CaptureStatus.ERRORED,
+    ).exists()
     return {
+        "evidence_unreadable": errored,
         "environment_version_id": current["environment_version_id"] or None,
         "agent_version_id": current["agent_version_id"] or None,
         "catalog_version": evidence.catalog_version if evidence is not None else None,
@@ -286,10 +430,13 @@ def environment_capability_report(
     }
 
 
-def scenario_capabilities(job: HostedHarnessJob) -> dict[str, dict[str, Any]]:
+def scenario_capabilities(
+    job: HostedHarnessJob, agent_version: Any = None, environment_version: Any = None
+) -> dict[str, dict[str, Any]]:
     """Per scenario key the build recorded needs for: the capabilities that block it (with each one's label and fix
-    type) and those not yet measured. A scenario absent here has no recorded needs."""
-    evidence, rows, _ = _environment_rows(job)
+    type) and those not yet measured, for the agent and environment versions a run is pinned to. A scenario absent here
+    has no recorded needs."""
+    evidence, rows, _ = _environment_rows(job, getattr(agent_version, "id", None), environment_version)
     by_id = {row["id"]: row for row in rows}
     out: dict[str, dict[str, Any]] = {}
     for key, value in ((evidence.scenario_requirements if evidence is not None else None) or {}).items():
@@ -305,3 +452,26 @@ def scenario_capabilities(job: HostedHarnessJob) -> dict[str, dict[str, Any]]:
                 untested.append(capability)
         out[key] = {"blocked_by": blocked, "untested": untested}
     return out
+
+
+def recheck_capabilities(job: HostedHarnessJob, scope: str, check: str | None, agent_version_id: Any = None) -> dict[str, Any]:
+    """Read a capability again without a run. The agent side re-runs the agent version's preflight when it failed or
+    never finished (a passed one stands); the world side needs a new build until a check-only job is decided."""
+    from simulate.services.harness_agent_versions import _RETRYABLE, _side_row, retry_preflight
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    evidence, rows, current = _environment_rows(job, agent_version_id)
+    if check and check not in {row["id"] for row in rows}:
+        raise HostedHarnessError("capability_unknown", f"{check} is not a capability this report checks", status_code=400)
+    if scope == "world":
+        raise HostedHarnessError(
+            "world_recheck_not_offered",
+            "Checking the world again needs a new build for now; rebuild the environment to read it again",
+            status_code=409,
+        )
+    version = agent_version_of(job, current["agent_version_id"])
+    runtime = _side_row(version.id)
+    if runtime is None or runtime.preflight_status not in _RETRYABLE:
+        return {"scope": scope, "agent_version_id": str(version.id), "state": "not_needed"}
+    retry_preflight(version)
+    return {"scope": scope, "agent_version_id": str(version.id), "state": "started"}

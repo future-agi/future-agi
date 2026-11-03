@@ -13,6 +13,7 @@ from simulate.models import HarnessCapabilityEvidence, HostedHarnessJob
 from simulate.services.capability_evidence import (
     capability_report,
     record_capability_evidence,
+    scenario_capabilities,
 )
 from simulate.tests.test_harness_versioning_backfill import (
     storage as storage,  # noqa: F401 - fixture
@@ -51,7 +52,7 @@ def job(db, organization, workspace):
         max_artifact_bytes=1024,
         deadline_at=timezone.now() + timedelta(hours=1),
         scenario_count=1,
-        payload={},
+        payload={"metadata": {}},
     )
 
 
@@ -254,3 +255,176 @@ def test_evidence_from_before_versions_existed_is_judged_only_on_what_it_names(u
         evidence.environment_version = other
         evidence.save(update_fields=["environment_version"])
         assert status() == "stale"
+
+
+def test_an_archive_whose_evidence_cannot_be_read_says_so_until_a_readable_one_arrives(job):
+    from simulate.services.capability_evidence import environment_capability_report
+
+    broken = record_capability_evidence(job, _archive({"generic-harness/capability-evidence.json": b"{not json"}))
+
+    row = HarnessCapabilityEvidence.no_workspace_objects.get(job=job)
+    assert broken is None and (row.capture_status, bool(row.capture_error)) == ("errored", True)
+    assert environment_capability_report(job)["evidence_unreadable"] is True
+    record_capability_evidence(job, _archive({"generic-harness/capability-evidence.json": json.dumps(_DOCUMENT).encode()}))
+    row.refresh_from_db()
+    assert (row.capture_status, row.capture_error) == ("complete", None)
+    assert environment_capability_report(job)["evidence_unreadable"] is False
+
+
+def _versioned_with_evidence(user, workspace, storage, key):
+    from simulate.models import HarnessSuiteMember
+    from simulate.tests.test_harness_versioning_picks import _environment
+
+    environment = _environment(user, workspace, key, storage)
+    members = list(
+        HarnessSuiteMember.no_workspace_objects.filter(suite_version=environment.suite_version)
+        .values_list("scenario_key", flat=True)
+    )
+    requirements = {name: {"capabilities": ["start_health"]} for name in [*members, "retired-case"]}
+    record_capability_evidence(environment, _archive({
+        "generic-harness/capability-evidence.json": json.dumps(_DOCUMENT).encode(),
+        "generic-harness/scenario-requirements.json": json.dumps({"scenarios": requirements}).encode(),
+    }))
+    HarnessCapabilityEvidence.no_workspace_objects.filter(job=environment).update(catalogue=_CATALOGUE)
+    return environment, members
+
+
+def test_the_report_counts_the_picked_suite_version_s_cases_and_refuses_what_is_not_in_it(
+    user, workspace, storage, auth_client, settings
+):
+    settings.HARNESS_VERSIONING_ENABLED = True
+    environment, members = _versioned_with_evidence(user, workspace, storage, "capability-picks")
+    url = f"/simulate/api/harness-environments/{environment.id}/capabilities/"
+
+    whole = auth_client.get(url, {"suite_version_id": str(environment.suite_version_id)})
+    one = auth_client.get(url, {"keys": [members[0]]})
+    outside = auth_client.get(url, {"keys": [members[0], "retired-case"]})
+    unknown = auth_client.get(url, {"environment_version_id": str(uuid.uuid4())})
+
+    assert whole.status_code == 200, whole.content
+    assert whole.json()["selection"]["dropped"] == [{"key": "retired-case", "reason": "no longer in the suite"}]
+    assert whole.json()["selection"]["eligible"] == len(members)
+    assert one.json()["selection"]["eligible"] == 1 and one.json()["selection"]["dropped"] == []
+    assert outside.status_code == 400 and outside.json()["error"] == "selection_invalid"
+    assert outside.json()["keys"] == ["retired-case"]
+    assert unknown.status_code == 404
+
+
+def test_a_re_check_runs_a_failed_agent_preflight_again_and_leaves_a_passed_one(
+    user, workspace, storage, auth_client, settings
+):
+    from simulate.models import HarnessAgentVersionRuntime
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    environment, _ = _versioned_with_evidence(user, workspace, storage, "capability-recheck")
+    url = f"/simulate/api/harness-environments/{environment.id}/capabilities/recheck/"
+    runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(agent_version_id=environment.agent_version_id)
+
+    runtime.preflight_status = "passed"
+    runtime.save(update_fields=["preflight_status"])
+    passed = auth_client.post(url, {"scope": "agent", "check": "start_health"}, format="json")
+    runtime.preflight_status = "failed"
+    runtime.save(update_fields=["preflight_status"])
+    started = auth_client.post(url, {"scope": "agent", "check": "start_health"}, format="json")
+    world = auth_client.post(url, {"scope": "world"}, format="json")
+    unknown = auth_client.post(url, {"scope": "agent", "check": "no_such_check"}, format="json")
+
+    assert passed.status_code == 200 and passed.json()["state"] == "not_needed"
+    assert started.status_code == 200, started.content
+    assert started.json() == {"scope": "agent", "agent_version_id": str(environment.agent_version_id), "state": "started"}
+    runtime.refresh_from_db()
+    assert runtime.preflight_status == "pending"
+    assert world.status_code == 409 and world.json()["error"] == "world_recheck_not_offered"
+    assert unknown.status_code == 400 and unknown.json()["error"] == "capability_unknown"
+
+
+def test_each_case_reads_its_capabilities_for_the_agent_version_a_run_is_pinned_to(job, organization, workspace):
+    first, second = _versions(organization, workspace)
+    job.agent_version = first
+    job.save(update_fields=["agent_version"])
+    document = {**_DOCUMENT, "capabilities": {"start_health": {"finding": "failed", "checks": []}}}
+    record_capability_evidence(job, _archive({
+        "generic-harness/capability-evidence.json": json.dumps(document).encode(),
+        "generic-harness/scenario-requirements.json": json.dumps(
+            {"scenarios": {"refund": {"capabilities": ["start_health"]}}}).encode(),
+    }))
+    HarnessCapabilityEvidence.no_workspace_objects.filter(job=job).update(catalogue=_CATALOGUE)
+
+    assert scenario_capabilities(job, first)["refund"]["blocked_by"][0]["capability"] == "start_health"
+    # Checked with the first version only: for the second it is not known, so the case is untested, not blocked.
+    pinned = scenario_capabilities(job, second)["refund"]
+    assert pinned["blocked_by"] == [] and pinned["untested"] == ["start_health"]
+
+
+_PRODUCTION_REFUND = {
+    "tool_entrypoints": [{"tool": "refund", "mode": "import"}, {"tool": "lookup", "mode": "import"}],
+    # The refund tool calls a payments service the environment has no way to stand up, so it would reach the real one.
+    "dependencies": [
+        {"name": "payments", "kind": "service", "used_by": ["refund"], "reached": {}},
+        {"name": "orders", "kind": "datastore", "used_by": ["lookup"], "engine": "postgres",
+         "reached": {"dsn_env": "ORDERS_DSN"}},
+    ],
+}
+
+
+def test_a_refund_tool_that_reaches_production_blocks_tool_routing_until_the_agent_version_changes(
+    user, workspace, storage, auth_client, settings
+):
+    from simulate.models import AgentVersion
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    environment, _ = _versioned_with_evidence(user, workspace, storage, "capability-production-refund")
+    catalogue = [*_CATALOGUE, {"id": "tool_routing", "label": "Tool routing", "depends_on": [], "fix_type": "tool_routing"}]
+    HarnessCapabilityEvidence.no_workspace_objects.filter(job=environment).update(catalogue=catalogue)
+    version = environment.environment_version
+    version.documents = {**(version.documents or {}), "contract": _PRODUCTION_REFUND}
+    version.save(update_fields=["documents"])
+    url = f"/simulate/api/harness-environments/{environment.id}/capabilities/"
+
+    rows = {row["id"]: row for row in auth_client.get(url).json()["capabilities"]}
+
+    routing = rows["tool_routing"]
+    assert (routing["status"], routing["reason_code"]) == ("blocked", "production_route")
+    assert routing["reason"] == "refund reaches payments outside the test world, so it would run live"
+    assert routing["fix"]["type"] == "tool_routing" and routing["fix"]["target"] == ["refund"]
+    assert routing["fix"]["repair"] == "agent.tools" and "payments" in routing["fix"]["text"]
+    assert rows["start_health"]["status"] == "supported"
+
+    newer = environment.agent_version.agent_definition.create_version(
+        description="", commit_message="v2", status=AgentVersion.StatusChoices.DRAFT
+    )
+    after = {row["id"]: row for row in auth_client.get(url, {"agent_version_id": str(newer.id)}).json()["capabilities"]}
+    assert (after["start_health"]["status"], after["start_health"]["stale_because"]) == ("stale", "agent_version_id")
+    # The contract still routes refund live, so that stays Blocked rather than reading as merely out of date.
+    assert after["tool_routing"]["status"] == "blocked"
+
+
+def test_the_report_goes_stale_once_a_newer_harness_release_certified_the_same_versions(user, workspace, storage):
+    from simulate.models import HarnessAssembledBundle
+    from simulate.services.capability_evidence import environment_capability_report
+
+    environment, _ = _versioned_with_evidence(user, workspace, storage, "capability-harness-release")
+    document = {**_DOCUMENT, "inputs": {**_DOCUMENT["inputs"], "harness_version": "1.0"}}
+    record_capability_evidence(environment, _archive({"generic-harness/capability-evidence.json": json.dumps(document).encode()}))
+    HarnessCapabilityEvidence.no_workspace_objects.filter(job=environment).update(catalogue=_CATALOGUE)
+
+    def bundle(release):
+        return HarnessAssembledBundle.no_workspace_objects.create(
+            job=environment,
+            organization=environment.organization,
+            agent_version=environment.agent_version,
+            environment_version=environment.environment_version,
+            suite_version=environment.suite_version,
+            assembly_key=f"sha256:{release}",
+            state=HarnessAssembledBundle.State.READY,
+            certificate={"compiler": {"version": release}},
+        )
+
+    def row():
+        return environment_capability_report(environment)["capabilities"][0]
+
+    assert row()["status"] == "supported"
+    bundle("1.0")
+    assert row()["status"] == "supported"
+    bundle("1.1")
+    assert (row()["status"], row()["stale_because"]) == ("stale", "harness_version")
