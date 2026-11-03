@@ -258,53 +258,44 @@ measured, with seeded simulation, 7 false alarms in 10,000 correct runs
 (2,000 units at 10%) and 1,000 of 1,000 detections of a 5% relative
 under-selection in a 200,000-unit stratum at 10%.
 
-Precision planner
------------------
+Task editor and advanced policies
+---------------------------------
 
-The preview includes per-cell approximate 95% normal margins for a proportion
-at p = 0.5, with finite-population correction, and the stratified margin,
-Kish effective size and unequal-weight design effect. The expandable advisory
-planner shows the minimum n for a requested margin, plus integer quota
-suggestions under a unit budget using proportional, balanced or Neyman
-allocation with a per-cell minimum. Neyman uses N times the anticipated
-standard deviation sqrt(p(1-p)); the user supplies per-cell anticipated
-proportions, default 0.5. A zero-variance cell receives only its minimum.
-Budgets above reachable populations are capped, and budgets below the sum of
-minimums are rejected. Largest-remainder rounding has a stable cell-order tie
-break. No suggested value is applied automatically.
+The task editor offers two selection methods: a percentage of matching rows,
+or whole groups. For whole groups, choose the sampling level with ``Pick:``:
+individual rows, traces, conversations, users or a custom ID, subject to the
+chosen evaluation row type. Historical data uses a count; new incoming data
+uses a percentage share, not an exact quota. Optional per-group counts/shares
+use one attribute's selected values and an explicit all-other-groups rule.
+``Preview sample`` shows the eligible and selected groups and evaluation rows.
+Changing the schedule requires confirming the conversion between counts and
+shares; it does not silently reinterpret a count as a percentage.
 
-The statistical formulas live in the pure ``sampling/stats.py`` module; the
-frontend mirrors only the planning functions in ``samplingStats.js``. Both
-suites consume ``tests/fixtures/sampling_stats_vectors.json``. Expected values
-are checked independently with exact fractions, closed forms, brute-force
-minimum n and SciPy. For example, n=100 of N=1000 gives margin 0.09301577436565599
-at 95%, and a 0.05 margin for N=10000 needs n=370. A 16-unit proportional budget
-for populations [100,50,10], with minimum 2, yields [9,5,2].
+Advanced API policies remain supported, including priority strata, group-by,
+coordination, floors/caps/census rules and explicit ``cell_quotas``. The task
+editor presents these policies read-only and preserves them on unrelated
+edits. Replacing one with simple controls requires an explicit confirmation;
+ordinary edits do not silently clear its overrides. There is no precision
+planner or suggested-quota application in the task editor.
 
-``Apply suggested quotas`` writes optional ``cell_quotas`` to the policy, keyed
-by opaque stratum identities from the preview. These explicit targets replace
-the rate, floor, cap and census for those cells only; unlisted cells retain
-their original rule. Classification still happens first, so a contact with
-rows in multiple attribute groups is not moved to another group merely by
-applying a plan. The real-ClickHouse regression
-``test_planned_cell_quotas_preserve_contact_groups_and_match_audit`` proves
-that property, the achieved targets, row expansion, inclusion probabilities
-and agreement with the audit. Cell quotas are closed-only, with at most 1,000
-entries, targets 0-1,000,000, and the existing 64 KiB policy/2 MiB statement
-bounds. Omitted/empty quotas preserve the historical policy digest.
+API ``cell_quotas`` are keyed by opaque stratum identities from the preview.
+They replace the rate, floor, cap and census for those cells only; unlisted
+cells retain their original rule. Classification still happens first, so a
+contact is not moved between groups by a quota override. Cell quotas are
+closed-only, with at most 1,000 entries, targets 0-1,000,000, and the existing
+64 KiB policy/2 MiB statement bounds. Omitted/empty quotas preserve the policy
+digest. Saving a changed sampling population requires an explicit fresh run.
 
-Applying a plan invalidates the preview. Any ordinary policy-control edit
-clears the planned overrides so they cannot invisibly supersede edited rules.
-Saving a changed population still follows the explicit fresh-run contract.
-Neither quotas nor precision estimates reserve a future population. Live
-previews show descriptive precision for their current snapshot but offer no
-quota application. Preview Kish effective size and unequal-weight design effect
-use the same inclusion weights as the audit: ``1/p`` for the configured live
-rate, or ``N/k`` for a closed quota. A live cell's realized ``N/n`` is not its
-design weight; equal-rate cells keep equal weights even if their realized
-selection fractions differ. Empty samples have no estimable margin; a census has zero
-sampling error. These are planning approximations, not observed-outcome
-confidence intervals, and small samples need a different inferential method.
+The preview API includes approximate 95% normal margins for a proportion at
+p = 0.5 with finite-population correction, plus stratified margin, Kish
+effective size and unequal-weight design effect. Formulas live in the pure
+``sampling/stats.py`` module, tested against shared vectors, exact fractions,
+closed forms, brute-force minimum n and SciPy. The weights are ``1/p`` for the
+configured live rate or ``N/k`` for a closed quota; realized live ``N/n`` is
+not a design weight. Empty samples have no estimable margin and a census has
+zero sampling error. These approximations are not observed-outcome confidence
+intervals, do not reserve a population and need a different inferential method
+for small samples.
 
 Persistence and downstream metrics
 ----------------------------------
