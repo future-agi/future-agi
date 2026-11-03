@@ -68,6 +68,10 @@ const ProjectWrapperView = () => {
     select: (response) => (currentTab === "observe" ? response : response.data),
   });
 
+  // Nothing traced yet: search and filter have nothing to act on, but Add
+  // Project stays so a first-run user can still create one.
+  const hideListControls = currentTab === "observe" && observeFirstRun;
+
   const isProjectCount =
     currentTab === "observe"
       ? data?.totalRows > 0
@@ -221,13 +225,18 @@ const ProjectWrapperView = () => {
 
           <Box
             sx={{
-              display:
-                currentTab === "observe" && observeFirstRun ? "none" : "flex",
-              justifyContent: "space-between",
+              display: "flex",
+              justifyContent: hideListControls ? "flex-end" : "space-between",
               alignItems: "center",
             }}
           >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <Box
+              sx={{
+                display: hideListControls ? "none" : "flex",
+                alignItems: "center",
+                gap: 1,
+              }}
+            >
               <FormSearchField
                 size="small"
                 placeholder="Search"
