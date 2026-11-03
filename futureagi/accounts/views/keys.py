@@ -8,7 +8,8 @@ from django.conf import settings
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
@@ -35,7 +36,7 @@ from analytics.utils import (
 from model_hub.models.api_key import mask_key
 from tfc.constants.levels import Level
 from tfc.constants.roles import RolePermissions
-from tfc.permissions.rbac import IsNotViewer, IsOrganizationAdmin
+from tfc.permissions.rbac import IsNotViewer
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -64,21 +65,42 @@ KEY_SWITCH_DENIED = (
 )
 
 
-def _is_organization_admin(request):
+def _is_organization_admin(request: Request) -> bool:
     organization = getattr(request, "organization", None) or request.user.organization
     level = request.user.get_membership_level(organization)
     return level is not None and level >= Level.ADMIN
 
 
-def _can_switch(request, apikey, is_admin):
+def _can_switch(request: Request, apikey: OrgApiKey, is_admin: bool) -> bool:
     return is_admin or (apikey.type == "user" and apikey.user_id == request.user.id)
 
 
-class CanReadOrganizationKey(IsOrganizationAdmin):
+def _switch_denied(request: Request, apikey: OrgApiKey) -> Response:
+    logger.info(
+        "access_denied",
+        reason="key_switch_not_allowed",
+        user_id=str(request.user.id),
+        key_id=str(apikey.id),
+        key_type=apikey.type,
+    )
+    return GeneralMethods().forbidden_response(KEY_SWITCH_DENIED)
+
+
+class CanReadOrganizationKey(BasePermission):
     message = (
         "Only organization admins can see the organization key. "
         "Ask an admin for an API key."
     )
+
+    def has_permission(self, request: Request, view) -> bool:
+        if _is_organization_admin(request):
+            return True
+        logger.info(
+            "access_denied",
+            reason="organization_key_admin_only",
+            user_id=str(request.user.id),
+        )
+        return False
 
 
 class GetKeysView(APIView):
@@ -253,7 +275,7 @@ class SecretKeyAPIViewSet(ViewSet):
                     or request.user.organization,
                 )
                 if not _can_switch(request, apikey, _is_organization_admin(request)):
-                    return self._gm.forbidden_response(KEY_SWITCH_DENIED)
+                    return _switch_denied(request, apikey)
                 if apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_ENABLED"))
                 apikey.enabled = True
@@ -289,7 +311,7 @@ class SecretKeyAPIViewSet(ViewSet):
                     or request.user.organization,
                 )
                 if not _can_switch(request, apikey, _is_organization_admin(request)):
-                    return self._gm.forbidden_response(KEY_SWITCH_DENIED)
+                    return _switch_denied(request, apikey)
                 if not apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_DISABLED"))
                 apikey.enabled = False
