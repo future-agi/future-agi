@@ -8,75 +8,44 @@ from unittest import mock
 
 import pytest
 from django.conf import settings
-from django.db import OperationalError
 
 from tracer.services.clickhouse import list_request_deadline as list_deadline
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 
 
 @pytest.mark.unit
-def test_list_postgres_statements_receive_a_shrinking_request_timeout(monkeypatch):
-    installed = {}
-    raw_cursor = mock.MagicMock()
+def test_list_postgres_statements_are_uncapped_with_scoped_restoration(monkeypatch):
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
 
-    @contextmanager
-    def install_wrapper(wrapper):
-        installed["wrapper"] = wrapper
-        yield
-
-    fake_connection = SimpleNamespace(
-        vendor="postgresql",
-        in_atomic_block=True,
-        execute_wrapper=install_wrapper,
-    )
-    monkeypatch.setattr(list_deadline, "connection", fake_connection)
+    pg = FakePostgres(outer=True)
+    monkeypatch.setattr(list_deadline, "connection", pg)
+    monkeypatch.setattr(list_deadline.transaction, "atomic", pg.atomic)
     deadline = mock.MagicMock()
-    deadline.remaining_ms.side_effect = [9_000, 8_500, 7_000, 6_500, 6_000]
-    executed = []
-
+    deadline.remaining_ms.return_value = 8_000
     with list_deadline.bounded_list_postgres_reads(deadline):
-        wrapper = installed["wrapper"]
-        context = {"cursor": SimpleNamespace(cursor=raw_cursor)}
-
-        def execute(sql, params, many, _context):
-            executed.append((sql, params, many))
-            return sql
-
-        assert wrapper(execute, "SELECT first", (), False, context) == "SELECT first"
-        assert wrapper(execute, "SELECT second", (), False, context) == "SELECT second"
-
-    assert raw_cursor.execute.call_args_list == [
-        mock.call(
-            "SELECT set_config('statement_timeout', %s, true)",
-            ("9000",),
-        ),
-        mock.call(
-            "SELECT set_config('statement_timeout', %s, true)",
-            ("7000",),
-        ),
-    ]
-    assert [item[0] for item in executed] == ["SELECT first", "SELECT second"]
+        assert pg.events == []
+        assert pg.execute("SELECT first") == "SELECT first"
+        assert pg.execute("SELECT second") == "SELECT second"
+    assert pg.query_timeouts == ["0", "0"]
+    assert pg.timeout == "750ms" and pg.in_atomic_block and not pg.wrappers
 
 
 @pytest.mark.unit
-def test_list_postgres_driver_failure_becomes_typed_deadline_without_sql_text():
+def test_list_postgres_driver_failure_is_not_misclassified_as_timeout(monkeypatch):
+    from tracer.services.postgres_read_policy import ApplicationPostgresReadError
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
+
+    pg = FakePostgres(outer=True, failure="statement")
+    monkeypatch.setattr(list_deadline, "connection", pg)
+    monkeypatch.setattr(list_deadline.transaction, "atomic", pg.atomic)
     deadline = mock.MagicMock()
     deadline.remaining_ms.return_value = 8_000
-    context = {"cursor": SimpleNamespace(cursor=mock.MagicMock())}
-
-    with pytest.raises(ReadDeadlineExceeded) as caught:
-        list_deadline._execute_list_postgres_query_with_deadline(
-            deadline,
-            mock.MagicMock(
-                side_effect=OperationalError("private tenant SQL and credentials")
-            ),
-            "SELECT private",
-            (),
-            False,
-            context,
-        )
-
+    with pytest.raises(ApplicationPostgresReadError) as caught:
+        with list_deadline.bounded_list_postgres_reads(deadline):
+            pg.execute("SELECT private")
+    assert not isinstance(caught.value, ReadDeadlineExceeded)
     assert "private" not in str(caught.value)
+    assert pg.in_atomic_block and pg.timeout == "750ms"
 
 
 def _request():
@@ -348,7 +317,7 @@ def test_list_deadline_precedes_tenant_scope_and_reaches_clickhouse(
         "clickhouse_dispatch",
         "postgres_budget_exited",
     ]
-    deadline.remaining_ms.assert_called_once_with(floor_ms=1)
+    deadline.remaining_ms.assert_not_called()  # Scope/reader admission is mocked.
 
 
 @pytest.mark.unit
@@ -386,7 +355,7 @@ def test_expired_scope_blocks_list_dispatch_and_returns_sanitized_503(monkeypatc
 
 
 @pytest.mark.unit
-def test_late_list_result_is_not_published_as_success(monkeypatch):
+def test_late_list_result_remains_usable(monkeypatch):
     deadline = mock.MagicMock()
     deadline.remaining_ms.side_effect = ReadDeadlineExceeded("private formatter timing")
     monkeypatch.setattr(list_deadline.ReadDeadline, "start", lambda _wall: deadline)
@@ -422,8 +391,5 @@ def test_late_list_result_is_not_published_as_success(monkeypatch):
         SimpleNamespace(),
     )
 
-    assert response.status_code == 503
-    assert response.data == {
-        "message": "Rows are temporarily unavailable. Please retry.",
-        "code": "service_unavailable",
-    }
+    assert response.status_code == 200
+    assert response.data == {"private": "stale"}

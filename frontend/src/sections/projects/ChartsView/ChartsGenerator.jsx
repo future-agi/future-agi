@@ -118,14 +118,8 @@ const ChartsGenerator = ({
       custom: function ({ series, seriesIndex, dataPointIndex, w }) {
         const xValue = w.globals.seriesX[seriesIndex][dataPointIndex];
         const formattedDate = format(new Date(xValue), "dd/MM/yyyy, HH:mm:ss");
-        const gradientColor =
-          theme.palette.mode === "light"
-            ? "linear-gradient(180deg, var(--primary-main) 0%, #CF6BE8 100%)"
-            : "linear-gradient(180deg, #FFFFFF 0%, #E6E6E7 100%)";
-
         let tooltipContent = `
       <div style="display: flex; min-width: 200px; background: var(--bg-paper); border-radius: 8px; overflow: hidden; font-size: 14px;">
-        <div style="width: 4px; background: ${gradientColor}; border-radius: 8px 0 0 8px;"></div>
         <div style="padding: 8px; color: var(--text-primary);">
           <div style="margin-bottom: 6px; color: var(--text-primary); font-weight: 500; font-size: 11px;">${formattedDate}</div>`;
 
@@ -160,7 +154,7 @@ const ChartsGenerator = ({
       show: true,
       position: "top",
       horizontalAlign: "left",
-      fontSize: "14px",
+      fontSize: "13px",
       labels: {
         colors: "var(--text-primary)",
       },
@@ -181,7 +175,7 @@ const ChartsGenerator = ({
         borderColor: "divider",
         paddingTop: theme.spacing(1.5),
         borderRadius: theme.spacing(0.5),
-        boxShadow: "0px",
+        boxShadow: "none",
       }}
     >
       {headerComponent ? (

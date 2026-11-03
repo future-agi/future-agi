@@ -13,6 +13,11 @@ import pytest
 from django.utils import timezone
 
 from tracer.models.observation_span import EvalLogger
+from tracer.models.trace_error_analysis import (
+    ClusterSource,
+    ErrorClusterTraces,
+    TraceErrorGroup,
+)
 from tracer.queries.eval_clustering import (
     _CLUSTER_WINDOW_DAYS,
     get_unclustered_eval_results,
@@ -95,6 +100,158 @@ def test_clustering_includes_eval_task_failures(
         r.explanation for r in get_unclustered_eval_results(str(project.id))
     }
     assert exp in explanations
+
+
+@pytest.mark.django_db
+def test_clustering_includes_choice_score_failures(
+    project, trace, observation_span, custom_eval_config
+):
+    """A choice result is clusterable when its template maps it below 1.0."""
+    custom_eval_config.eval_template.choice_scores = {"Good": 1.0, "Bad": 0.0}
+    custom_eval_config.eval_template.pass_threshold = 0.5
+    custom_eval_config.eval_template.save(
+        update_fields=["choice_scores", "pass_threshold"]
+    )
+    ev = EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str='{"choice": "Bad"}',
+        output_str_list=["Bad"],
+        eval_explanation="the response missed the requirement",
+        eval_task_id="et-choice-score",
+    )
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+    assert results[0].score == 0.0
+
+
+@pytest.mark.django_db
+def test_clustering_excludes_mapped_passing_choice(
+    project, trace, observation_span, custom_eval_config
+):
+    """Mapped passing choices must not be swept into the failure cluster."""
+    custom_eval_config.eval_template.choice_scores = {"Good": 1.0, "Bad": 0.0}
+    custom_eval_config.eval_template.pass_threshold = 0.5
+    custom_eval_config.eval_template.save(
+        update_fields=["choice_scores", "pass_threshold"]
+    )
+    EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str='{"choice": "Good"}',
+        output_str_list=["Good"],
+        eval_explanation="the response met the requirement",
+        eval_task_id="et-choice-pass",
+    )
+
+    assert get_unclustered_eval_results(str(project.id)) == []
+
+
+@pytest.mark.django_db
+def test_soft_deleted_membership_does_not_suppress_eval(
+    project, trace, observation_span, custom_eval_config
+):
+    ev = _make_failing_eval(
+        trace,
+        observation_span,
+        custom_eval_config,
+        "failure with a soft-deleted membership",
+        age_days=1,
+        eval_task_id="et-soft-deleted-membership",
+    )
+    cluster = TraceErrorGroup.objects.create(
+        project=project,
+        source=ClusterSource.EVAL,
+        cluster_id="E-soft-delete",
+    )
+    membership = ErrorClusterTraces.objects.create(cluster=cluster, eval_logger=ev)
+    ErrorClusterTraces.objects.filter(pk=membership.pk).update(deleted=True)
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+
+
+@pytest.mark.django_db
+def test_clustering_maps_numeric_choice_labels_before_numeric_parse(
+    project, trace, observation_span, custom_eval_config
+):
+    """A label such as ``"2"`` must use its configured choice score."""
+    custom_eval_config.eval_template.choice_scores = {"2": 0.0, "10": 1.0}
+    custom_eval_config.eval_template.pass_threshold = 0.5
+    custom_eval_config.eval_template.save(
+        update_fields=["choice_scores", "pass_threshold"]
+    )
+    ev = EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str="2",
+        output_str_list=["2"],
+        eval_explanation="the selected choice failed",
+        eval_task_id="et-numeric-label",
+    )
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+    assert results[0].score == 0.0
+
+
+@pytest.mark.django_db
+def test_structured_score_uses_template_pass_threshold(
+    project, trace, observation_span, custom_eval_config
+):
+    """Structured scores below the configured threshold are clusterable."""
+    custom_eval_config.eval_template.pass_threshold = 0.75
+    custom_eval_config.eval_template.save(update_fields=["pass_threshold"])
+    ev = EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str='{"score": 0.6, "choice": "Fair"}',
+        eval_explanation="the response was only partially correct",
+        eval_task_id="et-structured-threshold",
+    )
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+    assert results[0].score == 0.6
+
+
+@pytest.mark.django_db
+def test_structured_score_takes_precedence_over_choice_mapping(
+    project, trace, observation_span, custom_eval_config
+):
+    """An explicit structured score wins over the accompanying choice label."""
+    custom_eval_config.eval_template.choice_scores = {"2": 0.9}
+    custom_eval_config.eval_template.pass_threshold = 0.5
+    custom_eval_config.eval_template.save(
+        update_fields=["choice_scores", "pass_threshold"]
+    )
+    ev = EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str='{"score": 0.25, "choice": "2"}',
+        eval_explanation="the explicit score indicates failure",
+        eval_task_id="et-explicit-score",
+    )
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+    assert results[0].score == 0.25
 
 
 @pytest.mark.django_db

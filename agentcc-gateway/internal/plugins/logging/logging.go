@@ -3,6 +3,8 @@ package logging
 import (
 	"context"
 	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -59,7 +61,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	// Skip logging for requests without a model (e.g., health checks that somehow enter the pipeline).
-	if rc.Model == "" && rc.Request == nil {
+	// An endpoint's own calls always name it, a vector-store write or a run on
+	// the assistant's model among them.
+	if rc.Model == "" && rc.Request == nil && rc.EndpointType == "" {
 		return pipeline.ResultContinue()
 	}
 
@@ -111,9 +115,34 @@ func markRedacted(record *TraceRecord) {
 	record.Metadata["privacy_redacted"] = "true"
 }
 
-// Close drains buffered trace records and stops workers.
+// shutdownFlushTimeout bounds Close's last attempt to deliver request logs,
+// which runs alongside the emitter's drain. For the request logs to be sent
+// before SIGKILL, a stopping gateway needs
+//
+//	grace ≥ preStop + shutdown_timeout + max(shutdownFlushTimeout, emitterDrainTimeout)
+//
+// where grace and preStop are the Helm chart's
+// agentccGateway.terminationGracePeriodSeconds and preStopSleepSeconds, and
+// shutdown_timeout is the gateway's server.shutdown_timeout. The closers that
+// run after Plugin.Close (audit, OTel) are not covered.
+const shutdownFlushTimeout = 4 * time.Second
+
+// Close drains buffered trace records and stops workers while it makes a
+// last, bounded attempt to deliver the request logs still buffered for the
+// webhook.
 func (p *Plugin) Close() {
+	var wg sync.WaitGroup
+	if p.flusher != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), shutdownFlushTimeout)
+			defer cancel()
+			p.flusher.Close(ctx)
+		}()
+	}
 	if p.emitter != nil {
 		p.emitter.Close()
 	}
+	wg.Wait()
 }

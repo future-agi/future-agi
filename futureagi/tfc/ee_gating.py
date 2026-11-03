@@ -27,6 +27,7 @@ import logging
 from enum import Enum
 from typing import Any, Callable, Optional, Union
 
+from django.conf import settings
 from rest_framework import status as drf_status
 from rest_framework.exceptions import APIException
 from temporalio.exceptions import ApplicationError

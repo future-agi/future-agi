@@ -6,7 +6,6 @@ import base64
 import hashlib
 import json
 import uuid
-from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -53,6 +52,7 @@ from tracer.services.clickhouse.attribute_reads import (
     ATTRIBUTE_READ_EXACT_KEY_QUERY_TIMEOUT_MS,
     ATTRIBUTE_READ_EXPLICIT_SEGMENT,
     ATTRIBUTE_READ_JSON_QUERY_TIMEOUT_MS,
+    ATTRIBUTE_READ_MAX_KEY_BYTES,
     ATTRIBUTE_READ_MAX_PROJECTS,
     ATTRIBUTE_READ_MAX_QUERY_COUNT,
     ATTRIBUTE_READ_MAX_VALUES,
@@ -3147,8 +3147,8 @@ def test_filter_value_cursor_unpinned_nested_string_avoids_wide_json_replay():
 def test_filter_value_cursor_unpinned_recuts_baseline_before_exact_hydration():
     candidate = _candidate(
         PROJECT_A,
-        "whatfix-style-value",
-        trace_id="trace-whatfix-style-value",
+        "tertiary-fixture-style-value",
+        trace_id="trace-tertiary-fixture-style-value",
         start_time=NOW - timedelta(seconds=1),
         candidate_version=7,
     )
@@ -3191,7 +3191,7 @@ def test_filter_value_cursor_unpinned_recuts_baseline_before_exact_hydration():
         json_attribute_mode="arrays",
     ).read_value_cursor_page(
         [PROJECT_A],
-        "whatfix.ent_id",
+        "tertiary-fixture.ent_id",
         page_size=1,
         attribute_type=None,
         window_start=NOW - ATTRIBUTE_READ_EXPLICIT_SEGMENT,
@@ -8520,12 +8520,23 @@ def test_malformed_keys_and_oversized_project_scopes_fail_before_ch():
     executor = RecordingExecutor()
     selector = AttributeReadSelector(executor, now=NOW)
 
-    for key in ("", "contains\x00control", "é" * 257):
+    for key in (
+        "",
+        None,
+        42,
+        "\ud800",
+        "x" * (ATTRIBUTE_READ_MAX_KEY_BYTES + 1),
+        "é" * (ATTRIBUTE_READ_MAX_KEY_BYTES // 2 + 1),
+    ):
         with pytest.raises(InvalidAttributeKey):
             selector.read_values([PROJECT_A], key)
-    assert validate_attribute_key("customer.%_status\\路径'quote") == (
-        "customer.%_status\\路径'quote"
-    )
+    for key in (
+        "customer.%_status\\路径'quote",
+        "contains\x00control",
+        " key \t\n",
+        "é" * (ATTRIBUTE_READ_MAX_KEY_BYTES // 2),
+    ):
+        assert validate_attribute_key(key) == key
     too_many_projects = [
         str(uuid.uuid4()) for _ in range(ATTRIBUTE_READ_MAX_PROJECTS + 1)
     ]
@@ -12362,43 +12373,34 @@ def test_span_attribute_key_workspace_cursor_is_signed_to_workspace(monkeypatch)
     assert calls == [(PROJECT_A,)]
 
 
-def test_span_attribute_workspace_project_read_sets_remaining_pg_timeout(
+def test_span_attribute_workspace_project_read_is_uncapped_and_restored(
     monkeypatch,
 ):
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
     from tracer.views import span_attributes as span_attribute_view
 
-    cursor = MagicMock()
-    cursor_context = MagicMock()
-    cursor_context.__enter__.return_value = cursor
-    cursor_context.__exit__.return_value = False
-    connection = SimpleNamespace(
-        vendor="postgresql",
-        in_atomic_block=False,
-        cursor=lambda: cursor_context,
-    )
+    connection = FakePostgres(outer=True)
     deadline = MagicMock()
-    deadline.remaining_ms.side_effect = [1_234, 900]
+    deadline.remaining_ms.return_value = 1_234
     monkeypatch.setattr(span_attribute_view, "connection", connection)
     monkeypatch.setattr(
         span_attribute_view,
         "transaction",
-        SimpleNamespace(atomic=lambda: nullcontext()),
+        SimpleNamespace(atomic=connection.atomic),
     )
 
     result = span_attribute_view._run_span_attribute_pg_read(
         deadline,
-        lambda: (PROJECT_A,),
+        lambda: connection.execute("SELECT owned_project") and (PROJECT_A,),
     )
 
     assert result == (PROJECT_A,)
-    assert deadline.remaining_ms.call_args_list == [
-        mock_call(ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS),
-        mock_call(floor_ms=1),
-    ]
-    assert cursor.execute.call_args_list == [
-        mock_call("SET TRANSACTION READ ONLY"),
-        mock_call("SELECT set_config('statement_timeout', %s, true)", ["1234"]),
-    ]
+    assert deadline.remaining_ms.call_args_list
+    assert all(
+        call == mock_call(ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS)
+        for call in deadline.remaining_ms.call_args_list
+    )
+    assert connection.query_timeouts == ["0"] and connection.timeout == "750ms"
 
 
 def test_span_attribute_key_api_tracking_limit_is_terminal(monkeypatch):
@@ -12818,14 +12820,26 @@ def test_span_attribute_key_api_does_not_turn_cursor_size_into_vocabulary_cap(
 
 
 def test_span_attribute_detail_contract_validates_key_and_exposes_read_state():
-    query = SpanAttributeDetailQuerySerializer(
-        data={"project_id": uuid.uuid4(), "key": "customer.%_status\\path"}
-    )
-
-    assert query.is_valid(), query.errors
-    assert query.validated_data["key"] == "customer.%_status\\path"
-    assert query.validated_data["refresh"] is False
-    for invalid_key in ("", "contains\x00control", "é" * 257):
+    for key in (
+        "customer.%_status\\path",
+        "contains\x00control",
+        " key \t\n",
+        "é" * (ATTRIBUTE_READ_MAX_KEY_BYTES // 2),
+    ):
+        query = SpanAttributeDetailQuerySerializer(
+            data={"project_id": uuid.uuid4(), "key": key}
+        )
+        assert query.is_valid(), query.errors
+        assert query.validated_data["key"] == key
+        assert query.validated_data["refresh"] is False
+    for invalid_key in (
+        "",
+        None,
+        42,
+        "\ud800",
+        "x" * (ATTRIBUTE_READ_MAX_KEY_BYTES + 1),
+        "é" * (ATTRIBUTE_READ_MAX_KEY_BYTES // 2 + 1),
+    ):
         invalid = SpanAttributeDetailQuerySerializer(
             data={"project_id": uuid.uuid4(), "key": invalid_key}
         )

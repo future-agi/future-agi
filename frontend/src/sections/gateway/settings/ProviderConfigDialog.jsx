@@ -116,7 +116,13 @@ const ProviderConfigDialog = ({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>
         {isEdit ? `Edit Provider: ${providerName}` : "Add Provider"}
       </DialogTitle>
@@ -148,8 +154,10 @@ const ProviderConfigDialog = ({
                 <InputAdornment position="end">
                   <IconButton size="small" onClick={() => setShowKey(!showKey)}>
                     <Iconify
-                      icon={showKey ? "mdi:eye-off" : "mdi:eye"}
-                      width={18}
+                      icon={
+                        showKey ? "solar:eye-closed-linear" : "solar:eye-linear"
+                      }
+                      width={20}
                     />
                   </IconButton>
                 </InputAdornment>

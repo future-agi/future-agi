@@ -24,6 +24,8 @@ import {
 import { alpha } from "@mui/material/styles";
 import { LoadingButton } from "@mui/lab";
 import Iconify from "src/components/iconify";
+import { statusColors } from "src/utils/runStatus";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { fDateTime, fToNowStrict } from "src/utils/format-time";
 import {
   useCreateDiscussionComment,
@@ -33,6 +35,7 @@ import {
   useToggleDiscussionReaction,
   useUpdateDiscussionComment,
 } from "src/api/annotation-queues/annotation-queues";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 const MAX_MENTION_SUGGESTIONS = 6;
 const QUICK_REACTION_OPTIONS = ["👍", "✅", "👀", "❤️", "🎉", "🚀"];
@@ -112,46 +115,51 @@ const EMOJI_REACTION_OPTIONS = EMOJI_REACTION_GROUPS.flatMap((group) =>
 const THREAD_STATUS_META = {
   open: {
     label: "Open",
-    color: "info",
+    role: "warning",
     icon: "solar:chat-round-dots-bold",
   },
   reopened: {
     label: "Reopened",
-    color: "warning",
+    role: "warning",
     icon: "solar:restart-bold",
   },
   addressed: {
     label: "Addressed",
-    color: "info",
+    role: "info",
     icon: "solar:check-read-bold",
   },
   resolved: {
     label: "Resolved",
-    color: "success",
+    role: "success",
     icon: "solar:check-circle-bold",
   },
 };
 
 function neutralBorder(theme, opacity = 0.12) {
-  return alpha(theme.palette.text.primary, opacity);
+  return opacity > 0.12 ? theme.palette.border.default : theme.palette.divider;
 }
 
-function quietSurface(theme, opacity = 0.025) {
-  return alpha(
-    theme.palette.text.primary,
-    theme.palette.mode === "dark" ? opacity * 2 : opacity,
-  );
+function quietSurface(theme, opacity = 0.035) {
+  return opacity > 0.05
+    ? theme.palette.action.hover
+    : theme.palette.background.neutral;
 }
+
+const STATUS_ROLE = {
+  warning: "warning",
+  info: "info",
+  success: "success",
+  error: "danger",
+};
 
 function statusTone(theme, color = "info") {
-  const palette = theme.palette[color] || theme.palette.info;
-  const isDark = theme.palette.mode === "dark";
+  const c = statusColors(theme, STATUS_ROLE[color] || "info");
   return {
-    main: palette.main,
-    text: isDark ? palette.light : palette.dark,
-    bg: alpha(palette.main, isDark ? 0.16 : 0.08),
-    bgHover: alpha(palette.main, isDark ? 0.22 : 0.12),
-    border: alpha(palette.main, isDark ? 0.38 : 0.26),
+    main: c.solid,
+    text: c.fg,
+    bg: c.bg,
+    bgHover: c.bg,
+    border: c.border,
   };
 }
 
@@ -160,11 +168,11 @@ function statusChipSx(color) {
     const tone = statusTone(theme, color);
     return {
       height: 22,
-      borderRadius: 0.75,
+      borderRadius: "4px",
       bgcolor: quietSurface(theme, 0.035),
-      border: `1px solid ${neutralBorder(theme, theme.palette.mode === "dark" ? 0.16 : 0.1)}`,
+      border: `1px solid ${neutralBorder(theme, 0.1)}`,
       color: "text.secondary",
-      fontWeight: 650,
+      fontWeight: 600,
       "& .MuiChip-icon": { color: "inherit" },
       "& svg": { color: tone.main },
     };
@@ -174,11 +182,11 @@ function statusChipSx(color) {
 function neutralChipSx(theme) {
   return {
     height: 22,
-    borderRadius: 0.75,
+    borderRadius: "4px",
     bgcolor: quietSurface(theme, 0.04),
-    border: `1px solid ${neutralBorder(theme, theme.palette.mode === "dark" ? 0.16 : 0.1)}`,
+    border: `1px solid ${neutralBorder(theme, 0.1)}`,
     color: "text.primary",
-    fontWeight: 650,
+    fontWeight: 600,
     "& .MuiChip-icon": { color: "inherit" },
   };
 }
@@ -202,11 +210,11 @@ function actionButtonSx(color) {
   return (theme) => {
     const tone = statusTone(theme, color);
     return {
-      borderRadius: 0.75,
+      borderRadius: "4px",
       borderColor: tone.border,
       bgcolor: tone.bg,
       color: tone.text,
-      fontWeight: 700,
+      fontWeight: 600,
       "&:hover": {
         borderColor: tone.border,
         bgcolor: tone.bgHover,
@@ -658,10 +666,10 @@ function HighlightedComment({ comment, labels = [], onFocusScope }) {
             sx={{
               px: 0.35,
               py: 0.1,
-              borderRadius: 0.5,
+              borderRadius: "4px",
               color: (theme) => statusTone(theme, "info").text,
               bgcolor: (theme) => statusTone(theme, "info").bg,
-              fontWeight: 700,
+              fontWeight: 600,
               ...WRAP_TEXT_SX,
             }}
           >
@@ -684,11 +692,11 @@ function HighlightedComment({ comment, labels = [], onFocusScope }) {
               px: 0.35,
               py: 0.1,
               border: 0,
-              borderRadius: 0.5,
+              borderRadius: "4px",
               color: (theme) => statusTone(theme, "info").text,
               bgcolor: (theme) => statusTone(theme, "info").bg,
               font: "inherit",
-              fontWeight: 700,
+              fontWeight: 600,
               cursor: "pointer",
               ...WRAP_TEXT_SX,
               "&:hover": {
@@ -705,10 +713,10 @@ function HighlightedComment({ comment, labels = [], onFocusScope }) {
             sx={{
               px: 0.35,
               py: 0.1,
-              borderRadius: 0.5,
+              borderRadius: "4px",
               color: (theme) => statusTone(theme, "info").text,
               bgcolor: (theme) => statusTone(theme, "info").bg,
-              fontWeight: 700,
+              fontWeight: 600,
               ...WRAP_TEXT_SX,
             }}
           >
@@ -889,18 +897,15 @@ function CommentComposer({
         onChange={handleDraftChange}
         sx={{
           "& .MuiOutlinedInput-root": {
-            bgcolor: (theme) =>
-              theme.palette.mode === "dark"
-                ? alpha(theme.palette.common.white, 0.02)
-                : theme.palette.background.paper,
-            borderRadius: 0.75,
+            bgcolor: "background.paper",
+            borderRadius: "4px",
             transition: (theme) =>
               theme.transitions.create(["background-color", "box-shadow"], {
                 duration: theme.transitions.duration.shorter,
               }),
             "&.Mui-focused": {
               boxShadow: (theme) =>
-                `0 0 0 3px ${alpha(theme.palette.primary.main, theme.palette.mode === "dark" ? 0.18 : 0.12)}`,
+                `0 0 0 3px ${alpha(theme.palette.primary.main, 0.14)}`,
             },
           },
           "& .MuiFormHelperText-root": {
@@ -956,16 +961,7 @@ function CommentComposer({
               ? "Reference suggestions"
               : "Mention suggestions"
           }
-          sx={{
-            maxHeight: 220,
-            overflow: "auto",
-            bgcolor: "background.paper",
-            borderColor: (theme) => neutralBorder(theme, 0.12),
-            boxShadow: (theme) =>
-              theme.palette.mode === "dark"
-                ? `0 16px 36px ${alpha(theme.palette.common.black, 0.38)}`
-                : `0 16px 36px ${alpha(theme.palette.grey[500], 0.16)}`,
-          }}
+          sx={{ maxHeight: 220, overflow: "auto" }}
         >
           {referenceSuggestions.length === 0 ? (
             <Typography variant="body2" color="text.secondary" sx={{ p: 1 }}>
@@ -992,7 +988,7 @@ function CommentComposer({
                     mx: 0.5,
                     my: 0.25,
                     py: 0.75,
-                    borderRadius: 0.75,
+                    borderRadius: "4px",
                     "&.Mui-selected": {
                       bgcolor: (theme) => quietSurface(theme, 0.06),
                       "&:hover": {
@@ -1005,11 +1001,9 @@ function CommentComposer({
                     <ListItemAvatar sx={{ minWidth: 36 }}>
                       <Avatar
                         sx={{
-                          width: 26,
-                          height: 26,
+                          width: 24,
+                          height: 24,
                           fontSize: 12,
-                          bgcolor: (theme) => quietSurface(theme, 0.08),
-                          color: "text.secondary",
                         }}
                       >
                         {memberInitial(option)}
@@ -1027,7 +1021,11 @@ function CommentComposer({
                         ? `${option.secondary} · ${option.label}`
                         : option.email
                     }
-                    primaryTypographyProps={{ variant: "body2", noWrap: true }}
+                    primaryTypographyProps={{
+                      fontSize: 13,
+                      fontWeight: 500,
+                      noWrap: true,
+                    }}
                     secondaryTypographyProps={{
                       variant: "caption",
                       noWrap: true,
@@ -1084,19 +1082,14 @@ function CommentComposer({
           loading={Boolean(isPending)}
           loadingPosition="start"
           disabled={!canSubmit}
-          startIcon={<Iconify icon="eva:paper-plane-fill" width={16} />}
+          startIcon={<Iconify icon="solar:send-square-linear" width={16} />}
           sx={{
             ml: { xs: 0, sm: "auto" },
             flexShrink: 0,
-            borderRadius: 0.75,
             bgcolor: "text.primary",
             color: "background.paper",
-            boxShadow: "none",
-            fontWeight: 700,
             "&:hover": {
               bgcolor: "text.primary",
-              boxShadow: (theme) =>
-                `0 8px 18px ${alpha(theme.palette.text.primary, 0.16)}`,
             },
           }}
         >
@@ -1163,16 +1156,12 @@ function EmojiReactionPicker({ anchorEl, open, onClose, onSelect }) {
       PaperProps={{
         sx: {
           mt: 0.75,
-          width: 304,
+          width: 320,
           maxWidth: "calc(100vw - 24px)",
           borderRadius: 1,
           border: 1,
           borderColor: "divider",
           bgcolor: "background.paper",
-          boxShadow: (theme) =>
-            theme.palette.mode === "dark"
-              ? `0 18px 42px ${alpha(theme.palette.common.black, 0.46)}`
-              : `0 18px 42px ${alpha(theme.palette.grey[500], 0.18)}`,
           overflow: "hidden",
         },
       }}
@@ -1193,7 +1182,7 @@ function EmojiReactionPicker({ anchorEl, open, onClose, onSelect }) {
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ display: "block", mb: 0.5, fontWeight: 700 }}
+              sx={{ display: "block", mb: 0.5, fontWeight: 600 }}
             >
               Quick reactions
             </Typography>
@@ -1205,13 +1194,9 @@ function EmojiReactionPicker({ anchorEl, open, onClose, onSelect }) {
                   aria-label={`React with ${emoji}`}
                   onClick={() => selectEmoji(emoji)}
                   sx={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 0.75,
                     border: (theme) =>
                       `1px solid ${neutralBorder(theme, 0.08)}`,
                     bgcolor: (theme) => quietSurface(theme, 0.025),
-                    fontSize: 18,
                     "&:hover": {
                       bgcolor: (theme) => quietSurface(theme, 0.07),
                     },
@@ -1235,7 +1220,6 @@ function EmojiReactionPicker({ anchorEl, open, onClose, onSelect }) {
               sx={{
                 justifyContent: "flex-start",
                 mb: 1,
-                borderRadius: 0.75,
                 borderColor: (theme) => neutralBorder(theme, 0.12),
                 bgcolor: (theme) => quietSurface(theme, 0.025),
               }}
@@ -1254,7 +1238,7 @@ function EmojiReactionPicker({ anchorEl, open, onClose, onSelect }) {
                 <Typography
                   variant="caption"
                   color="text.secondary"
-                  sx={{ display: "block", mb: 0.5, fontWeight: 700 }}
+                  sx={{ display: "block", mb: 0.5, fontWeight: 600 }}
                 >
                   {group.title}
                 </Typography>
@@ -1272,10 +1256,6 @@ function EmojiReactionPicker({ anchorEl, open, onClose, onSelect }) {
                         aria-label={`React with ${emoji} ${label}`}
                         onClick={() => selectEmoji(emoji)}
                         sx={{
-                          width: 34,
-                          height: 34,
-                          borderRadius: 0.75,
-                          fontSize: 18,
                           color: "text.primary",
                           "&:hover": {
                             bgcolor: (theme) => quietSurface(theme, 0.07),
@@ -1336,9 +1316,6 @@ function ReactionBar({ comment, onReact, disabled = false }) {
             aria-label={`${emoji} reaction`}
             sx={{
               minWidth: 42,
-              height: 28,
-              px: 0.75,
-              borderRadius: 0.75,
               borderColor: (theme) =>
                 active
                   ? alpha(theme.palette.primary.main, 0.34)
@@ -1348,7 +1325,6 @@ function ReactionBar({ comment, onReact, disabled = false }) {
                   ? alpha(theme.palette.primary.main, 0.08)
                   : quietSurface(theme, 0.025),
               color: "text.primary",
-              boxShadow: "none",
               "&:hover": {
                 borderColor: (theme) =>
                   active
@@ -1378,9 +1354,6 @@ function ReactionBar({ comment, onReact, disabled = false }) {
             aria-label={isUpdating ? "Updating reaction" : "Add reaction"}
             onClick={(event) => setAnchorEl(event.currentTarget)}
             sx={{
-              width: 28,
-              height: 28,
-              borderRadius: 0.75,
               border: (theme) => `1px solid ${neutralBorder(theme, 0.12)}`,
               color: "text.secondary",
               bgcolor: (theme) => quietSurface(theme, 0.015),
@@ -1471,9 +1444,6 @@ function ThreadComment({
             width: 28,
             height: 28,
             fontSize: 12,
-            bgcolor: (theme) => quietSurface(theme, 0.08),
-            color: "text.secondary",
-            border: (theme) => `1px solid ${neutralBorder(theme, 0.08)}`,
           }}
         >
           {commentAuthor(comment).slice(0, 1).toUpperCase()}
@@ -1488,7 +1458,7 @@ function ThreadComment({
           >
             <Typography
               variant="caption"
-              fontWeight={700}
+              fontWeight={600}
               sx={{ minWidth: 0, ...WRAP_TEXT_SX }}
             >
               {commentAuthor(comment)}
@@ -1499,9 +1469,6 @@ function ThreadComment({
                 label={commentActionLabel(comment.action)}
                 sx={(theme) => ({
                   ...neutralChipSx(theme),
-                  height: 18,
-                  fontSize: 10,
-                  textTransform: "capitalize",
                   flexShrink: 0,
                 })}
               />
@@ -1529,7 +1496,6 @@ function ThreadComment({
                         setEditDraft(comment?.comment || "");
                         setIsEditing(true);
                       }}
-                      sx={{ width: 24, height: 24 }}
                     >
                       <Iconify icon="solar:pen-bold" width={14} />
                     </IconButton>
@@ -1543,7 +1509,6 @@ function ThreadComment({
                       aria-label="Delete comment"
                       disabled={isUpdating || isDeleting}
                       onClick={handleDelete}
-                      sx={{ width: 24, height: 24 }}
                     >
                       {isDeleting ? (
                         <CircularProgress size={12} color="inherit" />
@@ -1645,29 +1610,16 @@ function DiscussionThreadCard({
     <Box
       sx={{
         border: 1,
-        borderColor: (theme) =>
-          neutralBorder(theme, theme.palette.mode === "dark" ? 0.18 : 0.1),
-        borderRadius: 0.75,
-        bgcolor: (theme) =>
-          theme.palette.mode === "dark"
-            ? alpha(theme.palette.common.white, 0.022)
-            : theme.palette.background.paper,
-        boxShadow: (theme) =>
-          theme.palette.mode === "dark"
-            ? `0 10px 24px ${alpha(theme.palette.common.black, 0.2)}`
-            : `0 8px 20px ${alpha(theme.palette.grey[500], 0.07)}`,
+        borderColor: "border.default",
+        borderRadius: "8px",
+        bgcolor: "background.paper",
         overflow: "hidden",
         transition: (theme) =>
-          theme.transitions.create(["border-color", "box-shadow"], {
+          theme.transitions.create(["border-color"], {
             duration: theme.transitions.duration.shorter,
           }),
         "&:hover": {
-          borderColor: (theme) =>
-            neutralBorder(theme, theme.palette.mode === "dark" ? 0.24 : 0.16),
-          boxShadow: (theme) =>
-            theme.palette.mode === "dark"
-              ? `0 12px 28px ${alpha(theme.palette.common.black, 0.24)}`
-              : `0 10px 24px ${alpha(theme.palette.grey[500], 0.09)}`,
+          borderColor: "border.hover",
         },
       }}
     >
@@ -1675,10 +1627,7 @@ function DiscussionThreadCard({
         sx={{
           px: 1.25,
           py: 1,
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark"
-              ? alpha(theme.palette.common.white, 0.018)
-              : alpha(theme.palette.grey[500], 0.03),
+          bgcolor: "background.neutral",
           borderBottom: 1,
           borderColor: (theme) => neutralBorder(theme, 0.08),
         }}
@@ -1703,18 +1652,12 @@ function DiscussionThreadCard({
             }
             sx={(theme) => ({ ...neutralChipSx(theme), ...CHIP_TRUNCATE_SX })}
           />
-          <Chip
-            size="small"
-            variant="outlined"
-            icon={<Iconify icon={meta.icon} width={14} />}
+          <StatusBadge
+            status={threadStatus(thread)}
             label={meta.label}
-            sx={(theme) => ({
-              ...statusChipSx(meta.color)(theme),
-              height: 20,
-              fontSize: 11,
-              ml: "auto",
-              flexShrink: 0,
-            })}
+            role={meta.role}
+            icon={<Iconify icon={meta.icon} width={12} />}
+            sx={{ ml: "auto" }}
           />
         </Stack>
         {timelineParts.length > 0 && (
@@ -1782,11 +1725,9 @@ function DiscussionThreadCard({
             color="inherit"
             disabled={actionsDisabled}
             onClick={() => setReplyOpen((value) => !value)}
-            startIcon={<Iconify icon="solar:reply-bold" width={15} />}
+            startIcon={<Iconify icon="solar:reply-bold" width={16} />}
             sx={{
-              borderRadius: 0.75,
               color: "text.secondary",
-              fontWeight: 700,
               "&:hover": {
                 color: "text.primary",
                 bgcolor: (theme) => quietSurface(theme, 0.05),
@@ -1808,7 +1749,7 @@ function DiscussionThreadCard({
                 loading={Boolean(isReopening)}
                 loadingPosition="start"
                 disabled={actionsDisabled || isReopening}
-                startIcon={<Iconify icon="solar:restart-bold" width={15} />}
+                startIcon={<Iconify icon="solar:restart-bold" width={16} />}
                 sx={actionButtonSx("warning")}
               >
                 {isReopening ? "Reopening..." : "Reopen thread"}
@@ -1828,7 +1769,7 @@ function DiscussionThreadCard({
                 loadingPosition="start"
                 disabled={actionsDisabled || isResolving}
                 startIcon={
-                  <Iconify icon="solar:check-circle-bold" width={15} />
+                  <Iconify icon="solar:check-circle-bold" width={16} />
                 }
                 sx={actionButtonSx("success")}
               >
@@ -1964,15 +1905,18 @@ export function CollaborationDrawer({
     );
   };
 
+  const covered = useDrawerCovered(open);
+
   return (
     <Drawer
+      sx={coveredDrawerSx(covered)}
       anchor="right"
       open={open}
       onClose={onClose}
       variant="persistent"
       PaperProps={{
         sx: {
-          width: { xs: "100vw", sm: 420, md: 456 },
+          width: { xs: "100vw", sm: 480, md: 480 },
           maxWidth: "100vw",
           bgcolor: "background.paper",
           borderLeft: 1,
@@ -1994,24 +1938,21 @@ export function CollaborationDrawer({
             py: 1.1,
             borderBottom: 1,
             borderColor: "divider",
-            bgcolor: (theme) =>
-              theme.palette.mode === "dark"
-                ? alpha(theme.palette.common.white, 0.03)
-                : theme.palette.background.paper,
+            bgcolor: "background.paper",
           }}
         >
           <Box
             sx={{
               width: 28,
               height: 28,
-              borderRadius: 0.75,
+              borderRadius: "4px",
               display: "grid",
               placeItems: "center",
               bgcolor: (theme) => quietSurface(theme, 0.06),
               border: (theme) => `1px solid ${neutralBorder(theme, 0.1)}`,
             }}
           >
-            <Iconify icon="solar:chat-round-dots-bold" width={17} />
+            <Iconify icon="solar:chat-round-dots-bold" width={16} />
           </Box>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography variant="subtitle1" noWrap>
@@ -2038,7 +1979,7 @@ export function CollaborationDrawer({
               onClick={onClose}
               aria-label="Close comments"
             >
-              <Iconify icon="mingcute:close-line" width={18} />
+              <Iconify icon="solar:close-linear" width={20} />
             </IconButton>
           </Tooltip>
         </Stack>
@@ -2048,10 +1989,7 @@ export function CollaborationDrawer({
             p: 1.25,
             borderBottom: 1,
             borderColor: "divider",
-            bgcolor: (theme) =>
-              theme.palette.mode === "dark"
-                ? alpha(theme.palette.common.white, 0.012)
-                : alpha(theme.palette.grey[500], 0.025),
+            bgcolor: "background.neutral",
           }}
         >
           {canComment ? (
@@ -2076,10 +2014,7 @@ export function CollaborationDrawer({
             flex: 1,
             overflow: "auto",
             p: 1.25,
-            bgcolor: (theme) =>
-              theme.palette.mode === "dark"
-                ? theme.palette.background.default
-                : alpha(theme.palette.grey[500], 0.025),
+            bgcolor: "background.neutral",
           }}
         >
           <Stack spacing={1.5}>
@@ -2369,7 +2304,7 @@ export default function DiscussionPanel({
       sx={{
         border: 1,
         borderColor: "divider",
-        borderRadius: 0.75,
+        borderRadius: "4px",
         bgcolor: "background.paper",
         overflow: "hidden",
         flexShrink: 0,
@@ -2383,7 +2318,7 @@ export default function DiscussionPanel({
         sx={{ px: 1.5, py: 1.25 }}
       >
         <Stack direction="row" alignItems="center" spacing={0.75}>
-          <Iconify icon="solar:chat-round-dots-bold" width={18} />
+          <Iconify icon="solar:chat-round-dots-bold" width={20} />
           <Typography variant="subtitle2">Discussion</Typography>
         </Stack>
         <Chip
@@ -2424,7 +2359,7 @@ export default function DiscussionPanel({
                       borderColor: comment?.target_annotator_id
                         ? tone.border
                         : neutralBorder(theme, 0.1),
-                      borderRadius: 0.75,
+                      borderRadius: "4px",
                       bgcolor: comment?.target_annotator_id
                         ? tone.bg
                         : quietSurface(theme, 0.025),
@@ -2451,8 +2386,6 @@ export default function DiscussionPanel({
                       label={commentScope(comment)}
                       sx={(theme) => ({
                         ...neutralChipSx(theme),
-                        height: 18,
-                        fontSize: 10,
                         ...CHIP_TRUNCATE_SX,
                       })}
                     />
@@ -2520,7 +2453,6 @@ export default function DiscussionPanel({
               color="inherit"
               aria-pressed={!labelId}
               onClick={() => setLabelId("")}
-              sx={{ borderRadius: 0.75, minHeight: 30 }}
             >
               Item
             </Button>
@@ -2536,8 +2468,6 @@ export default function DiscussionPanel({
                   aria-pressed={isSelected}
                   onClick={() => setLabelId(value)}
                   sx={{
-                    borderRadius: 0.75,
-                    minHeight: 30,
                     maxWidth: "100%",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -2574,7 +2504,6 @@ export default function DiscussionPanel({
                 color="inherit"
                 aria-pressed={!targetAnnotatorId}
                 onClick={() => setTargetAnnotatorId("")}
-                sx={{ borderRadius: 0.75, minHeight: 30 }}
               >
                 Everyone
               </Button>
@@ -2590,8 +2519,6 @@ export default function DiscussionPanel({
                     aria-pressed={isSelected}
                     onClick={() => setTargetAnnotatorId(value)}
                     sx={{
-                      borderRadius: 0.75,
-                      minHeight: 30,
                       maxWidth: "100%",
                       justifyContent: "flex-start",
                       overflow: "hidden",
@@ -2681,12 +2608,7 @@ export default function DiscussionPanel({
               variant="outlined"
               role="listbox"
               aria-label="Mention suggestions"
-              sx={{
-                mt: 0.5,
-                maxHeight: 240,
-                overflow: "auto",
-                bgcolor: "background.paper",
-              }}
+              sx={{ mt: 0.5, maxHeight: 240, overflow: "auto" }}
             >
               {mentionSuggestions.length === 0 ? (
                 <Typography
@@ -2750,7 +2672,7 @@ export default function DiscussionPanel({
                       ? "info"
                       : "default"
                   }
-                  sx={{ height: 22, ...CHIP_TRUNCATE_SX }}
+                  sx={{ ...CHIP_TRUNCATE_SX }}
                 />
               ))}
             </Stack>
@@ -2764,7 +2686,7 @@ export default function DiscussionPanel({
           loading={Boolean(isPending)}
           loadingPosition="start"
           disabled={!canSubmit}
-          startIcon={<Iconify icon="eva:paper-plane-fill" width={16} />}
+          startIcon={<Iconify icon="solar:send-square-linear" width={16} />}
         >
           Add comment
         </LoadingButton>

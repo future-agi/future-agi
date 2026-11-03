@@ -1,4 +1,5 @@
 import UserIdCellRenderer from "./UserCellRenderers/UserIdCellRenderer";
+import ProjectCellRenderer from "./UserCellRenderers/ProjectCellRenderer";
 import LastActiveCellRenderer from "./UserCellRenderers/LastActiveCellRenderer";
 import EvaluateCellRenderer from "./UserCellRenderers/EvaluateCellRenderer";
 import { GeneralStatCellRenderer } from "./UserCellRenderers/GenericMetricCellRenderer";
@@ -24,6 +25,7 @@ import {
 import logger from "src/utils/logger";
 import { canonicalEntries, formatMs } from "../../../utils/utils";
 import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
+import { ROW_HEIGHT } from "src/theme/sizes";
 
 export const buildUsersRequestFilters = (filters) =>
   serializeFilterListForApi(filters || []);
@@ -49,6 +51,7 @@ export const tabsData = [
 
 export const DEFAULT_VISIBLE_COLUMNS = [
   "user_id",
+  "project_name", // only present outside a single project's Users tab
   "activated_at",
   "last_active",
   "num_traces",
@@ -162,7 +165,12 @@ export const userDefaultFilter = {
   },
 };
 
-export const getUsersColumnConfig = () => {
+// The Users API returns one row per user *within a project* (one EndUser
+// each), not one row per person. Outside a single project's Users tab the
+// page lists every project's rows, so the Project column names each row's
+// scope (TH-5037). Inside a project it would repeat one value, so it is
+// omitted there.
+export const getUsersColumnConfig = ({ includeProject = false } = {}) => {
   const columns = [
     {
       headerName: "User ID",
@@ -171,6 +179,19 @@ export const getUsersColumnConfig = () => {
       flex: 1,
       cellRenderer: UserIdCellRenderer,
     },
+    ...(includeProject
+      ? [
+          {
+            headerName: "Project",
+            field: "project_name",
+            headerTooltip:
+              "Users are listed per project: a user active in several projects has one row in each.",
+            minWidth: 200,
+            flex: 1,
+            cellRenderer: ProjectCellRenderer,
+          },
+        ]
+      : []),
     {
       headerName: "User ID Type",
       field: "user_id_type",
@@ -450,8 +471,8 @@ export const getSummaryCards = (data) => [
     title: "Active Days",
     value: data?.active_days?.toLocaleString() ?? 0,
     icon: "user_active_days",
-    color: "blue.500",
-    bgColor: "blue.o5",
+    color: "status.info.fg",
+    bgColor: "status.info.bg",
   },
   {
     title: "Total Tokens used",
@@ -471,8 +492,8 @@ export const getSummaryCards = (data) => [
     title: "Avg Latency per trace",
     value: data?.avg_trace_latency ? formatMs(data.avg_trace_latency) : 0,
     icon: "user_avg_latency_per_trace",
-    color: "orange.500",
-    bgColor: "orange.o5",
+    color: "status.warning.fg",
+    bgColor: "status.warning.bg",
   },
   {
     title: "Avg Latency per session",
@@ -481,22 +502,22 @@ export const getSummaryCards = (data) => [
       ? formatMs(data.avg_session_duration * 1000)
       : 0,
     icon: "user_avg_latency_per_session",
-    color: "blue.500",
-    bgColor: "blue.o5",
+    color: "status.info.fg",
+    bgColor: "status.info.bg",
   },
   {
     title: "Traces with error",
     value: data?.num_traces_with_errors?.toLocaleString() ?? 0,
     icon: "user_trace_with_error",
-    color: "red.500",
-    bgColor: "red.o5",
+    color: "status.danger.fg",
+    bgColor: "status.danger.bg",
   },
   {
     title: "Traces with guardrails triggered",
     value: data?.num_guardrails_triggered?.toLocaleString() ?? 0,
     icon: "user_traces_with_guardrails_triggered",
-    color: "red.500",
-    bgColor: "red.o5",
+    color: "status.danger.fg",
+    bgColor: "status.danger.bg",
   },
 ];
 export const detectTimePeriod = (start, end) => {
@@ -555,7 +576,7 @@ export const detectTimePeriod = (start, end) => {
 
 export const userTraceRowHeightMapping = {
   Short: {
-    height: 40,
+    height: ROW_HEIGHT.default,
     autoHeight: false,
   },
   Medium: {
@@ -588,7 +609,7 @@ export const LAST_ACTIVE_STYLES = {
   fontFamily: "IBM Plex Sans",
   fontWeight: 400,
   fontStyle: "normal",
-  fontSize: "13px",
+  fontSize: "12px",
   lineHeight: "20px",
   letterSpacing: "0%",
   verticalAlign: "middle",

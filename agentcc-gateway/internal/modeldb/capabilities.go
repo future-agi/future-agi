@@ -19,23 +19,31 @@ type CapabilityFlags struct {
 	SystemMessages    bool `json:"system_messages"`
 	PromptCaching     bool `json:"prompt_caching"`
 	Reasoning         bool `json:"reasoning"`
+
+	// The price table often leaves a flag out of an entry for a model that
+	// has the capability, and each refresh adds entries that do. These mark
+	// the validated flags the table did not state, which validation does not
+	// refuse on: a gap in the data must not turn a working request into a 400.
+	FunctionCallingUnstated bool `json:"-"`
+	VisionUnstated          bool `json:"-"`
+	ResponseSchemaUnstated  bool `json:"-"`
 }
 
 // ValidateRequest checks if the model supports the features used in the request.
 // Returns ("", true) if OK, or (reason, false) if a capability is missing.
 func (c *CapabilityFlags) ValidateRequest(req *models.ChatCompletionRequest) (string, bool) {
 	// Check tool/function calling.
-	if len(req.Tools) > 0 && !c.FunctionCalling {
+	if len(req.Tools) > 0 && !c.FunctionCalling && !c.FunctionCallingUnstated {
 		return "model does not support function calling / tools", false
 	}
 
 	// Check vision (image content in messages).
-	if hasImageContent(req.Messages) && !c.Vision {
+	if hasImageContent(req.Messages) && !c.Vision && !c.VisionUnstated {
 		return "model does not support vision / image input", false
 	}
 
 	// Check structured output / JSON schema.
-	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_schema" && !c.ResponseSchema {
+	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_schema" && !c.ResponseSchema && !c.ResponseSchemaUnstated {
 		return "model does not support structured output (json_schema response format)", false
 	}
 

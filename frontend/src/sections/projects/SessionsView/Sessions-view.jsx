@@ -44,14 +44,14 @@ const AddToQueueDialog = lazy(
 
 const SESSION_BULK_ACTIONS = [
   {
-    id: "replay",
+    id: REPLAY_ACTION_ID,
     label: "Replay Sessions",
-    icon: "mdi:play-outline",
+    icon: "solar:play-linear",
   },
   {
     id: "annotation-queue",
     label: "Add to annotation queue",
-    icon: "mdi:clipboard-list-outline",
+    icon: "solar:clipboard-list-linear",
   },
 ];
 
@@ -64,7 +64,8 @@ import {
   useSessionsGridStore,
   useSessionsGridStoreShallow,
 } from "./ReplaySessions/store";
-import { REPLAY_TYPES } from "./ReplaySessions/constants";
+import { REPLAY_ACTION_ID, REPLAY_TYPES } from "./ReplaySessions/constants";
+import { withoutReplayForRestrictedOrgs } from "./ReplaySessions/replayAccess";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -83,6 +84,7 @@ import {
 } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "../LLMTracing/useCursorAttributeInventory";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
+import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 
 const getLiveSessionGridApi = (gridRef) => {
@@ -187,6 +189,15 @@ export const getDateLabel = (dateFilter) => {
 const noopExtraProperties = () => ({});
 
 const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
+  const sessionBulkActions = useMemo(
+    () =>
+      withoutReplayForRestrictedOrgs(
+        SESSION_BULK_ACTIONS,
+        restrictSimulateToEnvironments,
+      ),
+    [restrictSimulateToEnvironments],
+  );
   const isUserMode = mode === "user";
   const { currentWorkspaceId } = useWorkspace();
   const { observeId: routeObserveId } = useParams();
@@ -807,7 +818,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const handleBulkAction = useCallback(
     (action, event) => {
-      if (action === "replay") {
+      if (action === REPLAY_ACTION_ID) {
         const replayData = {
           project_id: observeId,
           replay_type: REPLAY_MODULES.SESSIONS,
@@ -849,9 +860,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // --- Refresh ---
   const refreshSessions = useCallback(() => {
     trackEvent(Events.pObserveRefreshClicked);
-    withLiveGridApi(getLiveSessionGridApi(sessionGridApiRef), (api) =>
-      api.refreshServerSide?.(),
-    );
+    // ObserveHeader dispatches observe-refresh; SessionGrid owns cursor invalidation.
     queryClient.invalidateQueries({ queryKey: ["session-list"] });
   }, [queryClient]);
 
@@ -1101,7 +1110,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           });
         }}
         onBulkAction={handleBulkAction}
-        bulkActions={SESSION_BULK_ACTIONS}
+        bulkActions={sessionBulkActions}
         onAddEvals={handleAddEvals}
         onAddCustomColumn={() => setOpenCustomColumn(true)}
       />

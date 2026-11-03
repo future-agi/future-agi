@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax -- ds: data colours (decorative animation gradients) */
 // ----------------------------------------------------------------------
 
 export const varBgColor = (props) => {

@@ -20,7 +20,11 @@ import TracingControls from "../../LLMTracing/TracingControls";
 import PropTypes from "prop-types";
 import SvgColor from "src/components/svg-color";
 import AlertsChart from "./AlertsChart";
-import { getCompareChartConfig, getSimpleLineChartConfig } from "../common";
+import {
+  alertThresholdBand,
+  getCompareChartConfig,
+  getSimpleLineChartConfig,
+} from "../common";
 import { useQuery } from "@tanstack/react-query";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { getDefaultAlertConfigValues } from "./validation";
@@ -50,12 +54,14 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
   const [isFormDirty, setFormIsDirty] = useState(false);
   const [queryPayload, setQueryPayload] = useState(null);
   const [isQueryEnabled, setIsQueryEnabled] = useState(false);
+  const [previewAwaitingLabel, setPreviewAwaitingLabel] = useState(false);
   const thresholdTimeoutRef = useRef(null);
   const retainedGraphDataRef = useRef();
 
-  const handlePayloadChange = useCallback((payload, enabled) => {
+  const handlePayloadChange = useCallback((payload, enabled, awaitingLabel) => {
     setQueryPayload(payload);
     setIsQueryEnabled(enabled);
+    setPreviewAwaitingLabel(Boolean(awaitingLabel));
   }, []);
 
   const savedGraphQuery = useQuery({
@@ -84,6 +90,8 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
   });
 
   const useSavedGraph = Boolean(openSheetView && !isFormDirty);
+  // The saved graph already has its label; only a preview can be waiting.
+  const showAwaitingLabel = !useSavedGraph && previewAwaitingLabel;
   const activeGraphQuery = useSavedGraph ? savedGraphQuery : previewGraphQuery;
   const latestFetchedData = activeGraphQuery.data;
 
@@ -143,40 +151,34 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
               {
                 value: max,
                 y2: warningValue,
-                fillColor: "#00A25108",
-                borderColor: "#00A251",
+                ...alertThresholdBand(theme, "success", 0.03),
               },
               {
                 value: warningValue,
                 y2: criticalValue,
-                fillColor: "#E9690C08",
-                borderColor: "#F49A54",
+                ...alertThresholdBand(theme, "warning", 0.03),
               },
               {
                 value: criticalValue,
                 y2: min,
-                fillColor: "#D92D2033",
-                borderColor: "#D92D20",
+                ...alertThresholdBand(theme, "danger", 0.2),
               },
             ]
           : [
               {
                 value: max,
                 y2: criticalValue,
-                fillColor: "#D92D2033",
-                borderColor: "#D92D20",
+                ...alertThresholdBand(theme, "danger", 0.2),
               },
               {
                 value: criticalValue,
                 y2: warningValue,
-                fillColor: "#E9690C08",
-                borderColor: "#F49A54",
+                ...alertThresholdBand(theme, "warning", 0.03),
               },
               {
                 value: warningValue,
                 y2: min,
-                fillColor: "#00A25108",
-                borderColor: "#00A251",
+                ...alertThresholdBand(theme, "success", 0.03),
               },
             ];
 
@@ -186,13 +188,13 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
             seriesName: _.startCase(_.toLower(alertType)),
             thresholds,
           },
-          { isDark },
+          { isDark, theme },
         );
       } else if (selectedThresHoldType === "percentage_change") {
         chartConfig = getCompareChartConfig(
           fetchedData?.data,
           { seriesName: _.startCase(_.toLower(alertType)) },
-          { isDark },
+          { isDark, theme },
         );
       }
 
@@ -238,13 +240,20 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
             type: "datetime",
             convertedCatToNumeric: false, // include this explicitly
             labels: {
-              style: { fontSize: "12px", colors: isDark ? "#a1a1aa" : "#666" },
+              style: { fontSize: "12px", colors: theme.palette.text.tertiary },
             },
           },
         }}
       />
     );
-  }, [chartKey, isDark, openSheetView, options, selectedThresHoldType, series]);
+  }, [
+    chartKey,
+    openSheetView,
+    options,
+    selectedThresHoldType,
+    series,
+    theme.palette.text.tertiary,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -299,7 +308,12 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
           </Typography>
         </Button>
       </Stack>
-      {graphState.showError && (
+      {showAwaitingLabel && (
+        <Alert severity="info" sx={{ mb: 2 }} data-testid="preview-awaiting-label">
+          Pick a label to preview this alert.
+        </Alert>
+      )}
+      {!showAwaitingLabel && graphState.showError && (
         <Alert
           severity="error"
           sx={{ mb: 2 }}
@@ -317,7 +331,7 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
           {MONITOR_GRAPH_ERROR_MESSAGE}
         </Alert>
       )}
-      {graphState.showGraph && renderChart()}
+      {!showAwaitingLabel && graphState.showGraph && renderChart()}
       <Divider />
       <Box
         sx={{

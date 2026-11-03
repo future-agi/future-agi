@@ -89,6 +89,24 @@ test-results/
 ee/cloud/
 ee.local-leftover/
 
+# Test suites and test-only files (21.7 MB of tests + 2.4 MB .test_durations
+# in the v1.41 image). CI runs pytest from a checkout, never inside this image,
+# and no runtime module imports a `*.tests` package. Deliberately NOT
+# `test_*.py`: runtime modules use that name (simulate/models/test_execution.py,
+# ai_tools/tools/evaluations/test_eval_template.py, ee/voice/tasks/test_monitor.py).
+**/tests/
+**/conftest.py
+.test_durations
+.test_quarantine.json
+requirements-test.txt
+mypy-baseline.txt
+pytest.ini
+dockerfile.base
+Dockerfile.oss
+.secrets.baseline
+.pre-commit-config.yaml
+.flake8
+
 # Documentation (not needed in image)
 *.md
 docs/

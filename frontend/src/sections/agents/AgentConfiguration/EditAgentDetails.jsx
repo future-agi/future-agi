@@ -43,11 +43,7 @@ import {
 } from "../constants";
 import { ShowComponent } from "src/components/show";
 import CustomTooltip from "src/components/tooltip";
-import { PROVIDER_CHOICES } from "../constants";
-import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
-import { copyToClipboard } from "src/utils/utils";
-import { HOST_API } from "src/config-global";
 import SvgColor from "src/components/svg-color";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -64,7 +60,9 @@ const EditAgentDetails = ({
   setValue,
   getValues,
   clearErrors,
+  agentKind,
 }) => {
+  const isSourceAgent = agentKind === "source";
   const { orgLimit } = useAuthContext();
   const { agentDefinitionId } = useParams();
   const [lastFetchedAt, setLastFetchedAt] = useState(null);
@@ -230,7 +228,8 @@ const EditAgentDetails = ({
     }
   };
 
-  const canEnableObservability = Boolean(apiKey && assistantId);
+  const canEnableObservability =
+    isSourceAgent || Boolean(apiKey && assistantId);
   const keysRequired = inbound === false;
   // "others" provider brings its own endpoint, so outbound has no
   // meaning (nothing to call). Lock the toggle to inbound.
@@ -253,10 +252,12 @@ const EditAgentDetails = ({
   );
 
   useEffect(() => {
+    // A code agent has no key or assistant id to wait for.
+    if (isSourceAgent) return;
     if (observabilityEnabled && (!apiKey || !assistantId)) {
       setValue("observabilityEnabled", false);
     }
-  }, [apiKey, assistantId, observabilityEnabled, setValue]);
+  }, [apiKey, assistantId, isSourceAgent, observabilityEnabled, setValue]);
 
   return (
     <Box>
@@ -423,49 +424,6 @@ const EditAgentDetails = ({
                 }
               }}
             />
-            <ShowComponent condition={provider === PROVIDER_CHOICES.RETELL}>
-              <Stack
-                sx={{
-                  borderRadius: 0.5,
-                  bgcolor: "blue.o10",
-                  border: "1px solid",
-                  borderColor: "blue.200",
-                  p: 1,
-                  alignItems: "center",
-                }}
-                direction={"row"}
-                gap={1}
-              >
-                <Iconify icon="ci:info" sx={{ color: "blue.400" }} width={16} />
-                <Stack direction={"row"} gap={0.5}>
-                  <Typography typography={"s2_1"} color={"blue.500"}>
-                    Please add
-                  </Typography>
-                  <Typography
-                    typography={"s2_1"}
-                    onClick={() => {
-                      copyToClipboard(`${HOST_API}/tracer/webhook`);
-                      enqueueSnackbar({
-                        message: "Copied to clipboard",
-                        variant: "success",
-                      });
-                    }}
-                    color={"blue.500"}
-                    sx={{
-                      textDecorationLine: "underline",
-                      ":hover": {
-                        cursor: "pointer",
-                      },
-                    }}
-                  >
-                    {`${HOST_API}/tracer/webhook`}
-                  </Typography>
-                  <Typography typography={"s2_1"} color={"blue.500"}>
-                    to the Agent Level Webhook URL on Retell
-                  </Typography>
-                </Stack>
-              </Stack>
-            </ShowComponent>
             <ShowComponent
               condition={
                 selectedProvider !== "others" &&
@@ -478,7 +436,9 @@ const EditAgentDetails = ({
                     control={control}
                     fieldName="assistantId"
                     placeholder="asst_xxx"
-                    required={observabilityEnabled || keysRequired}
+                    required={
+                      (!isSourceAgent && observabilityEnabled) || keysRequired
+                    }
                     label="Assistant ID"
                     fullWidth
                     size="small"
@@ -532,7 +492,7 @@ const EditAgentDetails = ({
                       flexDirection: "row",
                       alignItems: "center",
                       gap: 1,
-                      color: "blue.600",
+                      color: "status.info.fg",
                     }}
                   >
                     <SvgColor
@@ -558,12 +518,12 @@ const EditAgentDetails = ({
                       flexDirection: "row",
                       alignItems: "center",
                       gap: 0.5,
-                      color: "green.600",
+                      color: "status.success.fg",
                     }}
                   >
                     <SvgColor
                       src="/assets/icons/ic_success_fill.svg"
-                      sx={{ width: 16, height: 16, color: "green.600" }}
+                      sx={{ width: 16, height: 16, color: "status.success.fg" }}
                     />
                     <Typography
                       typography={"s3"}
@@ -594,7 +554,7 @@ const EditAgentDetails = ({
                   },
                 }}
                 options={AUTH_METHODS_BY_PROVIDER[selectedProvider] || []}
-                required={observabilityEnabled}
+                required={!isSourceAgent && observabilityEnabled}
               />
             </ShowComponent>
             <ShowComponent
@@ -608,7 +568,9 @@ const EditAgentDetails = ({
                 fieldName="apiKey"
                 placeholder="Enter API key"
                 label="Provider API Key"
-                required={observabilityEnabled || keysRequired}
+                required={
+                  (!isSourceAgent && observabilityEnabled) || keysRequired
+                }
                 error={errors && !!errors.apiKey?.message}
                 helperText={errors && errors.apiKey?.message}
                 fullWidth
@@ -635,7 +597,7 @@ const EditAgentDetails = ({
               fieldName="livekitUrl"
               placeholder="https://your-project.livekit.cloud"
               label="LiveKit Server URL"
-              required
+              required={!isSourceAgent}
               fullWidth
               size="small"
               error={errors && !!errors.livekitUrl?.message}
@@ -646,7 +608,7 @@ const EditAgentDetails = ({
               fieldName="livekitApiKey"
               placeholder="APIxxxxxxxxxxxxxxxx"
               label="LiveKit API Key"
-              required
+              required={!isSourceAgent}
               fullWidth
               size="small"
               autoComplete="new-password"
@@ -659,7 +621,7 @@ const EditAgentDetails = ({
               placeholder="Paste the secret you copied when creating the key"
               label="LiveKit API Secret"
               type="password"
-              required
+              required={!isSourceAgent}
               fullWidth
               size="small"
               autoComplete="new-password"
@@ -673,7 +635,7 @@ const EditAgentDetails = ({
                   fieldName="livekitAgentName"
                   placeholder="e.g. test-agent"
                   label="Agent Name"
-                  required
+                  required={!isSourceAgent}
                   fullWidth
                   size="small"
                   error={errors && !!errors.livekitAgentName?.message}
@@ -693,20 +655,18 @@ const EditAgentDetails = ({
                 }
                 sx={{
                   minWidth: 120,
-                  height: 40,
                   whiteSpace: "nowrap",
-                  fontSize: 13,
                   borderColor:
                     livekitValidation === "valid"
-                      ? "success.main"
+                      ? "status.success.border"
                       : livekitValidation === "invalid"
-                        ? "error.main"
+                        ? "status.danger.border"
                         : "divider",
                   color:
                     livekitValidation === "valid"
-                      ? "success.main"
+                      ? "status.success.fg"
                       : livekitValidation === "invalid"
-                        ? "error.main"
+                        ? "status.danger.fg"
                         : "text.secondary",
                 }}
               >
@@ -720,7 +680,11 @@ const EditAgentDetails = ({
               </Button>
             </Stack>
             {livekitValidation === "invalid" && livekitValidationError && (
-              <Typography typography="s3" color="error.main" sx={{ mt: -1 }}>
+              <Typography
+                typography="s3"
+                color="status.danger.fg"
+                sx={{ mt: -1 }}
+              >
                 {livekitValidationError}
               </Typography>
             )}
@@ -815,7 +779,7 @@ const EditAgentDetails = ({
           <Box>
             <FormTextFieldV2
               label="Prompt/Chains"
-              required
+              required={!isSourceAgent}
               control={control}
               fieldName="description"
               placeholder="Describe the agent's purpose and functions"
@@ -876,16 +840,10 @@ const EditAgentDetails = ({
                 }
               }}
             >
-              <ToggleButton
-                value={VOICE_TRANSPORT.WEBRTC}
-                sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
-              >
+              <ToggleButton value={VOICE_TRANSPORT.WEBRTC}>
                 {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.WEBRTC].label}
               </ToggleButton>
-              <ToggleButton
-                value={VOICE_TRANSPORT.TELEPHONY}
-                sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
-              >
+              <ToggleButton value={VOICE_TRANSPORT.TELEPHONY}>
                 {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.TELEPHONY].label}
               </ToggleButton>
             </ToggleButtonGroup>
@@ -1035,13 +993,6 @@ const EditAgentDetails = ({
                 arrow
                 size="small"
                 type="black"
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      maxWidth: "200px !important",
-                    },
-                  },
-                }}
               >
                 <Box>
                   <SwitchField
@@ -1098,9 +1049,6 @@ const EditAgentDetails = ({
                 arrow
                 size="small"
                 type="black"
-                slotProps={{
-                  tooltip: { sx: { maxWidth: "200px !important" } },
-                }}
               >
                 <Box>
                   <SwitchField
@@ -1116,9 +1064,10 @@ const EditAgentDetails = ({
         </ShowComponent>
         <ShowComponent
           condition={
-            agentType === AGENT_TYPES.VOICE &&
-            selectedProvider !== "others" &&
-            !isLiveKitProvider(selectedProvider)
+            isSourceAgent ||
+            (agentType === AGENT_TYPES.VOICE &&
+              selectedProvider !== "others" &&
+              !isLiveKitProvider(selectedProvider))
           }
         >
           <Stack>
@@ -1141,7 +1090,9 @@ const EditAgentDetails = ({
                   labelPlacement="end"
                   helperText={""}
                   defaultValue={true}
-                  onChange={() => trigger(["apiKey", "assistantId"])}
+                  onChange={() => {
+                    if (!isSourceAgent) trigger(["apiKey", "assistantId"]);
+                  }}
                   disabled={!canEnableObservability}
                 />
               </span>
@@ -1179,6 +1130,7 @@ EditAgentDetails.propTypes = {
   getValues: PropTypes.func,
   trigger: PropTypes.func,
   clearErrors: PropTypes.func,
+  agentKind: PropTypes.string,
 };
 
 export default EditAgentDetails;

@@ -1,0 +1,663 @@
+# Publish the Helm chart (deploy/helm/futureagi, the Distributed setup on
+# Kubernetes) of a platform release to oci://ghcr.io/future-agi/charts/futureagi.
+#
+# release-images.yml calls it on every vX.Y.Z tag once the images the chart
+# deploys are on Docker Hub. To retry a failed publish, run it by hand from
+# that tag (Actions > helm-release > Run workflow, "Use workflow from" the tag
+# vX.Y.Z, version vX.Y.Z): the signing identity is this file at that tag.
+#
+#   package  checks out the tag, and hack/package.sh --version asserts
+#            Chart.yaml (version X.Y.Z, appVersion vX.Y.Z), then stamps the
+#            digest of every Future AGI image at that tag and the Artifact Hub
+#            annotations into futureagi-X.Y.Z.tgz. hack/check.sh then runs
+#            against the package itself (helm lint --strict, every value set
+#            including examples/, kubeconform, rendered invariants) on Helm 4
+#            and Helm 3, and hack/list-images.sh writes the images lock and
+#            Hauler manifest.
+#   smoke    installs the .tgz on kind with the published images, in a
+#            restricted Pod Security namespace, with hack/kind-smoke.sh
+#            (CHART=<the .tgz> PUBLISHED=1: install, helm test, upgrade,
+#            rollback).
+#   publish  pushes the chart once (a version is never overwritten: an
+#            identical package is a retry, a different one fails), signs it
+#            with cosign keyless (GitHub OIDC), attests its build provenance,
+#            attaches the .tgz, its sigstore bundle, the images lock, the Hauler
+#            manifest and checksums to the GitHub Release (a retry adds only
+#            the missing ones, and the checksums cover the copies already on
+#            the Release), pushes the Artifact
+#            Hub metadata, and finally pulls and verifies it as an anonymous
+#            client.
+#
+# If a job fails before the push, the images stay published and the chart
+# does not; fix it in the next patch release, or rerun from the tag if the
+# failure was transient. If a step fails after the push, the chart is on GHCR
+# (and stays: a version is never overwritten) but its release is incomplete;
+# rerun from the tag to finish it (first deleting any Release asset the run
+# names as not matching the chart). If GHCR already holds that version with
+# different content, nothing is pushed and a rerun cannot change that: ship
+# the next patch release. The withheld job says which case it is.
+#
+# One-time setup by a future-agi org owner, after the first push: make the
+# package charts/futureagi public (Packages > charts/futureagi > Package
+# settings), with access inherited from this repository; until then the
+# anonymous check at the end fails. Artifact Hub: see
+# deploy/helm/artifacthub-repo.yml.
+name: helm-release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Platform release tag, vX.Y.Z; its images must be published
+        required: true
+        type: string
+      smoke:
+        description: Install the packaged chart on kind before publishing
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      # Only the smoke install uses them, for authenticated Docker Hub pulls;
+      # without them the kind cluster pulls anonymously.
+      DOCKERHUB_USERNAME: { required: false }
+      DOCKERHUB_TOKEN: { required: false }
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Platform release tag, vX.Y.Z (run the workflow from that same tag)
+        required: true
+        type: string
+      smoke:
+        description: Install the packaged chart on kind before publishing (turn off only when the smoke harness itself is broken)
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CHART_REPO: ghcr.io/future-agi/charts
+  CHART_REF: ghcr.io/future-agi/charts/futureagi
+  OIDC_ISSUER: https://token.actions.githubusercontent.com
+
+jobs:
+  package:
+    name: package and check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      chart-version: ${{ steps.version.outputs.chart-version }}
+    steps:
+      - name: Release version
+        id: version
+        env:
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Whole-string match: no newline can reach GITHUB_OUTPUT.
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$VERSION' is not a stable platform tag (vX.Y.Z)"
+            exit 1
+          fi
+          # The signature's identity is this workflow at the release tag.
+          if [ "$GITHUB_REF" != "refs/tags/$VERSION" ]; then
+            echo "::error::run this workflow from the tag $VERSION (Use workflow from: $VERSION), not $GITHUB_REF"
+            exit 1
+          fi
+          echo "chart-version=${VERSION#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Helm 4, Helm 3 and kubeconform
+        uses: ./.github/actions/setup-helm-tools
+        with:
+          helm: "4 3"
+          kubeconform: "true"
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: python -m pip install PyYAML==6.0.3
+
+      - name: Release notes
+        # artifacthub.io/changes comes from the GitHub Release release-please
+        # wrote for this tag; without it the chart ships no changelog.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/notes.md"; then
+            echo "release notes: $(wc -l < "$RUNNER_TEMP/notes.md") lines"
+          else
+            echo "::warning::no GitHub Release $VERSION yet: the chart ships without artifacthub.io/changes"
+            : > "$RUNNER_TEMP/notes.md"
+          fi
+
+      - name: Package with image digests
+        id: package
+        env:
+          VERSION: ${{ inputs.version }}
+          CHART_VERSION: ${{ steps.version.outputs.chart-version }}
+        run: |
+          set -euo pipefail
+          dist="$RUNNER_TEMP/dist"
+          changes=()
+          [ -s "$RUNNER_TEMP/notes.md" ] && changes=(--changes "$RUNNER_TEMP/notes.md")
+          # Digests of docker.io/futureagi/*:$VERSION, read from Docker Hub.
+          tgz=$(deploy/helm/futureagi/hack/package.sh --version "$VERSION" --destination "$dist" "${changes[@]}")
+          [ "$tgz" = "$dist/futureagi-$CHART_VERSION.tgz" ]
+          helm show chart "$tgz"
+
+      - name: No subchart, no Bitnami image
+        env:
+          CHART_VERSION: ${{ steps.version.outputs.chart-version }}
+        run: |
+          set -euo pipefail
+          tgz="$RUNNER_TEMP/dist/futureagi-$CHART_VERSION.tgz"
+          if tar -tzf "$tgz" | grep -E '^futureagi/charts/'; then
+            echo "::error::the package contains subcharts: the chart ships no dependencies"
+            exit 1
+          fi
+          if helm show chart "$tgz" | grep -E '^dependencies:'; then
+            echo "::error::Chart.yaml declares dependencies: the chart ships no subcharts"
+            exit 1
+          fi
+
+      - name: Chart checks against the package (Helm 4, then Helm 3)
+        # hack/check.sh checks the chart directory it sits in: run it from the
+        # unpacked .tgz, with the maintenance scripts and CI value sets
+        # (excluded by .helmignore) copied back in, so a file .helmignore drops
+        # by mistake fails here.
+        env:
+          CHART_VERSION: ${{ steps.version.outputs.chart-version }}
+        run: |
+          set -euo pipefail
+          for helm in "$RUNNER_TEMP/helm4/helm" "$RUNNER_TEMP/helm3/helm"; do
+            unpacked=$(mktemp -d)
+            tar -xzf "$RUNNER_TEMP/dist/futureagi-$CHART_VERSION.tgz" -C "$unpacked"
+            cp -R deploy/helm/futureagi/hack deploy/helm/futureagi/ci "$unpacked/futureagi/"
+            echo "::group::$("$helm" version --short)"
+            HELM="$helm" OUT_DIR="$unpacked/rendered" "$unpacked/futureagi/hack/check.sh"
+            echo "::endgroup::"
+          done
+
+      - name: Images lock and Hauler manifest
+        env:
+          CHART_VERSION: ${{ steps.version.outputs.chart-version }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/dist"
+          tgz="futureagi-$CHART_VERSION.tgz"
+          list="$GITHUB_WORKSPACE/deploy/helm/futureagi/hack/list-images.sh"
+          "$list" --resolve --require-digest "$tgz" > "futureagi-images-$CHART_VERSION.txt"
+          "$list" --resolve --require-digest --format hauler "$tgz" > "futureagi-hauler-$CHART_VERSION.yaml"
+          if grep -E '(^|/)bitnami(legacy|secure|charts)?/' "futureagi-images-$CHART_VERSION.txt"; then
+            echo "::error::the chart deploys a Bitnami image"
+            exit 1
+          fi
+          cat "futureagi-images-$CHART_VERSION.txt"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: helm-chart-${{ steps.version.outputs.chart-version }}
+          path: ${{ runner.temp }}/dist
+          if-no-files-found: error
+          retention-days: 30
+
+  smoke:
+    name: install the package on kind (published images)
+    needs: package
+    if: inputs.smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      CHART_VERSION: ${{ needs.package.outputs.chart-version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: helm-chart-${{ needs.package.outputs.chart-version }}
+          path: ${{ runner.temp }}/dist
+
+      - name: Reclaim runner disk
+        # The Future AGI images plus a kind node holding them and the datastores.
+        run: |
+          df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo systemctl stop docker docker.socket
+          sudo mv /var/lib/docker /mnt/docker
+          sudo ln -s /mnt/docker /var/lib/docker
+          sudo systemctl start docker
+          timeout 60 bash -c 'until docker info >/dev/null 2>&1; do sleep 2; done'
+          df -h / /mnt
+
+      - name: Install Helm and kind
+        uses: ./.github/actions/setup-helm-tools
+        with:
+          helm: "4"
+          kind: "true"
+
+      - name: Install, check and upgrade on kind
+        # kind-smoke.sh with PUBLISHED=1 installs CHART, the .tgz, exactly as
+        # packaged (no TAG, nothing loaded into kind, no image overrides): the
+        # cluster pulls the release's images by the stamped digests, as a
+        # user's would, into a namespace that enforces the restricted Pod
+        # Security Standard. With DOCKERHUB_USERNAME and DOCKERHUB_TOKEN it
+        # creates a docker-registry Secret and installs with
+        # global.imagePullSecrets, so the pulls are authenticated; without
+        # them they are anonymous.
+        env:
+          KIND_CLUSTER: futureagi
+          NAMESPACE: futureagi
+          PUBLISHED: "1"
+          POD_SECURITY: restricted
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: CHART="$RUNNER_TEMP/dist/futureagi-$CHART_VERSION.tgz" deploy/helm/futureagi/hack/kind-smoke.sh
+
+  publish:
+    name: push, sign, attest, release
+    needs: [package, smoke]
+    # smoke is skipped only when a maintainer turned it off.
+    if: >-
+      always() && needs.package.result == 'success' &&
+      (needs.smoke.result == 'success' || needs.smoke.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # upload the Release assets
+      packages: write # push to ghcr.io/future-agi/charts
+      id-token: write # cosign keyless and the provenance attestation
+      attestations: write
+    concurrency:
+      group: helm-release-publish-${{ inputs.version }}
+      cancel-in-progress: false
+    outputs:
+      # For the withheld job: whether this run's chart is on GHCR, whether
+      # another package already holds the version, which step failed after
+      # the push, and the Release assets a rerun would keep but must not.
+      pushed: ${{ steps.push.outputs.pushed }}
+      exists: ${{ steps.push.outputs.exists }}
+      failed-step: ${{ steps.failed.outputs.step }}
+      stale-assets: ${{ steps.assets.outputs.stale-assets }}
+    env:
+      VERSION: ${{ inputs.version }}
+      CHART_VERSION: ${{ needs.package.outputs.chart-version }}
+      # Who signs and attests the chart: this workflow, at the release tag.
+      # Every verification here, and the commands the summary prints, use them.
+      SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/helm-release.yml
+      CERT_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/helm-release.yml@refs/tags/${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            deploy/helm
+            .github/actions
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: helm-chart-${{ needs.package.outputs.chart-version }}
+          path: ${{ runner.temp }}/dist
+
+      - name: Install Helm, cosign and ORAS
+        uses: ./.github/actions/setup-helm-tools
+        with:
+          helm: "4"
+          cosign: "true"
+          oras: "true"
+
+      - name: Log in to ghcr.io
+        # helm has its own registry config; docker's is read by oras and cosign.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "$GITHUB_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push once (never overwrite a version)
+        id: push
+        run: |
+          set -euo pipefail
+          tgz="$RUNNER_TEMP/dist/futureagi-$CHART_VERSION.tgz"
+          ref="$CHART_REF:$CHART_VERSION"
+          if existing=$(oras resolve "$ref" 2>"$RUNNER_TEMP/resolve.err"); then
+            # Already published. The same templates, values (with the image
+            # digests) and metadata mean this is a retry of this release; the
+            # published package stays either way, and what follows signs and
+            # attaches that one. The changelog and third-party image
+            # annotations may differ (edited release notes, a moved upstream
+            # tag) without making it another chart.
+            mkdir -p "$RUNNER_TEMP/existing/old" "$RUNNER_TEMP/existing/new"
+            helm pull "oci://$CHART_REF" --version "$CHART_VERSION" --destination "$RUNNER_TEMP/existing"
+            tar -xzf "$RUNNER_TEMP/existing/futureagi-$CHART_VERSION.tgz" -C "$RUNNER_TEMP/existing/old"
+            tar -xzf "$tgz" -C "$RUNNER_TEMP/existing/new"
+            strip() { awk '/^  artifacthub\.io\/(changes|images|containsSecurityUpdates):/ { skip = 1; next } skip && /^    / { next } { skip = 0; print }' "$1"; }
+            if diff -r --exclude=Chart.yaml "$RUNNER_TEMP/existing/old" "$RUNNER_TEMP/existing/new" &&
+              diff <(strip "$RUNNER_TEMP/existing/old/futureagi/Chart.yaml") <(strip "$RUNNER_TEMP/existing/new/futureagi/Chart.yaml"); then
+              echo "::notice::$ref is already published ($existing) with this content: not pushing again"
+              echo "pushed=true" >> "$GITHUB_OUTPUT"
+            else
+              # For the withheld job: the version is on GHCR, from another run.
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "::error::$ref is already published ($existing) with different content. A published version is never overwritten: ship the fix as the next patch release."
+              exit 1
+            fi
+          elif grep -qiE 'not found|name unknown|manifest unknown|404|denied' "$RUNNER_TEMP/resolve.err"; then
+            # "denied" is what GHCR answers for a repository that does not
+            # exist yet (the first publish). A token that cannot read an
+            # existing one cannot push to it either, so this never overwrites.
+            helm push "$tgz" "oci://$CHART_REPO"
+            # From here on a failure leaves a chart on GHCR: the withheld job
+            # says so, and a rerun from the tag finishes the release.
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          else
+            cat "$RUNNER_TEMP/resolve.err" >&2
+            echo "::error::cannot tell whether $ref exists; not pushing"
+            exit 1
+          fi
+          digest=$(oras resolve "$ref")
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::unexpected digest '$digest'"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "published $ref@$digest"
+
+      - name: Release copy of the published chart
+        id: release-copy
+        # The .tgz attached to the Release is the published one, byte for byte
+        # (a retry repackages, and a package is not reproducible).
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/by-digest"
+          # Pulled by digest, Helm names the file futureagi@sha256-<hex>.tgz.
+          helm pull "oci://$CHART_REF@$DIGEST" --destination "$RUNNER_TEMP/by-digest"
+          pulled=("$RUNNER_TEMP"/by-digest/*.tgz)
+          if [ "${#pulled[@]}" != 1 ] || [ ! -f "${pulled[0]}" ]; then
+            echo "::error::expected one pulled chart"
+            exit 1
+          fi
+          mv "${pulled[0]}" "$RUNNER_TEMP/release/futureagi-$CHART_VERSION.tgz"
+          [ "$(tar -xzOf "$RUNNER_TEMP/release/futureagi-$CHART_VERSION.tgz" futureagi/Chart.yaml | sed -nE 's/^version: *"?([^" #]+)"?.*/\1/p')" = "$CHART_VERSION" ]
+          cp "$RUNNER_TEMP/dist/futureagi-images-$CHART_VERSION.txt" \
+            "$RUNNER_TEMP/dist/futureagi-hauler-$CHART_VERSION.yaml" "$RUNNER_TEMP/release/"
+
+      - name: Sign (cosign keyless)
+        id: sign
+        # Stored the classic way, as a sha256-<digest>.sig tag, which Artifact
+        # Hub, Flux, Kyverno and older cosign clients all read (GHCR has no
+        # OCI referrers API). The certificate identity is this workflow at the
+        # release tag. Every cosign verify of the chart here passes
+        # --new-bundle-format=false: without it, once the provenance
+        # attestation (a Sigstore bundle, same identity) is attached, cosign
+        # verifies that instead and passes with no .sig at all.
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if cosign verify --new-bundle-format=false "$CHART_REF@$DIGEST" --certificate-identity "$CERT_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER" >/dev/null 2>&1; then
+            echo "::notice::$CHART_REF@$DIGEST is already signed by $CERT_IDENTITY"
+          else
+            cosign sign --yes --new-bundle-format=false --use-signing-config=false "$CHART_REF@$DIGEST"
+          fi
+          cd "$RUNNER_TEMP/release"
+          cosign sign-blob --yes --bundle "futureagi-$CHART_VERSION.tgz.sigstore.json" "futureagi-$CHART_VERSION.tgz"
+
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.CHART_REF }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+          # A storage record needs the artifact-metadata permission; the
+          # attestation itself does not.
+          create-storage-record: false
+
+      - name: Verify the signatures and the attestation
+        id: verify
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The classic .sig (see Sign); gh attestation verify checks the
+          # provenance attestation.
+          cosign verify --new-bundle-format=false "$CHART_REF@$DIGEST" --certificate-identity "$CERT_IDENTITY" --certificate-oidc-issuer "$OIDC_ISSUER" >/dev/null
+          cosign verify-blob "$RUNNER_TEMP/release/futureagi-$CHART_VERSION.tgz" \
+            --bundle "$RUNNER_TEMP/release/futureagi-$CHART_VERSION.tgz.sigstore.json" \
+            --certificate-identity "$CERT_IDENTITY" --certificate-oidc-issuer "$OIDC_ISSUER"
+          gh attestation verify "oci://$CHART_REF@$DIGEST" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$SIGNER_WORKFLOW"
+
+      - name: Attach to the GitHub Release
+        id: assets
+        # Only missing assets are uploaded: a retry never replaces one. A
+        # retry resolves the images lock and the Hauler manifest again
+        # (third-party images move under their tags) and signs the .tgz
+        # again, so every asset already on the Release is downloaded over this
+        # run's copy: the checksums cover what the Release carries.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The support bundle script is not in the chart (.helmignore drops
+          # hack/): users download it from the release they run.
+          cp "$GITHUB_WORKSPACE/deploy/helm/futureagi/hack/support-bundle.sh" "$RUNNER_TEMP/release/support-bundle.sh"
+          cd "$RUNNER_TEMP/release"
+          tgz="futureagi-$CHART_VERSION.tgz"
+          sums="futureagi-$CHART_VERSION.sha256"
+          summed=("$tgz" "futureagi-images-$CHART_VERSION.txt" "futureagi-hauler-$CHART_VERSION.yaml" support-bundle.sh)
+          # Uploaded in this order, the checksums last: a Release that has
+          # them has every file they cover.
+          assets=("$tgz" "$tgz.sigstore.json" "${summed[@]:1}" "$sums")
+          present=$(gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          on_release() { grep -qxF "$1" <<<"$present"; }
+          cp "$tgz" "$RUNNER_TEMP/registry.tgz"
+          for file in "${assets[@]}"; do
+            if on_release "$file"; then
+              echo "::notice::$file is already on the $VERSION release: kept"
+              gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --pattern "$file" --clobber
+            fi
+          done
+          # What a previous run attached must still be the published chart,
+          # its signature and their checksums. A rerun keeps every asset on
+          # the Release, so one that does not match fails it the same way
+          # until it is deleted; the withheld job names them too.
+          stale() { # message, then the assets to delete before a rerun
+            local message=$1 deletes="" file
+            shift
+            for file in "$@"; do
+              deletes+="${deletes:+; }gh release delete-asset $VERSION $file --repo $GITHUB_REPOSITORY --yes"
+            done
+            echo "stale-assets=$*" >> "$GITHUB_OUTPUT"
+            echo "::error::$message. Delete $* from the release ($deletes), then rerun: it attaches what is missing, from the published chart."
+            exit 1
+          }
+          if ! cmp "$tgz" "$RUNNER_TEMP/registry.tgz"; then
+            # Its signature bundle and the checksums describe that file too.
+            drop=("$tgz")
+            for file in "$tgz.sigstore.json" "$sums"; do
+              if on_release "$file"; then drop+=("$file"); fi
+            done
+            stale "the $VERSION release carries a $tgz that is not $CHART_REF:$CHART_VERSION" "${drop[@]}"
+          fi
+          if ! cosign verify-blob "$tgz" --bundle "$tgz.sigstore.json" \
+            --certificate-identity "$CERT_IDENTITY" --certificate-oidc-issuer "$OIDC_ISSUER"; then
+            # This run's own bundle passed the Verify step.
+            on_release "$tgz.sigstore.json" || exit 1
+            stale "$tgz.sigstore.json on the $VERSION release does not verify $tgz" "$tgz.sigstore.json"
+          fi
+          sha256sum "${summed[@]}" > "$RUNNER_TEMP/$sums"
+          if on_release "$sums"; then
+            diff "$sums" "$RUNNER_TEMP/$sums" ||
+              stale "$sums on the $VERSION release does not match the assets there" "$sums"
+          else
+            mv "$RUNNER_TEMP/$sums" "$sums"
+          fi
+          for file in "${assets[@]}"; do
+            on_release "$file" || gh release upload "$VERSION" "$file" --repo "$GITHUB_REPOSITORY"
+          done
+
+      - name: Artifact Hub metadata
+        id: artifacthub
+        # deploy/helm/artifacthub-repo.yml, at the artifacthub.io tag of the
+        # chart repository. Skipped until an org owner fills in repositoryID.
+        run: |
+          set -euo pipefail
+          cd deploy/helm
+          if grep -q 'REPLACE_WITH_ARTIFACT_HUB_REPOSITORY_ID' artifacthub-repo.yml; then
+            echo "::notice::deploy/helm/artifacthub-repo.yml has no repositoryID yet: Artifact Hub metadata not pushed"
+            exit 0
+          fi
+          oras push "$CHART_REF:artifacthub.io" \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+
+      - name: Pull and verify as an anonymous client
+        id: anonymous
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Empty credential stores: exactly what a user without a login sees.
+          DOCKER_CONFIG=$(mktemp -d)
+          HELM_REGISTRY_CONFIG="$(mktemp -d)/config.json"
+          export DOCKER_CONFIG HELM_REGISTRY_CONFIG
+          mkdir -p "$RUNNER_TEMP/anonymous"
+          if ! helm pull "oci://$CHART_REF" --version "$CHART_VERSION" --destination "$RUNNER_TEMP/anonymous"; then
+            echo "::error::anonymous pulls of $CHART_REF fail. One-time setup: a future-agi org owner makes the package charts/futureagi public (github.com/orgs/future-agi/packages > charts/futureagi > Package settings > Change visibility), then reruns this job."
+            exit 1
+          fi
+          cmp "$RUNNER_TEMP/anonymous/futureagi-$CHART_VERSION.tgz" "$RUNNER_TEMP/release/futureagi-$CHART_VERSION.tgz"
+          cosign verify --new-bundle-format=false "$CHART_REF:$CHART_VERSION" --certificate-identity "$CERT_IDENTITY" --certificate-oidc-issuer "$OIDC_ISSUER" >/dev/null
+          gh attestation verify "oci://$CHART_REF:$CHART_VERSION" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$SIGNER_WORKFLOW"
+          {
+            echo "### futureagi chart $CHART_VERSION"
+            echo
+            echo "\`oci://$CHART_REF\` version \`$CHART_VERSION\`, digest \`$DIGEST\`: signed and attested."
+            echo
+            echo '```sh'
+            echo "helm install futureagi oci://$CHART_REF --version $CHART_VERSION -n futureagi --create-namespace -f my-values.yaml --timeout 20m"
+            echo "cosign verify --new-bundle-format=false $CHART_REF:$CHART_VERSION --certificate-oidc-issuer $OIDC_ISSUER --certificate-identity $CERT_IDENTITY"
+            echo "gh attestation verify oci://$CHART_REF:$CHART_VERSION --repo $GITHUB_REPOSITORY --signer-workflow $SIGNER_WORKFLOW"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Name the failed step
+        # For the withheld job: once the chart is pushed, a failure leaves the
+        # release incomplete rather than withheld.
+        id: failed
+        if: failure()
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          set -euo pipefail
+          id=$(jq -r '[to_entries[] | select(.value.outcome == "failure") | .key] | first // ""' <<<"$STEPS")
+          case "$id" in
+            push) step="Push once (never overwrite a version)" ;;
+            release-copy) step="Release copy of the published chart" ;;
+            sign) step="Sign (cosign keyless)" ;;
+            attest) step="Attest build provenance" ;;
+            verify) step="Verify the signatures and the attestation" ;;
+            assets) step="Attach to the GitHub Release" ;;
+            artifacthub) step="Artifact Hub metadata" ;;
+            anonymous) step="Pull and verify as an anonymous client" ;;
+            *) step=${id:-an unknown step} ;;
+          esac
+          echo "step=$step" >> "$GITHUB_OUTPUT"
+
+  withheld:
+    name: report a withheld or incomplete chart
+    needs: [package, smoke, publish]
+    if: always() && (needs.package.result == 'failure' || needs.smoke.result == 'failure' || needs.publish.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Summary
+        env:
+          VERSION: ${{ inputs.version }}
+          PACKAGE: ${{ needs.package.result }}
+          SMOKE: ${{ needs.smoke.result }}
+          PUBLISH: ${{ needs.publish.result }}
+          PUSHED: ${{ needs.publish.outputs.pushed }}
+          EXISTS: ${{ needs.publish.outputs.exists }}
+          FAILED_STEP: ${{ needs.publish.outputs.failed-step }}
+          STALE_ASSETS: ${{ needs.publish.outputs.stale-assets }}
+        run: |
+          FAILED_STEP=${FAILED_STEP:-a step after the push}
+          rerun="rerun this workflow from the tag $VERSION (workflow_dispatch, version $VERSION)"
+          if [ "$EXISTS" = true ]; then
+            # The push step refused: another package already holds the version.
+            {
+              echo "### futureagi chart ${VERSION#v}: already on GHCR with different content"
+              echo
+              echo "package: $PACKAGE, smoke: $SMOKE, publish: $PUBLISH."
+              echo
+              echo "\`oci://$CHART_REF\` version \`${VERSION#v}\` is already published, and this run's package differs from it (the \"Push once\" step's log shows how). This run pushed, signed and attached nothing, and a rerun is refused the same way: a published version is never overwritten. The published chart stays as it is; to release this one, ship it as the next patch release."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::futureagi chart ${VERSION#v} is already on GHCR with different content: nothing was pushed, and a rerun is refused the same way; ship the next patch release"
+            exit 1
+          fi
+          if [ "$PUSHED" = true ]; then
+            read -ra stale <<<"$STALE_ASSETS"
+            {
+              echo "### futureagi chart ${VERSION#v}: published to GHCR, but \"$FAILED_STEP\" failed"
+              echo
+              echo "package: $PACKAGE, smoke: $SMOKE, publish: $PUBLISH."
+              echo
+              if [ "${#stale[@]}" -gt 0 ]; then
+                echo "The $VERSION release carries assets from an earlier run that do not match the published chart: ${stale[*]}. A rerun keeps every asset already on the Release and would fail the same way, so delete them first:"
+                echo
+                echo '```sh'
+                for file in "${stale[@]}"; do
+                  echo "gh release delete-asset $VERSION $file --repo $GITHUB_REPOSITORY --yes"
+                done
+                echo '```'
+                echo
+              fi
+              echo "\`oci://$CHART_REF\` version \`${VERSION#v}\` is pushed and stays: a version is never overwritten. To finish the release (signature, attestation, Release assets, Artifact Hub metadata, the anonymous check), $rerun: it finds the same package on GHCR, pushes nothing and completes the rest."
+              if [ "$SMOKE" = success ]; then
+                echo "The pushed chart passed the kind smoke install in this run, so the rerun can turn smoke off."
+              fi
+              if [ "$FAILED_STEP" = "Pull and verify as an anonymous client" ]; then
+                echo
+                echo "If anonymous pulls fail, the package is still private. One-time setup: a future-agi org owner makes charts/futureagi public (github.com/orgs/future-agi/packages > charts/futureagi > Package settings > Change visibility) before the rerun."
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "${#stale[@]}" -gt 0 ]; then
+              echo "::error::futureagi chart ${VERSION#v} is published to GHCR, but its release carries assets that do not match it (${stale[*]}): delete them, then $rerun to finish"
+            else
+              echo "::error::futureagi chart ${VERSION#v} is published to GHCR, but \"$FAILED_STEP\" failed; $rerun to finish"
+            fi
+            exit 1
+          fi
+          {
+            echo "### futureagi chart ${VERSION#v}: not published"
+            echo
+            echo "package: $PACKAGE, smoke: $SMOKE, publish: $PUBLISH."
+            echo
+            echo "The $VERSION images stay published; the chart is withheld. Fix the chart in the next patch release, or, when the failure was transient, $rerun. A version already pushed is never overwritten."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::futureagi chart ${VERSION#v} was not published (package: $PACKAGE, smoke: $SMOKE, publish: $PUBLISH)"
+          exit 1

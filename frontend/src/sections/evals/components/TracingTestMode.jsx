@@ -8,12 +8,13 @@ import {
   IconButton,
   InputAdornment,
   Tab,
-  Tabs,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import { styled } from "@mui/material/styles";
+import { createFilterOptions } from "@mui/material/Autocomplete";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -27,10 +28,18 @@ import { useQuery } from "@tanstack/react-query";
 import DraggableColResizer from "src/components/draggable-col-resizer";
 import Iconify from "src/components/iconify";
 import { useMapToVariable } from "./useMapToVariable";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { PROJECT_SOURCE } from "src/utils/constants";
+import { ANALYTICS_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { canonicalEntries } from "src/utils/utils";
+import {
+  getSpanReadCacheKey,
+  getSpanReadIdentityKey,
+  SPAN_REFERENCE_ERROR,
+  spanReadRequest,
+  verifySpanReadResponse,
+} from "src/sections/projects/LLMTracing/spanReadReference";
 import {
   collectExactListRows,
   createListCursorProtocolError,
@@ -55,11 +64,18 @@ import { useForm, useWatch } from "react-hook-form";
 import CustomTooltip from "src/components/tooltip";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
+import DateRangePill, {
+  dateFilterForOption,
+} from "src/sections/projects/LLMTracing/DateRangePill";
 import { JsonValueTree } from "./DatasetTestMode";
 import EvalResultDisplay from "./EvalResultDisplay";
 import SpanRowList from "./SpanRowList";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
-import { resolveMappingFromRow } from "../utils/evalExecution";
+import {
+  buildAutoCtx,
+  buildCompositeCtx,
+  resolveMappingFromRow,
+} from "../utils/evalExecution";
 import {
   walkPaths,
   expandPaths,
@@ -84,6 +100,58 @@ import {
   parseVoiceCallDetailResponse,
   parseVoiceCallListResponse,
 } from "src/api/project/observe-contracts";
+import ContentSkeleton from "src/components/content-skeleton";
+
+const MappingOption = styled("li")(({ theme }) => ({
+  fontSize: "12px",
+  fontFamily: "monospace",
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  containerType: "inline-size",
+  color: theme.palette.text.primary,
+  '&[data-nested="true"]': { color: theme.palette.primary.main },
+  // Reveal the clipped tail on hover/focus; fitting text stays put.
+  "&:hover > span, &.Mui-focused > span": {
+    maxWidth: "none",
+    flexShrink: 0,
+    transform: "translateX(min(0px, calc(100cqw - 100%)))",
+  },
+}));
+
+const MappingOptionLabel = styled("span")({
+  display: "inline-block",
+  maxWidth: "100%",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  verticalAlign: "top",
+});
+
+// The listbox is not virtualised; cap what gets mounted. The search is
+// server-backed, so narrowing the query still reaches everything.
+const MAPPING_OPTION_RENDER_LIMIT = 200;
+const filterMappingOptions = createFilterOptions({
+  limit: MAPPING_OPTION_RENDER_LIMIT,
+});
+
+// Module-level so their identity is stable across renders.
+const MAPPING_LISTBOX_PROPS = { style: { maxHeight: 260 } };
+const isMappingOptionEqual = (opt, val) => opt === val;
+
+const renderMappingOption = (props, col) => {
+  const { key, ...rest } = props;
+  const depth = col.includes(".") ? col.split(".").length - 1 : 0;
+  return (
+    <MappingOption
+      key={key}
+      {...rest}
+      title={col}
+      data-nested={depth > 0 ? "true" : undefined}
+      style={depth > 0 ? { paddingLeft: 12 + depth * 12 } : undefined}
+    >
+      <MappingOptionLabel>{col}</MappingOptionLabel>
+    </MappingOption>
+  );
+};
 
 const ROW_TYPE_OPTIONS = [
   { value: "Span", label: "Spans", icon: "solar:layers-outline" },
@@ -139,20 +207,6 @@ function sortEntries(entries) {
     if (bi !== -1) return 1;
     return 0;
   });
-}
-
-// Recursively find a span by ID in the observation spans tree.
-function findSpanInTree(spans, spanId) {
-  if (!spans) return null;
-  for (const item of spans) {
-    const span = item.observation_span;
-    if (span?.id === spanId) return span;
-    if (item.children?.length) {
-      const found = findSpanInTree(item.children, spanId);
-      if (found) return found;
-    }
-  }
-  return null;
 }
 
 // Flatten span tree into an ordered list (depth-first, like the graph)
@@ -270,8 +324,170 @@ const tracingPreviewRowIdentity = (rowType, row) => {
   if (rowType === "Trace") {
     return row?.trace_id || row?.id || null;
   }
-  const id = row?.span_id || row?.id;
-  return id ? `${row?.trace_id || ""}:${id}:${row?.start_time || ""}` : null;
+  return getSpanReadIdentityKey(row);
+};
+
+const MAPPING_COMMIT_DEBOUNCE_MS = 120;
+const MAPPING_AUTOCOMPLETE_SX = { flex: 1 };
+
+const MappingRow = React.memo(function MappingRow({
+  variable,
+  options,
+  value,
+  allowCustomFieldPath,
+  disabled,
+  isFetchingColumns,
+  disabledTooltip,
+  onSelect,
+  onType,
+  onOpen,
+}) {
+  const [inputValue, setInputValue] = useState(value || "");
+  const commitTimer = useRef(null);
+  const lastCommitted = useRef(value || "");
+
+  useEffect(() => {
+    const next = value || "";
+    if (next === lastCommitted.current) return;
+    lastCommitted.current = next;
+    setInputValue(next);
+  }, [value]);
+
+  useEffect(() => () => clearTimeout(commitTimer.current), []);
+
+  const autocomplete = (
+    <Autocomplete
+      size="small"
+      freeSolo={allowCustomFieldPath}
+      disabled={disabled}
+      options={options}
+      value={value || null}
+      onOpen={() => onOpen(variable, value)}
+      onChange={(_, val) => {
+        const next = val || "";
+        clearTimeout(commitTimer.current);
+        lastCommitted.current = next;
+        setInputValue(next);
+        onSelect(variable, next);
+      }}
+      {...(allowCustomFieldPath
+        ? {
+            inputValue,
+            onInputChange: (_event, val, reason) => {
+              if (reason === "reset") return;
+              const next = val || "";
+              setInputValue(next);
+              clearTimeout(commitTimer.current);
+              commitTimer.current = setTimeout(() => {
+                lastCommitted.current = next;
+                onType(variable, next);
+              }, MAPPING_COMMIT_DEBOUNCE_MS);
+            },
+          }
+        : {})}
+      openOnFocus
+      autoHighlight
+      selectOnFocus
+      handleHomeEndKeys
+      isOptionEqualToValue={isMappingOptionEqual}
+      sx={MAPPING_AUTOCOMPLETE_SX}
+      filterOptions={filterMappingOptions}
+      ListboxProps={MAPPING_LISTBOX_PROPS}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          placeholder={
+            isFetchingColumns
+              ? "Loading columns..."
+              : allowCustomFieldPath
+                ? "Search or type a path (e.g. attributes.input.value)"
+                : "Search column..."
+          }
+          InputProps={{
+            ...params.InputProps,
+            sx: {
+              ...params.InputProps.sx,
+              fontSize: "12px",
+              fontFamily: "monospace",
+              height: 28,
+              py: 0,
+            },
+            endAdornment: isFetchingColumns ? (
+              <InputAdornment position="end">
+                <CircularProgress size={14} />
+              </InputAdornment>
+            ) : (
+              params.InputProps.endAdornment
+            ),
+          }}
+        />
+      )}
+      renderOption={renderMappingOption}
+    />
+  );
+
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 0.5,
+          px: 1,
+          py: 0.25,
+          borderRadius: "4px",
+          border: "1px solid",
+          borderColor: "divider",
+          minWidth: 120,
+        }}
+      >
+        <Iconify
+          icon="solar:code-linear"
+          width={14}
+          sx={{ color: "text.secondary" }}
+        />
+        <Typography
+          variant="caption"
+          fontWeight={600}
+          sx={{ fontSize: "12px" }}
+        >
+          {variable}
+        </Typography>
+      </Box>
+      <Iconify
+        icon="solar:arrow-right-linear"
+        width={14}
+        sx={{ color: "text.disabled" }}
+      />
+      {disabled ? (
+        <CustomTooltip
+          show
+          type="black"
+          size="small"
+          title={disabledTooltip}
+          placement="top"
+          arrow
+        >
+          <Box sx={{ flex: 1 }}>{autocomplete}</Box>
+        </CustomTooltip>
+      ) : (
+        autocomplete
+      )}
+    </Box>
+  );
+});
+
+MappingRow.propTypes = {
+  variable: PropTypes.string.isRequired,
+  options: PropTypes.arrayOf(PropTypes.string).isRequired,
+  value: PropTypes.string,
+  allowCustomFieldPath: PropTypes.bool,
+  disabled: PropTypes.bool,
+  isFetchingColumns: PropTypes.bool,
+  disabledTooltip: PropTypes.string,
+  onSelect: PropTypes.func.isRequired,
+  onType: PropTypes.func.isRequired,
+  onOpen: PropTypes.func.isRequired,
 };
 
 const TracingTestMode = React.forwardRef(
@@ -338,9 +554,20 @@ const TracingTestMode = React.forwardRef(
       control: internalFilterForm.control,
       name: "filters",
     });
+    // Keep the existing 30-day preview default visible and editable. Property
+    // discovery includes older values; choosing one must not hide the range
+    // that determines whether its rows appear in this preview.
+    const [previewDateFilter, setPreviewDateFilter] = useState(() => ({
+      dateOption: "30D",
+      dateFilter: dateFilterForOption("30D"),
+    }));
     const internalApiFilters = useMemo(
-      () => buildApiFilterArray(internalFormFilters),
-      [internalFormFilters],
+      () =>
+        buildApiFilterArray(
+          internalFormFilters,
+          ...previewDateFilter.dateFilter,
+        ),
+      [internalFormFilters, previewDateFilter],
     );
     const effectiveFilters = hostsFilter ? internalApiFilters : localFilters;
 
@@ -438,11 +665,13 @@ const TracingTestMode = React.forwardRef(
     }, [keyColWidth]);
 
     // Span/trace detail (full attributes)
-    const [spanDetail, setSpanDetail] = useState(null);
+    const [loadedSpanDetail, setSpanDetail] = useState(null);
     const [loadingDetail, setLoadingDetail] = useState(false);
+    const [detailError, setDetailError] = useState(null);
 
     // Per-row cache so toggling rows doesn't refetch the trace or re-walk
-    // the response. Keyed by `${rowType}:${traceId}[:${spanId}]`. Each entry
+    // the response. Span keys contain project + physical identity + winner.
+    // Other keys retain the selected project scope. Each entry
     // is `{ detail, fieldNames? }` — fieldNames is filled lazily on first
     // walk and reused on subsequent row toggles.
     const detailCacheRef = useRef(new Map());
@@ -575,6 +804,9 @@ const TracingTestMode = React.forwardRef(
       setListContinuationPending(false);
       let cancelled = false;
       const requestController = new AbortController();
+      const startedAt = Date.now();
+      const remainingMs = () =>
+        Math.max(1, ANALYTICS_REQUEST_TIMEOUT_MS - (Date.now() - startedAt));
       const fetchKey = `${selectedProjectId}:${rowType}:${effectiveFilterKey}`;
       if (listContinuationRef.current.signature !== fetchKey) {
         listContinuationRef.current = {
@@ -603,6 +835,17 @@ const TracingTestMode = React.forwardRef(
       const requestedCursorIdentities = new Set(
         listContinuationRef.current.requestedCursorIdentities || [],
       );
+      const cursorIdentityByToken = new Map();
+      const assertUnconsumedCursor = (identity) => {
+        if (
+          typeof identity !== "string" ||
+          requestedCursorIdentities.has(identity)
+        ) {
+          throw createListCursorProtocolError(
+            "List API returned a repeated continuation cursor",
+          );
+        }
+      };
       const fetchData = async () => {
         if (!startingCursor) setRows([]);
         try {
@@ -610,10 +853,8 @@ const TracingTestMode = React.forwardRef(
             const startingCursorIdentity =
               listContinuationRef.current.cursorIdentity ||
               listCursorBoundaryIdentity({ next_cursor: startingCursor });
-            rememberBoundedListCursorIdentity(
-              requestedCursorIdentities,
-              startingCursorIdentity,
-            );
+            assertUnconsumedCursor(startingCursorIdentity);
+            cursorIdentityByToken.set(startingCursor, startingCursorIdentity);
           }
           const recordContinuation = (metadata) => {
             const nextCursor = metadata?.next_cursor;
@@ -623,10 +864,10 @@ const TracingTestMode = React.forwardRef(
                 "List API returned a repeated continuation cursor",
               );
             }
-            rememberBoundedListCursorIdentity(
-              requestedCursorIdentities,
-              nextCursorIdentity,
-            );
+            // A deadline can return this cursor as pending. Only successful
+            // responses may mark it consumed, otherwise Continue rejects it.
+            assertUnconsumedCursor(nextCursorIdentity);
+            cursorIdentityByToken.set(nextCursor, nextCursorIdentity);
           };
           const requestList = (
             endpoint,
@@ -635,11 +876,21 @@ const TracingTestMode = React.forwardRef(
           ) =>
             requestListWithLegacyCursorFallback({
               request: (nextParams) =>
-                axios.get(endpoint, { params: nextParams, signal }),
+                readQuery(endpoint, { params: nextParams, signal }),
               params,
               pageParam: voice ? "page" : "page_number",
               firstPage: voice ? 1 : 0,
-            }).then((response) => parseAxiosResult(response, parser));
+            }).then((response) => {
+              const parsed = parseAxiosResult(response, parser);
+              if (params.cursor && !signal.aborted && !cancelled) {
+                rememberBoundedListCursorIdentity(
+                  requestedCursorIdentities,
+                  cursorIdentityByToken.get(params.cursor) ||
+                    listCursorBoundaryIdentity({ next_cursor: params.cursor }),
+                );
+              }
+              return parsed;
+            });
           if (rowType === "VoiceCall") {
             const requestParams = buildTracingVoicePreviewListParams({
               selectedProjectId,
@@ -654,6 +905,7 @@ const TracingTestMode = React.forwardRef(
               { voice: true, parser: parseVoiceCallListResponse },
             );
             const exactRows = await collectExactListRows({
+              maxElapsedMs: remainingMs(),
               initialResponse: response,
               initialRows: startingRows,
               targetRowCount: requestParams.page_size,
@@ -741,6 +993,7 @@ const TracingTestMode = React.forwardRef(
             parser: responseParser,
           });
           const exactRows = await collectExactListRows({
+            maxElapsedMs: remainingMs(),
             initialResponse: response,
             initialRows: startingRows,
             targetRowCount: params.page_size,
@@ -807,7 +1060,7 @@ const TracingTestMode = React.forwardRef(
             // A transport failure does not invalidate rows and a checkpoint
             // already proven by earlier bounded reads. Restore the exact
             // pre-attempt snapshot (including the requested-cursor set before
-            // `startingCursor` was added) so an explicit retry can safely
+            // `startingCursor` was consumed) so an explicit retry can safely
             // request the same saved checkpoint once more.
             listContinuationRef.current = continuationSnapshot;
             setListReadState("error");
@@ -856,6 +1109,17 @@ const TracingTestMode = React.forwardRef(
 
     // ── Current row ──
     const currentRow = rows[currentRowIndex] || null;
+    // Effects clean up after render. Never expose the previous span even for
+    // the render between selection and cancellation of its in-flight request.
+    const selectedSpanKey = getSpanReadCacheKey(currentRow);
+    const spanDetail =
+      rowType === "Span"
+        ? selectedSpanKey &&
+          currentRow?.project_id === selectedProjectId &&
+          selectedSpanKey === getSpanReadCacheKey(loadedSpanDetail)
+          ? loadedSpanDetail
+          : null
+        : loadedSpanDetail;
 
     // ── Session drill-down queries (rowType=Session only) ──
     // These queries assemble the previewed session so the mapping dropdown
@@ -882,11 +1146,14 @@ const TracingTestMode = React.forwardRef(
     const sessionFirstTraceId =
       sessionDetailQuery.data?.response?.[0]?.trace_id || null;
 
+    // The same trace id can exist in several projects; rows come from the
+    // selected project, so every trace-keyed detail read pins to it.
     const sessionFirstTraceSpansQuery = useQuery({
-      queryKey: ["picker-trace-spans", sessionFirstTraceId],
+      queryKey: ["picker-trace-spans", sessionFirstTraceId, selectedProjectId],
       queryFn: async () => {
         const resp = await axios.get(
           endpoints.project.getTrace(sessionFirstTraceId),
+          { params: { project_id: selectedProjectId } },
         );
         const r = resp.data?.result || {};
         return {
@@ -902,8 +1169,10 @@ const TracingTestMode = React.forwardRef(
 
     // ── Fetch full span/trace detail when row changes ──
     useEffect(() => {
+      setDetailError(null);
       if (!currentRow) {
         setSpanDetail(null);
+        setLoadingDetail(false);
         return;
       }
 
@@ -911,8 +1180,16 @@ const TracingTestMode = React.forwardRef(
       const traceId = currentRow.trace_id;
       const cacheKey =
         rowType === "Span"
-          ? `Span:${traceId || ""}:${spanId || ""}`
-          : `${rowType}:${traceId || spanId || ""}`;
+          ? JSON.stringify([
+              selectedProjectId,
+              "Span",
+              getSpanReadCacheKey(currentRow),
+            ])
+          : JSON.stringify([
+              selectedProjectId,
+              rowType,
+              traceId || spanId || "",
+            ]);
 
       // Cache hit: reuse the exact same detailData reference so the
       // downstream fieldNames memo short-circuits too.
@@ -923,6 +1200,9 @@ const TracingTestMode = React.forwardRef(
         return;
       }
 
+      const controller = new AbortController();
+      let cancelled = false;
+      setSpanDetail(null);
       const fetchDetail = async () => {
         setLoadingDetail(true);
         try {
@@ -934,7 +1214,10 @@ const TracingTestMode = React.forwardRef(
             try {
               const { data } = await axios.get(
                 endpoints.project.getVoiceCallDetail,
-                { params: { trace_id: traceId } },
+                {
+                  params: { trace_id: traceId, project_id: selectedProjectId },
+                  signal: controller.signal,
+                },
               );
               const voiceResult = parseVoiceCallDetailResponse(data);
               // Spread row-list fields first as a fallback so we never
@@ -943,29 +1226,36 @@ const TracingTestMode = React.forwardRef(
             } catch {
               detailData = { ...currentRow };
             }
-          } else if ((rowType === "Span" || rowType === "Trace") && traceId) {
+          } else if (rowType === "Span") {
+            const { spanId: selectedSpanId, params } =
+              spanReadRequest(currentRow);
+            if (params.project_id !== selectedProjectId)
+              throw new Error(SPAN_REFERENCE_ERROR);
+            const { data } = await axios.get(
+              endpoints.project.getObservationSpan(selectedSpanId),
+              { params, signal: controller.signal },
+            );
+            if (data?.status !== true) throw new Error(SPAN_REFERENCE_ERROR);
+            detailData = verifySpanReadResponse(
+              currentRow,
+              data?.result?.observation_span,
+            );
+          } else if (rowType === "Trace" && traceId) {
             // Fetch the TRACE detail — same API as the drawer uses.
             // This returns all observation spans with full attributes (including spanAttributes).
             const { data } = await axios.get(
               endpoints.project.getTrace(traceId),
+              {
+                params: { project_id: selectedProjectId },
+                signal: controller.signal,
+              },
             );
             const traceResult = data?.result;
 
             const spans = traceResult?.observation_spans;
-            if (rowType === "Span" && spanId && spans) {
-              detailData = findSpanInTree(spans, spanId);
-              if (!detailData) {
-                const firstSpan = spans?.[0];
-                detailData = firstSpan?.observation_span || traceResult?.trace;
-              }
-            } else {
-              const traceInfo = traceResult?.trace || {};
-              const allSpans = sortSpansForMapping(flattenSpanTree(spans));
-              detailData = {
-                ...traceInfo,
-                spans: allSpans,
-              };
-            }
+            const traceInfo = traceResult?.trace || {};
+            const allSpans = sortSpansForMapping(flattenSpanTree(spans));
+            detailData = { ...traceInfo, spans: allSpans };
           } else if (rowType === "Session") {
             // Sessions are assembled via React Query at the top of the
             // component (sessionDetailQuery + sessionFirstTraceSpansQuery)
@@ -980,17 +1270,28 @@ const TracingTestMode = React.forwardRef(
             detailData = { ...currentRow };
           }
 
+          if (cancelled) return;
           detailCacheRef.current.set(cacheKey, { detail: detailData });
           setSpanDetail(detailData);
         } catch {
+          if (cancelled) return;
           setSpanDetail(null);
+          setDetailError(
+            rowType === "Span"
+              ? SPAN_REFERENCE_ERROR
+              : "Could not load this preview. Refresh the list and try again.",
+          );
         } finally {
-          setLoadingDetail(false);
+          if (!cancelled) setLoadingDetail(false);
         }
       };
 
       fetchDetail();
-    }, [currentRow, currentRowIndex, rowType, columns]);
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }, [currentRow, currentRowIndex, rowType, selectedProjectId]);
 
     // ── Session detail watcher ──
     // Compose `spanDetail` from the React Query results when in Session
@@ -1115,9 +1416,14 @@ const TracingTestMode = React.forwardRef(
     const [deepenedPaths, setDeepenedPaths] = useState([]);
     const [deepenedTruncated, setDeepenedTruncated] = useState(() => new Set());
 
+    // A prefix stays in `truncatedSet` once known, so without this each
+    // backspace across a `.` re-walked the subtree.
+    const expandedPrefixesRef = useRef(new Set());
+
     useEffect(() => {
       setDeepenedPaths([]);
       setDeepenedTruncated(new Set());
+      expandedPrefixesRef.current = new Set();
     }, [spanDetail]);
 
     // Mapping-dropdown source: paths walked from the previewed row (eager
@@ -1130,6 +1436,21 @@ const TracingTestMode = React.forwardRef(
         : rowFields.map((f) => f?.colId || f?.key);
       return mergeTracingFieldNames(genericFields, exactAttributeFields);
     }, [walkedFromDetail, deepenedPaths, rowFields, exactAttributeFields]);
+
+    // Untouched variables keep the same `fieldNames` reference so their
+    // listboxes skip re-filtering while a sibling is being typed into.
+    const optionsByVariable = useMemo(() => {
+      const fieldSet = new Set(fieldNames);
+      const out = {};
+      variables.forEach((variable) => {
+        const current = mapping[variable];
+        out[variable] =
+          current && !fieldSet.has(current)
+            ? [current, ...fieldNames]
+            : fieldNames;
+      });
+      return out;
+    }, [variables, mapping, fieldNames]);
 
     const truncatedSet = useMemo(() => {
       const merged = new Set(walkedFromDetail?.truncated || []);
@@ -1147,6 +1468,8 @@ const TracingTestMode = React.forwardRef(
         if (!inputValue?.endsWith(".")) return;
         const prefix = inputValue.slice(0, -1);
         if (!truncatedSet.has(prefix)) return;
+        if (expandedPrefixesRef.current.has(prefix)) return;
+        expandedPrefixesRef.current.add(prefix);
         const { paths, truncated } = expandPaths(spanDetail, prefix);
         if (!paths.length) return;
         setDeepenedPaths((prev) => {
@@ -1161,6 +1484,23 @@ const TracingTestMode = React.forwardRef(
         });
       },
       [truncatedSet, spanDetail, walkedFromDetail],
+    );
+
+    const handleMappingSelect = useCallback((variable, val) => {
+      setMapping((prev) => ({ ...prev, [variable]: val }));
+    }, []);
+    const handleMappingType = useCallback(
+      (variable, val) => {
+        handleMappingInputChange(null, val);
+        setMapping((prev) => ({ ...prev, [variable]: val }));
+      },
+      [handleMappingInputChange],
+    );
+    const handleMappingOpen = useCallback(
+      (variable, val) => {
+        if (allowCustomFieldPath) setMappingSearch(val || variable);
+      },
+      [allowCustomFieldPath],
     );
 
     // Notify parent of available fields for autocomplete
@@ -1267,29 +1607,12 @@ const TracingTestMode = React.forwardRef(
           rowFields,
         );
 
-        // Single-eval playground resolves {{span}} / {{trace}} /
-        // {{session}} server-side from IDs. Composite execution expects
-        // the concrete context objects directly.
-        const autoCtx = {};
-        const _spanId = currentRow?.span_id || currentRow?.spanId;
-        const _traceId = currentRow?.trace_id || currentRow?.traceId;
-        const _sessionId = currentRow?.session_id || currentRow?.sessionId;
-        if (rowType === "Span" && _spanId) autoCtx.span_id = _spanId;
-        if ((rowType === "Span" || rowType === "Trace") && _traceId)
-          autoCtx.trace_id = _traceId;
-        if (rowType === "Session" && _sessionId)
-          autoCtx.session_id = _sessionId;
-        if (rowType === "VoiceCall" && _traceId) autoCtx.trace_id = _traceId;
-
-        const compositeCtx = {};
-        if (rowType === "Span" && spanDetail)
-          compositeCtx.span_context = spanDetail;
-        if (rowType === "Trace" && currentRow)
-          compositeCtx.trace_context = currentRow;
-        if (rowType === "Session" && currentRow)
-          compositeCtx.session_context = currentRow;
-        if (rowType === "VoiceCall" && currentRow)
-          compositeCtx.trace_context = currentRow;
+        const autoCtx = buildAutoCtx({ rowType, currentRow, spanDetail });
+        const compositeCtx = buildCompositeCtx({
+          rowType,
+          currentRow,
+          spanDetail,
+        });
 
         const compositeConfig = buildCompositeRuntimeConfig({
           codeParams,
@@ -1397,13 +1720,20 @@ const TracingTestMode = React.forwardRef(
     );
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         {/* Project selector — hidden when pre-selected (e.g. task flow) */}
         {!projectLocked && (
           <Box>
             <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
               Project
-              <Typography component="span" sx={{ color: "error.main" }}>
+              <Typography component="span" sx={{ color: "status.danger.fg" }}>
                 *
               </Typography>
             </Typography>
@@ -1462,18 +1792,7 @@ const TracingTestMode = React.forwardRef(
             <Typography variant="body2" fontWeight={600}>
               Row Type
             </Typography>
-            <Chip
-              label="Voice Calls"
-              size="small"
-              sx={{
-                height: 20,
-                fontSize: "11px",
-                bgcolor: "background.neutral",
-                color: "text.secondary",
-                "& .MuiChip-label": { px: 0.75 },
-                "& .MuiChip-icon": { ml: 0.5, mr: -0.25 },
-              }}
-            />
+            <Chip label="Voice Calls" size="small" />
           </Box>
         )}
 
@@ -1487,42 +1806,17 @@ const TracingTestMode = React.forwardRef(
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px", display: "block", mb: 0.75 }}
+              sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
             >
               Run evaluations on
             </Typography>
-            <Tabs
+            <SegmentedTabs
               value={rowType}
               onChange={(_, val) => {
                 setRowType(val);
                 setMapping({});
               }}
-              variant="standard"
-              scrollButtons={false}
-              TabIndicatorProps={{ style: { display: "none" } }}
-              sx={{
-                minHeight: 28,
-                "& .MuiTabs-scroller": { overflow: "visible !important" },
-                "& .MuiTab-root": {
-                  minHeight: 28,
-                  px: 1.25,
-                  py: 0,
-                  mr: "0px !important",
-                  textTransform: "none",
-                  fontSize: "12px",
-                  borderRadius: "6px",
-                  minWidth: "auto",
-                },
-                border: "1px solid",
-                borderColor: "divider",
-                p: "2px",
-                borderRadius: "8px",
-                width: "fit-content",
-                bgcolor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.04)"
-                    : "background.neutral",
-              }}
+              sx={{ width: "fit-content" }}
             >
               {ROW_TYPE_OPTIONS.map((t) => (
                 <Tab
@@ -1532,33 +1826,13 @@ const TracingTestMode = React.forwardRef(
                     <Box
                       sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
                     >
-                      <Iconify icon={t.icon} width={13} />
+                      <Iconify icon={t.icon} width={14} />
                       {t.label}
                     </Box>
                   }
-                  sx={{
-                    bgcolor:
-                      rowType === t.value
-                        ? (theme) =>
-                            theme.palette.mode === "dark"
-                              ? "rgba(255,255,255,0.12)"
-                              : "background.paper"
-                        : "transparent",
-                    boxShadow:
-                      rowType === t.value
-                        ? (theme) =>
-                            theme.palette.mode === "dark"
-                              ? "none"
-                              : "0 1px 3px rgba(0,0,0,0.08)"
-                        : "none",
-                    borderRadius: "6px",
-                    fontWeight: rowType === t.value ? 600 : 400,
-                    color:
-                      rowType === t.value ? "text.primary" : "text.disabled",
-                  }}
                 />
               ))}
-            </Tabs>
+            </SegmentedTabs>
           </Box>
         )}
 
@@ -1567,7 +1841,7 @@ const TracingTestMode = React.forwardRef(
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px", display: "block", mb: 0.75 }}
+              sx={{ fontSize: "12px", display: "block", mb: 0.75 }}
             >
               Narrow down which{" "}
               {rowType === "Trace"
@@ -1585,6 +1859,13 @@ const TracingTestMode = React.forwardRef(
               projectId={selectedProjectId}
               isSimulator={isVoiceProject}
               rowType={rowType}
+              toolbarStart={
+                <DateRangePill
+                  dateFilter={previewDateFilter}
+                  setDateFilter={setPreviewDateFilter}
+                  sx={{ height: 30, fontSize: 12 }}
+                />
+              }
             />
           </Box>
         )}
@@ -1592,7 +1873,7 @@ const TracingTestMode = React.forwardRef(
         {/* Loading */}
         {(loading || isPendingNewFetch) && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
-            <CircularProgress size={20} />
+            <ContentSkeleton variant="panel" />
           </Box>
         )}
 
@@ -1645,7 +1926,7 @@ const TracingTestMode = React.forwardRef(
               <Typography
                 variant="caption"
                 color="text.secondary"
-                sx={{ fontSize: "11px" }}
+                sx={{ fontSize: "12px" }}
               >
                 Row {Math.min(currentRowIndex + 1, rows?.length ?? 0)} of{" "}
                 {rows?.length ?? 0}
@@ -1653,7 +1934,7 @@ const TracingTestMode = React.forwardRef(
                   <Typography
                     component="span"
                     sx={{
-                      fontSize: "11px",
+                      fontSize: "12px",
                       color: "text.disabled",
                       ml: 0.5,
                     }}
@@ -1667,19 +1948,20 @@ const TracingTestMode = React.forwardRef(
                 <IconButton
                   size="small"
                   disabled={currentRowIndex === 0}
+                  aria-label="Previous row"
                   onClick={() => {
                     setCurrentRowIndex((i) => Math.max(0, i - 1));
                     setResult(null);
                     setError(null);
                     onClearResult?.();
                   }}
-                  sx={{ width: 24, height: 24 }}
                 >
-                  <Iconify icon="mdi:chevron-left" width={16} />
+                  <Iconify icon="solar:alt-arrow-left-linear" width={16} />
                 </IconButton>
                 <IconButton
                   size="small"
                   disabled={currentRowIndex >= (rows?.length ?? 0) - 1}
+                  aria-label="Next row"
                   onClick={() => {
                     setCurrentRowIndex((i) =>
                       Math.min((rows?.length ?? 0) - 1, i + 1),
@@ -1688,9 +1970,8 @@ const TracingTestMode = React.forwardRef(
                     setError(null);
                     onClearResult?.();
                   }}
-                  sx={{ width: 24, height: 24 }}
                 >
-                  <Iconify icon="mdi:chevron-right" width={16} />
+                  <Iconify icon="solar:alt-arrow-right-linear" width={16} />
                 </IconButton>
               </Box>
             </Box>
@@ -1701,6 +1982,12 @@ const TracingTestMode = React.forwardRef(
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
             <CircularProgress size={18} />
           </Box>
+        )}
+
+        {detailError && !loadingDetail && (
+          <Typography role="alert" variant="body2" color="error" sx={{ py: 2 }}>
+            {detailError}
+          </Typography>
         )}
 
         {spanDetail && !loadingDetail && (
@@ -1731,7 +2018,7 @@ const TracingTestMode = React.forwardRef(
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="mdi:magnify"
+                        icon="solar:magnifier-linear"
                         width={14}
                         sx={{ color: "text.disabled" }}
                       />
@@ -1748,10 +2035,7 @@ const TracingTestMode = React.forwardRef(
                 display: "flex",
                 px: 1.5,
                 py: 0.5,
-                backgroundColor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? "rgba(255,255,255,0.03)"
-                    : "background.default",
+                backgroundColor: "background.neutral",
                 borderBottom: "1px solid",
                 borderColor: "divider",
               }}
@@ -1896,7 +2180,7 @@ const TracingTestMode = React.forwardRef(
                                   whiteSpace: "pre-wrap",
                                   wordBreak: "break-all",
                                   fontFamily: "monospace",
-                                  fontSize: 11,
+                                  fontSize: 12,
                                   maxWidth: 520,
                                 }}
                               >
@@ -1968,15 +2252,15 @@ const TracingTestMode = React.forwardRef(
           getQueryReadMessage(listReadState) && (
             <Box
               role="status"
-              sx={(theme) => ({
+              sx={{
                 px: 1.5,
                 py: 1,
                 mb: rows.length > 0 ? 1 : 0,
                 borderRadius: "6px",
                 border: "1px solid",
-                borderColor: alpha(theme.palette.warning.main, 0.35),
-                backgroundColor: alpha(theme.palette.warning.main, 0.08),
-              })}
+                borderColor: "status.warning.border",
+                backgroundColor: "status.warning.bg",
+              }}
             >
               <Box
                 sx={{
@@ -1986,7 +2270,10 @@ const TracingTestMode = React.forwardRef(
                   gap: 1,
                 }}
               >
-                <Typography variant="caption" color="warning.main">
+                <Typography
+                  variant="caption"
+                  sx={{ color: "status.warning.fg" }}
+                >
                   {getQueryReadMessage(listReadState)}
                 </Typography>
                 {listReadState === "error" && listFailureRetryable && (
@@ -2021,7 +2308,7 @@ const TracingTestMode = React.forwardRef(
               }}
             >
               <Iconify
-                icon="mdi:table-off"
+                icon="solar:table-linear"
                 width={28}
                 sx={{ color: "text.disabled" }}
               />
@@ -2030,11 +2317,14 @@ const TracingTestMode = React.forwardRef(
                 fontWeight={600}
                 color="text.secondary"
               >
-                No {rowType.toLowerCase()} data found
+                No matching{" "}
+                {rowType === "VoiceCall"
+                  ? "voice calls"
+                  : `${rowType.toLowerCase()}s`}{" "}
+                found
               </Typography>
               <Typography variant="caption" color="text.disabled">
-                Add {rowType.toLowerCase()} to this project before running a
-                test
+                Try changing the filters or date range.
               </Typography>
             </Box>
           )}
@@ -2042,13 +2332,15 @@ const TracingTestMode = React.forwardRef(
         {/* Variable mapping */}
         {variables.length > 0 &&
           (() => {
-            const isFetchingColumns =
+            const isLoadingRowColumns =
               !!selectedProjectId &&
-              (loading ||
-                isPendingNewFetch ||
-                loadingDetail ||
-                isFetchingExactAttributes);
-            const mappingDisabledTooltip = isFetchingColumns
+              (loading || isPendingNewFetch || loadingDetail);
+            // The exact lookup refetches per keystroke; disabling the control
+            // would close its popup, so it only drives the spinner.
+            const isFetchingColumns =
+              isLoadingRowColumns ||
+              (!!selectedProjectId && isFetchingExactAttributes);
+            const mappingDisabledTooltip = isLoadingRowColumns
               ? "Columns are being fetched"
               : "";
             const exactAttributeReadMessage = getAttributeLookupMessage(
@@ -2066,17 +2358,20 @@ const TracingTestMode = React.forwardRef(
                 {exactAttributeReadMessage && (
                   <Box
                     role="status"
-                    sx={(theme) => ({
+                    sx={{
                       px: 1,
                       py: 0.5,
                       mb: 0.75,
                       borderRadius: "4px",
                       border: "1px solid",
-                      borderColor: alpha(theme.palette.warning.main, 0.35),
-                      backgroundColor: alpha(theme.palette.warning.main, 0.08),
-                    })}
+                      borderColor: "status.warning.border",
+                      backgroundColor: "status.warning.bg",
+                    }}
                   >
-                    <Typography variant="caption" color="warning.main">
+                    <Typography
+                      variant="caption"
+                      sx={{ color: "status.warning.fg" }}
+                    >
                       {exactAttributeReadMessage}
                     </Typography>
                   </Box>
@@ -2090,7 +2385,7 @@ const TracingTestMode = React.forwardRef(
                       onClick={() =>
                         fetchNextAttributePage?.()?.catch?.(() => undefined)
                       }
-                      sx={{ px: 0, minWidth: 0, fontSize: 11 }}
+                      sx={{ px: 0, minWidth: 0 }}
                     >
                       {isFetchingNextAttributePage
                         ? "Loading more attributes…"
@@ -2103,183 +2398,21 @@ const TracingTestMode = React.forwardRef(
                 <Box
                   sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}
                 >
-                  {variables.map((variable) => {
-                    const autocomplete = (
-                      <Autocomplete
-                        size="small"
-                        freeSolo={allowCustomFieldPath}
-                        disabled={isFetchingColumns}
-                        options={
-                          mapping[variable] &&
-                          !fieldNames.includes(mapping[variable])
-                            ? [mapping[variable], ...fieldNames]
-                            : fieldNames
-                        }
-                        value={mapping[variable] || null}
-                        onOpen={() => {
-                          if (allowCustomFieldPath) {
-                            setMappingSearch(mapping[variable] || variable);
-                          }
-                        }}
-                        onChange={(_, val) =>
-                          setMapping((prev) => ({
-                            ...prev,
-                            [variable]: val || "",
-                          }))
-                        }
-                        {...(allowCustomFieldPath
-                          ? {
-                              inputValue: mapping[variable] || "",
-                              onInputChange: (event, val, reason) => {
-                                if (reason === "reset") return;
-                                handleMappingInputChange(event, val);
-                                setMapping((prev) => ({
-                                  ...prev,
-                                  [variable]: val || "",
-                                }));
-                              },
-                            }
-                          : {})}
-                        openOnFocus
-                        autoHighlight
-                        selectOnFocus
-                        handleHomeEndKeys
-                        isOptionEqualToValue={(opt, val) => opt === val}
-                        sx={{ flex: 1 }}
-                        ListboxProps={{ style: { maxHeight: 260 } }}
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            placeholder={
-                              isFetchingColumns
-                                ? "Loading columns..."
-                                : allowCustomFieldPath
-                                  ? "Search or type a path (e.g. attributes.input.value)"
-                                  : "Search column..."
-                            }
-                            InputProps={{
-                              ...params.InputProps,
-                              sx: {
-                                ...params.InputProps.sx,
-                                fontSize: "12px",
-                                fontFamily: "monospace",
-                                height: 28,
-                                py: 0,
-                              },
-                              endAdornment: isFetchingColumns ? (
-                                <InputAdornment position="end">
-                                  <CircularProgress size={14} />
-                                </InputAdornment>
-                              ) : (
-                                params.InputProps.endAdornment
-                              ),
-                            }}
-                          />
-                        )}
-                        renderOption={(props, col) => {
-                          const { key, ...rest } = props;
-                          return (
-                            <Box
-                              component="li"
-                              key={key}
-                              {...rest}
-                              title={col}
-                              sx={{
-                                ...rest.sx,
-                                fontSize: "12px",
-                                fontFamily: "monospace",
-                                pl: col.includes(".")
-                                  ? `${12 + (col.split(".").length - 1) * 12}px`
-                                  : undefined,
-                                color: col.includes(".")
-                                  ? "primary.main"
-                                  : "text.primary",
-                                whiteSpace: "nowrap",
-                                overflow: "hidden",
-                                containerType: "inline-size",
-                                // The option <li> is a flex row, so the span
-                                // is a flex item: releasing max-width alone
-                                // won't widen it — flex-shrink must go too.
-                                "&:hover > span, &.Mui-focused > span": {
-                                  maxWidth: "none",
-                                  flexShrink: 0,
-                                  // Slide left just far enough to reveal the
-                                  // clipped tail; fitting text stays put.
-                                  transform:
-                                    "translateX(min(0px, calc(100cqw - 100%)))",
-                                },
-                              }}
-                            >
-                              <Box
-                                component="span"
-                                sx={{
-                                  display: "inline-block",
-                                  maxWidth: "100%",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  verticalAlign: "top",
-                                }}
-                              >
-                                {col}
-                              </Box>
-                            </Box>
-                          );
-                        }}
-                      />
-                    );
-                    return (
-                      <Box
-                        key={variable}
-                        sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                      >
-                        <Box
-                          sx={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 0.5,
-                            px: 1,
-                            py: 0.25,
-                            borderRadius: "4px",
-                            border: "1px solid",
-                            borderColor: "divider",
-                            minWidth: 120,
-                          }}
-                        >
-                          <Iconify
-                            icon="mdi:code-braces"
-                            width={14}
-                            sx={{ color: "text.secondary" }}
-                          />
-                          <Typography
-                            variant="caption"
-                            fontWeight={600}
-                            sx={{ fontSize: "12px" }}
-                          >
-                            {variable}
-                          </Typography>
-                        </Box>
-                        <Iconify
-                          icon="mdi:arrow-right"
-                          width={14}
-                          sx={{ color: "text.disabled" }}
-                        />
-                        {isFetchingColumns ? (
-                          <CustomTooltip
-                            show
-                            type="black"
-                            size="small"
-                            title={mappingDisabledTooltip}
-                            placement="top"
-                            arrow
-                          >
-                            <Box sx={{ flex: 1 }}>{autocomplete}</Box>
-                          </CustomTooltip>
-                        ) : (
-                          autocomplete
-                        )}
-                      </Box>
-                    );
-                  })}
+                  {variables.map((variable) => (
+                    <MappingRow
+                      key={variable}
+                      variable={variable}
+                      options={optionsByVariable[variable] || fieldNames}
+                      value={mapping[variable] || ""}
+                      allowCustomFieldPath={allowCustomFieldPath}
+                      disabled={isLoadingRowColumns}
+                      isFetchingColumns={isFetchingColumns}
+                      disabledTooltip={mappingDisabledTooltip}
+                      onSelect={handleMappingSelect}
+                      onType={handleMappingType}
+                      onOpen={handleMappingOpen}
+                    />
+                  ))}
                 </Box>
               </Box>
             );
@@ -2316,18 +2449,15 @@ const TracingTestMode = React.forwardRef(
 
         {error && (
           <Box
-            sx={(t) => ({
+            sx={{
               p: 1.5,
               borderRadius: "6px",
               border: "1px solid",
-              borderColor: alpha(t.palette.error.main, 0.4),
-              backgroundColor: alpha(
-                t.palette.error.main,
-                t.palette.mode === "dark" ? 0.16 : 0.08,
-              ),
-            })}
+              borderColor: "status.danger.border",
+              backgroundColor: "status.danger.bg",
+            }}
           >
-            <Typography variant="caption" color="error.main">
+            <Typography variant="caption" sx={{ color: "status.danger.fg" }}>
               {typeof error === "string" ? error : JSON.stringify(error)}
             </Typography>
           </Box>

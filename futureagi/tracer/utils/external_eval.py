@@ -1,5 +1,4 @@
 import structlog
-from langfuse import Langfuse
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
@@ -279,6 +278,7 @@ def _send_eval_result(config: ExternalEvalConfig, value: str, reason: str):
 
 
 def _send_langfuse_eval_result(config: ExternalEvalConfig, value, reason: str):
+    from langfuse import Langfuse  # lazy
     langfuse = Langfuse(
         secret_key=config.credentials.get("langfuse_secret_key"),
         public_key=config.credentials.get("langfuse_public_key"),

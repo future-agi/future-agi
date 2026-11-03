@@ -1,0 +1,48 @@
+# Flux: the published OCI chart, verified with its keyless cosign signature
+# before every install or upgrade (not Helm values: apply with kubectl). The
+# signature must come from the release workflow of github.com/future-agi/future-agi
+# at a version tag. The values come from a ConfigMap you keep in Git.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: futureagi
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: oci://ghcr.io/future-agi/charts/futureagi
+  ref:
+    semver: "X.Y.Z"
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: ^https://token\.actions\.githubusercontent\.com$
+        subject: ^https://github\.com/future-agi/future-agi/\.github/workflows/helm-release\.yml@refs/tags/v.*$
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: futureagi
+  namespace: flux-system
+spec:
+  interval: 1h
+  releaseName: futureagi
+  targetNamespace: futureagi
+  install:
+    createNamespace: true
+    timeout: 20m
+  upgrade:
+    timeout: 20m
+  chartRef:
+    kind: OCIRepository
+    name: futureagi
+    namespace: flux-system
+  valuesFrom:
+    # The key values.yaml of this ConfigMap holds your values (e.g.
+    # examples/external.yaml plus your hosts). Credentials stay in Secrets
+    # (existingSecret values, or examples/external-secrets.yaml).
+    - kind: ConfigMap
+      name: futureagi-values
+      valuesKey: values.yaml

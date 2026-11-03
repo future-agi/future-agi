@@ -156,8 +156,8 @@ def test_agent_graph_is_one_latest_state_v2_statement():
     assert "graph_mapped_events AS" in query
     assert "groupArrayIf(" in query
     assert "graph_global_rank <= %(graph_visible_keep_count)s" in query
-    assert f"max_result_rows = {AGENT_GRAPH_RESULT_ROW_SENTINEL}" in query
-    assert f"max_result_bytes = {AGENT_GRAPH_MAX_RESULT_BYTES}" in query
+    assert "max_result_rows =" not in query
+    assert "max_result_bytes =" not in query
     assert "max_threads = 1" in query
     assert params["project_id"] == PROJECT_ID
     assert params["graph_visible_keep_count"] == AGENT_GRAPH_MAX_VISIBLE_NODES - 1

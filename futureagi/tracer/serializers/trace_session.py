@@ -9,9 +9,11 @@ from tracer.serializers.cursor_pagination import (
 )
 from tracer.serializers.filters import (
     BOUNDED_PAGE_NUMBER_HELP_TEXT,
+    JsonObjectField,
     ObserveGraphDataRequestSerializer,
     SortParamListQueryParamField,
     StrictInputSerializer,
+    json_object_query_param_field,
     session_bounded_filter_list_field,
     session_bounded_filter_list_query_param_field,
     session_filter_list_query_param_field,
@@ -129,7 +131,19 @@ class TraceSessionExportQuerySerializer(TraceSessionListQuerySerializer):
     project_id = serializers.UUIDField()
 
 
+class SessionNavigationContextSerializer(StrictInputSerializer):
+    page_request = json_object_query_param_field(required=False)
+    previous_page_request = json_object_query_param_field(required=False)
+    project_id = serializers.UUIDField(allow_null=True)
+    workspace_id = serializers.UUIDField()
+    user_id = serializers.CharField(required=False, allow_blank=False)
+    filters = session_bounded_filter_list_field()
+    sort_params = SortParamListQueryParamField()
+    cursor_mode = serializers.BooleanField(default=False)
+
+
 class TraceSessionRetrieveQuerySerializer(StrictInputSerializer):
+    navigation_context = json_object_query_param_field(required=False)
     user_id = serializers.CharField(required=False, allow_blank=True)
     filters = session_filter_list_query_param_field(required=False, default=list)
     sort_params = SortParamListQueryParamField(required=False, default=list)
@@ -137,6 +151,17 @@ class TraceSessionRetrieveQuerySerializer(StrictInputSerializer):
     page_size = serializers.IntegerField(
         required=False, default=30, min_value=1, max_value=500
     )
+
+
+class TraceSessionDetailResultSerializer(serializers.Serializer):
+    session_metadata = JsonObjectField()
+    response = serializers.ListField(child=JsonObjectField())
+    next = serializers.BooleanField()
+
+
+class TraceSessionDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = TraceSessionDetailResultSerializer()
 
 
 class TraceSessionGraphDataRequestSerializer(ObserveGraphDataRequestSerializer):

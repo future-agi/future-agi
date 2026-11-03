@@ -99,7 +99,8 @@ def test_ch25_classifier_does_not_revive_pre_correction_live_span() -> None:
                 completion_tokens Int64,
                 status String,
                 is_deleted UInt8,
-                _version UInt64
+                _version UInt64,
+                project_version_id Nullable(UUID)
             )
             ENGINE = ReplacingMergeTree(_version, is_deleted)
             PARTITION BY toDate(start_time)
@@ -177,7 +178,7 @@ def test_ch25_classifier_does_not_revive_pre_correction_live_span() -> None:
             ),
         ]
         for row in rows:
-            admin.execute("INSERT INTO spans VALUES", [row])
+            admin.execute("INSERT INTO spans VALUES", [(*row, None)])
         assert admin.execute("SELECT count() FROM spans") == [(3,)]
         assert admin.execute(
             """
@@ -219,7 +220,8 @@ def test_ch25_classifier_does_not_revive_pre_correction_live_span() -> None:
             "GROUP BY observation_type, service_name, "
             "toStartOfHour(start_time), trace_id, id" in query
         )
-        assert "argMax(start_time, _version) AS latest_start_time" in query
+        assert "argMax(" in query
+        assert "_physical_winner.2 AS latest_start_time" in query
         assert admin.execute(query, params) == []
     finally:
         admin.execute("USE default")

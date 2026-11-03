@@ -4,6 +4,8 @@ Thanks for your interest in contributing! This project exists because of people 
 
 Future AGI is an open-source AI evaluation and observability platform, and we welcome contributions of all kinds: bug fixes, new evaluators, framework integrations, docs improvements, examples, and issue triage.
 
+**Read [CONTRIBUTION_POLICY.md](CONTRIBUTION_POLICY.md) first.** It is one page: the four rules we hold every outside PR to, what gets a PR closed without full review, and what gets one merged fast. This file is the practical how-to; the policy is the contract.
+
 ---
 
 ## Quick links
@@ -11,7 +13,7 @@ Future AGI is an open-source AI evaluation and observability platform, and we we
 - 🐛 [Report a bug](https://github.com/future-agi/future-agi/issues/new?template=bug_report.yml)
 - ✨ [Request a feature](https://github.com/future-agi/future-agi/issues/new?template=feature_request.yml)
 - 🔖 [Good first issues](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-- 💬 [Join Discord](https://discord.com/invite/QDVvTgA8Xp)
+- 💬 [Join Discord](https://discord.com/invite/n2tCUKBkAw)
 
 ---
 
@@ -25,7 +27,7 @@ This project follows the [Contributor Covenant Code of Conduct](https://www.cont
 
 Before we can merge your first pull request, you'll need to sign our Contributor License Agreement. This is a one-click process that runs automatically on your first PR — you'll see a link to sign, we merge after.
 
-The CLA grants Future AGI, Inc. the rights to use your contribution (including an Apache-style patent grant), while letting you retain copyright. It also lets us re-license portions of the project later if needed (e.g. for a future `/ee/` folder). 
+The CLA grants Future AGI, Inc. the rights to use your contribution (including an Apache-style patent grant), while letting you retain copyright. It also lets us re-license portions of the project later if needed (e.g. for a future `/ee/` folder).
 
 ---
 
@@ -38,14 +40,24 @@ gh repo fork future-agi/future-agi --clone
 cd future-agi
 ```
 
-### 2. Start the stack
+### 2. Start the stack with hot reload
 
 ```bash
-cp futureagi/.env.example futureagi/.env
-docker compose up -d
+./bin/dev
 ```
 
-The backend will be at `http://localhost:8000`, the frontend at `http://localhost:3031`.
+The first run builds every image from your checkout and installs through
+`./bin/install --from-source` (it writes `.env` and asks for your first
+account); give Docker 8 GB of memory for that build. After that, the UI is at
+<http://localhost:3000> (Vite, hot module replacement) and the API at
+<http://localhost:8000>, which restarts when you save a Python file under
+`futureagi/`.
+
+Everyday commands: `./bin/dev logs`, `./bin/dev shell`,
+`./bin/dev manage migrate`, `./bin/dev rebuild` after a dependency change,
+`./bin/dev down`. [Local development](https://docs.futureagi.com/docs/self-hosting/development) covers what
+reloads, migrations, tests, when to use `./bin/dev --distributed`, and
+troubleshooting.
 
 ### 3. Install git hooks
 
@@ -67,14 +79,14 @@ Branch names are validated on `git push`.
 ### 4. Run tests
 
 ```bash
-# Backend
-cd futureagi && make test
+# Backend: a host virtualenv, with Postgres, Redis, ClickHouse and MinIO in their own test containers
+cd futureagi && uv sync --frozen && make test
 
 # Frontend
 cd frontend && yarn test
 ```
 
-Full testing workflow — git hooks, CI pipeline, coverage thresholds, frontend/backend-specific commands — lives in [TESTING.md](TESTING.md). Backend setup: [futureagi/README.md](futureagi/README.md). Frontend conventions and commands: [frontend/README.md](frontend/README.md).
+Tests never touch the `./bin/dev` stack. Full testing workflow — git hooks, CI pipeline, coverage thresholds, frontend/backend-specific commands — lives in [TESTING.md](TESTING.md). Backend setup: [futureagi/README.md](futureagi/README.md). Frontend conventions and commands: [frontend/README.md](frontend/README.md).
 
 ---
 
@@ -84,7 +96,8 @@ Full testing workflow — git hooks, CI pipeline, coverage thresholds, frontend/
 
 Before filing, search [existing issues](https://github.com/future-agi/future-agi/issues) to see if it's already reported. A good bug report includes:
 
-- Future AGI version (`git rev-parse HEAD` if self-hosted; see the settings page in Cloud)
+- Future AGI version (self-hosted: `FUTURE_AGI_VERSION` in `.env`, or `git rev-parse HEAD` for a source build; see the settings page in Cloud)
+- Setup: Standalone, Distributed or Helm, and whether you use `./bin/dev`
 - Environment: OS, Python / Node version, Docker version
 - Exact reproduction steps
 - Expected vs. actual behavior
@@ -92,9 +105,10 @@ Before filing, search [existing issues](https://github.com/future-agi/future-agi
 
 ### ✨ Proposing features
 
-For anything larger than a few hours of work, **open an issue first** so we can discuss design before you write code. This saves everyone time.
+For anything larger than a few hours of work, **open an issue first** and wait for a maintainer to label it `accepted` before you write code. PRs for un-accepted work are closed with a pointer back to the issue (see the [policy](CONTRIBUTION_POLICY.md)). This saves everyone time, yours most of all.
 
 Good feature requests:
+
 - Describe the problem you're trying to solve
 - Show (don't tell) — a mockup, a code snippet of the desired API
 - List alternatives you considered
@@ -102,14 +116,18 @@ Good feature requests:
 
 ### 🔧 Your first PR
 
-1. Pick a [`good first issue`](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) (or open one)
+1. Pick a [`good first issue`](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) or an issue labelled `accepted` (or open one and wait for the label)
 2. Comment that you're working on it so we don't double-up
 3. Branch from `dev`: `git checkout -b fix/short-description`
 4. Make your change — keep the diff small and focused
-5. Add tests (every bug fix needs a regression test)
-6. Make sure `make check-all` passes
-7. Push and open a PR using the template
+5. Add tests (every bug fix needs a regression test that fails without the fix)
+6. Run it for real: `make check-all`, and the affected app's tests via `bin/test app <name>`
+7. Push and open a PR using the template. Paste the actual test output; fill the `E2E:` and `AI use:` lines
 8. Sign the CLA when the bot asks
+
+If you are an automated agent opening this PR on someone's behalf, add `[agent]` to the end of the title so we can route it to the streamlined agent-review lane.
+
+Outside contributors can have **three PRs open at a time**. After two merges you're added to the bypass list and the limit no longer applies.
 
 ### 🧪 Adding a new evaluator
 
@@ -119,7 +137,7 @@ Most evaluators live under `futureagi/agentic_eval/core_evals/fi_evals/`. Each e
 2. A rubric prompt (if LLM-as-judge) — in the evaluator's own `prompt.py`
 3. A registration entry in `eval_type.py`
 4. Tests in the nearest `tests/` directory
-5. Docs in `docs/evaluators/` *(separate docs repo)*
+5. Docs in `docs/evaluators/` _(separate docs repo)_
 
 See [adding an evaluator](https://docs.futureagi.com/docs/evaluation/features/custom) for the full walkthrough.
 
@@ -153,7 +171,10 @@ Before requesting review:
 - [ ] `make check-all` (backend) or `yarn check-all` (frontend) passes
 - [ ] Docstrings on new public APIs
 - [ ] [CHANGELOG](https://futureagi.com/changelog) updated if user-facing
+- [ ] User docs changed in [future-agi/docs](https://github.com/future-agi/docs) (docs.futureagi.com), not under `docs/`. A new environment variable is a row in `deploy/env-reference.toml`, which the [configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference) is generated from; telemetry fields and image facts likewise live in `wire_reference.toml` and `deploy/images.toml` ([TESTING.md](TESTING.md#images-docs-and-the-helm-chart))
 - [ ] No hardcoded secrets, URLs, or PII
+- [ ] `AI use:` line filled in (tool and extent, or `none`)
+- [ ] Linked issue is labelled `accepted` (or the change is a small fix)
 - [ ] CLA signed (bot will prompt on first PR)
 
 Your PR will be reviewed by a maintainer within **3 business days**. If it's been longer, feel free to `@mention` one of us.
@@ -172,7 +193,13 @@ future-agi/
 │   ├── model_hub/    # LLM / embedding hub
 │   ├── tfc/          # Django project settings + routing
 │   └── ...
-└── frontend/         # React + Vite (JavaScript)
+├── frontend/         # React + Vite (JavaScript)
+├── fi-collector/     # OTLP trace collector (Go)
+├── agentcc-gateway/  # LLM gateway (Go)
+├── deploy/           # Standalone app image (standalone/), production overlay, Helm chart (helm/futureagi/)
+├── bin/              # install, uninstall, dev, e2e
+├── docs/             # maintainer notes; user docs live in future-agi/docs
+└── e2e/              # Playwright end-to-end flows
 ```
 
 ---

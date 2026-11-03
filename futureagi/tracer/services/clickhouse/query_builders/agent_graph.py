@@ -542,8 +542,6 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             optimize_aggregation_in_order = 1,
             max_bytes_before_external_group_by = 33554432,
             max_bytes_before_external_sort = 33554432,
-            max_result_rows = {AGENT_GRAPH_RESULT_ROW_SENTINEL},
-            max_result_bytes = {AGENT_GRAPH_MAX_RESULT_BYTES},
             result_overflow_mode = 'throw'
         """
         return query, self.params

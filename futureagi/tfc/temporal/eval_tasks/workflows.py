@@ -71,11 +71,58 @@ RUN_ENTRY_RETRY_POLICY = RetryPolicy(
 
 _CONTROL_TIMEOUT = timedelta(minutes=30)
 _RECONCILE_TIMEOUT = timedelta(hours=3)
-_RUN_ENTRY_TIMEOUT = timedelta(hours=12)
+# One entry is one eval config against one row, and this start-to-close
+# timeout is the ONLY bound on it. It was twelve hours, so one wedged
+# evaluation held its task's whole batch for half a day with nothing reporting
+# it: the drain gathers a claimed batch before claiming the next, and the
+# five-minute heartbeat cannot help because the Heartbeater is a timer rather
+# than a progress signal and keeps beating for an evaluation that has wedged.
+#
+# Be honest about what half an hour buys. A start-to-close timeout does not
+# kill the Python thread underneath: Temporal stops waiting for the attempt,
+# the workflow moves on, and the wedged evaluation keeps running inside the
+# worker's executor until it returns on its own or the process recycles. So
+# this bounds the *task* -- the batch is released, the entry is retried twice
+# more by RUN_ENTRY_RETRY_POLICY and then stamped ERRORED -- and it does not
+# bound the worker's thread pool. That leak is the follow-up; nothing in this
+# change closes it.
+#
+# The ceiling is mirrored, and pinned against this value, as
+# ``tfc.settings.runtime_setting_specs.RUN_ENTRY_CEILING_SECONDS``, which is
+# what the sweep's stale-threshold floor is derived from.
+_RUN_ENTRY_TIMEOUT = timedelta(minutes=30)
 _HEARTBEAT = timedelta(minutes=5)
 _CONTINUOUS_RECONCILE_BUDGET_DEFERRAL_PATCH = (
     "continuous-eval-reconcile-budget-deferral-v1"
 )
+# A historical drain that cannot finalize because entries are still RUNNING
+# waits for them to become reclaimable and reaps again, instead of failing the
+# task. The entries it finds there were claimed by an execution that stopped
+# (a restart shortly after a crash — the sweep's, Resume's or Edit's) or by
+# this one's run and fail activities that both exhausted their retries. Every
+# activity this execution launched has returned or timed out by then, so no
+# dispatch of its own is waiting on them; a timed-out evaluation's thread can
+# still be running, and its write is refused by the claim-epoch fence — the
+# same duplicate-spend residual ``effective_stale_seconds`` describes. One
+# wait is ``ReapInput``'s threshold, so a restart confirmed stopped reclaims
+# after one; without that evidence the reap applies the blind floor
+# (``MIN_STALE_RUNNING_SECONDS``, 5,401 s), which ten waits pass. Twelve
+# consecutive waits that reclaim nothing mean the rows cannot be reclaimed at
+# all, and the drain fails as it always did. The cap is a literal rather than
+# derived from ``_RUN_ENTRY_TIMEOUT``: it decides between sleeping and raising,
+# so a new value needs its own patch marker, and a timeout change must not
+# become a workflow change. The guard is a test that fails if the floor ever
+# outgrows the waits, in ``tracer/tests/test_eval_task_sweeper.py``:
+# ``test_thresholds_are_derived_and_the_wait_cap_clears_the_blind_floor``.
+_FINALIZE_WAIT = timedelta(seconds=ReapInput.older_than_seconds)
+_MAX_IDLE_FINALIZE_WAITS = 12
+_HISTORICAL_FINALIZE_WAIT_PATCH = "historical-eval-finalize-wait-v1"
+# A continuous run reaps once before its first claim. Claims a stopped
+# execution took shortly before are too young for that reap, and the loop
+# never reaped again until its next continue-as-new — while the sweep, seeing
+# a live workflow, left it alone. An idle poll that still finds undrained work
+# now reaps again before its next claim.
+_CONTINUOUS_IDLE_REAP_PATCH = "continuous-eval-idle-reap-v1"
 
 
 async def _apply_labels(task_id: str) -> None:
@@ -195,10 +242,21 @@ async def _reconcile_continuous(task_id: str) -> bool:
     return True
 
 
-async def _reap(task_id: str) -> None:
-    await workflow.execute_activity(
+async def _reap(task_id: str, *, workflow_confirmed_stopped: bool = False) -> dict:
+    """Reclaim entries a previous execution abandoned in ``running``.
+
+    ``workflow_confirmed_stopped`` is passed through from this execution's own
+    input: the starter described the task's workflow id in the moment before
+    this run began and the server said nothing owned it. Without it the reap
+    applies a ninety-minute floor, which is what made Resume and Edit → Save
+    no-ops inside ninety minutes of a crash. See
+    ``tracer.services.eval_tasks.reaper.effective_stale_seconds``.
+    """
+    return await workflow.execute_activity(
         "reap_stale_running_activity",
-        ReapInput(task_id=task_id),
+        ReapInput(
+            task_id=task_id, workflow_confirmed_stopped=workflow_confirmed_stopped
+        ),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
@@ -361,12 +419,20 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
             # continue-as-new are already running).
             await _mark_running(input.task_id)
             await _reconcile(input.task_id)
-            # Reclaim entries left RUNNING by a crashed prior execution.
-            await _reap(input.task_id)
+            # Reclaim entries left RUNNING by a crashed prior execution. Only
+            # on a genuine first start: a continue-as-new hop takes the
+            # ``already_reconciled`` branch, which is also why its input need
+            # not carry the describe forward.
+            await _reap(
+                input.task_id,
+                workflow_confirmed_stopped=input.workflow_confirmed_stopped,
+            )
 
         self._phase = PHASE_DRAINING
         processed = input.processed
         batches = 0
+        idle_waits = 0
+        reap_before_claim = False
         while True:
             state = await _task_state(input.task_id)
             if not state["active"]:
@@ -380,10 +446,45 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                     processed=processed,
                 )
 
+            if reap_before_claim:
+                # After the state check, so a pause that woke the wait below
+                # exits without reclaiming anything.
+                reap_before_claim = False
+                reaped = await _reap(
+                    input.task_id,
+                    workflow_confirmed_stopped=input.workflow_confirmed_stopped,
+                )
+                if reaped.get("requeued") or reaped.get("failed"):
+                    idle_waits = 0
+
             batch = await _claim(input.task_id, input.batch_size)
             entry_ids = batch["entry_ids"]
             if not entry_ids:
-                break
+                if await _finalize(input.task_id):
+                    break
+                # The drain loop only ends on an empty *pending* claim, so a
+                # task that still won't finalize has entries RUNNING. Histories
+                # recorded before the wait existed failed here, and replay must
+                # keep doing so.
+                if (
+                    not workflow.patched(_HISTORICAL_FINALIZE_WAIT_PATCH)
+                    or idle_waits >= _MAX_IDLE_FINALIZE_WAITS
+                ):
+                    # Never report COMPLETED over undrained work (the wrapper
+                    # persists FAILED).
+                    raise ApplicationError(
+                        f"eval task {input.task_id} drained but did not finalize",
+                        non_retryable=True,
+                    )
+                # Wait for the claims to become reclaimable rather than fail:
+                # FAILED is outside the sweep's scope by default, so failing
+                # here strands the rows for good.
+                idle_waits += 1
+                self._phase = PHASE_SLEEPING
+                await self._sleep_or_recheck(_FINALIZE_WAIT.total_seconds())
+                self._phase = PHASE_DRAINING
+                reap_before_claim = True
+                continue
 
             skipped = await _drain_batch(
                 entry_ids, input.max_concurrent, lambda: self._paused
@@ -411,18 +512,6 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                     )
                 )
 
-        if not await _finalize(input.task_id):
-            # The drain loop only ends on an empty *pending* claim, so a task
-            # that still won't finalize has entries stranded RUNNING — both
-            # run_entry and fail_eval_entry exhausted their retries. reap only
-            # runs at first start (skipped across continue-as-new), so these
-            # can't self-heal here; fail loudly rather than report COMPLETED
-            # over undrained work (the wrapper persists FAILED). A fresh
-            # workflow start reaps and re-drains.
-            raise ApplicationError(
-                f"eval task {input.task_id} drained but did not finalize",
-                non_retryable=True,
-            )
         _set_status(STATUS_COMPLETED)
         self._phase = PHASE_DONE
         return EvalTaskWorkflowOutput(
@@ -453,7 +542,10 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
         reconciled = await _reconcile_continuous(state.task_id)
         reaped = False
         if reconciled:
-            await _reap(state.task_id)
+            await _reap(
+                state.task_id,
+                workflow_confirmed_stopped=state.workflow_confirmed_stopped,
+            )
             reaped = True
 
         while True:
@@ -487,7 +579,10 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 # A restarted workflow may have entries stranded RUNNING. If
                 # initial CH pressure delayed the first proof, reap immediately
                 # after eventual success and before the first claim.
-                await _reap(state.task_id)
+                await _reap(
+                    state.task_id,
+                    workflow_confirmed_stopped=state.workflow_confirmed_stopped,
+                )
                 reaped = True
 
             batch = await _claim(state.task_id, state.batch_size)
@@ -506,11 +601,24 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                 await self._sleep_or_recheck(state.poll_interval_seconds)
                 self._phase = PHASE_MATERIALIZING
                 reconciled = await _reconcile_continuous(state.task_id)
+                # Nothing was claimable, yet work is undrained: it is RUNNING
+                # under claims no pending activity of this run is waiting on
+                # (the drain has returned every activity it launched). Reap
+                # again before the next claim, so they are reclaimed once they
+                # are old enough.
+                if tstate["has_undrained_work"] and workflow.patched(
+                    _CONTINUOUS_IDLE_REAP_PATCH
+                ):
+                    reaped = False
 
             if not self._paused and _should_continue_as_new(
                 state.batches, state.continue_as_new_after_batches
             ):
                 # Reset the per-run batch counter; keep lifetime ``processed``.
+                # ``workflow_confirmed_stopped`` is deliberately not carried:
+                # the next hop reaps again, and by then the execution draining
+                # this task is this one, so the describe taken before the
+                # original start no longer says anything about a live claim.
                 workflow.continue_as_new(
                     ContinuousDrainState(
                         task_id=state.task_id,
