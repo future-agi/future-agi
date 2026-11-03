@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from decimal import Decimal
 from uuid import UUID, uuid5
 
 from django.core.serializers.json import DjangoJSONEncoder
@@ -16,7 +17,7 @@ from simulate.services.harness_environment import _VOICE_CONNECTORS
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.ee_gating import is_oss
 
-_ACTIONS = frozenset({"harness_authoring", "text_call", "voice_call"})
+_ACTIONS = frozenset({"agent_fix", "harness_authoring", "text_call", "voice_call"})
 _REPORT_KEY = "usage_reports"
 _AUTHORING_REPORT_KEY = "authoring_usage_reports"
 _NON_BILLABLE_FAILURE_DOMAINS = frozenset(
@@ -66,8 +67,28 @@ def _require_harness_action(organization_id: str, action: str) -> None:
     raise UsageLimitExceeded(CheckResult.model_validate(decision))
 
 
+def usage_limit_error(exc: Exception) -> HostedHarnessError | None:
+    """A usage refusal as a hosted harness error, for a caller that reads only that shape:
+    the fix engine tells the organization's plan limit apart from the fix's own budget."""
+    if is_oss():
+        return None
+    from ee.usage.exceptions import UsageLimitExceeded
+
+    if not isinstance(exc, UsageLimitExceeded):
+        return None
+    return HostedHarnessError(
+        "usage_limit",
+        exc.check_result.reason or "the organization's usage limit is reached",
+        status_code=402,
+    )
+
+
 def require_harness_authoring(organization_id: str) -> None:
     _require_harness_action(organization_id, "harness_authoring")
+
+
+def require_agent_fix_usage(organization_id: str) -> None:
+    _require_harness_action(organization_id, "agent_fix")
 
 
 def require_harness_call_usage(job: HostedHarnessJob) -> None:
@@ -456,6 +477,53 @@ def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
                         "Authoring usage could not be finalized for attempt %s",
                         current.id,
                     )
+    price_fix_check_run(current.job_id)
+
+
+def billed_ai_usd(usd: Decimal) -> Decimal:
+    """What a model call bills the organization, in US dollars: its cost at the AI markup."""
+    if is_oss():
+        return usd
+    from ee.usage.services.config import BillingConfig
+
+    return usd * BillingConfig.get().get_ai_cost_markup()
+
+
+def _paid_unit_usd(config, dimension: str) -> Decimal:
+    """The first price a dimension charges past its free tiers."""
+    return next(
+        (
+            tier.price_per_unit
+            for tier in config.get_pricing_tiers(dimension)
+            if tier.price_per_unit > 0
+        ),
+        Decimal(0),
+    )
+
+
+def price_fix_check_run(job_id) -> None:
+    """Set what a fix's check run billed, once its usage is sealed: its conversations and
+    calls at their price per unit, plus any AI credits. A fix holds a worst case for a check
+    run until this replaces it."""
+    if is_oss():
+        return
+    job = HostedHarnessJob.all_objects.filter(id=job_id, fix_run__isnull=False).first()
+    if job is None:
+        return
+    from ee.usage.services.config import BillingConfig
+
+    config = BillingConfig.get()
+    used = harness_consumption(job) or {}
+    usd = sum(
+        (
+            Decimal(str(used.get(dimension) or 0)) * _paid_unit_usd(config, dimension)
+            for dimension in ("text_sim_tokens", "voice_sim_minutes")
+        ),
+        Decimal(str(used.get("ai_credits") or 0)) * Decimal("0.01"),
+    )
+    HostedHarnessJob.all_objects.filter(id=job.id).update(
+        fix_cost_usd=usd.quantize(Decimal("0.0001"))
+    )
 
 
 def harness_consumption(job: HostedHarnessJob) -> dict | None:
