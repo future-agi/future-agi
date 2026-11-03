@@ -306,6 +306,13 @@ class AutomaticPublisher:
         self._prepared[version] = dict(inputs=canonical_json(inputs), manifest=manifest, assets=assets)
         if self.lane == 'product' and proof is not None:
             row = self.transition(self.versions[position-1], version)
+            from deploy.tests.update_e2e.admission_diagnostics import reference_summary, failure_category, envelope
+            try:
+                reference = reference_summary(row)
+            except Exception as error:
+                reference = dict(envelope(), error=failure_category(error))
+            # Sanitized bounded reference only; never upload the private proof.
+            (output/'migration-reference.json').write_bytes(canonical_json(reference))
             (output/'package-result.json').write_bytes(canonical_json(dict(schema_version=1,
                 status='passed', source_version=self.versions[position-1], target_version=version,
                 platform=self.platform, qualification_seconds=qualification_seconds,

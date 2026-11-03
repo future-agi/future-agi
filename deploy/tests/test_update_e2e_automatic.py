@@ -7,6 +7,7 @@ production must pass before any acceptance stack is installed.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -22,8 +23,10 @@ from deploy.tests.update_e2e.real_automatic import (
     CRON_PERIOD_SECONDS, FAULT_SEAM, PRE_COLD_SOURCE_OBSERVATIONS, SETUP_PROBE_TIMEOUT_SECONDS,
     acceptance_policy, acceptance_reserve_seconds, policy_cli_arguments,
     pending_migration_names, read_attempt_ledger, read_event_records, scheduler_wait_budget,
-    replacement_tolerant, scheduler_history, diagnostic_scheduler_replay, setup_timeout_seconds,
+    replacement_tolerant, scheduler_history, setup_timeout_seconds,
     data_usage, command_refusal)
+from deploy.tests.update_e2e.admission_diagnostics import (
+    collect_admission_diagnostics, completed_admission_block, finish_acceptance)
 from deploy.update.baseline import BaselineStore
 from deploy.update.contracts import ReasonCode
 from deploy.update.enrollment import AUTOMATIC_UPDATE_DISCLOSURE
@@ -82,6 +85,7 @@ class AutomaticLifecycleE2E(unittest.TestCase):
         checkout = publisher.new_checkout('restore' if restore else 'one-opt-in')
         enrolled = False
         failure = None
+        store = configuration = row = None
         try:
             boot = checkout.install()
             policy = acceptance_policy([transitions[v] for v in versions[1:]], source_boot_seconds=boot['seconds'])
@@ -153,33 +157,16 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                         raise AssertionError('installed scheduler restored, latched or stalled on ' + version
                                              + ' instead of advancing')
                     return value
-                try:
-                    return e2e.wait_for(check, **kwargs)
-                except AssertionError:
-                    # Cron discards tick output: keep the scheduler's own closed outcomes.
-                    try:
-                        activation = inspect_activation(store, configuration.policy, **configuration.scheduler_options)
-                    except Exception:
-                        activation = None
-                    history = scheduler_history(store, destination, checkout.containers(), activation=activation)
-                    checkout.record('public-status.json', dict(reporting_init_returncode=getattr(reporting, 'returncode', None),
-                                                               reporting_init_refusal=reporting_refusal,
-                                                               status=public_status()))
-                    usage['diagnosis'] = data_usage(checkout)
-                    checkout.record('data-usage.json', usage)
-                    if not history.get('attempts'):
-                        # Every tick refused before an attempt: name the refusing check.
-                        history['diagnostic_replay'] = diagnostic_scheduler_replay(store)
-                    checkout.record('scheduler-history.json', history)
-                    raise
+                return e2e.wait_for(check, **kwargs)
             for position, version in enumerate(versions[1:], 1):
-                timeout = remaining_timeout()
                 row = transitions[version]
+                timeout = remaining_timeout()
                 migration = row['migration_evidence']
                 self.assertEqual(previous_migrations['inventory_sha256'], migration['source_inventory_sha256'])
                 self.assertEqual(previous_migrations['applied_sha256'], migration['source_applied_set_sha256'])
                 # The ONLY update trigger is publisher visibility. We do not
                 # call run/apply/retry, rewrite policies or re-enroll.
+                published_at = datetime.now(timezone.utc)
                 publisher.publish(version)
                 if restore:
                     fault = checkout.fail_after_migrations(publisher._prepared[version]['manifest'], timeout=timeout)
@@ -206,17 +193,14 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                     # observations before it reserves an attempt; allow two such runs.
                     attempt_start_seconds = (2*CRON_PERIOD_SECONDS + 60 + 600 + 2*PRE_COLD_SOURCE_OBSERVATIONS*(
                         max(policy.probe_timeout_seconds, SETUP_PROBE_TIMEOUT_SECONDS) + policy.stability_period_seconds))
-                    admission = {'backup_exceeds_window', 'migration_exceeds_window',
-                                 'insufficient_disk_for_backup', 'insufficient_disk_for_migration'}
                     def stalled():
                         state = read_state()
                         if state.active_attempt_id is not None:
                             started.append(True)
-                        discovery = (public_status() or {}).get('discovery') or {}
-                        # The same host and policy refuse the same estimate on every run.
-                        refused = (not started and discovery.get('state') == 'blocked'
-                                   and discovery.get('candidate_version') == version
-                                   and bool(admission & set(discovery.get('reason_codes') or [])))
+                        # Same candidate, fresh completed check, and no live lock
+                        # owner: an old blocked projection cannot abort active work.
+                        refused = (not started and completed_admission_block(public_status() or {}, state, version,
+                                   checked_after=published_at, store=store))
                         return refused or state.retry_count >= 3 or (not started
                             and time.monotonic() - published > attempt_start_seconds)
                     scheduler_wait(lambda: current_head().release.version == version and any(
@@ -317,23 +301,48 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                 witnesses_intact=True, product_acceptance=True))
         except BaseException as error:
             failure = error
+            if store is not None and configuration is not None and row is not None:
+                # Collect once for ANY failure after selecting the authenticated
+                # transition, including the restore seam before scheduler_wait.
+                # Independent best-effort samples never replace the original error.
+                try:
+                    collect_admission_diagnostics(checkout, store, configuration, row)
+                except Exception:
+                    pass
+                try:
+                    checkout.record('public-status.json', dict(reporting_init_returncode=getattr(reporting, 'returncode', None),
+                        reporting_init_refusal=reporting_refusal, sample='after_failure_not_original_tick',
+                        status=public_status()))
+                except Exception:
+                    pass
+                try:
+                    try:
+                        activation = inspect_activation(store, configuration.policy, **configuration.scheduler_options)
+                    except Exception:
+                        activation = None
+                    try:
+                        containers = checkout.containers()
+                    except Exception:
+                        containers = ()
+                    history = scheduler_history(store, destination, containers, activation=activation)
+                    history['sample'] = 'after_failure_not_original_tick'
+                    checkout.record('scheduler-history.json', history)
+                except Exception:
+                    pass
+                try:
+                    usage['diagnosis'] = data_usage(checkout)
+                    usage['diagnosis']['sample'] = 'after_failure_not_original_tick'
+                    checkout.record('data-usage.json', usage)
+                except Exception:
+                    pass
             raise
         finally:
-            # Diagnostics are read-only and bounded. Never let an evidence error
-            # hide the original failure or race an installed updater with cleanup.
-            checkout.collect_diagnostics(failure)
-            log_failure = None
-            try:
-                checkout.collect_logs()
-            except Exception as error:
-                log_failure = error
-                checkout.collect_diagnostics(failure or error)
-            # A refusal retains the stack and recovery source; do not clean up.
-            if enrolled or selected_store(checkout.root).path.exists():
-                checkout.bin_update('setup', '--deactivate', '--yes')
-            checkout.cleanup()
-            if failure is None and log_failure is not None:
-                raise log_failure
+            def deactivate():
+                if enrolled or selected_store(checkout.root).path.exists():
+                    checkout.bin_update('setup', '--deactivate', '--yes')
+            # A failed deactivation retains the stack/recovery source, while
+            # independently recording (never masking) the original failure.
+            finish_acceptance(checkout, failure=failure, deactivate=deactivate)
 
 
 if __name__ == '__main__':

@@ -230,6 +230,7 @@ jobs:
           python -m unittest discover -s deploy/tests -p 'test_update_*.py' -v
       - name: Daemon-free real harness, TLS publisher and native CI plans
         run: |
+          python -m unittest discover -s deploy/tests/update_e2e -p 'test_admission_diagnostics.py' -v
           python -m unittest discover -s deploy/tests/update_e2e -p 'test_real_automatic_harness.py' -v
           python -m unittest discover -s deploy/tests/update_e2e -p 'test_automatic_publisher.py' -v
           python -m unittest discover -s deploy/tests/update_e2e -p 'test_acceptance_ci.py' -v
@@ -474,6 +475,9 @@ jobs:
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/data-usage.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/startup-result.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/package-result.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/migration-reference.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/admission-diagnostics.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/teardown-diagnostics.json
             ${{ runner.temp }}/pr-mirror-probe.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-diagnostics.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-result.json
@@ -562,6 +566,9 @@ jobs:
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/data-usage.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/startup-result.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/package-result.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/migration-reference.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/admission-diagnostics.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/teardown-diagnostics.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-diagnostics.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-result.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/installed-v*.json
