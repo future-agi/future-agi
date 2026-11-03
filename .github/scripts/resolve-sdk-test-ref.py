@@ -9,7 +9,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 REPOSITORY = "https://github.com/future-agi/futureagi-sdk.git"
 # SDK PR #35 supplies the suites introduced by product PR #3624. Until a default
@@ -23,26 +23,55 @@ REQUIRED_PATHS = (
     "typescript/futureagi/src/platform/__tests__/live.test.ts",
 )
 PACKAGE_JSON = "typescript/futureagi/package.json"
-Probe = Callable[[str], tuple[str, list[str]] | None]
+Mode = Literal["named", "explicit", "pinned"]
+Probe = Callable[[str, Mode], tuple[str, list[str]] | None]
 
 
 class ResolutionError(RuntimeError):
     """The requested SDK revision cannot safely run the required suites."""
 
 
+class InvalidRefError(ResolutionError):
+    """A candidate is not a supported Git branch/tag/ref spelling."""
+
+
+def named_refs(ref: str) -> tuple[str, ...]:
+    if ref.startswith(("refs/heads/", "refs/tags/")):
+        return (ref,)
+    if ref.startswith("refs/"):
+        raise InvalidRefError("SDK refs must name a branch, tag or full commit SHA")
+    return (f"refs/heads/{ref}", f"refs/tags/{ref}")
+
+
 def validate_ref(ref: str) -> None:
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}", ref):
-        raise ResolutionError("Invalid SDK ref spelling")
-    if ".." in ref or "//" in ref or ref.endswith(("/", ".")):
-        raise ResolutionError("Invalid SDK ref spelling")
+    if not ref or len(ref) > 1024 or ref.startswith("-") or any(ord(c) < 32 for c in ref):
+        raise InvalidRefError("Invalid SDK ref spelling")
+    try:
+        result = subprocess.run(
+            ["git", "check-ref-format", named_refs(ref)[0]],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ResolutionError("SDK ref validation timed out") from exc
+    if result.returncode:
+        raise InvalidRefError("Invalid SDK ref spelling")
 
 
 def choose_ref(explicit: str, head: str, base: str, probe: Probe) -> tuple[str, str]:
     """Explicit requests fail closed; automatic refs must contain the harness."""
-    candidates = [explicit] if explicit else [head, base, "dev", "main", BOOTSTRAP_REF]
-    for candidate in dict.fromkeys(ref for ref in candidates if ref):
-        validate_ref(candidate)
-        result = probe(candidate)  # Transport errors must not become a fallback.
+    candidates: list[tuple[str, Mode]] = (
+        [(explicit, "explicit")] if explicit else
+        [(ref, "named") for ref in (head, base, "dev", "main") if ref]
+        + [(BOOTSTRAP_REF, "pinned")]
+    )
+    for candidate, mode in dict.fromkeys(candidates):
+        try:
+            validate_ref(candidate)
+        except InvalidRefError:
+            if mode == "named":
+                continue  # An unsupported automatic branch must not mask valid defaults.
+            raise
+        result = probe(candidate, mode)  # Transport errors must not become a fallback.
         if result is None:
             if explicit:
                 raise ResolutionError("Requested SDK ref does not exist")
@@ -50,6 +79,8 @@ def choose_ref(explicit: str, head: str, base: str, probe: Probe) -> tuple[str, 
         sha, missing = result
         if not re.fullmatch(r"[0-9a-f]{40}", sha):
             raise ResolutionError("SDK ref did not resolve to a full commit SHA")
+        if mode == "pinned" and sha != candidate:
+            raise ResolutionError("Pinned SDK harness identity mismatch")
         if missing:
             if explicit:
                 raise ResolutionError("Requested SDK ref lacks required live-test files or script")
@@ -78,17 +109,28 @@ class GitProbe:
             raise ResolutionError("SDK repository operation failed")
         return result
 
-    def __call__(self, ref: str) -> tuple[str, list[str]] | None:
-        if not re.fullmatch(r"[0-9a-fA-F]{7,40}", ref):
+    def __call__(self, ref: str, mode: Mode = "explicit") -> tuple[str, list[str]] | None:
+        fetch_ref = None
+        if mode == "pinned" or (mode == "explicit" and re.fullmatch(r"[0-9a-fA-F]{40}", ref)):
+            if not re.fullmatch(r"[0-9a-fA-F]{40}", ref):
+                raise ResolutionError("Pinned SDK harness requires a full commit SHA")
+            fetch_ref = ref.lower()
+        else:
+            names = named_refs(ref)
             advertised = self._git(
                 "ls-remote", "--exit-code", "--heads", "--tags", REPOSITORY,
-                f"refs/heads/{ref}", f"refs/tags/{ref}", allow_missing=True,
+                *names, allow_missing=True,
             )
-            if advertised.returncode == 2:
-                return None
-            if advertised.returncode:
+            if advertised.returncode not in (0, 2):
                 raise ResolutionError("Could not query SDK refs")
-        self._git("fetch", "--quiet", "--depth=1", "--no-tags", REPOSITORY, ref)
+            available = ({line.split()[1] for line in advertised.stdout.splitlines()
+                          if len(line.split()) == 2} if advertised.returncode == 0 else set())
+            fetch_ref = next((name for name in names if name in available), None)
+            if fetch_ref is None:
+                if mode == "explicit" and re.fullmatch(r"[0-9a-fA-F]{7,39}", ref):
+                    raise ResolutionError("Use a full 40-character SDK commit SHA; no branch or tag matches this abbreviation")
+                return None
+        self._git("fetch", "--quiet", "--depth=1", "--no-tags", REPOSITORY, fetch_ref)
         sha = self._git("rev-parse", "FETCH_HEAD^{commit}").stdout.strip()
         missing = []
         for path in (*REQUIRED_PATHS, PACKAGE_JSON):
