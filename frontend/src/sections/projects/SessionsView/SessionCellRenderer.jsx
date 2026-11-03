@@ -9,6 +9,7 @@ import CustomJsonViewer, {
 import { isJson } from "src/components/traceDetailDrawer/DrawerRightRenderer/getSpanData";
 import CustomTooltip from "src/components/tooltip";
 import { formatCost } from "../LLMTracing/formatters";
+import ObservedUsageValue from "../LLMTracing/Renderers/ObservedUsageValue";
 
 const SHOW_TOOLTIPS = ["first_message", "last_message"];
 
@@ -36,6 +37,21 @@ const SessionCellRenderer = (params) => {
   const colId = column?.colId;
 
   const renderValue = (fromCell) => {
+    if (
+      data?.capture_coverage?.coverage_unknown &&
+      (colId === "total_cost" || colId === "total_tokens")
+    ) {
+      return (
+        <ObservedUsageValue
+          coverage={data.capture_coverage}
+          value={
+            colId === "total_cost"
+              ? Number.isFinite(value) ? formatCost(value) : "Unknown"
+              : `${Number(value ?? 0).toLocaleString()} tokens`
+          }
+        />
+      );
+    }
     // session_id column — prefer user-defined name (TraceSession.name) over UUID
     if (colId === "session_id") {
       const displayValue = data?.session_name || value;

@@ -41,12 +41,22 @@ export const parseTraceGraphResponse = (payload) =>
   successfulResult(traceGraphResponse, payload, "Trace graph");
 
 /** Parse one Observe trace-list HTTP body into the generated result shape. */
-export const parseTraceObserveListResponse = (payload) =>
-  successfulResult(
+export const parseTraceObserveListResponse = (payload) => {
+  const result = successfulResult(
     TracerTraceListTracesOfSessionResponse,
     payload,
     "Trace list",
   );
+  // Read only the generated, typed sidecar, never an arbitrary dynamic cell.
+  // Nesting by project protects org-scoped pages with reused trace IDs.
+  return {
+    ...result,
+    table: result.table.map((row) => ({
+      ...row,
+      _captureCoverage: result.trace_capture_coverage?.[row.project_id]?.[row.trace_id],
+    })),
+  };
+};
 
 /** Parse one Observe span-list HTTP body into the generated result shape. */
 export const parseSpanObserveListResponse = (payload) =>

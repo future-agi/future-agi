@@ -374,6 +374,18 @@ class TraceObserveColumnConfigSerializer(serializers.Serializer):
 
 
 class TraceObserveListResultSerializer(serializers.Serializer):
+    # The dynamic table must retain arbitrary eval/attribute columns. A typed,
+    # page-bounded sidecar gives generators a stable coverage contract without
+    # changing any existing cell type. Both identity coordinates are required:
+    # org-scoped pages can contain the same trace ID in different projects.
+    trace_capture_coverage = serializers.DictField(
+        child=serializers.DictField(child=CaptureCoverageSerializer()),
+        required=False,
+        help_text=(
+            "Capture coverage for returned rows only, keyed by project ID then trace ID. "
+            "Omitted entries retain legacy presentation; never implies complete capture."
+        ),
+    )
     metadata = TraceObserveListMetadataSerializer()
     # allow_null: real rows carry null cells (cost, latency on error traces).
     table = serializers.ListField(

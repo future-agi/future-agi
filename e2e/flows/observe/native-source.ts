@@ -56,15 +56,21 @@ export interface NativeSession {
   trace_session_id: string;
   external_session_id: string;
 }
+// Optional serializer-owned capture shape, independent of numeric cost.
+export interface CaptureCoverage {
+  scope: 'observed_requests'; source_summary_present: boolean;
+  request_count: number; coverage_unknown: boolean;
+}
 export interface TracePage {
   result: {
     table: { trace_id: string; total_tokens: number; cost: number | null }[];
+    trace_capture_coverage?: Record<string, Record<string, CaptureCoverage>>;
     metadata: { total_rows: number; total_rows_is_lower_bound?: boolean };
   };
 }
 export interface SessionPage {
   result: {
-    table: { session_id: string; total_tokens: number; total_cost: number | null; total_traces_count: number }[];
+    table: { session_id: string; total_tokens: number; total_cost: number | null; total_traces_count: number; capture_coverage?: CaptureCoverage }[];
   };
 }
 export interface SessionHistory {
@@ -91,6 +97,7 @@ interface DetailEntry {
 }
 export interface TraceDetail {
   result: {
+    capture_coverage?: CaptureCoverage;
     summary: {
       total_tokens: number;
       total_cost: number | null;

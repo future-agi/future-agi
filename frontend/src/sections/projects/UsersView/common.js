@@ -26,6 +26,7 @@ import {
 } from "date-fns";
 import logger from "src/utils/logger";
 import { canonicalEntries, formatMs } from "../../../utils/utils";
+import { formatCost } from "../LLMTracing/formatters";
 import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
 
 export const buildUsersRequestFilters = (filters) =>
@@ -182,6 +183,16 @@ export const userDefaultFilter = {
 // page lists every project's rows, so the Project column names each row's
 // scope (TH-5037). Inside a project it would repeat one value, so it is
 // omitted there.
+// Coverage changes presentation only, never the numeric grid row.
+export const formatUsersCost = ({ value, data }) => {
+  const coverage = data?.cost_coverage;
+  if (coverage === undefined || coverage.status === "complete") return formatCost(value);
+  if (coverage?.status === "partial") {
+    return `Partial — Known subtotal ${formatCost(coverage.known_subtotal)}`;
+  }
+  return "Unknown";
+};
+
 export const getUsersColumnConfig = ({ includeProject = false } = {}) => {
   const columns = [
     {
@@ -266,9 +277,10 @@ export const getUsersColumnConfig = ({ includeProject = false } = {}) => {
       field: "total_cost",
       minWidth: 200,
       flex: 1,
-      cellRenderer: GeneralStatCellRenderer,
+      cellRenderer: formatUsersCost,
       cellRendererParams: { dataType: "cost" },
-      valueFormatter: (params) => params.value?.toFixed(2),
+      valueFormatter: formatUsersCost,
+      tooltipValueGetter: formatUsersCost,
     },
     {
       headerName: "Avg Latency / Trace (ms)",

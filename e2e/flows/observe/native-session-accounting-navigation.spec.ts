@@ -24,7 +24,7 @@ test(
       steps: [
         'read the exact six seeded session identities in the API and desktop grid',
         'open the two-turn Copilot session and navigate to its first source trace',
-        'scroll the grid to inspect known, zero and unknown costs and exact trace counts',
+        'scroll the grid to inspect observed-only native costs, coverage unknown and exact request and trace counts',
         'open each remaining session and match its history card, source trace, tokens and cost',
       ],
       backendChecks: [
@@ -60,6 +60,11 @@ test(
           const members = cases.filter((c) => c.session === session.external_session_id);
           const row = data.result.table.find((r) => r.session_id === session.trace_session_id);
           expect(row?.total_tokens).toBe(members.reduce((n, c) => n + c.total, 0));
+          if (members[0].key.startsWith('copilot')) expect(row?.capture_coverage).toEqual({
+            scope: 'observed_requests', source_summary_present: true,
+            request_count: members.length === 2 ? 6 : 3, coverage_unknown: true,
+          });
+          else expect(row?.capture_coverage).toBeUndefined();
           if (members.some((c) => c.cost === null)) expect(row?.total_cost).toBeNull();
           else
             expect(row?.total_cost).toBeCloseTo(
@@ -94,7 +99,7 @@ test(
         });
         await shot(page, testInfo, 'sessions-multi-turn');
         expect(
-          await drawer.getByText('Total Cost: $1.20', { exact: true }).isVisible(),
+          await drawer.getByText('Observed Cost: $1.20', { exact: true }).isVisible(),
           'known two-turn session cost must be $1.20',
         ).toBe(true);
         const trace = page.waitForResponse(
@@ -127,7 +132,8 @@ test(
           const label = members.length === 2 ? '$1.20' : labels[members[0].key];
           expect(typeof label).toBe('string');
           const cell = page.locator(`.ag-row[row-id="${session.trace_session_id}"] [col-id="total_cost"]:visible`);
-          await expect(cell).toHaveText(label, { timeout: UI_READY });
+          await expect(cell).toHaveText(members[0].key.startsWith('copilot')
+            ? `Observed-only · ${cost === null ? 'Unknown' : label}` : label, { timeout: UI_READY });
           const row = sessionList.table.find((s) => s.session_id === session.trace_session_id)!;
           if (cost === null) expect(row.total_cost).toBeNull();
           else expect(row.total_cost).toBeCloseTo(cost, 8);
@@ -163,7 +169,7 @@ test(
             .filter({ has: page.getByRole('tablist', { name: 'session drawer tabs' }) });
           // TracesDrawer.jsx deliberately labels null session cost N/A, not $0.
           await expect(
-            drawer.getByText(`Total Cost: ${c.cost === null ? 'N/A' : c.display}`, { exact: true }),
+            drawer.getByText(`${key.startsWith('copilot') ? 'Observed Cost' : 'Total Cost'}: ${c.cost === null ? 'N/A' : c.display}`, { exact: true }),
           ).toBeVisible({ timeout: UI_READY });
           // ShowTrace is a Grid container with the history card's View Trace button.
           // The auto-selected detail panel repeats this ID outside that card.

@@ -353,6 +353,17 @@ def test_hydration_uses_identical_live_member_usage(sessions, case):
     assert rows[0]["total_cost"] == cost
     assert rows[0]["total_tokens"] == tokens
     assert rows[0]["traces_count"] == (2 if case == "shared" else 1)
+    formatted = builder.format_sessions(rows, list(rows[0]))[0]
+    if case in {"nonadditive", "nonadditive-with-values"}:
+        # The native hour and CDC created-day implementations share this path.
+        # The nonadditive LLM-shaped source is not a second observed request.
+        assert formatted["capture_coverage"] == {
+            "scope": "observed_requests", "source_summary_present": True,
+            "request_count": 1, "coverage_unknown": True,
+        }
+    else:
+        assert "capture_coverage" not in formatted
+
 
 
 @pytest.mark.parametrize("direction", ["asc", "desc"])

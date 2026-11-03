@@ -139,3 +139,19 @@ describe("useGetTraceDetail", () => {
     await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
   });
 });
+
+
+it("does not reuse a fresh coverage-blind trace detail cache entry", async () => {
+  axios.get.mockReset();
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  queryClient.setQueryData(["trace-detail", "trace-1", "p"], {
+    data: { result: { summary: { total_cost: 0 } } },
+  });
+  const capture = { scope: "observed_requests", source_summary_present: true,
+    request_count: 0, coverage_unknown: true };
+  axios.get.mockResolvedValueOnce({ data: { result: { capture_coverage: capture } } });
+  const { result } = renderHook(() => useGetTraceDetail("trace-1", { projectId: "p" }), {
+    wrapper: ({ children }) => React.createElement(QueryClientProvider, { client: queryClient }, children),
+  });
+  await waitFor(() => expect(result.current.data?.capture_coverage).toEqual(capture));
+});

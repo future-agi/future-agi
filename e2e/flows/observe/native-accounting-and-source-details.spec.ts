@@ -1,6 +1,7 @@
 import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
-import { seedNative, browserErrors, shot, UI_READY, LIST, type TracePage } from './native-source';
+import { seedNative, browserErrors, shot, UI_READY, LIST, SESSIONS, type TracePage, type SessionPage } from './native-source';
+import { nativeCaptureStages } from './native-capture-stages';
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
@@ -14,6 +15,7 @@ test(
       userGoal:
         'A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero',
       steps: [
+        'read parent-only native trace and session list coverage, deliver children later, then replay identical IDs',
         'ingest synthetic Copilot and Gemini trees plus a legacy control, including duplicate delivery',
         'verify exact source identities, normalized counters and session grouping in storage',
         'read exact trace membership and known, zero and unknown costs in the desktop grid',
@@ -21,6 +23,7 @@ test(
         'sort positive costs and the full set both ways, replaying each captured API request',
       ],
       backendChecks: [
+        'root-only, late-child and replay lists keep observed request counts 0, 3, 3 with coverage unknown and unchanged source summary presence',
         'source IDs, parents, normalization profiles, summary counters and sanitized event attributes persist exactly',
         'trace API totals and grid distinguish zero from unknown costs',
         'session fallback and explicit identities match exact source membership',
@@ -29,11 +32,74 @@ test(
     }),
   },
   async ({ page, request, actor, probe }, testInfo) => {
-    // Two SPAN_VISIBLE polls (30s), 8 UI_READY action chains, 90s I/O headroom.
-    test.setTimeout(30_000 + 8 * UI_READY + 90_000);
+    // Eight SPAN_VISIBLE polls (120s), 20 UI_READY action chains, 90s I/O headroom.
+    test.setTimeout(120_000 + 20 * UI_READY + 90_000);
     page.setDefaultTimeout(UI_READY);
     const checkBrowser = browserErrors(page, testInfo);
     try {
+      // Pin list-specific UI readback, not merely a detail warning. The stored
+      // source totals remain 42925/146/17 while observed requests change 0→3.
+      for await (const stage of nativeCaptureStages(request, actor, probe, testInfo)) {
+        await test.step(`native capture lists ${stage.stage}`, async () => {
+          const coverage = { scope: 'observed_requests', source_summary_present: true,
+            request_count: stage.count, coverage_unknown: true };
+          const traces = await actor.api.get<TracePage>(LIST, {
+            project_id: stage.projectId, page_number: 0, page_size: 25, filters: '[]',
+          });
+          expect(traces.result.table.map((r) => r.trace_id).sort()).toEqual([stage.traceId, stage.legacyTraceId].sort());
+          expect(traces.result.trace_capture_coverage).toEqual({ [stage.projectId]: { [stage.traceId]: coverage } });
+          const row = traces.result.table.find((r) => r.trace_id === stage.traceId)!;
+          expect([row.total_tokens, row.cost]).toEqual([stage.tokens, stage.cost]);
+          const legacy = traces.result.table.find((r) => r.trace_id === stage.legacyTraceId)!;
+          expect([legacy.total_tokens, legacy.cost]).toEqual([10, 0.05]);
+          const sessions = await actor.api.get<SessionPage>(SESSIONS, {
+            project_id: stage.projectId, page_number: 0, page_size: 25,
+          });
+          const session = sessions.result.table.find((r) => r.session_id === stage.sessionId)!;
+          expect([session.total_tokens, session.total_cost, session.total_traces_count]).toEqual([stage.tokens, stage.cost, 1]);
+          expect(session.capture_coverage).toEqual(coverage);
+          await testInfo.attach(`capture-lists-${stage.stage}`, {
+            body: JSON.stringify({ traces, sessions }), contentType: 'application/json',
+          });
+          const costLabel = stage.cost === 0 ? 'Observed-only · $0.00' : 'Observed-only · Unknown';
+          const tokenLabel = stage.tokens === 0 ? 'Observed-only · 0 tokens' : 'Observed-only · 43,071 tokens';
+          for (const [path, rowId, costCol, tokenCol] of [
+            ['llm-tracing?tab=traces', stage.traceId, 'cost', 'total_tokens'],
+            ['sessions', stage.sessionId, 'total_cost', 'total_tokens'],
+          ]) {
+            await page.goto(`/dashboard/observe/${stage.projectId}/${path}`, { waitUntil: 'domcontentloaded' });
+            const identityCol = costCol === 'cost' ? 'trace_name' : 'session_id';
+            await expect(page.locator(`.clean-data-table:visible .ag-row[row-id="${rowId}"] [col-id="${identityCol}"]`))
+              .toBeVisible({ timeout: UI_READY });
+            // Session tokens are hidden by default (helper.py); use the actual
+            // Display picker and keep only three columns to avoid virtualization.
+            await page.getByRole('button', { name: 'Display', exact: true }).click();
+            await page.getByText('View columns', { exact: true }).click();
+            const popup = page.locator('.MuiPopover-paper:visible')
+              .filter({ has: page.getByPlaceholder('Search', { exact: true }) });
+            const labels = costCol === 'cost' ? ['Trace Name', 'Tokens', 'Total Cost']
+              : ['Session Id', 'Total Tokens', 'Total Cost'];
+            await expect(popup.getByText(labels[0], { exact: true })).toBeVisible({ timeout: UI_READY });
+            const all = popup.getByRole('checkbox', { name: 'Toggle Select all', exact: true });
+            await all.check(); await all.uncheck();
+            for (const label of labels)
+              await popup.getByText(label, { exact: true }).locator('..').getByRole('checkbox').check();
+            await expect(popup.getByRole('checkbox', { checked: true })).toHaveCount(3, { timeout: UI_READY });
+            await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+            await expect(page.getByText('View columns', { exact: true })).toBeHidden({ timeout: UI_READY });
+            const cost = page.locator(`.clean-data-table:visible .ag-row[row-id="${rowId}"] [col-id="${costCol}"]`);
+            await expect(cost).toHaveText(costLabel, { timeout: UI_READY });
+            await expect(page.locator(`.clean-data-table:visible .ag-row[row-id="${rowId}"] [col-id="${tokenCol}"]`))
+              .toHaveText(tokenLabel, { timeout: UI_READY });
+            await cost.getByText(costLabel, { exact: true }).hover();
+            await expect(page.getByRole('tooltip')).toHaveText(
+              `Capture coverage unknown. ${stage.count} observed requests. Source summaries are nonadditive; observed amounts do not prove complete capture.`,
+              { timeout: UI_READY },
+            );
+            await shot(page, testInfo, `capture-${stage.stage}-${costCol}`);
+          }
+        });
+      }
       const { cases, stored, sessions, projectId } = await seedNative(request, actor, probe, testInfo);
       await test.step('storage exact identities, profiles, usage, summary and event truth', async () => {
         for (const c of cases) {
@@ -100,6 +166,11 @@ test(
         for (const c of cases) {
           const row = data.result.table.find((r) => r.trace_id === c.traceId)!;
           expect(row?.total_tokens, c.key).toBe(c.total);
+          const capture = data.result.trace_capture_coverage?.[projectId]?.[c.traceId];
+          if (c.key.startsWith('copilot')) expect(capture).toEqual({
+            scope: 'observed_requests', source_summary_present: true, request_count: 3, coverage_unknown: true,
+          });
+          else expect(capture).toBeUndefined();
           if (c.cost === null) expect(row?.cost, c.key).toBeNull();
           else expect(row?.cost, c.key).toBeCloseTo(c.cost, 8);
         }
@@ -135,7 +206,8 @@ test(
                   : c.cost === 0.5
                     ? '$0.5000'
                     : '$0.0500';
-          expect(text, c.key).toBe(gridExpected);
+          expect(text, c.key).toBe(c.key.startsWith('copilot')
+            ? `Observed-only · ${c.cost === null ? 'Unknown' : gridExpected}` : gridExpected);
         }
       });
       await test.step('UI applied trace name filter exact membership', async () => {

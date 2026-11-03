@@ -75,3 +75,14 @@ describe("Users monetary coverage", () => {
     expect(container.textContent).not.toMatch(/Unknown|Partial/);
   });
 });
+
+
+it("uses one monetary presentation for cell, tooltip and export formatter", () => {
+  const column = getUsersColumnConfig().find((item) => item.field === "total_cost");
+  const data = { total_cost: 0, cost_coverage: coverage("partial", 0, 1, 1) };
+  const params = { value: data.total_cost, data };
+  expect(column.cellRenderer(params)).toBe("Partial — Known subtotal $0.00");
+  expect(column.valueFormatter(params)).toBe(column.cellRenderer(params));
+  expect(column.tooltipValueGetter(params)).toBe(column.cellRenderer(params));
+  expect(data.total_cost).toBe(0);
+});

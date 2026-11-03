@@ -44,6 +44,8 @@ from tracer.services.clickhouse.query_builders.trace_list import (
     _unix_microseconds,
 )
 from tracer.services.clickhouse.query_builders.trace_usage import (
+    capture_coverage_from_counts,
+    source_summary_sql,
     usage_aggregate_sql,
     usage_coverage_sql,
 )
@@ -59,6 +61,8 @@ TRACE_ROLLUP_COLUMNS: tuple[str, ...] = (
     "trace_rollup_present",
     "trace_rollup_cost",
     "trace_rollup_cost_unknown",
+    "trace_rollup_source_summary_present",
+    "trace_rollup_request_count",
     "trace_rollup_total_tokens",
     "trace_rollup_prompt_tokens",
     "trace_rollup_completion_tokens",
@@ -98,6 +102,14 @@ def apply_trace_rollup(row: dict[str, Any], rollup: Mapping[str, Any]) -> None:
     # An absent/join-default rollup must still leave the root unchanged.
     if rollup.get("trace_rollup_cost_unknown"):
         row["cost"] = None
+    capture = capture_coverage_from_counts(
+        source_summary_present=bool(rollup.get("trace_rollup_source_summary_present")),
+        request_count=int(rollup.get("trace_rollup_request_count") or 0),
+    )
+    if capture is not None:
+        row["capture_coverage"] = capture
+    else:
+        row.pop("capture_coverage", None)
     if _blank_content(row.get("input")) and _blank_content(row.get("output")):
         llm_input = rollup.get("first_llm_input")
         llm_output = rollup.get("first_llm_output")
@@ -533,13 +545,13 @@ class _TraceRootReplayV2:
                     rollup_prompt_tokens, rollup_completion_tokens,
                     rollup_first_llm_model, rollup_first_llm_provider,
                     rollup_first_llm_key, rollup_root_has_content,
-                    usage_cost_unknown
+                    usage_cost_unknown, usage_source_summary_present, usage_request_count
                 ))
                 FROM (
                     SELECT
                         project_id,
                         trace_id,
-                        {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage")},
+                        {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage", source_summary="latest_source_summary_present")},
                         usage_cost AS rollup_cost,
                         usage_total_tokens AS rollup_total_tokens,
                         usage_prompt_tokens AS rollup_prompt_tokens,
@@ -574,7 +586,8 @@ class _TraceRootReplayV2:
                             argMax(tuple(start_time, cost, total_tokens, prompt_tokens,
                                 completion_tokens, model, provider, input_length,
                                 output_length, parent_span_id, is_deleted, name,
-                                {usage_coverage_sql(attrs="attrs_string")}), _version)
+                                {usage_coverage_sql(attrs="attrs_string")},
+                                {source_summary_sql(attrs="attrs_string")}), _version)
                                 AS latest_span,
                             id AS latest_id,
                             observation_type AS latest_observation_type,
@@ -590,7 +603,8 @@ class _TraceRootReplayV2:
                             latest_span.10 AS latest_parent_span_id,
                             latest_span.11 AS latest_is_deleted,
                             latest_span.12 AS latest_name,
-                            latest_span.13 AS latest_usage_coverage
+                            latest_span.13 AS latest_usage_coverage,
+                            latest_span.14 AS latest_source_summary_present
                         FROM {self.TABLE}
                         PREWHERE (toString(project_id), trace_id) IN {identities}
                           AND {project_filter}
@@ -624,6 +638,8 @@ class _TraceRootReplayV2:
                 toUInt8(1) AS trace_rollup_present,
                 tupleElement(rollup_row, 3) AS trace_rollup_cost,
                 tupleElement(rollup_row, 11) AS trace_rollup_cost_unknown,
+                tupleElement(rollup_row, 12) AS trace_rollup_source_summary_present,
+                tupleElement(rollup_row, 13) AS trace_rollup_request_count,
                 tupleElement(rollup_row, 4) AS trace_rollup_total_tokens,
                 tupleElement(rollup_row, 5) AS trace_rollup_prompt_tokens,
                 tupleElement(rollup_row, 6) AS trace_rollup_completion_tokens,

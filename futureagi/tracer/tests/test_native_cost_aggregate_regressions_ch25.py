@@ -18,6 +18,7 @@ from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 from tracer.tests.test_openrouter_broadcast_list_rollups_ch25 import (
     _REMAP_DDL,
     _SPANS_DDL,
+    _TRACES_DDL,
 )
 
 pytestmark = pytest.mark.integration
@@ -125,7 +126,7 @@ def cost_client():
                 "SELECT value FROM system.settings "
                 "WHERE name = 'prefer_column_name_to_alias'"
             ).result_rows == [("0",)]
-            for ddl in (_SPANS_DDL, _REMAP_DDL):
+            for ddl in (_SPANS_DDL, _REMAP_DDL, _TRACES_DDL):
                 client.command(ddl)
             yield client
         finally:
@@ -211,6 +212,11 @@ def test_native_cost_aggregate_completeness(
         assert result[0]["total_tokens"] == expected_tokens
         assert result[0]["traces_count"] == 1
         actual_cost = result[0]["total_cost"]
+        formatted = builder.format_sessions(result, list(result[0]))[0]
+        if not any(span["attrs_string"].get("fi.usage.scope") == "turn"
+                   and span["attrs_string"].get("fi.usage.contribution") == "none"
+                   for span in spans):
+            assert "capture_coverage" not in formatted
 
     if expected_cost is None:
         assert actual_cost is None, "unknown work must not become zero or a partial sum"
@@ -301,7 +307,7 @@ def test_native_source_summary_parent_late_children_and_replay(
             rows.append([values[column] for column in columns])
         cost_client.insert("spans", rows, column_names=columns)
 
-    def read_usage(expected_tokens, expected_count, expected_cost):
+    def read_usage(expected_tokens, expected_count, expected_cost, root_version=1, source_present=True):
         sql, params = build_session_detail_aggregate_query(str(project), [str(session)])
         rows = list(cost_client.query(sql, parameters=params).named_results())
         assert len(rows) == 1
@@ -309,11 +315,53 @@ def test_native_source_summary_parent_late_children_and_replay(
         assert row["total_tokens"] == expected_tokens
         assert row["total_cost"] == expected_cost
         assert row["total_traces"] == 1
+        expected_capture = (
+            {"scope": "observed_requests", "source_summary_present": True,
+             "request_count": expected_count, "coverage_unknown": True}
+            if source_present else None
+        )
+        assert row["observed_request_count"] == expected_count
+        assert bool(row["source_summary_present"]) is source_present
         assert capture_coverage_from_counts(
             source_summary_present=bool(row["source_summary_present"]),
             request_count=row["observed_request_count"],
-        ) == {"scope": "observed_requests", "source_summary_present": True,
-              "request_count": expected_count, "coverage_unknown": True}
+        ) == expected_capture
+
+        # The actual trace-list physical winner and shared session-list base,
+        # not just detail reducers. Each full statement is bounded to this page.
+        from tracer.services.clickhouse.v2.query_builders.trace_list import (
+            TraceListQueryBuilderV2, apply_trace_rollup,
+        )
+        trace_builder = TraceListQueryBuilderV2(project_id=str(project), filters=[])
+        start_us = int(START.timestamp() * 1_000_000)
+        identity = (str(project), trace, root_id, start_us, "agent", "",
+                    start_us // 3_600_000_000 * 3_600_000_000, root_version)
+        trace_sql, trace_params = trace_builder.build_content_query(
+            [trace], root_identities=[identity], include_trace_rollup=True,
+        )
+        trace_rows = list(cost_client.query(trace_sql, parameters=trace_params).named_results())
+        assert len(trace_rows) == 1
+        trace_row = {"project_id": str(project), "trace_id": trace, "id": root_id}
+        apply_trace_rollup(trace_row, trace_rows[0])
+        assert trace_row.get("capture_coverage") == expected_capture
+        assert trace_row["cost"] == expected_cost
+        assert trace_row["total_tokens"] == expected_tokens
+        assert trace_row["id"] == "0000000000000001"
+        session_builder = SessionListQueryBuilderV2(project_id=str(project), filters=[{
+            "column_id": "created_at", "filter_config": {
+                "col_type": "SYSTEM_METRIC", "filter_type": "datetime", "filter_op": "between",
+                "filter_value": [START.isoformat(), (START + timedelta(days=2)).isoformat()],
+            },
+        }])
+        session_sql, session_params = session_builder.build_page_hydration_query([str(session)])
+        session_rows = list(cost_client.query(session_sql, parameters=session_params).named_results())
+        assert len(session_rows) == 1
+        session_row = session_builder.format_sessions(session_rows, list(session_rows[0]))[0]
+        assert session_row["session_id"] == str(session)
+        assert session_row["total_tokens"] == expected_tokens
+        assert session_row["total_cost"] == expected_cost
+        assert session_row["total_traces_count"] == 1
+        assert session_row.get("capture_coverage") == expected_capture
 
     insert([root], 1)
     insert(children, 1, selected_project=uuid4())
@@ -321,7 +369,7 @@ def test_native_source_summary_parent_late_children_and_replay(
     insert([*children, hook], 1)
     read_usage(43071, 3, None)
     insert([root, *children, hook], 2)
-    read_usage(43071, 3, None)
+    read_usage(43071, 3, None, root_version=2)
     stored = list(cost_client.query(
         "SELECT id, attrs_number FROM spans FINAL WHERE project_id = %(project)s "
         "AND trace_id = %(trace)s AND id = %(id)s AND is_deleted = 0",
@@ -329,7 +377,7 @@ def test_native_source_summary_parent_late_children_and_replay(
     ).named_results())
     assert stored == [{"id": root_id, "attrs_number": raw_summary}]
     insert([{**children[0], "is_deleted": 1}], 3)
-    read_usage(28915, 2, None)
+    read_usage(28915, 2, None, root_version=2)
     # The source witness follows the same latest physical winner; a historical
     # marker must not survive a newer unmarked root or a deleted source root.
     insert([{**root, "attrs_string": {}, "attrs_number": {}}], 4)
@@ -337,3 +385,4 @@ def test_native_source_summary_parent_late_children_and_replay(
     row = list(cost_client.query(sql, parameters=params).named_results())[0]
     assert not row["source_summary_present"]
     assert row["observed_request_count"] == 2
+    read_usage(28915, 2, None, root_version=4, source_present=False)

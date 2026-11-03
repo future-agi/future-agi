@@ -1862,19 +1862,21 @@
 ### OBS-E2E-054 — native source accounting retains exact usage and known, zero and unknown costs
 
 **Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero  
-**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:7`  
+**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:8`  
 **Tags:** —
 
 **User steps:**
 
-1. ingest synthetic Copilot and Gemini trees plus a legacy control, including duplicate delivery
-2. verify exact source identities, normalized counters and session grouping in storage
-3. read exact trace membership and known, zero and unknown costs in the desktop grid
-4. filter by trace name and by zero or positive cost
-5. sort positive costs and the full set both ways, replaying each captured API request
+1. read parent-only native trace and session list coverage, deliver children later, then replay identical IDs
+2. ingest synthetic Copilot and Gemini trees plus a legacy control, including duplicate delivery
+3. verify exact source identities, normalized counters and session grouping in storage
+4. read exact trace membership and known, zero and unknown costs in the desktop grid
+5. filter by trace name and by zero or positive cost
+6. sort positive costs and the full set both ways, replaying each captured API request
 
 **Backend state verified:**
 
+- root-only, late-child and replay lists keep observed request counts 0, 3, 3 with coverage unknown and unchanged source summary presence
 - source IDs, parents, normalization profiles, summary counters and sanitized event attributes persist exactly
 - trace API totals and grid distinguish zero from unknown costs
 - session fallback and explicit identities match exact source membership
@@ -1890,7 +1892,7 @@
 
 1. read the exact six seeded session identities in the API and desktop grid
 2. open the two-turn Copilot session and navigate to its first source trace
-3. scroll the grid to inspect known, zero and unknown costs and exact trace counts
+3. scroll the grid to inspect observed-only native costs, coverage unknown and exact request and trace counts
 4. open each remaining session and match its history card, source trace, tokens and cost
 
 **Backend state verified:**

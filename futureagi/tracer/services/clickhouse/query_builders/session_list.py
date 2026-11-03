@@ -47,6 +47,8 @@ from tracer.services.clickhouse.query_builders.session_filters import (
     build_session_id_filter_clause,
 )
 from tracer.services.clickhouse.query_builders.trace_usage import (
+    capture_coverage_from_counts,
+    source_summary_sql,
     usage_aggregate_sql,
     usage_coverage_sql,
 )
@@ -3230,7 +3232,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 latest_start_time,
                 ifNull(latest_members.latest_cost, 0) AS latest_cost,
                 ifNull(latest_members.latest_total_tokens, 0) AS latest_total_tokens,
-                latest_usage_coverage
+                latest_usage_coverage,
+                latest_source_summary_present
                 {message_rank}
             FROM (
                 SELECT
@@ -3245,6 +3248,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     argMax(tuple(cost), _peerdb_version).1 AS latest_cost,
                     argMax(tuple(total_tokens), _peerdb_version).1 AS latest_total_tokens,
                     argMax({coverage}, _peerdb_version) AS latest_usage_coverage,
+                    argMax({source_summary_sql(attrs=self._COST_ATTRIBUTE_MAP)},
+                           _peerdb_version) AS latest_source_summary_present,
                     argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
                     {message_length}
                 FROM {self.TABLE}
@@ -3263,7 +3268,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         ),
         member_trace_usage AS (
             SELECT project_id, member_session_id, trace_id,
-                {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage")}
+                {usage_aggregate_sql(prefix="latest_", coverage="latest_usage_coverage", source_summary="latest_source_summary_present")}
                 {message_aggregates}
             FROM session_members
             GROUP BY project_id, member_session_id, trace_id
@@ -3409,7 +3414,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         (
             SELECT groupArray(tuple(
                 member_session_id, member_total_cost, member_total_tokens,
-                first_message_key, last_message_key
+                first_message_key, last_message_key,
+                member_source_summary_present, member_request_count
             ))
             FROM (
                 SELECT
@@ -3417,6 +3423,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     if(countIf(isNull(usage_cost)) > 0,
                        CAST(NULL, 'Nullable(Float64)'), sum(usage_cost)) AS member_total_cost,
                     sum(usage_total_tokens) AS member_total_tokens,
+                    max(usage_source_summary_present) AS member_source_summary_present,
+                    sum(usage_request_count) AS member_request_count,
                     argMinIf(trace_message_key, tuple(trace_root_start, trace_id),
                         trace_has_root) AS first_message_key,
                     argMaxIf(trace_message_key, tuple(trace_root_start, trace_id),
@@ -3431,7 +3439,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 tupleElement(member_row, 2) AS member_total_cost,
                 tupleElement(member_row, 3) AS member_total_tokens,
                 tupleElement(member_row, 4) AS first_message_key,
-                tupleElement(member_row, 5) AS last_message_key
+                tupleElement(member_row, 5) AS last_message_key,
+                tupleElement(member_row, 6) AS member_source_summary_present,
+                tupleElement(member_row, 7) AS member_request_count
             FROM (SELECT arrayJoin(member_rollup_rows) AS member_row)
         ),
         message_inputs AS (
@@ -3460,6 +3470,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                member_rollup.member_total_cost, root_page.root_total_cost) AS total_cost,
             if(member_rollup.member_session_id = root_page.session_id,
                member_rollup.member_total_tokens, root_page.root_total_tokens) AS total_tokens,
+            member_rollup.member_source_summary_present AS source_summary_present,
+            member_rollup.member_request_count AS observed_request_count,
             root_page.traces_count AS traces_count,
             if(root_page.root_first_message != '', root_page.root_first_message,
                arrayElement(message_input_values,
@@ -3845,6 +3857,18 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     "last_message": _get(row, "last_message", 8, "") or "",
                 }
             )
+            # New columns are optional for legacy callers. Never use a positional
+            # fallback here: index 0 would turn a session ID into a witness.
+            capture = capture_coverage_from_counts(
+                source_summary_present=bool(
+                    _get(row, "source_summary_present", len(row), False)
+                ),
+                request_count=int(
+                    _get(row, "observed_request_count", len(row), 0) or 0
+                ),
+            )
+            if capture is not None:
+                results[-1]["capture_coverage"] = capture
         return results
 
     # ------------------------------------------------------------------

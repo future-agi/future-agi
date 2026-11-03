@@ -58,6 +58,10 @@ test(
             contentType: 'application/json',
           });
           expect(body.result.summary.total_tokens).toBe(c.total);
+          if (key.startsWith('copilot')) expect(body.result.capture_coverage).toEqual({
+            scope: 'observed_requests', source_summary_present: true, request_count: 3, coverage_unknown: true,
+          });
+          else expect(body.result.capture_coverage).toBeUndefined();
           if (c.cost === null) expect(body.result.summary.total_cost).toBeNull();
           else expect(body.result.summary.total_cost).toBeCloseTo(c.cost, 8);
           expect(body.result.summary.total_prompt_tokens).toBe(c.prompt.reduce((n, v) => n + v, 0));
@@ -89,11 +93,11 @@ test(
           });
           // formatters.js abbreviates >=10000; retain literal independent oracle.
           await expect(
-            drawer.getByText(`${c.total === 43071 ? '43.1K' : c.total} tokens`, { exact: true }),
+            drawer.getByText(`${c.total === 43071 ? '43.1K' : c.total} ${key.startsWith('copilot') ? 'observed tokens' : 'tokens'}`, { exact: true }),
           ).toBeVisible({ timeout: UI_READY });
           await shot(page, testInfo, `${key}-summary`);
           expect(
-            await drawer.getByText(c.display, { exact: true }).first().isVisible(),
+            await drawer.getByText(`${key.startsWith('copilot') ? 'Observed cost: ' : ''}${c.display}`, { exact: true }).first().isVisible(),
             `${key} summary must show ${c.display}`,
           ).toBe(true);
           const childName = key.startsWith('copilot') ? 'chat' : key.startsWith('gemini') ? 'llm_call' : 'e2e.llm-call';
