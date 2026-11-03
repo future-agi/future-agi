@@ -25,6 +25,9 @@ import { highlightOf, searchCatalog } from "./catalogSearch";
  * step it starts, with Connect beside it; how a fix comes back is said once
  * per group.
  */
+/* Dense catalogue: how many of a long part show before Show all. */
+const DENSE_LIMIT = 6;
+
 export default function ConnectCatalog({
   groups,
   pickedId,
@@ -32,11 +35,14 @@ export default function ConnectCatalog({
   emptyHint,
   onFallback,
   compact = false,
+  dense = false,
   showAll = true,
   ready = {},
   onBuild = null,
 }) {
   const [query, setQuery] = useState("");
+  /* Dense: long parts show their first few until opened. */
+  const [opened, setOpened] = useState({});
   /* Without an All chip, it opens on the first group. */
   const [filter, setFilter] = useState(showAll ? "all" : groups[0]?.id);
   const inputRef = useRef(null);
@@ -316,10 +322,10 @@ export default function ConnectCatalog({
                 display: "grid",
                 gridTemplateColumns: "1fr",
                 px: 1,
-                py: 1,
+                py: dense ? 0.5 : 1,
                 [t.breakpoints.up(compact ? "lg" : "md")]: {
-                  gridTemplateColumns: `repeat(${columns || 2}, 1fr)`,
-                  columnGap: 4,
+                  gridTemplateColumns: `repeat(${dense ? 3 : columns || 2}, 1fr)`,
+                  columnGap: dense ? 1 : 4,
                 },
               })}
             >
@@ -330,7 +336,9 @@ export default function ConnectCatalog({
                   ready={ready[it.id]}
                   selected={pickedId === it.id}
                   onPick={onPick}
+                  dense={dense}
                   {...rowProps(it)}
+                  {...(dense && !ready[it.id] && { single: true })}
                 />
               ))}
             </Box>
@@ -344,15 +352,38 @@ export default function ConnectCatalog({
                 {Object.entries(sec.sections).map(([key, part]) => {
                   const rows = sec.items.filter((it) => it.section === key);
                   if (!rows.length) return null;
+                  const cut =
+                    dense && rows.length > DENSE_LIMIT && !opened[key];
+                  const shown = cut ? rows.slice(0, DENSE_LIMIT) : rows;
                   return (
                     <PartPanel key={key} title={part.title} reach={part.reach}>
                       {part.dropzone ? (
                         <DropZone item={rows[0]} onPick={onPick} />
                       ) : (
-                        grid(rows, part.columns, (it) => ({
-                          sub: it.short,
-                          single: !!it.short && !ready[it.id],
-                        }))
+                        <>
+                          {grid(shown, part.columns, (it) => ({
+                            sub: it.short,
+                            single: !!it.short && !ready[it.id],
+                          }))}
+                          {dense && rows.length > DENSE_LIMIT && (
+                            <ButtonBase
+                              onClick={() =>
+                                setOpened((o) => ({ ...o, [key]: !o[key] }))
+                              }
+                              sx={{
+                                mx: 2,
+                                mb: 1,
+                                typography: "s3",
+                                fontWeight: 500,
+                                color: "text.secondary",
+                                "&:hover": { color: "text.primary" },
+                                "&.Mui-focusVisible": focusRing,
+                              }}
+                            >
+                              {cut ? `Show all ${rows.length}` : "Show fewer"}
+                            </ButtonBase>
+                          )}
+                        </>
                       )}
                     </PartPanel>
                   );
@@ -415,6 +446,8 @@ ConnectCatalog.propTypes = {
   onFallback: PropTypes.func,
   /* Inside a drawer: two columns only on wide screens. */
   compact: PropTypes.bool,
+  /* Name-only rows in three columns, long parts cut to their first few. */
+  dense: PropTypes.bool,
   /* An All chip listing every group at once — off where the list shares a drawer with other ways in. */
   showAll: PropTypes.bool,
 };
@@ -574,6 +607,7 @@ function CatalogRow({
   showGroup,
   sub,
   single = false,
+  dense = false,
   ready = null,
   active = false,
   query = "",
@@ -598,7 +632,7 @@ function CatalogRow({
         textAlign: "left",
         gap: 1.25,
         px: 1,
-        py: single ? 0.5 : 0.75,
+        py: dense ? 0.375 : single ? 0.5 : 0.75,
         borderRadius: 1,
         bgcolor: selected ? "action.selected" : "transparent",
         transition: "background-color .12s ease",
@@ -607,7 +641,7 @@ function CatalogRow({
             alpha(t.palette.text.primary, selected ? 0.09 : 0.045),
         },
         "&:hover .cat-connect, &.Mui-focusVisible .cat-connect, &[data-active] .cat-connect":
-          { borderColor: "text.primary" },
+          { borderColor: "text.primary", opacity: 1 },
         "&[data-active]": {
           bgcolor: (t) => alpha(t.palette.text.primary, 0.06),
         },
@@ -684,10 +718,12 @@ function CatalogRow({
             alignItems: "center",
             gap: 0.5,
             px: 1.25,
-            height: 28,
+            height: dense ? 24 : 28,
             borderRadius: "4px",
             border: "1px solid",
             borderColor: "divider",
+            /* Dense: the row is the click; Connect shows on hover or focus. */
+            ...(dense && !selected && { opacity: 0 }),
             typography: "s3",
             fontWeight: 600,
             color: "text.primary",
@@ -710,6 +746,8 @@ CatalogRow.propTypes = {
   sub: PropTypes.string,
   /* Name only — a framework under "Through our SDK" needs no second line. */
   single: PropTypes.bool,
+  /* One line, tighter, Connect on hover — for the build drawer. */
+  dense: PropTypes.bool,
   /* Its account is connected: { line } replaces the next step. */
   ready: PropTypes.object,
   /* The row the arrow keys are on, while searching. */

@@ -269,6 +269,7 @@ function ConnectSection({
         groups={groups}
         /* Other ways in sit above and below it, so no All: one group at a time, Code first. */
         showAll={false}
+        dense
         detect={detectPaste}
         onPaste={onPaste}
         pasteHint="a repo, an ID, an MCP URL or a prompt"
