@@ -13,6 +13,12 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
+func testWebhook(cfg map[string]interface{}) *WebhookGuardrail {
+	g := New("test-hook", cfg)
+	g.client = &http.Client{Timeout: 10 * time.Second}
+	return g
+}
+
 func makeInput(content string) *guardrails.CheckInput {
 	raw, _ := json.Marshal(content)
 	return &guardrails.CheckInput{
@@ -36,7 +42,7 @@ func TestWebhook_Pass(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{"url": srv.URL})
+	g := testWebhook(map[string]interface{}{"url": srv.URL})
 	r := g.Check(context.Background(), makeInput("Hello"))
 	if !r.Pass {
 		t.Fatal("expected pass")
@@ -53,7 +59,7 @@ func TestWebhook_Block(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{"url": srv.URL})
+	g := testWebhook(map[string]interface{}{"url": srv.URL})
 	r := g.Check(context.Background(), makeInput("Bad content"))
 	if r.Pass {
 		t.Fatal("expected block")
@@ -71,7 +77,7 @@ func TestWebhook_CustomHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{
+	g := testWebhook(map[string]interface{}{
 		"url": srv.URL,
 		"headers": map[string]interface{}{
 			"Authorization": "Bearer my-token",
@@ -92,7 +98,7 @@ func TestWebhook_ReceivesPayload(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{"url": srv.URL})
+	g := testWebhook(map[string]interface{}{"url": srv.URL})
 	g.Check(context.Background(), makeInput("Test message"))
 
 	if received.Metadata["key"] != "value" {
@@ -115,7 +121,7 @@ func TestWebhook_ServerError_Retry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{
+	g := testWebhook(map[string]interface{}{
 		"url":   srv.URL,
 		"retry": 2,
 	})
@@ -134,7 +140,7 @@ func TestWebhook_AllRetriesFail(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{
+	g := testWebhook(map[string]interface{}{
 		"url":   srv.URL,
 		"retry": 1,
 	})
@@ -157,7 +163,7 @@ func TestWebhook_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	g := New("test-hook", map[string]interface{}{"url": srv.URL})
+	g := testWebhook(map[string]interface{}{"url": srv.URL})
 	r := g.Check(ctx, makeInput("Test"))
 	if r.Pass {
 		t.Fatal("expected fail on timeout")
@@ -178,7 +184,7 @@ func TestWebhook_InvalidJSON_Response(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{"url": srv.URL})
+	g := testWebhook(map[string]interface{}{"url": srv.URL})
 	r := g.Check(context.Background(), makeInput("Test"))
 	if r.Pass {
 		t.Fatal("expected fail on invalid JSON response")
@@ -205,10 +211,23 @@ func TestWebhook_Details(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{"url": srv.URL})
+	g := testWebhook(map[string]interface{}{"url": srv.URL})
 	r := g.Check(context.Background(), makeInput("Test"))
 	if r.Details["reason"] != "custom_policy" {
 		t.Error("expected custom details passed through")
+	}
+}
+
+func TestWebhook_RefusesMetadataAddress(t *testing.T) {
+	g := New("test-hook", map[string]interface{}{
+		"url": "http://169.254.169.254/latest/meta-data/",
+	})
+	r := g.Check(context.Background(), makeInput("Hello"))
+	if r.Pass {
+		t.Fatal("metadata address must not pass")
+	}
+	if !strings.Contains(r.Message, "not allowed") && !strings.Contains(r.Message, "refused") {
+		t.Fatalf("expected a refused dial, got %q", r.Message)
 	}
 }
 

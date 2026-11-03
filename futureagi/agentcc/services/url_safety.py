@@ -1,3 +1,4 @@
+import ipaddress
 import os
 import socket
 from urllib.parse import urlparse
@@ -73,6 +74,18 @@ def _raise_if_unsafe_url(
         raise exception_cls(message)
 
     try:
+        literal = ipaddress.ip_address(hostname.strip("[]"))
+    except ValueError:
+        literal = None
+    if literal is not None:
+        ip_class = classify_ip(literal)
+        if ip_class is IPClass.NEVER:
+            raise exception_cls(message)
+        if ip_class is IPClass.PRIVATE and not allow_private:
+            raise exception_cls(private_message or message)
+        return
+
+    try:
         resolved = socket.getaddrinfo(
             hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
         )
@@ -95,6 +108,7 @@ def ensure_public_http_url(
     *,
     allow_private: bool = False,
     private_message: str | None = None,
+    allow_unresolvable: bool = False,
 ) -> None:
     _raise_if_unsafe_url(
         url,
@@ -102,6 +116,7 @@ def ensure_public_http_url(
         ValueError,
         allow_private=allow_private,
         private_message=private_message,
+        allow_unresolvable=allow_unresolvable,
     )
 
 
@@ -136,7 +151,10 @@ def ensure_provider_base_url_allowed(
 
 
 def build_ssrf_safe_session(
-    connect_error_message: str, *, allow_private: bool = False
+    connect_error_message: str,
+    *,
+    allow_private: bool = False,
+    allow_unresolvable: bool = False,
 ) -> http_requests.Session:
     class _SSRFSafeAdapter(http_requests.adapters.HTTPAdapter):
         def send(self, request, **kwargs):
@@ -145,6 +163,7 @@ def build_ssrf_safe_session(
                 connect_error_message,
                 ConnectionError,
                 allow_private=allow_private,
+                allow_unresolvable=allow_unresolvable,
             )
             return super().send(request, **kwargs)
 
