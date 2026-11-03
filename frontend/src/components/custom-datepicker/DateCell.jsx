@@ -2,8 +2,9 @@ import React from "react";
 import { isSameDay, isWithinInterval, isSameMonth, isToday } from "date-fns";
 import { Box, ButtonBase } from "@mui/material";
 import PropTypes from "prop-types";
+import { isDateSelectable } from "./dateRangeLimits";
 
-export default function DateCell({ day, monthStart, range, onClick }) {
+export default function DateCell({ day, monthStart, range, onClick, maxDate }) {
   const { start, end } = range;
 
   const isStart = start && isSameDay(day, start);
@@ -11,6 +12,7 @@ export default function DateCell({ day, monthStart, range, onClick }) {
   const inRange = start && end && isWithinInterval(day, { start, end });
   const isCurrentMonth = isSameMonth(day, monthStart);
   const today = isToday(day);
+  const isDisabled = !isDateSelectable(day, maxDate);
 
   if (!isCurrentMonth) {
     return <Box sx={{ p: 0, textAlign: "center", color: "transparent" }}></Box>;
@@ -19,6 +21,7 @@ export default function DateCell({ day, monthStart, range, onClick }) {
   return (
     <ButtonBase
       onClick={onClick}
+      disabled={isDisabled}
       sx={{
         width: "100%",
         aspectRatio: "1 / 1",
@@ -37,7 +40,13 @@ export default function DateCell({ day, monthStart, range, onClick }) {
             : inRange
               ? "action.hover"
               : "transparent",
-        color: isStart || isEnd ? "white" : "text.primary",
+        color: isDisabled
+          ? "text.disabled"
+          : isStart || isEnd
+            ? "white"
+            : "text.primary",
+        opacity: isDisabled ? 0.4 : 1,
+        cursor: isDisabled ? "not-allowed" : "pointer",
         "&:hover": {
           bgcolor:
             isStart || isEnd
@@ -66,4 +75,5 @@ DateCell.propTypes = {
     end: PropTypes.instanceOf(Date),
   }).isRequired,
   onClick: PropTypes.func.isRequired,
+  maxDate: PropTypes.instanceOf(Date),
 };
