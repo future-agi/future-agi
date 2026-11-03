@@ -10,6 +10,7 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
 import ContentSkeleton from "src/components/content-skeleton";
 
@@ -418,15 +419,15 @@ function JudgeReasonCard({ reason, score }) {
           Evaluator reasoning
         </Typography>
         <Box sx={{ flex: 1 }} />
+        {/* Anything short of a full score is a fail, as before the design system. */}
         {score != null && (
-          <Typography
-            fontSize="12px"
-            fontWeight={600}
-            color="text.primary"
-            sx={{ fontVariantNumeric: "tabular-nums" }}
-          >
-            {score.toFixed(2)} / 1.00
-          </Typography>
+          <StatusBadge
+            role={score < 1 ? "danger" : "success"}
+            label={`${score.toFixed(2)} / 1.00`}
+            variant="badge"
+            dot={false}
+            size="sm"
+          />
         )}
       </Stack>
       <Typography fontSize="13px" color="text.primary" sx={{ lineHeight: 1.6 }}>

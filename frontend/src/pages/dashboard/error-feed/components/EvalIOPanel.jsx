@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import { Box, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 
 // ── Format helpers ──────────────────────────────────────────────────────────
 function stringify(value) {
@@ -112,15 +113,15 @@ function JudgeReasonCard({ reason, score }) {
           Evaluator reasoning
         </Typography>
         <Box sx={{ flex: 1 }} />
+        {/* Anything short of a full score is a fail, as before the design system. */}
         {score != null && (
-          <Typography
-            variant="s3"
-            fontWeight={600}
-            color="text.primary"
-            sx={{ fontVariantNumeric: "tabular-nums" }}
-          >
-            {Number(score).toFixed(2)} / 1.00
-          </Typography>
+          <StatusBadge
+            role={score < 1 ? "danger" : "success"}
+            label={`${Number(score).toFixed(2)} / 1.00`}
+            variant="badge"
+            dot={false}
+            size="sm"
+          />
         )}
       </Stack>
       <Typography

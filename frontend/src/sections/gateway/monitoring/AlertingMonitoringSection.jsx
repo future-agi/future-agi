@@ -382,6 +382,8 @@ const LiveMetricsTab = ({
               Number(val(overview?.error_rate) ?? 0) > 5
                 ? "Above 5%"
                 : undefined,
+            hintRole:
+              Number(val(overview?.error_rate) ?? 0) > 5 ? "danger" : undefined,
             onClick: () => navigate("/dashboard/gateway/analytics?tab=errors"),
           },
           {

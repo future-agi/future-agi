@@ -15,6 +15,7 @@ import {
 import PropTypes from "prop-types";
 import React, { useCallback } from "react";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import RequiredMark from "src/components/RequiredMark";
 
@@ -227,17 +228,20 @@ const OutputTypeConfig = ({
                   valueLabelFormat={(v) => v.toFixed(1)}
                   sx={{ width: 80 }}
                 />
-                <Typography
-                  component="span"
-                  sx={{
-                    typography: "s2",
-                    minWidth: 24,
-                    color: "text.primary",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {score.toFixed(1)}
-                </Typography>
+                {/* Same bands as before the design system: 0.7 and up passes, below 0.3 fails. */}
+                <StatusBadge
+                  role={
+                    score >= 0.7
+                      ? "success"
+                      : score >= 0.3
+                        ? "warning"
+                        : "danger"
+                  }
+                  label={score.toFixed(1)}
+                  variant="badge"
+                  dot={false}
+                  size="sm"
+                />
                 <IconButton
                   size="small"
                   onClick={() => handleRemoveChoice(label)}

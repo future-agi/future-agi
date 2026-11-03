@@ -91,27 +91,11 @@ const isPassedEval = (ev) => {
   return label === "pass" || label === "passed" || label === "true";
 };
 
-/** Score → colored background + text — traffic-light pattern */
-export function scoreColor(score) {
-  if (score == null)
-    return {
-      bg: (theme) => alpha(theme.palette.text.disabled, 0.08),
-      text: "text.disabled",
-    };
-  if (score >= 80)
-    return {
-      bg: (theme) => alpha(theme.palette.success.main, 0.08),
-      text: "success.dark",
-    };
-  if (score >= 50)
-    return {
-      bg: (theme) => alpha(theme.palette.warning.main, 0.08),
-      text: "warning.dark",
-    };
-  return {
-    bg: (theme) => alpha(theme.palette.error.main, 0.08),
-    text: "error.main",
-  };
+/** Score (0-100) → status role: 80 and up passes, below 50 fails. */
+function scoreRole(score) {
+  if (score >= 80) return "success";
+  if (score >= 50) return "warning";
+  return "danger";
 }
 
 // Resizable columns. Until the user drags a header edge the table keeps its
@@ -363,6 +347,13 @@ const EvalTableRow = ({
             <StatusBadge
               role={ev.result ? "success" : "danger"}
               label={scoreLabel}
+            />
+          ) : ev.score != null ? (
+            <StatusBadge
+              role={scoreRole(ev.score)}
+              label={scoreLabel}
+              variant="badge"
+              dot={false}
             />
           ) : (
             <Typography

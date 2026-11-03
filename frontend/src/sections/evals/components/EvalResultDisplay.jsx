@@ -14,6 +14,7 @@ import Editor from "@monaco-editor/react";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
 import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { InlineAudio } from "src/components/inline-audio/inline-row-audio";
 import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
 import CompositeResultView from "./CompositeResultView";
@@ -182,17 +183,21 @@ const FormattedResult = ({ result }) => {
                   sx={{ display: "flex", alignItems: "center", gap: "8px" }}
                 >
                   <Chip label={label} size="small" variant="outlined" />
+                  {/* Same bands as before the design system: 0.7 and up passes, below 0.3 fails. */}
                   {itemScore != null && (
-                    <Typography
-                      component="span"
-                      sx={{
-                        typography: "s2",
-                        color: "text.primary",
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {itemScore.toFixed(1)}
-                    </Typography>
+                    <StatusBadge
+                      role={
+                        itemScore >= 0.7
+                          ? "success"
+                          : itemScore >= 0.3
+                            ? "warning"
+                            : "danger"
+                      }
+                      label={itemScore.toFixed(1)}
+                      variant="badge"
+                      dot={false}
+                      size="sm"
+                    />
                   )}
                 </Box>
               );

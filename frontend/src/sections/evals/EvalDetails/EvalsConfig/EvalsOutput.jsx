@@ -145,16 +145,11 @@ const CompositeResultView = ({ compositeResult }) => {
                 </Box>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                   {child.score != null && (
-                    <Typography
-                      component="span"
-                      variant="s2"
-                      sx={{
-                        color: "text.primary",
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {child.score.toFixed(3)}
-                    </Typography>
+                    <StatusBadge
+                      label={child.score.toFixed(3)}
+                      role={evalResultRole(child.score)}
+                      dot={false}
+                    />
                   )}
                   {child.output != null && child.score == null && (
                     <StatusBadge

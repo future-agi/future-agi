@@ -18,9 +18,21 @@ const ScoreChip = ({ value }) => {
       </Typography>
     );
   }
+  if (typeof value === "number") {
+    // Same bands as before the design system: 0.7 and up passes, below 0.3 fails.
+    return (
+      <StatusBadge
+        role={value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "danger"}
+        label={value.toFixed(2)}
+        variant="badge"
+        dot={false}
+        size="sm"
+      />
+    );
+  }
   return (
     <Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
-      {typeof value === "number" ? value.toFixed(2) : String(value)}
+      {String(value)}
     </Typography>
   );
 };

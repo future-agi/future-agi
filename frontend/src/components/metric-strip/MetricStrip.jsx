@@ -2,12 +2,14 @@ import React from "react";
 import PropTypes from "prop-types";
 import { Box, ButtonBase, Tooltip, Typography } from "@mui/material";
 
+import { STATUS_ROLES } from "src/utils/runStatus";
+
 // ----------------------------------------------------------------------
 // Future AGI Design System · Metric strip. A page's few headline numbers in
 // one bordered strip divided by hairlines — not a row of separate cards.
 // Label in caption/fg.tertiary, value 20px/600 in fg.default with tabular
-// figures, optional change. Colour goes only on the change (role), never on
-// the number itself.
+// figures, optional change. Colour goes only on the change or a verdict hint
+// (role), never on the number itself.
 // ----------------------------------------------------------------------
 
 const DELTA = { better: "status.success.fg", worse: "status.danger.fg", flat: "text.tertiary" };
@@ -65,7 +67,13 @@ export default function MetricStrip({ items, sx }) {
             )}
           </Box>
           {m.hint && (
-            <Typography noWrap sx={{ fontSize: 12, color: "text.tertiary" }}>
+            <Typography
+              noWrap
+              sx={{
+                fontSize: 12,
+                color: m.hintRole ? `status.${m.hintRole}.fg` : "text.tertiary",
+              }}
+            >
               {m.hint}
             </Typography>
           )}
@@ -83,6 +91,8 @@ MetricStrip.propTypes = {
       change: PropTypes.node,
       trend: PropTypes.oneOf(["better", "worse", "flat"]),
       hint: PropTypes.node,
+      // Colours a verdict hint (e.g. "Slow") by status role.
+      hintRole: PropTypes.oneOf(STATUS_ROLES),
       tooltip: PropTypes.node,
       onClick: PropTypes.func,
       key: PropTypes.string,

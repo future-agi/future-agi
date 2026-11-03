@@ -191,9 +191,11 @@ const GatewayOverviewSection = () => {
   const latencyMs = val(overview?.avg_latency_ms);
   const requestCount = Number(val(overview?.total_requests) ?? 0);
   let latencyHint;
+  let latencyRole;
   if (latencyMs != null && requestCount > 0) {
     const ms = Number(latencyMs);
     latencyHint = ms < 200 ? "Good" : ms < 500 ? "Fair" : "Slow";
+    latencyRole = ms < 200 ? "success" : ms < 500 ? "warning" : "danger";
   }
   const errorRate = Number(val(overview?.error_rate) ?? 0);
 
@@ -305,6 +307,7 @@ const GatewayOverviewSection = () => {
                 ? `${Number(latencyMs).toFixed(0)}ms`
                 : "\u2014",
             hint: latencyHint,
+            hintRole: latencyRole,
             onClick: () => navigate("/dashboard/gateway/analytics/latency"),
           },
           {
@@ -314,6 +317,7 @@ const GatewayOverviewSection = () => {
                 ? `${Number(val(overview.error_rate)).toFixed(1)}%`
                 : "0%",
             hint: errorRate > 5 ? "Above 5%" : undefined,
+            hintRole: errorRate > 5 ? "danger" : undefined,
             onClick: () => navigate("/dashboard/gateway/analytics/errors"),
           },
         ]}
