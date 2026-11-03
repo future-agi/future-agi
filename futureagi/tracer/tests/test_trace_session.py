@@ -731,8 +731,8 @@ class TestTraceSessionGraphAPI:
             "filters": filters,
             "interval": "day",
             "metric_id": "cost",
-            # Retires every snapshot cached before latency was the mean.
-            "payload_version": 2,
+            # Retires snapshots without latest-live monetary coverage.
+            "payload_version": 3,
         }
         assert exact_read.call_args.kwargs["refresh"] is False
         pending = exact_read.call_args.kwargs["pending_payload"]

@@ -62,7 +62,7 @@ def user_graph_tables(ch_client):
             start_time DateTime64(6, 'UTC'),
             trace_id String,
             id String,
-            name String MATERIALIZED '',
+            name String DEFAULT '',
             parent_span_id String,
             end_user_id Nullable(UUID),
             trace_session_id Nullable(UUID),

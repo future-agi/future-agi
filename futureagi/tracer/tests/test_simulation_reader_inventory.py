@@ -1340,6 +1340,12 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "SpanListQueryBuilder.build_filter_seed_page": _SEED_PAGE,
         "SpanListQueryBuilder.build_id_query": _LEGACY_PAGE_STATEMENT,
     },
+    "tracer.services.clickhouse.query_builders.graph_monetary_usage": {
+        "graph_monetary_rows_sql": filed(
+            PROJECT_SET,
+            why="reduces only the latest-live source fenced by each graph caller's authorized project; parent evidence is grouped by project and trace",
+        ),
+    },
     "tracer.services.clickhouse.query_builders.time_series": {
         "TimeSeriesQueryBuilder._build_agg_query": _PROJECT_CHART_STATEMENT,
         "TimeSeriesQueryBuilder._build_exact_raw_query": _EXACT_CHART_STATEMENT,

@@ -3559,7 +3559,10 @@ def test_exact_system_graph_compiles_relations_in_one_project_scoped_statement(
     assert analytics.capture_calls == []
     assert len(analytics.main_calls) == 1
     query, params, settings = analytics.main_calls[0]
-    assert query.count("FROM spans") == 1
+    assert query.count("FROM spans") == 2
+    assert "AND (project_id, trace_id) IN (" in query
+    assert "SELECT project_id, trace_id" in query
+    assert "AS graph_monetary_spans" in query
     assert "FROM spans FINAL" not in query
     assert "argMax(" in query
     assert "FROM tracer_eval_logger" in query
@@ -3577,7 +3580,7 @@ def test_exact_system_graph_compiles_relations_in_one_project_scoped_statement(
 
 
 @pytest.mark.unit
-def test_user_id_relation_filter_uses_one_spans_source_and_curated_remap():
+def test_user_id_relation_filter_uses_one_statement_and_curated_remap():
     analytics = _RelationSnapshotAnalytics()
     start = datetime(2026, 1, 1)
     end = start + timedelta(minutes=5)
@@ -3595,7 +3598,10 @@ def test_user_id_relation_filter_uses_one_spans_source_and_curated_remap():
     assert analytics.capture_calls == []
     assert len(analytics.main_calls) == 1
     query, _params, _settings = analytics.main_calls[0]
-    assert query.count("FROM spans") == 1
+    assert query.count("FROM spans") == 2
+    assert "AND (project_id, trace_id) IN (" in query
+    assert "SELECT project_id, trace_id" in query
+    assert "AS graph_monetary_spans" in query
     assert "FROM spans FINAL" not in query
     assert "argMax(" in query
     assert query.count("FROM end_users AS eu FINAL") == 1
@@ -3674,18 +3680,19 @@ def test_exact_system_graph_combines_scalar_array_map_and_legacy_json(observe_ty
     assert params["graph_filter_4_latest_filter_key_4"] == "legacy_payload"
     assert "additional_table_filters" not in settings
     assert query.count("FROM spans") == 2
+    assert "SELECT project_id, trace_id" in query
     assert (
-        "SELECT project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
-        in query
-    )
+        "GROUP BY project_id, observation_type, service_name, "
+        "toStartOfHour(start_time), trace_id, id"
+    ) in " ".join(query.split())
+    assert query.count("PREWHERE project_id = %(project_id)s") == 2
+    assert query.index("AS graph_monetary_spans") < query.rindex("WHERE ")
     assert "FROM spans FINAL" not in query
     assert "argMax(" in query
     assert "toUInt8(is_deleted)" in query
     assert "tupleElement(graph_latest_row, 8) = 0" in query
     assert "PREWHERE project_id = %(project_id)s" in query
-    prewhere = query.split("PREWHERE", 1)[1].split(
-        "AND (project_id, observation_type", 1
-    )[0]
+    prewhere = query.split("PREWHERE", 1)[1].split("AND (project_id, trace_id)", 1)[0]
     assert "project_id" in prewhere
     assert "start_time" in prewhere
     assert "attrs_" not in prewhere
@@ -5592,7 +5599,12 @@ def test_exact_trace_graph_merges_all_contribution_batches_before_averages(
     # final_status and confidence establish trace membership on possibly
     # different siblings; they are intentionally absent from the all-live-span
     # contribution scan once that identity membership has been proven.
-    assert all("attrs_string" not in call[0] for call in analytics.calls)
+    assert all(
+        "final_status" not in call[0]
+        and "confidence" not in call[0]
+        and "AS graph_cost_flags" in call[0]
+        for call in analytics.calls
+    )
     observed = next(point for point in result["data"] if point["value"])
     assert observed["value"] == 10
     assert observed["primary_traffic"] == 3
@@ -5777,7 +5789,9 @@ def test_exact_trace_graph_delegates_scalar_array_map_and_json_membership(
     query, params, _timeout, _settings = analytics.calls[0]
     assert params["graph_candidate_trace_ids"] == ("trace-1",)
     assert "trace_id IN %(graph_candidate_trace_ids)s" in query
-    assert "attrs_string" not in query
+    assert "AS graph_cost_flags" in query
+    assert "final_status" not in query and "tags" not in query
+    assert "profile" not in query and "legacy_payload" not in query
     assert "attrs_number" not in query
     assert "attrs_bool" not in query
     assert "attributes_extra" not in query
@@ -6230,7 +6244,9 @@ def test_exact_graph_budget_failure_does_not_publish_or_split_contribution_batch
     assert len(analytics.partition_calls) == 1
     query, params, timeout, settings = analytics.partition_calls[0]
     assert (params["start_date"], params["end_date"]) == (start, end)
-    assert "attrs_string" not in query and "attrs_number" not in query
+    assert "AS graph_cost_flags" in query
+    assert "final_status" not in query and "confidence" not in query
+    assert "attrs_number" not in query
     assert "trace_id IN %(graph_candidate_trace_ids)s" in query
     assert "snapshot_version_ceiling" not in params
     assert "additional_table_filters" not in settings
@@ -6339,7 +6355,10 @@ def test_filtered_exact_span_window_uses_hour_aligned_additive_statements():
     assert "additional_table_filters" not in settings
     assert "snapshot_version_ceiling" not in params
     assert "trace_id IN" not in query
-    assert query.count("FROM spans") == 1
+    assert query.count("FROM spans") == 2
+    assert "AND (project_id, trace_id) IN (" in query
+    assert "SELECT project_id, trace_id" in query
+    assert "AS graph_monetary_spans" in query
     assert "FROM spans FINAL" not in query
     assert "argMax(" in query
     assert "OVER (PARTITION BY trace_id) AS graph_match_" not in query

@@ -250,9 +250,9 @@ def test_unseeded_read_replays_hours_and_keeps_dimension_membership():
     assert "candidate_span_identities AS (" not in sql
     assert HOUR_LOWER in sql
     assert HOUR_UPPER in sql
-    # The identity superset is the only thing removed: the exact_usage
-    # semijoin still bounds aggregation to the curated dimension.
-    assert DIMENSION_SEMIJOIN in cte(sql, "exact_usage")
+    # The curated dimension fences the per-trace reducer before user totals.
+    assert DIMENSION_SEMIJOIN in cte(sql, "user_trace_usage")
+    assert "FROM user_trace_usage" in cte(sql, "exact_usage")
 
 
 def test_seeded_read_retains_the_identity_superset():

@@ -112,13 +112,21 @@ def test_typed_trace_sidecar_retains_dynamic_cells_and_project_coordinates():
     }
     old = TraceObserveListResultSerializer(data=payload)
     assert old.is_valid(), old.errors
-    assert old.data == payload
+    metadata = {
+        "total_rows": 2,
+        "total_rows_exact": None,
+        "next_cursor": None,
+        "next_cursor_fingerprint": None,
+        "query_error_code": None,
+    }
+    assert old.data == {**payload, "metadata": metadata}
     typed = {PROJECT: {"same": capture(0)}, "other": {"same": capture(3)}}
     new = TraceObserveListResultSerializer(
         data={**payload, "trace_capture_coverage": typed}
     )
     assert new.is_valid(), new.errors
     assert new.data["table"] == payload["table"]
+    assert new.data["metadata"] == metadata
     assert new.data["trace_capture_coverage"] == typed
     invalid = TraceObserveListResultSerializer(
         data={

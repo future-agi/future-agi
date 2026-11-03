@@ -330,7 +330,7 @@ def test_list_endpoint_total_rows(
                 fsum(member.cost for member in members), rel=1e-12, abs=1e-18
             )
             assert row["total_tokens"] == sum(member.total_tokens for member in members)
-            assert row["traces_count"] == len(
+            assert row["total_traces_count"] == len(
                 {member.trace_id for member in members if member.parent_span_id is None}
             )
 

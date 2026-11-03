@@ -46,10 +46,10 @@ WINDOW_START = datetime(2026, 9, 1, tzinfo=UTC)
 WINDOW_END = datetime(2026, 9, 2, tzinfo=UTC)
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 SERVICE = "tracer.services.users_list_manager.V2AnalyticsQueryService"
-# ``_USERS_ORIGIN_SHAPES["no_text_witness"]`` in
-# scripts/qa/replay_observe_queries_readonly.py: the unfiltered cursor page.
+# Reviewed unfiltered cursor shape: tuple-winner usage and trace-level money
+# reduction before whole-user totals (not the retired scalar-argMax pin).
 UNFILTERED_PAGE_DIGEST = (
-    "ba51ea62b5e2f3831b6d9d1e4ab345283c068af90f1795bb7b7082526cd4d4e5"
+    "44cf1a3b4c926b956cd34e7257f7e20ea52315915c51217dd3f3a547094563bb"
 )
 
 

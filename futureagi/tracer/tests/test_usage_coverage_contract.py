@@ -53,6 +53,54 @@ EDGE = {
 }
 
 
+# Existing DRF representation defaults; legacy inputs deliberately omit them.
+_ROW_NULL_DEFAULTS = {
+    UsersTableRowSerializer: dict.fromkeys(
+        (
+            "user_id",
+            "total_tokens",
+            "input_tokens",
+            "output_tokens",
+            "num_traces",
+            "num_sessions",
+            "avg_session_duration",
+            "avg_trace_latency",
+            "num_llm_calls",
+            "num_guardrails_triggered",
+            "activated_at",
+            "last_active",
+            "num_active_days",
+            "num_traces_with_errors",
+            "bool_eval_pass_rate",
+            "avg_output_float",
+            "project_id",
+            "project_name",
+            "user_id_type",
+            "user_id_hash",
+            "end_user_id",
+        )
+    ),
+    TraceSessionTableRowSerializer: dict.fromkeys(
+        (
+            "session_id",
+            "session_name",
+            "project_id",
+            "start_time",
+            "end_time",
+            "created_at",
+            "duration",
+            "total_tokens",
+            "total_traces_count",
+            "first_message",
+            "last_message",
+            "user_id",
+            "user_id_type",
+            "user_id_hash",
+        )
+    ),
+}
+
+
 @pytest.mark.parametrize(
     "status, subtotal, known, unknown",
     [
@@ -118,7 +166,8 @@ def test_present_coverage_requires_every_field(field):
 def test_numeric_total_contracts_remain_nonnullable(serializer_class, legacy):
     old = serializer_class(data=legacy)
     assert old.is_valid(), old.errors
-    assert old.data == legacy
+    expected = {**_ROW_NULL_DEFAULTS.get(serializer_class, {}), **legacy}
+    assert old.data == expected
     assert "cost_coverage" not in old.data
     assert not serializer_class(data={**legacy, "total_cost": None}).is_valid()
 
@@ -176,7 +225,14 @@ def test_shared_graph_exact_query_is_not_monetary_completeness():
         "metric_statistic": "mean",
         "query_complete": True,
         "query_exact": True,
-        "data": [{"timestamp": TIMESTAMP, "value": 0.625, "cost_coverage": MIXED}],
+        "data": [
+            {
+                "timestamp": TIMESTAMP,
+                "value": 0.625,
+                "primary_traffic": None,
+                "cost_coverage": MIXED,
+            }
+        ],
     }
     serializer = ObserveGraphDataResultSerializer(data=payload)
     assert serializer.is_valid(), serializer.errors
@@ -208,7 +264,10 @@ def test_capture_coverage_is_optional_and_independent_of_pricing(
 ):
     old = serializer_class(data=legacy)
     assert old.is_valid(), old.errors
-    assert old.data == legacy
+    expected = {**_ROW_NULL_DEFAULTS.get(serializer_class, {}), **legacy}
+    assert old.data == expected
+    assert "cost_coverage" not in old.data
+    assert "capture_coverage" not in old.data
     coverage = {
         "scope": "observed_requests",
         "source_summary_present": True,
@@ -228,7 +287,7 @@ def test_capture_coverage_is_optional_and_independent_of_pricing(
     }
     new = serializer_class(data=payload)
     assert new.is_valid(), new.errors
-    assert new.data == payload
+    assert new.data == {**expected, **payload}
     invalid = serializer_class(
         data={**payload, "capture_coverage": {**coverage, "request_count": -1}}
     )
