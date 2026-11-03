@@ -153,8 +153,10 @@ test('PROMPT-E2E-006: commit availability and retry are clear in both themes', {
       await dialog.getByRole('button', { name: action, exact: true }).click();
       const response = await saved;
       expect(response.status()).toBe(200);
+      // Captured from the real workbench: retrieve omits is_default, so the
+      // ordinary action omits set_default; CommitSerializer defaults it to false.
       expect(response.request().postDataJSON()).toEqual({ message: savedMessage,
-        set_default: isDefault, is_draft: false, version_name: 'v1' });
+        ...(isDefault ? { set_default: true } : {}), is_draft: false, version_name: 'v1' });
       await expect(dialog).not.toBeVisible({ timeout: UI_READY });
       await expect.poll(readVersion, POLL.ASYNC_JOB).toEqual([{
         id: initial[0].id, commit_message: savedMessage, is_default: isDefault, is_draft: false,
