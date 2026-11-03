@@ -405,3 +405,32 @@ def test_a_declared_worker_that_hands_work_out_stays_a_worker():
         ("delegated", "run-1/source_finder", "run-1/researcher"),
         ("returned", "run-1/source_finder", None),
     ]
+
+
+def test_a_hand_off_and_its_return_say_who_what_and_when():
+    timeline = worker_timeline(SPANS, DECLARED, run_key=RUN)
+
+    delegated = next(one for one in timeline["events"] if one["type"] == "delegated")
+    returned = next(one for one in timeline["events"] if one["type"] == "returned")
+    assert (delegated["worker_id"], delegated["task"], delegated["at"]) == (
+        "run-1/order_lookup",
+        "inspect order 1042",
+        "t05",
+    )
+    assert (returned["worker_id"], returned["result"], returned["at"]) == (
+        "run-1/order_lookup",
+        "order 1042 is eligible; refund RF-7 exists",
+        "t08",
+    )
+
+
+def test_simulated_people_in_the_world_are_never_shown_as_workers():
+    # The world's own record of what simulated actors did: their rows name the actor, never a worker.
+    acted = [
+        {"name": "crm.approve_discount", "ok": True, "at": 1730454600.5, "actor_id": "manager"},
+        {"name": "slack.post_message", "ok": True, "at": 1730454601.0, "actor_id": "coworker"},
+    ]
+    with_actors = worker_timeline(SPANS, DECLARED, run_key=RUN, traced_calls=acted)
+
+    assert with_actors == worker_timeline(SPANS, DECLARED, run_key=RUN)
+    assert not {"manager", "coworker"} & {one["id"] for one in with_actors["workers"]}
