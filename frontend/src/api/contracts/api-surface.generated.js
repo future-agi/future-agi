@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1109,
+  endpointCount: 1111,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -879,6 +879,10 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/simulate/api/harness-environments/{id}/compare/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/": ["get"],
+      "/simulate/api/harness-environments/{id}/drafts/review/": ["get"],
+      "/simulate/api/harness-environments/{id}/drafts/review/decisions/": [
+        "post",
+      ],
       "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
       "/simulate/api/harness-environments/{id}/drafts/{piece}/": ["delete"],
       "/simulate/api/harness-environments/{id}/evaluations/": ["post"],
@@ -2228,6 +2232,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/api/harness-environments/{id}/compare/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/": ["get"],
+  "/simulate/api/harness-environments/{id}/drafts/review/": ["get"],
+  "/simulate/api/harness-environments/{id}/drafts/review/decisions/": ["post"],
   "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
   "/simulate/api/harness-environments/{id}/drafts/{piece}/": ["delete"],
   "/simulate/api/harness-environments/{id}/evaluations/": ["post"],
