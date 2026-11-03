@@ -38,7 +38,8 @@ The design system is the standard for every screen. Docs, with every component s
 
 ## Rules
 
-- **Colour:** theme roles only — `text.primary / secondary / tertiary`, `divider`, `background.paper`, `action.hover / selected`, `status.*`, and `palette.data[]` for chart series. No hex or rgba values, no `isDark ? … : …`. When dark mode matters, read `theme.palette.mode`.
+- **Colour:** theme roles only — `text.primary / secondary / tertiary`, `divider`, `background.paper`, `action.hover / selected`, `status.*`, and `palette.data[]` for chart series (`seriesColor`, `seriesColorList` and `chartAxisColors` in `src/theme/data-colors.js`). No hex or rgba values, no `isDark ? … : …`. When dark mode matters, read `theme.palette.mode`.
+- **Exceptions:** a hex the system can't express (a brand logo, a type encoding, a user-picked colour) gets `// eslint-disable-next-line no-restricted-syntax -- ds: <reason>` with a reason from `frontend/scripts/ds-optouts.mjs`. Never turn the rules off for a whole file, and never opt out a chart colour.
 - **One accent:** purple only for the main action, focus and AI. Status colours only ever mean status. Put colour on a change (up or down), not on the number itself.
 - **Type:** theme variants only — `m1` titles (15/600), `m3` section headings (13/500), `s1` body and table values (12), `s3` secondary text (11). Weights 400, 500, 600; never 700. No hard-coded `fontSize`.
 - **Spacing and shape:** theme spacing (`p: 1.5`, `gap: 1`) and theme radii (4 / 6 / 8). No `calc(100vh - N)` heights.
@@ -49,6 +50,6 @@ The design system is the standard for every screen. Docs, with every component s
 
 ## Before you finish
 
-1. `cd frontend && npx eslint -c .eslintrc.ds.cjs <changed files>` — fix every `[DS]` message.
+1. `cd frontend && yarn lint:ds:changed && yarn ds:optouts` — fix every `[DS]` message on the lines you added (CI runs both).
 2. `cd frontend && npx eslint <changed files>` (not `yarn lint`, which lints all of `src`).
 3. Open the screen in light and in dark (dark: set `themeMode` to `"dark"` in the `settings` localStorage key and reload, or use the theme switch) and compare each component you used with its docs page.
