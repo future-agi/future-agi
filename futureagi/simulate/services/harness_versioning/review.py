@@ -22,7 +22,7 @@ from simulate.services.harness_versioning.diffs import _CONTRACT_IGNORED_FIELDS
 from simulate.services.harness_versioning.references import ALL, affects, depends_on
 
 # Kinds in the order a review lists them.
-KINDS = ("tool", "rule", "contract_field", "sub_goal", "actor", "source", "scenario", "file")
+KINDS = ("tool", "rule", "contract_field", "sub_goal", "actor", "world_state", "source", "scenario", "file")
 _LISTS = {
     "sub_goals.json": ("sub_goal", "sub_goals", "name"),
     "actors.json": ("actor", "actors", "id"),
@@ -127,8 +127,79 @@ def item_index(files: Mapping[str, bytes]) -> dict[str, Item]:
             or hashing.is_environment_unhashed(path)
         ):
             continue
-        items.append(Item("file", path, path, None, raw=data))
+        kind = "world_state" if path.rsplit("/", 1)[-1] in hashing.WORLD_SEED_FILES else "file"
+        items.append(Item(kind, path, path, None, raw=data))
     return {item.id: item for item in items}
+
+
+def _world_tables(path: str, data: bytes | None) -> dict[str, dict[str, str]] | None:
+    """A world store's rows per table, each keyed by its primary key (or its position) with the row's digest; None when
+    the store cannot be read as tables."""
+    if data is None:
+        return {}
+    if path.endswith(".json"):
+        body = _json(data)
+        if not isinstance(body, dict):
+            return None
+        tables = {}
+        for name, rows in body.items():
+            if isinstance(rows, list):
+                tables[name] = {
+                    str(row.get("id", index)) if isinstance(row, dict) else str(index): hashlib.sha256(
+                        _canonical(row)
+                    ).hexdigest()
+                    for index, row in enumerate(rows)
+                }
+        return tables
+    if path.endswith(".sqlite"):
+        import sqlite3
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".sqlite") as handle:
+            handle.write(data)
+            handle.flush()
+            try:
+                connection = sqlite3.connect(f"file:{handle.name}?mode=ro", uri=True)
+                try:
+                    names = [row[0] for row in connection.execute(
+                        "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'"
+                    )]
+                    tables = {}
+                    for name in names:
+                        quoted = '"' + name.replace('"', '""') + '"'
+                        keys = [row[1] for row in connection.execute(f"pragma table_info({quoted})") if row[5]]
+                        tables[name] = {}
+                        rows = connection.execute(f"select * from {quoted}")
+                        columns = [one[0] for one in rows.description]
+                        for index, row in enumerate(rows):
+                            record = dict(zip(columns, row))
+                            key = "|".join(str(record[k]) for k in keys) if keys else str(index)
+                            tables[name][key] = hashlib.sha256(repr(sorted(record.items())).encode()).hexdigest()
+                    return tables
+                finally:
+                    connection.close()
+            except sqlite3.DatabaseError:
+                return None
+    return None
+
+
+def world_rows(path: str, before: bytes | None, after: bytes | None) -> list[dict[str, Any]] | None:
+    """Per table, how many rows a world store change adds, removes and changes, keyed by primary key; None when either
+    side cannot be read as tables."""
+    old, new = _world_tables(path, before), _world_tables(path, after)
+    if old is None or new is None:
+        return None
+    out = []
+    for table in sorted(set(old) | set(new)):
+        was, now = old.get(table, {}), new.get(table, {})
+        counts = {
+            "added": len(set(now) - set(was)),
+            "removed": len(set(was) - set(now)),
+            "changed": sum(was[key] != now[key] for key in set(was) & set(now)),
+        }
+        if any(counts.values()):
+            out.append({"table": table, **counts})
+    return out
 
 
 def _tested(before: Any, patch: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -186,6 +257,11 @@ def compute_changes(default: Mapping[str, bytes], draft: Mapping[str, bytes]) ->
                 "base_digest": old.digest if old else None,
                 "draft_digest": new.digest if new else None,
                 "summary": _summary(action, item.kind, item.key, fields),
+                **(
+                    {"rows": world_rows(item.key, old.raw if old else None, new.raw if new else None)}
+                    if item.kind == "world_state"
+                    else {}
+                ),
             }
         )
     changes.sort(key=lambda one: (KINDS.index(one["kind"]), one["key"]))
@@ -287,7 +363,7 @@ def compose_accepted(
                 for path in [one for one in files if one.startswith(prefix)]:
                     del files[path]
                 files.update({path: data for path, data in draft.items() if path.startswith(prefix)})
-            elif change["kind"] == "file":
+            elif change["kind"] in ("file", "world_state"):
                 if change["action"] == "removed":
                     files.pop(change["key"], None)
                 else:
@@ -325,6 +401,18 @@ def _scenarios(environment: Any) -> dict[str, dict[str, Any]]:
     return {item.key: item.value for item in item_index(files).values() if item.kind == "scenario"}
 
 
+# A scenario's own name is shown, never graded.
+_UNGRADED_SCENARIO_FIELDS = frozenset({"name", "title"})
+
+
+def graded(change: Mapping[str, Any]) -> bool:
+    """Whether a change alters what a trial is graded on: every change except a scenario's rename (fields the diff
+    ignores never become changes at all)."""
+    if change["kind"] == "scenario" and change["action"] == "changed":
+        return not set(change.get("fields") or []) <= _UNGRADED_SCENARIO_FIELDS
+    return True
+
+
 def draft_review(environment: Any) -> dict[str, Any]:
     """Every change the open drafts make, each with the decision taken on it.
 
@@ -357,6 +445,9 @@ def draft_review(environment: Any) -> dict[str, Any]:
     for change in changes:
         change["affects"] = affects(change, scenarios)
         change["depends_on"] = depends_on(change, changes, scenarios)
+        change["graded"] = graded(change)
+        touched = sorted(scenarios) if change["affects"] == ALL else change["affects"]
+        change["revalidate"] = touched if change["graded"] else []
     counts = {
         "total": len(changes),
         "accepted": sum(one["decision"] == "accepted" for one in changes),
@@ -464,7 +555,10 @@ def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str |
         for piece in pieces:
             draft = open_draft(locked, piece, lock=True)
             kept = [
-                {name: one[name] for name in ("id", "kind", "key", "action", "summary", "decision", "affects")}
+                {
+                    name: one[name]
+                    for name in ("id", "kind", "key", "action", "summary", "decision", "affects", "graded", "revalidate")
+                }
                 for one in review["changes"]
                 if one["piece"] == piece
             ]
@@ -576,10 +670,12 @@ def record_sources(
     user: Any,
     revision: int,
     at: str,
-    cited: Mapping[str, Mapping[str, str]] | None = None,
+    cited: Mapping[str, Mapping[str, Any]] | None = None,
+    used: list[dict[str, Any]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Where each change came from: every item this write moved gets one source (who, through what, at which draft
-    revision), appended to the sources it already had. A retried write at the same revision adds nothing."""
+    revision), appended to the sources it already had. A retried write at the same revision adds nothing. `used`
+    is what the writer read for every item it moved, such as the file and row an import took it from."""
     out = {key: list(value) for key, value in (provenance or {}).items()}
     old, new = item_index(before), item_index(after)
     moved = sorted(
@@ -592,6 +688,7 @@ def record_sources(
         "agent": {"kind": "user", "user_id": str(getattr(user, "id", "") or "")} if user is not None else {"kind": "harness"},
         "at": at,
         "draft_revision": revision,
+        **({"used": list(used)} if used else {}),
     }
     for item_id in moved:
         listed = out.setdefault(item_id, [])
@@ -604,7 +701,8 @@ def record_sources(
                 **source,
                 "agent": {"kind": "harness", "on_behalf_of": source["agent"].get("user_id", "")},
                 "tool": chat.get("tool", ""),
-                "used": [{"kind": "message", "id": chat.get("message_id", "")}],
+                "used": [{"kind": "message", "id": chat.get("message_id", "")}, *(chat.get("used") or [])],
+                **({"note": chat["note"]} if chat.get("note") else {}),
             })
         else:
             listed.append(source)
@@ -615,10 +713,19 @@ def record_sources(
 PROVENANCE_FILE = ".futureagi-provenance.jsonl"
 
 
-def chat_citations(published: Mapping[str, bytes]) -> dict[str, dict[str, str]]:
-    """Per item, the chat tool call that last moved it and the person's message that call answered, from the
-    builder chat's provenance file in a published tree."""
-    out: dict[str, dict[str, str]] = {}
+def _used(value: Any) -> list[dict[str, Any]]:
+    """The files and rows a chat call read, as the provenance line names them; anything else is dropped."""
+    out = []
+    for one in value if isinstance(value, list) else []:
+        if isinstance(one, dict) and one.get("kind") == "source" and one.get("source_id"):
+            out.append({name: str(one[name]) for name in ("kind", "source_id", "version", "digest", "locator") if one.get(name)})
+    return out
+
+
+def chat_citations(published: Mapping[str, bytes]) -> dict[str, dict[str, Any]]:
+    """Per item, the chat tool call that last moved it, the person's message that call answered, what the call read
+    (a file and its row) and its note, from the builder chat's provenance file in a published tree."""
+    out: dict[str, dict[str, Any]] = {}
     for line in (published.get(PROVENANCE_FILE) or b"").decode("utf-8", "replace").splitlines():
         try:
             entry = json.loads(line)
@@ -627,5 +734,10 @@ def chat_citations(published: Mapping[str, bytes]) -> dict[str, dict[str, str]]:
         if not isinstance(entry, dict):
             continue
         for item_id in entry.get("items") or []:
-            out[str(item_id)] = {"message_id": str(entry.get("message_id") or ""), "tool": str(entry.get("tool") or "")}
+            out[str(item_id)] = {
+                "message_id": str(entry.get("message_id") or ""),
+                "tool": str(entry.get("tool") or ""),
+                "used": _used(entry.get("used")),
+                "note": str(entry.get("note") or "")[:280],
+            }
     return out

@@ -622,6 +622,7 @@ def record_draft(
     expected: Mapping[str, DraftRef] | None = None,
     pieces: set[str] | None = None,
     nudge: Any = None,
+    used: list[dict[str, Any]] | None = None,
 ) -> DraftWrite | None:
     """Write an edited authoring tree into the environment's drafts.
 
@@ -629,7 +630,8 @@ def record_draft(
     piece's one draft; one equal to its default discards the draft. ``expected`` is the
     drafts the writer started from: another edit since refuses with ``draft_changed``.
     ``pieces`` limits the writes and the check (both by default); ``nudge`` tags a draft
-    this call creates. ``None`` once drafts no longer apply: the caller saves as before.
+    this call creates; ``used`` is what the writer read (a file and its row) and becomes part of each moved item's
+    source. ``None`` once drafts no longer apply: the caller saves as before.
     """
     from simulate.services.hosted_harness_conversation import (
         require_checkpoint_scenarios,
@@ -760,6 +762,7 @@ def record_draft(
                 revision=draft.revision + 1 if fresh else 1,
                 at=timezone.now().isoformat(),
                 cited=chat_citations(published),
+                used=used,
             )
             replaced = draft if draft is not None and not fresh else None
             if replaced is not None:

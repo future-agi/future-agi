@@ -716,7 +716,7 @@ class HarnessReviewChangeSerializer(serializers.Serializer):
     id = serializers.CharField()
     piece = serializers.ChoiceField(choices=("environment", "suite"))
     kind = serializers.ChoiceField(
-        choices=("tool", "rule", "contract_field", "sub_goal", "actor", "source", "scenario", "file")
+        choices=("tool", "rule", "contract_field", "sub_goal", "actor", "world_state", "source", "scenario", "file")
     )
     key = serializers.CharField()
     document = serializers.CharField()
@@ -729,10 +729,24 @@ class HarnessReviewChangeSerializer(serializers.Serializer):
     decision = serializers.ChoiceField(choices=("accepted", "rejected"), allow_null=True)
     affects = serializers.JSONField(help_text="The scenario keys this change touches, or `all`.")
     sources = serializers.ListField(
-        child=serializers.DictField(), help_text="Where the change came from, latest first: who, through what, when."
+        child=serializers.DictField(),
+        help_text=(
+            "Where the change came from, latest first: who, through what, when, and what it used (the person's"
+            " message, or a file and its row)."
+        ),
     )
     depends_on = serializers.ListField(
         child=serializers.CharField(), help_text="Changes this one needs; accepting it means accepting them."
+    )
+    graded = serializers.BooleanField(help_text="The change alters what trials are graded on.")
+    revalidate = serializers.ListField(
+        child=serializers.CharField(), help_text="The scenarios to prove again once this change is saved."
+    )
+    rows = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        allow_null=True,
+        help_text="A world state change: rows added, removed and changed per table; null when it cannot be read.",
     )
 
 
@@ -762,7 +776,7 @@ class HarnessDraftReviewSerializer(serializers.Serializer):
 class HarnessReviewDecisionSerializer(StrictInputSerializer):
     id = serializers.CharField(required=False, help_text="One change; omit with `kind` or `remaining`.")
     kind = serializers.ChoiceField(
-        choices=("tool", "rule", "contract_field", "sub_goal", "actor", "source", "scenario", "file"), required=False
+        choices=("tool", "rule", "contract_field", "sub_goal", "actor", "world_state", "source", "scenario", "file"), required=False
     )
     remaining = serializers.BooleanField(required=False, help_text="Every change not yet decided.")
     decision = serializers.ChoiceField(choices=("accepted", "rejected"))

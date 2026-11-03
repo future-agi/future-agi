@@ -221,3 +221,53 @@ def test_a_reviewed_save_keeps_proofs_for_scenarios_no_accepted_change_touched(
     narrowed.delete()
     carry_untouched_proofs(parent, target, suite, [{"decision": "accepted", "affects": "all"}])
     assert not HarnessSuiteValidation.no_workspace_objects.filter(environment_version=target).exists()
+
+
+def test_a_chat_rule_and_a_direct_actor_edit_are_both_cited_and_only_the_accepted_one_is_saved_and_flagged(
+    user, workspace, storage, auth_client, settings
+):
+    import json
+
+    from simulate.models import HarnessSuiteMember
+    from simulate.services.harness_versioning import archives, drafts
+    from simulate.services.harness_versioning.review import PROVENANCE_FILE, _rule_key
+    from simulate.services.harness_versioning.run_warnings import _needs_revalidation
+    from simulate.tests.test_harness_actors import _saved_actors
+
+    environment = _versioned(user, workspace, "review-done-when", storage)
+    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+
+    rule = "Never refund more than the order total"
+    sides = drafts.edit_sides(environment)
+    tree = {**sides["suite"], **sides["environment"]}
+    contract = json.loads(tree["contract.json"])
+    tree["contract.json"] = json.dumps({**contract, "hard_constraints": [*(contract.get("hard_constraints") or []), rule]}).encode()
+    rule_id = f"rule:{_rule_key(rule)}"
+    tree[PROVENANCE_FILE] = json.dumps({"message_id": "msg-7", "tool": "add_rule", "items": [rule_id]}).encode()
+    draft = drafts.open_draft(environment, "environment")
+    drafts.record_draft(
+        environment, archives.pack_archive(tree), origin="chat", user=user, pieces={"environment"},
+        expected={"environment": drafts.DraftRef(str(draft.parent_id), draft.revision)},
+    )
+
+    review = _review(auth_client, environment)
+    changes = {one["id"]: one for one in review["changes"]}
+    assert set(changes) == {"actor:manager", rule_id}
+    assert changes["actor:manager"]["sources"][0]["agent"] == {"kind": "user", "user_id": str(user.id)}
+    assert changes[rule_id]["sources"][0]["used"] == [{"kind": "message", "id": "msg-7"}]
+    members = sorted(HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version=environment.suite_version).values_list("scenario_key", flat=True))
+    assert changes[rule_id]["graded"] and changes[rule_id]["revalidate"] == members
+
+    decided = _decide(auth_client, environment, [
+        {"id": rule_id, "decision": "accepted"}, {"id": "actor:manager", "decision": "rejected"},
+    ], {"environment": review["drafts"]["environment"]["revision"]}).json()
+    decided = decided.get("result", decided)
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+    assert _save(auth_client, environment, decided["review_digest"], name="Refund cap").status_code == 200
+
+    environment.refresh_from_db()
+    files = archives.read_archive(archives.get_archive(environment.environment_version.archive_object_key))
+    assert rule in json.loads(files["contract.json"])["hard_constraints"]
+    assert _saved_actors(environment) == []
+    assert _needs_revalidation(environment.environment_version, environment.suite_version) == members

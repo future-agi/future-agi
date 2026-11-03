@@ -201,7 +201,7 @@ def test_a_chat_change_is_the_person_s_through_the_harness_with_the_message_it_a
         {"message_id": "m2", "tool": "change_world", "items": ["tool:issue_refund", "file:world.sqlite"]},
     )) + b"\nnot json"}
     cited = chat_citations(published)
-    assert cited["tool:issue_refund"] == {"message_id": "m2", "tool": "change_world"}
+    assert cited["tool:issue_refund"] == {"message_id": "m2", "tool": "change_world", "used": [], "note": ""}
 
     default = _tree({"tools": TOOLS})
     edited = _tree({"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}]})
@@ -209,3 +209,69 @@ def test_a_chat_change_is_the_person_s_through_the_harness_with_the_message_it_a
                               at="t", cited=cited)["tool:issue_refund"]
     assert source["agent"] == {"kind": "harness", "on_behalf_of": "u-1"}
     assert (source["tool"], source["used"]) == ("change_world", [{"kind": "message", "id": "m2"}])
+
+
+def test_a_world_store_change_is_world_state_with_its_rows_added_removed_and_changed_per_table():
+    import sqlite3
+    import tempfile
+
+    from simulate.services.harness_versioning.review import world_rows
+
+    default = _tree(store__json={"orders": [{"id": 1, "total": 10}, {"id": 2, "total": 20}], "users": [{"id": "a"}]})
+    draft = _tree(store__json={"orders": [{"id": 1, "total": 15}, {"id": 3, "total": 30}], "users": [{"id": "a"}]})
+    default["store.json"], draft["store.json"] = default.pop("store/json"), draft.pop("store/json")
+
+    [change] = compute_changes(default, draft)
+
+    assert (change["kind"], change["key"], change["patch"]) == ("world_state", "store.json", [])
+    assert change["rows"] == [{"table": "orders", "added": 1, "removed": 1, "changed": 1}]
+    assert compose_accepted(default, draft, [change], {change["id"]: "accepted"})["store.json"] == draft["store.json"]
+
+    def database(rows):
+        with tempfile.NamedTemporaryFile(suffix=".sqlite") as handle:
+            connection = sqlite3.connect(handle.name)
+            connection.execute("create table refunds (id integer primary key, amount integer)")
+            connection.executemany("insert into refunds values (?, ?)", rows)
+            connection.commit()
+            connection.close()
+            return open(handle.name, "rb").read()
+
+    assert world_rows("world.sqlite", database([(1, 5), (2, 6)]), database([(1, 5), (2, 9), (4, 1)])) == [
+        {"table": "refunds", "added": 1, "removed": 0, "changed": 1}
+    ]
+    assert world_rows("world.sqlite", b"not a database", b"") is None
+
+
+def test_every_change_but_a_scenario_rename_is_graded():
+    from simulate.services.harness_versioning.review import graded
+
+    assert graded({"kind": "rule", "action": "added"})
+    assert graded({"kind": "scenario", "action": "changed", "fields": ["sub_goals"]})
+    assert not graded({"kind": "scenario", "action": "changed", "fields": ["name"]})
+    assert graded({"kind": "scenario", "action": "removed", "fields": []})
+
+
+def test_a_source_names_the_file_and_row_a_change_came_from_and_the_harness_note():
+    import json as _json
+    from types import SimpleNamespace
+
+    from simulate.services.harness_versioning.review import PROVENANCE_FILE, chat_citations, record_sources
+
+    row = {"kind": "source", "source_id": "src-1", "version": 2, "locator": "row 14", "secret": "dropped"}
+    published = {PROVENANCE_FILE: _json.dumps(
+        {"message_id": "m1", "tool": "fix_tool", "items": ["tool:issue_refund"], "used": [row, "junk"],
+         "note": "the policy caps refunds at $50"}).encode()}
+    default = _tree({"tools": TOOLS})
+    edited = _tree({"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}]})
+
+    [chat] = record_sources(None, default, edited, origin="chat", user=SimpleNamespace(id="u-1"), revision=1, at="t",
+                            cited=chat_citations(published))["tool:issue_refund"]
+    [imported] = record_sources(None, default, edited, origin="file_import", user=SimpleNamespace(id="u-1"),
+                                revision=1, at="t", used=[{"kind": "source", "source_id": "src-1", "locator": "row 3"}])[
+        "tool:issue_refund"]
+
+    assert chat["used"] == [{"kind": "message", "id": "m1"},
+                            {"kind": "source", "source_id": "src-1", "version": "2", "locator": "row 14"}]
+    assert chat["note"] == "the policy caps refunds at $50"
+    assert (imported["origin"], imported["used"]) == ("file_import", [{"kind": "source", "source_id": "src-1",
+                                                                        "locator": "row 3"}])
