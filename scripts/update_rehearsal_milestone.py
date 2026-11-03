@@ -22,6 +22,7 @@ import secrets
 import shutil
 import signal
 import socket
+import stat
 import sys
 import tarfile
 import time
@@ -151,6 +152,103 @@ def validate_interruption_results(results, requested=INTERRUPTION_BOUNDARIES):
         p.need(result.get('outcome') == 'restored', 'interruption_boundary_outcome_invalid')
     completed = [result.get('boundary') for result in results]
     p.need(completed == list(requested), 'interruption_boundaries_incomplete')
+
+
+# Only these local source files may contribute path-free traceback locations.
+# Neither exception messages nor the private refusal document are public data.
+INTERRUPTION_DIAGNOSTIC_BYTES = 16*1024
+INTERRUPTION_CAUSE_TYPES = frozenset({
+    'GuardRefused', 'RuntimeRefused', 'ProcessError', 'RecoveryError', 'RestoreError',
+    'BackupError', 'StoreError', 'RehearsalError', 'ManualRelease', 'CommandError',
+    'ObservationFailure', 'ResourceObservationError', 'ObservedSpoolWitnessError',
+    'AssertionError', 'TimeoutError', 'RuntimeError', 'ValueError', 'OSError',
+})
+INTERRUPTION_CAUSE_SOURCES = {
+    str(Path(__file__).resolve().parents[1]/name): Path(name).name for name in (
+        'scripts/update_rehearsal_milestone.py', 'scripts/update_rehearsal_qualification.py',
+        'scripts/update_rehearsal_shipping.py', 'scripts/rehearse_update_compatibility.py',
+        'scripts/update_rehearsal_resources.py', 'scripts/update_rehearsal_spool.py',
+        'deploy/update/apply.py', 'deploy/update/orchestrator.py',
+        'deploy/update/automatic_runtime.py', 'deploy/update/processes.py',
+        'deploy/update/recovery.py', 'deploy/update/standalone_restore.py',
+        'deploy/update/standalone_backup.py', 'deploy/update/runtime_observer.py',
+        'deploy/update/runner_state.py',
+    )
+}
+
+
+def interruption_cause_location(exc):
+    """Last fixed-source check, not a traceback, arbitrary basename or locals."""
+    location = None
+    trace = exc.__traceback__
+    while trace is not None:
+        code = trace.tb_frame.f_code
+        name = INTERRUPTION_CAUSE_SOURCES.get(code.co_filename)
+        if (name is not None and 0 < trace.tb_lineno < 1000000 and
+                code.co_name not in ('need', '_need', 'require', '_require', 'equal', '__init__')):
+            location = name+':'+str(trace.tb_lineno)
+        trace = trace.tb_next
+    return location
+
+
+def _interruption_cause_projection(item):
+    from deploy.update.contracts import ReasonCode
+    if type(item) is not dict:
+        raise ValueError('invalid cause entry')
+    kind, reason = item.get('exception_type'), item.get('reason')
+    reasons = tuple(code.value for code in ReasonCode) + producer().MANUAL_REASONS
+    result = dict(exception_type=kind if type(kind) is str and kind in INTERRUPTION_CAUSE_TYPES else 'OtherError',
+        reason=reason if type(reason) is str and reason in reasons else 'suite_failed')
+    location = item.get('location')
+    if type(location) is str and len(location) <= 100:
+        name, _, line = location.rpartition(':')
+        if name in INTERRUPTION_CAUSE_SOURCES.values() and re.fullmatch(r'[1-9][0-9]{0,5}', line):
+            result['location'] = location
+    return result
+
+
+def interruption_diagnostic(directory, result, ledger):
+    """Best-effort bounded projection; never influence recovery or qualification."""
+    from deploy.update.recovery import PHASES
+    data = dict(boundary=result['boundary'] if result.get('boundary') in INTERRUPTION_BOUNDARIES else 'unknown',
+        outcome=result['outcome'] if result.get('outcome') in ('restored', 'recovery_required') else 'unknown',
+        retained_evidence=result.get('retained_evidence') is True, causes=[], collection_status='not_required')
+    if ledger.phase in PHASES:
+        data['phase'] = ledger.phase
+    if ledger.direction in ('forward_pending', 'restore_decided', 'success_decided'):
+        data['direction'] = ledger.direction
+    if data['outcome'] == 'restored':
+        return data
+    try:
+        # Nonblocking/no-follow avoids hanging on a FIFO or following a private link.
+        fd = os.open(Path(directory)/'fresh-recovery-refusal.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                data['collection_status'] = 'unavailable'
+                return data
+            if info.st_size > INTERRUPTION_DIAGNOSTIC_BYTES:
+                data['collection_status'] = 'oversized'
+                return data
+            raw = source.read(INTERRUPTION_DIAGNOSTIC_BYTES+1)
+        if len(raw) > INTERRUPTION_DIAGNOSTIC_BYTES:
+            data['collection_status'] = 'oversized'
+            return data
+        document = json.loads(raw)
+        if type(document) is not dict or type(document.get('causes')) is not list or not document['causes']:
+            raise ValueError('invalid cause document')
+        causes = document['causes']
+        data['causes'] = [_interruption_cause_projection(item) for item in causes[:8]]
+        filtered = any(projected != {key: item[key] for key in ('exception_type', 'reason', 'location') if key in item}
+                       for item, projected in zip(causes, data['causes']))
+        data['collection_status'] = 'truncated' if len(causes) > 8 else 'filtered' if filtered else 'collected'
+    except FileNotFoundError:
+        data['collection_status'] = 'missing'
+    except (ValueError, UnicodeError, RecursionError):
+        data['collection_status'] = 'malformed'
+    except OSError:
+        data['collection_status'] = 'unavailable'
+    return data
 
 
 def integrity_checkpoint_projection(snapshot):
@@ -1395,6 +1493,8 @@ print(json.dumps({'exists':get_user_model().objects.filter(email=a['email']).exi
                         while cause is not None and len(causes)<8:
                             item=dict(exception_type=type(cause).__name__,reason=p.failure_diagnostics(cause)['refusal_code'])
                             if isinstance(cause,p.RehearsalError): item['detail']=str(cause)[:512]
+                            location=interruption_cause_location(cause)
+                            if location is not None: item['location']=location
                             causes.append(item); cause=cause.__cause__
                         self.record('fresh-recovery-refusal.json',label(milestone='interruption_restore',causes=causes))
                     self.retain_authority()
@@ -1416,6 +1516,12 @@ print(json.dumps({'exists':get_user_model().objects.filter(email=a['email']).exi
                     one_backup=True,no_second_forward=True,
                     forward_operations=forward_ops_before,backup_seal_sha256=sealed_before,
                     attempt_id=self.expected.attempt_id))
+                # Forked child diagnostics are not shared memory. Project only
+                # closed fields into the parent's existing uploaded diagnostics,
+                # before validation raises on recovery_required.
+                diagnostics=self._diagnostic_data.setdefault('interruption_recovery', [])
+                diagnostics.append(interruption_diagnostic(self.output, results[-1], self.ledger))
+                self._diagnostic_data['interruption_recovery']=diagnostics[-len(INTERRUPTION_BOUNDARIES):]
                 if outcome!='restored': break  # Retain evidence; do not repair/guess a new attempt.
             validate_interruption_results(results)
         finally:
