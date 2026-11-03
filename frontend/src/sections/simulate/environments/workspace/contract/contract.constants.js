@@ -164,6 +164,10 @@ export const CONTRACT_COPY = {
     },
     form: {
       createTitle: "Add someone in the world",
+      moreDetails: "More details (not used by runs yet)",
+      lessDetails: "Hide more details",
+      moreDetailsHelp:
+        "Saved with the actor, but a run plays them from each scenario's actions, so these do not change what happens yet.",
       createCallerTitle: "Add someone on the caller's side",
       editTitle: (name) => `Edit ${name}`,
       id: "Id",

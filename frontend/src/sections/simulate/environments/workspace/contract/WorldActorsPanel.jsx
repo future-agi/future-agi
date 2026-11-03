@@ -427,6 +427,7 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
   const existing = Boolean(actor?.id);
   const callerSide = speaks(actor);
   const [fields, setFields] = useState({});
+  const [more, setMore] = useState(false);
   const value = (name, fallback = "") =>
     name in fields ? fields[name] : fallback;
   const set = (name) => (event) =>
@@ -659,41 +660,12 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
                   </MenuItem>
                 ))}
               </TextField>
-              {others.length > 0 && (
-                <TextField
-                  select
-                  size="small"
-                  label={F.parent}
-                  value={value("parent", actor.parent || "")}
-                  onChange={set("parent")}
-                  helperText={F.parentHelp}
-                >
-                  <MenuItem value="">{F.nobody}</MenuItem>
-                  {others.map((one) => (
-                    <MenuItem key={one.id} value={one.id}>
-                      {one.name}
-                    </MenuItem>
-                  ))}
-                </TextField>
-              )}
-              {text("goal", F.goal, actor.goal || "", {
-                multiline: true,
-                minRows: 2,
-                helperText: F.goalHelp,
-              })}
-              {many("may_agree", F.mayAgree, constraints.may_agree)}
-              {many("private", F.private, constraints.private)}
-              {many("escalate_when", F.escalateWhen, constraints.escalate_when)}
-              {many("stop_when", F.stopWhen, constraints.stop_when)}
               {many(
                 "facts",
                 F.facts,
                 facts.map((one) => one.text),
                 F.factsHelp,
               )}
-              {text("style", F.style, actor.behaviour?.style || "", {
-                helperText: F.styleHelp,
-              })}
               <Stack direction="row" spacing={1}>
                 <TextField
                   select
@@ -788,6 +760,56 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
                   </MenuItem>
                 ))}
               </TextField>
+              {/* Kept on the record and editable, but a run plays an actor from its scenario's actions and does not read these yet. */}
+              <Button
+                size="small"
+                sx={{ alignSelf: "flex-start" }}
+                onClick={() => setMore((shown) => !shown)}
+              >
+                {more ? F.lessDetails : F.moreDetails}
+              </Button>
+              <Collapse in={more}>
+                <Stack spacing={2}>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.secondary" }}
+                  >
+                    {F.moreDetailsHelp}
+                  </Typography>
+                  {others.length > 0 && (
+                    <TextField
+                      select
+                      size="small"
+                      label={F.parent}
+                      value={value("parent", actor.parent || "")}
+                      onChange={set("parent")}
+                      helperText={F.parentHelp}
+                    >
+                      <MenuItem value="">{F.nobody}</MenuItem>
+                      {others.map((one) => (
+                        <MenuItem key={one.id} value={one.id}>
+                          {one.name}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  )}
+                  {text("goal", F.goal, actor.goal || "", {
+                    multiline: true,
+                    minRows: 2,
+                    helperText: F.goalHelp,
+                  })}
+                  {many("may_agree", F.mayAgree, constraints.may_agree)}
+                  {many("private", F.private, constraints.private)}
+                  {many(
+                    "escalate_when",
+                    F.escalateWhen,
+                    constraints.escalate_when,
+                  )}
+                  {many("stop_when", F.stopWhen, constraints.stop_when)}
+                  {text("style", F.style, actor.behaviour?.style || "", {
+                    helperText: F.styleHelp,
+                  })}
+                </Stack>
+              </Collapse>
             </>
           )}
           <Stack direction="row" spacing={1} justifyContent="flex-end">

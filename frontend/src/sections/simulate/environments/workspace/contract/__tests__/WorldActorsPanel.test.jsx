@@ -219,6 +219,20 @@ describe("WorldActorsPanel", () => {
     });
   });
 
+  it("keeps the details a run does not read yet folded under More details", () => {
+    actorsData = cast([]);
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    expect(
+      screen.getByLabelText("What they know (optional, one per line)"),
+    ).toBeVisible();
+    expect(
+      screen.getByLabelText("What they want (optional)"),
+    ).not.toBeVisible();
+    fireEvent.click(screen.getByText("More details (not used by runs yet)"));
+    expect(screen.getByLabelText("What they want (optional)")).toBeVisible();
+  });
+
   it("says plainly when the environment has no world actions to give", () => {
     actorsData = cast([], { actions: [] });
     render(<WorldActorsPanel envId="env-1" />);
