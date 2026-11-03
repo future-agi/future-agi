@@ -118,8 +118,7 @@ const EditAutoReloadSettingsModal = ({
           transform: "translate(-50%, -50%)",
           width: 560,
           bgcolor: "background.paper",
-          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-          boxShadow: 24,
+          boxShadow: theme.customShadows?.dialog,
           borderRadius: theme.spacing(1),
         }}
       >

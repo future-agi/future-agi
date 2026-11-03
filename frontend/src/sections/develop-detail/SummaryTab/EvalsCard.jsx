@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Box, Grid, useTheme } from "@mui/material";
+import { chartAxisColors, seriesColor } from "src/theme/data-colors";
 import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
@@ -156,8 +157,7 @@ const EvalCard = ({ setCurrentTab, datasetId = null }) => {
     chart: {
       type: "bar",
       background: "transparent",
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      foreColor: isDark ? "#a1a1aa" : undefined,
+      foreColor: chartAxisColors(theme).foreColor,
       toolbar: {
         show: false,
       },
@@ -181,14 +181,12 @@ const EvalCard = ({ setCurrentTab, datasetId = null }) => {
       enabled: true,
     },
     grid: {
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      borderColor: isDark ? "#27272a" : undefined,
+      borderColor: chartAxisColors(theme).gridColor,
     },
     dataLabels: {
       enabled: false,
     },
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    colors: ["#A792FD"],
+    colors: [seriesColor(theme, 0)],
     plotOptions: {
       bar: {
         borderRadius: 4,

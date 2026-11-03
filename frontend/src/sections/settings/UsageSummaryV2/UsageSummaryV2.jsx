@@ -33,6 +33,7 @@ import MetricStrip from "src/components/metric-strip";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { fCurrency, fUsage } from "src/utils/format-number";
+import { seriesColor } from "src/theme/data-colors";
 import UsageChart from "./UsageChart";
 import WorkspaceBreakdown from "./WorkspaceBreakdown";
 
@@ -41,47 +42,46 @@ import WorkspaceBreakdown from "./WorkspaceBreakdown";
 const DIMENSION_CONFIG = {
   storage: {
     icon: "solar:database-linear",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    color: "#3b82f6",
+    colorIndex: 1,
     label: "Storage",
   },
   ai_credits: {
     icon: "solar:cpu-linear",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    color: "#7857FC",
+    colorIndex: 0,
     label: "AI Credits",
   },
   gateway_requests: {
     icon: "solar:transfer-horizontal-linear",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    color: "#06b6d4",
+    colorIndex: 2,
     label: "Gateway Requests",
   },
   gateway_cache_hits: {
     icon: "solar:bolt-linear",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    color: "#14b8a6",
+    colorIndex: 6,
     label: "Gateway Cache Hits",
   },
   text_sim_tokens: {
     icon: "solar:file-search-linear",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    color: "#f59e0b",
+    colorIndex: 3,
     label: "Text Simulation",
   },
   voice_sim_minutes: {
     icon: "solar:microphone-3-linear",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    color: "#ef4444",
+    colorIndex: 5,
     label: "Voice Simulation",
   },
   tracing_events: {
     icon: "solar:chart-2-linear",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    color: "#ec4899",
+    colorIndex: 4,
     label: "Tracing Events",
   },
 };
+
+// Each dimension keeps one data-palette slot so its colour matches everywhere.
+const dimensionColor = (theme, config) =>
+  config.colorIndex === undefined
+    ? undefined
+    : seriesColor(theme, config.colorIndex);
 
 function getSingularUnit(unit) {
   if (!unit) return "unit";
@@ -244,7 +244,7 @@ function DimensionCard({ dim, periodCaption, periodMonthCount }) {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(false);
   const config = DIMENSION_CONFIG[dim.key] || {};
-  const color = config.color || theme.palette.primary.main;
+  const color = dimensionColor(theme, config) || theme.palette.primary.main;
   const periodFreeAllowance = getPeriodAllowance(
     dim.free_allowance,
     periodMonthCount,
@@ -1041,7 +1041,11 @@ function DimensionDetail({ dimensions, period, periodEnd }) {
                 <Iconify
                   icon={dc.icon || "solar:pie-chart-2-linear"}
                   width={16}
-                  sx={{ color: isActive ? "common.white" : dc.color }}
+                  sx={{
+                    color: isActive
+                      ? "common.white"
+                      : dimensionColor(theme, dc),
+                  }}
                 />
               }
               label={dim.display_name}
@@ -1051,7 +1055,8 @@ function DimensionDetail({ dimensions, period, periodEnd }) {
               sx={{
                 cursor: "pointer",
                 ...(isActive && {
-                  bgcolor: config.color || theme.palette.primary.main,
+                  bgcolor:
+                    dimensionColor(theme, config) || theme.palette.primary.main,
                   color: "common.white",
                   "& .MuiChip-icon": { color: "common.white" },
                 }),

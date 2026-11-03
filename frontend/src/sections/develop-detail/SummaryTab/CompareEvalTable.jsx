@@ -40,7 +40,7 @@ const RankCellRenderer = (params) => {
             icon="solar:crown-bold"
             width={16}
             height={16}
-            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+            // eslint-disable-next-line no-restricted-syntax -- ds: encoding (first-rank crown)
             sx={{ color: "#FFD700" }}
           />
         </Box>

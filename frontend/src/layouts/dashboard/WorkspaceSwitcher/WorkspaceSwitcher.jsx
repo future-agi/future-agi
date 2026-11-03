@@ -349,8 +349,6 @@ const WorkspaceSwitcher = ({ collapsed }) => {
               borderRadius: "8px",
               border: "1px solid",
               borderColor: "divider",
-              // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-              boxShadow: "0 4px 12px 0 rgba(0,0,0,0.08)",
               mt: 0.5,
               width: 240,
               py: 0.5,
@@ -463,7 +461,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         <AvatarRow
           letter={orgDisplayLabel?.slice(0, 1)}
           label={orgDisplayLabel}
-          // eslint-disable-next-line no-restricted-syntax -- ds: organisation avatar colour
+          // eslint-disable-next-line no-restricted-syntax -- ds: avatar (organisation)
           color="#b8a068"
           onMouseEnter={(e) => {
             if (orgPopperTimeoutRef.current) {

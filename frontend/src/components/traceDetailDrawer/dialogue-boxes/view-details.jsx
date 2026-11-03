@@ -68,8 +68,7 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
           height: "85%",
           overflowY: "auto",
           bgcolor: "background.paper",
-          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-          boxShadow: 24,
+          boxShadow: theme.customShadows?.dialog,
           width: "720px",
           borderRadius: theme.spacing(1.5),
           padding: theme.spacing(2.5),

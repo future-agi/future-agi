@@ -1,21 +1,8 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
-
-const COLORS = [
-  "#7B56DB",
-  "#1ABCFE",
-  "#FF6B6B",
-  "#2ECB71",
-  "#F7B731",
-  "#E84393",
-  "#0984E3",
-  "#FD7E14",
-  "#00CEC9",
-  "#A29BFE",
-];
+import { seriesColors } from "src/theme/data-colors";
 
 export default function WidgetAreaChart({ config }) {
   const theme = useTheme();
@@ -34,7 +21,7 @@ export default function WidgetAreaChart({ config }) {
       toolbar: { show: false },
     },
     theme: { mode: isDark ? "dark" : "light" },
-    colors: config.colors || COLORS,
+    colors: config.colors || seriesColors(theme),
     stroke: { width: 2, curve: "smooth" },
     fill: { type: "gradient", gradient: { opacityFrom: 0.4, opacityTo: 0.05 } },
     dataLabels: { enabled: false },

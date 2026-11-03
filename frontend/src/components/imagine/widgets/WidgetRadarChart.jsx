@@ -1,10 +1,8 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
-
-const COLORS = ["#7B56DB", "#1ABCFE", "#FF6B6B", "#2ECB71", "#F7B731"];
+import { seriesColors } from "src/theme/data-colors";
 
 export default function WidgetRadarChart({ config }) {
   const theme = useTheme();
@@ -21,7 +19,7 @@ export default function WidgetRadarChart({ config }) {
       toolbar: { show: false },
     },
     theme: { mode: isDark ? "dark" : "light" },
-    colors: config.colors || COLORS,
+    colors: config.colors || seriesColors(theme),
     xaxis: { categories },
     yaxis: { show: false },
     stroke: { width: 2 },

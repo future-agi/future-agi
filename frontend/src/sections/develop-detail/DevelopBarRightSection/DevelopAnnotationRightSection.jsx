@@ -101,8 +101,7 @@ const DeleteModal = ({
           transform: "translate(-50%, -50%)",
           width: 400,
           bgcolor: "background.paper",
-          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-          boxShadow: 24,
+          boxShadow: (theme) => theme.customShadows?.dialog,
           borderRadius: "8px",
           p: 3,
         }}

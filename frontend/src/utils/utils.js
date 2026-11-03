@@ -6,25 +6,25 @@ import { extractJinjaVariables } from "./jinjaVariables";
 import { logger } from "./logger";
 
 export const colorPalette = [
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#ECE8FF", textColor: "#846EFF", graphBgColor: "#D7D0FF" },
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#FDEEE2", textColor: "#F17F2B", graphBgColor: "#FBD8BF" },
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#E0F7EC", textColor: "#26BD78", graphBgColor: "#B3EAD1" },
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#E8F3FE", textColor: "#559FF7", graphBgColor: "#CFE5FD" },
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#F9E8FD", textColor: "#D65EEC", graphBgColor: "#F2D1FA" },
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#ECE8FF", textColor: "#573FCC", graphBgColor: "#B8AFFF" },
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#FDEEE2", textColor: "#B5520A", graphBgColor: "#F8B98A" },
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#E0F7EC", textColor: "#007C3E", graphBgColor: "#80DBB3" },
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#E8F3FE", textColor: "#276DBD", graphBgColor: "#A3CDFB" },
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (compare colour palette)
   { bgColor: "#ECE8FF", textColor: "#9F46B5", graphBgColor: "#E8A9F5" },
 ];
 
@@ -546,22 +546,22 @@ export const getMarkColor = (weight, isOverlap = false, alpha = 0.5) => {
   let baseColor = "";
 
   if (weight > 0 && weight < 0.2) {
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#FA9B78";
   } else if (weight > 0.2 && weight < 0.4) {
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#fa8f7e";
   } else if (weight > 0.4 && weight < 0.6) {
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#f98881";
   } else if (weight > 0.6 && weight < 0.8) {
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#f78185";
   } else if (weight > 0.8 && weight < 1) {
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#F57B8A";
   } else {
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    // eslint-disable-next-line no-restricted-syntax -- ds: encoding (error weight heatmap)
     baseColor = "#F57B8A";
   }
 
@@ -1046,8 +1046,7 @@ export function interpolateColorTokenBasedOnScore(
   } else if (factor < 60) {
     return {
       bgcolor: palette("light").orange.o5,
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      color: palette("light").orange[500] ?? "#A64B00",
+      color: palette("light").orange[500],
     };
   } else if (factor < 80) {
     return {

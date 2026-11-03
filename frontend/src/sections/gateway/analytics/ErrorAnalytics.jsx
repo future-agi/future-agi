@@ -20,6 +20,7 @@ import Section from "src/components/section";
 import MetricStrip from "src/components/metric-strip";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
+import { seriesColor } from "src/theme/data-colors";
 import { useAnalyticsErrors } from "./hooks/useAnalyticsErrors";
 import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
 
@@ -56,16 +57,11 @@ function getChartColors(theme) {
     theme.palette.primary.main,
     theme.palette.secondary.main,
     theme.palette.info.main,
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#7857FC",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#FF6D00",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#00BFA5",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#D500F9",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#64DD17",
+    seriesColor(theme, 0),
+    seriesColor(theme, 5),
+    seriesColor(theme, 2),
+    seriesColor(theme, 4),
+    seriesColor(theme, 6),
   ];
 }
 

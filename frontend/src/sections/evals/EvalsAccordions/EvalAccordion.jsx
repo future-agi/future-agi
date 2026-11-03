@@ -9,6 +9,7 @@ import {
   Stack,
   Tab,
   Typography,
+  alpha,
   useTheme,
 } from "@mui/material";
 import { ShowComponent } from "src/components/show";
@@ -306,9 +307,8 @@ const EvalAccordion = ({
                             height="100%"
                             // borderRadius="15px"
                             gap="5px"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: overlay scrim
-                            bgcolor="#00000080"
                             sx={{
+                              bgcolor: alpha(theme.palette.common.black, 0.5),
                               opacity: 0,
                               visibility: "hidden",
                               transition:
@@ -358,8 +358,7 @@ const EvalAccordion = ({
                               width: "100%",
                               maxWidth: "960px",
                               bgcolor: "background.paper",
-                              // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-                              boxShadow: 24,
+                              boxShadow: theme.customShadows?.dialog,
                               borderRadius: "12px",
                               mx: "auto",
                               height: "90vh",

@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import Typography from "@mui/material/Typography";
-import { Box, CircularProgress, IconButton } from "@mui/material";
+import { Box, CircularProgress, IconButton, useTheme } from "@mui/material";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import axios, { endpoints } from "src/utils/axios";
 import { trackEvent, Events } from "src/utils/Mixpanel";
 import { useForm } from "react-hook-form";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
+import { seriesColor } from "src/theme/data-colors";
 
 const UsageSummary = () => {
+  const theme = useTheme();
   const [isLoading, setIsLoading] = useState(false);
 
   // Form setup
@@ -287,8 +289,11 @@ const UsageSummary = () => {
                 }
               />
               <Tooltip />
-              {/* eslint-disable-next-line no-restricted-syntax -- ds: data colour */}
-              <Bar dataKey="value" fill="#D3B2E2" radius={[3, 3, 0, 0]} />
+              <Bar
+                dataKey="value"
+                fill={seriesColor(theme, 0)}
+                radius={[3, 3, 0, 0]}
+              />
             </BarChart>
           </div>
         </div>

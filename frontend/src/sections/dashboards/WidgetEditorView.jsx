@@ -40,6 +40,7 @@ import {
   ButtonBase,
 } from "@mui/material";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { alpha } from "@mui/material/styles";
 import ReactApexChart from "react-apexcharts";
 import ChartLegend from "./ChartLegend";
 import WidgetPieCharts from "./WidgetPieCharts";
@@ -80,6 +81,7 @@ import {
 } from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
 import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
+import { seriesColors } from "src/theme/data-colors";
 import {
   coerceFilterValue,
   FILTER_STRING_MAX_UTF8_BYTES,
@@ -1381,29 +1383,6 @@ const METRIC_TYPE_ICONS = {
   custom_column: "solar:columns-3-linear",
 };
 
-const SERIES_COLORS = [
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#7B56DB", // purple (primary)
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#1ABCFE", // cyan
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#FF6B6B", // coral red
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#2ECB71", // emerald green
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#F7B731", // amber
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#E84393", // magenta pink
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#0984E3", // ocean blue
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#FD7E14", // tangerine orange
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#00CEC9", // teal
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#A29BFE", // lavender
-];
-
 const hashSeriesName = (name) => {
   const s = String(name || "");
   let h = 0;
@@ -1412,27 +1391,27 @@ const hashSeriesName = (name) => {
   }
   return Math.abs(h);
 };
-const buildSeriesColorMap = (names) => {
+// `palette` is the theme's data palette (seriesColors(theme)).
+const buildSeriesColorMap = (names, palette) => {
   const map = {};
   const used = new Set();
   (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % SERIES_COLORS.length;
+    const start = hashSeriesName(name) % palette.length;
     let picked = start;
-    for (let i = 0; i < SERIES_COLORS.length; i += 1) {
-      const candidate = (start + i) % SERIES_COLORS.length;
+    for (let i = 0; i < palette.length; i += 1) {
+      const candidate = (start + i) % palette.length;
       if (!used.has(candidate)) {
         picked = candidate;
         break;
       }
     }
     used.add(picked);
-    map[name] = SERIES_COLORS[picked];
+    map[name] = palette[picked];
   });
   return map;
 };
-const getSeriesColor = (name, map) =>
-  (map && map[name]) ||
-  SERIES_COLORS[hashSeriesName(name) % SERIES_COLORS.length];
+const getSeriesColor = (name, map, palette) =>
+  (map && map[name]) || palette[hashSeriesName(name) % palette.length];
 
 const LETTER_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -3850,30 +3829,37 @@ export default function WidgetEditorView() {
   }, [axisConfig.leftY.unit, autoAppliedLeftAxisUnit, suggestedLeftAxisUnit]);
 
   // Hash-derived colors give cross-reload stability; the map walker
-  // advances to the next free slot on collision so ≤10 series never
-  // share a color inside one widget. Built from previewSeries so hidden
-  // series keep their color when re-checked.
+  // advances to the next free slot on collision so series never share a
+  // color inside one widget until the palette runs out. Built from
+  // previewSeries so hidden series keep their color when re-checked.
+  const palette = seriesColors(theme);
   const seriesColorMap = useMemo(
-    () => buildSeriesColorMap(previewSeries.map((s) => s.name)),
-    [previewSeries],
+    () =>
+      buildSeriesColorMap(
+        previewSeries.map((s) => s.name),
+        palette,
+      ),
+    [previewSeries, palette],
   );
   const chartColors = useMemo(
-    () => chartSeries.map((s) => getSeriesColor(s.name, seriesColorMap)),
-    [chartSeries, seriesColorMap],
+    () =>
+      chartSeries.map((s) => getSeriesColor(s.name, seriesColorMap, palette)),
+    [chartSeries, seriesColorMap, palette],
   );
 
   // Pie slices are breakdown values, which repeat across metrics — key their
   // colours by the raw breakdown name so a project stays one colour in every pie.
   const pieColorMap = useMemo(
     () =>
-      buildSeriesColorMap([
-        ...new Set(previewSeries.map((s) => s.breakdownName)),
-      ]),
-    [previewSeries],
+      buildSeriesColorMap(
+        [...new Set(previewSeries.map((s) => s.breakdownName))],
+        palette,
+      ),
+    [previewSeries, palette],
   );
   const pieColorFor = useCallback(
-    (name) => getSeriesColor(name, pieColorMap),
-    [pieColorMap],
+    (name) => getSeriesColor(name, pieColorMap, palette),
+    [pieColorMap, palette],
   );
 
   // A pie needs a category to slice by. `hasBreakdown` mirrors the filter in
@@ -4263,8 +4249,8 @@ export default function WidgetEditorView() {
             intersect: isLineChart && !isDenseSeries,
             custom: ({ series, seriesIndex, dataPointIndex, w }) => {
               const sName = w.globals.seriesNames[seriesIndex] || "";
-              // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-              const color = w.globals.colors[seriesIndex] || "#6366F1";
+              const color =
+                w.globals.colors[seriesIndex] || seriesColors(theme)[0];
               const val = series[seriesIndex]?.[dataPointIndex];
               const prevVal =
                 dataPointIndex > 0
@@ -5163,7 +5149,11 @@ export default function WidgetEditorView() {
                         sx={{ px: 2, pt: 2, pb: 1 }}
                       >
                         {chartSeries.map((s, i) => {
-                          const color = getSeriesColor(s.name, seriesColorMap);
+                          const color = getSeriesColor(
+                            s.name,
+                            seriesColorMap,
+                            palette,
+                          );
                           return (
                             <Stack
                               key={i}
@@ -5249,6 +5239,7 @@ export default function WidgetEditorView() {
                               const color = getSeriesColor(
                                 row.name || row.label,
                                 seriesColorMap,
+                                palette,
                               );
                               const pct =
                                 maxVal > 0 ? (Math.abs(val) / maxVal) * 100 : 0;
@@ -5430,6 +5421,7 @@ export default function WidgetEditorView() {
                               const color = getSeriesColor(
                                 s.name,
                                 seriesColorMap,
+                                palette,
                               );
                               return (
                                 <ButtonBase
@@ -5647,6 +5639,7 @@ export default function WidgetEditorView() {
                                             bgcolor: getSeriesColor(
                                               s.name,
                                               seriesColorMap,
+                                              palette,
                                             ),
                                             display: "inline-block",
                                           }}
@@ -6201,6 +6194,7 @@ export default function WidgetEditorView() {
                             const color = getSeriesColor(
                               s.name,
                               seriesColorMap,
+                              palette,
                             );
                             return (
                               <tr
@@ -6402,8 +6396,7 @@ export default function WidgetEditorView() {
                           <polyline
                             points="20,60 35,45 50,50 65,28 80,32 95,18 105,22"
                             fill="none"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            stroke={isDark ? "#916BFF" : "#7857FC"}
+                            stroke={palette[0]}
                             strokeWidth="2"
                             strokeLinecap="round"
                             strokeLinejoin="round"
@@ -6412,70 +6405,21 @@ export default function WidgetEditorView() {
                           <polyline
                             points="20,68 35,62 50,58 65,48 80,52 95,42 105,45"
                             fill="none"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            stroke={isDark ? "#5BE49B" : "#22C55E"}
+                            stroke={palette[2]}
                             strokeWidth="2"
                             strokeLinecap="round"
                             strokeLinejoin="round"
                           />
                           {/* Data points - purple */}
-                          <circle
-                            cx="20"
-                            cy="60"
-                            r="2.5"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#916BFF" : "#7857FC"}
-                          />
-                          <circle
-                            cx="50"
-                            cy="50"
-                            r="2.5"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#916BFF" : "#7857FC"}
-                          />
-                          <circle
-                            cx="65"
-                            cy="28"
-                            r="2.5"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#916BFF" : "#7857FC"}
-                          />
-                          <circle
-                            cx="95"
-                            cy="18"
-                            r="2.5"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#916BFF" : "#7857FC"}
-                          />
+                          <circle cx="20" cy="60" r="2.5" fill={palette[0]} />
+                          <circle cx="50" cy="50" r="2.5" fill={palette[0]} />
+                          <circle cx="65" cy="28" r="2.5" fill={palette[0]} />
+                          <circle cx="95" cy="18" r="2.5" fill={palette[0]} />
                           {/* Data points - teal */}
-                          <circle
-                            cx="20"
-                            cy="68"
-                            r="2.5"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
-                          />
-                          <circle
-                            cx="50"
-                            cy="58"
-                            r="2.5"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
-                          />
-                          <circle
-                            cx="65"
-                            cy="48"
-                            r="2.5"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
-                          />
-                          <circle
-                            cx="95"
-                            cy="42"
-                            r="2.5"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
-                          />
+                          <circle cx="20" cy="68" r="2.5" fill={palette[2]} />
+                          <circle cx="50" cy="58" r="2.5" fill={palette[2]} />
+                          <circle cx="65" cy="48" r="2.5" fill={palette[2]} />
+                          <circle cx="95" cy="42" r="2.5" fill={palette[2]} />
                         </svg>
                         <Typography
                           variant="caption"
@@ -6952,8 +6896,7 @@ export default function WidgetEditorView() {
                                 ? "rgba(145,107,255,0.25)"
                                 : "rgba(105,65,198,0.1)"
                             }
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            stroke={isDark ? "#916BFF" : "#7857FC"}
+                            stroke={palette[0]}
                             strokeWidth="1.5"
                           />
                           <rect
@@ -6967,8 +6910,7 @@ export default function WidgetEditorView() {
                                 ? "rgba(145,107,255,0.4)"
                                 : "rgba(105,65,198,0.18)"
                             }
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            stroke={isDark ? "#916BFF" : "#7857FC"}
+                            stroke={palette[0]}
                             strokeWidth="1.5"
                           />
                           <rect
@@ -6982,8 +6924,7 @@ export default function WidgetEditorView() {
                                 ? "rgba(145,107,255,0.6)"
                                 : "rgba(105,65,198,0.28)"
                             }
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            stroke={isDark ? "#916BFF" : "#7857FC"}
+                            stroke={palette[0]}
                             strokeWidth="1.5"
                           />
                           {/* Connecting lines */}
@@ -6992,8 +6933,7 @@ export default function WidgetEditorView() {
                             y1="26"
                             x2="25"
                             y2="34"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            stroke={isDark ? "#916BFF" : "#7857FC"}
+                            stroke={palette[0]}
                             strokeWidth="1"
                             strokeDasharray="2 2"
                           />
@@ -7002,8 +6942,7 @@ export default function WidgetEditorView() {
                             y1="26"
                             x2="95"
                             y2="34"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            stroke={isDark ? "#916BFF" : "#7857FC"}
+                            stroke={palette[0]}
                             strokeWidth="1"
                             strokeDasharray="2 2"
                           />
@@ -7012,8 +6951,7 @@ export default function WidgetEditorView() {
                             y1="50"
                             x2="40"
                             y2="58"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            stroke={isDark ? "#916BFF" : "#7857FC"}
+                            stroke={palette[0]}
                             strokeWidth="1"
                             strokeDasharray="2 2"
                           />
@@ -7022,8 +6960,7 @@ export default function WidgetEditorView() {
                             y1="50"
                             x2="80"
                             y2="58"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            stroke={isDark ? "#916BFF" : "#7857FC"}
+                            stroke={palette[0]}
                             strokeWidth="1"
                             strokeDasharray="2 2"
                           />
@@ -7032,64 +6969,55 @@ export default function WidgetEditorView() {
                             cx="30"
                             cy="18"
                             r="2"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="50"
                             cy="18"
                             r="2"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="70"
                             cy="18"
                             r="2"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#FF6B6B" : "#EF4444"}
+                            fill={theme.palette.status.danger.solid}
                           />
                           <circle
                             cx="90"
                             cy="18"
                             r="2"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="40"
                             cy="42"
                             r="2"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="60"
                             cy="42"
                             r="2"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="80"
                             cy="42"
                             r="2"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#FF6B6B" : "#EF4444"}
+                            fill={theme.palette.status.danger.solid}
                           />
                           <circle
                             cx="52"
                             cy="66"
                             r="2"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                           <circle
                             cx="68"
                             cy="66"
                             r="2"
-                            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                            fill={theme.palette.status.success.solid}
                           />
                         </svg>
                         <Typography
@@ -7396,48 +7324,30 @@ export default function WidgetEditorView() {
                     title={
                       <Box sx={{ textAlign: "center" }}>
                         {(() => {
-                          // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                          const teal = isDark ? "#5BE49B" : "#16A34A";
-                          const tealFill1 = isDark
-                            ? "rgba(91,228,155,0.2)"
-                            : "rgba(22,163,74,0.12)";
-                          const tealFill2 = isDark
-                            ? "rgba(91,228,155,0.3)"
-                            : "rgba(22,163,74,0.2)";
-                          const tealFill3 = isDark
-                            ? "rgba(91,228,155,0.15)"
-                            : "rgba(22,163,74,0.08)";
-                          const tealFill4 = isDark
-                            ? "rgba(91,228,155,0.25)"
-                            : "rgba(22,163,74,0.15)";
-                          // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                          const purple = isDark ? "#916BFF" : "#7857FC";
-                          const purpleFill1 = isDark
-                            ? "rgba(145,107,255,0.2)"
-                            : "rgba(105,65,198,0.12)";
-                          const purpleFill2 = isDark
-                            ? "rgba(145,107,255,0.3)"
-                            : "rgba(105,65,198,0.2)";
-                          const purpleFill3 = isDark
-                            ? "rgba(145,107,255,0.15)"
-                            : "rgba(105,65,198,0.08)";
-                          const purpleFill4 = isDark
-                            ? "rgba(145,107,255,0.25)"
-                            : "rgba(105,65,198,0.15)";
-                          // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                          const coral = isDark ? "#FF6B6B" : "#EF4444";
-                          const coralFill1 = isDark
-                            ? "rgba(255,107,107,0.2)"
-                            : "rgba(239,68,68,0.12)";
-                          const coralFill2 = isDark
-                            ? "rgba(255,107,107,0.3)"
-                            : "rgba(239,68,68,0.2)";
-                          const coralFill3 = isDark
-                            ? "rgba(255,107,107,0.15)"
-                            : "rgba(239,68,68,0.08)";
-                          const coralFill4 = isDark
-                            ? "rgba(255,107,107,0.25)"
-                            : "rgba(239,68,68,0.15)";
+                          const teal = palette[2];
+                          const tealFill1 = alpha(teal, isDark ? 0.2 : 0.12);
+                          const tealFill2 = alpha(teal, isDark ? 0.3 : 0.2);
+                          const tealFill3 = alpha(teal, isDark ? 0.15 : 0.08);
+                          const tealFill4 = alpha(teal, isDark ? 0.25 : 0.15);
+                          const purple = palette[0];
+                          const purpleFill1 = alpha(
+                            purple,
+                            isDark ? 0.2 : 0.12,
+                          );
+                          const purpleFill2 = alpha(purple, isDark ? 0.3 : 0.2);
+                          const purpleFill3 = alpha(
+                            purple,
+                            isDark ? 0.15 : 0.08,
+                          );
+                          const purpleFill4 = alpha(
+                            purple,
+                            isDark ? 0.25 : 0.15,
+                          );
+                          const coral = palette[4];
+                          const coralFill1 = alpha(coral, isDark ? 0.2 : 0.12);
+                          const coralFill2 = alpha(coral, isDark ? 0.3 : 0.2);
+                          const coralFill3 = alpha(coral, isDark ? 0.15 : 0.08);
+                          const coralFill4 = alpha(coral, isDark ? 0.25 : 0.15);
                           return (
                             <svg
                               width="120"
@@ -7721,6 +7631,7 @@ export default function WidgetEditorView() {
                         const seriesColor = getSeriesColor(
                           s.name,
                           seriesColorMap,
+                          palette,
                         );
                         return (
                           <Stack

@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Typography, useTheme } from "@mui/material";
+import { chartAxisColors } from "src/theme/data-colors";
 import ReactApexChart from "react-apexcharts";
 import { useState, useRef, useEffect, useMemo } from "react";
 import Logo from "src/components/logo/logo";
@@ -224,8 +225,7 @@ const DatasetOptimizationResultGraph = ({ optimizationId }) => {
               id: "dataset-optimization-result-graph",
               type: "line",
               background: "transparent",
-              // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-              foreColor: isDark ? "#a1a1aa" : undefined,
+              foreColor: chartAxisColors(theme).foreColor,
               toolbar: {
                 show: false,
               },

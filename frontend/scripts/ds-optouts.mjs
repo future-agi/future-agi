@@ -49,7 +49,7 @@ export const WHOLE_FILE_EXCEPTIONS = [
   "sections/simulate/environments/buildEnvironment/buildTones.js",
 ];
 
-export const MAX_DS_OPTOUTS = Number.POSITIVE_INFINITY;
+export const MAX_DS_OPTOUTS = 107;
 
 const RULE = "no-restricted-syntax";
 const DISABLE = /eslint-disable(-next-line|-line)?\s+([^*\n]*?)(?:\s*\*\/|\s*$)/;

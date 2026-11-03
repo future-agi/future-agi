@@ -44,8 +44,7 @@ const ThemeSelectorChild = React.forwardRef(({ setOpen }, popperTimeoutRef) => {
         border: "1px solid",
         borderColor: "divider",
         borderRadius: 1,
-        // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-        boxShadow: "0px 4px 20px rgba(0, 0, 0, 0.1)",
+        boxShadow: (theme) => theme.customShadows?.dropdown,
         p: 0.5,
         minWidth: "160px",
         display: "flex",

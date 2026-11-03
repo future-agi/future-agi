@@ -110,11 +110,11 @@ export default function FalconAIFab() {
           width: 40,
           height: 40,
           minHeight: 40,
-          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
+          // eslint-disable-next-line no-restricted-syntax -- ds: brand (Falcon button glow)
           boxShadow: "0 3px 12px 0 rgba(120, 87, 252, 0.4)",
           "&:hover": {
             bgcolor: "primary.dark",
-            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
+            // eslint-disable-next-line no-restricted-syntax -- ds: brand (Falcon button glow)
             boxShadow: "0 4px 18px 0 rgba(120, 87, 252, 0.55)",
             transform: "scale(1.08)",
           },

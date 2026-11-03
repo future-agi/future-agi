@@ -141,10 +141,8 @@ const columns = (
               <ResendInviteIcon
                 width={20}
                 height={20}
-                // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                fill="#A792FD"
-                // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-                stroke="#A792FD"
+                fill={palette.primary.main}
+                stroke={palette.primary.main}
                 strokeWidth={0.0}
               />
             )}{" "}
@@ -175,8 +173,7 @@ const columns = (
               width={20}
               height={20}
               fill="none"
-              // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-              stroke="#DB2F2D"
+              stroke={palette.error.main}
               strokeWidth={1.0}
             />
           </IconButton>

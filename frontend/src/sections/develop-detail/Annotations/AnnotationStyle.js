@@ -11,8 +11,7 @@ export const LabelCard = styled(Box)(({ theme }) => ({
   position: "absolute",
   zIndex: 2,
   overflow: "hidden",
-  // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-  boxShadow: "-20px 20px 40px -4px rgba(145, 158, 171, 0.24)",
+  boxShadow: theme.customShadows?.dropdown,
   "&:before": {
     content: '""',
     position: "absolute",

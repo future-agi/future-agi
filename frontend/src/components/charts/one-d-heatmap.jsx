@@ -1,4 +1,3 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
@@ -34,6 +33,8 @@ export default function OneDHeatmap() {
     theme: {
       mode: isDark ? "dark" : "light",
     },
+    // One red, shaded light to dark by value.
+    colors: [theme.palette.status.danger.solid],
     plotOptions: {
       heatmap: {
         shadeIntensity: 0.5,
@@ -42,7 +43,6 @@ export default function OneDHeatmap() {
         colorScale: {
           min: 0,
           max: 1,
-          color: ["#ffcccc", "#ff3333"], // Gradient from very light red to dark red
         },
       },
     },

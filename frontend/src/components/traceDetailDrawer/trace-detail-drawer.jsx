@@ -676,8 +676,7 @@ const TraceDetailDrawerChild = ({
                     sx={{
                       position: "absolute",
                       left: "91%",
-                      // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-                      boxShadow: "3",
+                      boxShadow: (theme) => theme.customShadows?.dropdown,
                       borderRadius: "50%",
                       bgcolor: "background.paper",
                       height: "23px",
@@ -704,8 +703,7 @@ const TraceDetailDrawerChild = ({
                 <Box
                   sx={{
                     position: "absolute",
-                    // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-                    boxShadow: "3",
+                    boxShadow: (theme) => theme.customShadows?.dropdown,
                     borderRadius: "50%", // This makes it a circle
                     backgroundColor: dragging
                       ? "background.neutral"

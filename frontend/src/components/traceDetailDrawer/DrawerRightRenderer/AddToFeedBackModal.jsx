@@ -23,8 +23,7 @@ const style = {
   width: "616px",
   bgcolor: "background.paper",
   borderRadius: 1,
-  // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-  boxShadow: 24,
+  boxShadow: (theme) => theme.customShadows?.dialog,
   px: 1.5,
   py: 0.5,
 };

@@ -251,7 +251,7 @@ function AnalyzedState({
               <Iconify
                 icon="simple-icons:linear"
                 width={12}
-                // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+                // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
                 sx={{ color: "#5E6AD2" }}
               />
             }

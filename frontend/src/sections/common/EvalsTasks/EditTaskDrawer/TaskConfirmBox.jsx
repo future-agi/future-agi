@@ -114,8 +114,6 @@ export default function TaskConfirmDialog({
       PaperProps={{
         sx: {
           borderRadius: "8px",
-          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-          boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.1)",
           width: "560px",
           height: "282px",
         },

@@ -969,8 +969,6 @@ const FallbacksSection = () => {
             borderRadius: 1,
             border: 1,
             borderColor: "divider",
-            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-            boxShadow: 3,
           }}
         >
           <Stack

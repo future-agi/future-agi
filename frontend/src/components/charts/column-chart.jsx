@@ -1,8 +1,8 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import PropTypes from "prop-types";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material";
+import { seriesColor } from "src/theme/data-colors";
 
 export default function ColumnChart({ size }) {
   const theme = useTheme();
@@ -15,13 +15,13 @@ export default function ColumnChart({ size }) {
   const series = [
     {
       data: [
-        { x: "Scammeds", y: 15, fillColor: "#FF4560" },
-        { x: "Haley Group", y: 20, fillColor: "#00E396" },
-        { x: "Reilly LLC", y: 25, fillColor: "#FEB019" },
-        { x: "Champlin and...", y: 30, fillColor: "#775DD0" },
-        { x: "Kirlin and S...", y: 35, fillColor: "#008FFB" },
-        { x: "Leannon Ward", y: 40, fillColor: "#FF4560" },
-        { x: "Schiller Ltd", y: 45, fillColor: "#00E396" },
+        { x: "Scammeds", y: 15, fillColor: seriesColor(theme, 0) },
+        { x: "Haley Group", y: 20, fillColor: seriesColor(theme, 1) },
+        { x: "Reilly LLC", y: 25, fillColor: seriesColor(theme, 2) },
+        { x: "Champlin and...", y: 30, fillColor: seriesColor(theme, 3) },
+        { x: "Kirlin and S...", y: 35, fillColor: seriesColor(theme, 4) },
+        { x: "Leannon Ward", y: 40, fillColor: seriesColor(theme, 0) },
+        { x: "Schiller Ltd", y: 45, fillColor: seriesColor(theme, 1) },
       ],
     },
   ];

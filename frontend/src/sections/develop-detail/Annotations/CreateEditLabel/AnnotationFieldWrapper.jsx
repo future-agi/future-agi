@@ -13,15 +13,15 @@ import CustomPopover from "src/components/custom-popover";
 import SvgColor from "../../../../components/svg-color";
 
 const LabelBgColorMapper = {
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   numeric: "#007AFF26",
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   text: "#7857FC26",
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   categorical: "#4CAF5033",
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   thumbs_up_down: "#FF98004D",
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   star: "#CF6BE84D",
 };
 

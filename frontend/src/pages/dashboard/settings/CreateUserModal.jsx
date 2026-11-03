@@ -238,8 +238,6 @@ const CreateUserModal = ({ open, onClose, userData, type, setRefreshData }) => {
             width: "400px",
             backgroundColor: "background.paper",
             padding: 2,
-            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-            boxShadow: 3,
             zIndex: 1000,
             flexDirection: "column",
             gap: 2,

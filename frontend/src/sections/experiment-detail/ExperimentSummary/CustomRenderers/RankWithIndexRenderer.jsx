@@ -21,7 +21,7 @@ const RankWithIndexRenderer = (props) => {
         <Iconify
           icon="solar:crown-bold"
           sx={{
-            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+            // eslint-disable-next-line no-restricted-syntax -- ds: encoding (first-rank crown)
             color: "#FFCC00",
           }}
         />

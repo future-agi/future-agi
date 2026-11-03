@@ -79,8 +79,7 @@ export const PromptWrap = styled(Box)(({ theme }) => ({
   width: "525px",
   height: "100%",
   backgroundColor: theme.palette.background.paper,
-  // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-  boxShadow: "-40px 40px 80px -8px rgba(145, 158, 171, 0.24)",
+  boxShadow: theme.customShadows?.dropdown,
 }));
 export const PromptWrapTtl = styled(Typography)(({ theme }) => ({
   fontWeight: theme.typography.fontWeightBold,

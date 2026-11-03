@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { Box, useTheme } from "@mui/material";
+import { chartAxisColors, seriesColor } from "src/theme/data-colors";
 import { PropmtTitle } from "./SummaryStyle";
 import ReactApexChart from "react-apexcharts";
 import PropTypes from "prop-types";
@@ -70,8 +71,7 @@ const PropmtCard = ({ setCurrentTab, datasetId = null }) => {
     chart: {
       type: "bar",
       background: "transparent",
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      foreColor: isDark ? "#a1a1aa" : undefined,
+      foreColor: chartAxisColors(theme).foreColor,
       toolbar: { show: false },
     },
     theme: {
@@ -94,21 +94,23 @@ const PropmtCard = ({ setCurrentTab, datasetId = null }) => {
       },
     },
     grid: {
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      borderColor: isDark ? "#27272a" : undefined,
+      borderColor: chartAxisColors(theme).gridColor,
     },
   });
 
   // Chart options for each chart type
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  const optionsOne = generateChartOptions(chartData.avgPromptToken, "#9585D5");
+  const optionsOne = generateChartOptions(
+    chartData.avgPromptToken,
+    seriesColor(theme, 0),
+  );
   const optionsTwo = generateChartOptions(
     chartData.avgCompletionToken,
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#E6CAF5",
+    seriesColor(theme, 1),
   );
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  const optionsThree = generateChartOptions(chartData.avgTotalToken, "#BF75E5");
+  const optionsThree = generateChartOptions(
+    chartData.avgTotalToken,
+    seriesColor(theme, 2),
+  );
 
   if (isLoading) {
     return (

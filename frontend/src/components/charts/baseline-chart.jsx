@@ -1,7 +1,7 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material";
+import { seriesColor } from "src/theme/data-colors";
 
 export default function BaselineChart() {
   const theme = useTheme();
@@ -44,7 +44,7 @@ export default function BaselineChart() {
     theme: {
       mode: isDark ? "dark" : "light",
     },
-    colors: ["#77B6EA", "#545454"],
+    colors: [seriesColor(theme, 1), seriesColor(theme, 7)],
     dataLabels: {
       enabled: false,
     },

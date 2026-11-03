@@ -1,4 +1,5 @@
 import { Box, Typography, useTheme } from "@mui/material";
+import { chartAxisColors } from "src/theme/data-colors";
 import PropTypes from "prop-types";
 import React from "react";
 import ReactApexChart from "react-apexcharts";
@@ -45,8 +46,7 @@ const ExperimentEvaluationChart = ({ col, rows }) => {
               toolbar: {
                 show: false,
               },
-              // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-              foreColor: isDark ? "#a1a1aa" : undefined,
+              foreColor: chartAxisColors(theme).foreColor,
             },
             theme: {
               mode: isDark ? "dark" : "light",
@@ -71,8 +71,7 @@ const ExperimentEvaluationChart = ({ col, rows }) => {
               theme: isDark ? "dark" : "light",
             },
             grid: {
-              // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-              borderColor: isDark ? "#27272a" : undefined,
+              borderColor: chartAxisColors(theme).gridColor,
             },
           }}
           series={[

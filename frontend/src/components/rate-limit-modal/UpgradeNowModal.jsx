@@ -39,7 +39,7 @@ const planData = {
   [PLAN_TYPES.FREE]: {
     name: "Free plan",
     icon: "circle",
-    // eslint-disable-next-line no-restricted-syntax -- ds: plan-tier colour
+    // eslint-disable-next-line no-restricted-syntax -- ds: illustration (plan tier icon)
     iconColor: "#ff6384", // Pink/red color based on the image
     tagline: "For individuals and early stage start-ups",
     price: 0,
@@ -59,7 +59,7 @@ const planData = {
   [PLAN_TYPES.CUSTOM]: {
     name: "Custom plan",
     icon: "diamond",
-    // eslint-disable-next-line no-restricted-syntax -- ds: plan-tier colour
+    // eslint-disable-next-line no-restricted-syntax -- ds: illustration (plan tier icon)
     iconColor: "#9c27b0", // Purple color based on the image
     tagline: "For large organization",
     price: "",

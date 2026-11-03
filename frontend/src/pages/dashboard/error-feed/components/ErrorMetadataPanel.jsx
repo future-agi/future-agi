@@ -947,9 +947,9 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
                   borderRadius: "8px",
                   cursor: createIssue.isPending ? "wait" : "pointer",
                   "&:hover": {
-                    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+                    // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
                     borderColor: "#5E6AD2",
-                    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+                    // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
                     bgcolor: alpha("#5E6AD2", 0.04),
                   },
                   transition: "all 0.15s",
@@ -960,7 +960,7 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
                     width: 28,
                     height: 28,
                     borderRadius: "6px",
-                    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+                    // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
                     bgcolor: alpha("#5E6AD2", 0.1),
                     display: "flex",
                     alignItems: "center",
@@ -968,7 +968,7 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
                     flexShrink: 0,
                   }}
                 >
-                  {/* eslint-disable-next-line no-restricted-syntax -- ds: data colour */}
+                  {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear) */}
                   <Typography fontSize="12px" fontWeight={600} color="#5E6AD2">
                     {t.key}
                   </Typography>
@@ -982,7 +982,7 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
                   {t.name}
                 </Typography>
                 {createIssue.isPending && (
-                  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+                  // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
                   <CircularProgress size={14} sx={{ color: "#5E6AD2" }} />
                 )}
               </Stack>
@@ -1161,7 +1161,7 @@ function Integrations({
       <Stack gap={0.75}>
         <ConnectorRow
           icon="simple-icons:linear"
-          // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+          // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
           color="#5E6AD2"
           name="Linear"
           subtitle={linearSubtitle}

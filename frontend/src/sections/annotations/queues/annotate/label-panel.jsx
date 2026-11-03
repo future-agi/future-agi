@@ -261,8 +261,7 @@ function ShortcutsOverlay({ onClose }) {
           borderRadius: "4px",
           p: 2.5,
           width: 300,
-          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-          boxShadow: 8,
+          boxShadow: (theme) => theme.customShadows?.dialog,
         }}
       >
         <Box

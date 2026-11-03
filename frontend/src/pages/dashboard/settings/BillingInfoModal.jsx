@@ -330,8 +330,6 @@ const BillingInfoModal = ({ open, onClose }) => {
             padding: theme.spacing(2),
             overflow: "hidden",
             backgroundColor: "background.paper",
-            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-            boxShadow: 3,
             zIndex: 1000,
             flexDirection: "column",
           }}

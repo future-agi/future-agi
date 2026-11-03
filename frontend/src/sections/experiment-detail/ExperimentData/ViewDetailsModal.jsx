@@ -110,8 +110,7 @@ const ViewDetailsModal = ({
           transform: "translate(-50%, -50%)",
           width: "30%",
           bgcolor: "background.paper",
-          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-          boxShadow: 24,
+          boxShadow: theme.customShadows?.dialog,
           borderRadius: theme.spacing(1.5),
           padding: theme.spacing(2.5),
           display: "flex",

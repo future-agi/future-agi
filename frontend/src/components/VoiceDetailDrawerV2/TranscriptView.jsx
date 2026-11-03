@@ -1004,8 +1004,7 @@ const TranscriptView = ({
                 borderRadius: "999px",
                 fontSize: 12,
                 fontWeight: 600,
-                // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-                boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
+                boxShadow: (theme) => theme.customShadows?.dropdown,
                 "&:hover": {
                   bgcolor: "primary.dark",
                 },

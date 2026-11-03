@@ -3,9 +3,11 @@
 import React, { memo } from "react";
 import CustomJsonViewer from "../../../../components/custom-json-viewer/CustomJsonViewer";
 import PropTypes from "prop-types";
+import { useTheme } from "@mui/material/styles";
 
 // AG Grid passes { value, colDef } as props
 const IPOPTooltipComponent = memo(({ value }) => {
+  const theme = useTheme();
   const tooltipStyle = {
     maxHeight: 200,
     minWidth: "200px",
@@ -19,8 +21,7 @@ const IPOPTooltipComponent = memo(({ value }) => {
     fontWeight: "400",
     fontStyle: "normal",
     maxWidth: "400px",
-    // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-    boxShadow: "0px 4px 12px 0px rgba(0, 0, 0, 0.1)",
+    boxShadow: theme.customShadows?.dropdown,
     borderRadius: "8px",
     border: "1px solid var(--border-default)",
   };

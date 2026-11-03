@@ -331,13 +331,6 @@ const TooltipForEvals = ({
           wordBreak: "break-word",
         },
       }}
-      componentsProps={{
-        tooltip: {
-          sx: {
-            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-          },
-        },
-      }}
       slotProps={{
         popper: {
           modifiers: [

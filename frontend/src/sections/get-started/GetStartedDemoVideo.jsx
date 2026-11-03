@@ -28,8 +28,7 @@ const GetStartedDemoVideo = ({
           top: "50%",
           left: "50%",
           transform: "translate(-50%, -50%)",
-          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-          boxShadow: 24,
+          boxShadow: (theme) => theme.customShadows?.dialog,
           borderRadius: "12px",
           // py: "24px",
           // px: "32px",

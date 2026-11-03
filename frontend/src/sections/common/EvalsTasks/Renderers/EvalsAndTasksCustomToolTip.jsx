@@ -39,8 +39,7 @@ const EvalsAndTasksCustomTooltip = ({ value, colDef }) => {
         backgroundColor: "background.paper",
         border: "1px solid lightgray",
         borderRadius: "12px",
-        // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-        boxShadow: "-5px 5px 10px rgba(0, 0, 0, 0.1)",
+        boxShadow: (theme) => theme.customShadows?.dropdown,
         fontSize: "13px",
         paddingBottom: "4px",
         paddingX: 1,

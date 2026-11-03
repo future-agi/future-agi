@@ -51,8 +51,6 @@ export const HubspotMeetingModalWrapper = ({ open, onClose }) => {
           maxHeight: "none",
           margin: 0,
           borderRadius: 2,
-          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-          boxShadow: 2,
           display: "flex",
           flexDirection: "column",
         },

@@ -123,6 +123,7 @@ export const PLATFORMS = [
     wizardDescription: "Connect a Slack workspace for Error Feed alerts",
     logo: null,
     icon: "simple-icons:slack",
+    // eslint-disable-next-line no-restricted-syntax -- ds: brand (Slack)
     iconColor: "#E01E5A",
     available: true,
   },
@@ -133,7 +134,7 @@ export const PLATFORMS = [
     wizardDescription: "Create Linear issues from Error Feed clusters",
     logo: null,
     icon: "simple-icons:linear",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+    // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
     iconColor: "#5E6AD2",
     available: true,
   },

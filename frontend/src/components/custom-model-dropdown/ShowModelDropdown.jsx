@@ -512,7 +512,7 @@ const ShowModelDropdown = forwardRef(
                             pointerEvents: "auto",
                             cursor: "pointer",
                             opacity: 1,
-                            // eslint-disable-next-line no-restricted-syntax -- ds: error state of unavailable option
+                            // eslint-disable-next-line no-restricted-syntax -- ds: error state
                             color: "status.danger.fg",
                           },
                         }}

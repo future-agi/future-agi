@@ -1,4 +1,3 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React from "react";
 import {
   Box,
@@ -54,6 +53,7 @@ export default function DatasetMetricChart({
               sx={{
                 border: "1px solid",
                 borderColor: "divider",
+                // eslint-disable-next-line no-restricted-syntax -- ds: layout (bordered stat box)
                 borderRadius: "8px",
                 m: "10px",
                 padding: "20px",

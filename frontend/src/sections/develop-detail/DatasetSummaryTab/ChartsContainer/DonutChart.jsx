@@ -1,4 +1,5 @@
 import { Box, Button, Checkbox, Typography, useTheme } from "@mui/material";
+import { chartAxisColors } from "src/theme/data-colors";
 import PropTypes from "prop-types";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactApexChart from "react-apexcharts";
@@ -8,15 +9,14 @@ import CompareDatasetSummaryIcon from "../CompareDatasetSummaryIcon";
 import TotalRowCount from "./TotalRowCount";
 import { cleanChoiceLabel } from "src/sections/develop-detail/DataTab/common";
 
-const getDefaultOptions = (isDark) => ({
+const getDefaultOptions = (isDark, axis) => ({
   chart: {
     type: "donut",
     background: "transparent",
     toolbar: {
       show: false,
     },
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    foreColor: isDark ? "#a1a1aa" : undefined,
+    foreColor: axis.foreColor,
   },
   theme: { mode: isDark ? "dark" : "light" },
   tooltip: { theme: isDark ? "dark" : "light" },
@@ -55,7 +55,10 @@ const DonutChart = ({
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const defaultOptions = useMemo(() => getDefaultOptions(isDark), [isDark]);
+  const defaultOptions = useMemo(
+    () => getDefaultOptions(isDark, chartAxisColors(theme)),
+    [isDark, theme],
+  );
   const chartRef = useRef(null);
   const [visibleSeries, setVisibleSeries] = useState([]);
 

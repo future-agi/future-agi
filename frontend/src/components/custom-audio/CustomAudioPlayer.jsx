@@ -14,6 +14,7 @@ import { useAudioPlayback } from "./context-provider/useAudioPlayback";
 import { getRandomId } from "src/utils/utils";
 import logger from "src/utils/logger";
 import { ShowComponent } from "../show";
+import { palette } from "src/theme/palette";
 
 const CustomAudioPlayer = ({
   audioData,
@@ -199,8 +200,8 @@ const CustomAudioPlayer = ({
             backend: "MediaElement",
             normalize: true,
             progressColor:
-              // eslint-disable-next-line no-restricted-syntax -- ds: fallback colour
-              activeColor || getCSSVar("--text-primary", "#201e25"),
+              activeColor ||
+              getCSSVar("--text-primary", palette("light").text.primary),
             interact: true,
             renderFunction: (channels, ctx) => {
               const { width, height } = ctx.canvas;
@@ -210,8 +211,8 @@ const CustomAudioPlayer = ({
 
               ctx.clearRect(0, 0, width, height);
               ctx.fillStyle =
-                // eslint-disable-next-line no-restricted-syntax -- ds: fallback colour
-                inactiveColor || getCSSVar("--border-default", "#e1dfec");
+                inactiveColor ||
+                getCSSVar("--border-default", palette("light").border.default);
               ctx.translate(0, height / 2);
 
               for (let x = 0; x < width; x += step) {

@@ -1,8 +1,8 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import { Alert, Box, Button, Grid, Skeleton, useTheme } from "@mui/material";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import EvaluationDateTimeRangePicker from "../EvalsChartsView/EvaluationDateTimeRangePicker";
 import ReactApexChart from "react-apexcharts";
+import { seriesColor } from "src/theme/data-colors";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
@@ -115,13 +115,13 @@ const MetricsTabGraph = ({ setDateFilter }) => {
           name: lineSeriesName,
           type: "line",
           data: primaryData,
-          color: "#CC91EA",
+          color: seriesColor(theme, 0),
         },
         {
           name: barSeriesName,
           type: "column",
           data: trafficData,
-          color: isDark ? "#3f3f46" : "#F0ECFF",
+          color: theme.palette.border.default,
         },
       ],
       options: {

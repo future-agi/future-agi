@@ -1,4 +1,3 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import React, { useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Typography, useTheme } from "@mui/material";
@@ -65,7 +64,7 @@ function ClickMarker({
         cy={cy}
         r={10}
         fill={color}
-        stroke="#fff"
+        stroke={theme.palette.common.white}
         strokeWidth={2}
       />
       {/* Step number */}
@@ -74,7 +73,7 @@ function ClickMarker({
         y={cy + 1}
         textAnchor="middle"
         dominantBaseline="middle"
-        fill="#fff"
+        fill={theme.palette.common.white}
         fontSize={11}
         fontWeight={600}
         fontFamily="Inter, sans-serif"
@@ -96,7 +95,7 @@ function ClickMarker({
           <text
             x={cx + 20}
             y={cy - 4}
-            fill="#fff"
+            fill={theme.palette.common.white}
             fontSize={11}
             fontFamily="Inter, sans-serif"
           >
@@ -105,7 +104,7 @@ function ClickMarker({
           <text
             x={cx + 20}
             y={cy + 10}
-            fill="#aaa"
+            fill={theme.palette.grey[400]}
             fontSize={11}
             fontFamily="Inter, sans-serif"
           >
@@ -250,7 +249,7 @@ export default function WidgetScreenshot({ config }) {
             top: 8,
             right: 8,
             bgcolor: "rgba(0,0,0,0.7)",
-            color: "#fff",
+            color: "common.white",
             px: 1,
             py: 0.25,
             borderRadius: "4px",

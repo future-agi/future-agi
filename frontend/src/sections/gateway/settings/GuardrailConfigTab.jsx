@@ -116,9 +116,9 @@ const FutureAGIIcon = ({ size = 20, enabled }) => (
         y2="46.9"
         gradientUnits="userSpaceOnUse"
       >
-        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand logo */}
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop stopColor="#CF6BE8" />
-        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand logo */}
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop offset="1" stopColor="#7857FC" />
       </linearGradient>
       <linearGradient
@@ -129,9 +129,9 @@ const FutureAGIIcon = ({ size = 20, enabled }) => (
         y2="46.9"
         gradientUnits="userSpaceOnUse"
       >
-        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand logo */}
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop stopColor="#8B44FF" />
-        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand logo */}
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop offset="1" stopColor="#7857FC" />
       </linearGradient>
       <linearGradient
@@ -142,9 +142,9 @@ const FutureAGIIcon = ({ size = 20, enabled }) => (
         y2="40.09"
         gradientUnits="userSpaceOnUse"
       >
-        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand logo */}
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop stopColor="#CF6BE8" />
-        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand logo */}
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop offset="1" stopColor="#7857FC" />
       </linearGradient>
       <linearGradient
@@ -155,9 +155,9 @@ const FutureAGIIcon = ({ size = 20, enabled }) => (
         y2="25.42"
         gradientUnits="userSpaceOnUse"
       >
-        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand logo */}
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop stopColor="#8B44FF" />
-        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand logo */}
+        {/* eslint-disable-next-line no-restricted-syntax -- ds: brand (logo) */}
         <stop offset="1" stopColor="#7857FC" />
       </linearGradient>
     </defs>

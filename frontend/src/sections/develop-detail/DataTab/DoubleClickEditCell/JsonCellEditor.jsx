@@ -246,8 +246,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
             padding: "10px",
             border: "1px solid var(--border-default)",
             borderRadius: "4px",
-            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-            boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+            boxShadow: theme.customShadows?.dropdown,
             zIndex: 1000,
           }}
         >

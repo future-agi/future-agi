@@ -11,6 +11,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { fmtMs } from "src/utils/utils";
+import { seriesColor } from "src/theme/data-colors";
 import { computeCallMetrics, enrichTurns } from "./transcriptUtils";
 import { fmtWpm } from "./formatters";
 
@@ -304,8 +305,7 @@ const LatencyPipeline = ({ latencies }) => {
       theme.palette.blue?.[700] || theme.palette.primary.dark,
       theme.palette.blue?.[600] || theme.palette.primary.main,
       theme.palette.blue?.[500] || theme.palette.primary.light,
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      theme.palette.blue?.[400] || "#8BB5FF",
+      theme.palette.blue?.[400] || seriesColor(theme, 1),
     ];
     return shades[i] || theme.palette.primary.main;
   };

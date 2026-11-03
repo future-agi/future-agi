@@ -12,6 +12,7 @@ import {
 import Section from "src/components/section";
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
+import { seriesColors } from "src/theme/data-colors";
 import { useAnalyticsCost } from "./hooks/useAnalyticsCost";
 import { formatCost, formatCostTick } from "../utils/formatters";
 import { REQUEST_DIMENSION_OPTIONS } from "../constants/requestTags";
@@ -28,60 +29,6 @@ function toNumericCost(value) {
 }
 
 // ---------------------------------------------------------------------------
-// Chart color palette
-// ---------------------------------------------------------------------------
-
-function getChartColors(theme) {
-  if (theme.palette.mode === "dark") {
-    return [
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      "#60A5FA",
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      "#F87171",
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      "#34D399",
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      "#FBBF24",
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      "#A78BFA",
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      "#F472B6",
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      "#22D3EE",
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      "#FB7185",
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      "#2DD4BF",
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-      "#F59E0B",
-    ];
-  }
-
-  return [
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#2563EB",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#DC2626",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#059669",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#D97706",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#7857FC",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#DB2777",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#0891B2",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#EA580C",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#0F766E",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#7857FC",
-  ];
-}
-
-// ---------------------------------------------------------------------------
 // Chart option builders
 // ---------------------------------------------------------------------------
 
@@ -92,7 +39,7 @@ function buildBarChartOptions(theme, categories) {
       toolbar: { show: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: getChartColors(theme),
+    colors: seriesColors(theme),
     plotOptions: {
       bar: {
         horizontal: true,
@@ -151,7 +98,7 @@ function buildDonutChartOptions(theme, labels) {
       toolbar: { show: false },
       fontFamily: theme.typography.fontFamily,
     },
-    colors: getChartColors(theme),
+    colors: seriesColors(theme),
     labels,
     dataLabels: {
       enabled: false,

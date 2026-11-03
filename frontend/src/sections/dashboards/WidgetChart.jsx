@@ -46,31 +46,9 @@ import {
 import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
 import ContentSkeleton from "src/components/content-skeleton";
+import { seriesColors } from "src/theme/data-colors";
 
 const CHART_HEIGHT_FALLBACK = 280;
-const COLORS = [
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#7B56DB", // purple (primary)
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#1ABCFE", // cyan
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#FF6B6B", // coral red
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#2ECB71", // emerald green
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#F7B731", // amber
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#E84393", // magenta pink
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#0984E3", // ocean blue
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#FD7E14", // tangerine orange
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#00CEC9", // teal
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  "#A29BFE", // lavender
-];
-
 const hashSeriesName = (name) => {
   const s = String(name || "");
   let h = 0;
@@ -82,26 +60,27 @@ const hashSeriesName = (name) => {
 // Name-hash gives cross-reload stability, but a bare hash % palette collides ~50%
 // at 4 series. Walk each name once and, on a taken slot, advance to the next
 // free one — distinct up to palette size, stable for the common non-colliding case.
-const buildSeriesColorMap = (names) => {
+// `palette` is the theme's data palette (seriesColors(theme)).
+const buildSeriesColorMap = (names, palette) => {
   const map = {};
   const used = new Set();
   (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % COLORS.length;
+    const start = hashSeriesName(name) % palette.length;
     let picked = start;
-    for (let i = 0; i < COLORS.length; i += 1) {
-      const candidate = (start + i) % COLORS.length;
+    for (let i = 0; i < palette.length; i += 1) {
+      const candidate = (start + i) % palette.length;
       if (!used.has(candidate)) {
         picked = candidate;
         break;
       }
     }
     used.add(picked);
-    map[name] = COLORS[picked];
+    map[name] = palette[picked];
   });
   return map;
 };
-const getSeriesColorFromMap = (map, name) =>
-  (map && map[name]) || COLORS[hashSeriesName(name) % COLORS.length];
+const getSeriesColorFromMap = (map, name, palette) =>
+  (map && map[name]) || palette[hashSeriesName(name) % palette.length];
 
 function getApexType(chartType) {
   const map = {
@@ -542,20 +521,31 @@ export default function WidgetChart({
 
   // Build from the full `series` list (not filtered chartSeries) so a
   // hidden series keeps its slot and its color stays put when unhidden.
+  const palette = seriesColors(theme);
   const seriesColorMap = useMemo(
-    () => buildSeriesColorMap(series.map((s) => s.name)),
-    [series],
+    () =>
+      buildSeriesColorMap(
+        series.map((s) => s.name),
+        palette,
+      ),
+    [series, palette],
   );
-  const colorFor = (name) => getSeriesColorFromMap(seriesColorMap, name);
+  const colorFor = (name) =>
+    getSeriesColorFromMap(seriesColorMap, name, palette);
 
   // Pie slices are breakdown values, which repeat across metrics. Key their
   // colours by the raw breakdown name so a given project is the same colour in
   // every pie — the composite series label differs per metric.
   const pieColorMap = useMemo(
-    () => buildSeriesColorMap([...new Set(series.map((s) => s.breakdownName))]),
-    [series],
+    () =>
+      buildSeriesColorMap(
+        [...new Set(series.map((s) => s.breakdownName))],
+        palette,
+      ),
+    [series, palette],
   );
-  const pieColorFor = (name) => getSeriesColorFromMap(pieColorMap, name);
+  const pieColorFor = (name) =>
+    getSeriesColorFromMap(pieColorMap, name, palette);
 
   const isDenseSeries = isDenseChartSeries(plottedChartSeries);
   const markerSizes = useMemo(
@@ -1488,8 +1478,7 @@ export default function WidgetChart({
           intersect: isLineChart && !isDenseSeries,
           custom: ({ series: s, seriesIndex, dataPointIndex, w }) => {
             const sName = w.globals.seriesNames[seriesIndex] || "";
-            // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-            const color = w.globals.colors[seriesIndex] || "#6366F1";
+            const color = w.globals.colors[seriesIndex] || palette[0];
             const val = s[seriesIndex]?.[dataPointIndex];
             const prevVal =
               dataPointIndex > 0 ? s[seriesIndex]?.[dataPointIndex - 1] : null;

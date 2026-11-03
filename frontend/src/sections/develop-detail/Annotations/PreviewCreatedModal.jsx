@@ -70,8 +70,7 @@ export default function PreviewCreatedModal({
           transform: "translate(-50%, -50%)",
           width: "90%",
           bgcolor: "background.paper",
-          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-          boxShadow: 24,
+          boxShadow: (theme) => theme.customShadows?.dialog,
           borderRadius: "12px",
           height: "90%",
         }}

@@ -1,4 +1,3 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import SelectionBar from "src/components/selection-bar";
 import { Box, Typography, Button, Link, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
@@ -7,6 +6,7 @@ import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import axios, { endpoints } from "src/utils/axios";
 import { useDebounce } from "src/hooks/use-debounce";
+import { seriesColor } from "src/theme/data-colors";
 import { useNavigate } from "react-router";
 import { preventHeaderSelection } from "src/utils/utils";
 import { trackEvent, Events } from "src/utils/Mixpanel";
@@ -22,7 +22,7 @@ import { APP_CONSTANTS } from "src/utils/constants";
 const ApexChartRenderer = ({ data, type, max }) => {
   const muiTheme = useTheme();
   const chartRef = useRef(null);
-  const color = type == "chart1" ? "#E2A6F1" : "#AE9AFD";
+  const color = seriesColor(muiTheme, type == "chart1" ? 4 : 0);
 
   useEffect(() => {
     if (chartRef.current && data) {
@@ -103,7 +103,7 @@ const ApexChartRenderer = ({ data, type, max }) => {
         chart.destroy();
       };
     }
-  }, [data]);
+  }, [data, color]);
 
   return <div ref={chartRef} style={{ height: "100px" }} />;
 };

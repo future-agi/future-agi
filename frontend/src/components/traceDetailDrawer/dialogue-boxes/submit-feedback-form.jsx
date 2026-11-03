@@ -30,8 +30,6 @@ const FEEDBACK_OPTIONS = {
 const DIALOG_PAPER_STYLES = {
   maxWidth: 720,
   borderRadius: 2,
-  // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-  boxShadow: "0px 8px 24px rgba(0, 0, 0, 0.15)",
 };
 
 const CLOSE_BUTTON_STYLES = {

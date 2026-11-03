@@ -1,5 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
+import { seriesColor } from "src/theme/data-colors";
 import {
   Box,
   FormControl,
@@ -21,16 +22,14 @@ export default function DatasetSelector({
   datasetType,
   disabled = false,
 }) {
-  let borderColor = "";
+  let seriesIndex = 0;
   let datasetName = "";
 
   if (datasetType === "primary") {
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    borderColor = "#551a8b";
+    seriesIndex = 0;
     datasetName = "A";
   } else {
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    borderColor = "#03AC13";
+    seriesIndex = 1;
     datasetName = "B";
   }
 
@@ -75,7 +74,8 @@ export default function DatasetSelector({
           sx={{
             p: 1,
             mr: 1,
-            border: "2.5px solid " + borderColor,
+            border: "2.5px solid",
+            borderColor: (theme) => seriesColor(theme, seriesIndex),
             borderRadius: "6px",
             alignItems: "center",
             width: "auto",

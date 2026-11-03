@@ -1079,7 +1079,7 @@ export const postProcessPopup = (params) => {
       element.style.color = "var(--primary-main)";
     }
     if (element.textContent.trim() === "Delete Column") {
-      // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+      // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
       element.style.color = "#fa0c0c";
     }
     element.style.fontWeight = 400;

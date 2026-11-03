@@ -1,11 +1,12 @@
 import { Box, useTheme } from "@mui/material";
+import { chartAxisColors } from "src/theme/data-colors";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactApexChart from "react-apexcharts";
 import PropTypes from "prop-types";
 import { generateAllColors } from "src/sections/projects/ChartsView/common";
 import { palette } from "src/theme/palette";
 
-const getDefaultOptions = (isDark) => ({
+const getDefaultOptions = (isDark, axis) => ({
   chart: {
     type: "radar",
     background: "transparent",
@@ -23,8 +24,7 @@ const getDefaultOptions = (isDark) => ({
       left: 1,
       top: 1,
     },
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    foreColor: isDark ? "#a1a1aa" : undefined,
+    foreColor: axis.foreColor,
   },
   theme: {
     mode: isDark ? "dark" : "light",
@@ -33,10 +33,8 @@ const getDefaultOptions = (isDark) => ({
     radar: {
       size: 150,
       polygons: {
-        // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-        strokeColors: isDark ? "#27272a" : undefined,
-        // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-        connectorColors: isDark ? "#27272a" : undefined,
+        strokeColors: axis.gridColor,
+        connectorColors: axis.gridColor,
       },
     },
   },
@@ -70,7 +68,10 @@ const RedarChart = ({ data, graphLabels }) => {
   const chartRef = useRef(null);
   const [visibleSeries, setVisibleSeries] = useState([]);
 
-  const defaultOptions = useMemo(() => getDefaultOptions(isDark), [isDark]);
+  const defaultOptions = useMemo(
+    () => getDefaultOptions(isDark, chartAxisColors(theme)),
+    [isDark, theme],
+  );
 
   useEffect(() => {
     const newData = data?.map((item) => ({

@@ -335,8 +335,7 @@ const RightMenu = ({
             width: "100%",
             maxWidth: "960px",
             bgcolor: "background.paper",
-            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-            boxShadow: 24,
+            boxShadow: (theme) => theme.customShadows?.dialog,
             borderRadius: "12px",
             mx: "auto",
           }}

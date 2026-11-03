@@ -1,4 +1,5 @@
 import { Box, Button, Checkbox, Typography, useTheme } from "@mui/material";
+import { chartAxisColors } from "src/theme/data-colors";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactApexChart from "react-apexcharts";
 import PropTypes from "prop-types";
@@ -7,7 +8,7 @@ import { palette } from "src/theme/palette";
 import CompareDatasetSummaryIcon from "../CompareDatasetSummaryIcon";
 import TotalRowCount from "./TotalRowCount";
 
-const getDefaultOptions = (isDark) => ({
+const getDefaultOptions = (isDark, axis) => ({
   chart: {
     height: 350,
     type: "bar",
@@ -21,16 +22,14 @@ const getDefaultOptions = (isDark) => ({
     toolbar: {
       show: false,
     },
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    foreColor: isDark ? "#a1a1aa" : undefined,
+    foreColor: axis.foreColor,
   },
   theme: { mode: isDark ? "dark" : "light" },
   tooltip: { theme: isDark ? "dark" : "light" },
   grid: {
     show: true,
     strokeDashArray: 10,
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    borderColor: isDark ? "#27272a" : undefined,
+    borderColor: axis.gridColor,
   },
   dataLabels: {
     enabled: false,
@@ -68,7 +67,10 @@ const StackBarChart = ({
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const defaultOptions = useMemo(() => getDefaultOptions(isDark), [isDark]);
+  const defaultOptions = useMemo(
+    () => getDefaultOptions(isDark, chartAxisColors(theme)),
+    [isDark, theme],
+  );
   const chartRef = useRef(null);
   const containerRef = useRef(null);
   const [visibleSeries, setVisibleSeries] = useState([]);

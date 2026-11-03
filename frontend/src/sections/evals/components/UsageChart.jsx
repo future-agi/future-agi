@@ -1,8 +1,8 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import { useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { useMemo } from "react";
 import ReactApexChart from "react-apexcharts";
+import { seriesColor } from "src/theme/data-colors";
 
 /**
  * Eval usage chart — dual axis:
@@ -68,7 +68,9 @@ const UsageChart = ({ data, outputType = "pass_fail" }) => {
         background: "transparent",
         fontFamily: "'IBM Plex Sans', sans-serif",
       },
-      colors: hasTwoAxes ? ["#5BE49B", "#7B56DB"] : ["#7B56DB"],
+      colors: hasTwoAxes
+        ? [seriesColor(theme, 2), seriesColor(theme, 0)]
+        : [seriesColor(theme, 0)],
       stroke: { width: hasTwoAxes ? [0, 2.5] : [0], curve: "smooth" },
       plotOptions: {
         bar: { columnWidth: "55%", borderRadius: 2 },

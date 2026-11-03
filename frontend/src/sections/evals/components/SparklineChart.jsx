@@ -1,11 +1,12 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import { Box, Typography, useTheme } from "@mui/material";
 import ApexCharts from "apexcharts";
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef } from "react";
+import { seriesColor } from "src/theme/data-colors";
 
-const SparklineChart = ({ data = [], color = "#E2A6F1", height = 28 }) => {
+const SparklineChart = ({ data = [], color: colorProp, height = 28 }) => {
   const muiTheme = useTheme();
+  const color = colorProp ?? seriesColor(muiTheme, 4);
   const chartRef = useRef(null);
   const chartInstanceRef = useRef(null);
 

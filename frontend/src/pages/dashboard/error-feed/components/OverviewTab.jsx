@@ -21,6 +21,7 @@ import AgentPath from "src/sections/projects/LLMTracing/GraphSection/AgentPath";
 import GraphSkeleton from "src/sections/projects/LLMTracing/GraphSection/GraphSkeleton";
 import { buildTraceGraph } from "src/components/traceDetail/buildTraceGraph";
 import { statusColors } from "src/utils/runStatus";
+import { seriesColor } from "src/theme/data-colors";
 import { useErrorFeedOverview } from "src/api/errorFeed/error-feed";
 import { useIssueTraceDetail } from "../useIssueTraceDetail";
 import { useSharedIssue } from "../sharedIssueContext";
@@ -331,8 +332,7 @@ function EventsUsersChart({
 
   const axisLabelColor = theme.palette.text.tertiary;
   const gridColor = theme.palette.divider;
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  const evtColor = isDark ? "#4F8EF7" : "#2563EB";
+  const evtColor = seriesColor(theme, 1);
   const usrColor = isDark ? "rgba(99,155,245,0.18)" : "rgba(147,197,253,0.55)";
 
   useEffect(() => {

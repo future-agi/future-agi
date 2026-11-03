@@ -12,6 +12,7 @@ import {
   Radio,
   RadioGroup,
   ButtonBase,
+  useTheme,
 } from "@mui/material";
 import React, { useEffect, useMemo, useState } from "react";
 import { FaceInfo, FaceItem, FaceRow, FaceWrapper } from "./huggingFaceStyle";
@@ -25,6 +26,7 @@ import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router";
 import { paths } from "src/routes/paths";
 import { useDebounce } from "src/hooks/use-debounce";
+import { seriesColor, seriesColors } from "src/theme/data-colors";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   HuggingFaceDatasetValidationSchema1,
@@ -59,6 +61,7 @@ const getDefaultValue = () => {
 };
 
 const HuggingFaceView = () => {
+  const theme = useTheme();
   const [show, setShow] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
@@ -91,23 +94,7 @@ const HuggingFaceView = () => {
   });
   const navigate = useNavigate();
   const datasetId = location?.state?.datasetId;
-  const colors = [
-    "primary.main",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#2F7CF7",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#B8AC47",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#DB2F2D",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#47B8AC",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#F77C2F",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#57FC78",
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    "#AC47B8",
-  ];
+  const colors = seriesColors(theme);
 
   // Filter options
   const modalityOptions = [
@@ -186,8 +173,7 @@ const HuggingFaceView = () => {
   };
 
   const getColor = (val) => {
-    // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-    if (!val) return "#DB2F2D";
+    if (!val) return seriesColor(theme, 0);
     const index = hashStringToIndex(val);
     return colors[index];
   };

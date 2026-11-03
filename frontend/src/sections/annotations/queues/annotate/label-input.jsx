@@ -17,21 +17,22 @@ import {
   TextField,
   Typography,
   ButtonBase,
+  useTheme,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 
 const LABEL_COLORS = {
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   star: "#d26464",
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   categorical: "#2e9469",
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   numeric: "#5278c7",
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   text: "#8067c9",
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
+  // eslint-disable-next-line no-restricted-syntax -- ds: encoding (annotation label type)
   thumbs_up_down: "#b7772a",
 };
 
@@ -72,8 +73,8 @@ export default function LabelInput({
   onLabelNotesChange,
 }) {
   const { type, settings = {} } = label;
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  const color = LABEL_COLORS[type] || "#888";
+  const { palette } = useTheme();
+  const color = LABEL_COLORS[type] || palette.text.disabled;
   const inputRef = useRef(null);
 
   return (

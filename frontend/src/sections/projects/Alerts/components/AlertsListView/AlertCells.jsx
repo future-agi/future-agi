@@ -1,4 +1,3 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import {
   Box,
   Button,
@@ -15,6 +14,7 @@ import SvgColor from "src/components/svg-color";
 import _ from "lodash";
 import { useEffect, useRef } from "react";
 import ApexCharts from "apexcharts";
+import { seriesColor } from "src/theme/data-colors";
 import { ShowComponent } from "src/components/show";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { isAlertMuted } from "../../common";
@@ -185,7 +185,9 @@ LastTriggeredCell.propTypes = {
 };
 
 export const TrendChartCell = ({ value }) => {
+  const theme = useTheme();
   const chartRef = useRef(null);
+  const lineColor = seriesColor(theme, 0);
 
   useEffect(() => {
     if (!value || !Array.isArray(value) || value.length === 0) return;
@@ -199,7 +201,7 @@ export const TrendChartCell = ({ value }) => {
         sparkline: { enabled: true },
       },
       stroke: { curve: "smooth", width: 2 },
-      colors: ["#CF6BE8"],
+      colors: [lineColor],
       series: [{ data: value.map((item) => item.value) }],
       tooltip: { enabled: false },
       xaxis: {
@@ -214,7 +216,7 @@ export const TrendChartCell = ({ value }) => {
     chart.render();
 
     return () => chart.destroy();
-  }, [value]);
+  }, [value, lineColor]);
 
   // Render nothing if no chart data
   if (!value || !Array.isArray(value) || value.length === 0) {
@@ -317,8 +319,10 @@ export const ActionCell = ({ options = [], onClick }) => {
                 transition: "all 0.2s ease-in-out",
               },
               "&:hover, &:active": {
+                // eslint-disable-next-line no-restricted-syntax -- ds: layout (hover weight on action menu)
                 fontWeight: "fontWeightMedium",
                 "& .action-label": {
+                  // eslint-disable-next-line no-restricted-syntax -- ds: layout (hover weight on action menu)
                   fontWeight: "fontWeightMedium",
                 },
               },

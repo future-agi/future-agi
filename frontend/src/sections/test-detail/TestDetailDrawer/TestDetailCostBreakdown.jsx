@@ -1,4 +1,5 @@
 import { Box, Typography, useTheme, Checkbox } from "@mui/material";
+import { chartAxisColors } from "src/theme/data-colors";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import ApexCharts from "react-apexcharts";
@@ -148,8 +149,7 @@ const TestDetailCostBreakdown = ({ costBreakdown }) => {
         fontSize: "13px",
         fontFamily: "IBM Plex Sans",
         fontWeight: 600,
-        // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-        colors: ["#fff"],
+        colors: [chartAxisColors(theme).surface],
       },
       dropShadow: {
         enabled: false,

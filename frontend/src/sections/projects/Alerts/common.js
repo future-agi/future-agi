@@ -1,9 +1,9 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import { endOfToday, sub } from "date-fns";
 import _ from "lodash";
 import { formatDate } from "src/utils/report-utils";
 import { alpha } from "@mui/material/styles";
 import { statusColors } from "src/utils/runStatus";
+import { seriesColor } from "src/theme/data-colors";
 import { getYAxisUnit } from "../LLMTracing/GraphSection/common";
 import { apiFilterHasValue } from "src/sections/annotations/queues/utils/filter-operators";
 
@@ -612,6 +612,8 @@ export function getCompareChartConfig(
     }
   });
 
+  const lineColor = theme ? seriesColor(theme, 0) : undefined;
+
   const maxY = Math.max(...graphData.map((d) => d.value));
   const alertHeight = maxY * 0.02; // 2% of max
 
@@ -647,7 +649,7 @@ export function getCompareChartConfig(
       width: [3, 3],
       curve: "smooth",
     },
-    colors: ["transparent", "#0066FF"], // 🔹 match legend + marker to series
+    colors: ["transparent", lineColor], // 🔹 match legend + marker to series
     dataLabels: {
       enabled: false,
     },
@@ -710,7 +712,7 @@ export function getCompareChartConfig(
         highlightDataSeries: false,
       },
       markers: {
-        fillColors: ["#CC91EA"],
+        fillColors: [lineColor],
       },
     },
   };
@@ -764,6 +766,7 @@ export function getSimpleLineChartConfig(
 ) {
   const transformed = transformSimpleLineChart(apiData);
   const axisLabelColor = theme?.palette.text.tertiary;
+  const lineColor = theme ? seriesColor(theme, 0) : undefined;
   const { lineData, metadata } = transformed;
 
   // Determine Y-axis range based on data
@@ -787,7 +790,7 @@ export function getSimpleLineChartConfig(
     stroke: {
       curve: "smooth",
       width: 2,
-      colors: ["#CC91EA"], // Purple
+      colors: [lineColor],
     },
     markers: {
       size: 0,
@@ -825,7 +828,7 @@ export function getSimpleLineChartConfig(
       position: "top",
       horizontalAlign: "left",
       markers: {
-        fillColors: ["#CC91EA"],
+        fillColors: [lineColor],
       },
     },
     tooltip: {

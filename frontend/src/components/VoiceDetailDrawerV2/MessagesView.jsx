@@ -13,13 +13,10 @@ import NestedJsonTable from "./NestedJsonTable";
 
 const ROLE_CONFIG = {
   system: { label: "SYS", accent: "neutral" },
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  user: { label: "USER", color: "#0ea5e9" },
+  user: { label: "USER", accent: "info" },
   assistant: { label: "AI", accent: "brand" },
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  tool: { label: "TOOL", color: "#f59e0b" },
-  // eslint-disable-next-line no-restricted-syntax -- ds: data colour
-  function: { label: "FN", color: "#f59e0b" },
+  tool: { label: "TOOL", accent: "tool" },
+  function: { label: "FN", accent: "tool" },
   developer: { label: "DEV", accent: "violet" },
 };
 

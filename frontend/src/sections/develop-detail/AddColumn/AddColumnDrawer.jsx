@@ -272,8 +272,7 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
           height: staticColumnType ? "205px" : "700px",
           bgcolor: "background.paper",
           borderRadius: "12px",
-          // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-          boxShadow: 24,
+          boxShadow: (theme) => theme.customShadows?.dialog,
           p: 3,
         }}
       >

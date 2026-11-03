@@ -1,8 +1,8 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (chart series) */
 import { Box, Typography, useTheme } from "@mui/material";
 import React from "react";
 import ChartsTheme from "./ChartsTheme";
 import PropTypes from "prop-types";
+import { seriesColor } from "src/theme/data-colors";
 import { format } from "date-fns";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { throttle } from "src/utils/utils";
@@ -15,7 +15,7 @@ const EvalsChartsGenerator = ({ id, series, subLabel, label, onZoom }) => {
     });
   }, 30000);
 
-  const color = id == "chart-1" ? "#E2A6F1" : "#AE9AFD";
+  const color = seriesColor(theme, id == "chart-1" ? 4 : 0);
 
   const chartOptions = {
     chart: {

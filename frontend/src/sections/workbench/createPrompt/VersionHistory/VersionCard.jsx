@@ -287,8 +287,7 @@ const VersionCard = ({
                             borderColor: "divider",
                             borderRadius: 1,
                             padding: 1,
-                            // eslint-disable-next-line no-restricted-syntax -- ds: overlay shadow
-                            boxShadow: 4,
+                            boxShadow: theme.customShadows?.dropdown,
                             minWidth: "150px",
                             display: "flex",
                             flexDirection: "column",
