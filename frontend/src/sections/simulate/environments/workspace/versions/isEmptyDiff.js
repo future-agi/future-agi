@@ -25,6 +25,7 @@ export const isEmptyDiff = (piece, diff) => {
     !list(contract.fields).length &&
     !contract.modality &&
     !names(diff.sub_goals) &&
+    !names(diff.actors) &&
     diff.files !== null &&
     !names(diff.files)
   );

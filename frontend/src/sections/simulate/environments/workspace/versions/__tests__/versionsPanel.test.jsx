@@ -440,6 +440,31 @@ describe("VersionsPanel", () => {
     expect(screen.getByText(/This is the first version/)).toBeInTheDocument();
   });
 
+  it("lists the actors added and changed when only the cast changed", async () => {
+    const user = userEvent.setup();
+    state.diffs["e2:e1"] = {
+      summary: "2 actors added, 1 actor changed",
+      diff: {
+        contract: { tools: {}, rules: {}, use_cases: {}, fields: [] },
+        sub_goals: {},
+        files: {},
+        actors: { added: ["someone_1", "colleague_2"], changed: ["colleague"] },
+      },
+    };
+    render(<VersionsPanel env={ENV} />);
+
+    await user.click(screen.getByRole("combobox", { name: "Compared with" }));
+    await user.click(screen.getByRole("option", { name: "v1" }));
+
+    expect(screen.queryByText("Nothing changed.")).toBeNull();
+    expect(screen.getByTestId("diff-group-Actors")).toHaveTextContent(
+      "someone_1, colleague_2",
+    );
+    expect(screen.getByTestId("diff-group-Actors")).toHaveTextContent(
+      "colleague",
+    );
+  });
+
   it("shows a spinner while the changes load and an error if they fail", async () => {
     state.diffLoading = true;
     const { unmount } = render(<VersionsPanel env={ENV} />);

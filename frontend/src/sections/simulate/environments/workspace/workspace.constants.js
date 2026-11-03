@@ -245,6 +245,7 @@ export const VERSIONS_COPY = {
     fields: "Contract fields changed",
     modality: "Modality",
     subGoals: "Sub-goals",
+    actors: "Actors",
     files: "World files",
     filesUnknown:
       "World files of the earlier version aren't known, so file changes aren't shown.",
