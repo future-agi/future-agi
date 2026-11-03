@@ -707,3 +707,26 @@ describe("CallWorkersPanel", () => {
     });
   });
 });
+
+describe("readable", () => {
+  it("shows a structured task or answer as its own text", async () => {
+    const { readable } = await import("../CallWorkersPanel");
+    expect(
+      readable(
+        '{"description": "Implement a rate limiter", "subagent_type": "coder"}',
+      ),
+    ).toBe("Implement a rate limiter");
+    expect(
+      readable(
+        '{"messages": ["content=\'Build it\' additional_kwargs={}", "content=\'Done: limiter.py\' additional_kwargs={}"]}',
+      ),
+    ).toBe("Done: limiter.py");
+    expect(readable("content='plain answer' response_metadata={}")).toBe(
+      "plain answer",
+    );
+    expect(readable("Refund order #1043 in full")).toBe(
+      "Refund order #1043 in full",
+    );
+    expect(readable('{"order_id": 1043}')).toBe('{"order_id": 1043}');
+  });
+});

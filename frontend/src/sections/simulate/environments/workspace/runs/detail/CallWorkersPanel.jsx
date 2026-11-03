@@ -28,6 +28,45 @@ const OPEN_DEPTH = 2;
 const MAX_CHIPS = 8;
 const MONO = "ui-monospace, Menlo, monospace";
 
+// A task or answer a framework hands over as structured data reads as its own text: a JSON object's main
+// text field, a message list's last message, a message object's `content='...'`; anything else as it came.
+const TEXT_KEYS = [
+  "description",
+  "task",
+  "input",
+  "query",
+  "prompt",
+  "content",
+  "output",
+  "result",
+  "answer",
+  "text",
+];
+export const readable = (value) => {
+  if (typeof value !== "string") return value;
+  const repr = value.match(/content='((?:[^'\\]|\\.)*)'/);
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return repr ? repr[1] : value;
+  }
+  const pick = (one) => {
+    if (typeof one === "string") return readable(one);
+    if (Array.isArray(one))
+      return one.length ? pick(one[one.length - 1]) : null;
+    if (one && typeof one === "object") {
+      if (Array.isArray(one.messages)) return pick(one.messages);
+      const key = TEXT_KEYS.find(
+        (name) => typeof one[name] === "string" && one[name].trim(),
+      );
+      return key ? readable(one[key]) : null;
+    }
+    return null;
+  };
+  return pick(parsed) || value;
+};
+
 const seconds = (iso) => {
   const value = iso ? Date.parse(iso.endsWith("Z") ? iso : `${iso}Z`) : NaN;
   return Number.isNaN(value) ? null : value / 1000;
@@ -364,7 +403,7 @@ function HandOff({ block, workers, nameOf, start }) {
             title={
               transfer
                 ? C.transferred(name)
-                : `${C.delegated(name)}${block.delegated?.task ? `: ${block.delegated.task}` : ""}`
+                : `${C.delegated(name)}${block.delegated?.task ? `: ${readable(block.delegated.task)}` : ""}`
             }
             at={block.delegated?.at}
             start={start}
@@ -418,7 +457,7 @@ function HandOff({ block, workers, nameOf, start }) {
                   block.returned.status === "error" ? "error.main" : undefined
                 }
               />
-              <Answer text={block.returned.result} />
+              <Answer text={readable(block.returned.result)} />
             </Box>
           ) : (
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
