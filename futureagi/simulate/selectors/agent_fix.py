@@ -611,11 +611,18 @@ SURFACE_LABELS = {
     Surface.SETTINGS: "Settings",
     Surface.CODE: "Code",
 }
-# What the launch form starts from: the instructions only, within 1,500 credits and three
-# hours.
+# What the launch form starts from: the instructions only, within 1,500 credits and the time
+# default_max_minutes gives the run's suite.
 DEFAULT_SURFACES = [Surface.PROMPT]
 DEFAULT_BUDGET_CREDITS = 1500
 DEFAULT_MAX_MINUTES = 180
+
+
+def default_max_minutes(cases: int) -> int:
+    """A fix's default time limit for a suite of ``cases`` scenarios: Reproduce and Verify run
+    every one. Three hours up to 30 cases, then 4 minutes a case (5 hours at 60), within
+    the limit a launch accepts."""
+    return min(MAX_MINUTES_MAX, max(DEFAULT_MAX_MINUTES, 60 + 4 * cases))
 
 
 def launch_blocker(
@@ -717,7 +724,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         defaults=LaunchDefaults(
             surfaces=[one for one in DEFAULT_SURFACES if one in offered],
             budget_credits=DEFAULT_BUDGET_CREDITS,
-            max_minutes=DEFAULT_MAX_MINUTES,
+            max_minutes=default_max_minutes(len(scenarios)),
         ),
         limits=LaunchLimits(
             budget_credits_max=BUDGET_CREDITS_MAX,

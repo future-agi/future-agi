@@ -17193,7 +17193,7 @@ export interface AgentFixLaunchApi {
    * @minimum 1
    * @maximum 1440
    */
-  max_minutes: number;
+  max_minutes?: number;
 }
 
 export interface AgentFixLaunchSourceRunApi {

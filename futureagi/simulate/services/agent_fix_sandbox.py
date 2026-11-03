@@ -14,7 +14,11 @@ from django.db.models import F, Q
 from django.utils import timezone
 
 from simulate.models import AgentFixRun
-from simulate.pydantic_schemas.agent_fix import EngineCapability, EngineModels
+from simulate.pydantic_schemas.agent_fix import (
+    EngineCapability,
+    EngineModels,
+    FixRequest,
+)
 from simulate.selectors.agent_fix import fix_deadline
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.hosted_harness import HostedHarnessError, hash_secret
@@ -273,7 +277,9 @@ def _claim_launch(fix_run_id: str) -> Observation | None:
     attempts = settings.AGENT_FIX_MAX_SANDBOX_ATTEMPTS
     if held_back:
         waited = (timezone.now() - fix_run.created_at).total_seconds()
-        if waited < settings.AGENT_FIX_MAX_QUEUED_SECONDS:
+        # The fixes ahead may each run their own limit, so a fix waits at least its own.
+        minutes = FixRequest.model_validate(fix_run.request).max_minutes
+        if waited < max(settings.AGENT_FIX_MAX_QUEUED_SECONDS, minutes * 60):
             return Observation.WAITING
         failure = {
             "code": "fix_queue_timeout",

@@ -140,7 +140,7 @@ def provider(monkeypatch):
     return fake
 
 
-def _new_fix(user, workspace):
+def _new_fix(user, workspace, *, max_minutes=60):
     environment, _ = create_hosted_job(
         user.organization,
         _payload(),
@@ -157,7 +157,7 @@ def _new_fix(user, workspace):
             failing_sub_goals=["refund_issued"],
             surfaces=[Surface.PROMPT],
             budget_usd=5,
-            max_minutes=60,
+            max_minutes=max_minutes,
         ).model_dump(mode="json"),
     )
 
@@ -458,15 +458,44 @@ def test_a_running_fix_is_started_again_even_when_the_caps_are_full(
     assert launch(str(fix_run.id)).observation == Observation.RUNNING
 
 
+def _queued_for(fix_run, minutes):
+    AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+        created_at=timezone.now() - timedelta(minutes=minutes)
+    )
+
+
+def test_a_queued_fix_waits_as_long_as_its_own_time_limit(
+    provider, user, workspace, settings
+):
+    settings.AGENT_FIX_MAX_RUNNING = 1
+    settings.AGENT_FIX_MAX_QUEUED_SECONDS = 3600
+    _running(_new_fix(user, workspace))
+    fix_run = _new_fix(user, workspace, max_minutes=300)
+
+    _queued_for(fix_run, minutes=61)
+    waiting = launch(str(fix_run.id))
+    _queued_for(fix_run, minutes=301)
+    late = launch(str(fix_run.id))
+
+    fix_run.refresh_from_db()
+    assert (waiting.observation, late.observation) == (
+        Observation.WAITING,
+        Observation.ENDED,
+    )
+    assert fix_run.failure["code"] == "fix_queue_timeout"
+    assert provider.specs == []
+
+
 def test_a_fix_that_waits_too_long_fails_free_to_retry(
     fix_run, provider, user, workspace, settings
 ):
+    # Longer than the fix's own 60 minutes, so the setting is what it waits.
     settings.AGENT_FIX_MAX_RUNNING = 1
-    settings.AGENT_FIX_MAX_QUEUED_SECONDS = 60
+    settings.AGENT_FIX_MAX_QUEUED_SECONDS = 2 * 3600
     _running(_new_fix(user, workspace))
-    AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
-        created_at=timezone.now() - timedelta(seconds=61)
-    )
+    _queued_for(fix_run, minutes=61)
+    assert launch(str(fix_run.id)).observation == Observation.WAITING
+    _queued_for(fix_run, minutes=121)
 
     launched = launch(str(fix_run.id))
 

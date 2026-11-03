@@ -25,7 +25,8 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.models import TestExecution as Execution
-from simulate.pydantic_schemas.agent_fix import Surface
+from simulate.pydantic_schemas.agent_fix import MAX_MINUTES_MAX, Surface
+from simulate.selectors.agent_fix import default_max_minutes
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_agents import VersionedSourceAgent
 from simulate.services.agent_fix_runs import close_fix_run
@@ -794,6 +795,29 @@ class TestUserApi:
             "scenarios_max": 200,
         }
         assert options["blocked"] is None
+
+    @pytest.mark.parametrize(
+        ("cases", "minutes"),
+        [(12, 180), (30, 180), (60, 300), (400, MAX_MINUTES_MAX)],
+    )
+    def test_the_default_time_limit_grows_with_the_suite(self, cases, minutes):
+        assert default_max_minutes(cases) == minutes
+
+    def test_a_launch_without_a_time_limit_gets_the_suggested_one(
+        self, auth_client, source_run
+    ):
+        options = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+        body = _launch_body(source_run)
+        del body["max_minutes"]
+
+        response = auth_client.post(f"{BASE}/", body, format="json")
+
+        assert response.status_code == 201, response.content
+        assert response.json()["request"]["max_minutes"] == 180
+        assert options["defaults"]["max_minutes"] == 180
 
     def test_launch_options_say_what_would_refuse_the_launch(
         self, auth_client, environment, source_run

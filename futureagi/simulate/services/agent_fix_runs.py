@@ -22,6 +22,7 @@ from simulate.pydantic_schemas.agent_fix import (
 )
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
+    default_max_minutes,
     failing_sub_goals_by_scenario,
     is_retryable,
     launch_blocker,
@@ -74,10 +75,11 @@ def launch_fix_run(
     surfaces: list[Surface],
     locked_paths: list[str],
     budget_usd: float,
-    max_minutes: int,
+    max_minutes: int | None,
     user: Any,
 ) -> AgentFixRun:
-    """Start fixing the agent of a finished run on the scenarios the user chose."""
+    """Start fixing the agent of a finished run on the scenarios the user chose; without
+    ``max_minutes``, within the time the launch form suggests for the run's suite."""
     environment = source_run.environment
     if environment is None:
         raise HostedHarnessError(
@@ -123,6 +125,8 @@ def launch_fix_run(
             f"to be proven; these have {failing_cases}",
             status_code=422,
         )
+    if max_minutes is None:
+        max_minutes = default_max_minutes(len(ran))
     request = FixRequest(
         target_scenario_keys=target_scenario_keys,
         held_back_scenario_keys=split_held_back(str(source_run.id), by_scenario),
