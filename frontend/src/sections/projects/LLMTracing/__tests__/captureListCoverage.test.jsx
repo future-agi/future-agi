@@ -6,9 +6,14 @@ import CostCell from "../Renderers/CostCell";
 import TokenCell from "../Renderers/TokenCell";
 import SessionCellRenderer from "../../SessionsView/SessionCellRenderer";
 import { boundObserveListRow } from "../observeListPayload";
+import { getTraceListColumnDefs } from "../common";
+import CustomTraceRenderer from "../Renderers/CustomTraceRenderer";
 
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 vi.mock("src/components/svg-color", () => ({ default: () => null }));
+vi.mock("../Renderers/useNavigationHandlers", () => ({
+  useNavigationHandlers: () => ({ handleTraceClick: vi.fn(), handleSpanClick: vi.fn() }),
+}));
 
 const coverage = (request_count) => ({
   scope: "observed_requests", source_summary_present: true,
@@ -67,6 +72,36 @@ describe("typed capture companion reaches actual list cells", () => {
       rerender(<TokenCell value={tokens} data={traceRow(count, cost, tokens)} />);
       expect(container.textContent).toBe(tokenLabel);
     });
+
+  it.each([
+    [0, 0, "Observed-only · $0.00"],
+    [3, null, "Observed-only · Unknown"],
+    [3, 1.25, "Observed-only · $1.25"],
+  ])("dispatches qualified cost through the actual grid selector (%s, %s)",
+    async (count, cost, label) => {
+      const colDef = getTraceListColumnDefs({ id: "cost", name: "Total Cost", isVisible: true });
+      const params = { colDef, value: cost, data: traceRow(count, cost, 43071) };
+      const selected = colDef.cellRendererSelector(params);
+      expect(selected?.component).toBe(CustomTraceRenderer);
+      const Renderer = selected.component;
+      const { container } = render(<Renderer {...params} />);
+      expect(container.textContent).toBe(label);
+      fireEvent.mouseOver(screen.getByText(label));
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        `Capture coverage unknown. ${count} observed requests. Source summaries are nonadditive; observed amounts do not prove complete capture.`,
+      );
+      expect(params.data.cost).toBe(cost);
+    });
+
+  it("keeps legacy null prices and unrelated empty cells on the original grid path", () => {
+    for (const id of ["cost", "input", "output"]) {
+      const colDef = getTraceListColumnDefs({ id, name: id, isVisible: true });
+      const data = id === "cost" ? { cost: null } : traceRow(3, null, 43071);
+      const params = { colDef, value: null, data };
+      expect(colDef.cellRendererSelector(params)).toBeNull();
+      expect(colDef.valueFormatter(params)).toBe("-");
+    }
+  });
 
   it("explains the literal observed count, not an inferred complete turn", async () => {
     render(<CostCell value={0} data={traceRow(0, 0, 0)} />);
