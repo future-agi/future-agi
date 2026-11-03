@@ -10,6 +10,7 @@ import { ShareDialog } from "src/components/share-dialog";
 import {
   useCallDetail,
   useCallTraces,
+  useHasWorkers,
 } from "src/api/simulate-environments/runDetail";
 
 import { BUILD_TONES } from "../../../buildEnvironment/buildTones";
@@ -115,7 +116,10 @@ export default function ChatCallDrawer({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
-  const [artifact, setArtifact] = useState("transcript");
+  const [chosenArtifact, setArtifact] = useState("transcript");
+  const hasWorkers = useHasWorkers(task.id);
+  // The next call may have no Participants tab; the chosen one falls back to the transcript.
+  const artifact = chosenArtifact === "workers" && !hasWorkers ? "transcript" : chosenArtifact;
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
@@ -202,7 +206,7 @@ export default function ChatCallDrawer({
           >
             <Tab value="transcript" label="Transcript" sx={{ minHeight: 40 }} />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} sx={{ minHeight: 40 }} />
-            <Tab value="workers" label={CALL_WORKERS_COPY.tab} sx={{ minHeight: 40 }} />
+            {hasWorkers ? <Tab value="workers" label={CALL_WORKERS_COPY.tab} sx={{ minHeight: 40 }} /> : null}
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>

@@ -945,7 +945,10 @@ class CallExecutionV3WorkersView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: CallWorkersResponseSerializer},
+        responses={
+            200: CallWorkersResponseSerializer,
+            204: "No hand-off to other agents was seen in this call, or its record is still arriving",
+        },
         operation_id="simulate_v3_call_execution_workers",
     )
     def get(self, request, call_execution_id, *args, **kwargs):
@@ -954,16 +957,8 @@ class CallExecutionV3WorkersView(APIView):
         call = _call_for_request(request, call_execution_id)
         timeline = (call.call_metadata or {}).get(WORKERS_KEY)
         if not timeline:
-            return Response(
-                {
-                    "code": "workers_unavailable",
-                    "reason": (
-                        "no workers were recorded for this call: it handed no work to other agents that could be seen, "
-                        "or the record is still arriving"
-                    ),
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            # No hand-off to other agents was seen in this call, or its record is still arriving.
+            return Response(status=status.HTTP_204_NO_CONTENT)
         return Response(timeline)
 
 

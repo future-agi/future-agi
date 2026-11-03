@@ -69429,15 +69429,22 @@ export type simulateV3CallExecutionWorkersResponse200 = {
   status: 200;
 };
 
-export type simulateV3CallExecutionWorkersResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+export type simulateV3CallExecutionWorkersResponse204 = {
+  data: void;
+  status: 204;
 };
 
-export type simulateV3CallExecutionWorkersResponseSuccess =
-  simulateV3CallExecutionWorkersResponse200 & {
-    headers: Headers;
-  };
+export type simulateV3CallExecutionWorkersResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 204>;
+};
+
+export type simulateV3CallExecutionWorkersResponseSuccess = (
+  | simulateV3CallExecutionWorkersResponse200
+  | simulateV3CallExecutionWorkersResponse204
+) & {
+  headers: Headers;
+};
 export type simulateV3CallExecutionWorkersResponseError =
   simulateV3CallExecutionWorkersResponseDefault & {
     headers: Headers;

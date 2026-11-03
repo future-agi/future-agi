@@ -54,6 +54,10 @@ export const readable = (value) => {
   } catch {
     // A conversation cut off before its last message has no answer to show.
     if (/^\s*\{\s*"messages"\s*:/.test(value)) return null;
+    // A JSON object cut off mid-field still reads as its main text field so far.
+    const cut = value.match(/^\s*\{\s*"(\w+)"\s*:\s*"((?:[^"\\]|\\.)*)/);
+    if (cut && TEXT_KEYS.includes(cut[1]))
+      return readable(cut[2].replace(/\\"/g, '"').replace(/…$/, "") + "…");
     return repr ? repr[1] : value;
   }
   const pick = (one) => {

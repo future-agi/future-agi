@@ -666,31 +666,18 @@ const traceRow = (raw) => ({
 });
 
 // The worker record lands up to a minute after the call ends, so a missing one is checked again
-// for two minutes before the tab settles on "no workers".
+// for two minutes before settling on none.
 export const WORKERS_ARRIVAL_POLL_MS = 15000;
 export const WORKERS_ARRIVAL_POLLS = 8;
 
-// Which of a multi-agent app's workers did what in one call. A 404 means the trial has
-// no worker record (no hand-off was seen, or the record is still arriving): null, not an error.
+// Which of a multi-agent app's workers did what in one call. An empty answer (204) means the
+// trial has no worker record (no hand-off was seen, or the record is still arriving): null.
 export function useCallWorkers(callExecutionId) {
   return useQuery({
     queryKey: ["simulation-call-workers-v3", callExecutionId],
-    queryFn: async () => {
-      try {
-        return (
-          await axios.get(endpoints.runResultsV3.workers(callExecutionId))
-        ).data;
-      } catch (error) {
-        // The app's client rejects with `statusCode`; a call with no worker record is a 404, not a failure.
-        if (
-          [error?.statusCode, error?.status, error?.response?.status].includes(
-            404,
-          )
-        )
-          return null;
-        throw error;
-      }
-    },
+    queryFn: async () =>
+      (await axios.get(endpoints.runResultsV3.workers(callExecutionId))).data ||
+      null,
     enabled: !!callExecutionId,
     retry: false,
     refetchInterval: (query) =>
@@ -699,6 +686,12 @@ export function useCallWorkers(callExecutionId) {
         ? WORKERS_ARRIVAL_POLL_MS
         : false,
   });
+}
+
+// Whether a call has workers to show: a call that handed no work to other agents has no Participants tab.
+export function useHasWorkers(callExecutionId) {
+  const { data } = useCallWorkers(callExecutionId);
+  return Boolean(data?.workers?.length || data?.events?.length);
 }
 
 export function useCallTraces(executionId, callExecutionId) {

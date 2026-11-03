@@ -59813,6 +59813,9 @@
                             "$ref": "#/definitions/CallWorkersResponse"
                         }
                     },
+                    "204": {
+                        "description": "No hand-off to other agents was seen in this call, or its record is still arriving"
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {

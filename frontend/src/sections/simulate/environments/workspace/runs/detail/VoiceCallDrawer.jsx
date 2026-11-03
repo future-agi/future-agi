@@ -13,6 +13,7 @@ import {
   callTranscript,
   useCallExecutionV3Detail,
   useCallTraces,
+  useHasWorkers,
   withScoringStatus,
 } from "src/api/simulate-environments/runDetail";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
@@ -97,6 +98,7 @@ export default function VoiceCallDrawer({
   );
 
   const callTraces = useCallTraces(executionId, task.id);
+  const hasWorkers = useHasWorkers(task.id);
   const leftPanelTabs = useMemo(
     () => [
       {
@@ -113,15 +115,20 @@ export default function VoiceCallDrawer({
           />
         ),
       },
-      {
-        label: CALL_WORKERS_COPY.tab,
-        value: "workers",
-        icon: "solar:users-group-two-rounded-linear",
-        content: <CallWorkersPanel callExecutionId={task.id} />,
-      },
+      ...(hasWorkers
+        ? [
+            {
+              label: CALL_WORKERS_COPY.tab,
+              value: "workers",
+              icon: "solar:users-group-two-rounded-linear",
+              content: <CallWorkersPanel callExecutionId={task.id} />,
+            },
+          ]
+        : []),
     ],
     [
       task.id,
+      hasWorkers,
       callTraces.projectId,
       callTraces.isError,
       callTraces.traces,

@@ -271,7 +271,7 @@ def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(user
     locked_call_metadata_update(call.id, lambda metadata: metadata.update({WORKERS_KEY: timeline}) or True)
     found = auth_client.get(url)
 
-    assert (missing.status_code, missing.json()["code"]) == (404, "workers_unavailable")
+    assert (missing.status_code, missing.content) == (204, b"")
     assert found.status_code == 200, found.content
     assert [one["type"] for one in found.json()["events"]][:2] == ["delegated", "tool_call"]
     assert {one["id"] for one in found.json()["workers"]} == {"order_lookup", "refund", "audit"}
