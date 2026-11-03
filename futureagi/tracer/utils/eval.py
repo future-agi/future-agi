@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import structlog
 from django.db import transaction
@@ -43,6 +44,9 @@ from tracer.utils.helper import (
     get_default_project_version_config,
     get_default_trace_config,
 )
+
+if TYPE_CHECKING:
+    from tracer.serializers.usage_coverage import CostCoverage
 
 logger = structlog.get_logger(__name__)
 
@@ -402,7 +406,9 @@ def build_span_context(span, *, anchor_span_id: str | None = None) -> dict:
         "model": getattr(span, "model", None),
         "latency_ms": getattr(span, "latency_ms", None),
         "total_tokens": getattr(span, "total_tokens", None),
-        "cost": float(span.cost) if getattr(span, "cost", None) else None,
+        "cost": (
+            float(span.cost) if getattr(span, "cost", None) is not None else None
+        ),
     }
 
 
@@ -491,6 +497,17 @@ def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
     return payload
 
 
+def _context_cost_coverage(
+    subtotal: float, known: int, unknown: int
+) -> "CostCoverage":
+    return {
+        "status": "complete" if not unknown else "partial" if known else "unknown",
+        "known_subtotal": subtotal,
+        "known_fact_count": known,
+        "unknown_fact_count": unknown,
+    }
+
+
 def build_session_context(session) -> dict | None:
     """Build the ``session_context`` payload that AgentEvaluator receives.
 
@@ -503,6 +520,10 @@ def build_session_context(session) -> dict | None:
         return None
     try:
         from tracer.models.trace import Trace
+        from tracer.services.clickhouse.query_builders.trace_usage import (
+            SUMMARY_NAME,
+            is_repeated_usage_summary,
+        )
         from tracer.services.clickhouse.v2 import get_reader
 
         # Derive the session's trace set from CH spans, NOT the ``Trace.session``
@@ -569,12 +590,28 @@ def build_session_context(session) -> dict | None:
                     project_id=(str(project_id) if project_id is not None else None),
                 )
 
+        # Reuse the trace usage rule on the rows already needed for context.
+        # Index children only for candidate Pydantic wrappers, by trace AND span
+        # identity: no extra read, raw-attribute copy, or per-span tree scan.
+        summary_children = {
+            (s.trace_id, s.id): []
+            for s in _ch_spans
+            if s.name == SUMMARY_NAME and s.observation_type != "llm"
+        }
+        if summary_children:
+            for s in _ch_spans:
+                children = summary_children.get((s.trace_id, s.parent_span_id))
+                if children is not None:
+                    children.append(vars(s))
+
         _start_time = None
         _end_time = None
         _total_spans = 0
         _error_count = 0
         _total_tokens = 0
         _total_cost = 0.0
+        _known_cost_facts = 0
+        _unknown_cost_facts = 0
         per_trace: dict = {}
         spans_by_trace: dict = {}
         for s in _ch_spans:
@@ -584,8 +621,35 @@ def build_session_context(session) -> dict | None:
             _total_spans += 1
             if s.status == "ERROR":
                 _error_count += 1
-            _total_tokens += s.total_tokens or 0
-            _total_cost += float(s.cost or 0.0)
+            attrs = s.attrs_string
+            additive = attrs.get("fi.usage.contribution") != "none" and not (
+                is_repeated_usage_summary(
+                    vars(s), summary_children.get((s.trace_id, s.id), [])
+                )
+            )
+            # Same billable predicate as usage_coverage_sql; None alone does not
+            # invent unknown pricing for unmarked legacy or tokenless activity.
+            has_usage = (
+                (s.total_tokens or 0) > 0
+                or (s.prompt_tokens or 0) > 0
+                or (s.completion_tokens or 0) > 0
+                or s.observation_type == "llm"
+                or attrs.get("fi.usage.scope") == "turn"
+            )
+            unknown_cost = (
+                additive and has_usage and attrs.get("fi.cost.kind") == "unknown"
+            )
+            known_cost = additive and not unknown_cost and (
+                has_usage
+                or s.cost not in (None, 0)
+                or attrs.get("fi.cost.kind") in ("provider_reported", "estimated")
+            )
+            tokens = (s.total_tokens or 0) if additive else 0
+            cost = float(s.cost or 0.0) if known_cost else 0.0
+            _total_tokens += tokens
+            _total_cost += cost
+            _known_cost_facts += int(known_cost)
+            _unknown_cost_facts += int(unknown_cost)
             if s.start_time and (_start_time is None or s.start_time < _start_time):
                 _start_time = s.start_time
             if s.end_time and (_end_time is None or s.end_time > _end_time):
@@ -603,13 +667,19 @@ def build_session_context(session) -> dict | None:
                     "error_count": 0,
                     "total_tokens": 0,
                     "total_latency": 0,
+                    "known_subtotal": 0.0,
+                    "known_fact_count": 0,
+                    "unknown_fact_count": 0,
                 },
             )
             agg["span_count"] += 1
             if s.status == "ERROR":
                 agg["error_count"] += 1
-            agg["total_tokens"] += s.total_tokens or 0
+            agg["total_tokens"] += tokens
             agg["total_latency"] += s.latency_ms or 0
+            agg["known_subtotal"] += cost
+            agg["known_fact_count"] += int(known_cost)
+            agg["unknown_fact_count"] += int(unknown_cost)
 
             bucket = spans_by_trace.setdefault(s.trace_id, [])
             if len(bucket) >= 50:
@@ -660,6 +730,11 @@ def build_session_context(session) -> dict | None:
                     "total_tokens": agg.get("total_tokens") or 0,
                     "total_latency_ms": agg.get("total_latency") or 0,
                     "has_error": bool(t_error or err_count > 0),
+                    "cost_coverage": _context_cost_coverage(
+                        agg.get("known_subtotal", 0.0),
+                        agg.get("known_fact_count", 0),
+                        agg.get("unknown_fact_count", 0),
+                    ),
                     "spans": spans_by_trace.get(t_id_key, []),
                 }
             )
@@ -682,6 +757,23 @@ def build_session_context(session) -> dict | None:
             "total_tokens": sess_agg["total_tokens"] or 0,
             "total_cost": (
                 float(round(sess_agg["total_cost"], 6)) if sess_agg["total_cost"] else 0
+            ),
+            "cost_coverage": _context_cost_coverage(
+                _total_cost, _known_cost_facts, _unknown_cost_facts
+            ),
+            "cost_note": (
+                # The explorer's session summary previews only 60 characters.
+                # Put the incomplete-price warning first, not after the caveat.
+                (
+                    "Incomplete cost: total_cost is NOT a complete total. "
+                    "It is a numeric compatibility amount (rounded known subtotal). "
+                    "Unknown price is not free. "
+                    if _unknown_cost_facts else ""
+                )
+                + "Costs describe observed additive usage only, excluding source "
+                "summaries; monetary coverage does not prove capture completeness. "
+                "Per-trace cost_coverage.known_subtotal is also a subtotal, not a "
+                "complete price unless that trace's monetary coverage is complete."
             ),
             "start_time": str(start) if start else None,
             "end_time": str(end) if end else None,
