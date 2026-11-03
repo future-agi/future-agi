@@ -518,6 +518,7 @@ export interface SecretKeyListItemApi {
   enabled: boolean;
   /** @minLength 1 */
   type: string;
+  can_switch: boolean;
 }
 
 export interface SecretKeyListResultApi {

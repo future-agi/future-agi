@@ -30,6 +30,7 @@ from simulate.serializers.response.run_test_evals import (
 )
 from simulate.serializers.test_execution import CallExecutionSerializer
 from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
     is_masked,
     resolve_api_key_for_version,
     resolve_api_secret_for_version,
@@ -358,6 +359,8 @@ class CreateAgentVersionView(APIView):
             )
         except ObservabilityRefused as error:
             return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
+        except CredentialsNeedReentry as error:
+            return _error_response(error.message, status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return _error_response(
                 f"Failed to create agent version: {str(e)}",
