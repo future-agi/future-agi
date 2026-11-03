@@ -1083,6 +1083,9 @@ class EmbeddingManager:
                 if n >= len(input_cols) or n >= len(self.input_types):
                     logger.warning(f"Skipping input {n} due to mismatch in column names or types")
                     continue
+                # Stored feedback embeds text as str(value) (data_formatter); match it.
+                if self.input_types[n] == "text" and not isinstance(inp, str):
+                    inp = str(inp)
                 if table_name == GROUND_TRUTH_TABLE_NAME:
                     meta_col = "column_name"
                     per_input_filter = {"column_name": input_cols[n]}

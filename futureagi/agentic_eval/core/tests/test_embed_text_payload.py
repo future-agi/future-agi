@@ -57,8 +57,10 @@ class FakeEmbedService:
         if self.status != 200:
             return _response(url, self.status, {"detail": "down"})
         text = json.get("text")
-        valid = text is None or isinstance(text, str) or (
-            isinstance(text, list) and all(isinstance(t, str) for t in text)
+        valid = (
+            text is None
+            or isinstance(text, str)
+            or (isinstance(text, list) and all(isinstance(t, str) for t in text))
         )
         if not valid:
             return _response(
@@ -68,7 +70,12 @@ class FakeEmbedService:
             )
         items = [text] if isinstance(text, str) else text
         return _response(
-            url, 200, {"embeddings": [list(VECTOR) for _ in items], "model_name": "text_embedding"}
+            url,
+            200,
+            {
+                "embeddings": [list(VECTOR) for _ in items],
+                "model_name": "text_embedding",
+            },
         )
 
 
@@ -144,3 +151,59 @@ class TestEmbedTextPayload:
 
         assert isinstance(result, RuntimeError)
         assert "503" in str(result)
+
+
+class FakeVectorDB:
+    """Records the query vectors and answers with one stored feedback row."""
+
+    def __init__(self):
+        self.queries = []
+
+    def vector_similarity_search(self, table_name, query_vector, *args, **kwargs):
+        self.queries.append(query_vector)
+        return [("row", {"item_id": "fb-1", "feedback_comment": "too vague"}, 0.1)]
+
+
+class TestFewShotRetrievalWithStructuredInputs:
+    """The few-shot lookup each eval runs, end to end, with JSON eval inputs."""
+
+    @pytest.fixture
+    def manager(self, client, monkeypatch):
+        from agentic_eval.core.embeddings import embedding_manager as em
+
+        monkeypatch.setattr(em.model_manager, "_serving_client", client)
+        monkeypatch.setattr(em.model_manager, "_use_serving", True)
+        monkeypatch.setattr(em, "serving_available", lambda: True)
+        manager = em.EmbeddingManager.__new__(em.EmbeddingManager)
+        manager.db_client = FakeVectorDB()
+        monkeypatch.setattr(manager, "get_feedback_count", lambda **kwargs: 1)
+        return manager
+
+    @pytest.mark.parametrize(
+        "eval_input",
+        [
+            {"question": "What is the refund window?", "lang": "en"},
+            [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ],
+            ["first turn", "second turn"],
+            42,
+            "plain text",
+        ],
+        ids=["dict", "message_list", "string_list", "number", "string"],
+    )
+    def test_feedback_examples_are_found_for_any_input_shape(
+        self, client, manager, eval_input
+    ):
+        service = FakeEmbedService()
+        with patch.object(client.session, "post", side_effect=service):
+            examples = manager.retrieve_avg_rag_based_examples(
+                eval_id="eval-1",
+                inputs=[eval_input],
+                input_cols=["input"],
+                organization_id="org-1",
+            )
+
+        assert examples == [[{"item_id": "fb-1", "feedback_comment": "too vague"}]]
+        assert service.payloads == [{"text": [str(eval_input)], "input_type": "text"}]
