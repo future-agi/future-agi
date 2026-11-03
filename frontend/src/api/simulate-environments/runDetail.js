@@ -570,9 +570,13 @@ export function mapCallDetail(raw) {
       a + (s.text ? s.text.trim().split(/\s+/).filter(Boolean).length : 0),
     0,
   );
+  // A hand-off to another agent is counted in the Participants tab, not as a tool call.
   const toolCalls = turns.reduce(
     (count, turn) =>
-      count + (Array.isArray(turn.toolCalls) ? turn.toolCalls.length : 0),
+      count +
+      (Array.isArray(turn.toolCalls)
+        ? turn.toolCalls.filter((call) => !call?.delegated_to).length
+        : 0),
     0,
   );
 

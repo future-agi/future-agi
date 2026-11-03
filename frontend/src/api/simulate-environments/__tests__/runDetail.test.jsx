@@ -461,6 +461,23 @@ describe("mapCallDetail", () => {
     expect(d.stats.toolCalls).toBe(1);
   });
 
+  it("counts tool calls but not hand-offs to other agents, and keeps both in the transcript", () => {
+    const d = mapCallDetail({
+      id: "flow-call",
+      simulation_call_type: "text",
+      transcript: [{ role: "assistant", content: "Here is the post." }],
+      function_calls: [
+        { name: "Shakespearean Bard", delegated_to: "Shakespearean Bard", result: "a draft" },
+        { name: "Character Counter Tool", arguments: { text: "a draft" }, result: "208" },
+        { name: "X Post Verifier", delegated_to: "X Post Verifier", result: "valid" },
+      ],
+      eval_metrics: {},
+    });
+
+    expect(d.stats.toolCalls).toBe(1);
+    expect(d.turns.filter((turn) => turn.role === "tool")).toHaveLength(3);
+  });
+
   it("returns null for a missing payload", () => {
     expect(mapCallDetail(null)).toBeNull();
   });
