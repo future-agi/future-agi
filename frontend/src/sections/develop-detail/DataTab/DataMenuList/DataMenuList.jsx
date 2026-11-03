@@ -25,12 +25,6 @@ import { useDevelopSelectedRowsStoreShallow } from "../../states";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
-const StyledButton = styled(Button)(({ theme }) => ({
-  color: theme.palette.text.primary,
-  fontWeight: theme.typography["fontWeightRegular"],
-  ...theme.typography["s1"],
-}));
-
 const StyledFormControl = styled(FormControl)({
   width: "100%",
 });
@@ -195,29 +189,36 @@ const DataMenuList = ({
 
   return (
     <div>
-      <StyledButton
+      <Button
+        color="inherit"
         variant="text"
         size="small"
         startIcon={
           <SvgColor
+            width={20}
             src="/assets/icons/action_buttons/ic_add.svg"
-            sx={{ width: 20, height: 20, color: "text.secondary" }}
+            sx={{ color: "text.secondary" }}
           />
         }
         onClick={handleButtonClick}
         disabled={!RolePermission.DATASETS[PERMISSIONS.UPDATE][role]}
       >
         Add to dataset
-      </StyledButton>
+      </Button>
 
       <CustomDialog
         title="Add to Dataset"
         actionButton={
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Icon icon="mdi:plus" width={18} height={18} color="inherit" />
+            <Icon
+              icon="solar:add-linear"
+              width={18}
+              height={18}
+              color="inherit"
+            />
             <Typography
               fontWeight={400}
-              fontSize={14}
+              fontSize={13}
               color={"background.neutral"}
             >
               {selectedOption === "new" ? "Add Dataset" : "Add to Dataset"}

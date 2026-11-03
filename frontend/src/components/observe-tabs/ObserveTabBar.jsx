@@ -39,14 +39,14 @@ import { useAuthContext } from "src/auth/hooks";
 
 // Fixed default tabs — matches backend DEFAULT_TABS
 const FIXED_TABS = [
-  { key: "traces", label: "Trace", icon: "mdi:link-variant", shortcut: "1" },
+  { key: "traces", label: "Trace", icon: "solar:link-linear", shortcut: "1" },
   {
     key: "sessions",
     label: "Sessions",
-    icon: "mdi:account-group-outline",
+    icon: "solar:users-group-rounded-linear",
     shortcut: "2",
   },
-  { key: "users", label: "Users", icon: "mdi:account-outline", shortcut: "3" },
+  { key: "users", label: "Users", icon: "solar:user-linear", shortcut: "3" },
   { key: "query", label: "Query", icon: "mdi:database-search-outline" },
 ];
 
@@ -175,9 +175,12 @@ const ObserveTabBar = ({
             setIsSavingView(false);
           },
           onError: (err) => {
-            enqueueSnackbar(getRequestErrorMessage(err, "Failed to create view"), {
-              variant: "error",
-            });
+            enqueueSnackbar(
+              getRequestErrorMessage(err, "Failed to create view"),
+              {
+                variant: "error",
+              },
+            );
             setIsSavingView(false);
           },
         },
@@ -242,7 +245,9 @@ const ObserveTabBar = ({
       if (isNaN(num) || num < 1 || num > 9) return;
 
       if (num <= 3) {
-        const fixedTab = visibleFixedTabs.find((tab) => tab.shortcut === String(num));
+        const fixedTab = visibleFixedTabs.find(
+          (tab) => tab.shortcut === String(num),
+        );
         if (fixedTab) onTabChange(fixedTab.key);
       } else {
         const idx = num - 4;
@@ -283,9 +288,12 @@ const ObserveTabBar = ({
         { id: viewId, name: newName },
         {
           onError: (err) =>
-            enqueueSnackbar(getRequestErrorMessage(err, "Failed to rename view"), {
-              variant: "error",
-            }),
+            enqueueSnackbar(
+              getRequestErrorMessage(err, "Failed to rename view"),
+              {
+                variant: "error",
+              },
+            ),
         },
       );
       // Always exit edit mode — a lingering rename state would re-submit on blur.
@@ -428,7 +436,7 @@ const ObserveTabBar = ({
             }}
           >
             <Iconify
-              icon="mdi:plus"
+              icon="solar:add-linear"
               width={16}
               sx={{ color: "text.primary" }}
             />

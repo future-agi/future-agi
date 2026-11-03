@@ -119,6 +119,7 @@ const CostCell = ({ value, data }) => {
         {fmt(totalCost)}
       </Typography>
       <Tooltip
+        classes={{ tooltip: "ds-hovercard" }}
         title={
           <BreakdownTooltip
             inputCost={inputCost}
@@ -129,7 +130,7 @@ const CostCell = ({ value, data }) => {
         arrow
         placement="bottom"
         slotProps={{
-          tooltip: { sx: { maxWidth: 280, bgcolor: "grey.900", p: 1 } },
+          tooltip: { sx: { maxWidth: 280 } },
         }}
       >
         <Box
@@ -143,7 +144,7 @@ const CostCell = ({ value, data }) => {
           }}
         >
           <Iconify
-            icon="mdi:information-outline"
+            icon="solar:info-circle-linear"
             width={14}
             color="text.secondary"
           />

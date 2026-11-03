@@ -88,13 +88,10 @@ const EvaluationActions = () => {
           color="primary"
           disabled={!RolePermission.PROMPTS[PERMISSIONS.UPDATE][role]}
           startIcon={
-            <SvgColor
+            <SvgColor width={16}
               src="/assets/icons/action_buttons/ic_add.svg"
               color="primary.main"
-              sx={{
-                height: theme.spacing(2),
-                width: theme.spacing(2),
-              }}
+              sx={{ }}
             />
           }
         >

@@ -6,14 +6,15 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 const FixedTab = ({ tabKey, label, icon, shortcut, isActive, onClick }) => (
   <CustomTooltip
-    show={!isActive}
-    title={`Press ${shortcut}`}
+    show={!isActive && Boolean(shortcut)}
+    title={shortcut ? `Press ${shortcut}` : label}
     placement="bottom"
     arrow
     size="small"
     type="black"
   >
     <ButtonBase
+      aria-label={label}
       onClick={() => onClick(tabKey)}
       sx={{
         display: "inline-flex",
@@ -55,7 +56,7 @@ FixedTab.propTypes = {
   tabKey: PropTypes.string.isRequired,
   label: PropTypes.string.isRequired,
   icon: PropTypes.string,
-  shortcut: PropTypes.string.isRequired,
+  shortcut: PropTypes.string,
   isActive: PropTypes.bool.isRequired,
   onClick: PropTypes.func.isRequired,
 };

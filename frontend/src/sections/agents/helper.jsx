@@ -404,7 +404,7 @@ export const defaultAgentDefinitionValues = {
 export const icon = (name) => (
   <SvgColor
     src={`/assets/icons/agent/${name}.svg`}
-    sx={{ width: 20, height: 20 }}
+    sx={{ width: 16, height: 16 }}
   />
 );
 
@@ -551,7 +551,7 @@ const LoadingSkeleton = () => {
       width="80%"
       sx={{
         mx: 1,
-        borderRadius: 0.5,
+        borderRadius: "4px",
       }}
       height={15}
     />
@@ -1092,8 +1092,7 @@ export const useCallLogs = ({
         }
       : {
           retry: (failureCount, queryError) =>
-            !isListCursorContinuationLimitError(queryError) &&
-            failureCount < 1,
+            !isListCursorContinuationLimitError(queryError) && failureCount < 1,
         }),
   });
   return { queryKey, data, isLoading, error };

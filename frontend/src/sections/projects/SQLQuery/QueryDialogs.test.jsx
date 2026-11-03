@@ -63,13 +63,7 @@ describe.each(["light", "dark"])(
         const foreground = getComputedStyle(label).color;
         const background = getComputedStyle(dialog).backgroundColor;
         expect(foreground).toBe(hexToRgb(theme.palette.text.secondary));
-        expect(background).toBe(
-          hexToRgb(
-            mode === "dark"
-              ? theme.palette.background.neutral
-              : theme.palette.background.paper,
-          ),
-        );
+        expect(background).toBe(hexToRgb(theme.palette.background.overlay));
         expect(getContrastRatio(foreground, background)).toBeGreaterThanOrEqual(
           4.5,
         );

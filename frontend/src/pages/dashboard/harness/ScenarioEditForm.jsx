@@ -12,7 +12,6 @@ import {
   ToggleButtonGroup,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 
@@ -81,11 +80,11 @@ export default function ScenarioEditForm({
         direction="row"
         alignItems="center"
         spacing={2}
-        sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        sx={{ px: 2, py: 1.5, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
       >
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "m2", fontWeight: 600 }}>Edit scenario</Typography>
-          <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
+          <Typography sx={{ typography: "m2", fontWeight: 500 }}>Edit scenario</Typography>
+          <Typography noWrap sx={{ typography: "s1", color: "text.subtitle" }}>
             {readable(scenario.name)}
           </Typography>
         </Box>
@@ -94,7 +93,7 @@ export default function ScenarioEditForm({
         </IconButton>
       </Stack>
 
-      <Stack spacing={2.5} sx={{ flex: 1, overflow: "auto", p: 2.5 }}>
+      <Stack spacing={2} sx={{ flex: 1, overflow: "auto", p: 2 }}>
         <SectionHeader
           title="Directly editable"
           hint="These parts do not touch the proof, so they save straight to the suite."
@@ -254,10 +253,10 @@ export default function ScenarioEditForm({
 
             <Box sx={shown(editable("max_turns"))}>
               <Stack direction="row" alignItems="center" spacing={1}>
-                <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
+                <Typography sx={{ typography: "s1", fontWeight: 500, flex: 1 }}>
                   Max turns
                 </Typography>
-                <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>
+                <Typography sx={{ typography: "s1", fontVariantNumeric: "tabular-nums" }}>
                   {form.max_turns ?? "Default"}
                 </Typography>
               </Stack>
@@ -274,7 +273,7 @@ export default function ScenarioEditForm({
             </Box>
 
             <Box sx={shown(editable("background_noise"))}>
-              <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
+              <Typography sx={{ typography: "s1", fontWeight: 500, mb: 0.75 }}>
                 Background noise
               </Typography>
               <ToggleButtonGroup
@@ -282,26 +281,7 @@ export default function ScenarioEditForm({
                 exclusive
                 value={form.background_noise}
                 onChange={(event, value) => value && set("background_noise")(value)}
-                sx={{
-                  flexWrap: "wrap",
-                  gap: 0.5,
-                  "& .MuiToggleButton-root": {
-                    typography: "s2",
-                    fontWeight: 600,
-                    textTransform: "none",
-                    px: 1.5,
-                    py: 0.375,
-                    color: "text.secondary",
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: 1,
-                    "&.Mui-selected": {
-                      bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
-                      color: "primary.main",
-                      borderColor: "primary.main",
-                    },
-                  },
-                }}
+                sx={{ flexWrap: "wrap" }}
               >
                 {withHeld(noiseChoices, form.background_noise).map((one) => (
                   <ToggleButton key={one} value={one}>
@@ -318,20 +298,18 @@ export default function ScenarioEditForm({
 
         <Stack
           direction="row"
-          spacing={1.25}
+          spacing={1.5}
           alignItems="flex-start"
           sx={{
-            p: 1.75,
-            borderRadius: 1.25,
-            border: "1px solid",
-            borderColor: (theme) => alpha(theme.palette.primary.main, 0.24),
-            bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
+            p: 1.5,
+            borderRadius: "8px",
+            bgcolor: "background.neutral",
           }}
         >
           <Iconify
             icon="solar:shield-check-linear"
-            width={15}
-            sx={{ color: "primary.main", flexShrink: 0, mt: "1px" }}
+            width={16}
+            sx={{ color: "text.secondary", flexShrink: 0, mt: "1px" }}
           />
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
             A read-only field is one this scenario was proved against: the world was set up, a
@@ -345,12 +323,13 @@ export default function ScenarioEditForm({
         direction="row"
         justifyContent="flex-end"
         spacing={1}
-        sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        sx={{ px: 2, py: 1.5, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
       >
         <Button
+          size="small"
           onClick={onCancel}
           disabled={busy}
-          sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}
+          sx={{ color: "text.secondary" }}
         >
           Cancel
         </Button>
@@ -359,7 +338,6 @@ export default function ScenarioEditForm({
           size="small"
           disabled={busy || !dirty}
           onClick={() => onSave(form, initial)}
-          sx={{ typography: "s2", fontWeight: 700 }}
         >
           Save scenario
         </Button>
@@ -385,12 +363,10 @@ function SectionHeader({ title, hint, sx }) {
     <Box sx={sx}>
       <Typography
         sx={{
-          typography: "s3",
-          fontWeight: 700,
+          typography: "m3",
+          fontWeight: 500,
           color: "text.primary",
-          textTransform: "uppercase",
-          letterSpacing: 0.6,
-          mb: 0.375,
+          mb: 0.25,
         }}
       >
         {title}
@@ -416,12 +392,7 @@ function Field({ label, value, onChange, readOnly, rows, mono, help, fullWidth =
       minRows={rows}
       helperText={help}
       onChange={onChange ? (event) => onChange(event.target.value) : undefined}
-      InputProps={{
-        sx: {
-          typography: "s2",
-          ...(mono && { fontFamily: "ui-monospace, Menlo, monospace" }),
-        },
-      }}
+      InputProps={mono ? { sx: { fontFamily: "ui-monospace, Menlo, monospace" } } : undefined}
       sx={{
         "& .MuiInputBase-input.Mui-disabled, & .MuiInputBase-inputMultiline.Mui-disabled": {
           WebkitTextFillColor: (theme) => theme.palette.text.secondary,
@@ -451,10 +422,9 @@ function Choice({ label, value, onChange, options }) {
       label={label}
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      InputProps={{ sx: { typography: "s2" } }}
     >
       {options.map((one) => (
-        <MenuItem key={one.value ?? one} value={one.value ?? one} sx={{ typography: "s2" }}>
+        <MenuItem key={one.value ?? one} value={one.value ?? one}>
           {one.label ?? one}
         </MenuItem>
       ))}
