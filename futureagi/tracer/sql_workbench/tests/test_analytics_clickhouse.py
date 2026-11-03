@@ -1271,7 +1271,9 @@ def test_estimate_withholds_short_primary_indexes_during_foreign_growth(
         assert raw_rows[0] < bound < raw_rows[1], (
             "foreign-only growth must cross the advisory threshold in the raw control"
         )
-        print(f"withheld {primary_key}: raw rows {raw_rows}, advisory threshold {bound}")
+        print(
+            f"withheld {primary_key}: raw rows {raw_rows}, advisory threshold {bound}"
+        )
         assert observed[0] == observed[1]
         assert observed[0]["exceeds_scan_bound"] is None
 
@@ -1590,7 +1592,7 @@ def _matches(actual, wanted):
     if isinstance(wanted, datetime):
         return _normalized(actual) == _normalized(wanted)
     if isinstance(wanted, float):
-        return isinstance(actual, (int, float)) and math.isclose(
+        return isinstance(actual, int | float) and math.isclose(
             actual, wanted, rel_tol=1e-9, abs_tol=1e-9
         )
     return actual == wanted
