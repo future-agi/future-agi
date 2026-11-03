@@ -148,7 +148,38 @@ def read_actors(environment: HostedHarnessJob) -> dict[str, Any]:
         "record_schemas": rules["records"],
         "actions": world_actions(environment_files, rules),
         "channels": rules.get("channels") or {},
+        "loudness": rules.get("loudness") or {},
     }
+
+
+def _sharing_the_caller(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    suite_files: dict[str, bytes],
+    rules: dict[str, Any],
+) -> list[str]:
+    """A sub-actor field the rules keep distinct from the caller's must not equal the caller's in any scenario that
+    includes the sub-actor; two speakers of one name make a transcript unreadable."""
+    from simulate.services.harness_versioning.versions import suite_documents
+
+    actor_id = str(after.get("id") or "")
+    problems = []
+    for field in rules.get("distinct_from_caller") or []:
+        value = str(after.get(field) or "").strip().lower()
+        if not value or value == str(before.get(field) or "").strip().lower():
+            continue
+        for scenario in suite_documents(suite_files):
+            included = any(
+                isinstance(one, dict) and one.get("id") == actor_id
+                for one in scenario.get("sub_actors") or []
+            )
+            caller = str((scenario.get("persona") or {}).get(field) or "").strip()
+            if included and caller.lower() == value:
+                key = scenario.get("scenario_key") or scenario.get("name")
+                problems.append(
+                    f"{actor_id}'s {field} is the caller's in {key} ({caller}); choose another."
+                )
+    return problems
 
 
 def _new_choices(
@@ -156,6 +187,7 @@ def _new_choices(
     after: dict[str, Any],
     files: dict[str, bytes],
     rules: dict[str, Any],
+    suite_files: dict[str, bytes] | None = None,
 ) -> list[str]:
     """An action, trigger or channel this edit adds must be one the environment has. Values already on the record are
     kept as they are, so an actor written elsewhere can still be edited."""
@@ -172,7 +204,7 @@ def _new_choices(
             problems.append(
                 f"{actor_id}'s channel {after.get('channel')!r} is not one of: {', '.join(channels)}."
             )
-        return problems
+        return problems + _sharing_the_caller(before, after, suite_files or {}, rules)
     known = [one["action"] for one in world_actions(files, rules)]
     old = set(before.get("permitted_actions") or [])
     added = [
@@ -357,6 +389,7 @@ def write_actor_edit(
             next(one for one in actors if one.get("id") == actor_id),
             environment_files,
             rules,
+            suite_files,
         )
     if problems:
         raise _error("actor_invalid", " ".join(problems), 400)

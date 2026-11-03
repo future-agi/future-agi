@@ -18013,6 +18013,8 @@ export type HarnessActorListApiRecordSchemas = { [key: string]: unknown };
 
 export type HarnessActorListApiChannels = { [key: string]: string };
 
+export type HarnessActorListApiLoudness = { [key: string]: unknown };
+
 export interface HarnessWorldActionApi {
   /** @minLength 1 */
   action: string;
@@ -18027,6 +18029,7 @@ export interface HarnessActorListApi {
   record_schemas: HarnessActorListApiRecordSchemas;
   actions: HarnessWorldActionApi[];
   channels: HarnessActorListApiChannels;
+  loudness: HarnessActorListApiLoudness;
 }
 
 export type HarnessActorWriteApiActor = { [key: string]: unknown };

@@ -135,6 +135,9 @@ export const CONTRACT_COPY = {
     sees: "Sees",
     neverSees: "Never sees",
     comesIn: "Comes in",
+    loudnessShare: (ratio) =>
+      `${Math.round(ratio * 100)}% as loud as the caller`,
+    loudnessAutomatic: "Loudness automatic",
     atStart: "From the start",
     whenCalled: (action) => `When the agent calls ${action}`,
     ifNoAnswer: "If they do not answer",
@@ -162,7 +165,9 @@ export const CONTRACT_COPY = {
       editTitle: (name) => `Edit ${name}`,
       id: "Id",
       idHelp:
-        "1 to 64 lowercase letters, digits or underscores, such as store_manager. It never changes.",
+        "Made from the name; change it now if you like. 1 to 64 lowercase letters, digits or underscores. It never changes once saved.",
+      idFixed:
+        "Fixed once saved, so scenarios and past runs keep pointing at this actor.",
       name: "Name",
       nameHelp: "What others call them, such as Priya Raman",
       role: "Role",
@@ -206,8 +211,11 @@ export const CONTRACT_COPY = {
         `${id} answers instead`,
       channel: "How they join the call",
       loudness: "How loud, next to the caller",
-      loudnessHelp:
-        "A share of the caller's voice, above 0 and up to 1 (1 is as loud as the caller). Empty picks one per call.",
+      automatic: "Automatic",
+      loudnessHelp: (range) =>
+        range?.length === 2
+          ? `A share of the caller's voice, above 0 and up to 1. Empty is automatic: each call picks between ${Math.round(range[0] * 100)}% and ${Math.round(range[1] * 100)}% of the caller's voice.`
+          : "A share of the caller's voice, above 0 and up to 1. Empty is automatic: each call picks a level.",
       cancel: "Cancel",
       save: "Save to draft",
     },

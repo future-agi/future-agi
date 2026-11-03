@@ -36042,6 +36042,7 @@ export const SimulateApiHarnessEnvironmentsActorsResponse = zod.object({
     }),
   ),
   channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
 });
 
 /**
@@ -36074,6 +36075,7 @@ export const SimulateApiHarnessEnvironmentsCreateActorResponse = zod.object({
     }),
   ),
   channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
 });
 
 /**
@@ -36138,6 +36140,7 @@ export const SimulateApiHarnessEnvironmentsReplaceActorResponse = zod.object({
     }),
   ),
   channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
 });
 
 /**
@@ -36170,6 +36173,7 @@ export const SimulateApiHarnessEnvironmentsDeleteActorResponse = zod.object({
     }),
   ),
   channels: zod.record(zod.string(), zod.string()),
+  loudness: zod.record(zod.string(), zod.unknown()),
 });
 
 /**

@@ -127009,7 +127009,8 @@
                 "revision",
                 "record_schemas",
                 "actions",
-                "channels"
+                "channels",
+                "loudness"
             ],
             "type": "object",
             "properties": {
@@ -127049,6 +127050,11 @@
                     "additionalProperties": {
                         "type": "string"
                     }
+                },
+                "loudness": {
+                    "title": "Loudness",
+                    "type": "object",
+                    "additionalProperties": true
                 }
             }
         },

@@ -93,6 +93,18 @@
     "tool": "tool",
     "separator": "."
   },
+  "loudness": {
+    "channels": [
+      "audio_mix"
+    ],
+    "automatic": [
+      0.333,
+      0.667
+    ]
+  },
+  "distinct_from_caller": [
+    "name"
+  ],
   "channels": {
     "audio_mix": "a voice near the person that speaks up whenever it has something to say, which the agent may hear",
     "audio_handoff": "someone who takes the phone from the person for a few turns, then hands it back",

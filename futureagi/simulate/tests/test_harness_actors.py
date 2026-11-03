@@ -705,3 +705,34 @@ def test_an_actor_a_version_saved_before_actor_digests_already_had_reads_as_chan
         "removed": [],
     }
     assert draft.summary == "1 actor changed"
+
+
+def test_a_sub_actor_never_takes_the_name_of_a_caller_it_is_with():
+    from simulate.services import harness_actors
+
+    rules = json.loads(harness_actors._RULES_BEFORE_DECLARED.read_text())
+    suite = {
+        "scenarios/one/scenario.json": json.dumps(
+            {
+                "scenario_key": "one",
+                "persona": {"name": "Mei Lin"},
+                "sub_actors": [{"id": "colleague"}],
+            }
+        ).encode(),
+        "scenarios/two/scenario.json": json.dumps(
+            {"scenario_key": "two", "persona": {"name": "Jordan Taylor"}}
+        ).encode(),
+    }
+    colleague = {"id": "colleague", "name": "Jordan Taylor", "channel": "audio_mix"}
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            "simulate.services.harness_versioning.versions.suite_documents",
+            lambda files: [json.loads(raw) for raw in files.values()],
+        )
+        # The caller of a scenario that does not include the sub-actor may share its name.
+        assert harness_actors._new_choices(None, colleague, {}, rules, suite) == []
+        renamed = {**colleague, "name": "mei lin"}
+        problems = harness_actors._new_choices(colleague, renamed, {}, rules, suite)
+    assert problems == [
+        "colleague's name is the caller's in one (Mei Lin); choose another."
+    ]

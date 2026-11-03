@@ -1049,6 +1049,8 @@ class HarnessActorListSerializer(serializers.Serializer):
     # What an actor can be given here: the world's actions, and the call channels a sub-actor speaks on.
     actions = HarnessWorldActionSerializer(many=True)
     channels = serializers.DictField(child=serializers.CharField(allow_blank=True))
+    # Which channels have a loudness, and the range a call draws from when none is set.
+    loudness = JsonObjectRequestField()
 
 
 class HarnessActorViewQuerySerializer(serializers.Serializer):

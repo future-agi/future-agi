@@ -59,6 +59,19 @@ const hidden = (names) => {
   }
   return { grader, others };
 };
+// An id made from a name: lowercase letters, digits and underscores, unique in the cast (`sam_lee`, `sam_lee_2`).
+const idFrom = (name, taken) => {
+  const base =
+    (name || "")
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 60) || "actor";
+  let id = base;
+  for (let n = 2; taken.has(id); n += 1) id = `${base}_${n}`;
+  return id;
+};
 // A sub-actor speaks on a call channel; a world actor has none.
 const speaks = (actor) => Boolean(actor?.channel);
 
@@ -83,6 +96,7 @@ export default function WorldActorsPanel({
   const context = {
     actions: data?.actions || [],
     channels: data?.channels || {},
+    loudness: data?.loudness || {},
     others: cast,
   };
 
@@ -209,6 +223,10 @@ function summary(actor) {
   if (speaks(actor))
     return [
       CHANNEL_LABELS[actor.channel] || actor.channel,
+      actor.channel === "audio_mix" &&
+        (actor.loudness_ratio
+          ? C.loudnessShare(actor.loudness_ratio)
+          : C.loudnessAutomatic),
       genderLabel(actor.persona?.gender),
       actor.persona?.age_group,
       actor.persona?.accent,
@@ -364,10 +382,14 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
     (one) => one.id !== actor?.id && !speaks(one),
   );
 
+  // A new actor's id follows its name until someone types an id of their own; a saved id never changes.
+  const madeId = existing
+    ? actor.id
+    : idFrom(value("name", ""), new Set(context.others.map((one) => one.id)));
   const save = () => {
     const base = {
       ...actor,
-      id: value("id", actor?.id || ""),
+      id: value("id", actor?.id || madeId),
       name: value("name", actor?.name || ""),
       role: value("role", actor?.role || ""),
     };
@@ -472,11 +494,11 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
                 : F.createTitle}
           </Typography>
           {error && <Alert severity="error">{error}</Alert>}
-          {text("id", F.id, actor.id || "", {
-            helperText: F.idHelp,
+          {text("name", F.name, actor.name || "", { helperText: F.nameHelp })}
+          {text("id", F.id, madeId, {
+            helperText: existing ? F.idFixed : F.idHelp,
             disabled: existing,
           })}
-          {text("name", F.name, actor.name || "", { helperText: F.nameHelp })}
           {text("role", F.role, actor.role || "", { helperText: F.roleHelp })}
           {callerSide ? (
             <>
@@ -497,7 +519,8 @@ function ActorForm({ actor, context, busy, error, onClose, onSave }) {
               {channel === "audio_mix" &&
                 text("loudness_ratio", F.loudness, actor.loudness_ratio ?? "", {
                   type: "number",
-                  helperText: F.loudnessHelp,
+                  placeholder: F.automatic,
+                  helperText: F.loudnessHelp(context.loudness.automatic),
                   inputProps: { min: 0.05, max: 1, step: 0.05 },
                 })}
             </>
@@ -668,6 +691,7 @@ ActorForm.propTypes = {
       }),
     ),
     channels: PropTypes.object,
+    loudness: PropTypes.object,
     others: PropTypes.array,
   }).isRequired,
   busy: PropTypes.bool,

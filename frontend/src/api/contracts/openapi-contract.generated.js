@@ -63864,6 +63864,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "record_schemas",
         "actions",
         "channels",
+        "loudness",
       ],
       type: "object",
       properties: {
@@ -63900,6 +63901,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           additionalProperties: {
             type: "string",
           },
+        },
+        loudness: {
+          title: "Loudness",
+          type: "object",
+          additionalProperties: true,
         },
       },
     },

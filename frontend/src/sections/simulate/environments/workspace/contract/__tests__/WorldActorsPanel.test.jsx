@@ -67,6 +67,7 @@ const cast = (actors, extra = {}) => ({
   revision: 3,
   actions: ACTIONS,
   channels: CHANNELS,
+  loudness: { channels: ["audio_mix"], automatic: [0.333, 0.667] },
   ...extra,
 });
 // Open an MUI select by its label and pick an option by its text.
@@ -108,7 +109,7 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText("Actors (2)")).toBeInTheDocument();
     expect(screen.getByText("On the caller's side")).toBeInTheDocument();
     expect(
-      screen.getByText("Heard nearby · In 2 scenarios"),
+      screen.getByText("Heard nearby · Loudness automatic · In 2 scenarios"),
     ).toBeInTheDocument();
     expect(screen.getByText("In the world")).toBeInTheDocument();
   });
@@ -231,6 +232,25 @@ describe("WorldActorsPanel", () => {
       channel: "audio_mix",
       loudness_ratio: 0.5,
     });
+  });
+
+  it("makes a new actor's id from its name, unique in the cast, and says how loud is automatic", () => {
+    actorsData = cast([{ id: "sam_lee", name: "Sam Lee", side: "world" }]);
+    render(<WorldActorsPanel envId="env-1" callerSide />);
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Sam Lee" },
+    });
+    expect(screen.getByLabelText("Id")).toHaveValue("sam_lee_2");
+    fireEvent.click(screen.getByText("Save to draft"));
+    expect(mutate.mock.calls[0][0].actor.id).toBe("sam_lee_2");
+    fireEvent.click(screen.getByText("Cancel"));
+    fireEvent.click(screen.getByText("Add someone on the caller's side"));
+    expect(
+      screen.getByText(
+        /Empty is automatic: each call picks between 33% and 67%/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("opens a fresh form for the next actor after a save", () => {
