@@ -1,4 +1,4 @@
-/* Future AGI Design System v0.2.3 — MUI v5 mapping.
+/* Future AGI Design System v0.2.4 — MUI v5 mapping.
    Generated from frontend/design-system/tokens/tokens.json by `yarn tokens:build`.
    Do not edit by hand: change tokens.json and rebuild.
 
