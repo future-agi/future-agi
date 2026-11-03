@@ -816,7 +816,8 @@ def test_bounded_compatibility_rows_keep_types_nulls_order_and_count(
         rows, columns = native.execute(sql, params, with_column_types=True)
     assert columns[:-1] == reference_columns[:-1]
     assert columns[-1] == (
-        "total_count", "UInt64" if paginated else reference_columns[-1][1]
+        "total_count",
+        "UInt64" if paginated else reference_columns[-1][1],
     )
     assert dict(columns)["known_cost_fact_count"] == "Int64"
     expected_native = (
@@ -825,7 +826,6 @@ def test_bounded_compatibility_rows_keep_types_nulls_order_and_count(
         else reference_rows[:max_rows]
     )
     assert rows == [(*row[:-1], 3 if paginated else 0) for row in expected_native]
-
 
 
 @pytest.mark.integration

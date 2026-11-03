@@ -124,7 +124,9 @@ def usage_aggregate_sql(
         values += f", {source_summary}"
     if known_cost_fact is not None:
         if source_summary is not None:
-            raise ValueError("User metrics and capture coverage are separate projections")
+            raise ValueError(
+                "User metrics and capture coverage are separate projections"
+            )
         values += f", {known_cost_fact}"
     # Fixed layout: identity, parent, name, kind, cost, total, prompt, completion,
     # (nonadditive, unknown billable cost). Siblings are never deduplicated.
