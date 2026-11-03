@@ -177,28 +177,30 @@ const ConversationCard = ({
           condition={Array.isArray(rawContent) && rawContent.length > 0}
         >
           <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-            {rawContent.flatMap((message, index) => {
-              if (message.role === "tool") {
-                return [
-                  <ToolResultCard
-                    key={`result-${index}`}
-                    content={message.content}
-                  />,
-                ];
-              }
-              if (message.tool_calls?.length > 0) {
-                return message.tool_calls.map((toolCall) => (
-                  <ToolCallCard
-                    key={toolCall.id}
-                    toolCall={{
-                      name: toolCall.function.name,
-                      arguments: toolCall.function.arguments,
-                    }}
-                  />
-                ));
-              }
-              return [];
-            })}
+            {(Array.isArray(rawContent) ? rawContent : []).flatMap(
+              (message, index) => {
+                if (message.role === "tool") {
+                  return [
+                    <ToolResultCard
+                      key={`result-${index}`}
+                      content={message.content}
+                    />,
+                  ];
+                }
+                if (message.tool_calls?.length > 0) {
+                  return message.tool_calls.map((toolCall) => (
+                    <ToolCallCard
+                      key={toolCall.id}
+                      toolCall={{
+                        name: toolCall.function.name,
+                        arguments: toolCall.function.arguments,
+                      }}
+                    />
+                  ));
+                }
+                return [];
+              },
+            )}
           </Stack>
         </ShowComponent>
       </Box>
