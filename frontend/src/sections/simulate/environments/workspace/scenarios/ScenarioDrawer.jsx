@@ -1,10 +1,10 @@
 import PropTypes from "prop-types";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { subActorWhen } from "src/api/simulate-environments/scenarios";
 import SideDrawer from "../../components/SideDrawer";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import { personaSubline } from "./personaLabels";
+import { subActorWhen } from "./subActorLabels";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 
 // One scenario, opened from its table row, laid out as the designer's

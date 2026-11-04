@@ -115728,12 +115728,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
         persona: {
-          title: "Persona",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
+          $ref: "#/definitions/HarnessEnvironmentSubActorPersona",
         },
         loudness_ratio: {
           title: "Loudness ratio",
@@ -115942,12 +115937,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
         },
         trigger: {
-          title: "Trigger",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
+          $ref: "#/definitions/HarnessEnvironmentSubActorTrigger",
         },
       },
     },
@@ -123717,6 +123707,87 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
+        },
+      },
+    },
+    HarnessEnvironmentSubActorPersona: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        gender: {
+          title: "Gender",
+          type: "string",
+        },
+        age_group: {
+          title: "Age group",
+          type: "string",
+        },
+        occupation: {
+          title: "Occupation",
+          type: "string",
+        },
+        location: {
+          title: "Location",
+          type: "string",
+        },
+        personality: {
+          title: "Personality",
+          type: "string",
+        },
+        communication_style: {
+          title: "Communication style",
+          type: "string",
+        },
+        initial_message: {
+          title: "Initial message",
+          type: "string",
+        },
+        languages: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        accent: {
+          title: "Accent",
+          type: "string",
+        },
+      },
+    },
+    HarnessEnvironmentSubActorTrigger: {
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        turn: {
+          title: "Turn",
+          type: "integer",
+        },
+        tool: {
+          title: "Tool",
+          type: "string",
+        },
+        on_call: {
+          title: "On call",
+          type: "integer",
+        },
+        words: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        p: {
+          title: "P",
+          type: "number",
         },
       },
     },

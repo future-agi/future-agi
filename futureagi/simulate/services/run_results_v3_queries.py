@@ -1020,13 +1020,15 @@ def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
 
 def _sub_actor_spoke(sub_actor: str | None = None) -> Q:
     """Calls where a sub-actor (or this one) entered: at least one of its lines reached the agent."""
-    who = f" && @.sub_actor == {json.dumps(sub_actor)}" if sub_actor else ""
+    who = " && @.sub_actor == $who" if sub_actor else ""
+    path = Value(f"$.harness_sub_actors.summary[*] ? (@.delivered > 0{who})")
     return Q(
         Func(
             F("call_metadata"),
-            Value(f"$.harness_sub_actors.summary[*] ? (@.delivered > 0{who})"),
+            Func(path, template="%(expressions)s::jsonpath", output_field=TextField()),
+            # The id travels as a jsonpath variable, never as path text.
+            Value({"who": sub_actor}, output_field=JSONField()),
             function="jsonb_path_exists",
-            template="%(function)s(%(expressions)s::jsonpath)",
             output_field=BooleanField(),
         )
     )
@@ -1267,7 +1269,9 @@ def _sub_actor_facet(calls: QuerySet) -> list[dict[str, Any]]:
         entered = [
             one
             for one in (summary if isinstance(summary, list) else [])
-            if isinstance(one, dict) and (one.get("delivered") or 0) > 0 and one.get("sub_actor")
+            if isinstance(one, dict)
+            and (one.get("delivered") or 0) > 0
+            and one.get("sub_actor")
         ]
         for one in entered:
             key = str(one["sub_actor"])
