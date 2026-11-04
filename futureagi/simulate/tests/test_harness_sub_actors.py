@@ -390,3 +390,38 @@ def test_a_pinned_suite_version_keeps_each_scenario_s_sub_actors():
         _member_content({"name": "a", "sub_actors": included})["sub_actors"] == included
     )
     assert "sub_actors" not in _member_content({"name": "a"})
+
+
+@pytest.mark.django_db
+def test_the_scenario_filter_names_the_environment_s_own_sub_actors(
+    organization, workspace
+):
+    from simulate.models import HostedHarnessStageOutput
+    from simulate.services.harness_environment import sub_actor_labels
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="labels", workspace=workspace
+    )
+    assert sub_actor_labels(job) == {"none": "Simulated user only"}
+    HostedHarnessStageOutput.no_workspace_objects.create(
+        job=job, title="Sub-actors", summary="", kind="sub_actors", data=_LIST
+    )
+    assert sub_actor_labels(job) == {
+        "none": "Simulated user only",
+        "friend": "Rowan",
+        "partner": "Sam",
+    }
+
+
+def test_stored_sub_actor_shapes_keep_only_well_formed_entries():
+    from simulate.services.harness_scenarios import sub_actor_entries
+    from simulate.services.hosted_harness_ingestion import _sub_actor_record
+
+    assert sub_actor_entries([{"id": "friend", "trigger": "soon"}, "x"]) == [
+        {"id": "friend", "instruction": "", "trigger": {}}
+    ]
+    assert sub_actor_entries({"id": "friend"}) is None
+    assert _sub_actor_record(
+        {"summary": [{"sub_actor": "friend"}, "x"], "events": "x", "extra": 1}
+    ) == {"summary": [{"sub_actor": "friend"}]}
+    assert _sub_actor_record(["x"]) is None

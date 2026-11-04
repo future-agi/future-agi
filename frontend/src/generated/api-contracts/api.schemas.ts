@@ -18211,7 +18211,18 @@ export interface HarnessEnvironmentCatalogueSubGoalApi {
   check: string;
 }
 
-export type HarnessEnvironmentSubActorApiPersona = { [key: string]: string };
+export interface HarnessEnvironmentSubActorPersonaApi {
+  name?: string;
+  gender?: string;
+  age_group?: string;
+  occupation?: string;
+  location?: string;
+  personality?: string;
+  communication_style?: string;
+  initial_message?: string;
+  languages?: string[];
+  accent?: string;
+}
 
 export interface HarnessEnvironmentSubActorApi {
   /** @minLength 1 */
@@ -18221,7 +18232,7 @@ export interface HarnessEnvironmentSubActorApi {
   role: string;
   /** @minLength 1 */
   channel: string;
-  persona: HarnessEnvironmentSubActorApiPersona;
+  persona: HarnessEnvironmentSubActorPersonaApi;
   loudness_ratio?: number;
   scenarios_count: number;
 }
@@ -18353,15 +18364,21 @@ export interface HarnessEnvironmentSubGoalApi {
   claim?: string;
 }
 
-export type HarnessEnvironmentScenarioSubActorApiTrigger = {
-  [key: string]: string;
-};
+export interface HarnessEnvironmentSubActorTriggerApi {
+  /** @minLength 1 */
+  kind?: string;
+  turn?: number;
+  tool?: string;
+  on_call?: number;
+  words?: string[];
+  p?: number;
+}
 
 export interface HarnessEnvironmentScenarioSubActorApi {
   /** @minLength 1 */
   id: string;
   instruction: string;
-  trigger: HarnessEnvironmentScenarioSubActorApiTrigger;
+  trigger: HarnessEnvironmentSubActorTriggerApi;
 }
 
 export type HarnessEnvironmentScenarioApiFixture = { [key: string]: string };
