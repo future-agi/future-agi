@@ -1320,7 +1320,12 @@ def save_drafts(
             locked,
             pieces,
             expected_review_digest=next(
-                (one.expected_review_digest for one in requests.values() if one.expected_review_digest), None
+                (
+                    one.expected_review_digest
+                    for one in requests.values()
+                    if one.expected_review_digest
+                ),
+                None,
             ),
         )
         drafts = {
@@ -1332,7 +1337,10 @@ def save_drafts(
         activated = activate_drafts(locked, pieces, origin=None, user=user)
         from simulate.services.harness_versioning.review import name_saved
 
-        name_saved(activated, name=next((one.name for one in requests.values() if one.name), ""))
+        name_saved(
+            activated,
+            name=next((one.name for one in requests.values() if one.name), ""),
+        )
         payload = dict(locked.payload or {})
         metadata = dict(payload.get("metadata") or {})
         saves = {

@@ -22,7 +22,17 @@ from simulate.services.harness_versioning.diffs import _CONTRACT_IGNORED_FIELDS
 from simulate.services.harness_versioning.references import ALL, affects, depends_on
 
 # Kinds in the order a review lists them.
-KINDS = ("tool", "rule", "contract_field", "sub_goal", "actor", "world_state", "source", "scenario", "file")
+KINDS = (
+    "tool",
+    "rule",
+    "contract_field",
+    "sub_goal",
+    "actor",
+    "world_state",
+    "source",
+    "scenario",
+    "file",
+)
 _LISTS = {
     "sub_goals.json": ("sub_goal", "sub_goals", "name"),
     "actors.json": ("actor", "actors", "id"),
@@ -52,7 +62,9 @@ class Item:
 
 
 def _canonical(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+    return json.dumps(
+        value, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    ).encode()
 
 
 def _json(data: bytes) -> Any:
@@ -82,7 +94,8 @@ def _contract_items(contract: Any) -> list[Item]:
     items += [
         Item("contract_field", field, "contract.json", value)
         for field, value in contract.items()
-        if field not in ("tools", "hard_constraints") and field not in _CONTRACT_IGNORED_FIELDS
+        if field not in ("tools", "hard_constraints")
+        and field not in _CONTRACT_IGNORED_FIELDS
     ]
     return items
 
@@ -106,7 +119,11 @@ def _scenario_items(files: Mapping[str, bytes]) -> list[Item]:
     items = []
     for key, inside in sorted(folders.items()):
         document = _json(inside.get("scenario.json", b"")) or {}
-        others = {name: archives.sha256_hex(data) for name, data in sorted(inside.items()) if name != "scenario.json"}
+        others = {
+            name: archives.sha256_hex(data)
+            for name, data in sorted(inside.items())
+            if name != "scenario.json"
+        }
         value = {**document, **({"_files": others} if others else {})}
         items.append(Item("scenario", key, f"scenarios/{key}/scenario.json", value))
     return items
@@ -127,7 +144,11 @@ def item_index(files: Mapping[str, bytes]) -> dict[str, Item]:
             or hashing.is_environment_unhashed(path)
         ):
             continue
-        kind = "world_state" if path.rsplit("/", 1)[-1] in hashing.WORLD_SEED_FILES else "file"
+        kind = (
+            "world_state"
+            if path.rsplit("/", 1)[-1] in hashing.WORLD_SEED_FILES
+            else "file"
+        )
         items.append(Item(kind, path, path, None, raw=data))
     return {item.id: item for item in items}
 
@@ -145,9 +166,11 @@ def _world_tables(path: str, data: bytes | None) -> dict[str, dict[str, str]] | 
         for name, rows in body.items():
             if isinstance(rows, list):
                 tables[name] = {
-                    str(row.get("id", index)) if isinstance(row, dict) else str(index): hashlib.sha256(
-                        _canonical(row)
-                    ).hexdigest()
+                    (
+                        str(row.get("id", index))
+                        if isinstance(row, dict)
+                        else str(index)
+                    ): hashlib.sha256(_canonical(row)).hexdigest()
                     for index, row in enumerate(rows)
                 }
         return tables
@@ -161,20 +184,35 @@ def _world_tables(path: str, data: bytes | None) -> dict[str, dict[str, str]] | 
             try:
                 connection = sqlite3.connect(f"file:{handle.name}?mode=ro", uri=True)
                 try:
-                    names = [row[0] for row in connection.execute(
-                        "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'"
-                    )]
+                    names = [
+                        row[0]
+                        for row in connection.execute(
+                            "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'"
+                        )
+                    ]
                     tables = {}
                     for name in names:
                         quoted = '"' + name.replace('"', '""') + '"'
-                        keys = [row[1] for row in connection.execute(f"pragma table_info({quoted})") if row[5]]
+                        keys = [
+                            row[1]
+                            for row in connection.execute(
+                                f"pragma table_info({quoted})"
+                            )
+                            if row[5]
+                        ]
                         tables[name] = {}
                         rows = connection.execute(f"select * from {quoted}")
                         columns = [one[0] for one in rows.description]
                         for index, row in enumerate(rows):
                             record = dict(zip(columns, row))
-                            key = "|".join(str(record[k]) for k in keys) if keys else str(index)
-                            tables[name][key] = hashlib.sha256(repr(sorted(record.items())).encode()).hexdigest()
+                            key = (
+                                "|".join(str(record[k]) for k in keys)
+                                if keys
+                                else str(index)
+                            )
+                            tables[name][key] = hashlib.sha256(
+                                repr(sorted(record.items())).encode()
+                            ).hexdigest()
                     return tables
                 finally:
                     connection.close()
@@ -183,7 +221,9 @@ def _world_tables(path: str, data: bytes | None) -> dict[str, dict[str, str]] | 
     return None
 
 
-def world_rows(path: str, before: bytes | None, after: bytes | None) -> list[dict[str, Any]] | None:
+def world_rows(
+    path: str, before: bytes | None, after: bytes | None
+) -> list[dict[str, Any]] | None:
     """Per table, how many rows a world store change adds, removes and changes, keyed by primary key; None when either
     side cannot be read as tables."""
     old, new = _world_tables(path, before), _world_tables(path, after)
@@ -208,13 +248,19 @@ def _tested(before: Any, patch: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for op in patch:
         if op["op"] in ("replace", "remove"):
             pointer = jsonpatch.JsonPointer(op["path"])
-            tests.append({"op": "test", "path": op["path"], "value": pointer.resolve(before)})
+            tests.append(
+                {"op": "test", "path": op["path"], "value": pointer.resolve(before)}
+            )
     return tests + patch
 
 
 def _fields(before: Any, after: Any) -> list[str]:
     if isinstance(before, dict) and isinstance(after, dict):
-        return sorted(name for name in set(before) | set(after) if before.get(name) != after.get(name))
+        return sorted(
+            name
+            for name in set(before) | set(after)
+            if before.get(name) != after.get(name)
+        )
     return []
 
 
@@ -226,7 +272,9 @@ def _summary(action: str, kind: str, key: str, fields: list[str]) -> str:
     return f"{verb} {noun} {key}"
 
 
-def compute_changes(default: Mapping[str, bytes], draft: Mapping[str, bytes]) -> list[dict[str, Any]]:
+def compute_changes(
+    default: Mapping[str, bytes], draft: Mapping[str, bytes]
+) -> list[dict[str, Any]]:
     """The draft's changes against the default, one per item, in review order."""
     before, after = item_index(default), item_index(draft)
     changes = []
@@ -258,7 +306,11 @@ def compute_changes(default: Mapping[str, bytes], draft: Mapping[str, bytes]) ->
                 "draft_digest": new.digest if new else None,
                 "summary": _summary(action, item.kind, item.key, fields),
                 **(
-                    {"rows": world_rows(item.key, old.raw if old else None, new.raw if new else None)}
+                    {
+                        "rows": world_rows(
+                            item.key, old.raw if old else None, new.raw if new else None
+                        )
+                    }
                     if item.kind == "world_state"
                     else {}
                 ),
@@ -277,9 +329,14 @@ class ReviewRefused(Exception):
         self.changes = changes
 
 
-def review_digest(default_hash: str, changes: list[dict[str, Any]], decisions: Mapping[str, str]) -> str:
+def review_digest(
+    default_hash: str, changes: list[dict[str, Any]], decisions: Mapping[str, str]
+) -> str:
     """What the person saw and decided: every change's id, draft content and decision, on this default."""
-    triples = sorted((one["id"], one["draft_digest"] or "", decisions.get(one["id"], "")) for one in changes)
+    triples = sorted(
+        (one["id"], one["draft_digest"] or "", decisions.get(one["id"], ""))
+        for one in changes
+    )
     return "sha256:" + hashlib.sha256(_canonical([default_hash, triples])).hexdigest()
 
 
@@ -343,16 +400,26 @@ def compose_accepted(
     Each accepted change is applied to its item as the default holds it now; a `test` that fails means the default
     moved after the review, and nothing is applied (`review_stale`).
     """
-    if undecided := [one["id"] for one in changes if decisions.get(one["id"]) not in ("accepted", "rejected")]:
-        raise ReviewRefused("review_undecided", "Every change needs a decision before Save.", undecided)
+    if undecided := [
+        one["id"]
+        for one in changes
+        if decisions.get(one["id"]) not in ("accepted", "rejected")
+    ]:
+        raise ReviewRefused(
+            "review_undecided", "Every change needs a decision before Save.", undecided
+        )
     current = item_index(default)
     moved = [
-        one["id"] for one in changes
+        one["id"]
+        for one in changes
         if decisions[one["id"]] == "accepted"
-        and (current[one["id"]].digest if one["id"] in current else None) != one["base_digest"]
+        and (current[one["id"]].digest if one["id"] in current else None)
+        != one["base_digest"]
     ]
     if moved:
-        raise ReviewRefused("review_stale", "These changed after the review; review them again.", moved)
+        raise ReviewRefused(
+            "review_stale", "These changed after the review; review them again.", moved
+        )
     files = dict(default)
     for change in changes:
         if decisions[change["id"]] != "accepted":
@@ -362,7 +429,13 @@ def compose_accepted(
                 prefix = change["document"].rsplit("/", 1)[0] + "/"
                 for path in [one for one in files if one.startswith(prefix)]:
                     del files[path]
-                files.update({path: data for path, data in draft.items() if path.startswith(prefix)})
+                files.update(
+                    {
+                        path: data
+                        for path, data in draft.items()
+                        if path.startswith(prefix)
+                    }
+                )
             elif change["kind"] in ("file", "world_state"):
                 if change["action"] == "removed":
                     files.pop(change["key"], None)
@@ -371,7 +444,11 @@ def compose_accepted(
             else:
                 _apply_listed(files, change)
         except jsonpatch.JsonPatchException as exc:
-            raise ReviewRefused("review_stale", f"{change['id']} changed after the review: {exc}", [change["id"]]) from exc
+            raise ReviewRefused(
+                "review_stale",
+                f"{change['id']} changed after the review: {exc}",
+                [change["id"]],
+            ) from exc
     return files
 
 
@@ -398,7 +475,11 @@ def _scenarios(environment: Any) -> dict[str, dict[str, Any]]:
     if version is None:
         return {}
     files = _piece_files(environment, "suite", version)
-    return {item.key: item.value for item in item_index(files).values() if item.kind == "scenario"}
+    return {
+        item.key: item.value
+        for item in item_index(files).values()
+        if item.kind == "scenario"
+    }
 
 
 # A scenario's own name is shown, never graded.
@@ -429,14 +510,22 @@ def draft_review(environment: Any) -> dict[str, Any]:
         draft = open_draft(environment, piece)
         if draft is None:
             continue
-        drafts[piece] = {"id": str(draft.id), "revision": draft.revision, "parent_id": str(draft.parent_id or "")}
+        drafts[piece] = {
+            "id": str(draft.id),
+            "revision": draft.revision,
+            "parent_id": str(draft.parent_id or ""),
+        }
         defaults.append(str(getattr(draft.parent, "hash", "") or ""))
         recorded = _decisions(draft)
         sources = (draft.documents or {}).get("provenance") or {}
         for change in _piece_changes(environment, piece, draft):
             change["sources"] = list(reversed(sources.get(change["id"]) or []))
             entry = recorded.get(change["id"]) or {}
-            decision = entry.get("decision") if entry.get("draft_digest") == change["draft_digest"] else None
+            decision = (
+                entry.get("decision")
+                if entry.get("draft_digest") == change["draft_digest"]
+                else None
+            )
             change["decision"] = decision
             if decision:
                 decided[change["id"]] = decision
@@ -464,7 +553,11 @@ def draft_review(environment: Any) -> dict[str, Any]:
 
 
 def record_decisions(
-    environment: Any, decisions: list[dict[str, Any]], *, expected_revisions: dict[str, int], user: Any
+    environment: Any,
+    decisions: list[dict[str, Any]],
+    *,
+    expected_revisions: dict[str, int],
+    user: Any,
 ) -> dict[str, Any]:
     """Store accept or reject on changes, by id, by kind, or for every remaining one, and return the review.
 
@@ -481,36 +574,64 @@ def record_decisions(
     )
 
     with transaction.atomic():
-        current = {piece: open_draft(environment, piece, lock=True) for piece in DRAFT_PIECES}
-        current = {piece: draft for piece, draft in current.items() if draft is not None}
+        current = {
+            piece: open_draft(environment, piece, lock=True) for piece in DRAFT_PIECES
+        }
+        current = {
+            piece: draft for piece, draft in current.items() if draft is not None
+        }
         if not current:
             raise _error("draft_not_found", "No unsaved changes", 404)
         for piece, draft in current.items():
-            if piece in expected_revisions and expected_revisions[piece] != draft.revision:
+            if (
+                piece in expected_revisions
+                and expected_revisions[piece] != draft.revision
+            ):
                 raise draft_changed(piece=piece)
-        changes = [change for piece, draft in current.items() for change in _piece_changes(environment, piece, draft)]
+        changes = [
+            change
+            for piece, draft in current.items()
+            for change in _piece_changes(environment, piece, draft)
+        ]
         by_id = {change["id"]: change for change in changes}
         for item in decisions:
             decision = item.get("decision")
             if decision not in DECISIONS:
-                raise _error("decision_invalid", "A decision is accepted or rejected", 400)
+                raise _error(
+                    "decision_invalid", "A decision is accepted or rejected", 400
+                )
             if item.get("id"):
                 if item["id"] not in by_id:
-                    raise _error("change_not_found", "That change is not in the draft any more", 404, id=item["id"])
+                    raise _error(
+                        "change_not_found",
+                        "That change is not in the draft any more",
+                        404,
+                        id=item["id"],
+                    )
                 targets = [by_id[item["id"]]]
             elif item.get("kind"):
-                targets = [change for change in changes if change["kind"] == item["kind"]]
+                targets = [
+                    change for change in changes if change["kind"] == item["kind"]
+                ]
             else:
                 targets = changes
             for change in targets:
                 draft = current[change["piece"]]
                 recorded = _decisions(draft)
-                if item.get("remaining") and (recorded.get(change["id"]) or {}).get("draft_digest") == change[
-                    "draft_digest"
-                ]:
+                if (
+                    item.get("remaining")
+                    and (recorded.get(change["id"]) or {}).get("draft_digest")
+                    == change["draft_digest"]
+                ):
                     continue
-                recorded[change["id"]] = {"decision": decision, "draft_digest": change["draft_digest"]}
-                review = {**((draft.documents or {}).get("review") or {}), "decisions": recorded}
+                recorded[change["id"]] = {
+                    "decision": decision,
+                    "draft_digest": change["draft_digest"],
+                }
+                review = {
+                    **((draft.documents or {}).get("review") or {}),
+                    "decisions": recorded,
+                }
                 draft.documents = {**(draft.documents or {}), "review": review}
         for draft in current.values():
             draft.last_edited_by = user
@@ -518,7 +639,9 @@ def record_decisions(
     return draft_review(environment)
 
 
-def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str | None) -> None:
+def apply_review(
+    locked: Any, pieces: set[str], *, expected_review_digest: str | None
+) -> None:
     """Before Save makes drafts live: when the person rejected any change, rewrite each draft as the saved version
     plus exactly the accepted changes. With no decision at all, Save keeps today's behaviour (the whole draft).
 
@@ -536,11 +659,18 @@ def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str |
 
     review = draft_review(locked)
     if expected_review_digest and expected_review_digest != review["review_digest"]:
-        raise _error("review_stale", "The changes moved since you reviewed them; review them again", 409)
+        raise _error(
+            "review_stale",
+            "The changes moved since you reviewed them; review them again",
+            409,
+        )
     refused = {one["id"] for one in review["changes"] if one["decision"] == "rejected"}
     needs = [
-        (one["id"], other) for one in review["changes"] if one["decision"] == "accepted"
-        for other in one.get("depends_on") or [] if other in refused
+        (one["id"], other)
+        for one in review["changes"]
+        if one["decision"] == "accepted"
+        for other in one.get("depends_on") or []
+        if other in refused
     ]
     if needs:
         raise _error(
@@ -549,7 +679,9 @@ def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str |
             409,
             pairs=[{"change": change, "needs": other} for change, other in needs],
         )
-    rejected = {one["piece"] for one in review["changes"] if one["decision"] == "rejected"} & pieces
+    rejected = {
+        one["piece"] for one in review["changes"] if one["decision"] == "rejected"
+    } & pieces
     if any(one["decision"] for one in review["changes"]):
         # What the person decided, kept with the version it becomes, so its summary and diff are the approved ones.
         for piece in pieces:
@@ -557,7 +689,17 @@ def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str |
             kept = [
                 {
                     name: one[name]
-                    for name in ("id", "kind", "key", "action", "summary", "decision", "affects", "graded", "revalidate")
+                    for name in (
+                        "id",
+                        "kind",
+                        "key",
+                        "action",
+                        "summary",
+                        "decision",
+                        "affects",
+                        "graded",
+                        "revalidate",
+                    )
                 }
                 for one in review["changes"]
                 if one["piece"] == piece
@@ -566,7 +708,9 @@ def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str |
             draft.save(update_fields=["documents", "updated_at"])
     if not rejected:
         return
-    decisions = {one["id"]: one["decision"] for one in review["changes"] if one["decision"]}
+    decisions = {
+        one["id"]: one["decision"] for one in review["changes"] if one["decision"]
+    }
     for piece in sorted(rejected):
         draft = open_draft(locked, piece, lock=True)
         default = draft.parent
@@ -579,7 +723,9 @@ def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str |
                 decisions,
             )
         except ReviewRefused as refused:
-            raise _error(refused.code, str(refused), 409, changes=refused.changes) from refused
+            raise _error(
+                refused.code, str(refused), 409, changes=refused.changes
+            ) from refused
         other = "suite" if piece == "environment" else "environment"
         other_draft = open_draft(locked, other)
         other_version = other_draft or getattr(locked, f"{other}_version")
@@ -593,7 +739,9 @@ def apply_review(locked: Any, pieces: set[str], *, expected_review_digest: str |
         archives.put_archive(*body)
         values = _content(locked, piece, prepared, origin=draft.origin, default=default)
         values["documents"]["review"] = (draft.documents or {}).get("review")
-        values["documents"]["review_changes"] = (draft.documents or {}).get("review_changes")
+        values["documents"]["review_changes"] = (draft.documents or {}).get(
+            "review_changes"
+        )
         for name, value in values.items():
             setattr(draft, name, value)
         draft.save()
@@ -604,19 +752,30 @@ SUMMARY_ITEMS = 5
 
 def review_summary(review: dict[str, Any]) -> str:
     """A saved version's summary, from what the person accepted: the first few changes and how many more."""
-    accepted = [one["summary"] for one in (review or {}).get("changes") or [] if one.get("decision") == "accepted"]
+    accepted = [
+        one["summary"]
+        for one in (review or {}).get("changes") or []
+        if one.get("decision") == "accepted"
+    ]
     head = "; ".join(accepted[:SUMMARY_ITEMS])
     more = len(accepted) - SUMMARY_ITEMS
     return head + (f"; and {more} more" if more > 0 else "")
 
 
-def carry_untouched_proofs(parent: Any, version: Any, suite_version: Any, reviewed: list[dict[str, Any]]) -> None:
+def carry_untouched_proofs(
+    parent: Any, version: Any, suite_version: Any, reviewed: list[dict[str, Any]]
+) -> None:
     """Scenarios no accepted change touched keep the proofs they had against the environment version this one came
-    from. A change that may touch every scenario (a rule, a contract field, a world file) carries nothing."""
+    from. A change that may touch every scenario (a rule, a contract field, a world file) carries nothing.
+    """
     from simulate.models import HarnessSuiteValidation
 
     accepted = [one for one in reviewed if one.get("decision") == "accepted"]
-    if parent is None or suite_version is None or any(one.get("affects") == ALL for one in accepted):
+    if (
+        parent is None
+        or suite_version is None
+        or any(one.get("affects") == ALL for one in accepted)
+    ):
         return
     earlier = HarnessSuiteValidation.no_workspace_objects.filter(
         suite_version=suite_version, environment_version=parent
@@ -627,7 +786,11 @@ def carry_untouched_proofs(parent: Any, version: Any, suite_version: Any, review
     kept = {key: proof for key, proof in earlier.proofs.items() if key not in touched}
     if not kept:
         return
-    holding = [key for key, proof in kept.items() if isinstance(proof, dict) and proof.get("holds") is True]
+    holding = [
+        key
+        for key, proof in kept.items()
+        if isinstance(proof, dict) and proof.get("holds") is True
+    ]
     status = (
         HarnessSuiteValidation.Status.PASSED
         if len(kept) == len(earlier.proofs) and len(holding) == len(kept)
@@ -636,7 +799,12 @@ def carry_untouched_proofs(parent: Any, version: Any, suite_version: Any, review
     HarnessSuiteValidation.no_workspace_objects.get_or_create(
         suite_version=suite_version,
         environment_version=version,
-        defaults={"status": status, "proofs": kept, "job": earlier.job, "proved_at": earlier.proved_at},
+        defaults={
+            "status": status,
+            "proofs": kept,
+            "job": earlier.job,
+            "proved_at": earlier.proved_at,
+        },
     )
 
 
@@ -651,9 +819,14 @@ def name_saved(activated: dict[str, Any], *, name: str) -> None:
             version.name, fields = name[:80], [*fields, "name"]
         reviewed = (version.documents or {}).get("review_changes")
         if reviewed:
-            version.summary, fields = review_summary({"changes": reviewed})[:1024], [*fields, "summary"]
+            version.summary, fields = review_summary({"changes": reviewed})[:1024], [
+                *fields,
+                "summary",
+            ]
             if version.__class__.__name__ == "HarnessEnvironmentVersion":
-                carry_untouched_proofs(version.parent, version, version.job.suite_version, reviewed)
+                carry_untouched_proofs(
+                    version.parent, version, version.job.suite_version, reviewed
+                )
         if fields:
             version.save(update_fields=[*fields, "updated_at"])
 
@@ -675,17 +848,23 @@ def record_sources(
 ) -> dict[str, list[dict[str, Any]]]:
     """Where each change came from: every item this write moved gets one source (who, through what, at which draft
     revision), appended to the sources it already had. A retried write at the same revision adds nothing. `used`
-    is what the writer read for every item it moved, such as the file and row an import took it from."""
+    is what the writer read for every item it moved, such as the file and row an import took it from.
+    """
     out = {key: list(value) for key, value in (provenance or {}).items()}
     old, new = item_index(before), item_index(after)
     moved = sorted(
         item_id
         for item_id in set(old) | set(new)
-        if (old[item_id].digest if item_id in old else None) != (new[item_id].digest if item_id in new else None)
+        if (old[item_id].digest if item_id in old else None)
+        != (new[item_id].digest if item_id in new else None)
     )
     source = {
         "origin": origin,
-        "agent": {"kind": "user", "user_id": str(getattr(user, "id", "") or "")} if user is not None else {"kind": "harness"},
+        "agent": (
+            {"kind": "user", "user_id": str(getattr(user, "id", "") or "")}
+            if user is not None
+            else {"kind": "harness"}
+        ),
         "at": at,
         "draft_revision": revision,
         **({"used": list(used)} if used else {}),
@@ -697,13 +876,21 @@ def record_sources(
         chat = (cited or {}).get(item_id)
         if chat:
             # A chat change belongs to the person whose message it answered, made through the harness.
-            listed.append({
-                **source,
-                "agent": {"kind": "harness", "on_behalf_of": source["agent"].get("user_id", "")},
-                "tool": chat.get("tool", ""),
-                "used": [{"kind": "message", "id": chat.get("message_id", "")}, *(chat.get("used") or [])],
-                **({"note": chat["note"]} if chat.get("note") else {}),
-            })
+            listed.append(
+                {
+                    **source,
+                    "agent": {
+                        "kind": "harness",
+                        "on_behalf_of": source["agent"].get("user_id", ""),
+                    },
+                    "tool": chat.get("tool", ""),
+                    "used": [
+                        {"kind": "message", "id": chat.get("message_id", "")},
+                        *(chat.get("used") or []),
+                    ],
+                    **({"note": chat["note"]} if chat.get("note") else {}),
+                }
+            )
         else:
             listed.append(source)
         del listed[:-SOURCES_PER_CHANGE]
@@ -717,16 +904,29 @@ def _used(value: Any) -> list[dict[str, Any]]:
     """The files and rows a chat call read, as the provenance line names them; anything else is dropped."""
     out = []
     for one in value if isinstance(value, list) else []:
-        if isinstance(one, dict) and one.get("kind") == "source" and one.get("source_id"):
-            out.append({name: str(one[name]) for name in ("kind", "source_id", "version", "digest", "locator") if one.get(name)})
+        if (
+            isinstance(one, dict)
+            and one.get("kind") == "source"
+            and one.get("source_id")
+        ):
+            out.append(
+                {
+                    name: str(one[name])
+                    for name in ("kind", "source_id", "version", "digest", "locator")
+                    if one.get(name)
+                }
+            )
     return out
 
 
 def chat_citations(published: Mapping[str, bytes]) -> dict[str, dict[str, Any]]:
     """Per item, the chat tool call that last moved it, the person's message that call answered, what the call read
-    (a file and its row) and its note, from the builder chat's provenance file in a published tree."""
+    (a file and its row) and its note, from the builder chat's provenance file in a published tree.
+    """
     out: dict[str, dict[str, Any]] = {}
-    for line in (published.get(PROVENANCE_FILE) or b"").decode("utf-8", "replace").splitlines():
+    for line in (
+        (published.get(PROVENANCE_FILE) or b"").decode("utf-8", "replace").splitlines()
+    ):
         try:
             entry = json.loads(line)
         except ValueError:

@@ -24,7 +24,6 @@ from simulate.serializers.harness_environment import (
     HarnessDraftSaveResponseSerializer,
     HarnessDraftSaveSerializer,
     HarnessDraftsSerializer,
-    HarnessReviewDecisionsSerializer,
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
     HarnessEnvironmentDetailSerializer,
@@ -39,6 +38,7 @@ from simulate.serializers.harness_environment import (
     HarnessNudgeAnswerSerializer,
     HarnessNudgeListQuerySerializer,
     HarnessNudgeSerializer,
+    HarnessReviewDecisionsSerializer,
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
     HarnessSuiteMemberSerializer,
@@ -187,9 +187,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     @action(
         detail=True,
         methods=["get"],
-        url_path=(
-            r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"
-        ),
+        url_path=(r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"),
     )
     def version_diff(self, request, pk=None, piece=None, version_id=None):
         """What one version changed, against its parent or the ``against`` version."""
@@ -476,7 +474,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         body = request.validated_data
         return Response(
             record_decisions(
-                job, body["decisions"], expected_revisions=body["expected_revisions"], user=request.user
+                job,
+                body["decisions"],
+                expected_revisions=body["expected_revisions"],
+                user=request.user,
             )
         )
 
