@@ -81,6 +81,9 @@ def sync_integration_connection(connection_id: str):
         ConnectionStatus.ACTIVE,
         ConnectionStatus.SYNCING,
         ConnectionStatus.BACKFILLING,
+        # The scheduler selects ACTIVE only; sync_now also dispatches ERROR
+        # connections so a user can retry after correcting a rejected export.
+        ConnectionStatus.ERROR,
     ):
         logger.info(
             "Connection not in syncable state",
@@ -496,8 +499,12 @@ def _sync_export_integration(connection):
 
     # Determine time window for log export.
     if not connection.last_synced_at:
-        # First sync: export logs from the last 24 hours (or backfill_from).
-        sync_from = connection.backfill_from or (now - timedelta(hours=24))
+        # Persist the first window before sending. Recomputing a rolling 24-hour
+        # window on retry would age unacknowledged rows out of the backfill.
+        if not connection.backfill_from:
+            connection.backfill_from = now - timedelta(hours=24)
+            connection.save(update_fields=["backfill_from", "updated_at"])
+        sync_from = connection.backfill_from
     else:
         # Incremental: overlap by 1 minute for safety (target deduplicates).
         sync_from = connection.last_synced_at - timedelta(minutes=1)
