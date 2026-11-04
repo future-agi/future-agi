@@ -90,35 +90,58 @@ export default function DraftBar({
 
   return (
     <>
+      {/* The dashboard stays 1200 wide and scrolls sideways below that, so there
+          the bar takes its own row at the left to keep Save on screen. Above it,
+          the line gives way before Save does; the drawer's footer repeats it. */}
       <Stack
         direction="row"
         alignItems="center"
         spacing={0.75}
         data-testid="draft-bar"
-        sx={{ ml: "auto" }}
+        sx={{
+          flex: { xs: "1 1 100%", lg: "1 1 0" },
+          minWidth: { xs: 0, lg: 260 },
+          justifyContent: { xs: "flex-start", lg: "flex-end" },
+        }}
       >
         <Button
           size="small"
           color="inherit"
           onClick={onReview}
           endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
-          sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
+          sx={{ color: "text.secondary", whiteSpace: "nowrap", minWidth: 0 }}
         >
-          {kept.length ? (
-            <>
-              <Box component="span" sx={{ fontWeight: "fontWeightRegular" }}>
-                {`${REVIEW_COPY.unsavedEdits(kept.length)} · `}
-              </Box>
-              <Box
-                component="span"
-                sx={{ ml: 0.5, fontWeight: "fontWeightSemiBold" }}
-              >
-                {REVIEW_COPY.saveLine(line)}
-              </Box>
-            </>
-          ) : (
-            REVIEW_COPY.couldntApply(failedCount)
-          )}
+          <Box
+            component="span"
+            sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
+          >
+            {kept.length ? (
+              <>
+                <Box component="span" sx={{ fontWeight: "fontWeightRegular" }}>
+                  {REVIEW_COPY.unsavedEdits(kept.length)}
+                </Box>
+                <Box
+                  component="span"
+                  sx={{ display: { xs: "none", lg: "inline" } }}
+                >
+                  <Box
+                    component="span"
+                    sx={{ fontWeight: "fontWeightRegular" }}
+                  >
+                    {" · "}
+                  </Box>
+                  <Box
+                    component="span"
+                    sx={{ ml: 0.5, fontWeight: "fontWeightSemiBold" }}
+                  >
+                    {REVIEW_COPY.saveLine(line)}
+                  </Box>
+                </Box>
+              </>
+            ) : (
+              REVIEW_COPY.couldntApply(failedCount)
+            )}
+          </Box>
         </Button>
         {kept.length > 0 && (
           <Button
