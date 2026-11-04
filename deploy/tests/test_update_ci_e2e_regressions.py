@@ -1,8 +1,10 @@
 """CI E2E regressions: real filesystem/CLI guards, daemon-free Docker setup checks."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import tempfile
@@ -15,9 +17,237 @@ if str(ROOT) not in sys.path:
 from deploy.tests import test_update_apply as applies  # noqa: E402
 from deploy.tests import test_update_install_cli as installs  # noqa: E402
 from deploy.tests import test_update_runner as runners  # noqa: E402
+from deploy.tests.update_e2e import harness as e2e  # noqa: E402
 from deploy.update.receipt import StateDir, StateError  # noqa: E402
 from deploy.update.apply import Updater  # noqa: E402
 from deploy.update.orchestrator import GuardRefused, ScheduledGuard  # noqa: E402
+
+
+# This file is selected by update-ci's test_update_*.py discovery on Python
+# 3.9 and 3.12. These regressions need neither the E2E opt-in nor a Docker daemon.
+class HarnessPortFactsTests(unittest.TestCase):
+    def assert_allocation_refused(self):
+        taken = {23456}
+        with mock.patch.object(e2e.socket, 'socket') as probe, \
+                mock.patch.object(e2e.socket, 'create_connection') as connect:
+            with self.assertRaisesRegex(RuntimeError, 'cannot determine local ephemeral TCP port ranges'):
+                e2e.free_port(taken)
+        probe.assert_not_called()
+        connect.assert_not_called()
+        self.assertEqual(taken, {23456})
+
+    def test_linux_reads_actual_range_including_custom_endpoints(self):
+        for raw, expected in [('32768\t60999\n', [(32768, 60999)]),
+                              ('15000 25000\n', [(15000, 25000)]), ('20000 20000', [(20000, 20000)])]:
+            with self.subTest(raw=raw), mock.patch.object(e2e.sys, 'platform', 'linux'), \
+                    mock.patch.object(e2e.Path, 'read_text', autospec=True, return_value=raw) as read:
+                self.assertEqual(e2e._ephemeral_port_ranges(), expected)
+                read.assert_called_once_with(Path('/proc/sys/net/ipv4/ip_local_port_range'), encoding='ascii')
+
+    def test_darwin_reads_both_ranges_and_normalizes_descending_endpoints(self):
+        for raw, expected in [('49152\n65535\n49152\n65535\n', [(49152, 65535), (49152, 65535)]),
+                              ('25000\n21000\n39000\n35000\n', [(21000, 25000), (35000, 39000)]),
+                              ('20000\n20000\n30000\n30000\n', [(20000, 20000), (30000, 30000)])]:
+            with self.subTest(raw=raw), mock.patch.object(e2e.sys, 'platform', 'darwin'), \
+                    mock.patch.object(e2e, 'run', return_value=e2e.Result([], 0, raw, '')) as run:
+                self.assertEqual(e2e._ephemeral_port_ranges(), expected)
+                run.assert_called_once_with(['/usr/sbin/sysctl', '-n', 'net.inet.ip.portrange.first',
+                    'net.inet.ip.portrange.last', 'net.inet.ip.portrange.hifirst',
+                    'net.inet.ip.portrange.hilast'], check=False, timeout=5)
+
+    def test_linux_missing_or_invalid_facts_fail_before_any_socket_probe(self):
+        bad = ['', '32768', '32768 60999 65535', 'first=32768 60999', '-1 60999',
+               '0 60999', '32768 65536', '60999 32768', '+20000 30000', '２０000 30000']
+        for raw in bad:
+            with self.subTest(raw=raw), mock.patch.object(e2e.sys, 'platform', 'linux'), \
+                    mock.patch.object(e2e.Path, 'read_text', return_value=raw):
+                self.assert_allocation_refused()
+        for error in (FileNotFoundError('missing procfs'), PermissionError('unreadable procfs'),
+                      UnicodeDecodeError('ascii', b'\xff', 0, 1, 'invalid byte')):
+            with self.subTest(error=error), mock.patch.object(e2e.sys, 'platform', 'linux'), \
+                    mock.patch.object(e2e.Path, 'read_text', side_effect=error):
+                self.assert_allocation_refused()
+
+    def test_darwin_missing_or_invalid_facts_do_not_fall_back_to_defaults(self):
+        for raw in ('', '49152\n65535\n', '49152 65535 49152 65535 9',
+                    'first: 49152 65535 49152 65535', '49152 65535 0 65535',
+                    '49152 65535 49152 65536', '49152 65535 nope 65535'):
+            with self.subTest(raw=raw), mock.patch.object(e2e.sys, 'platform', 'darwin'), \
+                    mock.patch.object(e2e, 'run', return_value=e2e.Result([], 0, raw, '')):
+                self.assert_allocation_refused()
+        # run() reports a timeout as -999; even valid-looking stdout from a
+        # failed/partial query must not authorize allocating any port.
+        for code in (1, -999):
+            with self.subTest(code=code), mock.patch.object(e2e.sys, 'platform', 'darwin'), \
+                    mock.patch.object(e2e, 'run', return_value=e2e.Result([], code,
+                        '49152 65535 49152 65535', 'query failed')):
+                self.assert_allocation_refused()
+        with mock.patch.object(e2e.sys, 'platform', 'darwin'), \
+                mock.patch.object(e2e, 'run', side_effect=FileNotFoundError('missing sysctl')):
+            self.assert_allocation_refused()
+
+    def test_unsupported_platform_fails_explicitly_without_guessing(self):
+        with mock.patch.object(e2e.sys, 'platform', 'unsupported'), \
+                mock.patch.object(e2e.Path, 'read_text') as read, mock.patch.object(e2e, 'run') as run:
+            self.assert_allocation_refused()
+        read.assert_not_called()
+        run.assert_not_called()
+
+
+class HarnessPortPolicyTests(unittest.TestCase):
+    def patch(self, obj, name, **kwargs):
+        patcher = mock.patch.object(obj, name, **kwargs)
+        value = patcher.start()
+        self.addCleanup(patcher.stop)
+        return value
+
+    def setUp(self):
+        self.facts = self.patch(e2e, '_ephemeral_port_ranges', return_value=[(32768, 60999)])
+        self.socket = self.patch(e2e.socket, 'socket')
+        self.probe = self.socket.return_value.__enter__.return_value
+        self.connect = self.patch(e2e.socket, 'create_connection', side_effect=ConnectionRefusedError)
+        self.sample = self.patch(e2e.random, 'sample', side_effect=lambda ports, count: ports[:count])
+
+    def test_default_linux_policy_excludes_the_failed_ci_port(self):
+        taken = set()
+        self.assertEqual(e2e.free_port(taken), 20000)
+        candidates, count = self.sample.call_args.args
+        self.assertEqual(candidates, list(range(20000, 32768)))
+        self.assertNotIn(39192, candidates)
+        self.assertEqual(count, 500)
+        self.assertEqual(taken, {20000})
+
+    def test_custom_ranges_exclude_both_endpoints_and_keep_all_safe_fragments(self):
+        cases = [([(20000, 20000)], [20001, 20002, 20003, 20004, 20005]),
+                 ([(20005, 20005)], [20000, 20001, 20002, 20003, 20004]),
+                 ([(20002, 20003)], [20000, 20001, 20004, 20005]),
+                 ([(19999, 20001), (20004, 50000)], [20002, 20003]),
+                 ([(1, 19999), (40000, 65535)], list(range(20000, 20006)))]
+        with mock.patch.object(e2e, '_PORT_RANGE', range(20000, 20006)):
+            for ranges, expected in cases:
+                with self.subTest(ranges=ranges):
+                    self.facts.return_value = ranges
+                    self.assertEqual(e2e.free_port(set()), expected[0])
+                    self.assertEqual(self.sample.call_args, mock.call(expected, len(expected)))
+
+    def test_excluded_or_taken_pool_is_exhausted_without_probing(self):
+        for ranges, taken in [([(20000, 20002)], set()), ([(32768, 60999)], {20000, 20001, 20002}),
+                              ([(20001, 65535)], {20000})]:
+            with self.subTest(ranges=ranges, taken=taken), \
+                    mock.patch.object(e2e, '_PORT_RANGE', range(20000, 20003)):
+                self.facts.return_value = ranges
+                before = set(taken)
+                with self.assertRaisesRegex(RuntimeError, 'no eligible TCP port'):
+                    e2e.free_port(taken)
+                self.assertEqual(taken, before)
+        self.sample.assert_not_called()
+        self.socket.assert_not_called()
+        self.connect.assert_not_called()
+
+    def test_taken_ports_do_not_spend_the_probe_budget(self):
+        taken = set(range(20000, 20600))
+        with mock.patch.object(e2e, '_PORT_RANGE', range(20000, 20601)):
+            self.assertEqual(e2e.free_port(taken), 20600)
+        self.sample.assert_called_once_with([20600], 1)
+        self.assertEqual(taken, set(range(20000, 20601)))
+
+    def test_busy_small_pool_is_searched_once_and_does_not_claim_any_port(self):
+        self.probe.bind.side_effect = OSError('busy')
+        taken = {20003}
+        with mock.patch.object(e2e, '_PORT_RANGE', range(20000, 20004)), \
+                self.assertRaisesRegex(RuntimeError, 'after 3 distinct probes'):
+            e2e.free_port(taken)
+        self.assertEqual(self.probe.bind.call_args_list,
+                         [mock.call(('0.0.0.0', port)) for port in range(20000, 20003)])
+        self.assertEqual(self.socket.return_value.__exit__.call_count, 3)
+        self.connect.assert_not_called()
+        self.assertEqual(taken, {20003})
+
+    def test_probe_budget_still_bounds_large_busy_pools_without_replacement(self):
+        self.sample.side_effect = e2e.random.Random(0).sample
+        self.probe.bind.side_effect = OSError('busy')
+        taken = {20000}
+        with mock.patch.object(e2e, '_PORT_RANGE', range(20000, 20601)), \
+                self.assertRaisesRegex(RuntimeError, 'after 500 distinct probes'):
+            e2e.free_port(taken)
+        attempted = [call.args[0][1] for call in self.probe.bind.call_args_list]
+        self.assertEqual(len(attempted), 500)
+        self.assertEqual(len(set(attempted)), 500)
+        self.assertNotIn(20000, attempted)
+        self.assertEqual(taken, {20000})
+        self.connect.assert_not_called()
+
+    def test_parallel_callers_share_locked_taken_set_until_exhaustion(self):
+        def refused(*args, **kwargs):
+            self.assertTrue(e2e._PORT_LOCK.locked())
+            raise ConnectionRefusedError
+        self.connect.side_effect = refused
+        taken = set()
+        with mock.patch.object(e2e, '_PORT_RANGE', range(20000, 20032)):
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                ports = list(pool.map(lambda _: e2e.free_port(taken), range(32)))
+            with self.assertRaisesRegex(RuntimeError, 'no eligible TCP port'):
+                e2e.free_port(taken)
+        self.assertEqual(len(set(ports)), 32)
+        self.assertEqual(taken, set(range(20000, 20032)))
+
+    def test_wildcard_loopback_and_answering_forwarder_guards_remain_independent(self):
+        for obstruction in ('0.0.0.0', '127.0.0.1', 'forwarder'):
+            with self.subTest(obstruction=obstruction), \
+                    mock.patch.object(e2e, '_PORT_RANGE', range(20000, 20002)):
+                self.socket.reset_mock()
+                self.connect.reset_mock()
+                forwarder = mock.Mock()
+                def bind(address):
+                    if address == (obstruction, 20000):
+                        raise OSError('busy')
+                def connect(address, timeout):
+                    self.assertEqual(timeout, 0.2)
+                    if obstruction == 'forwarder' and address[1] == 20000:
+                        return forwarder
+                    raise ConnectionRefusedError
+                self.probe.bind.side_effect = bind
+                self.connect.side_effect = connect
+                taken = set()
+                self.assertEqual(e2e.free_port(taken), 20001)
+                self.assertEqual(taken, {20001})
+                expected = [mock.call(('0.0.0.0', 20000))]
+                if obstruction != '0.0.0.0':
+                    expected.append(mock.call(('127.0.0.1', 20000)))
+                expected += [mock.call(('0.0.0.0', 20001)), mock.call(('127.0.0.1', 20001))]
+                self.assertEqual(self.probe.bind.call_args_list, expected)
+                self.assertEqual(self.socket.return_value.__exit__.call_count, len(expected))
+                self.probe.setsockopt.assert_not_called()
+                connections = [mock.call(('127.0.0.1', 20001), timeout=0.2)]
+                if obstruction == 'forwarder':
+                    connections.insert(0, mock.call(('127.0.0.1', 20000), timeout=0.2))
+                    forwarder.close.assert_called_once_with()
+                self.assertEqual(self.connect.call_args_list, connections)
+
+
+class HarnessPortBindingTests(unittest.TestCase):
+    def test_real_bound_ports_are_rejected_and_probes_release_for_static_rebinding(self):
+        # Real sockets and real platform facts, no daemon/listening service.
+        # Use the allocator to seed a non-ephemeral port rather than hard-code
+        # a port or use bind(0), which would choose inside the ephemeral range.
+        for host in ('0.0.0.0', '127.0.0.1'):
+            with self.subTest(host=host):
+                port = e2e.free_port(set())
+                taken = set()
+                with mock.patch.object(e2e, '_PORT_RANGE', (port,)):
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as owner:
+                        owner.bind((host, port))
+                        with self.assertRaisesRegex(RuntimeError, 'no free TCP port'):
+                            e2e.free_port(taken)
+                        self.assertEqual(owner.getsockname(), (host, port))
+                        self.assertEqual(taken, set())
+                    self.assertEqual(e2e.free_port(taken), port)
+                    self.assertEqual(taken, {port})
+                    # The returned integer is suitable for a retained static
+                    # .env port: no probe socket or reuse option is required.
+                    for target in ('0.0.0.0', '127.0.0.1'):
+                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as successor:
+                            successor.bind((target, port))
 
 
 class FaultFixtureTests(unittest.TestCase):

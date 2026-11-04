@@ -504,18 +504,69 @@ def update_source() -> Path:
 
 
 _PORT_LOCK = threading.Lock()
+_PORT_RANGE = range(20000, 40000)
+
+
+def _ephemeral_port_ranges() -> List[tuple]:
+    """Read the local kernel's automatic port ranges, not assumed OS defaults.
+
+    Darwin's default and high ranges are independently configurable; its low
+    range is kernel-clamped below 1024, outside _PORT_RANGE. Unknown/malformed
+    facts fail closed rather than silently reintroducing ephemeral candidates.
+    """
+    try:
+        if sys.platform.startswith("linux"):
+            raw = Path("/proc/sys/net/ipv4/ip_local_port_range").read_text(encoding="ascii")
+            count = 2
+        elif sys.platform == "darwin":
+            result = run(["/usr/sbin/sysctl", "-n", "net.inet.ip.portrange.first",
+                          "net.inet.ip.portrange.last", "net.inet.ip.portrange.hifirst",
+                          "net.inet.ip.portrange.hilast"], check=False, timeout=5)
+            if result.code != 0:
+                raise ValueError(f"port-range sysctl exited {result.code}: {result.stderr.strip()}")
+            raw, count = result.stdout, 4
+        else:
+            raise ValueError("unsupported platform")
+        fields = raw.split()
+        if len(fields) != count or any(not re.fullmatch(r"[0-9]{1,5}", value) for value in fields):
+            raise ValueError(f"expected {count} decimal port-range endpoints, got {raw!r}")
+        ports = list(map(int, fields))
+        if any(not 1 <= port <= 65535 for port in ports):
+            raise ValueError(f"port-range endpoints out of bounds: {raw!r}")
+        ranges = list(zip(ports[::2], ports[1::2]))
+        if sys.platform == "darwin":  # XNU also permits descending allocation ranges.
+            ranges = [(min(first, last), max(first, last)) for first, last in ranges]
+        elif any(first > last for first, last in ranges):
+            raise ValueError(f"reversed port-range endpoints: {raw!r}")
+        return ranges
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"cannot determine local ephemeral TCP port ranges on {sys.platform}: {exc}") from exc
 
 
 def free_port(taken: set) -> int:
+    """Choose a static fixture port, reserved only in the caller's taken set.
+
+    Keeping it outside the local ephemeral ranges prevents ordinary outgoing
+    connections (including our probes/pulls) from taking it before Docker does.
+    This is NOT an OS reservation: probes must close before Docker can bind,
+    so explicit binders, other processes/suites, a separate Docker host/VM, or
+    later kernel range changes can still race us. Keep the bind/connect guards.
+    """
     with _PORT_LOCK:
         return _free_port(taken)
 
 
 def _free_port(taken: set) -> int:
-    for _ in range(500):
-        port = random.randint(20000, 39999)
-        if port in taken:
-            continue
+    ephemeral = _ephemeral_port_ranges()
+    candidates = [port for port in _PORT_RANGE if port not in taken
+                  and not any(first <= port <= last for first, last in ephemeral)]
+    if not candidates:
+        raise RuntimeError(f"no eligible TCP port outside local ephemeral ranges {ephemeral}; "
+                           "fixture range excluded or already taken")
+    # Without replacement: neither exclusions nor repeated random choices spend
+    # the existing 500-probe budget. Small candidate pools are searched fully.
+    probes = random.sample(candidates, min(500, len(candidates)))
+    for port in probes:
         busy = False
         for host in ("0.0.0.0", "127.0.0.1"):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -533,7 +584,8 @@ def _free_port(taken: set) -> int:
             pass
         taken.add(port)
         return port
-    raise RuntimeError("no free TCP port found")
+    raise RuntimeError(f"no free TCP port found after {len(probes)} distinct probes "
+                       f"outside local ephemeral ranges {ephemeral}")
 
 
 def http_ok(url: str, timeout: float = 3.0) -> bool:
