@@ -9,6 +9,10 @@ export const convertToISO = (dateArray) => {
 export const normalizeTimestamp = (timestamp) => {
   if (!timestamp) return timestamp;
 
-  // Remove common timezone patterns: +00:00, -05:00, Z, etc.
-  return timestamp.replace(/([+-]\d{2}:\d{2}|Z)$/, "");
+  // Keep the instant intact. The API marks UTC with an explicit offset
+  // (+00:00, +05:30, Z); a bare timestamp is UTC as well. Stripping that
+  // marker made the browser read the point as local time, so every chart
+  // shifted by the viewer's offset from UTC.
+  if (typeof timestamp !== "string") return timestamp;
+  return /([+-]\d{2}:\d{2}|Z)$/.test(timestamp) ? timestamp : `${timestamp}Z`;
 };
