@@ -1,0 +1,134 @@
+name: Validation 3289 canonical codegen
+
+# Validation-only branch. Never copy this workflow into the product PR.
+# Push starts exactly one remote run; no production deploy or broader secrets.
+on:
+  push:
+    branches: [validation3289codegen1104]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validation3289-codegen1104
+  cancel-in-progress: false
+
+jobs:
+  canonical-codegen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TESTING: "false"
+      DJANGO_SETTINGS_MODULE: tfc.settings.openapi
+      UV_FROZEN: "true"
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - name: Checkout exact scratch merge
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require existing EE read token
+        env:
+          EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
+        run: |
+          if [ -z "${EE_REPO_READ_TOKEN}" ]; then
+            echo "::error::The existing EE_REPO_READ_TOKEN is required for canonical contract generation."
+            exit 1
+          fi
+
+      - name: Checkout exact EE revision
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/ee
+          ref: a4fe9e015efe7003e5129458aa8a6dd6165bfaca
+          path: futureagi/ee/cloud
+          token: ${{ secrets.EE_REPO_READ_TOKEN }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: yarn
+          cache-dependency-path: |
+            frontend/yarn.lock
+            e2e/yarn.lock
+
+      - name: Record pinned source and EE manifest
+        run: python3 -I scripts/validation3289-codegen.py start
+
+      - name: Install frozen backend dependencies
+        working-directory: futureagi
+        run: uv sync --frozen --all-extras
+
+      - name: Bootstrap MCP registry from valid merged Swagger
+        working-directory: futureagi
+        run: uv run python ../scripts/generate-mcp-tools.py
+
+      - name: Generate authoritative Swagger
+        run: |
+          if ! ./scripts/generate-openapi-schema.sh > "$RUNNER_TEMP/validation3289-openapi.log" 2>&1; then
+            echo "::error::Canonical OpenAPI generation failed. Private-source context is intentionally not printed or uploaded."
+            exit 1
+          fi
+
+      - name: Regenerate canonical MCP registry after Swagger
+        working-directory: futureagi
+        run: |
+          uv run python ../scripts/generate-mcp-tools.py
+          uv run python ../scripts/generate-mcp-tools.py --check
+
+      - name: Install frozen frontend dependencies
+        working-directory: frontend
+        run: yarn install --frozen-lockfile
+
+      - name: Generate and check frontend contracts
+        working-directory: frontend
+        run: |
+          yarn contracts:generate
+          yarn contracts:check
+
+      - name: Install frozen E2E harness dependencies
+        working-directory: e2e
+        run: yarn install --frozen-lockfile
+
+      - name: Generate and check E2E catalogue
+        working-directory: e2e
+        run: |
+          yarn typecheck
+          yarn catalog
+          yarn catalog:check
+
+      - name: Assert API preservation and private-field exclusion
+        run: python3 -I scripts/validation3289-codegen.py finish
+
+      - name: Upload exact generated outputs and receipts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: canonical-generated-3289-dev94
+          path: validation3289-output/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload safe diagnostic receipts on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: canonical-codegen-safe-diagnostics
+          path: |
+            validation3289-output/source-manifest.json
+            validation3289-output/surface-checks.json
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1335,6 +1335,13 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "SessionListQueryBuilder._candidate_session_ctes": _SESSION_OR_USER,
         "SessionListQueryBuilder._seed_witness_identity_gate": _SESSION_OR_USER,
         "SessionListQueryBuilder._session_from_where": _SESSION_OR_USER,
+        "SessionListQueryBuilder._session_member_ctes": filed(
+            PROJECT_SET,
+            why=(
+                "latest live member replay and child-inclusive usage for sessions "
+                "scoped by the list view's project ids; shared by filtering and hydration"
+            ),
+        ),
         "SessionListQueryBuilder.build_filter_anchor_probe": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_filter_seed_page": _SESSION_OR_USER,
         "SessionListQueryBuilder.build_page_hydration_query": _SESSION_OR_USER,
@@ -1360,6 +1367,12 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "SpanListQueryBuilder.build_filter_anchor_probe": _CANDIDATE_PROBE,
         "SpanListQueryBuilder.build_filter_seed_page": _SEED_PAGE,
         "SpanListQueryBuilder.build_id_query": _LEGACY_PAGE_STATEMENT,
+    },
+    "tracer.services.clickhouse.query_builders.graph_monetary_usage": {
+        "graph_monetary_rows_sql": filed(
+            PROJECT_SET,
+            why="reduces only the latest-live source fenced by each graph caller's authorized project; parent evidence is grouped by project and trace",
+        ),
     },
     "tracer.services.clickhouse.query_builders.time_series": {
         "TimeSeriesQueryBuilder._build_agg_query": _PROJECT_CHART_STATEMENT,

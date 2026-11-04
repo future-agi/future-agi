@@ -982,141 +982,27 @@
 ### EVAL-E2E-006 — a task run opens its trace in a drawer from the Usage tab
 
 **Goal:** Open the trace behind an eval task result without leaving the task Usage tab  
-**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:25`  
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:36`  
 **Tags:** —
 
 **User steps:**
 
-1. seed a trace and run an eval task over it through the mock judge
-2. open the task Usage tab and click its run
-3. read the run panel Trace ID and Span ID
-4. click Open trace and read the drawer
-5. press Esc to close the drawer, then Esc again to close the run panel
+1. seed the same native two-span trace and run the same eval task via the managed mock judge
+2. verify the task and exact PG child/root outcomes
+3. wait for the completed child's exact CDC mirror row, then verify its run/task/span identity and unique verdict
+4. open Usage and click the exact successful run
+5. read the seeded Trace ID and Span ID in the run panel
+6. open the trace drawer on the evaluated child and its Evals tab
+7. press Esc to close only the drawer, then Esc to close the run panel
 
 **Backend state verified:**
 
 - the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored
+- the completed evaluation's exact run, task, span and verdict reach the ClickHouse mirror before drawer navigation
 - the Usage runs response carries only the completed run, with the seeded trace and span IDs
 - the run panel shows the seeded trace and span IDs
 - the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open
 - the first Esc closes only the drawer and the second closes the run panel
-
-### EVAL-E2E-007 — choosing a Jev model without a TypeSafe key opens the keys drawer on TypeSafe
-
-**Goal:** Choose a Jev evaluator model before saving a TypeSafe key and land in the keys drawer on TypeSafe  
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:269`  
-**Tags:** —
-
-**User steps:**
-
-1. open the evaluator create page on the LLM-As-A-Judge tab and open the model picker
-2. choose Jev latest
-3. type into the TypeSafe API key field without adding it
-
-**Backend state verified:**
-
-- the provider-status API reports no TypeSafe key before and after, and the drawer sent no API-key write
-
-**Browser observations:**
-
-- both Jev rows are enabled and prompt for a TypeSafe API key
-- choosing Jev latest closes the picker and opens the keys drawer with TypeSafe as its first provider
-- the drawer takes input (Add enables) and the evaluator model stays unselected
-
-### EVAL-E2E-008 — a Jev pass/fail evaluator keeps its model, output type and criteria after reload
-
-**Goal:** Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)  
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:340`  
-**Tags:** —
-
-**User steps:**
-
-1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
-2. author an LLM-As-A-Judge evaluator and choose Jev latest
-3. keep Pass/fail and describe a pass and a fail
-4. save the evaluation
-5. reload its detail page
-
-**Backend state verified:**
-
-- PG keeps the validated noul mapping with both criteria, Pass/Fail output, org/workspace scope, model jev-latest and an identical V1 snapshot
-
-**Browser observations:**
-
-- the publish request carries jev-latest, pass_fail and both criteria
-- after reload the pill reads Jev latest, Pass/fail is selected and both criteria are filled
-
-### EVAL-E2E-009 — a Jev choices evaluator keeps its authored label order and scores after reload
-
-**Goal:** Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)  
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:395`  
-**Tags:** —
-
-**User steps:**
-
-1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
-2. author an LLM-As-A-Judge evaluator and choose Jev latest
-3. choose Choices and enter Resolved (Pass), Escalated (Neutral), No (Fail), describing Escalated
-4. save the evaluation
-5. reload its detail page
-
-**Backend state verified:**
-
-- PG choice_scores holds the three scores with jsonb keys shortest-first, while choices and the validated mapping keep Resolved, Escalated, No with the Escalated description; V1 snapshot identical
-
-**Browser observations:**
-
-- the publish request carries jev-latest, deterministic and the labels in authored order
-- after reload the rows read Resolved, Escalated, No as Pass, Neutral, Fail and the description is kept
-
-### EVAL-E2E-010 — a Jev scoring evaluator keeps its four ordered levels after reload
-
-**Goal:** Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)  
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:474`  
-**Tags:** —
-
-**User steps:**
-
-1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
-2. author an LLM-As-A-Judge evaluator and choose Jev latest
-3. choose Scoring and add four ordered levels
-4. save the evaluation
-5. reload its detail page
-
-**Backend state verified:**
-
-- PG keeps the validated score mapping with the four levels in order, no choice scores and an identical V1 snapshot
-
-**Browser observations:**
-
-- the publish request carries jev-latest, percentage and the four levels
-- after reload Scoring is selected and the four levels read back in order
-
-### EVAL-E2E-011 — Jev models are listed and saved on a Community stack without a licence
-
-**Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install  
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:171`  
-**Tags:** —
-
-**User steps:**
-
-1. open the evaluator create page on the LLM-As-A-Judge tab
-2. open the model picker and read the Jev group
-3. read each Jev row's plan tooltip label
-4. save a Turing-model evaluator through the create API, then switch it to jev-latest through the update API
-5. create a Jev evaluator through the create API
-
-**Backend state verified:**
-
-- the capabilities API allows jev_models and still denies turing_models for the actor org
-- the provider-status API lists TypeSafe with no key
-- the update to jev-latest answers 200 and the PG template row holds jev-latest in model and config with the validated noul mapping
-- create-v2 with jev-latest answers 200 and stores one row with model jev-latest
-
-**Browser observations:**
-
-- the picker lists exactly Jev 1.13 (pinned) then Jev latest, below FutureAGI Models
-- both Jev rows are enabled, prompt for a TypeSafe API key and carry an empty plan tooltip (a locked row carries "Not included in your plan")
 
 ## gateway
 
@@ -1689,7 +1575,7 @@
 ### OBS-E2E-038 — a saved view opens its preset date on fresh dates, and Custom on its saved range
 
 **Goal:** A user who reopens a saved trace view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:390`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:438`  
 **Tags:** —
 
 **User steps:**
@@ -1710,7 +1596,7 @@
 ### OBS-E2E-039 — a saved span view opens its preset date on fresh dates, and Custom on its saved range
 
 **Goal:** A user who reopens a saved span view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:444`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:492`  
 **Tags:** —
 
 **User steps:**
@@ -1731,7 +1617,7 @@
 ### OBS-E2E-040 — a saved compare view opens its compare preset date on fresh dates, and a Custom compare range as saved
 
 **Goal:** A user who reopens a saved trace view in compare mode days later sees its compare preset (Today, Yesterday, 7D…12M) as of now, while a Custom compare range stays exactly as saved  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:498`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:546`  
 **Tags:** —
 
 **User steps:**
@@ -1751,7 +1637,7 @@
 ### OBS-E2E-041 — a saved session view opens its preset date on fresh dates, and Custom on its saved range
 
 **Goal:** A user who reopens a saved session view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:589`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:637`  
 **Tags:** —
 
 **User steps:**
@@ -1772,7 +1658,7 @@
 ### OBS-E2E-042 — a saved user view opens its preset date on fresh dates, and Custom on its saved range
 
 **Goal:** A user who reopens a saved user view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:589`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:637`  
 **Tags:** —
 
 **User steps:**
@@ -1793,7 +1679,7 @@
 ### OBS-E2E-043 — a bookmarked trace list link loads its preset date fresh, and a Custom range as bookmarked
 
 **Goal:** A user who opens a trace list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`  
 **Tags:** —
 
 **User steps:**
@@ -1813,7 +1699,7 @@
 ### OBS-E2E-044 — a bookmarked span list link loads its preset date fresh, and a Custom range as bookmarked
 
 **Goal:** A user who opens a span list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`  
 **Tags:** —
 
 **User steps:**
@@ -1833,7 +1719,7 @@
 ### OBS-E2E-045 — a bookmarked session list link loads its preset date fresh, and a Custom range as bookmarked
 
 **Goal:** A user who opens a session list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`  
 **Tags:** —
 
 **User steps:**
@@ -1853,7 +1739,7 @@
 ### OBS-E2E-046 — a bookmarked user list link loads its preset date fresh, and a Custom range as bookmarked
 
 **Goal:** A user who opens a user list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`  
 **Tags:** —
 
 **User steps:**
@@ -1873,7 +1759,7 @@
 ### OBS-E2E-047 — a bookmarked compare date link loads its preset date fresh, and a Custom range as bookmarked
 
 **Goal:** A user who opens a compare date bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:684`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:732`  
 **Tags:** —
 
 **User steps:**
@@ -1892,7 +1778,7 @@
 ### OBS-E2E-048 — the workspace Users list opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
 **Goal:** A user who reopens the workspace Users list days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:801`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:849`  
 **Tags:** —
 
 **User steps:**
@@ -1901,6 +1787,7 @@
 2. for each preset and Custom, open a /dashboard/users link carrying that option with a range from ~400 days ago
 3. save one workspace Users view per preset and Custom, all storing that range
 4. open /dashboard/users and click each saved view tab in turn
+5. wheel-scroll each nonempty complete Users API page, including a target beyond the first virtualized viewport; verify the confirmed empty Users screen for Custom
 
 **Backend state verified:**
 
@@ -1908,12 +1795,13 @@
 - each preset link and view sends every user-list request with the preset window as of now, never the stored one, and the URL date param is rewritten to it
 - Today lists only the today user, Yesterday only the yesterday user, and 7D–12M exactly both, among this flow's users
 - Custom links and views send and keep their stored range verbatim and list neither user
+- the complete wheel-scrolled rendered user-ID set equals the actual API page; a rolling view reveals the initially offscreen target; an empty API page shows the confirmed empty Users screen with no visible grid or user rows
 - opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
 
 ### OBS-E2E-049 — a user's session tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
 **Goal:** A user who reopens one end user's session tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:878`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:965`  
 **Tags:** —
 
 **User steps:**
@@ -1934,7 +1822,7 @@
 ### OBS-E2E-050 — a user's trace tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
 **Goal:** A user who reopens one end user's trace tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:878`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:965`  
 **Tags:** —
 
 **User steps:**
@@ -1955,7 +1843,7 @@
 ### OBS-E2E-051 — a user's span tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored
 
 **Goal:** A user who reopens one end user's span tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:878`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:965`  
 **Tags:** —
 
 **User steps:**
@@ -1994,59 +1882,68 @@
 - C: trace/span/session API precision and UI displays retain positive subprecision costs, nested 18, equal independent calls and parent-only usage
 - D: session first-generation messages and Users UI/API identities equal the scoped storage facts
 
-### OBS-E2E-053 — without a licence, Ask a question opens the Instant eval upgrade page and its API answers 402
+### OBS-E2E-054 — native source accounting retains exact usage and known, zero and unknown costs
 
-**Goal:** Try Instant eval on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed)  
-**Spec:** `flows/observe/instant-eval-insights-gates.spec.ts:106`  
+**Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero  
+**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:8`  
 **Tags:** —
 
 **User steps:**
 
-1. create an Observe project through the API
-2. open the project's Traces view and its Evaluate menu
-3. choose Ask a question
-4. open the Ask page from a bookmarked link
-5. post an Instant eval estimate for the project through the API
+1. read parent-only native trace and session list coverage, deliver children later, then replay identical IDs
+2. ingest synthetic Copilot and Gemini trees plus a legacy control, including duplicate delivery
+3. verify exact source identities, normalized counters and session grouping in storage
+4. read exact trace membership and known, zero and unknown costs in the desktop grid
+5. filter by trace name and by zero or positive cost
+6. sort positive costs and the full set both ways, replaying each captured API request
 
 **Backend state verified:**
 
-- the project row exists in PG tracer_project under the actor org
-- the capabilities API denies instant_eval with LICENSE_MISSING
-- the estimate API answers 402 with upgrade_required, code LICENSE_MISSING and feature instant_eval
+- root-only, late-child and replay lists keep observed request counts 0, 3, 3 with coverage unknown and unchanged source summary presence
+- source IDs, parents, normalization profiles, summary counters and sanitized event attributes persist exactly
+- trace API totals and grid distinguish zero from unknown costs
+- session fallback and explicit identities match exact source membership
+- filtered and sorted API, replay and DOM IDs match independent expected sets and order, with exact counts and no lower-bound marker
 
-**Browser observations:**
+### OBS-E2E-056 — native sessions preserve exact membership, costs and trace navigation
 
-- the Evaluate menu lists Ask a question, Find patterns, Add evaluators, and only the first two carry the Enterprise mark
-- Ask a question lands on /observe/:id/ask showing the Instant eval upgrade page, its upgrade link and the Jev footnote
-- the bookmarked /ask link shows the same upgrade page
-- the browser never requests an Instant eval endpoint
-
-### OBS-E2E-054 — without a licence, Find patterns opens the Insights upgrade page and its API answers 402
-
-**Goal:** Try Insights on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed)  
-**Spec:** `flows/observe/instant-eval-insights-gates.spec.ts:168`  
+**Goal:** A developer trusts native session totals and opens the intended source trace from ordered conversation history  
+**Spec:** `flows/observe/native-session-accounting-navigation.spec.ts:15`  
 **Tags:** —
 
 **User steps:**
 
-1. create an Observe project through the API
-2. open the project's Traces view and its Evaluate menu
-3. choose Find patterns
-4. open the Insights page from a bookmarked link
-5. list the project's Insights reports through the API
+1. read the exact six seeded session identities in the API and desktop grid
+2. open the two-turn Copilot session and navigate to its first source trace
+3. scroll the grid to inspect observed-only native costs, coverage unknown and exact request and trace counts
+4. open each remaining session and match its history card, source trace, tokens and cost
 
 **Backend state verified:**
 
-- the project row exists in PG tracer_project under the actor org
-- the capabilities API denies insights with LICENSE_MISSING
-- the report list API answers 402 with upgrade_required, code LICENSE_MISSING and feature insights
+- session list and history totals sum all request contributions, not parent summaries
+- two-turn history has exactly the source chronology, 86142 tokens, two traces and 1.20 USD
+- single-trace session API, card and header retain exact membership, token breakdown and known, zero or null cost
+- View Trace opens the exact source trace, without unexpected browser or HTTP errors
 
-**Browser observations:**
+### OBS-E2E-057 — native tree, model, tool and timeline details preserve source truth
 
-- the Evaluate menu lists Ask a question, Find patterns, Add evaluators, and only the first two carry the Enterprise mark
-- Find patterns lands on /observe/:id/insights showing the Insights upgrade page and its upgrade link
-- the bookmarked /insights link shows the same upgrade page
-- the browser never requests an Insights endpoint
+**Goal:** A developer inspects native model and tool work on a normal desktop with truthful costs and sanitized events  
+**Spec:** `flows/observe/native-trace-desktop-detail.spec.ts:7`  
+**Tags:** —
+
+**User steps:**
+
+1. open known, zero, unknown and legacy traces from the real grid
+2. select root and model nodes and inspect source IDs and canonical token and cost summaries
+3. inspect Gemini tool output and sanitized exception attributes
+4. switch to timeline and back to tree using the display controls
+
+**Backend state verified:**
+
+- trace detail contains exact source IDs, parents, token contributions and LLM call counts
+- trace and selected model costs preserve known, zero and unknown semantics
+- Copilot links and exception types and Gemini sanitized events survive in the detail API
+- tool output and exception type render in the selected node; unexpected browser and HTTP errors fail
 
 ## prompts
 

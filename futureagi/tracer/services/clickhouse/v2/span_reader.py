@@ -72,7 +72,7 @@ class CHSpan:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    cost: float
+    cost: float | None  # unknown qualified native prices are not verified zero
 
     status: str
     status_message: str
@@ -514,7 +514,28 @@ def _row_to_dict(keys: tuple[str, ...] | list[str], row: tuple) -> dict[str, Any
 
 
 def _row_to_chspan(row: tuple) -> CHSpan:
-    return CHSpan(**_row_to_dict(_DATA_KEYS, row))
+    data = _row_to_dict(_DATA_KEYS, row)
+    if (data.get("attrs_string") or {}).get("fi.cost.kind") == "unknown":
+        data["cost"] = None
+    return CHSpan(**data)
+
+
+# A numeric zero remains in the legacy Float64 column for unpriced native
+# usage. A mixed sum without its coverage marker is not a complete price.
+# Non-additive parent summaries and tokenless activity spans
+# do not introduce an unknown charge by themselves.
+_UNKNOWN_COST = (
+    "attrs_string['fi.cost.kind'] = 'unknown' "
+    "AND attrs_string['fi.usage.contribution'] != 'none' "
+    "AND (total_tokens > 0 OR prompt_tokens > 0 OR completion_tokens > 0 "
+    "OR observation_type = 'llm' "
+    "OR attrs_string['fi.usage.scope'] = 'turn')"
+)
+_COMPLETE_COST_SUM = f"if(countIf({_UNKNOWN_COST}) > 0, NULL, sum(cost))"
+
+
+def _known_cost(value: float | None) -> float | None:
+    return float(value) if value is not None else None
 
 
 def _as_uuid(value: object) -> str | None:
@@ -1919,7 +1940,7 @@ class CHSpanReader:
         rows = self._client.query(
             "SELECT count() AS n, "
             "sum(prompt_tokens) AS pt, sum(completion_tokens) AS ct, "
-            "sum(total_tokens) AS tt, sum(cost) AS cost "
+            f"sum(total_tokens) AS tt, {_COMPLETE_COST_SUM} AS cost "
             "FROM spans FINAL "
             "WHERE trace_id IN %(trace_ids)s AND is_deleted = 0",
             parameters={"trace_ids": tuple(trace_ids)},
@@ -1938,7 +1959,7 @@ class CHSpanReader:
             "prompt_tokens": int(pt or 0),
             "completion_tokens": int(ct or 0),
             "total_tokens": int(tt or 0),
-            "cost": float(c or 0.0),
+            "cost": _known_cost(c),
         }
 
     # ─── Session-level aggregation ────────────────────────────────────────────
@@ -1964,7 +1985,7 @@ class CHSpanReader:
         rows = self._client.query(
             "SELECT count() AS n, "
             "sum(prompt_tokens) AS pt, sum(completion_tokens) AS ct, "
-            "sum(total_tokens) AS tt, sum(cost) AS cost, "
+            f"sum(total_tokens) AS tt, {_COMPLETE_COST_SUM} AS cost, "
             "min(start_time) AS start_time, max(end_time) AS end_time "
             "FROM spans FINAL "
             f"{remap_join} "
@@ -1979,7 +2000,7 @@ class CHSpanReader:
             "prompt_tokens": int(pt or 0),
             "completion_tokens": int(ct or 0),
             "total_tokens": int(tt or 0),
-            "cost": float(c or 0.0),
+            "cost": _known_cost(c),
             "start_time": st,
             "end_time": et,
         }
@@ -2072,7 +2093,7 @@ class CHSpanReader:
             "SELECT toString(trace_id) AS tid, "
             "count() AS n, "
             "sum(prompt_tokens) AS pt, sum(completion_tokens) AS ct, "
-            "sum(total_tokens) AS tt, sum(cost) AS cost, "
+            f"sum(total_tokens) AS tt, {_COMPLETE_COST_SUM} AS cost, "
             "min(start_time) AS st, max(end_time) AS et, "
             "sum(latency_ms) AS lat "
             "FROM spans FINAL "
@@ -2087,7 +2108,7 @@ class CHSpanReader:
                 "prompt_tokens": int(pt or 0),
                 "completion_tokens": int(ct or 0),
                 "total_tokens": int(tt or 0),
-                "cost": float(c or 0.0),
+                "cost": _known_cost(c),
                 "start_time": st,
                 "end_time": et,
                 "latency_ms": int(lat or 0),
@@ -3407,12 +3428,14 @@ class CHSpanReader:
         """Computes the same aggregate the eval runner needs for trace-level
         evals: total tokens, total cost, span count, max end_time.
         """
+        # Do not shadow token columns inside _UNKNOWN_COST's countIf: ClickHouse
+        # resolves same-SELECT aliases before columns by default.
         rows = self._client.query(
             "SELECT count() AS span_count, "
-            "sum(prompt_tokens) AS prompt_tokens, "
-            "sum(completion_tokens) AS completion_tokens, "
-            "sum(total_tokens) AS total_tokens, "
-            "sum(cost) AS cost, "
+            "sum(prompt_tokens) AS pt, "
+            "sum(completion_tokens) AS ct, "
+            "sum(total_tokens) AS tt, "
+            f"{_COMPLETE_COST_SUM} AS cost, "
             "max(end_time) AS last_end "
             "FROM spans FINAL WHERE trace_id = %(trace_id)s AND is_deleted = 0",
             parameters={"trace_id": trace_id},
@@ -3425,7 +3448,7 @@ class CHSpanReader:
             "prompt_tokens": int(pt or 0),
             "completion_tokens": int(ct or 0),
             "total_tokens": int(tt or 0),
-            "cost": float(c or 0.0),
+            "cost": _known_cost(c),
             "last_end": last_end,
         }
 

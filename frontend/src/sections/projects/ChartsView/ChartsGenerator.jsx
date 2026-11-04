@@ -7,6 +7,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { throttle } from "src/utils/utils";
 
 import ChartsTheme from "./ChartsTheme";
+import { isIncompleteCost, monetaryCostLabel } from "../LLMTracing/GraphSection/common";
 import { generateAllColors } from "./common";
 
 const ChartsGenerator = ({
@@ -22,6 +23,9 @@ const ChartsGenerator = ({
   groupName,
 }) => {
   const theme = useTheme();
+  const incompleteCost = unit === "$" && (series || []).some((item) =>
+    (item.data || []).some((point) => isIncompleteCost(point?.cost_coverage)),
+  );
   const seriesTotal = React.useMemo(
     () =>
       (series || []).reduce(
@@ -132,7 +136,9 @@ const ChartsGenerator = ({
             const yValue = w.globals.series[index][dataPointIndex];
             const label = w.config.series[index]?.name || `Series ${index + 1}`;
             const formattedYValue =
-              unit === "$" ? `${unit}${yValue}` : `${yValue} ${unit}`;
+              unit === "$"
+                ? monetaryCostLabel(yValue, w.config.series[index]?.data[dataPointIndex]?.cost_coverage)
+                : `${yValue} ${unit}`;
 
             tooltipContent += `
           <div style="font-weight: normal; color: var(--text-secondary); font-size: 11px;">${label}: ${formattedYValue}</div>`;
@@ -169,7 +175,8 @@ const ChartsGenerator = ({
   return (
     <Box
       data-chart-label={label}
-      data-chart-total={seriesTotal}
+      data-chart-total={incompleteCost ? undefined : seriesTotal}
+      data-cost-coverage={incompleteCost ? "incomplete" : undefined}
       sx={{
         border: "1px solid",
         borderColor: "divider",
@@ -188,6 +195,11 @@ const ChartsGenerator = ({
           sx={{ paddingLeft: theme.spacing(2) }}
         >
           {label}
+        </Typography>
+      )}
+      {incompleteCost && (
+        <Typography variant="caption" sx={{ px: 2 }}>
+          Cost coverage incomplete · Unknown or partial prices are not plotted.
         </Typography>
       )}
       <ChartsTheme
