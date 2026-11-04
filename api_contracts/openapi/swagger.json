@@ -141944,6 +141944,28 @@
                 }
             }
         },
+        "CallSubActor": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string"
+                },
+                "channel": {
+                    "title": "Channel",
+                    "type": "string"
+                }
+            }
+        },
         "CallExecutionV3DetailResponse": {
             "required": [
                 "goal",
@@ -141958,6 +141980,7 @@
                 "cost_breakdown_cents",
                 "evaluations",
                 "function_calls",
+                "sub_actors",
                 "scoring_status",
                 "csat_status",
                 "csat_reason"
@@ -142430,6 +142453,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/SimulateRunV3FunctionCall"
+                    }
+                },
+                "sub_actors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/CallSubActor"
                     }
                 },
                 "scoring_status": {

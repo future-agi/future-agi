@@ -220,7 +220,10 @@ export default function ChatCallDrawer({
                 <CircularProgress size={20} />
               </Stack>
             ) : (
-              <ChatTranscriptPane turns={turns} />
+              <ChatTranscriptPane
+                turns={turns}
+                customerName={callDetail?.persona}
+              />
             )}
           </Box>
         </Stack>

@@ -560,6 +560,15 @@ class FunctionCallSerializer(serializers.Serializer):
         ref_name = "SimulateRunV3FunctionCall"
 
 
+class CallSubActorSerializer(serializers.Serializer):
+    """Someone on the person's side in the call; a call stored by an older build may lack any field."""
+
+    id = serializers.CharField(required=False)
+    name = serializers.CharField(required=False, allow_blank=True)
+    role = serializers.CharField(required=False, allow_blank=True)
+    channel = serializers.CharField(required=False, allow_blank=True)
+
+
 class CallWorkerSerializer(serializers.Serializer):
     worker_id = serializers.CharField()
     id = serializers.CharField()
@@ -627,6 +636,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
+    sub_actors = CallSubActorSerializer(many=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
@@ -646,6 +656,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
+            "sub_actors",
             "scoring_status",
             "csat_status",
             "csat_reason",
@@ -861,6 +872,21 @@ class RunCallsV3View(APIView):
         return Response(response)
 
 
+def _call_sub_actors(metadata: object) -> list[dict[str, str]]:
+    """Who each of the call's sub-actors is and how they were heard."""
+    record = metadata.get("harness_sub_actors") if isinstance(metadata, dict) else None
+    resolved = record.get("resolved") if isinstance(record, dict) else None
+    return [
+        {
+            key: one[key]
+            for key in ("id", "name", "role", "channel")
+            if isinstance(one.get(key), str)
+        }
+        for one in resolved or []
+        if isinstance(one, dict)
+    ]
+
+
 def build_call_execution_detail(
     call: CallExecution, request=None, workspace=None
 ) -> dict[str, Any]:
@@ -906,6 +932,7 @@ def build_call_execution_detail(
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": function_calls(call),
+            "sub_actors": _call_sub_actors(call.call_metadata),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],

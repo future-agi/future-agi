@@ -92,7 +92,10 @@ const SharedSimulationCallView = ({ call }) => {
         <SharedVoiceView voiceData={voiceData} />
       ) : (
         <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-          <ChatTranscriptPane turns={chatDetail?.turns || []} />
+          <ChatTranscriptPane
+            turns={chatDetail?.turns || []}
+            customerName={chatDetail?.persona}
+          />
         </Box>
       )}
     </Box>

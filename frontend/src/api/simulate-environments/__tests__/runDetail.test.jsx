@@ -1624,6 +1624,35 @@ describe("sub-actor turns in a call", () => {
       ["customer", ""],
     ]);
   });
+
+  it("gives each sub-actor's turn their role and how they were heard, and an older call neither", () => {
+    const transcript = [
+      { speaker_role: "sub_actor", speaker_name: "Rowan", content: "Two" },
+      { speaker_role: "sub_actor", speaker_name: "Sam", content: "Me too" },
+      { speaker_role: "user", content: "One" },
+    ];
+    const voice = mapCallDetail({
+      id: "v",
+      transcript,
+      sub_actors: [
+        { id: "friend", name: "Rowan", role: "roommate", channel: "audio_mix" },
+        { id: "kid", name: "Sam", role: "son", channel: "audio_handoff" },
+      ],
+    });
+    expect(
+      voice.turns.map((t) => [t.speakerName, t.actorRole, t.channel]),
+    ).toEqual([
+      ["Rowan", "roommate", "audio_mix"],
+      ["Sam", "son", "audio_handoff"],
+      ["", "", ""],
+    ]);
+    const older = mapCallDetail({ id: "v", transcript });
+    expect(older.turns.map((t) => [t.actorRole, t.channel])).toEqual([
+      ["", ""],
+      ["", ""],
+      ["", ""],
+    ]);
+  });
 });
 
 describe("useCallWorkers", () => {
