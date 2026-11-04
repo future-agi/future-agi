@@ -2,11 +2,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "src/utils/test-utils";
 
 const mutate = vi.fn();
+const resetEdit = vi.fn();
+const refetch = vi.fn();
+let editState;
 let actorsData;
 let actorsState;
 
 vi.mock("src/api/simulate-environments/versions", () => ({
-  useActors: () => ({ data: actorsData, ...actorsState }),
+  useActors: () => ({ data: actorsData, refetch, ...actorsState }),
   useActorView: () => ({
     data: {
       sees: [
@@ -42,12 +45,7 @@ vi.mock("src/api/simulate-environments/versions", () => ({
       ],
     },
   }),
-  useEditActor: () => ({
-    mutate,
-    reset: vi.fn(),
-    isPending: false,
-    error: null,
-  }),
+  useEditActor: () => ({ mutate, reset: resetEdit, ...editState }),
 }));
 
 const { default: WorldActorsPanel } = await import("../WorldActorsPanel");
@@ -105,6 +103,9 @@ const choose = (label, option) => {
 describe("WorldActorsPanel", () => {
   beforeEach(() => {
     mutate.mockReset();
+    resetEdit.mockReset();
+    refetch.mockReset();
+    editState = { isPending: false, error: null };
     actorsData = cast([MANAGER]);
     actorsState = { isLoading: false, isError: false };
   });
@@ -122,14 +123,13 @@ describe("WorldActorsPanel", () => {
     expect(screen.queryByText("Add someone on the caller's side")).toBeNull();
   });
 
-  it("says the actors could not be loaded and offers nothing to add", () => {
+  it("says the actors could not be loaded, offers a retry and nothing to add", () => {
     actorsData = undefined;
     actorsState = { isLoading: false, isError: true };
     render(<WorldActorsPanel envId="env-1" />);
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "The actors could not be loaded. Refresh the page to try again.",
-    );
-    expect(screen.queryByText("Actors (0)")).toBeNull();
+    expect(screen.getByText("Couldn't load the actors")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalled();
     expect(screen.queryByText("Add someone in the world")).toBeNull();
   });
 
@@ -386,7 +386,7 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" callerSide />);
     fireEvent.click(screen.getByText("Jordan Taylor"));
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     expect(screen.getByLabelText("Age")).toHaveTextContent("32-40");
     choose("Accent", "British");
     fireEvent.click(screen.getByText("Save to draft"));
@@ -488,7 +488,7 @@ describe("WorldActorsPanel", () => {
       revision: 3,
     };
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Priya R." },
     });
@@ -500,7 +500,7 @@ describe("WorldActorsPanel", () => {
 
   it("removes an actor from the draft once confirmed, and a locked environment offers no edits", () => {
     const { unmount } = render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Remove / }));
     expect(mutate).not.toHaveBeenCalled();
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", {
@@ -515,8 +515,8 @@ describe("WorldActorsPanel", () => {
     unmount();
     render(<WorldActorsPanel envId="env-1" locked />);
     expect(screen.queryByText("Add someone in the world")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Edit / })).toBeNull();
     expect(
       screen.getByRole("button", { name: "What they see" }),
     ).toBeInTheDocument();
@@ -524,7 +524,7 @@ describe("WorldActorsPanel", () => {
 
   it("sends nothing when the remove dialog is cancelled", () => {
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Remove / }));
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", {
         name: "Cancel",
@@ -536,7 +536,7 @@ describe("WorldActorsPanel", () => {
   it("warns instead of asking when the actor is in a scenario", () => {
     actorsData = cast([{ ...MANAGER, scenarios: 2 }]);
     render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Remove / }));
     expect(screen.getByText(/is in 2 scenarios/)).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mutate).not.toHaveBeenCalled();
@@ -587,6 +587,70 @@ describe("WorldActorsPanel", () => {
       target: { value: "Sam Lee" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.queryByRole("dialog", { name: /Discard changes/ }),
+    ).toBeNull();
+    expect(screen.queryByText("Save to draft")).toBeNull();
+  });
+
+  it("names the actor on its icon buttons, so rows can be told apart", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(
+      screen.getByRole("button", { name: "Edit Priya Raman" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Remove Priya Raman" }),
+    ).toBeInTheDocument();
+  });
+
+  it("clears a failed remove's error when a form opens, and it can be dismissed", () => {
+    editState = {
+      isPending: false,
+      error: new Error("fraud_desk depends on them"),
+    };
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(resetEdit).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    expect(resetEdit).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves an open view open when a remove is cancelled", async () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("What they see"));
+    fireEvent.click(screen.getByRole("button", { name: /^Remove / }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Cancel",
+      }),
+    );
+    expect(await screen.findByText("Hide what they see")).toBeInTheDocument();
+  });
+
+  it("will not close or discard the form while a save is in flight", () => {
+    editState = { isPending: true, error: null };
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+      target: { value: "Sam Lee" },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Name" }), {
+      key: "Escape",
+    });
+    expect(
+      screen.queryByRole("dialog", { name: /Discard changes/ }),
+    ).toBeNull();
+    expect(screen.getByText("Save to draft")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  });
+
+  it("does not ask once typed text has been deleted again", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    const name = screen.getByRole("textbox", { name: "Name" });
+    fireEvent.change(name, { target: { value: "Sam Lee" } });
+    fireEvent.change(name, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(
       screen.queryByRole("dialog", { name: /Discard changes/ }),
     ).toBeNull();

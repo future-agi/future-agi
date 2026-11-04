@@ -5,7 +5,7 @@ import { ACTORS_COPY } from "./actors.constants";
 
 const C = ACTORS_COPY.worldActors;
 
-// Sized to a real row (ActorRow), so nothing moves when the cast arrives.
+// Sized to a real one-line row (ActorRow), so a short cast doesn't jump when it arrives.
 function RowSkeleton({ locked }) {
   return (
     <Stack
@@ -62,7 +62,7 @@ function RowSkeleton({ locked }) {
 
 RowSkeleton.propTypes = { locked: PropTypes.bool };
 
-function GroupSkeleton({ title, about, rows, locked, addWidth }) {
+function GroupSkeleton({ title, about, locked, addWidth, children }) {
   return (
     <SectionCard
       title={title}
@@ -84,10 +84,7 @@ function GroupSkeleton({ title, about, rows, locked, addWidth }) {
           <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
         }
       >
-        {Array.from({ length: rows }, (_, i) => (
-          // eslint-disable-next-line react/no-array-index-key
-          <RowSkeleton key={i} locked={locked} />
-        ))}
+        {children}
       </Stack>
     </SectionCard>
   );
@@ -96,9 +93,9 @@ function GroupSkeleton({ title, about, rows, locked, addWidth }) {
 GroupSkeleton.propTypes = {
   title: PropTypes.string,
   about: PropTypes.string,
-  rows: PropTypes.number,
   locked: PropTypes.bool,
   addWidth: PropTypes.number,
+  children: PropTypes.node,
 };
 
 /** The tab while its cast loads: the words are known, so only the rows are placeholders. */
@@ -107,6 +104,7 @@ export default function ActorsSkeleton({ callerSide = false, locked = false }) {
     <Box
       role="progressbar"
       aria-busy="true"
+      aria-live="polite"
       aria-label={C.loading}
       sx={{ p: 2 }}
     >
@@ -119,18 +117,21 @@ export default function ActorsSkeleton({ callerSide = false, locked = false }) {
         <GroupSkeleton
           title={C.callerSide}
           about={C.callerSideAbout}
-          rows={1}
           locked={locked}
           addWidth={210}
-        />
+        >
+          <RowSkeleton locked={locked} />
+        </GroupSkeleton>
       )}
       <GroupSkeleton
         title={C.worldSide}
         about={C.worldSideAbout}
-        rows={2}
         locked={locked}
         addWidth={174}
-      />
+      >
+        <RowSkeleton locked={locked} />
+        <RowSkeleton locked={locked} />
+      </GroupSkeleton>
     </Box>
   );
 }

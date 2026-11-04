@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Alert,
   Autocomplete,
@@ -92,8 +92,12 @@ export default function ActorForm({
   const callerSide = speaks(actor);
   const [fields, setFields] = useState({});
   const [more, setMore] = useState(false);
-  const value = (name, fallback = "") =>
-    name in fields ? fields[name] : fallback;
+  // What each field started from, so typing something and deleting it again is no change.
+  const started = useRef({});
+  const value = (name, fallback = "") => {
+    started.current[name] = fallback;
+    return name in fields ? fields[name] : fallback;
+  };
   const set = (name) => (event) =>
     setFields((current) => ({ ...current, [name]: event.target.value }));
   const put = (name, next) =>
@@ -104,8 +108,13 @@ export default function ActorForm({
   };
   // Escape, the close button and a click outside can all be accidents; Cancel is not, so it never asks.
   const [leaving, setLeaving] = useState(false);
+  const changed = Object.entries(fields).some(
+    ([name, one]) => String(one ?? "") !== String(started.current[name] ?? ""),
+  );
   const leave = () => {
-    if (Object.keys(fields).length > 0) setLeaving(true);
+    // A save in flight lands whatever happens here, so nothing can be discarded yet.
+    if (busy) return;
+    if (changed) setLeaving(true);
     else close();
   };
   const constraints = actor?.constraints || {};
@@ -505,7 +514,7 @@ export default function ActorForm({
                 >
                   {more ? F.lessDetails : F.moreDetails}
                 </Button>
-                <Collapse in={more}>
+                <Collapse in={more} sx={{ flexShrink: 0 }}>
                   <Stack spacing={2}>
                     <Typography
                       sx={{ typography: "s3", color: "text.secondary" }}
@@ -562,7 +571,9 @@ export default function ActorForm({
               borderColor: "divider",
             }}
           >
-            <Button onClick={close}>{F.cancel}</Button>
+            <Button onClick={close} disabled={busy}>
+              {F.cancel}
+            </Button>
             <Button
               variant="contained"
               disabled={

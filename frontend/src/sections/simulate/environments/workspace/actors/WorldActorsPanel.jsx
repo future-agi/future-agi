@@ -18,6 +18,8 @@ import {
   useActorView,
   useEditActor,
 } from "src/api/simulate-environments/versions";
+import ErrorState from "src/components/error-state";
+import EmptyState from "../../components/EmptyState";
 import SectionCard from "../../components/SectionCard";
 import { genderLabel } from "../scenarios/personaLabels";
 import ActorForm from "./ActorForm";
@@ -50,9 +52,14 @@ export default function WorldActorsPanel({
   locked = false,
   callerSide = false,
 }) {
-  const { data, isLoading, isError } = useActors(envId);
+  const { data, isLoading, isError, refetch } = useActors(envId);
   const edit = useEditActor(envId);
   const [editing, setEditing] = useState(null);
+  const openForm = (actor) => {
+    // An error from a remove belongs to that remove, not to the form opening now.
+    edit.reset();
+    setEditing(actor);
+  };
   const cast = data?.actors || [];
   const caller = cast.filter(speaks);
   // Without a channel an actor cannot speak on the call, whatever side it is on: it acts in the world.
@@ -67,7 +74,9 @@ export default function WorldActorsPanel({
   };
 
   const [inUse, setInUse] = useState(null);
+  // Kept after the dialog closes, so its title doesn't blank while it fades out.
   const [removing, setRemoving] = useState(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const remove = (actor) => {
     if (actor.scenarios) {
       setInUse(C.inUse(actor.name || actor.id, actor.scenarios));
@@ -75,10 +84,15 @@ export default function WorldActorsPanel({
     }
     setInUse(null);
     setRemoving(actor);
+    setConfirmRemove(true);
   };
   const actionIds = context.actions.map((one) => one.action);
   // A new person on the caller's side starts on the first channel the rules list.
   const firstChannel = Object.keys(context.channels)[0];
+  const deletingId =
+    edit.isPending && edit.variables?.op === "delete"
+      ? edit.variables.actorId
+      : null;
   const rows = (group) =>
     group.map((actor) => (
       <ActorRow
@@ -86,10 +100,11 @@ export default function WorldActorsPanel({
         envId={envId}
         actor={actor}
         locked={locked}
-        onEdit={() => setEditing(actor)}
+        onEdit={() => openForm(actor)}
         onRemove={() => remove(actor)}
         actionIds={actionIds}
         loudChannels={context.loudness.channels || []}
+        deleting={actor.id === deletingId}
       />
     ));
 
@@ -99,9 +114,11 @@ export default function WorldActorsPanel({
     return (
       <Box sx={{ p: 2 }}>
         <SectionCard title={C.title} subtitle={C.subtitle}>
-          <Box sx={{ px: 1.5, py: 1.5 }}>
-            <Alert severity="error">{C.loadFailed}</Alert>
-          </Box>
+          <ErrorState
+            title={C.loadFailedTitle}
+            detail={C.loadFailed}
+            onRetry={() => refetch()}
+          />
         </SectionCard>
       </Box>
     );
@@ -123,7 +140,9 @@ export default function WorldActorsPanel({
           </Alert>
         )}
         {edit.error && !editing && (
-          <Alert severity="error">{edit.error.message}</Alert>
+          <Alert severity="error" onClose={() => edit.reset()}>
+            {edit.error.message}
+          </Alert>
         )}
       </Stack>
       {(callerSide || caller.length > 0) && (
@@ -133,7 +152,7 @@ export default function WorldActorsPanel({
           empty={C.callerSideEmpty}
           locked={locked || !firstChannel}
           addLabel={C.addCallerSide}
-          onAdd={() => setEditing({ channel: firstChannel })}
+          onAdd={() => openForm({ channel: firstChannel })}
         >
           {rows(caller)}
         </Group>
@@ -144,7 +163,7 @@ export default function WorldActorsPanel({
         empty={C.empty}
         locked={locked}
         addLabel={C.add}
-        onAdd={() => setEditing({})}
+        onAdd={() => openForm({})}
       >
         {rows(world)}
       </Group>
@@ -175,8 +194,8 @@ export default function WorldActorsPanel({
         }
       />
       <ConfirmDialog
-        open={Boolean(removing)}
-        onClose={() => setRemoving(null)}
+        open={confirmRemove}
+        onClose={() => setConfirmRemove(false)}
         title={removing ? C.removeTitle(removing.name || removing.id) : ""}
         content={C.removeBody}
         action={
@@ -186,7 +205,7 @@ export default function WorldActorsPanel({
             color="error"
             onClick={() => {
               edit.mutate({ op: "delete", actorId: removing.id, revision });
-              setRemoving(null);
+              setConfirmRemove(false);
             }}
           >
             {C.remove}
@@ -226,11 +245,7 @@ function Group({ title, about, empty, locked, addLabel, onAdd, children }) {
       }
     >
       {count === 0 ? (
-        <Typography
-          sx={{ typography: "s2", color: "text.secondary", px: 1.5, py: 1.5 }}
-        >
-          {empty}
-        </Typography>
+        <EmptyState icon="solar:users-group-two-rounded-linear" title={empty} />
       ) : (
         <Stack
           divider={
@@ -295,9 +310,13 @@ function ActorRow({
   onRemove,
   actionIds,
   loudChannels,
+  deleting,
 }) {
   const [open, setOpen] = useState(false);
-  const { data: view } = useActorView(envId, actor.id, { enabled: open });
+  // Off while it is being removed, so the removed actor's view is not read again.
+  const { data: view } = useActorView(envId, actor.id, {
+    enabled: open && !deleting,
+  });
   const shown = hidden(view?.never_sees);
   const quiet = {
     typography: "s3",
@@ -388,7 +407,11 @@ function ActorRow({
           {!locked && (
             <>
               <CustomTooltip show size="small" arrow title={C.edit}>
-                <IconButton size="small" aria-label={C.edit} onClick={onEdit}>
+                <IconButton
+                  size="small"
+                  aria-label={C.editNamed(actor.name || actor.id)}
+                  onClick={onEdit}
+                >
                   <Iconify
                     icon="solar:pen-new-square-linear"
                     width={16}
@@ -399,12 +422,8 @@ function ActorRow({
               <CustomTooltip show size="small" arrow title={C.remove}>
                 <IconButton
                   size="small"
-                  aria-label={C.remove}
-                  onClick={() => {
-                    // Closed first, so the removed actor's view is not read again.
-                    setOpen(false);
-                    onRemove();
-                  }}
+                  aria-label={C.removeNamed(actor.name || actor.id)}
+                  onClick={onRemove}
                 >
                   <Iconify
                     icon="solar:trash-bin-trash-linear"
@@ -461,4 +480,5 @@ ActorRow.propTypes = {
   onRemove: PropTypes.func,
   actionIds: PropTypes.arrayOf(PropTypes.string),
   loudChannels: PropTypes.arrayOf(PropTypes.string),
+  deleting: PropTypes.bool,
 };

@@ -19,8 +19,8 @@ export const ACTORS_COPY = {
     removeTitle: (name) => `Remove ${name}?`,
     removeBody: "They leave the draft. Saved versions keep them.",
     loading: "Loading the actors…",
-    loadFailed:
-      "The actors could not be loaded. Refresh the page to try again.",
+    loadFailedTitle: "Couldn't load the actors",
+    loadFailed: "Try again, or refresh the page.",
     subtitle:
       "Everyone the agent deals with who is not the agent: people beside the caller on the call, and people and systems in the world. Edits wait in the draft until you save.",
     unsaved: "Unsaved changes: saved with the environment's other changes",
@@ -34,7 +34,9 @@ export const ACTORS_COPY = {
       "People and systems who act through the world's own actions, such as a manager approving in the CRM. They never speak to the agent.",
     add: "Add someone in the world",
     edit: "Edit",
+    editNamed: (name) => `Edit ${name}`,
     remove: "Remove",
+    removeNamed: (name) => `Remove ${name}`,
     empty: "No one in the world yet. Add one, or ask the builder chat.",
     wants: "Wants",
     mayDo: "May do",
