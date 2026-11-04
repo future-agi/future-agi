@@ -324,9 +324,20 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ hashFiles('e2e/yarn.lock') }}
 
-      - name: Flow catalog is current
+      - name: Typecheck and generate the approved EVAL006 catalog remotely
         working-directory: e2e
-        run: yarn catalog:check
+        run: |
+          yarn typecheck
+          yarn catalog
+          yarn catalog:check
+          sha256sum flows/evals/task-usage-trace-drawer.spec.ts FLOWS.md
+
+      - name: Export remotely generated flow catalog
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval006-catalog-${{ matrix.stack }}
+          path: e2e/FLOWS.md
+          retention-days: 7
 
       # The @saml flows start e2e/lib/saml_idp_server.py on the runner. It
       # signs with the backend's own pysaml2 fixtures, which need pysaml2,
@@ -344,15 +355,25 @@ jobs:
         id: boot
         run: bin/e2e up
 
-      - name: Run E2E suite
-        run: bin/e2e test
+      - name: Managed EVAL006 baseline green
+        id: eval006-green
+        run: python3 -I .github/scripts/eval006-proof.py green
 
-      - name: Upload report
+      - name: Managed EVAL006 one-sided negative must fail at the CH verdict
+        if: matrix.stack == 'distributed' && steps.eval006-green.outcome == 'success'
+        id: eval006-negative
+        run: python3 -I .github/scripts/eval006-proof.py negative
+
+      - name: Managed EVAL006 restored source must be green again
+        if: matrix.stack == 'distributed' && steps.eval006-negative.outcome == 'success'
+        run: python3 -I .github/scripts/eval006-proof.py restored
+
+      - name: Upload immutable phase reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
-          path: e2e/playwright-report
+          name: eval006-proof-${{ matrix.stack }}
+          path: e2e/eval006-proof-reports
           retention-days: 7
           # A job that dies before the suite runs has no report; the real
           # failure is upstream and must not be buried by an upload error.

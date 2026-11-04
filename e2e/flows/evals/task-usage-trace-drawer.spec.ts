@@ -18,6 +18,11 @@ const UI_READY = 60_000;
 // Fields of one run, from futureagi/tracer/views/eval_task.py (get_usage log_items).
 interface UsageRun { id: string; eval_name: string | null; trace_id: string | null; span_id: string | null }
 interface UsageBody { result: { logs: { results: UsageRun[]; count: number } } }
+interface MirroredResult {
+  id: string; eval_task_id: string; trace_id: string; span_id: string; config_id: string;
+  status: string; output_bool: boolean | number; eval_explanation: string;
+  error: boolean | number; deleted: number; cdc_deleted: number;
+}
 
 test.beforeAll(() => { inspectManagedMock({ evalBackground: true }); });
 test.use({ evalBackground: true, viewport: { width: 1600, height: 1100 } });
@@ -28,20 +33,23 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
     id: 'EVAL-E2E-006', area: 'evals',
     userGoal: 'Open the trace behind an eval task result without leaving the task Usage tab',
     steps: ['seed a trace and run an eval task over it through the mock judge',
+      'verify the exact completed child result reaches ClickHouse through CDC',
       'open the task Usage tab and click its run',
       'read the run panel Trace ID and Span ID',
       'click Open trace and read the drawer',
       'press Esc to close the drawer, then Esc again to close the run panel'],
     backendChecks: ['the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored',
+      'the exact completed child result reaches ClickHouse through CDC with the same log, task, trace, span and config IDs, successful verdict and unique explanation',
       'the Usage runs response carries only the completed run, with the seeded trace and span IDs',
       'the run panel shows the seeded trace and span IDs',
       'the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open',
       'the first Esc closes only the drawer and the second closes the run panel'],
   }),
 }, async ({ page, actor, probe, mockModel }, testInfo) => {
-  // EVAL_RESULT (90 s) for the Temporal task, then navigation and four UI_READY
-  // waits; the runs list reads Postgres, so no CDC budget is spent.
-  test.setTimeout(300_000);
+  // SPAN_VISIBLE15 + EVAL_RESULT90 + CDC_VISIBLE180 + 5*UI_READY60
+  // (Usage, run panel, drawer, Esc, Esc) + setup/headroom15 = 600 seconds.
+  // Usage reads PG, but the trace drawer reads the CDC-fed eval logger in CH.
+  test.setTimeout(600_000);
   const req = await request.newContext();
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const projectName = `e2e-usage-drawer-${suffix}`;
@@ -62,7 +70,7 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
       projectId, projectName, organizationId: actor.organizationId, workspaceId: actor.workspaceId,
       traceId: seeded.traceId, spanIds: seeded.spanIds, evaluatedSpanId, evalName }) });
 
-    const taskId = await test.step('run an eval task over the seeded spans', async () => {
+    const { taskId, configId } = await test.step('run an eval task over the seeded spans', async () => {
       await mockModel.assertReady();
       // Wire bodies as in flows/evals/eval-task.spec.ts (pinned from the serializers).
       const template = await actor.api.post<{ result: { id: string } }>('/model-hub/eval-templates/create-v2/', {
@@ -82,8 +90,11 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
           date_range: [new Date(now - 3_600_000).toISOString(), new Date(now + 3_600_000).toISOString()] },
         run_type: 'historical', row_type: 'spans', spans_limit: 100000, sampling_rate: 100,
       });
-      return created.result.id;
+      return { taskId: created.result.id, configId: config.result.id };
     });
+    await testInfo.attach('task-fixture.json', { contentType: 'application/json', body: JSON.stringify({
+      taskId, configId, projectId, organizationId: actor.organizationId, workspaceId: actor.workspaceId,
+      traceId: seeded.traceId, spanIds: seeded.spanIds, evaluatedSpanId }) });
 
     const runs = await test.step('storage lane: the evaluated span completed, the root errored', async () => {
       await expect.poll(async () =>
@@ -102,6 +113,44 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
     });
     const runId = runs.evaluated;
     const position = '1 / 1';
+
+    await test.step('storage lane: the exact completed result reaches the drawer’s ClickHouse source', async () => {
+      // TraceDetailQueryBuilder.build_eval_query reads tracer_eval_logger; unlike
+      // Usage's PG read, it must wait for CDC (as eval-task.spec.ts does).
+      const params = { id: runId, task: taskId, trace: seeded.traceId,
+        span: evaluatedSpanId, config: configId };
+      let rows: MirroredResult[] = [];
+      try {
+        await expect.poll(async () => {
+          rows = await probe.ch<MirroredResult>(
+            `SELECT toString(id) AS id, eval_task_id, toString(trace_id) AS trace_id,
+                    observation_span_id AS span_id, toString(custom_eval_config_id) AS config_id,
+                    status, output_bool, eval_explanation, error,
+                    toUInt8(coalesce(deleted, false)) AS deleted,
+                    toUInt8(_peerdb_is_deleted) AS cdc_deleted
+             FROM tracer_eval_logger FINAL
+             WHERE id = {id:UUID} AND eval_task_id = {task:String}
+               AND trace_id = {trace:UUID} AND observation_span_id = {span:String}
+               AND custom_eval_config_id = {config:UUID}`, params);
+          return rows.length === 1 ? rows[0].status : undefined;
+        }, POLL.CDC_VISIBLE).toBe('completed');
+      } finally {
+        await testInfo.attach('ch-result.json', { contentType: 'application/json',
+          body: JSON.stringify({ params, rows }) });
+      }
+      expect(rows).toHaveLength(1);
+      const mirrored = rows[0];
+      expect({ id: mirrored.id, taskId: mirrored.eval_task_id, traceId: mirrored.trace_id,
+        spanId: mirrored.span_id, configId: mirrored.config_id }).toEqual({
+        id: runId, taskId, traceId: seeded.traceId, spanId: evaluatedSpanId, configId,
+      });
+      expect([true, 1]).toContain(mirrored.output_bool);
+      expect([false, 0]).toContain(mirrored.error);
+      expect([mirrored.deleted, mirrored.cdc_deleted]).toEqual([0, 0]);
+      // Expectation-only mutation anchor: never reused by the seed or PG check.
+      const expectedChExplanation = `${verdict} saw llm`; // EVAL006_CDC_EXPECTATION_ONLY
+      expect(mirrored.eval_explanation).toBe(expectedChExplanation);
+    });
 
     await test.step('Usage: the run panel shows the seeded trace and span', async () => {
       await page.goto(`/dashboard/tasks/${taskId}`);
