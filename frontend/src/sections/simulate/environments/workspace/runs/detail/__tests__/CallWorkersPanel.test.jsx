@@ -230,10 +230,10 @@ describe("CallWorkersPanel", () => {
 
   it("times each step from the call's start", () => {
     render(<CallWorkersPanel callExecutionId="c1" />);
-    expect(screen.getByText("+4.0 s")).toBeInTheDocument();
-    expect(screen.getByText("+5.9 s")).toBeInTheDocument();
-    expect(screen.getByText("+7.0 s")).toBeInTheDocument();
-    expect(screen.getByText("+20.0 s")).toBeInTheDocument();
+    expect(screen.getByText("0:04")).toBeInTheDocument();
+    expect(screen.getByText("0:05")).toBeInTheDocument();
+    expect(screen.getByText("0:07")).toBeInTheDocument();
+    expect(screen.getByText("0:20")).toBeInTheDocument();
   });
 
   it("opens a tool call to show its input and output", () => {

@@ -19,6 +19,7 @@ import {
 import Markdown from "src/sections/simulate/environments/buildEnvironment/console/Markdown";
 import { CALL_WORKERS_COPY as C } from "./callTraces.constants";
 import { arrange, asShown, isLong, seconds } from "./utils/callWorkersUtils";
+import { formatClock } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 
 // One colour per level of hand-off, so a deep or wide team stays readable; names tell workers apart.
 const DEPTH_COLORS = ["info", "success", "warning", "secondary", "error"];
@@ -30,7 +31,7 @@ const OPEN_DEPTH = 2;
 const MAX_CHIPS = 8;
 const MONO = "ui-monospace, Menlo, monospace";
 
-// "+5.9 s" from the call's start, with the exact clock time on hover.
+// Time into the call ("0:05"), as the transcript shows it, with the exact clock time on hover.
 function Stamp({ at, start }) {
   const moment = seconds(at);
   if (moment === null) return null;
@@ -38,7 +39,7 @@ function Stamp({ at, start }) {
   const label =
     from === null
       ? new Date(moment * 1000).toISOString().slice(11, 19)
-      : `+${Math.max(0, moment - from).toFixed(1)} s`;
+      : formatClock(Math.max(0, moment - from));
   return (
     <Tooltip
       title={`${new Date(moment * 1000).toISOString().replace("T", " ").slice(0, 23)} UTC`}
