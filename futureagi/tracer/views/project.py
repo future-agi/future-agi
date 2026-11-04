@@ -68,6 +68,9 @@ from tracer.services.clickhouse.graph_metric_statistic import (
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
 )
+from tracer.services.clickhouse.query_builders.time_series import (
+    graph_cost_coverage_series,
+)
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
     is_clickhouse_api_read_unavailable_error,
@@ -936,7 +939,27 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     "Graph data is temporarily unavailable. Please retry.",
                     code="service_unavailable",
                 )
+            cost_points = response_data.get("cost", [])
+            cost_coverage = [
+                {"timestamp": point["timestamp"], **point["cost_coverage"]}
+                for point in cost_points
+                if "cost_coverage" in point
+            ]
+            # The typed companion lives beside the legacy JSON bundle, not in it.
+            if cost_coverage:
+                response_data = {
+                    **response_data,
+                    "cost": [
+                        {
+                            key: value
+                            for key, value in point.items()
+                            if key != "cost_coverage"
+                        }
+                        for point in cost_points
+                    ],
+                }
             graph_data = {
+                **({"cost_coverage": cost_coverage} if cost_coverage else {}),
                 "system_metrics": response_data,
                 "system_metric_statistics": chart_bundle_statistics(),
                 "evaluations": {},
@@ -1382,9 +1405,22 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         value_keys=[output_key],
                     )
 
+                cost_coverage = graph_cost_coverage_series(
+                    builder=builder,
+                    rows=rows,
+                    columns=list(result.columns or []),
+                    interval=interval,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
                 return finish(
                     self._gm.success_response(
                         {
+                            **(
+                                {"cost_coverage": cost_coverage}
+                                if cost_coverage
+                                else {}
+                            ),
                             "session": _series("session_count", "session"),
                             "trace": _series("trace_count", "trace"),
                             "cost": _series("cost", "cost"),

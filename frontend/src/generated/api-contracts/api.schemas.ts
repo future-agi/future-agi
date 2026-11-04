@@ -30000,6 +30000,34 @@ export const ObserveGraphDataResultApiMetricStatistic = {
   percentage: "percentage",
 } as const;
 
+export type CostCoverageApiStatus =
+  (typeof CostCoverageApiStatus)[keyof typeof CostCoverageApiStatus];
+
+export const CostCoverageApiStatus = {
+  complete: "complete",
+  partial: "partial",
+  unknown: "unknown",
+} as const;
+
+export interface CostCoverageApi {
+  status: CostCoverageApiStatus;
+  /**
+   * Sum in USD of known observed contributions, never an average.
+   * @minimum 0
+   */
+  known_subtotal: number;
+  /**
+   * Observed additive monetary facts with known cost, including zero.
+   * @minimum 0
+   */
+  known_fact_count: number;
+  /**
+   * Observed additive monetary facts with unknown cost, not missing requests.
+   * @minimum 0
+   */
+  unknown_fact_count: number;
+}
+
 /**
  * Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.
  */
@@ -30008,6 +30036,7 @@ export interface ObserveGraphDataPointApi {
   timestamp: string;
   value: number;
   primary_traffic?: number;
+  cost_coverage?: CostCoverageApi;
 }
 
 export type ObserveGraphDataResultApiQueryProvenance =
@@ -30506,6 +30535,36 @@ export interface ProjectApi {
   tags?: ProjectApiTags;
 }
 
+export type CostCoverageBucketApiStatus =
+  (typeof CostCoverageBucketApiStatus)[keyof typeof CostCoverageBucketApiStatus];
+
+export const CostCoverageBucketApiStatus = {
+  complete: "complete",
+  partial: "partial",
+  unknown: "unknown",
+} as const;
+
+export interface CostCoverageBucketApi {
+  status: CostCoverageBucketApiStatus;
+  /**
+   * Sum in USD of known observed contributions, never an average.
+   * @minimum 0
+   */
+  known_subtotal: number;
+  /**
+   * Observed additive monetary facts with known cost, including zero.
+   * @minimum 0
+   */
+  known_fact_count: number;
+  /**
+   * Observed additive monetary facts with unknown cost, not missing requests.
+   * @minimum 0
+   */
+  unknown_fact_count: number;
+  /** @minLength 1 */
+  timestamp: string;
+}
+
 /**
  * Any valid JSON value.
  */
@@ -30526,6 +30585,7 @@ export type ProjectGraphDataResultApiEvaluations = { [key: string]: unknown };
 export interface ProjectGraphDataResultApi {
   /** Any valid JSON value. */
   system_metrics: ProjectGraphDataResultApiSystemMetrics;
+  cost_coverage?: CostCoverageBucketApi[];
   /** Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "mean", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the mean (avg) span latency. */
   system_metric_statistics?: ProjectGraphDataResultApiSystemMetricStatistics;
   /** Any valid JSON value. */
@@ -30601,6 +30661,7 @@ export type ProjectUserGraphDataResultApiOutputTokensItem = {
 };
 
 export interface ProjectUserGraphDataResultApi {
+  cost_coverage?: CostCoverageBucketApi[];
   session: ProjectUserGraphDataResultApiSessionItem[];
   trace: ProjectUserGraphDataResultApiTraceItem[];
   cost: ProjectUserGraphDataResultApiCostItem[];
@@ -31676,6 +31737,25 @@ export interface TraceDetailSpanApi {
   annotations?: TraceDetailSpanApiAnnotationsItem[];
 }
 
+export type CaptureCoverageApiScope =
+  (typeof CaptureCoverageApiScope)[keyof typeof CaptureCoverageApiScope];
+
+export const CaptureCoverageApiScope = {
+  observed_requests: "observed_requests",
+} as const;
+
+export interface CaptureCoverageApi {
+  scope: CaptureCoverageApiScope;
+  source_summary_present: boolean;
+  /**
+   * Observed request spans only; never inferred from source summary totals.
+   * @minimum 0
+   */
+  request_count: number;
+  /** Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness. */
+  coverage_unknown: boolean;
+}
+
 export type TraceDetailResultApiTrace = { [key: string]: unknown };
 
 export type TraceDetailResultApiSummary = { [key: string]: unknown };
@@ -31686,6 +31766,8 @@ export interface TraceDetailResultApi {
   trace: TraceDetailResultApiTrace;
   observation_spans: TraceDetailSpanApi[];
   summary: TraceDetailResultApiSummary;
+  cost_coverage?: CostCoverageApi;
+  capture_coverage?: CaptureCoverageApi;
   graph: TraceDetailResultApiGraph;
 }
 
@@ -32296,6 +32378,8 @@ export interface TraceSessionTableRowApi {
   created_at?: string | null;
   duration?: number | null;
   total_cost?: number | null;
+  cost_coverage?: CostCoverageApi;
+  capture_coverage?: CaptureCoverageApi;
   total_tokens?: number | null;
   total_traces_count?: number | null;
   /** Any valid JSON value. */
@@ -32366,7 +32450,16 @@ export interface TraceObserveColumnConfigApi {
   property_source?: string;
 }
 
+/**
+ * Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.
+ */
+export type TraceSessionListResultApiTraceCaptureCoverage = {
+  [key: string]: { [key: string]: CaptureCoverageApi };
+};
+
 export interface TraceSessionListResultApi {
+  /** Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture. */
+  trace_capture_coverage?: TraceSessionListResultApiTraceCaptureCoverage;
   metadata: TraceSessionListMetadataApi;
   table: TraceSessionTableRowApi[];
   config: TraceObserveColumnConfigApi[];
@@ -32423,6 +32516,8 @@ export type TraceSessionDetailResultApiResponseItem = {
 
 export interface TraceSessionDetailResultApi {
   session_metadata: TraceSessionDetailResultApiSessionMetadata;
+  cost_coverage?: CostCoverageApi;
+  capture_coverage?: CaptureCoverageApi;
   response: TraceSessionDetailResultApiResponseItem[];
   next: boolean;
 }
@@ -32496,6 +32591,7 @@ export interface TraceAgentGraphNodeApi {
   total_tokens: number;
   /** @minimum 0 */
   total_cost: number;
+  cost_coverage?: CostCoverageApi;
   /** @minimum 0 */
   error_count: number;
   /** @minimum 0 */
@@ -32519,6 +32615,7 @@ export interface TraceAgentGraphEdgeApi {
   total_tokens: number;
   /** @minimum 0 */
   total_cost: number;
+  cost_coverage?: CostCoverageApi;
   /** @minimum 0 */
   error_count: number;
   /** @minimum 0 */
@@ -32796,11 +32893,20 @@ export interface TraceListQueryApi {
   allow_sampled?: boolean;
 }
 
+/**
+ * Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.
+ */
+export type TraceObserveListResultApiTraceCaptureCoverage = {
+  [key: string]: { [key: string]: CaptureCoverageApi };
+};
+
 export type TraceObserveListResultApiTableItem = {
   [key: string]: JsonValueApi;
 };
 
 export interface TraceObserveListResultApi {
+  /** Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture. */
+  trace_capture_coverage?: TraceObserveListResultApiTraceCaptureCoverage;
   metadata: TraceObserveListMetadataApi;
   /** Observe eval bool and choice cells are counts of completed attempts; a detail eval_rollup separately selects the latest completed row per span. */
   table: TraceObserveListResultApiTableItem[];
@@ -33486,6 +33592,7 @@ export interface UsersTableRowApi {
   /** @minLength 1 */
   user_id?: string;
   total_cost: number;
+  cost_coverage?: CostCoverageApi;
   total_tokens?: number;
   input_tokens?: number;
   output_tokens?: number;

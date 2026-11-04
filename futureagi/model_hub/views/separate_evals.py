@@ -7031,11 +7031,12 @@ class EvalPlayGroundAPIView(APIView):
             if session_context is None and _session_id:
                 try:
                     from tracer.models.project import Project
-                    from tracer.models.trace import Trace
+                    from tracer.models.trace_session import TraceSession
                     from tracer.services.clickhouse.v2 import get_reader
                     from tracer.services.clickhouse.v2.trace_session_dict_reader import (
                         resolve_session_fields,
                     )
+                    from tracer.utils.eval import build_session_context
 
                     # Resolve the session identity from CH (Slice D, DESIGN §5 /
                     # PG_ORM_READ_MIGRATION), NOT PG ``TraceSession``: a net-new
@@ -7064,139 +7065,26 @@ class EvalPlayGroundAPIView(APIView):
                         ).exists()
                     )
                     if _ss_fields and _ss_in_org:
-                        # Trace SET via CH spans, NOT the dead ``Trace.session`` FK
-                        # (None post-flip → empty for ALL sessions). Trace stays PG
-                        # → the CH-derived ids drive a PG ``id__in`` filter.
+                        # The builder's span read expects the survivor id, not
+                        # a remapped alias. Resolve only after the project check.
                         with get_reader() as reader:
-                            _trace_id_list = reader.session_trace_ids(
-                                str(_ss_project_id), str(_session_id)
+                            _canonical_session_id = (
+                                reader._resolve_session_ids_to_canonical(
+                                    [str(_session_id)]
+                                )[str(_session_id)]
                             )
-                        _trace_qs = Trace.objects.filter(
-                            id__in=_trace_id_list, deleted=False
-                        )
-
-                        # CH read replaces two ObservationSpan ORM queries:
-                        #   1. .filter(trace__in=_trace_qs, deleted=False).aggregate(...)
-                        #   2. .filter(trace_id__in=_trace_ids, deleted=False)
-                        #        .values("trace_id").annotate(...)
-                        # CHSpanReader doesn't expose `error_count` / per-trace
-                        # `error_count` or `total_latency` aggregates, so we
-                        # list session spans once (already filtered to
-                        # is_deleted=0) and compute both rollups in Python.
-                        # Sessions are bounded by product semantics (a single
-                        # conversation/workflow), so the in-process scan is
-                        # cheaper than two CH round-trips.
-                        # ``list_by_session`` matches the RAW ``_session_id``; the
-                        # ``session_trace_ids`` trace set above resolves the input
-                        # id. They agree because the eval-context ``session_id`` is
-                        # always a SURVIVOR (old) or NET-NEW id (the session
-                        # list/detail surfaces resolved/old ids), never a
-                        # straddler's raw NEW id — for those the input resolves to
-                        # itself, so both reads see the same session.
-                        with get_reader() as reader:
-                            _ch_session_spans = reader.list_by_session(str(_session_id))
-                        _total_spans = len(_ch_session_spans)
-                        _sess_error_count = sum(
-                            1 for s in _ch_session_spans if s.status == "ERROR"
-                        )
-                        _sess_total_tokens = sum(
-                            (s.total_tokens or 0) for s in _ch_session_spans
-                        )
-                        _sess_total_cost = sum(
-                            (s.cost or 0.0) for s in _ch_session_spans
-                        )
-                        _sess_start_times = [
-                            s.start_time for s in _ch_session_spans if s.start_time
-                        ]
-                        _sess_end_times = [
-                            s.end_time for s in _ch_session_spans if s.end_time
-                        ]
-                        _start = min(_sess_start_times) if _sess_start_times else None
-                        _end = max(_sess_end_times) if _sess_end_times else None
-
-                        # Lightweight trace summaries for the agent to browse
-                        # and decide which to drill into. Page-scoped (first
-                        # 100 traces by created_at) to match the prior PG path
-                        # which annotated only over `trace_id__in=_trace_ids`.
-                        _traces_page = list(_trace_qs.order_by("created_at")[:100])
-                        _trace_id_set = {str(_tr.id) for _tr in _traces_page}
-                        _per_trace: dict[str, dict] = {}
-                        for s in _ch_session_spans:
-                            if s.trace_id not in _trace_id_set:
-                                continue
-                            row = _per_trace.setdefault(
-                                s.trace_id,
-                                {
-                                    "span_count": 0,
-                                    "error_count": 0,
-                                    "total_tokens": 0,
-                                    "total_latency": 0,
-                                },
+                        session_context = build_session_context(
+                            TraceSession(
+                                id=_canonical_session_id,
+                                project_id=_ss_project_id,
+                                name=(
+                                    _ss_fields["display_name"]
+                                    or _ss_fields["external_session_id"]
+                                ),
+                                bookmarked=bool(_ss_fields["bookmarked"]),
+                                created_at=_ss_fields["first_seen"],
                             )
-                            row["span_count"] += 1
-                            if s.status == "ERROR":
-                                row["error_count"] += 1
-                            row["total_tokens"] += s.total_tokens or 0
-                            row["total_latency"] += s.latency_ms or 0
-
-                        _trace_summaries = []
-                        for _tr in _traces_page:
-                            _agg = _per_trace.get(str(_tr.id), {})
-                            _err_count = _agg.get("error_count") or 0
-                            _trace_summaries.append(
-                                {
-                                    "id": str(_tr.id),
-                                    "name": _tr.name,
-                                    "created_at": (
-                                        _tr.created_at.isoformat()
-                                        if _tr.created_at
-                                        else None
-                                    ),
-                                    "span_count": _agg.get("span_count") or 0,
-                                    "error_count": _err_count,
-                                    "total_tokens": _agg.get("total_tokens") or 0,
-                                    "total_latency_ms": _agg.get("total_latency") or 0,
-                                    "has_error": bool(_tr.error or _err_count > 0),
-                                }
-                            )
-
-                        _duration = None
-                        if _start and _end:
-                            _duration = (_end - _start).total_seconds()
-
-                        # Session identity fields now come from the CH record +
-                        # PG overlay (``resolve_session_fields``), NOT a PG
-                        # TraceSession row: name = display_name override else the
-                        # external session id (DESIGN §5.2 COALESCE); created_at =
-                        # first_seen (the session's first observed activity).
-                        _ss_first_seen = _ss_fields["first_seen"]
-                        session_context = {
-                            "id": str(_session_id),
-                            "name": (
-                                _ss_fields["display_name"]
-                                or _ss_fields["external_session_id"]
-                            ),
-                            "project_id": (
-                                str(_ss_project_id) if _ss_project_id else None
-                            ),
-                            "bookmarked": bool(_ss_fields["bookmarked"]),
-                            "created_at": (
-                                _ss_first_seen.isoformat() if _ss_first_seen else None
-                            ),
-                            "trace_count": _trace_qs.count(),
-                            "total_spans": _total_spans,
-                            "error_count": _sess_error_count,
-                            "total_tokens": _sess_total_tokens,
-                            "total_cost": (
-                                float(round(_sess_total_cost, 6))
-                                if _sess_total_cost
-                                else 0
-                            ),
-                            "start_time": (str(_start) if _start else None),
-                            "end_time": (str(_end) if _end else None),
-                            "duration_seconds": _duration,
-                            "traces": _trace_summaries,
-                        }
+                        )
                 except Exception as _e:
                     logger.warning(f"Failed to fetch session {_session_id}: {_e}")
 
