@@ -466,9 +466,14 @@ const SAVE_TARGET = { environment: "environment", suite: "scenarios" };
 const scenarioWord = (n) => `${n} scenario${n === 1 ? "" : "s"}`;
 export const REVIEW_COPY = {
   title: "Review changes",
-  subtitle: (n, label) =>
-    `${n} unsaved edit${n === 1 ? "" : "s"} since ${label ? `environment ${label}` : "the saved version"}. Keep or undo each one, then save. Runs use ${label || "the saved version"} until they're saved.`,
-  empty: "Nothing waiting. Every edit is saved.",
+  subtitle: (n, piece, label) =>
+    `${n} unsaved edit${n === 1 ? "" : "s"} since ${label ? `${SAVE_TARGET[piece]} ${label}` : "the saved version"}. Keep or undo each one, then save. Runs use ${label || "the saved version"} until they're saved.`,
+  emptyTitle: "Nothing waiting",
+  emptyBody: "Every edit is saved.",
+  loadError: "Couldn't load the changes",
+  loadErrorBody: "Your edits are still there. Try again in a moment.",
+  undone: (summary) => `Undone: ${summary}`,
+  dismissed: (detail) => `Dismissed: ${detail}`,
   groupTitle: (label, n) => `${label} · ${n}`,
   failed: "Couldn't apply",
   failedMeta: ({ source_id: source, scenarios }) => {
@@ -512,13 +517,20 @@ export const REVIEW_COPY = {
   namePlaceholder: "For example: Refund window from the 2026 policy",
   discardAll: "Discard all",
   discardTitle: (n) => `Discard ${n} edit${n === 1 ? "" : "s"}?`,
-  discardBody: (label) =>
-    `The world goes back to ${label ? `environment ${label}` : "the saved version"} as it was saved. This can't be undone.`,
+  discardBody: (piece, label) => {
+    const saved = label
+      ? `${SAVE_TARGET[piece]} ${label}`
+      : "the saved version";
+    return piece === "suite"
+      ? `The scenarios go back to ${saved} as they were saved. This can't be undone.`
+      : `The world goes back to ${saved} as it was saved. This can't be undone.`;
+  },
   discard: "Discard",
   saveLine: ({ kind, piece, next, rechecked }) =>
     `${SAVE_KIND[kind]} → ${SAVE_TARGET[piece]}${next ? ` ${next}` : ""} · ${scenarioWord(rechecked)} rechecked`,
   save: (next) => (next ? `Save release ${next}` : "Save release"),
   unsavedEdits: (n) => `${n} unsaved edit${n === 1 ? "" : "s"}`,
+  unsavedEditsUncounted: "Unsaved edits",
   couldntApply: (n) => `${n} change${n === 1 ? "" : "s"} couldn't apply`,
   sampleSaved: "Sample data: nothing was saved.",
   sampleDiscarded: "Sample data: nothing was discarded.",

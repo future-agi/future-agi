@@ -3,11 +3,19 @@ import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 // The hooks are stubbed; tests set the drafts and each mutation's state.
-const state = { drafts: undefined, save: {}, review: null };
+const state = {
+  drafts: undefined,
+  save: {},
+  review: null,
+  reviewFailed: false,
+};
 const saveMutate = vi.fn();
 const saveReset = vi.fn();
 vi.mock("src/api/simulate-environments/draftReview", () => ({
-  useDraftReview: vi.fn(() => ({ data: state.review })),
+  useDraftReview: vi.fn(() => ({
+    data: state.review,
+    isError: state.reviewFailed,
+  })),
 }));
 vi.mock("src/api/simulate-environments/versions", async () => {
   const actual = await vi.importActual(
@@ -80,6 +88,7 @@ beforeEach(() => {
   state.drafts = both();
   state.save = {};
   state.review = { changes: [KEPT], failed: [] };
+  state.reviewFailed = false;
   saveMutate.mockReset();
   saveReset.mockReset();
 });
@@ -94,6 +103,18 @@ describe("DraftBar", () => {
     state.drafts = { environment: null, suite: null, set_aside: [] };
     render(<DraftBar env={ENV} />);
     expect(screen.queryByTestId("draft-bar")).toBeNull();
+  });
+
+  it("keeps the way in and the save when the review won't load", async () => {
+    const onReview = vi.fn();
+    state.review = undefined;
+    state.reviewFailed = true;
+    render(<DraftBar env={ENV} onReview={onReview} />);
+    await userEvent.click(
+      screen.getByRole("button", { name: /unsaved edits/i }),
+    );
+    expect(onReview).toHaveBeenCalled();
+    expect(saveButton()).toBeEnabled();
   });
 
   it("states the edits and what saving makes, and opens the review", async () => {

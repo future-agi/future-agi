@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { act, render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 const { enqueueSnackbar } = vi.hoisted(() => ({ enqueueSnackbar: vi.fn() }));
@@ -8,11 +8,15 @@ vi.mock("notistack", async (importOriginal) => ({
   enqueueSnackbar,
 }));
 
-const state = { review: null };
+const state = { review: null, query: {} };
 const decide = vi.fn();
 const dismiss = vi.fn();
 vi.mock("src/api/simulate-environments/draftReview", () => ({
-  useDraftReview: vi.fn(() => ({ data: state.review, isLoading: false })),
+  useDraftReview: vi.fn(() => ({
+    data: state.review,
+    isLoading: false,
+    ...state.query,
+  })),
   useDecideChanges: vi.fn(() => ({ mutate: decide, isPending: false })),
   useDismissFailedChange: vi.fn(() => dismiss),
 }));
@@ -22,7 +26,7 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => ({
     data: {
       defaults: {
         environment: { label: "v1" },
-        suite: { label: "v1" },
+        suite: { label: "v2" },
       },
     },
   })),
@@ -73,6 +77,7 @@ describe("ReviewChangesDrawer", () => {
     decide.mockReset();
     dismiss.mockReset();
     enqueueSnackbar.mockReset();
+    state.query = {};
   });
 
   it("undo sends a rejection for that change", async () => {
@@ -104,9 +109,61 @@ describe("ReviewChangesDrawer", () => {
       }),
     ]);
     renderDrawer();
-    const [needed, free] = screen.getAllByRole("button", { name: "Undo" });
-    expect(needed).toBeDisabled();
-    expect(free).toBeEnabled();
+    const [needed, free] = screen.getAllByRole("button", { name: /^Undo/ });
+    expect(needed).toHaveAttribute("aria-disabled", "true");
+    expect(free).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("keeps a held Undo reachable by keyboard, and it does nothing", async () => {
+    const user = userEvent.setup();
+    state.review = review([
+      change({ id: "actor:a", kind: "actor", summary: "Added a" }),
+      change({
+        id: "scenario:s",
+        kind: "scenario",
+        summary: "Change s",
+        depends_on: ["actor:a"],
+      }),
+    ]);
+    renderDrawer();
+    const held = screen.getByRole("button", { name: /^Undo\. .*Change s/ });
+    act(() => held.focus());
+    expect(held).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it("hands focus to the next Undo when a row leaves", async () => {
+    const user = userEvent.setup();
+    const first = change({ id: "tool:a", summary: "Change a" });
+    const second = change({ id: "tool:b", summary: "Change b" });
+    state.review = review([first, second]);
+    const props = { open: true, env: { id: "env-1" } };
+    const { rerender } = render(<ReviewChangesDrawer {...props} />);
+    await user.click(screen.getAllByRole("button", { name: "Undo" })[0]);
+    state.review = review([{ ...first, decision: "rejected" }, second]);
+    rerender(<ReviewChangesDrawer {...props} />);
+    expect(screen.getByRole("button", { name: "Undo" })).toHaveFocus();
+  });
+
+  it("names the version of what the edits change", async () => {
+    const user = userEvent.setup();
+    state.review = review([change({ piece: "suite", kind: "scenario" })]);
+    renderDrawer();
+    expect(screen.getByText(/since scenarios v2/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Discard all" }));
+    expect(screen.getByText(/back to scenarios v2/)).toBeInTheDocument();
+  });
+
+  it("offers a retry when the review won't load, not an empty list", async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn();
+    state.review = undefined;
+    state.query = { isError: true, refetch };
+    renderDrawer();
+    expect(screen.queryByText(/Nothing waiting/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalled();
   });
 
   it("opens a row to its diff", async () => {

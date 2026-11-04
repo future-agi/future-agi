@@ -47,7 +47,7 @@ export default function DraftBar({
 }) {
   const enabled = Boolean(env?.versioning?.enabled);
   const { data: drafts } = useDrafts(env?.id, { enabled });
-  const { data: review } = useDraftReview(env?.id, {
+  const { data: review, isError: reviewFailed } = useDraftReview(env?.id, {
     enabled: enabled && Boolean(drafts?.any),
   });
   const { data: versions } = useEnvironmentVersions(env?.id, { enabled });
@@ -72,12 +72,19 @@ export default function DraftBar({
 
   const kept = keptChanges(review?.changes);
   const failedCount = review?.failed?.length || 0;
-  if (!kept.length && !failedCount) return null;
+  // A review that won't load doesn't mean the draft is gone: keep the way in,
+  // where the drawer offers a retry, and the save.
+  const uncounted = reviewFailed && !review;
+  if (!uncounted && !kept.length && !failedCount) return null;
 
   const line = saveLine(review?.changes, versions);
   const staleReason = drafts.stale ? staleText(drafts) : null;
   const holdReasons = [busy && busyId, rebuilding && holdId].filter(Boolean);
   const saveReasons = [staleReason && staleId, ...holdReasons].filter(Boolean);
+
+  const shortLabel = uncounted
+    ? REVIEW_COPY.unsavedEditsUncounted
+    : REVIEW_COPY.couldntApply(failedCount);
 
   const onSave = () =>
     save.mutate(
@@ -139,11 +146,11 @@ export default function DraftBar({
                 </Box>
               </>
             ) : (
-              REVIEW_COPY.couldntApply(failedCount)
+              shortLabel
             )}
           </Box>
         </Button>
-        {kept.length > 0 && (
+        {(kept.length > 0 || uncounted) && (
           <Button
             size="small"
             variant="outlined"
@@ -153,7 +160,9 @@ export default function DraftBar({
             onClick={onSave}
             sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
           >
-            {save.isPending ? COPY.saving : REVIEW_COPY.save(line.next)}
+            {save.isPending
+              ? COPY.saving
+              : REVIEW_COPY.save(uncounted ? null : line.next)}
           </Button>
         )}
       </Stack>

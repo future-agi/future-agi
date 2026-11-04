@@ -1,9 +1,11 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Box, Button, Stack, TextField, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import ContentSkeleton from "src/components/content-skeleton";
 import { ConfirmDialog } from "src/components/custom-dialog";
+import EmptyState from "src/components/empty-state";
+import ErrorState from "src/components/error-state";
 import {
   useDecideChanges,
   useDismissFailedChange,
@@ -25,6 +27,17 @@ import {
 } from "./reviewView";
 
 const NAME_LIMIT = 80;
+const visuallyHidden = {
+  border: 0,
+  clip: "rect(0 0 0 0)",
+  height: "1px",
+  margin: -1,
+  overflow: "hidden",
+  padding: 0,
+  position: "absolute",
+  whiteSpace: "nowrap",
+  width: "1px",
+};
 const cardSx = {
   border: "1px solid",
   borderColor: "divider",
@@ -56,7 +69,12 @@ export default function ReviewChangesDrawer({
   onSaved,
   onOpenTab,
 }) {
-  const { data: review, isLoading } = useDraftReview(env?.id, {
+  const {
+    data: review,
+    isLoading,
+    isError,
+    refetch,
+  } = useDraftReview(env?.id, {
     enabled: open,
   });
   const { data: versions } = useEnvironmentVersions(env?.id, {
@@ -66,6 +84,10 @@ export default function ReviewChangesDrawer({
   const dismiss = useDismissFailedChange(env?.id);
   const [name, setName] = useState("");
   const [discarding, setDiscarding] = useState(false);
+  const [announced, setAnnounced] = useState("");
+  const bodyRef = useRef(null);
+  const titleRef = useRef(null);
+  const focusAfterRemoval = useRef(null);
 
   const changes = review?.changes || [];
   const failed = review?.failed || [];
@@ -77,6 +99,28 @@ export default function ReviewChangesDrawer({
     names.length,
     review?.sample_scenario_total ?? names.length,
   );
+
+  const focusTargets = () =>
+    Array.from(
+      bodyRef.current?.querySelectorAll(
+        '[data-review-focus]:not([aria-disabled="true"])',
+      ) || [],
+    );
+  // The row holding the focused button is about to leave; only a button that
+  // had focus hands it on, so a click elsewhere doesn't move anything.
+  const beforeRemoval = (message) => {
+    const at = focusTargets().indexOf(document.activeElement);
+    focusAfterRemoval.current = at < 0 ? null : at;
+    setAnnounced(message);
+  };
+  const rowCount = kept.length + failed.length;
+  useEffect(() => {
+    const at = focusAfterRemoval.current;
+    if (at === null) return;
+    focusAfterRemoval.current = null;
+    const targets = focusTargets();
+    (targets[Math.min(at, targets.length - 1)] || titleRef.current)?.focus();
+  }, [rowCount]);
 
   const goTab = (tab) => {
     onClose?.();
@@ -98,11 +142,22 @@ export default function ReviewChangesDrawer({
 
   const body = () => {
     if (isLoading) return <ContentSkeleton variant="rows" />;
+    if (isError && !review) {
+      return (
+        <ErrorState
+          title={COPY.loadError}
+          detail={COPY.loadErrorBody}
+          onRetry={() => refetch()}
+        />
+      );
+    }
     if (!kept.length && !failed.length) {
       return (
-        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-          {COPY.empty}
-        </Typography>
+        <EmptyState
+          variant="no-results"
+          title={COPY.emptyTitle}
+          description={COPY.emptyBody}
+        />
       );
     }
     return (
@@ -119,7 +174,10 @@ export default function ReviewChangesDrawer({
                   failed={one}
                   canEdit={canEdit}
                   onFix={() => goTab("contract")}
-                  onDismiss={() => dismiss(one.id)}
+                  onDismiss={() => {
+                    beforeRemoval(COPY.dismissed(one.detail));
+                    dismiss(one.id);
+                  }}
                 />
               ))}
             </Box>
@@ -137,9 +195,10 @@ export default function ReviewChangesDrawer({
                   change={change}
                   changes={changes}
                   canEdit={canEdit}
-                  onUndo={() =>
-                    decide.mutate([{ id: change.id, decision: "rejected" }])
-                  }
+                  onUndo={() => {
+                    beforeRemoval(COPY.undone(change.summary));
+                    decide.mutate([{ id: change.id, decision: "rejected" }]);
+                  }}
                   onOpen={(link) =>
                     link.kind === "chat" ? onClose?.() : goTab(group.tab)
                   }
@@ -177,19 +236,33 @@ export default function ReviewChangesDrawer({
         >
           <Stack direction="row" alignItems="center" spacing={1}>
             <Typography
+              ref={titleRef}
+              tabIndex={-1}
               component="h2"
-              sx={{ typography: "m1", fontWeight: "fontWeightSemiBold" }}
+              sx={{
+                typography: "m1",
+                fontWeight: "fontWeightSemiBold",
+                outline: "none",
+              }}
             >
               {COPY.title}
             </Typography>
             {review?.is_sample && <MockBadge />}
           </Stack>
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {COPY.subtitle(kept.length, savedLabel)}
-          </Typography>
+          {review && (
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              {COPY.subtitle(kept.length, line.piece, savedLabel)}
+            </Typography>
+          )}
         </Box>
 
-        <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 2, py: 2 }}>
+        <Box role="status" sx={visuallyHidden}>
+          {announced}
+        </Box>
+        <Box
+          ref={bodyRef}
+          sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 2, py: 2 }}
+        >
           {body()}
         </Box>
 
@@ -248,7 +321,7 @@ export default function ReviewChangesDrawer({
         open={discarding}
         onClose={() => setDiscarding(false)}
         title={COPY.discardTitle(kept.length)}
-        content={COPY.discardBody(savedLabel)}
+        content={COPY.discardBody(line.piece, savedLabel)}
         action={
           <Button
             size="small"
