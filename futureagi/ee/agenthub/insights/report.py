@@ -27,6 +27,8 @@ from __future__ import annotations
 import re
 from types import SimpleNamespace
 
+import structlog
+
 from ee.agenthub.insights import agent as insight_agent
 from ee.agenthub.insights.llm import Spend
 from ee.agenthub.insights.summary import (
@@ -36,6 +38,8 @@ from ee.agenthub.insights.summary import (
     verified,
     write_summary,
 )
+
+logger = structlog.get_logger(__name__)
 
 MAX_FINDINGS = 6
 MAX_HIGHLIGHTS = 6
@@ -232,13 +236,17 @@ def checked_numbers(result: dict, units: list[dict]) -> set[str]:
     return numbers
 
 
-def _without_ids(text: str, units: list[dict]) -> str:
-    """Ids carry digits that are not claims: user ids like cust_ada_532, and
-    the session or trace id of a unit (956ae508-1958-…) an answer names. An
-    id of digits alone stays in, so it never vouches for a number."""
+def _without_ids(text: str, units: list[dict], *, category_ids=()) -> str:
+    """Known mixed-alphanumeric ids are references, not numerical claims.
+
+    Category ids are opaque hashes too. Only complete ids from this report
+    are removed; unknown ids and ids of digits alone still face the number
+    check, so an id cannot vouch for an unsupported quantity.
+    """
     for user in {u.get("user_id") for u in units if u.get("user_id")}:
         text = text.replace(user, "")
     ids = {u.get(k) or "" for u in units for k in ("unit_id", "session_id")}
+    ids.update(category_ids)
     for unit_id in sorted(ids, key=len, reverse=True):
         if unit_id in text and re.search(r"[A-Za-z]", unit_id):
             text = re.sub(rf"(?<![\w-]){re.escape(unit_id)}(?![\w-])", "", text)
@@ -294,7 +302,9 @@ class _Refs:
         return self.order.index(key) + 1
 
 
-def _evidence(items, units_by_key, contents, *, v2: bool = False) -> list[dict]:
+def _evidence(
+    items, units_by_key, contents, *, v2: bool = False, limit: int = 3
+) -> list[dict]:
     kept = []
     for item in _objects(items):
         key = str(item.get("unit_key", ""))
@@ -312,7 +322,7 @@ def _evidence(items, units_by_key, contents, *, v2: bool = False) -> list[dict]:
                     "evidence_id": e["evidence_id"],
                 }
             )
-    return kept[:3]
+    return kept[:limit]
 
 
 def _receipt_evidence(item: dict, key: str, unit: dict) -> list[dict]:
@@ -361,7 +371,10 @@ def _findings(
         evidence = _evidence(raw.get("evidence"), units_by_key, contents, v2=v2)
         grounded = _cited_numbers([k for k in keys if k in units_by_key], evidence)
         if not headline or not verified(
-            _without_ids(f"{headline} {detail} {action}", units), numbers | grounded
+            _without_ids(
+                f"{headline} {detail} {action}", units, category_ids=categories
+            ),
+            numbers | grounded,
         ):
             dropped += 1
             continue
@@ -620,8 +633,9 @@ def _answer_payload(
     """The answer's paragraphs that check out. On a v2 run an answer its
     verifier did not pass is returned under ``unverified_answer``, with
     ``answer`` empty."""
+    rejected: dict[str, int] = {}
     paragraphs, dropped = _paragraphs(
-        reply.get("answer"), result, units, contents, v2=v2
+        reply.get("answer"), result, units, contents, v2=v2, rejected=rejected
     )
     dropped_reply = reply.get("dropped")
     if isinstance(dropped_reply, dict):
@@ -645,6 +659,14 @@ def _answer_payload(
         reply.get("verification")
     ):
         apart, out["answer"] = paragraphs + apart, []
+    elif not paragraphs:
+        # The agent's verdict does not override the host's checks. A reply
+        # whose answer was entirely removed is a failed answer, not a
+        # successfully verified empty list.
+        verification = {
+            "status": "failed",
+            "reason": "answer_validation_failed" if rejected else "answer_empty",
+        }
     out.update(
         {
             "unverified_answer": apart,
@@ -655,37 +677,92 @@ def _answer_payload(
             },
         }
     )
+    upstream_rejections = _agent_rejections(reply.get("diagnostics"))
+    if upstream_rejections:
+        out["verification"]["validation"] = {"agent_rejections": upstream_rejections}
+    if rejected:
+        # Fixed reason codes and counts only: no prose, source content or
+        # credentials from an agent reply enter diagnostics.
+        out["verification"].setdefault("validation", {}).update(
+            {"stage": "backend", "rejected_paragraphs": rejected}
+        )
+        logger.warning(
+            "insight_answer_validation_rejected",
+            rejected_paragraphs=rejected,
+            kept_paragraphs=len(out["answer"]),
+            verification_status=out["verification"]["status"],
+        )
     return out
 
 
+def _agent_rejections(diagnostics) -> dict[str, int]:
+    """Copy only the agent protocol's bounded reason counters, never prose."""
+    rejections = (
+        diagnostics.get("rejections") if isinstance(diagnostics, dict) else None
+    )
+    if not isinstance(rejections, dict):
+        return {}
+    codes = (
+        "invalid_quote",
+        "ungrounded_number",
+        "empty_text",
+        "verifier_rejected",
+        "verifier_unjudged",
+        "verifier_unavailable",
+    )
+    return {
+        code: value
+        for code in codes
+        if type(value := rejections.get(code)) is int and 0 <= value <= 2**53 - 1
+    }
+
+
 def _paragraphs(
-    raws, result: dict, units: list[dict], contents: dict[str, str], *, v2: bool
+    raws,
+    result: dict,
+    units: list[dict],
+    contents: dict[str, str],
+    *,
+    v2: bool,
+    rejected: dict[str, int] | None = None,
 ) -> tuple[list[dict], int]:
     units_by_key = {u["key"]: u for u in units}
     categories = {c["id"] for c in result["categories"]}
     numbers = checked_numbers(result, units)
     paragraphs, dropped = [], 0
+
+    def reject(reason: str) -> None:
+        nonlocal dropped
+        dropped += 1
+        if rejected is not None:
+            rejected[reason] = rejected.get(reason, 0) + 1
+
     for raw in model_list(raws):
         if not isinstance(raw, dict):
             # A model-written item that isn't an object ({"answer": ["text"]})
             # is dropped like any unverifiable paragraph, never a 500.
-            dropped += 1
+            reject("invalid_paragraph")
             continue
         text, cited, cited_ids = _inline_citations(
             _clean(raw.get("text"), 1200), units_by_key, categories
         )
         if not text:
+            reject("empty_paragraph")
             continue
         keys = [
             str(k) for k in model_list(raw.get("unit_keys")) if str(k) in units_by_key
         ] + cited
-        # Its citations are checked first: how many units it cites, or a
-        # number one of its quotes holds, is what it cites, not a statistic.
-        evidence = _evidence(raw.get("evidence"), units_by_key, contents, v2=v2)
+        # Ask permits four citations per paragraph. Keep all four before
+        # checking numbers: its fourth quote may be the sole source of an
+        # amount, duration or policy limit the answer repeats.
+        evidence = _evidence(
+            raw.get("evidence"), units_by_key, contents, v2=v2, limit=4
+        )
         if not verified(
-            _without_ids(text, units), numbers | _cited_numbers(keys, evidence)
+            _without_ids(text, units, category_ids=categories),
+            numbers | _cited_numbers(keys, evidence),
         ):
-            dropped += 1
+            reject("unsupported_number")
             continue
         ids = [
             str(c) for c in model_list(raw.get("category_ids")) if str(c) in categories
