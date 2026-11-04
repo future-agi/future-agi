@@ -543,8 +543,8 @@ export const dsTypography = {
     "lineHeight": "22px"
   },
   "m3": {
-    "fontSize": "0.75rem",
-    "lineHeight": "18px"
+    "fontSize": "0.8125rem",
+    "lineHeight": "20px"
   },
   "l1": {
     "fontSize": "1.5rem",

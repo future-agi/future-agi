@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="tokens/tokens.css?v=27">
-<link rel="stylesheet" href="ds.css?v=38">
+<link rel="stylesheet" href="tokens/tokens.css?v=28">
+<link rel="stylesheet" href="ds.css?v=39">
 <link rel="stylesheet" href="docs.css?v=25">
 <script>
   try { var t = localStorage.getItem("ds-theme"); if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); } catch (e) {}
@@ -173,7 +173,7 @@
             <tr><td>To change a value</td><td>Edit <span class="mono">frontend/design-system/tokens/tokens.json</span>, then run <span class="mono">yarn tokens:build</span> from <span class="mono">frontend/</span></td><td>The build fails if any promised text contrast drops below its minimum</td></tr>
           </tbody>
         </table></div>
-        <p class="small muted">Generated files: <a href="tokens/tokens.css?v=27">tokens.css</a> · <a href="tokens/tokens.json">tokens.json</a> (source) · <span class="mono">frontend/src/theme/ds-tokens.js</span> (what the product uses).</p>
+        <p class="small muted">Generated files: <a href="tokens/tokens.css?v=28">tokens.css</a> · <a href="tokens/tokens.json">tokens.json</a> (source) · <span class="mono">frontend/src/theme/ds-tokens.js</span> (what the product uses).</p>
       </section>
 
       <section class="doc" id="changelog">
@@ -182,7 +182,7 @@
           <p class="muted">What changed in each version.</p>
         </header>
         <div class="tscroll"><table class="spec"><thead><tr><th>Version</th><th>Date</th><th>Changes</th></tr></thead><tbody>
-          <tr><td>0.2.4</td><td>4 Nov 2026</td><td>Body and reading text 12px: <code>body-md</code> 12/18, was 13/20 (also <span class="mono">body1</span>, <span class="mono">s1_2</span>, <span class="mono">m3</span>). Small headings (<code>title-xs</code>) stay 13px.</td></tr>
+          <tr><td>0.2.4</td><td>4 Nov 2026</td><td>Body and reading text 12px: <code>body-md</code> 12/18, was 13/20 (also <span class="mono">body1</span>, <span class="mono">s1_2</span>). Small headings (<code>title-xs</code>, and <span class="mono">m3</span>, used mostly for card titles) stay 13px.</td></tr>
           <tr><td>0.2.3</td><td>31 Oct 2026</td><td>Unselected tab labels darker: <code>fg.secondary</code>, was <code>fg.tertiary</code>. Every dialog that can be closed has a close cross top right; new <span class="mono">ClosableDialog</span> for raw dialogs.</td></tr>
           <tr><td>0.2.2</td><td>31 Oct 2026</td><td>Table rows 36, two-line rows 48. Tab rail: the theme draws one hairline under every tab row. Sidebar labels darker: items <code>fg.default</code>, section labels <code>fg.secondary</code>. Loading is <span class="mono">ContentSkeleton</span>, no centred spinners. Knowledge base statuses in the status map.</td></tr>
           <tr><td>0.2.1</td><td>30 Oct 2026</td><td>Docs match the product: page titles, object headers, dialog and drawer titles 15/600, section and panel titles 13/500; table rows 36 everywhere (one shared setting); 12 inside panels. Removed screen-specific notes (Evidence and requirements, the long density note, run and issue header details). Status map, merged with Run status into one table. Getting started and Rollout apply the theme kit, not <span class="mono">mui-theme.js</span> alone. White tab underline and focus in dark. Product text sizes and the theme kit.</td></tr>
@@ -236,7 +236,7 @@
       <section class="doc" id="type">
         <header>
           <h2>Typography</h2>
-          <p class="muted">Inter, three weights (400, 500, 600), tabular figures for numbers. Line heights sit on a 4px grid. <code>body-sm</code> and <code>body-md</code> are both 12px: <code>body-sm</code> for UI text, <code>body-md</code> for long reading text. <code>title-xs</code> (13px) is the small heading. Legacy variants map onto the scale: <span class="mono">s1</span> 12, <span class="mono">s3</span> 11, <span class="mono">m3</span> 12, <span class="mono">m1</span>/<span class="mono">m2</span> 15.</p>
+          <p class="muted">Inter, three weights (400, 500, 600), tabular figures for numbers. Line heights sit on a 4px grid. <code>body-sm</code> and <code>body-md</code> are both 12px: <code>body-sm</code> for UI text, <code>body-md</code> for long reading text. <code>title-xs</code> (13px) is the small heading. Legacy variants map onto the scale: <span class="mono">s1</span> 12, <span class="mono">s3</span> 11, <span class="mono">m3</span> 13, <span class="mono">m1</span>/<span class="mono">m2</span> 15.</p>
         </header>
         <div class="type-spec" id="typeSpec"></div>
         <div class="dd">
@@ -1004,7 +1004,7 @@
   </div>
 </div>
 
-<script src="tokens/tokens.js?v=29"></script>
+<script src="tokens/tokens.js?v=30"></script>
 <script src="docs.js?v=25"></script>
 </body>
 </html>

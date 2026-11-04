@@ -658,7 +658,7 @@ window.DS = {
     "s3": "caption",
     "m1": "title-sm",
     "m2": "title-sm",
-    "m3": "body-md",
+    "m3": "title-xs",
     "l1": "title-lg",
     "l2": "title-lg",
     "l3": "title-md",

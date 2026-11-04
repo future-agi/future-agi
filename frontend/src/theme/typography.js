@@ -53,9 +53,9 @@ export const typography = {
   // Page titles: compact, like Linear and PostHog.
   m1: { fontSize: pxToRem(15), lineHeight: "22px" },
   m2: { fontSize: pxToRem(15), lineHeight: "22px" },
-  // 15px is only for drawer/dialog titles (m2); m3 was used for body and
-  // card text, so it is the 12px body size.
-  m3: { fontSize: pxToRem(12), lineHeight: "18px" },
+  // 15px is only for drawer/dialog titles (m2). Most m3 uses are card and
+  // section titles, so it stays at the 13px small-heading size.
+  m3: { fontSize: pxToRem(13), lineHeight: "20px" },
   l1: { fontSize: pxToRem(24), lineHeight: "32px" },
   l2: { fontSize: pxToRem(24), lineHeight: "32px" },
   l3: { fontSize: pxToRem(20), lineHeight: "28px" },
