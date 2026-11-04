@@ -14,7 +14,7 @@ export default function RecheckCard({ names }) {
       sx={{
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         px: 1.5,
         py: 1,
       }}

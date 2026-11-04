@@ -203,7 +203,7 @@ const CHANGES = [
       },
     ],
     affects: ["seniority-pressure"],
-    revalidate: ["seniority-pressure"],
+    revalidate: ALL_SCENARIOS.slice(0, 1),
     depends_on: ["actor:someone-claiming-seniority"],
     sources: [hand(7)],
   }),

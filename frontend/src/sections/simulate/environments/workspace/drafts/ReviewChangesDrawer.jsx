@@ -25,11 +25,18 @@ import {
 } from "./reviewView";
 
 const NAME_LIMIT = 80;
-const cardSx = { border: "1px solid", borderColor: "divider", borderRadius: 1 };
+const cardSx = {
+  border: "1px solid",
+  borderColor: "divider",
+  borderRadius: "8px",
+};
 
 function GroupHeading({ children }) {
   return (
-    <Typography component="h3" sx={{ typography: "m3", mb: 0.75 }}>
+    <Typography
+      component="h3"
+      sx={{ typography: "m3", fontWeight: "fontWeightMedium", mb: 0.75 }}
+    >
       {children}
     </Typography>
   );
@@ -225,7 +232,12 @@ export default function ReviewChangesDrawer({
               >
                 {COPY.saveLine(line)}
               </Typography>
-              <Button size="small" variant="contained" onClick={save}>
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={save}
+              >
                 {COPY.save(line.next)}
               </Button>
             </Stack>

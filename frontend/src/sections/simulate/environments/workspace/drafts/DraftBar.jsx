@@ -109,7 +109,10 @@ export default function DraftBar({
               <Box component="span" sx={{ fontWeight: "fontWeightRegular" }}>
                 {`${REVIEW_COPY.unsavedEdits(kept.length)} · `}
               </Box>
-              <Box component="span" sx={{ ml: 0.5 }}>
+              <Box
+                component="span"
+                sx={{ ml: 0.5, fontWeight: "fontWeightSemiBold" }}
+              >
                 {REVIEW_COPY.saveLine(line)}
               </Box>
             </>
