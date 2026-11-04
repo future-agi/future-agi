@@ -11,6 +11,7 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from simulate.selectors.held_back import coding_agent_key, coding_agent_run
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
 )
@@ -295,7 +296,12 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @swagger_auto_schema(responses={200: HarnessJobReadSerializer})
     def retrieve(self, request, pk=None):
-        return get_harness_provider().retrieve(request, pk)
+        """One job; a coding agent reads its own run with only the fields fi uses, never
+        the stage outputs, which name every case of the suite."""
+        response = get_harness_provider().retrieve(request, pk)
+        if coding_agent_key(request) is None or response.status_code != 200:
+            return response
+        return Response(coding_agent_run(response.data))
 
     @validated_request(
         request_serializer=HarnessJobActionSerializer,

@@ -606,6 +606,57 @@ class TestWhatACodingAgentReads:
         ]
         assert hidden not in coder.content.decode()
 
+    def test_its_own_run_reads_without_the_held_back_cases(
+        self, api_client, environment, keys
+    ):
+        chosen = ensure_held_back(environment)
+        hidden = chosen.scenario_keys[0]
+        member = HarnessSuiteMember.no_workspace_objects.get(
+            suite_version_id=chosen.suite_version_id, scenario_key=hidden
+        )
+        shown = [
+            key for key in _suite_keys(environment) if key not in chosen.scenario_keys
+        ]
+        created = _as(
+            api_client,
+            keys.coder,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": shown, "trials": 1},
+            HTTP_IDEMPOTENCY_KEY="coder",
+        )
+        assert created.status_code == 202, created.content
+        path = f"/simulate/api/harness-jobs/{created.json()['job_id']}/"
+
+        coder = _as(api_client, keys.coder, "get", path)
+        person = _as(api_client, keys.user, "get", path)
+
+        assert coder.status_code == person.status_code == 200, coder.content
+        # The control: the run's stage outputs name every case of its suite.
+        assert hidden in json.dumps(person.json()["stage_outputs"])
+        body = coder.json()
+        assert set(body) == {"job", "status", "receipts", "consumption", "platform"}
+        assert set(body["job"]) == {
+            "job_id",
+            "run_id",
+            "run_test_id",
+            "test_execution_id",
+            "metadata",
+        }
+        assert set(body["job"]["metadata"]) <= {
+            "environment_job_id",
+            "selected_scenario_keys",
+            "trials",
+            "rerun_execution_keys",
+            "version_pins",
+        }
+        assert body["job"]["metadata"]["selected_scenario_keys"] == shown
+        assert body["job"]["test_execution_id"] == created.json()["test_execution_id"]
+        assert body["status"] == person.json()["status"]
+        text = json.dumps(body)
+        for secret in (hidden, member.content["instruction"], member.content["name"]):
+            assert secret not in text
+
     def test_a_person_s_read_chooses_nothing(self, api_client, environment, keys):
         _as(api_client, keys.user, "get", f"{BASE}/{environment.id}/")
 

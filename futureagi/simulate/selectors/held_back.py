@@ -102,6 +102,37 @@ def detail_without(detail: dict[str, Any], keys: Collection[str]) -> dict[str, A
     return shown
 
 
+# What a coding agent's read of its own run keeps: the fields fi reads to follow a run
+# and count its results. The rest goes, the stage outputs first: they hold every case
+# of the run's suite, held-back ones included.
+_RUN_FIELDS = ("status", "receipts", "consumption", "platform")
+_RUN_JOB_FIELDS = ("job_id", "run_id", "run_test_id", "test_execution_id")
+_RUN_METADATA_FIELDS = (
+    "environment_job_id",
+    "selected_scenario_keys",
+    "trials",
+    "rerun_execution_keys",
+    "version_pins",
+)
+
+
+def coding_agent_run(read: Mapping[str, Any]) -> dict[str, Any]:
+    """A run read as a coding agent may see it: only the fields listed above."""
+    job = read.get("job") or {}
+    metadata = job.get("metadata") or {}
+    return {
+        **{name: read[name] for name in _RUN_FIELDS if name in read},
+        "job": {
+            **{name: job.get(name) for name in _RUN_JOB_FIELDS},
+            "metadata": {
+                name: metadata[name]
+                for name in _RUN_METADATA_FIELDS
+                if name in metadata
+            },
+        },
+    }
+
+
 def members_without(
     members: list[dict[str, Any]], keys: Collection[str]
 ) -> list[dict[str, Any]]:
