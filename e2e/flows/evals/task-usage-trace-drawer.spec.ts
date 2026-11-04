@@ -28,20 +28,23 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
     id: 'EVAL-E2E-006', area: 'evals',
     userGoal: 'Open the trace behind an eval task result without leaving the task Usage tab',
     steps: ['seed a trace and run an eval task over it through the mock judge',
+      'wait for the evaluated result to reach the trace drawer’s ClickHouse mirror',
       'open the task Usage tab and click its run',
       'read the run panel Trace ID and Span ID',
       'click Open trace and read the drawer',
       'press Esc to close the drawer, then Esc again to close the run panel'],
     backendChecks: ['the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored',
+      'the completed child reaches the ClickHouse mirror before the trace drawer reads its Evals tab',
       'the Usage runs response carries only the completed run, with the seeded trace and span IDs',
       'the run panel shows the seeded trace and span IDs',
       'the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open',
       'the first Esc closes only the drawer and the second closes the run panel'],
   }),
 }, async ({ page, actor, probe, mockModel }, testInfo) => {
-  // EVAL_RESULT (90 s) for the Temporal task, then navigation and four UI_READY
-  // waits; the runs list reads Postgres, so no CDC budget is spent.
-  test.setTimeout(300_000);
+  // EVAL_RESULT (90 s) for the Temporal task, CDC_VISIBLE (180 s) for the
+  // drawer’s eval mirror, then navigation and UI_READY waits. The Usage list
+  // itself reads Postgres, but the drawer does not.
+  test.setTimeout(540_000);
   const req = await request.newContext();
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const projectName = `e2e-usage-drawer-${suffix}`;
@@ -101,6 +104,13 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
       return { evaluated: bySpan.get(evaluatedSpanId)!.id, root: bySpan.get(seeded.spanIds[0])!.id };
     });
     const runId = runs.evaluated;
+    // The Usage list reads PG, but the trace drawer reads the CDC-backed CH
+    // eval mirror. Do not open it while its first response would be empty.
+    await expect.poll(async () => {
+      const mirror = await probe.ch<{ observation_span_id: string; status: string }>(
+        'SELECT observation_span_id,status FROM tracer_eval_logger FINAL WHERE eval_task_id={t:String}', { t: taskId });
+      return mirror.find(row => row.observation_span_id === evaluatedSpanId)?.status;
+    }, POLL.CDC_VISIBLE).toBe('completed');
     const position = '1 / 1';
 
     await test.step('Usage: the run panel shows the seeded trace and span', async () => {

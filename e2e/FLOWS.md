@@ -988,14 +988,16 @@
 **User steps:**
 
 1. seed a trace and run an eval task over it through the mock judge
-2. open the task Usage tab and click its run
-3. read the run panel Trace ID and Span ID
-4. click Open trace and read the drawer
-5. press Esc to close the drawer, then Esc again to close the run panel
+2. wait for the evaluated result to reach the trace drawer’s ClickHouse mirror
+3. open the task Usage tab and click its run
+4. read the run panel Trace ID and Span ID
+5. click Open trace and read the drawer
+6. press Esc to close the drawer, then Esc again to close the run panel
 
 **Backend state verified:**
 
 - the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored
+- the completed child reaches the ClickHouse mirror before the trace drawer reads its Evals tab
 - the Usage runs response carries only the completed run, with the seeded trace and span IDs
 - the run panel shows the seeded trace and span IDs
 - the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open
