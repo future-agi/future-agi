@@ -650,7 +650,7 @@ class HarnessVersionSerializer(serializers.Serializer):
         help_text="Whether this environment can discard an agent version.",
     )
     candidate_state = serializers.ChoiceField(
-        choices=("validating", "ready", "failed", "superseded", "expired"),
+        choices=("validating", "retry", "ready", "failed", "superseded", "expired"),
         allow_null=True,
         help_text=(
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside;"
@@ -780,7 +780,7 @@ class HarnessDraftValidationSerializer(serializers.Serializer):
     """Where the validation of the reviewed changes stands."""
 
     state = serializers.ChoiceField(
-        choices=("validating", "ready", "failed", "superseded", "unavailable")
+        choices=("validating", "retry", "ready", "failed", "superseded", "unavailable")
     )
     job_id = serializers.CharField(
         required=False, allow_null=True, help_text="The validation job, while one runs."

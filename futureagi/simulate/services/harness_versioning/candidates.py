@@ -19,13 +19,12 @@ import structlog
 from django.db import transaction
 from django.utils import timezone
 
-from simulate.models import HarnessAssembledBundle, HostedHarnessJob
+from simulate.models import AgentVersion, HarnessAssembledBundle, HostedHarnessJob
 from simulate.models.harness_versioning import DiscardReason, HashKind, VersionStatus
-from simulate.services.harness_versioning import archives, assembly, drafts, review
+from simulate.services.harness_versioning import archives, drafts, review, validation
 from simulate.services.harness_versioning.versions import (
     _add_members,
     _default_pair,
-    _default_runtime,
     _lock_environment,
     _member_rows,
     _next_number,
@@ -64,9 +63,8 @@ class CandidateSet(TypedDict):
 
 
 def validation_available(environment: HostedHarnessJob) -> bool:
-    """Whether the environment's pairings can be certified: bundle certification is on and the default agent has
-    the side row a certify runs with."""
-    return assembly.certify_enabled() and _default_runtime(environment) is not None
+    """Whether the environment's pairings can be certified with its default agent."""
+    return validation.can_validate(environment, environment.agent_version_id)
 
 
 def any_decision(environment: HostedHarnessJob) -> bool:
@@ -121,6 +119,10 @@ def validation_state(
         return None
     bundle = _bundle(environment, entry)
     state = "validating"
+    if bundle is not None and bundle.state == HarnessAssembledBundle.State.PENDING:
+        # Infrastructure ended the last job before a check ran: the pairing is not failed, it is checked again.
+        if validation.live_validation(bundle.id) is None:
+            state = "retry"
     if _defaults(environment) != entry["base_defaults"]:
         state = "superseded"
     elif bundle is not None and bundle.state == HarnessAssembledBundle.State.READY:
@@ -360,9 +362,20 @@ def create_candidates(
 
 def _start_validation(
     locked: HostedHarnessJob, versions: Mapping[str, Any]
-) -> str | None:
-    """Start certifying the pairing; the job's id, or ``None`` when no job is needed or none can start yet."""
-    return None
+) -> validation.Validation:
+    """Certify the default agent with the candidate pairing: already ready, a validation still running, or a new
+    run-less job (a failed pairing is checked again)."""
+    started = validation.start_validation(
+        locked,
+        AgentVersion.no_workspace_objects.get(id=locked.agent_version_id),
+        versions["environment"],
+        versions["suite"],
+        purpose="save",
+    )
+    if started is None:
+        # `validation_available` was checked under the same lock.
+        raise RuntimeError("pairing validation became unavailable under the lock")
+    return started
 
 
 def _same_set(
@@ -409,25 +422,28 @@ def validate_drafts(
         base_defaults = _defaults(locked)
         versions = create_candidates(locked, opened, reviewed, user=user)
         entry = live_set(locked)
+        started = _start_validation(locked, versions)
+        job_id = str(started.job.id) if started.job is not None else None
         if not _same_set(entry, versions, base_defaults):
             _supersede(locked, keep={str(one.id) for one in versions.values()})
             entry = {
                 "environment_version_id": str(versions["environment"].id),
                 "suite_version_id": str(versions["suite"].id),
                 "agent_version_id": base_defaults["agent"],
-                "assembly_key": assembly.bundle_key(
-                    _default_runtime(locked), versions["environment"], versions["suite"]
-                ),
+                "assembly_key": started.bundle.assembly_key,
                 "base_defaults": base_defaults,
                 "drafts": {
                     piece: {"id": str(draft.id), "revision": draft.revision}
                     for piece, draft in opened.items()
                 },
                 "review_digest": reviewed["review_digest"],
-                "job_id": None,
+                "job_id": job_id,
                 "at": timezone.now().isoformat(),
             }
-            entry["job_id"] = _start_validation(locked, versions)
+            _store(locked, entry)
+        elif entry["job_id"] != job_id:
+            # The same set validated again: a failed or interrupted pairing is checked by a new job.
+            entry = {**entry, "job_id": job_id}
             _store(locked, entry)
         state = validation_state(locked, entry)
     logger.info(

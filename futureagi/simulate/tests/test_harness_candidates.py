@@ -1006,3 +1006,91 @@ def test_a_change_touching_one_scenario_drops_only_its_proof_and_one_touching_al
     assert not HarnessSuiteValidation.no_workspace_objects.filter(
         environment_version=other
     ).exists()
+
+
+def test_validate_returns_202_with_job(user, workspace, storage, auth_client):
+    from simulate.models import HostedHarnessJob, TestExecution
+
+    environment = _with_world(user, workspace, "cand-job", storage)
+    _two_actors(auth_client, environment)
+    digest = _decided(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "rejected"},
+    )
+
+    validated = _validate(auth_client, environment, digest)
+    assert validated.status_code == 202, validated.content
+    body = _result(validated)
+    assert body["validation"]["state"] == "validating"
+    job = HostedHarnessJob.no_workspace_objects.get(id=body["validation"]["job_id"])
+    metadata = job.payload["metadata"]
+    assert (metadata["certify_only"], metadata["validation_purpose"]) == (True, "save")
+    # The job certifies the default agent with the candidate pairing, and nothing else.
+    environment.refresh_from_db()
+    assert (
+        str(job.agent_version_id),
+        str(job.environment_version_id),
+        str(job.suite_version_id),
+    ) == (
+        str(environment.agent_version_id),
+        body["candidates"]["environment_version_id"],
+        body["candidates"]["suite_version_id"],
+    )
+    assert "draft_validation" not in metadata
+    assert not TestExecution.objects.filter(id=job.test_execution_id).exists()
+    # Validating the same content again returns the same job.
+    again = _result(_validate(auth_client, environment, digest))
+    assert again["validation"]["job_id"] == body["validation"]["job_id"]
+
+
+def test_a_failed_pairing_is_checked_again_by_a_new_validate(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-retry", storage)
+    _two_actors(auth_client, environment)
+    digest = _decided(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "rejected"},
+    )
+    first = _result(_validate(auth_client, environment, digest))
+    from simulate.models import HostedHarnessJob
+
+    HostedHarnessJob.no_workspace_objects.filter(
+        id=first["validation"]["job_id"]
+    ).update(state="failed")
+    _certify(
+        environment,
+        state=HarnessAssembledBundle.State.FAILED,
+        error={
+            "code": "certify_incomplete",
+            "message": "no bundle",
+            "source": "validation",
+        },
+    )
+    assert _drafts(auth_client, environment)["validation"]["state"] == "failed"
+
+    again = _validate(auth_client, environment, digest)
+    assert again.status_code == 202, again.content
+    body = _result(again)
+    assert body["candidates"] == first["candidates"]
+    assert body["validation"]["state"] == "validating"
+    assert body["validation"]["job_id"] not in (None, first["validation"]["job_id"])
+
+
+def test_a_job_ended_before_any_check_reads_retry_not_failed(
+    user, workspace, storage, auth_client
+):
+    from simulate.models import HostedHarnessJob
+
+    environment = _with_world(user, workspace, "cand-retry-state", storage)
+    _two_actors(auth_client, environment)
+    first = _result(_validate(auth_client, environment))
+    # The sandbox was lost: the job ended and the pairing's bundle is still pending.
+    HostedHarnessJob.no_workspace_objects.filter(
+        id=first["validation"]["job_id"]
+    ).update(state="failed")
+
+    validation = _drafts(auth_client, environment)["validation"]
+    assert (validation["state"], validation["error"]) == ("retry", None)
