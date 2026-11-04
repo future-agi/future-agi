@@ -345,6 +345,8 @@ def _place(
 ) -> Placed:
     needed = set(case.rows)
     if voice:
+        # A voice case reaches the agent by audio, not by a test chat message.
+        needed.discard("message")
         needed.add("audio")
     if many and "state" in needed:
         # Cases that read the world are graded on what an earlier case left in it.
