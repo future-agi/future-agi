@@ -2,8 +2,7 @@
 // CallAnalyticsView. Keep these pure (no React) so they're trivial to
 // unit-test and reuse.
 
-import { CONTRACT_COPY } from "src/sections/simulate/environments/workspace/contract/contract.constants";
-import { OTHER_PARTY_FALLBACK } from "./constants";
+import { OTHER_PARTY_FALLBACK, SUB_ACTOR_CHANNEL_LABELS } from "./constants";
 
 export const formatClock = (seconds) => {
   if (seconds == null || !Number.isFinite(seconds)) return "0:00";
@@ -32,7 +31,7 @@ export const otherPartyLabel = ({ speakerName, actorRole } = {}) =>
 
 // How a sub-actor was heard, in the actor editor's own words; none for an unknown channel.
 export const channelLabel = (channel) =>
-  CONTRACT_COPY.subActors.channels[channel] || "";
+  SUB_ACTOR_CHANNEL_LABELS[channel] || "";
 
 // Everyone other than the agent and the customer, once each, in the order they first appear.
 export const otherParties = (turns = []) => {

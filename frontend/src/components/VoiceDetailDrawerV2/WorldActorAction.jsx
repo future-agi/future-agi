@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Box, ButtonBase, Collapse, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { WORLD_ACTION_DETAILS } from "./constants";
@@ -10,6 +10,7 @@ export default function WorldActorAction({
   renderText = (line) => line,
 }) {
   const [open, setOpen] = useState(false);
+  const detailsId = useId();
   const [event, ...details] = text.split("\n");
   return (
     <Box>
@@ -20,6 +21,8 @@ export default function WorldActorAction({
         {details.length > 0 && (
           <ButtonBase
             aria-expanded={open}
+            aria-controls={detailsId}
+            aria-label={`${WORLD_ACTION_DETAILS}: ${event}`}
             onClick={(e) => {
               e.stopPropagation();
               setOpen((was) => !was);
@@ -40,6 +43,7 @@ export default function WorldActorAction({
       </Stack>
       <Collapse in={open} unmountOnExit>
         <Box
+          id={detailsId}
           sx={{
             mt: 0.5,
             fontFamily: "monospace",

@@ -76,7 +76,7 @@ describe("ChatTranscriptPane", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/args:/)).toBeNull();
     expect(screen.queryByText(/world_actor|in the world/)).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Details" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Details/ }));
     expect(screen.getByText(/args:/)).toBeInTheDocument();
   });
 });

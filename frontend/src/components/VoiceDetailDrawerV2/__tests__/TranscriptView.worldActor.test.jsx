@@ -49,7 +49,7 @@ describe("world actors in voice transcripts", () => {
     ).toBeNull();
     expect(screen.queryByText(/args:/)).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: "Details" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Details/ }));
     expect(screen.getByText(/→ args: .*"percent":20/)).toBeInTheDocument();
     expect(
       screen.getByText(/← result: .*"approved":false/),
@@ -97,8 +97,8 @@ describe("world actors in voice transcripts", () => {
     expect(screen.getAllByText("Arjun Mehta")).toHaveLength(2);
     expect(screen.getAllByText("clerk")).toHaveLength(2);
     expect(screen.getByText("crm.lookup")).toBeInTheDocument();
-    expect(screen.queryByText(/undefined|^Action|· $/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
+    expect(screen.queryByText(/undefined|^Action| ·$/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Details/ })).toBeNull();
   });
 
   it("lists world actors among who was on the call and under Others", async () => {

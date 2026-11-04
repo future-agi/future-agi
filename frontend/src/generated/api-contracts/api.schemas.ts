@@ -24289,10 +24289,13 @@ export interface SimulateRunV3FunctionCallApi {
 }
 
 export interface CallSubActorApi {
-  /** @minLength 1 */
+  /** The sub-actor's id in the environment. */
   id?: string;
+  /** The name the transcript shows. */
   name?: string;
+  /** Who they are to the caller. */
   role?: string;
+  /** The channel id they joined the call on. */
   channel?: string;
 }
 

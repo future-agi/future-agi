@@ -577,10 +577,22 @@ class FunctionCallSerializer(serializers.Serializer):
 class CallSubActorSerializer(serializers.Serializer):
     """Someone on the person's side in the call; a call stored by an older build may lack any field."""
 
-    id = serializers.CharField(required=False)
-    name = serializers.CharField(required=False, allow_blank=True)
-    role = serializers.CharField(required=False, allow_blank=True)
-    channel = serializers.CharField(required=False, allow_blank=True)
+    id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="The sub-actor's id in the environment.",
+    )
+    name = serializers.CharField(
+        required=False, allow_blank=True, help_text="The name the transcript shows."
+    )
+    role = serializers.CharField(
+        required=False, allow_blank=True, help_text="Who they are to the caller."
+    )
+    channel = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="The channel id they joined the call on.",
+    )
 
 
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
