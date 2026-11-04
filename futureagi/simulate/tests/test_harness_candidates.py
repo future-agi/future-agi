@@ -542,7 +542,29 @@ def test_candidates_carry_review_changes(user, workspace, storage, auth_client):
 def test_failed_validation_keeps_draft_and_names_affected_scenarios(
     user, workspace, storage, auth_client
 ):
+    from simulate.services.harness_versioning.versions import record_authoring
+    from simulate.tests.test_harness_amend_archive import _key
+    from simulate.tests.test_harness_versioning_record import _authoring, _scenario
+
     environment = _with_world(user, workspace, "cand-failed", storage)
+    # One scenario needs approve_discount on every path; the other has a path without it.
+    approve = [{"tool": "request_approval"}, {"tool": "approve_discount"}]
+    documents = [
+        _scenario(NAMES[0], solution=approve, alternatives=[approve]),
+        _scenario(
+            NAMES[2], solution=approve, alternatives=[[{"tool": "reject_discount"}]]
+        ),
+    ]
+    scenarios = {"scenarios.json": json.dumps(documents)}
+    for document in documents:
+        scenarios[f"scenarios/{document['name']}/scenario.json"] = json.dumps(document)
+    record_authoring(
+        environment,
+        _authoring(names=[NAMES[0], NAMES[2]], contract=CRM_CONTRACT, **scenarios),
+        origin="manual",
+        user=user,
+    )
+    environment.refresh_from_db()
     _two_actors(auth_client, environment)
     digest = _decided(
         auth_client,
@@ -574,7 +596,7 @@ def test_failed_validation_keeps_draft_and_names_affected_scenarios(
         "message": "certify failed",
         "failed_actions": failed_actions,
     }
-    assert "affected_scenarios" in validation
+    assert validation["affected_scenarios"] == [_key(NAMES[0])]
     refused = _save(auth_client, environment, candidates, digest=digest)
     assert refused.status_code == 409 and refused.json()["error"] == "not_validated"
     # The draft is as the person left it, decisions and all.

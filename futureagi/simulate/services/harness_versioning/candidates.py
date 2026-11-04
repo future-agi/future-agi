@@ -21,6 +21,7 @@ from django.utils import timezone
 
 from simulate.models import AgentVersion, HarnessAssembledBundle, HostedHarnessJob
 from simulate.models.harness_versioning import DiscardReason, HashKind, VersionStatus
+from simulate.services.harness_scenario_needs import affected_by_tool, case_needs
 from simulate.services.harness_versioning import archives, drafts, review, validation
 from simulate.services.harness_versioning.versions import (
     _add_members,
@@ -156,25 +157,25 @@ def validation_state(
             "message": str(error.get("message") or ""),
             "failed_actions": failed,
         }
-        suite = _set_versions(environment, entry)["suite"]
-        scenarios = {
-            str(one.get("scenario_key") or one.get("name")): one
-            for one in (suite.documents or {}).get("scenarios") or []
-            if isinstance(one, dict)
-        }
         body["affected_scenarios"] = _affected_scenarios(
-            {str(one.get("action")) for one in failed}, scenarios
+            environment, entry, {str(one.get("action")) for one in failed}
         )
     return body
 
 
 def _affected_scenarios(
-    tools: set[str], scenarios: Mapping[str, Mapping[str, Any]]
+    environment: HostedHarnessJob, entry: CandidateSet, tools: set[str]
 ) -> list[str]:
-    """The scenarios a failed tool breaks, by TH-8881's one definition of affected (the scenario needs the tool on
-    every path). That definition lands with TH-8881's branch; until it is merged here, none are named.
-    """
-    return []
+    """The candidate suite's scenarios a failed tool affects: those that need it on every path."""
+    versions = _set_versions(environment, entry)
+    return [
+        case.key
+        for case in case_needs(
+            environment_version=versions["environment"],
+            suite_version=versions["suite"],
+        )
+        if any(affected_by_tool(case, tool) for tool in tools)
+    ]
 
 
 def candidate_states(environment: HostedHarnessJob) -> dict[str, str]:
