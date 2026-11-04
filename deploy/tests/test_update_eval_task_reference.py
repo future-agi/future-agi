@@ -470,8 +470,10 @@ class EvalTaskReferenceTests(unittest.TestCase):
         namespace=dict(headers={},account={'email':ARGS['email']})
         witness.namespaces={'source':namespace,'target':namespace}
         witness._http=mock.Mock(side_effect=RuntimeError('stop at API boundary'))
-        with mock.patch.object(s,'verify_eval_task_reference',side_effect=p.ManualRelease('fixture changed')) as verify:
-            with self.assertRaises(p.ManualRelease): witness.read('source')
+        refusal=p.ManualRelease('high_volume_reference_unavailable')
+        with mock.patch.object(s,'verify_eval_task_reference',side_effect=refusal) as verify:
+            with self.assertRaises(p.ManualRelease) as raised: witness.read('source')
+            self.assertIs(raised.exception,refusal)
             verify.assert_called_once_with(witness.d,prefix=s.DJANGO_PREFIX,producer=p)
             witness._http.assert_not_called()
             with self.assertRaisesRegex(RuntimeError,'API boundary'): witness.read('target')
