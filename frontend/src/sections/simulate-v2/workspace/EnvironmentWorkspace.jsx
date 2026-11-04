@@ -1591,7 +1591,7 @@ export default function EnvironmentWorkspace() {
                     {
                       label: plan.draft
                         ? "Add to unsaved changes"
-                        : `Save release ${plan.next}`,
+                        : `Save environment ${plan.next}`,
                       description: plan.detail,
                     },
                     {
@@ -3386,7 +3386,7 @@ export default function EnvironmentWorkspace() {
                 patch: { releaseSavedAt: new Date().toISOString() },
               });
               enqueueSnackbar(
-                `Saved release ${envState.activeEnvVersion || "v1"} — private to this workspace. Connect your agent from Overview to run it.`,
+                `Saved environment ${envState.activeEnvVersion || "v1"} — private to this workspace. Connect your agent from Overview to run it.`,
                 { variant: "success" },
               );
             }}

@@ -240,7 +240,9 @@ export default function VersionBar({
                   borderColor: "divider",
                 }}
               >
-                {undecided ? "Review and save" : `Save release ${cost?.label}`}
+                {undecided
+                  ? "Review and save"
+                  : `Save environment ${cost?.label}`}
               </Button>
             )}
           </Stack>

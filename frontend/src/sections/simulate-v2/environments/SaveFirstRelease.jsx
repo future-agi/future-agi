@@ -93,7 +93,7 @@ export default function SaveFirstRelease({ env, envState, label, onSave }) {
               minWidth: 0,
             }}
           >
-            {`Saving makes environment ${label} a private release in this workspace. Nothing runs until you connect an agent and start a run.`}
+            {`Saving makes environment ${label} — private to this workspace. Your agent isn't part of it, and nothing runs until you connect one and start a run.`}
           </Typography>
           <Button
             size="small"
@@ -102,7 +102,7 @@ export default function SaveFirstRelease({ env, envState, label, onSave }) {
             onClick={onSave}
             startIcon={<Iconify icon="solar:check-circle-linear" width={14} />}
           >
-            {`Save release ${label}`}
+            {`Save environment ${label}`}
           </Button>
         </Stack>
       </Box>

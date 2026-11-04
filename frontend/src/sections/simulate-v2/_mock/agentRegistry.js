@@ -1920,7 +1920,14 @@ const readBaseOf = (versions) =>
 
 /* The arguments a tool takes today, for the tools the seeded agents call —
    only needed to say what a changed signature replaced. */
+/* Seeded agents whose next sync changes a tool's arguments — the starting
+   data's example of a new agent version the environment must be rebuilt for. */
+const PENDING_RESHAPE = {
+  "repo:https://github.com/skyline-air/rebooking-agent": "rebook_segment",
+};
+
 const SIGNATURES = {
+  rebook_segment: ["booking_ref", "flight_id"],
   verify_identity: ["customer_id", "last_four"],
   lookup_order: ["order_id"],
   issue_refund: ["order_id", "amount"],
@@ -1956,9 +1963,22 @@ export const changesSince = ({ agent, versions, env, source }) => {
     });
   /* Another in three changes what an existing tool takes — a new required
      argument. The world still answers the old signature, so scenarios that
-     call it can't be measured on this version until the world is rebuilt. */
-  const reshaped = [...(latest?.tools || env?.tools || [])][seed % 2];
-  if (reshaped && seed % 3 === 1 && !reshaped.params) {
+     call it can't be measured on this version until the world is rebuilt.
+     A seeded agent with a pending change (PENDING_RESHAPE) shows it on its
+     first sync, so everyone testing the starting data sees the same one. */
+  const pending = PENDING_RESHAPE[agentKeyOf(agent)];
+  const firstSync = !versions.some((v) =>
+    ["sync", "push", "pr"].includes(v.origin),
+  );
+  const pool = [...(latest?.tools || env?.tools || [])];
+  const reshaped =
+    (pending && firstSync && pool.find((t) => t.name === pending)) ||
+    pool[seed % 2];
+  if (
+    reshaped &&
+    !reshaped.params &&
+    (seed % 3 === 1 || (pending === reshaped.name && firstSync))
+  ) {
     const params = [...(SIGNATURES[reshaped.name] || ["id"]), "reason"];
     changes.push({
       kind: "toolSignature",

@@ -774,7 +774,7 @@ export default function ReviewChangesDrawer({
                       setNote("");
                     }}
                   >
-                    {`${cost?.label ? `Save release ${cost.label}` : "Save"}${thenRun ? " and run" : ""}`}
+                    {`${cost?.label ? `Save environment ${cost.label}` : "Save"}${thenRun ? " and run" : ""}`}
                   </Button>
                 </span>
               </Tooltip>
