@@ -98,6 +98,40 @@ export const clearedCheckPatch = (values, applied = "all") => {
   };
 };
 
+/*
+  Repairs small enough to make where the problem shows (the run plan): one
+  connection field, or pointing the tools at the test world. Anything else
+  is done on the agent's Connections tab.
+*/
+const INLINE_FIELDS = {
+  start: ["startCommand", "Start command"],
+  reply: ["replyField", "Reply field"],
+  session: ["sessionField", "Session ID field"],
+  taskId: ["taskIdField", "Job ID field"],
+  status: ["statusField", "Status field"],
+  artifact: ["artifactField", "Artifact field"],
+};
+
+/** { kind: "field", label, value } | { kind: "tools", label } | null */
+export const inlineRepairOf = (spec, fixId) => {
+  if (fixId === "tools")
+    return { kind: "tools", label: "Point its tools at the test world" };
+  const f = INLINE_FIELDS[fixId];
+  return f ? { kind: "field", label: f[1], value: spec?.[f[0]] || "" } : null;
+};
+
+/** The agent values an inline repair saves — the check runs again after. */
+export const inlineRepairPatch = (values, spec, fixId, value = "") =>
+  fixId === "tools"
+    ? {
+        connection: { ...spec, toolsRedirected: true },
+        ...clearedCheckPatch(values, "tools"),
+      }
+    : {
+        connection: { ...spec, [INLINE_FIELDS[fixId][0]]: value.trim() },
+        ...clearedCheckPatch(values, fixId),
+      };
+
 /* The tool a hard-coded production URL would still send to production —
    one write tool, picked the same way every time for this agent. */
 const productionToolOf = (agent, tools = []) => {

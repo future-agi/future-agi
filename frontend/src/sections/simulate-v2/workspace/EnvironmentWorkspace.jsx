@@ -64,6 +64,16 @@ import {
 } from "../_mock/releaseUpdate";
 import { agentRecordOf } from "../_mock/envCopy";
 import { foundValuesOf } from "../agents/foundFacts";
+import { runPlanHref } from "../_mock/runPlanLink";
+import {
+  checkSavedPatch,
+  checksConnection,
+  checksFor,
+  connectionSpecOf,
+  inlineRepairOf,
+  inlineRepairPatch,
+  runConnectionCheck,
+} from "../_mock/connectionCheck";
 import NextStepBanner from "./NextStepBanner";
 import VersionBuildStrip, { VersionChangeNote } from "./VersionBuildStrip";
 import { onFocusChat, openReviewChanges } from "./reviewChangesBus";
@@ -542,6 +552,8 @@ export default function EnvironmentWorkspace() {
   }, []);
   /* Before a live run: only which tools must never run for real. */
   const [safetyOpen, setSafetyOpen] = useState(false);
+  /* The connection check run from the run plan, in place (TH-8877). */
+  const [capsChecking, setCapsChecking] = useState(false);
   const { agents: connectedAgents, setAgentValues } = useConnectedAgents();
   const { enqueueSnackbar } = useSnackbar();
   const { viewAs: viewingOlder } = useEnvViewAs(env, envState);
@@ -1132,6 +1144,50 @@ export default function EnvironmentWorkspace() {
   const connectedAgent =
     connectedAgents.find((a) => a.key === agentKey) || envState.agent;
   const agentName = connectedAgent?.name || "the agent";
+  /* Run the agent's connection check from the run plan without leaving it:
+     the same check as Agent → Capabilities, saved on the agent, so the
+     plan's capability rows update where they are. */
+  const canCheckCaps = !!connectedAgent && checksConnection(connectedAgent);
+  const runCapsCheck = (agentNow = connectedAgent) => {
+    if (capsChecking || !canCheckCaps) return;
+    const found = foundValuesOf(agentNow);
+    const spec = connectionSpecOf(agentNow, found);
+    setCapsChecking(true);
+    setTimeout(
+      () => {
+        const out = runConnectionCheck(agentNow, spec, found.tools);
+        const failed = out.results.filter((r) => r.state === "failed").length;
+        setAgentValues(agentKey, checkSavedPatch(agentNow.values, out));
+        setCapsChecking(false);
+        enqueueSnackbar(
+          out.passed
+            ? "Connection ready — every check passed."
+            : `${failed} check${failed === 1 ? "" : "s"} failed — each has a Fix in the list.`,
+          { variant: out.passed ? "success" : "warning" },
+        );
+      },
+      450 * (checksFor(spec).length + 1),
+    );
+  };
+  /* A one-field repair, made in the run plan: saved on the agent like the
+     Connections tab saves it, then the check runs again right away. */
+  const capsSpec = () =>
+    connectionSpecOf(connectedAgent, foundValuesOf(connectedAgent));
+  const inlineFixOf = (row) =>
+    canCheckCaps && row?.fixId ? inlineRepairOf(capsSpec(), row.fixId) : null;
+  const applyInlineFix = (row, value) => {
+    const patch = inlineRepairPatch(
+      connectedAgent.values,
+      capsSpec(),
+      row.fixId,
+      value,
+    );
+    setAgentValues(agentKey, patch);
+    runCapsCheck({
+      ...connectedAgent,
+      values: { ...connectedAgent.values, ...patch },
+    });
+  };
   /* Run setup: this environment's agent first, then any other connected
      agent of the same type — each with whether it's ready to run here. */
   const runAgentChoices = (() => {
@@ -3198,13 +3254,32 @@ export default function EnvironmentWorkspace() {
           }
           /* Fix on a capability opens its repair on the agent; otherwise its
              Capabilities tab for this world. */
-          onRepairCompat={(row) =>
+          onCheckCompat={canCheckCaps ? () => runCapsCheck() : undefined}
+          inlineFixOf={inlineFixOf}
+          onInlineFix={applyInlineFix}
+          checkingCompat={capsChecking}
+          onRepairCompat={(row) => {
+            /* A bigger repair is done on the agent; its back button returns
+               to this run plan, with the same scenarios and attempts. */
             navigate(
               row?.fixId
                 ? `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=connections&fix=${encodeURIComponent(row.fixId)}`
                 : `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=compatibility&env=${encodeURIComponent(envId)}`,
-            )
-          }
+              {
+                state: {
+                  from: "environment",
+                  envId,
+                  envName: env?.name,
+                  back: runPlanHref(envId, {
+                    only: runPlanReq?.scenarioIds,
+                    trials: runPlanReq?.trials,
+                    agent: runPlanReq?.agent,
+                  }),
+                  backLabel: "Back to run plan",
+                },
+              },
+            );
+          }}
           seedFrom={
             runPlanReq?.snapshot
               ? `run ${(envState.runs || []).find((r) => r.id === runPlanReq.snapshot)?.ordinal ?? ""}`.trim()
@@ -3525,7 +3600,6 @@ export default function EnvironmentWorkspace() {
         envState={envState}
         patch={patch}
         locked={readOnlyEnv}
-        onOpenHistory={() => go("history")}
         thenRun={!!runAfterSave}
         onReviewClose={() => setRunAfterSave(null)}
         onSave={(note) => {

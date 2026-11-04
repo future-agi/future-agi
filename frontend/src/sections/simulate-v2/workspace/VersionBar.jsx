@@ -20,7 +20,6 @@ import { reviewCountsOf } from "../_mock/editReview";
 import { envVersionNameOf } from "../_mock/codeRefs";
 import { currentEnvSnapshot } from "../_mock/envSnapshot";
 import useEnvViewAs from "./useEnvViewAs";
-import VersionHistoryMenu from "./VersionHistory";
 
 /**
  * What is being tested, against what — a run is always agent version ×
@@ -44,7 +43,6 @@ export default function VersionBar({
   patch,
   locked = false,
   /* Opens the environment's History tab; without it, History is a menu. */
-  onOpenHistory,
   /* Saves the edits — the workspace checks for a teammate's save first. */
   onSave,
   thenRun = false,
@@ -67,7 +65,6 @@ export default function VersionBar({
     : snap?.label || envLabelOf(env, envState, envV.label);
   /* Before the first run nothing is a version yet: edits land in place. */
   const draft = !viewAs && isEnvDraft(envState);
-  const [historyAnchor, setHistoryAnchor] = useState(null);
   /* The unsaved edits, in Review changes; Discard asks first. */
   const [editsAnchor, setEditsAnchor] = useState(null);
   const failedCount = (envState?.failedEnvChanges || []).filter(
@@ -291,31 +288,6 @@ export default function VersionBar({
             </Button>
           }
         />
-
-        <Button
-          size="small"
-          onClick={(e) =>
-            onOpenHistory ? onOpenHistory() : setHistoryAnchor(e.currentTarget)
-          }
-          variant="outlined"
-          startIcon={<Iconify icon="solar:history-linear" width={16} />}
-          sx={{
-            minWidth: 0,
-            flexShrink: 0,
-            color: "text.primary",
-            borderColor: "divider",
-          }}
-        >
-          History
-        </Button>
-        <VersionHistoryMenu
-          anchor={historyAnchor}
-          onClose={() => setHistoryAnchor(null)}
-          env={env}
-          envState={envState}
-          patch={patch}
-          readOnly={locked}
-        />
       </Stack>
 
       {/* Viewing another version — read-only, held in the URL, one way back. */}
@@ -360,7 +332,6 @@ VersionBar.propTypes = {
   envState: PropTypes.object,
   patch: PropTypes.func,
   locked: PropTypes.bool,
-  onOpenHistory: PropTypes.func,
   onSave: PropTypes.func,
   /* A run waits on the review's save. */
   thenRun: PropTypes.bool,

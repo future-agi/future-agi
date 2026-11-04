@@ -178,11 +178,17 @@ export default function AgentViewPage() {
       ? {
           id: location.state.envId,
           name: location.state.envName || "the environment",
+          /* Sent from a run plan's Fix: back reopens that plan. */
+          back: location.state.back || null,
+          backLabel: location.state.backLabel || null,
         }
       : null;
   const goBack = () =>
     fromEnv
-      ? navigate(paths.dashboard.simulate.environmentDetail(fromEnv.id))
+      ? navigate(
+          fromEnv.back ||
+            paths.dashboard.simulate.environmentDetail(fromEnv.id),
+        )
       : location.state?.from
         ? navigate(-1)
         : navigate(`${paths.dashboard.agents}?tab=connected`);
@@ -687,7 +693,7 @@ export default function AgentViewPage() {
                 whiteSpace: "nowrap",
               }}
             >
-              {fromEnv.name}
+              {fromEnv.backLabel || fromEnv.name}
             </Box>
           </Button>
         ) : (

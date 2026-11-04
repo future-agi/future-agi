@@ -151,6 +151,10 @@ export default function RunPlanDialog({
   breakdown = null,
   seedFrom = null,
   compat = null,
+  onCheckCompat,
+  inlineFixOf,
+  onInlineFix,
+  checkingCompat = false,
   onRepairCompat,
   agentChoices = [],
   suites = [],
@@ -219,7 +223,8 @@ export default function RunPlanDialog({
       return m;
     }, {}),
   )
-    .map(([by, list]) => `${list.length} that need ${by}: ${list.join("; ")}`)
+    /* The count and the capability; which scenarios is on the Capabilities tab. */
+    .map(([by, list]) => `${list.length} that need ${by}`)
     .join(" · ");
 
   /* Each opening starts from the header's attempts and the current version. */
@@ -435,6 +440,10 @@ export default function RunPlanDialog({
               requested={compat.scope.requested}
               testedAt={compat.testedAt}
               onFix={onRepairCompat}
+              onCheck={onCheckCompat}
+              inlineFixOf={inlineFixOf}
+              onInlineFix={onInlineFix}
+              checking={checkingCompat}
             >
               {(blockedN > 0 || cancelRow) && (
                 <Stack spacing={1}>
@@ -446,19 +455,22 @@ export default function RunPlanDialog({
                         >
                           {`${blockedN} of ${compat.scope.requested} cases can't run with this agent — choose how to go on`}
                         </Typography>
-                        {onRepairCompat && blockingRows[0] && (
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={() => onRepairCompat(blockingRows[0])}
-                            sx={{
-                              color: "text.primary",
-                              borderColor: "divider",
-                            }}
-                          >
-                            Repair
-                          </Button>
-                        )}
+                        {/* The row's own Fix is right above when it fits inline. */}
+                        {onRepairCompat &&
+                          blockingRows[0] &&
+                          !inlineFixOf?.(blockingRows[0]) && (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => onRepairCompat(blockingRows[0])}
+                              sx={{
+                                color: "text.primary",
+                                borderColor: "divider",
+                              }}
+                            >
+                              Repair
+                            </Button>
+                          )}
                       </Stack>
                       {[
                         {
@@ -809,6 +821,19 @@ export default function RunPlanDialog({
           {/* ── what's in and out, counted before any ID is resolved ── */}
           {breakdown && !suite && !blockedN && (
             <Typography
+              title={[
+                breakdown.stale
+                  ? `${breakdown.stale} stale — they run but count toward no decision.`
+                  : null,
+                breakdown.blocked
+                  ? `${breakdown.blocked} blocked${breakdown.blockedWhy ? ` — ${breakdown.blockedWhy}` : "."}`
+                  : null,
+                breakdown.excluded
+                  ? `${breakdown.excluded} excluded — ${breakdown.excludedWhy}.`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join("\n")}
               sx={{
                 typography: "s3",
                 color: "text.tertiary",
@@ -816,20 +841,24 @@ export default function RunPlanDialog({
                 fontVariantNumeric: "tabular-nums",
               }}
             >
-              {[
-                `${breakdown.eligible} tested of ${breakdown.eligible + (breakdown.stale || 0) + (breakdown.blocked || 0) + (breakdown.excluded || 0)} requested`,
-                breakdown.stale
-                  ? `${breakdown.stale} stale — they run but count toward no decision`
-                  : null,
-                breakdown.blocked
-                  ? `${breakdown.blocked} blocked${breakdown.blockedWhy ? ` (${breakdown.blockedWhy.replace(/\.$/, "")})` : ""}`
-                  : null,
-                breakdown.excluded
-                  ? `${breakdown.excluded} excluded (${breakdown.excludedWhy})`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
+              {/* The count reads in one line; why each isn't counted is on hover. */}
+              {(() => {
+                const out = [
+                  breakdown.stale ? `${breakdown.stale} stale` : null,
+                  breakdown.blocked ? `${breakdown.blocked} blocked` : null,
+                  breakdown.excluded ? `${breakdown.excluded} excluded` : null,
+                ].filter(Boolean);
+                const sitOut =
+                  (breakdown.stale || 0) +
+                  (breakdown.blocked || 0) +
+                  (breakdown.excluded || 0);
+                return [
+                  `${breakdown.eligible} tested of ${breakdown.eligible + sitOut} requested`,
+                  sitOut ? `not counted: ${out.join(", ")}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+              })()}
             </Typography>
           )}
 
@@ -866,12 +895,7 @@ export default function RunPlanDialog({
 
           {/* ── seed and limits: one line; each one on request ── */}
           <Box>
-            <Stack
-              direction="row"
-              alignItems="baseline"
-              justifyContent="space-between"
-              gap={2}
-            >
+            <Stack direction="row" alignItems="center" spacing={1.5}>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 Seed and limits
               </Typography>
@@ -880,7 +904,9 @@ export default function RunPlanDialog({
                 sx={{
                   typography: "s3",
                   color: "text.tertiary",
+                  flex: 1,
                   minWidth: 0,
+                  textAlign: "right",
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
@@ -889,26 +915,26 @@ export default function RunPlanDialog({
                   seed: seedFrom ? `seed of ${seedFrom}` : "new seed",
                 })}
               </Typography>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => setShowLimits((v) => !v)}
+                aria-expanded={showLimits}
+                endIcon={
+                  <Iconify
+                    icon={
+                      showLimits
+                        ? "solar:alt-arrow-up-linear"
+                        : "solar:alt-arrow-down-linear"
+                    }
+                    width={14}
+                  />
+                }
+                sx={{ flexShrink: 0 }}
+              >
+                {showLimits ? "Hide limits" : "Change limits"}
+              </Button>
             </Stack>
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() => setShowLimits((v) => !v)}
-              aria-expanded={showLimits}
-              endIcon={
-                <Iconify
-                  icon={
-                    showLimits
-                      ? "solar:alt-arrow-up-linear"
-                      : "solar:alt-arrow-down-linear"
-                  }
-                  width={14}
-                />
-              }
-              sx={{ px: 0.5, ml: -0.5, mt: 0.25 }}
-            >
-              {showLimits ? "Hide limits" : "Change limits"}
-            </Button>
             <Collapse in={showLimits}>
               <Box sx={{ mt: 0.5 }}>
                 <Row
@@ -1395,5 +1421,9 @@ RunPlanDialog.propTypes = {
   seedFrom: PropTypes.string,
   /* The compatibility report for this scope — blocked cases ask for a reviewed subset. */
   compat: PropTypes.object,
+  onCheckCompat: PropTypes.func,
+  inlineFixOf: PropTypes.func,
+  onInlineFix: PropTypes.func,
+  checkingCompat: PropTypes.bool,
   onRepairCompat: PropTypes.func,
 };
