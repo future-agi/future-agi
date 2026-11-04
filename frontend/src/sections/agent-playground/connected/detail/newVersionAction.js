@@ -1,12 +1,12 @@
 // How a new version arrives for this agent: a code agent syncs its branch (or
 // takes a new upload), a provider agent syncs the provider, a built-in agent
-// takes an edited prompt. An upload's flow is not wired yet.
+// takes an edited prompt.
 export const newVersionAction = (agent) => {
   if (agent.source === "archive") {
     return {
       label: "Upload new version",
       icon: "solar:cloud-upload-linear",
-      kind: null,
+      kind: "upload",
     };
   }
   if (

@@ -31,6 +31,7 @@ import ObservabilityToggle, {
 import useAgentRoute from "./useAgentRoute";
 
 function DefinitionRow({ row }) {
+  const [expanded, setExpanded] = useState(false);
   return (
     <Stack
       direction="row"
@@ -85,24 +86,38 @@ function DefinitionRow({ row }) {
         ) : row.node ? (
           row.node
         ) : (
-          <Typography
-            noWrap={!row.multiline}
-            title={row.multiline ? undefined : String(row.value)}
-            sx={{
-              typography: "s2",
-              lineHeight: "24px",
-              fontFamily: row.mono ? MONO : undefined,
-              ...(row.multiline && {
-                whiteSpace: "pre-wrap",
-                display: "-webkit-box",
-                WebkitLineClamp: 6,
-                WebkitBoxOrient: "vertical",
-                overflow: "hidden",
-              }),
-            }}
-          >
-            {row.value}
-          </Typography>
+          <>
+            <Typography
+              noWrap={!row.multiline}
+              title={row.multiline ? undefined : String(row.value)}
+              sx={{
+                typography: "s2",
+                lineHeight: "24px",
+                fontFamily: row.mono ? MONO : undefined,
+                ...(row.multiline && {
+                  whiteSpace: "pre-wrap",
+                  ...(!expanded && {
+                    display: "-webkit-box",
+                    WebkitLineClamp: 6,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                  }),
+                }),
+              }}
+            >
+              {row.value}
+            </Typography>
+            {row.multiline && String(row.value).split("\n").length > 6 && (
+              <Button
+                size="small"
+                color="inherit"
+                onClick={() => setExpanded((v) => !v)}
+                sx={{ typography: "s2", minWidth: 0, px: 0.5, mt: 0.25 }}
+              >
+                {expanded ? "Show less" : "Show the whole prompt"}
+              </Button>
+            )}
+          </>
         )}
       </Box>
     </Stack>
@@ -234,7 +249,9 @@ export default function AgentDefinitionTab() {
           <DefinitionRow key={row.label} row={row} />
         ))}
         <Note>
-          {`Stored by SDK ${details.sdkVersion} on ${format(new Date(details.storedAt), "dd-MM-yyyy")}`}
+          {details.origin === "reading"
+            ? `Read from the code on ${format(new Date(details.storedAt), "dd-MM-yyyy")} · SDK ${details.sdkVersion}`
+            : `Stored by SDK ${details.sdkVersion} on ${format(new Date(details.storedAt), "dd-MM-yyyy")}`}
         </Note>
         {details.setupStale && (
           <Note tone="warning">

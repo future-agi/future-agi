@@ -52,6 +52,16 @@ export const toVersion = (v) => ({
   // From the version's side row; null for a version made before versioning.
   origin: v.origin ?? null,
   check: v.preflight_status ?? null,
+  // Where a pending check stands (snapshot, reading, check) and why a failed
+  // one failed.
+  checkStep: v.check_step ?? null,
+  checkFailure: v.check_failure
+    ? {
+        code: v.check_failure.code,
+        message: v.check_failure.message ?? "",
+        retryable: !!v.check_failure.retryable,
+      }
+    : null,
   environmentsCount: v.environments_count ?? 0,
   source: v.source ?? null,
 });
@@ -97,6 +107,12 @@ export const mapAgentDetail = (raw) => ({
   managedBy: raw.managed_by
     ? { id: raw.managed_by.id, name: raw.managed_by.name }
     : null,
+  // An agent connected on its own is built only once what its first reading
+  // found was confirmed.
+  foundCheck: {
+    required: !!raw.found_check?.required,
+    doneAt: raw.found_check?.done_at ?? null,
+  },
 });
 
 const toStoredAgent = (d) => ({
@@ -104,6 +120,7 @@ const toStoredAgent = (d) => ({
   sdkVersion: d.sdk_version,
   storedAt: d.stored_at,
   setupStale: !!d.setup_stale,
+  origin: d.origin ?? "build",
 });
 
 export const mapVersionDetail = (raw) => ({

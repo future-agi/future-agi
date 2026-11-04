@@ -208,7 +208,7 @@ export const storedAgentRows = ({ agent }) => {
         : null,
     },
     {
-      label: "Prompts",
+      label: (agent.behaviour ?? []).length > 1 ? "Prompts" : "Prompt",
       value:
         (agent.behaviour ?? [])
           .map((b) => b.instructions)

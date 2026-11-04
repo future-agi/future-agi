@@ -17,6 +17,7 @@ import { CONNECTED_AGENTS_PATH } from "../../agentsTabs";
 import AgentDetailHeader, {
   AgentDetailHeaderSkeleton,
 } from "./AgentDetailHeader";
+import AgentReadingState from "./AgentReadingState";
 import AgentVersionSelect from "./AgentVersionSelect";
 import {
   COMING_SOON_TABS,
@@ -102,6 +103,7 @@ export default function AgentDetailLayout() {
         ) : (
           <AgentDetailHeaderSkeleton onBack={back} />
         )}
+        {agent && <AgentReadingState agent={agent} />}
         <Box
           sx={{
             borderBottom: "1px solid",

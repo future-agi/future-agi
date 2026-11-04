@@ -1608,6 +1608,14 @@ export const endpoints = {
       apiPath("/simulate/agent-definitions/{agent_id}/build-preflight/", {
         agent_id: id,
       }),
+    foundCheck: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/found-check/", {
+        agent_id: id,
+      }),
+    scan: apiPath("/simulate/agents/scan/"),
+    scanDetail: (id) =>
+      apiPath("/simulate/agents/scan/{scan_id}/", { scan_id: id }),
+    connect: apiPath("/simulate/agents/connect/"),
     codeTree: (id, version) =>
       apiPath(
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/",

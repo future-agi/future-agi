@@ -21,12 +21,13 @@ import { MONO } from "./format";
 import useAgentRoute from "./useAgentRoute";
 import usePinnedVersions from "./usePinnedVersions";
 import {
-  CHECK_LABEL,
   ORIGIN_LABEL,
   canDiscard,
   canPromote,
   canRetry,
+  checkLabel,
   environmentsLabel,
+  failureText,
 } from "./versionLabels";
 
 const VERSION_ACTION = { typography: "s2", minWidth: 0, height: 24, px: 1 };
@@ -324,12 +325,10 @@ export default function AgentVersionsTab() {
                     </Typography>
                     {v.isLatest && <Pill tone="primary">Latest</Pill>}
                     {v.isActive && <Pill>In production</Pill>}
-                    {v.isDraft && !v.isActive && !CHECK_LABEL[v.check] && (
+                    {v.isDraft && !v.isActive && !checkLabel(v) && (
                       <Pill>Draft</Pill>
                     )}
-                    {CHECK_LABEL[v.check] && (
-                      <Pill>{CHECK_LABEL[v.check]}</Pill>
-                    )}
+                    {checkLabel(v) && <Pill>{checkLabel(v)}</Pill>}
                     {ORIGIN_LABEL[v.origin] && (
                       <Pill>{ORIGIN_LABEL[v.origin]}</Pill>
                     )}
@@ -346,6 +345,18 @@ export default function AgentVersionsTab() {
                       }}
                     >
                       {v.commitMessage}
+                    </Typography>
+                  )}
+                  {v.check === "failed" && v.checkFailure && (
+                    <Typography
+                      data-testid="version-check-failure"
+                      sx={{
+                        typography: "s2",
+                        color: "warning.dark",
+                        mt: 0.375,
+                      }}
+                    >
+                      {failureText(v.checkFailure)}
                     </Typography>
                   )}
                   {v.createdAt && (
