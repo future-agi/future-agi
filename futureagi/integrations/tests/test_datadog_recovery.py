@@ -208,6 +208,8 @@ def test_successive_poll_does_not_antijoin_the_entire_export_history(datadog):
 @pytest.mark.django_db(transaction=True)
 def test_large_history_reconciliation_eventually_finds_a_late_commit(datadog):
     connection, service = datadog
+    connection.backfill_completed = False
+    connection.save(update_fields=["backfill_completed"])
     rows = AgentccRequestLog.no_workspace_objects.bulk_create(
         [
             AgentccRequestLog(
@@ -225,7 +227,9 @@ def test_large_history_reconciliation_eventually_finds_a_late_commit(datadog):
     sync_at(connection, 120)
     # Source discovery, not just HTTP batching, is bounded per scheduled run.
     assert len(logs_sent(service)) == 5000
+    assert not connection.backfill_completed
     sync_at(connection, 180)
+    assert not connection.backfill_completed
     # Arrives behind both scan positions after the first historical page was read.
     create_log(connection, "late-behind-sweep", arrived=1)
     for seconds in range(240, 661, 60):
@@ -233,6 +237,7 @@ def test_large_history_reconciliation_eventually_finds_a_late_commit(datadog):
     delivered = [row["attributes"]["request_id"] for row in logs_sent(service)]
     assert len(delivered) == len(set(delivered)) == 10002
     assert delivered.count("late-behind-sweep") == 1
+    assert connection.backfill_completed
 
 
 @pytest.mark.django_db(transaction=True)

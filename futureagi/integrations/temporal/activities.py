@@ -581,7 +581,12 @@ def _run_export_integration(connection):
             connection.status = ConnectionStatus.ACTIVE
             connection.last_synced_at = sync_to
             connection.status_message = ""
-            if not connection.backfill_completed:
+            backfill_drained = connection.platform != "datadog" or (
+                connection.sync_cursor.get("datadog_scan", {}).get(
+                    "forward_exhausted", False
+                )
+            )
+            if not connection.backfill_completed and backfill_drained:
                 connection.backfill_completed = True
                 update_fields.append("backfill_completed")
             _save_export_progress(connection, update_fields)

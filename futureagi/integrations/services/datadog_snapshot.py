@@ -21,6 +21,7 @@ class Position(TypedDict):
 
 
 class ScanProgress(TypedDict, total=False):
+    forward_exhausted: bool
     new_after: Position
     reconcile_after: Position
     reconcile_until: Position
@@ -96,6 +97,7 @@ def snapshot_request_ids(
     previous: ScanProgress = connection.sync_cursor.get("datadog_scan", {})
     progress: ScanProgress = dict(previous)
     fresh = _page(source, previous.get("new_after"), workspace_ids)
+    progress["forward_exhausted"] = len(fresh) < SCAN_PAGE_SIZE
     if fresh:
         progress["new_after"] = _position(fresh[-1])
 
