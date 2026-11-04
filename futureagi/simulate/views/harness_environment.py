@@ -364,7 +364,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"], url_path="verify")
     def verify(self, request, pk=None):
         """Verify an agent version on the held-back cases, in a run no user read shows.
-        Each version is verified once: asking again returns that verify."""
+        Its live or completed verify is final: asking again returns it. After one that
+        failed or was canceled, asking again starts a new one."""
         version_reads.require_versioning()
         job = self._job(request, pk)
         if job is None:

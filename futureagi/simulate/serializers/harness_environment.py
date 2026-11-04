@@ -863,7 +863,10 @@ class HarnessSuiteMemberSerializer(serializers.Serializer):
 
 class HarnessVerifyCreateSerializer(serializers.Serializer):
     agent_version_id = serializers.UUIDField(
-        help_text="The agent version to verify; each version is verified once."
+        help_text=(
+            "The agent version to verify. Its completed verify is final; after one"
+            " that failed or was canceled, a new one starts."
+        )
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=3)
 

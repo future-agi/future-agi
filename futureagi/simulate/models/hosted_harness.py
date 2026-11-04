@@ -162,10 +162,12 @@ class HostedHarnessJob(BaseModel):
                 ),
                 name="harness_job_scenario_count_1_5000",
             ),
-            # One verify per agent version: a second one would be a second look.
+            # One live or completed verify per agent version: a second one would be a
+            # second look. One that failed or was canceled may be followed by another.
             models.UniqueConstraint(
                 fields=["verify_of", "agent_version"],
-                condition=models.Q(verify_of__isnull=False),
+                condition=models.Q(verify_of__isnull=False)
+                & ~models.Q(state__in=["failed", "canceled"]),
                 name="uniq_harness_verify_agent_version",
             ),
         ]

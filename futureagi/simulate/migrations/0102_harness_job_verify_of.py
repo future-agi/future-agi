@@ -23,7 +23,8 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name="hostedharnessjob",
             constraint=models.UniqueConstraint(
-                condition=models.Q(("verify_of__isnull", False)),
+                condition=models.Q(("verify_of__isnull", False))
+                & ~models.Q(("state__in", ["failed", "canceled"])),
                 fields=("verify_of", "agent_version"),
                 name="uniq_harness_verify_agent_version",
             ),

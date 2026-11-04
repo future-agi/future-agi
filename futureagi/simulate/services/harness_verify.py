@@ -3,7 +3,7 @@ agent version on them in a run the user's reads never show."""
 
 from collections.abc import Sequence
 from hashlib import sha256
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 from django.conf import settings
@@ -73,8 +73,13 @@ def start_verify(
     environment: HostedHarnessJob, *, agent_version_id: UUID, trials: int
 ) -> HostedHarnessJob:
     """Run ``agent_version_id`` on the held-back cases, pinned to the suite version they
-    were chosen from. A version is verified once: asking again returns that verify,
-    whatever its trials or state, so the held-back cases cannot be sampled twice."""
+    were chosen from. A live or completed verify is final: asking again returns it,
+    whatever its trials, so the held-back cases cannot be sampled twice. After one
+    that failed or was canceled, asking again starts a new one.
+
+    The advisory lock and ``version_verify`` keep a repeated request to one verify;
+    the idempotency key is unique per verify, so no run a caller names can stand in
+    for one."""
     chosen = ensure_held_back(environment)
     if chosen is None or not chosen.scenario_keys:
         raise HostedHarnessError(
@@ -95,7 +100,7 @@ def start_verify(
             environment,
             scenario_keys=list(chosen.scenario_keys),
             trials=trials,
-            idempotency_key=f"verify:{agent_version_id}",
+            idempotency_key=f"verify:{agent_version_id}:{uuid4().hex}",
             picks=VersionPicks(
                 agent_version_id=agent_version_id,
                 suite_version_id=chosen.suite_version_id,

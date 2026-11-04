@@ -2,6 +2,7 @@
 gets back when it verifies an agent version on the cases it never saw."""
 
 import json
+import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
@@ -11,8 +12,8 @@ import pytest
 from accounts.models import OrgApiKey
 from simulate.models import HarnessSuiteMember, HostedHarnessJob
 from simulate.models import TestExecution as Execution
-from simulate.selectors.held_back import held_back
-from simulate.selectors.runs import user_environment_runs, user_executions
+from simulate.selectors.held_back import held_back, verify_run, version_verify
+from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
 from simulate.services.harness_environment import annotate_for_list, environment_row
 from simulate.services.harness_verify import (
     ensure_held_back,
@@ -199,6 +200,88 @@ class TestVerify:
             == 1
         )
         temporal.usage.assert_called_once()
+
+    def test_a_completed_verify_is_final(self, environment):
+        candidate = _second_agent(environment)
+        first = _verify(environment, candidate)
+        HostedHarnessJob.no_workspace_objects.filter(id=first.id).update(
+            state=HostedHarnessJob.State.COMPLETED
+        )
+
+        assert _verify(environment, candidate, trials=5).id == first.id
+
+    def test_a_verify_that_could_not_be_scheduled_runs_again(
+        self, environment, temporal, django_capture_on_commit_callbacks
+    ):
+        candidate = _second_agent(environment)
+        temporal.start.side_effect = RuntimeError("temporal down")
+        with django_capture_on_commit_callbacks(execute=True):
+            first = _verify(environment, candidate)
+        first.refresh_from_db()
+        assert first.failure["code"] == "scheduler_unavailable"
+
+        temporal.start.side_effect = None
+        with django_capture_on_commit_callbacks(execute=True):
+            again = _verify(environment, candidate)
+
+        assert again.id != first.id
+        again.refresh_from_db()
+        assert again.state == HostedHarnessJob.State.QUEUED
+        assert temporal.start.call_args.args[0] == str(again.id)
+        assert version_verify(environment, candidate.id) == again
+        # The failed one stays out of every user read, and still reads by its id.
+        assert not HostedHarnessJob.no_workspace_objects.filter(
+            user_runs(), id=first.id
+        ).exists()
+        assert verify_run(environment, first.id) == first
+
+    def test_a_canceled_verify_runs_again(self, environment):
+        candidate = _second_agent(environment)
+        first = _verify(environment, candidate)
+        HostedHarnessJob.no_workspace_objects.filter(id=first.id).update(
+            state=HostedHarnessJob.State.CANCELED
+        )
+
+        again = _verify(environment, candidate)
+
+        assert again.id != first.id
+        assert again.verify_of_id == environment.id
+
+    def test_a_run_holding_the_verify_key_does_not_block_it(
+        self, api_client, environment, keys
+    ):
+        candidate = _second_agent(environment)
+        chosen = ensure_held_back(environment)
+        shown = [
+            key for key in _suite_keys(environment) if key not in chosen.scenario_keys
+        ]
+        squatter = _as(
+            api_client,
+            keys.coder,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": shown, "trials": 1},
+            HTTP_IDEMPOTENCY_KEY=f"verify:{candidate.id}",
+        )
+        assert squatter.status_code == 202, squatter.content
+
+        posted = _as(
+            api_client,
+            keys.coder,
+            "post",
+            f"{BASE}/{environment.id}/verify/",
+            {"agent_version_id": str(candidate.id), "trials": 1},
+        )
+
+        assert posted.status_code == 202, posted.content
+        verify = HostedHarnessJob.no_workspace_objects.get(
+            id=posted.json()["verify_id"]
+        )
+        assert verify.id != uuid.UUID(squatter.json()["job_id"])
+        assert verify.verify_of_id == environment.id
+        assert verify.payload["metadata"]["selected_scenario_keys"] == list(
+            chosen.scenario_keys
+        )
 
     def test_another_version_gets_its_own_verify(self, environment):
         first = _verify(environment, _second_agent(environment))

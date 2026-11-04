@@ -19,6 +19,12 @@ from simulate.services.run_compare import trial_passed, wilson_interval
 
 # The environment payload metadata key; never copied to a run's payload.
 HELD_BACK_METADATA_KEY = "verify_held_back"
+# A verify that ended in one of these may be followed by another of the same version;
+# the partial unique constraint on verify runs leaves them out too.
+VERIFY_RETRYABLE_STATES = (
+    HostedHarnessJob.State.FAILED,
+    HostedHarnessJob.State.CANCELED,
+)
 
 
 @dataclass(frozen=True)
@@ -116,10 +122,15 @@ def verify_run(
 def version_verify(
     environment: HostedHarnessJob, agent_version_id: UUID
 ) -> HostedHarnessJob | None:
-    """The verify of one agent version on this environment, if it has had one."""
-    return HostedHarnessJob.no_workspace_objects.filter(
-        verify_of=environment, agent_version_id=agent_version_id
-    ).first()
+    """The live or completed verify of one agent version on this environment, if it
+    has one. A verify that failed or was canceled does not count: another may follow."""
+    return (
+        HostedHarnessJob.no_workspace_objects.filter(
+            verify_of=environment, agent_version_id=agent_version_id
+        )
+        .exclude(state__in=VERIFY_RETRYABLE_STATES)
+        .first()
+    )
 
 
 def verify_result(run: HostedHarnessJob) -> dict[str, Any]:
