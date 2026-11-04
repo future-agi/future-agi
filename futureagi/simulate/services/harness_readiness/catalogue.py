@@ -117,7 +117,8 @@ class Fix(TypedDict):
     target: str | None
     action: str
     would: str
-    recheck: FixRecheck
+    # None when checking this pairing again cannot change the row.
+    recheck: FixRecheck | None
 
 
 class RowView(TypedDict):

@@ -347,6 +347,50 @@ class TestRows:
         message = _rows(_report(environment))["message"]
 
         assert (message["status"], message["reason_code"]) == ("untested", "not_run")
+
+    def test_a_certified_pairing_offers_no_recheck_that_cannot_change_a_row(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = _environment(user, workspace, storage, "rd-ready-not-run")
+        _certify(
+            environment,
+            storage,
+            checks={**PASSED, "action_behavior": "0/0"},
+            actions=[{"action": "issue_refund", "status": "not_run", "reason": ""}],
+        )
+        jobs = HostedHarnessJob.no_workspace_objects.count()
+
+        routing = _rows(_get(auth_client, environment.id).json())["tool_routing"]
+        rechecked = _recheck(auth_client, environment.id).json()["validation"]
+
+        # Checking the certified pairing again starts nothing, so it is not offered.
+        assert (rechecked["state"], rechecked["job_id"]) == ("ready", None)
+        assert HostedHarnessJob.no_workspace_objects.count() == jobs
+        assert (routing["status"], routing["reason_code"]) == ("untested", "not_run")
+        assert routing["fix"] == {
+            "type": "tool_routing",
+            "target": "issue_refund",
+            "action": "Point issue_refund at the test world",
+            "would": "issue_refund lands in the test world and its probe passes",
+            "recheck": None,
+        }
+
+    def test_a_check_not_run_on_build_evidence_is_rechecked_on_the_pairing(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage, "rd-build-not-run")
+        HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
+            state="pending", object_key=None
+        )
+        checks = {
+            name: value for name, value in PASSED.items() if name != "chat_ingress"
+        }
+        _built(environment, checks=checks)
+
+        message = _rows(_report(environment))["message"]
+
+        assert (message["status"], message["reason_code"]) == ("untested", "not_run")
+        assert message["fix"]["type"] == "recheck"
         assert message["fix"]["recheck"]["scope"] == "pair"
 
     def test_production_only_reads_blocked_in_nikhils_words(
@@ -824,11 +868,8 @@ class TestDoneWhen:
             "target": "issue_refund",
             "action": "Point issue_refund at the test world",
             "would": "issue_refund lands in the test world and its probe passes",
-            "recheck": {
-                "scope": "pair",
-                "method": "POST",
-                "path": f"{BASE}/{environment.id}/capabilities/recheck/",
-            },
+            # Certified already: the fix is a new version, checked on its own.
+            "recheck": None,
         }
         assert {
             one: rows[one]["status"]

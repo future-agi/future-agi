@@ -167,7 +167,7 @@ def rows(
                 )
         statuses[capability.id] = row["status"]
         fresh.setdefault(capability.id, row["status"])
-        row["fix"] = _fix(pairing, row)
+        row["fix"] = _fix(pairing, row, certified=evidence.source == "pair_certificate")
         rows.append(row)
     return rows
 
@@ -237,17 +237,26 @@ _FIXES: dict[str, tuple[str, str]] = {
 }
 
 
-def _fix(pairing: Pairing, row: RowView) -> Fix | None:
+def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
     """What to change for a measured row that is Blocked, Stale or Untested, and the
-    re-check that reads it again."""
+    re-check that reads it again.
+
+    A pairing ``certified`` already has its own evidence: checking it again starts
+    nothing and changes no row, so its fixes offer no pair re-check, and a check that
+    did not run there is fixed like a failed one.
+    """
     if not row["measured"] or row["status"] not in ("blocked", "stale", "untested"):
         return None
     environment_id = pairing.environment.id
-    pair: FixRecheck = {
-        "scope": "pair",
-        "method": "POST",
-        "path": f"{_BASE_PATH}/{environment_id}/capabilities/recheck/",
-    }
+    pair: FixRecheck | None = (
+        None
+        if certified
+        else {
+            "scope": "pair",
+            "method": "POST",
+            "path": f"{_BASE_PATH}/{environment_id}/capabilities/recheck/",
+        }
+    )
     code = row["reason_code"]
     if code in ("preflight_failed", "preflight_pending"):
         return {
@@ -264,7 +273,9 @@ def _fix(pairing: Pairing, row: RowView) -> Fix | None:
                 ),
             },
         }
-    if row["status"] == "stale" or code in ("built_with_unknown", "not_run"):
+    if pair is not None and (
+        row["status"] == "stale" or code in ("built_with_unknown", "not_run")
+    ):
         return {
             "type": "recheck",
             "target": None,
@@ -272,7 +283,7 @@ def _fix(pairing: Pairing, row: RowView) -> Fix | None:
             "would": "The row reads what this agent does",
             "recheck": pair,
         }
-    if row["status"] == "untested":
+    if row["status"] == "untested" and row["blocked_by"]:
         gate = row["blocked_by"]
         labels = {one.id: one.label for one in CATALOGUE}
         return {
@@ -284,7 +295,7 @@ def _fix(pairing: Pairing, row: RowView) -> Fix | None:
         }
     target = row["targets"][0]["name"] if row["targets"] else None
     action, would = _FIXES[row["id"]]
-    subject = target or "the failing tools"
+    subject = target or ("the tools" if code == "not_run" else "the failing tools")
     return {
         "type": row["id"],
         "target": target,

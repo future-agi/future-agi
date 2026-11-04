@@ -900,7 +900,14 @@ class HarnessCapabilityFixSerializer(serializers.Serializer):
     target = serializers.CharField(allow_null=True)
     action = serializers.CharField()
     would = serializers.CharField()
-    recheck = HarnessCapabilityFixRecheckSerializer()
+    recheck = HarnessCapabilityFixRecheckSerializer(
+        allow_null=True,
+        help_text=(
+            "How to read the row again once fixed; null when this pairing is"
+            " certified already, so only a new agent or environment version"
+            " (checked on its own) can change it."
+        ),
+    )
 
 
 class HarnessCapabilityRowSerializer(serializers.Serializer):
