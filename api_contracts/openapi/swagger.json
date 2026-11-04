@@ -131498,6 +131498,7 @@
             }
         },
         "HarnessCapabilityFixRecheck": {
+            "description": "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
             "required": [
                 "scope",
                 "method",
@@ -131525,7 +131526,8 @@
                     "type": "string",
                     "minLength": 1
                 }
-            }
+            },
+            "x-nullable": true
         },
         "HarnessCapabilityFix": {
             "required": [

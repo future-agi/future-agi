@@ -37394,11 +37394,15 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         target: zod.string().min(1),
         action: zod.string().min(1),
         would: zod.string().min(1),
-        recheck: zod.object({
-          scope: zod.enum(["agent", "pair"]),
-          method: zod.enum(["POST"]),
-          path: zod.string().min(1),
-        }),
+        recheck: zod
+          .object({
+            scope: zod.enum(["agent", "pair"]),
+            method: zod.enum(["POST"]),
+            path: zod.string().min(1),
+          })
+          .describe(
+            "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
+          ),
       }),
     }),
   ),
@@ -52460,11 +52464,15 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
               target: zod.string().min(1),
               action: zod.string().min(1),
               would: zod.string().min(1),
-              recheck: zod.object({
-                scope: zod.enum(["agent", "pair"]),
-                method: zod.enum(["POST"]),
-                path: zod.string().min(1),
-              }),
+              recheck: zod
+                .object({
+                  scope: zod.enum(["agent", "pair"]),
+                  method: zod.enum(["POST"]),
+                  path: zod.string().min(1),
+                })
+                .describe(
+                  "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
+                ),
             }),
           }),
         ),

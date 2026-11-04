@@ -18775,6 +18775,9 @@ export const HarnessCapabilityFixRecheckApiMethod = {
   POST: "POST",
 } as const;
 
+/**
+ * How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.
+ */
 export interface HarnessCapabilityFixRecheckApi {
   scope: HarnessCapabilityFixRecheckApiScope;
   method: HarnessCapabilityFixRecheckApiMethod;

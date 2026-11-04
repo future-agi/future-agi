@@ -128139,6 +128139,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessCapabilityFixRecheck: {
+      description:
+        "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
       required: ["scope", "method", "path"],
       type: "object",
       properties: {
@@ -128158,6 +128160,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+      "x-nullable": true,
     },
     HarnessEnvironmentSubActorPersona: {
       type: "object",
