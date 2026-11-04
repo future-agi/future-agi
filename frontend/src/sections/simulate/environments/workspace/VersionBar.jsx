@@ -52,6 +52,9 @@ export default function VersionBar({ env, envState, action = null }) {
       sx={{
         px: 2,
         py: 0.875,
+        // Tall enough for the unsaved edits' buttons, so the page doesn't shift
+        // when they appear or go.
+        minHeight: 43,
         borderBottom: "1px solid",
         borderColor: "divider",
         flexShrink: 0,
