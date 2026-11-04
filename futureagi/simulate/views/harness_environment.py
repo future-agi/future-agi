@@ -8,6 +8,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from simulate.models import AgentDefinition, HostedHarnessJob
+from simulate.selectors.held_back import (
+    coding_agent_key,
+    detail_without,
+    members_without,
+    verify_result,
+    verify_run,
+)
 from simulate.selectors.runs import user_executions
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
@@ -35,6 +42,9 @@ from simulate.serializers.harness_environment import (
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
     HarnessSuiteMemberSerializer,
+    HarnessVerifyCreateResponseSerializer,
+    HarnessVerifyCreateSerializer,
+    HarnessVerifyResultSerializer,
     HarnessVersionDiffQuerySerializer,
     HarnessVersionDiffSerializer,
     HarnessVersionsSerializer,
@@ -57,6 +67,7 @@ from simulate.services.harness_provider import (
     request_workspace,
     scope_jobs,
 )
+from simulate.services.harness_verify import ensure_held_back, start_verify
 from simulate.services.harness_versioning import read as version_reads
 from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
 from tfc.utils.api_contracts import validated_request
@@ -96,6 +107,15 @@ def _bound_by_name(run_test, name):
         if name == str(getattr(config.eval_template, "name", "") or ""):
             return config
     return None
+
+
+def _held_back_from(request, job) -> tuple[str, ...]:
+    """The scenarios this caller may not read: the held-back cases for a coding agent,
+    chosen on its first read; none for anyone else."""
+    if coding_agent_key(request) is None:
+        return ()
+    chosen = ensure_held_back(job)
+    return chosen.scenario_keys if chosen is not None else ()
 
 
 def _uuid_or_none(value):
@@ -324,7 +344,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         url_path=r"versions/suite/(?P<version_id>[0-9a-fA-F-]{36})/members",
     )
     def suite_members(self, request, pk=None, version_id=None):
-        """The scenarios in one suite version, by number."""
+        """The scenarios in one suite version, by number; a coding agent's read leaves
+        out the held-back cases."""
         version_reads.require_versioning()
         job = self._job(request, pk)
         if job is None:
@@ -332,7 +353,47 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         identifier = _uuid_or_none(version_id)
         if identifier is None:
             raise version_reads.version_not_found()
-        return Response(version_reads.suite_members(job, identifier))
+        members = version_reads.suite_members(job, identifier)
+        return Response(members_without(members, _held_back_from(request, job)))
+
+    @validated_request(
+        request_serializer=HarnessVerifyCreateSerializer,
+        responses={202: HarnessVerifyCreateResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="verify")
+    def verify(self, request, pk=None):
+        """Verify an agent version on the held-back cases, in a run no user read shows.
+        Each version is verified once: asking again returns that verify."""
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        run = start_verify(job, **request.validated_data)
+        return Response(
+            {"verify_id": str(run.id), "state": run.state},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @validated_request(responses={200: HarnessVerifyResultSerializer})
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"verify/(?P<verify_id>[0-9a-fA-F-]{36})",
+        url_name="verify-detail",
+    )
+    def verify_detail(self, request, pk=None, verify_id=None):
+        """How the verified version did on the held-back cases, as counts only."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        identifier = _uuid_or_none(verify_id)
+        run = verify_run(job, identifier) if identifier is not None else None
+        if run is None:
+            return Response(
+                {"detail": "Verify not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        return Response(verify_result(run))
 
     @validated_request(responses={200: HarnessDraftsSerializer})
     @action(detail=True, methods=["get"], url_path="drafts")
@@ -604,7 +665,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         """One environment: overview, contract, world, scenarios, evaluations, settings.
 
         Same shape whichever door built it. A section the pipeline has not reached
-        yet is null, so the client renders "building" rather than an empty pane.
+        yet is null, so the client renders "building" rather than an empty pane. A
+        coding agent's read leaves out the held-back cases.
         """
         job = self._job(request, pk)
         if job is None:
@@ -612,7 +674,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 {"detail": "Environment not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(environment_detail(job))
+        return Response(
+            detail_without(environment_detail(job), _held_back_from(request, job))
+        )
 
     @validated_request(
         request_serializer=HarnessEnvironmentRenameSerializer,

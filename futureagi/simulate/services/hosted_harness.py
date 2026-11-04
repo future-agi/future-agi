@@ -290,12 +290,17 @@ def create_selected_harness_run(
     fix_run: Any = None,
     seed: int | None = None,
     parallelism: int | None = None,
+    verify: bool = False,
+    coding_agent_key_id: str | None = None,
 ) -> tuple[HostedHarnessJob, bool]:
     """Freeze and preallocate one selected-scenario Run for an authored environment.
 
     A rerun of a pinned run (``rerun_of``) keeps that run's pins; ``picks`` win over
-    both, per piece. A ``fix_run`` marks the Run as one of its check runs. ``seed`` and
-    ``parallelism`` replace the environment's; each defaults to what it has.
+    both, per piece. A ``fix_run`` marks the Run as one of its check runs, and
+    ``verify`` as a verify of the environment's held-back cases. A Run a coding agent
+    asks for (``coding_agent_key_id``) is stamped with its key and may not select a
+    held-back case. ``seed`` and ``parallelism`` replace the environment's; each
+    defaults to what it has.
     """
 
     if environment.environment_id is not None:
@@ -417,6 +422,17 @@ def create_selected_harness_run(
                 f"scenario keys do not belong to this environment: {missing}",
                 status_code=400,
             )
+        from simulate.selectors.held_back import HELD_BACK_METADATA_KEY, held_back
+
+        chosen = held_back(environment) if coding_agent_key_id is not None else None
+        if chosen is not None and set(scenario_keys) & set(chosen.scenario_keys):
+            # Which ones is not said: the caller may only learn that some are held back.
+            raise HostedHarnessError(
+                "scenario_held_back",
+                "the selection includes scenarios held back to verify the agent;"
+                " run without them",
+                status_code=400,
+            )
         if pins is not None and pins.assembles:
             _refuse_ungradable(pins, scenario_keys)
 
@@ -494,8 +510,12 @@ def create_selected_harness_run(
             "conversation_checkpoints",
             "draft_saves",
             "observability_refusal",
+            # The run's sandbox must never hold the held-back case keys.
+            HELD_BACK_METADATA_KEY,
         ):
             child_metadata.pop(key, None)
+        if coding_agent_key_id is not None:
+            child_metadata["coding_agent_key_id"] = coding_agent_key_id
         child_metadata.update(
             {
                 "environment_job_id": str(environment.id),
@@ -597,6 +617,7 @@ def create_selected_harness_run(
         )
         child.environment = environment
         child.fix_run = fix_run
+        child.verify_of = environment if verify else None
         child.run_test = environment.run_test
         child.stage_outputs = list(environment.stage_outputs or [])
         child.bundle_digest = environment.bundle_digest
@@ -619,6 +640,7 @@ def create_selected_harness_run(
                 "payload",
                 "environment",
                 "fix_run",
+                "verify_of",
                 "run_test",
                 "test_execution",
                 "updated_at",

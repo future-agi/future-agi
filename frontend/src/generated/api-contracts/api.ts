@@ -660,6 +660,9 @@ import type {
   HarnessSuiteMemberApi,
   HarnessUsageRequestApi,
   HarnessUsageResponseApi,
+  HarnessVerifyCreateApi,
+  HarnessVerifyCreateResponseApi,
+  HarnessVerifyResultApi,
   HarnessVersionDiffApi,
   HarnessVersionsApi,
   HealthCheckResponseApi,
@@ -59730,7 +59733,8 @@ export const getSimulateApiHarnessEnvironmentsReadUrl = (id: string) => {
 
 /**
  * Same shape whichever door built it. A section the pipeline has not reached
-yet is null, so the client renders "building" rather than an empty pane.
+yet is null, so the client renders "building" rather than an empty pane. A
+coding agent's read leaves out the held-back cases.
  * @summary One environment: overview, contract, world, scenarios, evaluations, settings.
  */
 export const simulateApiHarnessEnvironmentsRead = async (
@@ -60686,6 +60690,100 @@ export const simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluations =
     );
   };
 
+export type simulateApiHarnessEnvironmentsVerifyResponse202 = {
+  data: HarnessVerifyCreateResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsVerifyResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiHarnessEnvironmentsVerifyResponseSuccess =
+  simulateApiHarnessEnvironmentsVerifyResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsVerifyResponseError =
+  simulateApiHarnessEnvironmentsVerifyResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsVerifyResponse =
+  | simulateApiHarnessEnvironmentsVerifyResponseSuccess
+  | simulateApiHarnessEnvironmentsVerifyResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVerifyUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/verify/`;
+};
+
+/**
+ * Verify an agent version on the held-back cases, in a run no user read shows.
+Each version is verified once: asking again returns that verify.
+ */
+export const simulateApiHarnessEnvironmentsVerify = async (
+  id: string,
+  harnessVerifyCreateApi: HarnessVerifyCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVerifyResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVerifyResponse>(
+    getSimulateApiHarnessEnvironmentsVerifyUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessVerifyCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsVerifyDetailResponse200 = {
+  data: HarnessVerifyResultApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVerifyDetailResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsVerifyDetailResponseSuccess =
+  simulateApiHarnessEnvironmentsVerifyDetailResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsVerifyDetailResponseError =
+  simulateApiHarnessEnvironmentsVerifyDetailResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsVerifyDetailResponse =
+  | simulateApiHarnessEnvironmentsVerifyDetailResponseSuccess
+  | simulateApiHarnessEnvironmentsVerifyDetailResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVerifyDetailUrl = (
+  id: string,
+  verifyId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/verify/${verifyId}/`;
+};
+
+/**
+ * How the verified version did on the held-back cases, as counts only.
+ */
+export const simulateApiHarnessEnvironmentsVerifyDetail = async (
+  id: string,
+  verifyId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVerifyDetailResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVerifyDetailResponse>(
+    getSimulateApiHarnessEnvironmentsVerifyDetailUrl(id, verifyId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsVersionsResponse200 = {
   data: HarnessVersionsApi;
   status: 200;
@@ -60924,7 +61022,8 @@ export const getSimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersUrl = (
 };
 
 /**
- * The scenarios in one suite version, by number.
+ * The scenarios in one suite version, by number; a coding agent's read leaves
+out the held-back cases.
  */
 export const simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembers = async (
   id: string,

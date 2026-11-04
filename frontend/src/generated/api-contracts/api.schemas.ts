@@ -19260,6 +19260,78 @@ export interface HarnessEnvironmentRunEvaluationsQueuedApi {
   call_execution_count: number;
 }
 
+export interface HarnessVerifyCreateApi {
+  /** The agent version to verify; each version is verified once. */
+  agent_version_id: string;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+}
+
+export type HarnessVerifyCreateResponseApiState =
+  (typeof HarnessVerifyCreateResponseApiState)[keyof typeof HarnessVerifyCreateResponseApiState];
+
+export const HarnessVerifyCreateResponseApiState = {
+  received: "received",
+  queued: "queued",
+  admitted: "admitted",
+  provisioning: "provisioning",
+  running: "running",
+  finalizing: "finalizing",
+  cleaning_up: "cleaning_up",
+  retry_wait: "retry_wait",
+  completed: "completed",
+  failed: "failed",
+  canceled: "canceled",
+} as const;
+
+export interface HarnessVerifyCreateResponseApi {
+  verify_id: string;
+  state: HarnessVerifyCreateResponseApiState;
+}
+
+export type HarnessVerifyResultApiState =
+  (typeof HarnessVerifyResultApiState)[keyof typeof HarnessVerifyResultApiState];
+
+export const HarnessVerifyResultApiState = {
+  received: "received",
+  queued: "queued",
+  admitted: "admitted",
+  provisioning: "provisioning",
+  running: "running",
+  finalizing: "finalizing",
+  cleaning_up: "cleaning_up",
+  retry_wait: "retry_wait",
+  completed: "completed",
+  failed: "failed",
+  canceled: "canceled",
+} as const;
+
+export interface HarnessVerifyResultApi {
+  state: HarnessVerifyResultApiState;
+  /** @minimum 0 */
+  passed: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  total: number;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials: number;
+  /**
+   * 95% range of the trial pass rate, [low, high]; null until it ends.
+   * @minItems 2
+   * @maxItems 2
+   */
+  held_back_pass_rate: number[];
+  /** Too few cases were held back to call a version verified. */
+  limited_validation: boolean;
+}
+
 export interface HarnessAgentConfigChangeApi {
   /**
    * @minLength 1

@@ -1557,6 +1557,8 @@ class HostedHarnessProvider:
     def run(self, request, pk) -> Response:
         """Create and dispatch one immutable selected-scenario simulation Run."""
 
+        from simulate.selectors.held_back import coding_agent_key
+        from simulate.services.harness_verify import ensure_held_back
         from simulate.services.harness_versioning.run_warnings import created_run
         from simulate.services.hosted_harness import (
             HostedHarnessError,
@@ -1586,6 +1588,10 @@ class HostedHarnessProvider:
             if response is not None:
                 return response
             raise
+        coder = coding_agent_key(request)
+        if coder is not None:
+            # The cases a coding agent may not run are chosen before its first run.
+            ensure_held_back(environment)
         try:
             child, created = create_selected_harness_run(
                 environment,
@@ -1599,6 +1605,7 @@ class HostedHarnessProvider:
                     ),
                     suite_version_id=request.validated_data.get("suite_version_id"),
                 ),
+                coding_agent_key_id=str(coder.id) if coder is not None else None,
             )
             retry_dispatch = False
             if (
