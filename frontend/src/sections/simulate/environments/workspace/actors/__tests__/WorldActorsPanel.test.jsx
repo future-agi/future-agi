@@ -555,6 +555,44 @@ describe("WorldActorsPanel", () => {
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Priya Raman");
   });
 
+  it("asks before closing a form with typed values, and keeps them if you stay", async () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    const name = screen.getByRole("textbox", { name: "Name" });
+    fireEvent.change(name, { target: { value: "Sam Lee" } });
+    fireEvent.keyDown(name, { key: "Escape" });
+    const dialog = screen.getByRole("dialog", { name: /Discard changes/ });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    // The drawer is hidden from assistive tech until the prompt has finished closing.
+    expect(await screen.findByRole("textbox", { name: "Name" })).toHaveValue(
+      "Sam Lee",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: /Discard changes/ })).getByRole(
+        "button",
+        { name: "Discard" },
+      ),
+    );
+    expect(screen.queryByText("Save to draft")).toBeNull();
+  });
+
+  it("closes straight away with nothing typed, and when Cancel is pressed", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByText("Save to draft")).toBeNull();
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
+      target: { value: "Sam Lee" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.queryByRole("dialog", { name: /Discard changes/ }),
+    ).toBeNull();
+    expect(screen.queryByText("Save to draft")).toBeNull();
+  });
+
   it("shows Not set for a value with nothing in it", () => {
     render(<WorldActorsPanel envId="env-1" locked />);
     fireEvent.click(screen.getByText("What they see"));

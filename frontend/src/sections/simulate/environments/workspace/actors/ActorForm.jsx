@@ -14,6 +14,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import SideDrawer from "../../components/SideDrawer";
 import { ACTORS_COPY } from "./actors.constants";
 import { idFrom, idRule, lines, speaks } from "./actorUtils";
@@ -100,6 +101,12 @@ export default function ActorForm({
   const close = () => {
     setFields({});
     onClose();
+  };
+  // Escape, the close button and a click outside can all be accidents; Cancel is not, so it never asks.
+  const [leaving, setLeaving] = useState(false);
+  const leave = () => {
+    if (Object.keys(fields).length > 0) setLeaving(true);
+    else close();
   };
   const constraints = actor?.constraints || {};
   const activation = actor?.activation || {};
@@ -245,7 +252,7 @@ export default function ActorForm({
   return (
     <SideDrawer
       open={Boolean(actor)}
-      onClose={close}
+      onClose={leave}
       width={{ xs: "100%", sm: 520 }}
     >
       {actor && (
@@ -572,6 +579,25 @@ export default function ActorForm({
           </Stack>
         </Stack>
       )}
+      <ConfirmDialog
+        open={leaving}
+        onClose={() => setLeaving(false)}
+        title={F.discardTitle}
+        content={F.discardBody}
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            onClick={() => {
+              setLeaving(false);
+              close();
+            }}
+          >
+            {F.discard}
+          </Button>
+        }
+      />
     </SideDrawer>
   );
 }
