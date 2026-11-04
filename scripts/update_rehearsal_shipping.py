@@ -31,6 +31,9 @@ from scripts.update_rehearsal_trace_reference import TRACE_REFERENCE_MODELS, see
 from scripts.update_rehearsal_eval_task_reference import (
     EVAL_TASK_REFERENCE_MODELS, seed_eval_task_reference, verify_eval_task_reference,
 )
+from scripts.update_rehearsal_usage_reference import (
+    USAGE_REFERENCE_MODELS, seed_usage_reference, verify_usage_reference,
+)
 
 REHEARSAL_CONTRACT = 'standalone-disposable-rehearsal-v1'
 # Explicit incompleteness, not an admission flag. Do not flip this constant to
@@ -218,7 +221,7 @@ print(json.dumps(rows))
 # claims an empty/unavailable table reached scale. It clones existing real rows
 # only for reviewed append-only logs; relational fixtures have their own path.
 APPEND_ONLY_MODELS = frozenset({('prism', 'AgentccRequestLog'), ('prism', 'AgentccShadowResult'),
-    ('prism', 'AgentccWebhookEvent'), ('usage', 'APICallLog')})
+    ('prism', 'AgentccWebhookEvent')})
 REFERENCE_SEED = DJANGO_PREFIX + """
 from django.apps import apps
 from django.db import transaction
@@ -720,6 +723,7 @@ class ProductWitnesses:
             # Separate ORM-fixture preservation, not a fabricated API witness.
             # This read is used before backup, on B, and after restoring A.
             verify_eval_task_reference(self.d, prefix=DJANGO_PREFIX, producer=p)
+            verify_usage_reference(self.d, prefix=DJANGO_PREFIX, producer=p)
         info = self._http('/accounts/user-info/',headers=n['headers'])
         p.equal(info.get('email'),n['account']['email'],'witness API returned another user')
         relational = {
@@ -1137,6 +1141,19 @@ class ShippingRehearsal:
     def seed_reference_table(self,entry,rows):
         p=producer()
         key=(entry.get('app_label'),entry.get('model'))
+        if hasattr(self, '_diagnostic_data'):
+            # Closed registry identity only; never invocation args or owner IDs.
+            known = next((row for row in p.load_high_volume_registry() if all(
+                entry.get(name) == row.get(name) for name in ('database','app_label','model','table'))), None)
+            self._diagnostic_data['last_reference'] = (dict(
+                {name: known.get(name) for name in ('database','app_label','model','table')},
+                requested_rows=rows if type(rows) is int and 0 <= rows <= 100000000 else None)
+                if known is not None else None)
+        if key in USAGE_REFERENCE_MODELS or entry.get('table') in USAGE_REFERENCE_MODELS.values():
+            if (entry.get('database')=='postgres' and key in USAGE_REFERENCE_MODELS
+                    and entry.get('table')==USAGE_REFERENCE_MODELS[key]):
+                return self.seed_usage_reference(rows)
+            raise p.ManualRelease('high_volume_reference_unavailable')
         if key in TRACE_REFERENCE_MODELS or entry.get('table') in TRACE_REFERENCE_MODELS.values():
             if (entry.get('database')=='postgres' and key in TRACE_REFERENCE_MODELS
                     and entry.get('table')==TRACE_REFERENCE_MODELS[key]):
@@ -1163,6 +1180,9 @@ class ShippingRehearsal:
 
     def seed_eval_task_reference(self, rows):
         return seed_eval_task_reference(self, rows, prefix=DJANGO_PREFIX, producer=producer())
+
+    def seed_usage_reference(self, rows):
+        return seed_usage_reference(self, rows, prefix=DJANGO_PREFIX, producer=producer())
 
     def seed_error_feed_reference_family(self, rows):
         """Build the whole graph once; later callbacks can only re-verify it.

@@ -106,14 +106,17 @@ class ErrorFeedReferenceTests(unittest.TestCase):
         driver.app_python.assert_not_called()
         driver.seed_error_feed_reference_family.assert_not_called()
 
-    def test_append_only_dispatch_is_unchanged(self):
+    def test_append_only_dispatch_remains_narrow_after_relational_usage_dispatch(self):
         driver = driver_for()
         driver.app_python = mock.Mock()
-        entry = dict(database='postgres',app_label='usage',model='APICallLog',table='usage_api_call_log')
+        entry = dict(database='postgres',app_label='prism',model='AgentccShadowResult',table='agentcc_shadow_result')
         driver.seed_reference_table(entry, 100000)
         driver.app_python.assert_called_once_with(s.REFERENCE_SEED, dict(entry,rows=100000))
         self.assertEqual(s.APPEND_ONLY_MODELS, frozenset({('prism','AgentccRequestLog'),
-            ('prism','AgentccShadowResult'),('prism','AgentccWebhookEvent'),('usage','APICallLog')}))
+            ('prism','AgentccShadowResult'),('prism','AgentccWebhookEvent')}))
+        with self.assertRaises(p.ManualRelease):
+            driver.seed_reference_table(dict(database='postgres',app_label='usage',
+                model='APICallLog',table='usage_api_call_log'),100000)
 
     def test_cohort_arithmetic_and_scaling(self):
         self.assertEqual(tuple(sum(row[i] for row in s.ERROR_FEED_REFERENCE_COHORTS.values()) for i in range(5)),

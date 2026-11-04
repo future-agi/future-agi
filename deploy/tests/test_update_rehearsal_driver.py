@@ -190,6 +190,8 @@ class RehearsalDriverTests(unittest.TestCase):
         self.assertEqual(inventory['scripts/update_rehearsal_trace_reference.py'],hashlib.sha256(Path(trace_reference.__file__).read_bytes()).hexdigest())
         from scripts import update_rehearsal_eval_task_reference as task_reference
         self.assertEqual(inventory['scripts/update_rehearsal_eval_task_reference.py'],hashlib.sha256(Path(task_reference.__file__).read_bytes()).hexdigest())
+        from scripts import update_rehearsal_usage_reference as usage_reference
+        self.assertEqual(inventory['scripts/update_rehearsal_usage_reference.py'],hashlib.sha256(Path(usage_reference.__file__).read_bytes()).hexdigest())
 
     def test_failure_counts_are_only_completed_assertions_not_an_adapter_verdict(self):
         class IncompleteExecutor:

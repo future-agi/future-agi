@@ -1296,6 +1296,7 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
                  'scripts/update_rehearsal_milestone.py', 'scripts/update_rehearsal_qualification.py',
                  'scripts/update_rehearsal_resources.py', 'scripts/update_rehearsal_spool.py',
                  'scripts/update_rehearsal_trace_reference.py', 'scripts/update_rehearsal_eval_task_reference.py',
+                 'scripts/update_rehearsal_usage_reference.py',
                  'scripts/generate_update_manifest.py', 'deploy/standalone/bin/start',
                  'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf',
                  # Read at runtime by deploy/update/contracts.py; older retained
