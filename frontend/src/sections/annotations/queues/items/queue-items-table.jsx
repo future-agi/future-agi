@@ -638,7 +638,7 @@ export default function QueueItemsTable({
       lockVisible: true,
       filter: false,
       sortable: false,
-      resizable: false,
+      resizable: true,
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
     }),
