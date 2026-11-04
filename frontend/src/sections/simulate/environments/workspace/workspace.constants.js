@@ -239,6 +239,8 @@ export const VERSIONS_COPY = {
     modality: "Modality",
     subGoals: "Sub-goals",
     actors: "Actors",
+    actorsUnknown:
+      "Actors of one of these versions aren't known, so actor changes aren't shown.",
     files: "World files",
     filesUnknown:
       "World files of the earlier version aren't known, so file changes aren't shown.",

@@ -80,7 +80,13 @@ function EnvironmentDiff({ diff }) {
         </Stack>
       )}
       <ChangeGroup title={COPY.subGoals} change={diff?.sub_goals} />
-      <ChangeGroup title={COPY.actors} change={diff?.actors} />
+      {diff?.actors === null ? (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {COPY.actorsUnknown}
+        </Typography>
+      ) : (
+        <ChangeGroup title={COPY.actors} change={diff?.actors} />
+      )}
       {diff?.files === null ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {COPY.filesUnknown}

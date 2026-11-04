@@ -96,7 +96,8 @@ def environment_diff(
 ) -> dict[str, Any]:
     """Contract items, sub-goal definitions, world files and actors, each added, removed or changed.
 
-    A parent whose world files are unknown (backfilled without its archive) has no file diff.
+    A parent whose world files are unknown (backfilled without its archive) has no file diff; a side whose cast is
+    unknown has no actor diff.
     """
     with_actors = bool(previous_actors or actors)
     file_diff = None if previous_files is None else keyed_diff(previous_files, files)
@@ -113,7 +114,11 @@ def environment_diff(
         "sub_goals": keyed_diff(previous_sub_goals, sub_goals),
         "files": file_diff,
         **(
-            {"actors": keyed_diff(previous_actors or {}, actors or {})}
+            {
+                "actors": None
+                if previous_actors is None or actors is None
+                else keyed_diff(previous_actors, actors)
+            }
             if with_actors
             else {}
         ),

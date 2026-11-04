@@ -465,6 +465,29 @@ describe("VersionsPanel", () => {
     );
   });
 
+  it("says the actor changes are unknown when a version's cast cannot be read, not that nothing changed", async () => {
+    const user = userEvent.setup();
+    state.diffs["e2:e1"] = {
+      summary: "",
+      diff: {
+        contract: { tools: {}, rules: {}, use_cases: {}, fields: [] },
+        sub_goals: {},
+        files: {},
+        actors: null,
+      },
+    };
+    render(<VersionsPanel env={ENV} />);
+
+    await user.click(screen.getByRole("combobox", { name: "Compared with" }));
+    await user.click(screen.getByRole("option", { name: "v1" }));
+
+    expect(
+      screen.getByText(/Actors of one of these versions aren't known/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nothing changed.")).toBeNull();
+    expect(screen.queryByTestId("diff-group-Actors")).toBeNull();
+  });
+
   it("shows a spinner while the changes load and an error if they fail", async () => {
     state.diffLoading = true;
     const { unmount } = render(<VersionsPanel env={ENV} />);
