@@ -16,6 +16,8 @@ from django.db import close_old_connections
 from django.db.models import Q
 from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
+from jinja2 import StrictUndefined
+from jinja2.exceptions import UndefinedError
 from jinja2.sandbox import SandboxedEnvironment
 from rest_framework import viewsets
 from rest_framework.generics import CreateAPIView
@@ -427,10 +429,116 @@ DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_JINJA2
 
 # Jinja2 environment (reusable, sandboxed for security)
 _jinja2_env = SandboxedEnvironment()
+# Strict counterpart used for fail-closed rendering: an undefined variable
+# raises instead of silently rendering as an empty string.
+_jinja2_strict_env = SandboxedEnvironment(undefined=StrictUndefined)
+
+# Matches a surviving `{{ ... }}` token in already-rendered output.
+_UNRESOLVED_PLACEHOLDER_RE = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+
+
+class UnresolvedPromptPlaceholdersError(ValueError):
+    """Raised when a prompt would reach the provider with placeholders intact.
+
+    Carries the offending placeholder names so callers can tell the user which
+    columns failed to resolve, rather than surfacing a generic failure.
+    """
+
+    def __init__(self, placeholders):
+        self.placeholders = sorted(set(placeholders))
+        joined = ", ".join(self.placeholders)
+        super().__init__(
+            "Prompt was not fully rendered; unresolved placeholders: " + joined
+        )
+
+
+def find_unresolved_placeholders(value) -> list[str]:
+    """Return placeholder names still present in rendered content.
+
+    Walks strings, lists and dicts because a rendered message's content may be
+    a plain string or a list of typed parts.
+    """
+    found: list[str] = []
+    if isinstance(value, str):
+        found.extend(
+            match.strip() for match in _UNRESOLVED_PLACEHOLDER_RE.findall(value)
+        )
+    elif isinstance(value, dict):
+        for item in value.values():
+            found.extend(find_unresolved_placeholders(item))
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            found.extend(find_unresolved_placeholders(item))
+    return found
+
+
+def _missing_mustache_keys(template_str: str, context: dict) -> list[str]:
+    """Names a mustache template substitutes that the context cannot supply.
+
+    Only tokens at the top level are checked. Inside a section
+    (``{{#items}} … {{/items}}``) mustache resolves names against each item of
+    the section rather than the root context, and that per-item shape is not
+    knowable before rendering — so section bodies are skipped rather than
+    guessed at. Missing it there is acceptable: the post-render scan in
+    :func:`populate_placeholders` still catches a token that survives, whereas
+    a false positive here would reject a perfectly valid prompt.
+    """
+    missing: list[str] = []
+    depth = 0
+
+    for raw in _UNRESOLVED_PLACEHOLDER_RE.findall(template_str):
+        name = raw.strip()
+        if not name:
+            continue
+
+        sigil = name[0]
+        if sigil in "#^":
+            depth += 1
+            continue
+        if sigil == "/":
+            depth = max(0, depth - 1)
+            continue
+        # `!` comment, `>` partial, `&` unescaped — not plain substitution.
+        if sigil in "!>&":
+            continue
+        if depth:
+            continue
+
+        current = context
+        for part in name.split("."):
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                missing.append(name)
+                break
+
+    return missing
+
+
+def _undefined_names_from_error(exc, template_str: str, context: dict) -> list[str]:
+    """Best-effort list of the names that made a strict Jinja render fail.
+
+    Jinja reports one undefined name at a time, so the template is also scanned
+    for other top-level names absent from the context. That way a prompt with
+    three missing columns names all three instead of dripping them out one
+    render at a time.
+    """
+    names = []
+    message = str(getattr(exc, "message", "") or exc)
+    match = re.search(r"'([^']+)' is undefined", message)
+    if match:
+        names.append(match.group(1))
+
+    for raw in _UNRESOLVED_PLACEHOLDER_RE.findall(template_str):
+        root = raw.strip().split(".")[0].split("[")[0].strip()
+        if root and root not in context and root not in names:
+            names.append(root)
+
+    return names or [message or "unknown"]
 
 
 def render_template(
-    template_str: str, context: dict, template_format: str = None
+    template_str: str, context: dict, template_format: str = None, strict: bool = False
 ) -> str:
     """
     Render a template string with the given context.
@@ -451,9 +559,20 @@ def render_template(
         template_format = DEFAULT_TEMPLATE_FORMAT
 
     if template_format == TEMPLATE_FORMAT_FSTRING:
-        return template_str.format(**context)
+        try:
+            return template_str.format(**context)
+        except KeyError as exc:
+            if strict:
+                raise UnresolvedPromptPlaceholdersError([str(exc.args[0])]) from exc
+            raise
 
     elif template_format == TEMPLATE_FORMAT_MUSTACHE:
+        if strict:
+            # chevron renders an unknown key as an empty string, so the missing
+            # name has to be detected before rendering erases the evidence.
+            missing = _missing_mustache_keys(template_str, context)
+            if missing:
+                raise UnresolvedPromptPlaceholdersError(missing)
         return chevron.render(template_str, context)
 
     elif template_format == TEMPLATE_FORMAT_JINJA2:
@@ -472,7 +591,13 @@ def render_template(
                 processed = processed.replace(
                     "{{ " + stripped + " }}", str(context.get(stripped, ""))
                 )
-        return _jinja2_env.from_string(processed).render(**safe_ctx)
+        env = _jinja2_strict_env if strict else _jinja2_env
+        try:
+            return env.from_string(processed).render(**safe_ctx)
+        except UndefinedError as exc:
+            raise UnresolvedPromptPlaceholdersError(
+                _undefined_names_from_error(exc, processed, safe_ctx)
+            ) from exc
 
     else:
         raise ValueError(
@@ -494,10 +619,25 @@ class JsonStr(dict):
 
 
 def populate_placeholders(
-    messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None
+    messages: list[dict],
+    dataset_id,
+    row_id,
+    col_id,
+    model_name,
+    template_format=None,
+    fail_closed: bool = True,
 ):
+    """Substitute dataset values into prompt messages.
+
+    When ``fail_closed`` is set (the default) a prompt that cannot be fully
+    rendered raises :class:`UnresolvedPromptPlaceholdersError` instead of being
+    handed to the provider with its placeholders intact. Pass
+    ``fail_closed=False`` only where rendering is best-effort and unresolved
+    tokens are acceptable.
+    """
     try:
         media_error = None
+        column_errors: list[str] = []
         # Debug: Log input messages to see what template we're processing
         logger.info(f"populate_placeholders called with messages: {messages}")
 
@@ -579,9 +719,13 @@ def populate_placeholders(
                         f"value_preview={str(cell_value)[:100] if cell_value else 'None'}"
                     )
             except Exception as e:
+                column_name = column.name if "column" in locals() else "unknown"
                 logger.exception(
-                    f"Error processing column {column_id} ({column.name if 'column' in locals() else 'unknown'}): {e}"
+                    f"Error processing column {column_id} ({column_name}): {e}"
                 )
+                # Record rather than swallow: a column that failed to resolve is
+                # exactly what leaves a placeholder unsubstituted downstream.
+                column_errors.append(column_name)
                 continue
 
         # Debug: Log final context structure
@@ -608,6 +752,7 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
+                        strict=fail_closed,
                     )
                 elif isinstance(content, str):
                     processed_content = process_string_content(
@@ -617,6 +762,7 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
+                        strict=fail_closed,
                     )
 
                 # If no content was processed, keep original
@@ -629,24 +775,48 @@ def populate_placeholders(
                 # Preserve all message keys (name, tool_calls, tool_call_id, etc.)
                 processed_messages.append({**message, "content": processed_content})
 
+            if fail_closed:
+                # Backstop for formats that leave the token in place rather than
+                # raising during render.
+                unresolved = find_unresolved_placeholders(processed_messages)
+                if unresolved:
+                    raise UnresolvedPromptPlaceholdersError(unresolved)
+                if column_errors:
+                    raise UnresolvedPromptPlaceholdersError(column_errors)
+
             return processed_messages
 
         except ValueError as e:
             media_error = True
             raise e
 
+    except UnresolvedPromptPlaceholdersError:
+        # Already precise about what failed — surface unchanged.
+        raise
     except Exception as e:
         if media_error:
             raise e
-        else:
+        if not fail_closed:
             traceback.print_exc()
             logger.exception(f"Fatal error processing messages: {e}")
-            # Return original messages as fallback
+            # Legacy best-effort behaviour, retained for opt-in callers only.
             return messages
+        logger.exception(f"Fatal error processing messages: {e}")
+        # Returning the original messages here would hand the provider a prompt
+        # with its placeholders intact and no error surfaced to the caller.
+        raise UnresolvedPromptPlaceholdersError(
+            find_unresolved_placeholders(messages) or [str(e)]
+        ) from e
 
 
 def process_list_content(
-    content, column_info, context, image_counter, model_name, template_format=None
+    content,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    strict: bool = False,
 ):
     """Process list-type content with proper media handling"""
     processed_content = []
@@ -661,6 +831,7 @@ def process_list_content(
                 image_counter,
                 model_name,
                 template_format=template_format,
+                strict=strict,
             )
             processed_content.extend(text_segments)
         else:
@@ -676,7 +847,13 @@ def process_list_content(
 
 
 def process_string_content(
-    content, column_info, context, image_counter, model_name, template_format=None
+    content,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    strict: bool = False,
 ):
     """Process string-type content with proper media handling"""
     return process_text_with_media(
@@ -686,11 +863,18 @@ def process_string_content(
         image_counter,
         model_name,
         template_format=template_format,
+        strict=strict,
     )
 
 
 def process_text_with_media(
-    text, column_info, context, image_counter, model_name, template_format=None
+    text,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    strict: bool = False,
 ):
     """Process text content, handling both templates and media placeholders"""
     try:
@@ -808,7 +992,7 @@ def process_text_with_media(
             effective_format = TEMPLATE_FORMAT_JINJA2
         try:
             processed_text = render_template(
-                text, context, template_format=effective_format
+                text, context, template_format=effective_format, strict=strict
             )
         except Exception as render_error:
             logger.exception(
@@ -817,7 +1001,14 @@ def process_text_with_media(
             # Re-raise to see full error - template syntax issue
             raise
         uuid_pattern = r"\{\{[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\}\}"
-        if re.search(uuid_pattern, processed_text, re.IGNORECASE):
+        unreplaced_uuids = re.findall(uuid_pattern, processed_text, re.IGNORECASE)
+        if unreplaced_uuids:
+            if strict:
+                # Deleting these would hide the failure: the prompt would be
+                # silently missing the column the user referenced.
+                raise UnresolvedPromptPlaceholdersError(
+                    [uuid.strip("{} ") for uuid in unreplaced_uuids]
+                )
             logger.warning(
                 f"Found unreplaced UUID placeholders in processed text: {processed_text}"
             )
