@@ -80,6 +80,7 @@ class StoredAgentAnswer:
     sdk_version: str
     stored_at: datetime
     setup_stale: bool
+    origin: str = AgentVersionSetup.Origin.BUILD
 
 
 @dataclass(frozen=True)
@@ -238,6 +239,7 @@ def stored_agent_answer(agent_version: AgentVersion) -> StoredAgentAnswer | None
         sdk_version=setup.sdk_version,
         stored_at=setup.created_at,
         setup_stale=_setup_is_stale(setup, agent_version.agent_definition),
+        origin=setup.origin,
     )
 
 
@@ -320,20 +322,37 @@ def _rebuilt_agent(setup: AgentVersionSetup, *, with_raw_setup: bool) -> dict[st
 
 
 def store_agent(
-    *, agent_version_id: UUID, agent: dict, sdk_version: str
-) -> Literal["stored", "unchanged"]:
+    *,
+    agent_version_id: UUID,
+    agent: dict,
+    sdk_version: str,
+    origin: str = AgentVersionSetup.Origin.BUILD,
+    replace_reading: bool = False,
+) -> Literal["stored", "unchanged", "replaced"]:
+    """Keep the agent document on a version, once. A build seeded from the version's
+    reading knows what the reading could not (the framework's version), so with
+    ``replace_reading`` it replaces a document a reading stored; any other second
+    document is refused."""
     try:
         version = _checked_version(agent_version_id, agent, sdk_version)
         existing = _first_write(
-            agent_version_id, lambda: _insert_agent(version, agent, sdk_version)
+            agent_version_id,
+            lambda: _insert_agent(version, agent, sdk_version, origin=origin),
         )
         if existing is None:
-            outcome: Literal["stored", "unchanged"] = "stored"
+            outcome: Literal["stored", "unchanged", "replaced"] = "stored"
         elif (
             existing.status == AgentVersionSetup.Status.STORED
             and existing.setup_hash == agent["setup_hash"]
         ):
             outcome = "unchanged"
+        elif (
+            replace_reading
+            and existing.status == AgentVersionSetup.Status.STORED
+            and existing.origin == AgentVersionSetup.Origin.READING
+        ):
+            _replace_agent(existing, version, agent, sdk_version, origin=origin)
+            outcome = "replaced"
         else:
             raise AgentStoreError("setup_outcome_already_stored")
     except AgentStoreError as error:
@@ -582,7 +601,7 @@ def _word(value: Any, words: tuple[str, ...]) -> None:
 def _directions(inbound: bool, outbound: bool) -> list[str]:
     return [
         direction
-        for direction, present in zip(_DIRECTIONS, (inbound, outbound))
+        for direction, present in zip(_DIRECTIONS, (inbound, outbound), strict=False)
         if present
     ]
 
@@ -608,37 +627,71 @@ def _first_write(
     return None
 
 
-def _insert_agent(version: AgentVersion, agent: dict, sdk_version: str) -> None:
+def _replace_agent(
+    existing: AgentVersionSetup,
+    version: AgentVersion,
+    agent: dict,
+    sdk_version: str,
+    *,
+    origin: str,
+) -> None:
+    """A build's document in place of a reading's, under the same row id, so the
+    version's contract key and anything pointing at the row stay."""
+    with transaction.atomic():
+        locked = AgentVersionSetup.all_objects.select_for_update().get(id=existing.id)
+        if locked.setup_hash == agent["setup_hash"]:
+            return
+        locked.behaviour_units.all().delete()
+        locked.tools.all().delete()
+        locked.telephony.all().delete()
+        for name, value in _setup_columns(agent, sdk_version, origin).items():
+            setattr(locked, name, value)
+        locked.save()
+        _insert_children(locked, agent)
+    logger.info(
+        "agent_setup_replaced",
+        agent_version_id=str(version.id),
+        setup_hash=agent["setup_hash"],
+        origin=origin,
+    )
+
+
+def _setup_columns(agent: dict, sdk_version: str, origin: str) -> dict[str, Any]:
     provider_ref = agent["provider_ref"] or {}
     model = agent["model"] or {}
     voice = agent["voice"] or {}
-    setup = AgentVersionSetup.objects.create(
-        agent_version=version,
-        status=AgentVersionSetup.Status.STORED,
-        setup_hash=agent["setup_hash"],
-        schema_version=agent["schema_version"],
-        sdk_version=sdk_version,
-        agent_type=agent["type"],
-        agent_kind=agent["kind"],
-        name=agent["name"],
-        provider=provider_ref.get("provider", ""),
-        provider_agent_id=provider_ref.get("id", ""),
-        provider_version=provider_ref.get("version"),
-        model_provider=model.get("provider"),
-        model_name=model.get("name"),
-        model_temperature=model.get("temperature"),
-        model_max_tokens=model.get("max_tokens"),
-        voice_provider=voice.get("provider"),
-        voice_id=voice.get("voice_id"),
-        voice_language=voice.get("language"),
-        voice_speed=voice.get("speed"),
-        supports_inbound="inbound" in agent["supports"],
-        supports_outbound="outbound" in agent["supports"],
-        direction_answer=agent["direction_answer"],
-        gaps=list(agent["gaps"]),
-        instrumentation=agent.get("instrumentation", "none"),
-        raw_setup=agent["extension"],
-    )
+    return {
+        "status": AgentVersionSetup.Status.STORED,
+        "failure_code": "",
+        "failure_message": "",
+        "setup_hash": agent["setup_hash"],
+        "schema_version": agent["schema_version"],
+        "sdk_version": sdk_version,
+        "agent_type": agent["type"],
+        "agent_kind": agent["kind"],
+        "name": agent["name"],
+        "provider": provider_ref.get("provider", ""),
+        "provider_agent_id": provider_ref.get("id", ""),
+        "provider_version": provider_ref.get("version"),
+        "model_provider": model.get("provider"),
+        "model_name": model.get("name"),
+        "model_temperature": model.get("temperature"),
+        "model_max_tokens": model.get("max_tokens"),
+        "voice_provider": voice.get("provider"),
+        "voice_id": voice.get("voice_id"),
+        "voice_language": voice.get("language"),
+        "voice_speed": voice.get("speed"),
+        "supports_inbound": "inbound" in agent["supports"],
+        "supports_outbound": "outbound" in agent["supports"],
+        "direction_answer": agent["direction_answer"],
+        "gaps": list(agent["gaps"]),
+        "instrumentation": agent.get("instrumentation", "none"),
+        "raw_setup": agent["extension"],
+        "origin": origin,
+    }
+
+
+def _insert_children(setup: AgentVersionSetup, agent: dict) -> None:
     AgentBehaviourUnit.objects.bulk_create(
         AgentBehaviourUnit(
             setup=setup,
@@ -674,3 +727,16 @@ def _insert_agent(version: AgentVersion, agent: dict, sdk_version: str) -> None:
         )
         for position, entry in enumerate(agent["telephony"])
     )
+
+
+def _insert_agent(
+    version: AgentVersion,
+    agent: dict,
+    sdk_version: str,
+    *,
+    origin: str = AgentVersionSetup.Origin.BUILD,
+) -> None:
+    setup = AgentVersionSetup.objects.create(
+        agent_version=version, **_setup_columns(agent, sdk_version, origin)
+    )
+    _insert_children(setup, agent)

@@ -70,3 +70,4 @@ class StoredAgentResponseSerializer(serializers.Serializer):
     sdk_version = serializers.CharField()
     stored_at = serializers.DateTimeField()
     setup_stale = serializers.BooleanField()
+    origin = serializers.ChoiceField(choices=("build", "reading"))

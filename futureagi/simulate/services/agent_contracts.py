@@ -28,22 +28,30 @@ def contract_object_key(
 
 
 def store_version_contract(
-    *, organization_id: UUID, agent_version_id: UUID, contract: dict[str, Any]
+    *,
+    organization_id: UUID,
+    agent_version_id: UUID,
+    contract: dict[str, Any],
+    replace: bool = False,
 ) -> bool:
     """Keep the raw contract a version was read into, beside its stored agent.
 
     Written once, like the agent: a version that already has one, or whose agent
-    is not stored yet, is left alone. Returns whether this call stored it.
+    is not stored yet, is left alone, unless ``replace`` says a build seeded from
+    the reading brings the contract it finished with. Returns whether this call
+    stored it.
     """
-    agent_definition_id = (
-        AgentVersionSetup.no_workspace_objects.filter(
-            agent_version_id=agent_version_id, contract_object_key=""
-        )
-        .values_list("agent_version__agent_definition_id", flat=True)
-        .first()
+    rows = AgentVersionSetup.no_workspace_objects.filter(
+        agent_version_id=agent_version_id
     )
-    if not contract or agent_definition_id is None:
+    if not replace:
+        rows = rows.filter(contract_object_key="")
+    current = rows.values_list(
+        "agent_version__agent_definition_id", "contract_object_key"
+    ).first()
+    if not contract or current is None:
         return False
+    agent_definition_id, previous_key = current
     key = contract_object_key(organization_id, agent_definition_id, agent_version_id)
     body = json.dumps(contract, separators=(",", ":")).encode("utf-8")
     client = get_storage_client()
@@ -64,15 +72,18 @@ def store_version_contract(
         )
         return False
     stored = AgentVersionSetup.no_workspace_objects.filter(
-        agent_version_id=agent_version_id, contract_object_key=""
+        agent_version_id=agent_version_id, contract_object_key=previous_key
     ).update(contract_object_key=key)
     if not stored:
         _remove_object(client, key)
+    elif previous_key:
+        _remove_object(client, previous_key)
     logger.info(
         "agent_contract_stored",
         agent_version_id=str(agent_version_id),
         size_bytes=len(body),
         stored=bool(stored),
+        replaced=bool(stored and previous_key),
     )
     return bool(stored)
 
@@ -114,13 +125,20 @@ def _remove_object(client, key: str) -> None:
         logger.warning("agent_contract_orphan_left", object_key=key, exc_info=True)
 
 
+def seeded_from_reading(job) -> bool:
+    """Whether the build started from its version's stored reading, so what it
+    finished with may stand in for that reading."""
+    return bool(((job.payload or {}).get("metadata") or {}).get("seeded_contract"))
+
+
 def store_build_contract(
     job, *, agent_version_id: UUID | None = None, archive: bytes | None = None
 ) -> bool:
     """Keep a build's contract on the version the build stored its agent on.
 
     The build's authoring archive and its agent arrive in either order; whichever
-    comes second stores the contract, since it needs both.
+    comes second stores the contract, since it needs both. A build seeded from the
+    version's reading replaces the reading's contract with its own.
     """
     from simulate.services.hosted_harness_gateway import authored_contract
 
@@ -140,6 +158,7 @@ def store_build_contract(
             organization_id=job.organization_id,
             agent_version_id=agent_version_id,
             contract=authored_contract(archive),
+            replace=seeded_from_reading(job),
         )
     except DatabaseError:
         logger.warning(

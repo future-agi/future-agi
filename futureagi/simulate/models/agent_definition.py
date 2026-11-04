@@ -196,6 +196,10 @@ class AgentDefinition(BaseModel):
         default=dict,
     )
 
+    # When someone confirmed what the first reading found of an agent connected
+    # on its own; until then it is not built or run.
+    found_checked_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         db_table = "simulate_agent_definition"
         verbose_name = "Agent Definition"

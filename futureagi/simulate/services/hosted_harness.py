@@ -27,7 +27,10 @@ from simulate.models import (
     HostedHarnessScenario,
     TestExecution,
 )
-from simulate.services.agent_contracts import store_build_contract
+from simulate.services.agent_contracts import (
+    seeded_from_reading,
+    store_build_contract,
+)
 from simulate.services.agent_setup import AgentStoreError, store_agent
 from simulate.services.alk_simulate_ingestion import (
     ALKSimulateIngestionError,
@@ -2561,15 +2564,33 @@ def _store_authored_agent(
                 agent_version_id=version.id,
                 agent=sent["agent"],
                 sdk_version=sent["sdk_version"],
+                replace_reading=seeded_from_reading(job),
             )
         store_build_contract(job, agent_version_id=agent_version_id)
         return outcome, agent_version_id
+    except AgentStoreError as exc:
+        if exc.code == "setup_outcome_already_stored":
+            # The version keeps the document it was read into; a build that read
+            # the agent again says nothing new about the version.
+            logger.info(
+                "agent_document_kept",
+                job_id=str(job.id),
+                agent_version_id=str(agent_version_id) if agent_version_id else None,
+            )
+            return "kept", agent_version_id
+        logger.warning(
+            "harness_agent_not_stored",
+            job_id=str(job.id),
+            agent_version_id=str(agent_version_id) if agent_version_id else None,
+            code=exc.code,
+        )
+        return None, None
     except Exception as exc:
         logger.warning(
             "harness_agent_not_stored",
             job_id=str(job.id),
             agent_version_id=str(agent_version_id) if agent_version_id else None,
-            code=exc.code if isinstance(exc, AgentStoreError) else type(exc).__name__,
+            code=type(exc).__name__,
         )
         return None, None
 
@@ -2590,7 +2611,7 @@ def _turn_on_observability(
     failure: Exception | None = None
     if payload.get("agent_definition_id"):
         code = "bound"
-    elif stored[0] != "stored":
+    elif stored[0] not in ("stored", "replaced", "kept"):
         code = "agent_not_stored"
     else:
         # The try sits outside the savepoint so its rollback runs before the handler.
