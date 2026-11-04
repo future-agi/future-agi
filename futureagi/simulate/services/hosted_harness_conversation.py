@@ -32,6 +32,7 @@ from simulate.models import (
     HostedHarnessReceipt,
     HostedHarnessScenario,
     HostedHarnessStageOutput,
+    TestExecution,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.selectors.runs import user_environment_runs
@@ -40,6 +41,7 @@ from simulate.services.hosted_harness import (
     canonical_digest,
     hash_secret,
 )
+from simulate.services.run_results_v3_page import run_outcome_summaries
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
@@ -1544,6 +1546,15 @@ def conversation_runs(
     environment = job.environment or job
     runs = user_environment_runs(environment)
     if not run_id:
+        page = list(runs.order_by("-created_at")[: max(1, min(limit, 50))])
+        # completed/failed count harness verdicts; pass_rate is the graded one.
+        graded = run_outcome_summaries(
+            list(
+                TestExecution.no_workspace_objects.filter(
+                    id__in=[run.test_execution_id for run in page]
+                )
+            )
+        )
         return {
             "runs": [
                 {
@@ -1554,9 +1565,11 @@ def conversation_runs(
                     "calls": run.scenario_count,
                     "completed": run.completed_count,
                     "failed": run.failed_count,
+                    "pass_rate": graded.get(run.test_execution_id, {}).get("pass_rate"),
+                    "measured": graded.get(run.test_execution_id, {}).get("measured"),
                     "failure": run.failure or None,
                 }
-                for run in runs.order_by("-created_at")[: max(1, min(limit, 50))]
+                for run in page
             ]
         }
     run = runs.filter(id=run_id).first()

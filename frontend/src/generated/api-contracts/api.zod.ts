@@ -32221,6 +32221,8 @@ export const SimulateAgentDefinitionsRunsListResponse = zod.object({
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
         outcome_skipped: zod.number(),
+        pass_rate: zod.number(),
+        measured: zod.number(),
         started_at: zod.string().datetime({ offset: true }),
         completed_at: zod.string().datetime({ offset: true }),
       }),
@@ -36744,6 +36746,8 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
         outcome_skipped: zod.number(),
+        pass_rate: zod.number(),
+        measured: zod.number(),
         started_at: zod.string().datetime({ offset: true }),
         completed_at: zod.string().datetime({ offset: true }),
       }),
@@ -48815,6 +48819,8 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
         outcome_passed: zod.number().optional(),
         outcome_failed: zod.number().optional(),
         outcome_skipped: zod.number().optional(),
+        pass_rate: zod.number().optional(),
+        measured: zod.number().optional(),
         environment_version: zod
           .object({
             id: zod.string().uuid().optional(),

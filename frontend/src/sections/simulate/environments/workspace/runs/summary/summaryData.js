@@ -19,7 +19,6 @@ function humanizeEvalKey(key) {
 // map (kpis-derived for a real run, inline for a mock one); absent → {}.
 export function buildSummaryRow(run, scores) {
   const total = run?.total ?? 0;
-  const passed = run?.passed ?? 0;
   return {
     id: run?.id,
     executionId: run?.executionId ?? run?.id,
@@ -37,7 +36,8 @@ export function buildSummaryRow(run, scores) {
     scenarioCount: run?.scenarioCount ?? null,
     scenarioIds: run?.scenarioIds ?? [],
     trials: run?.trials ?? 1,
-    passRate: total ? Math.round((passed / total) * 100) : 0,
+    // The server's graded rate over measured calls; null when none was measured.
+    passRate: run?.passRate == null ? null : Math.round(run.passRate),
     durationS: run?.durationS ?? null,
     scores: scores || {},
     tokens: null,

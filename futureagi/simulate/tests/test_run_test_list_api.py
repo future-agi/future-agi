@@ -7,6 +7,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from django.core.cache import cache
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
@@ -30,6 +31,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.models.agent_version import AgentVersion
+from simulate.services.run_results_v3_queries import run_calls_queryset
 
 
 @pytest.fixture
@@ -206,6 +208,107 @@ def _link_harness_job(run_test):
         deadline_at=timezone.now() + timedelta(hours=1),
         run_test=run_test,
     )
+
+
+def _graded_harness_run(run_test, scenario, organization, workspace):
+    """A finished harness run with one eval whose calls grade six ways.
+
+    Every call's harness receipt says passed; only one call passes once its
+    eval, native check and call status are graded.
+    """
+    template = EvalTemplate.objects.create(
+        name=f"graded-{uuid4().hex[:8]}",
+        organization=organization,
+        workspace=workspace,
+        config={"output": "score"},
+        output_type_normalized="percentage",
+        pass_threshold=0.5,
+    )
+    eval_id = str(
+        SimulateEvalConfig.objects.create(
+            name="Graded eval",
+            eval_template=template,
+            run_test=run_test,
+            mapping={},
+        ).id
+    )
+    test_execution = TestExecution.objects.create(
+        run_test=run_test,
+        status=TestExecution.ExecutionStatus.COMPLETED,
+        completed_at=timezone.now(),
+        total_scenarios=6,
+        total_calls=6,
+        completed_calls=6,
+    )
+    job = HostedHarnessJob.no_workspace_objects.create(
+        organization=organization,
+        workspace=workspace,
+        run_test=run_test,
+        test_execution=test_execution,
+        run_id=uuid4(),
+        idempotency_key=uuid4().hex,
+        request_digest=uuid4().hex,
+        schema_version="1.6",
+        seed=1,
+        artifact_level="standard",
+        max_artifact_bytes=1024,
+        deadline_at=timezone.now() + timedelta(hours=1),
+        scenario_count=6,
+        payload={"metadata": {}, "runtime": {"max_duration_seconds": 600}},
+    )
+    attempt = HostedHarnessAttempt.objects.create(
+        job=job,
+        attempt_number=1,
+        token_hash="t" * 64,
+        fence_hash="f" * 64,
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+    scored = {"status": "completed", "output": 0.9}
+    calls = {
+        "eval-errored": ({eval_id: {"status": "error"}}, "completed", False),
+        "eval-failed": (
+            {eval_id: {"status": "completed", "output": 0.2}},
+            "completed",
+            False,
+        ),
+        "passed": ({eval_id: scored}, "completed", False),
+        "call-failed": ({eval_id: scored}, "failed", False),
+        "native-failed": (
+            {
+                eval_id: scored,
+                "native-check": {
+                    "source": "harness",
+                    "status": "completed",
+                    "output": "fail",
+                },
+            },
+            "completed",
+            False,
+        ),
+        "deleted": ({eval_id: scored}, "completed", True),
+    }
+    for key, (eval_outputs, call_status, deleted) in calls.items():
+        call = CallExecution.all_objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            status=call_status,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+            call_metadata={"harness_outcome_status": "passed"},
+            eval_outputs=eval_outputs,
+            deleted=deleted,
+        )
+        HostedHarnessReceipt.objects.create(
+            job=job,
+            attempt=attempt,
+            scenario=HostedHarnessScenario.objects.create(
+                job=job, scenario_key=key, call_execution=call
+            ),
+            attempt_number=1,
+            digest="sha256:" + "0" * 64,
+            status="passed",
+            body={},
+        )
+    return test_execution
 
 
 @pytest.mark.integration
@@ -1770,11 +1873,9 @@ class TestRunTestExecutionsView:
         organization,
         workspace,
     ):
-        # A harness run's passed/failed/skipped come from the harness
-        # receipts, which stay in the table after a call is soft deleted. A
-        # receipt reaches its call through the execution, or, for a receipt
-        # without one, through the scenario registration. Both kinds of
-        # deleted call sit next to the visible ones.
+        # A harness run's passed/failed/skipped are its calls' graded outcomes.
+        # The receipts stay in the table after a call is soft deleted, and
+        # neither they nor the deleted calls may count.
         test_execution = TestExecution.objects.create(
             run_test=run_test_with_v10_scenario,
             status=TestExecution.ExecutionStatus.COMPLETED,
@@ -1812,6 +1913,7 @@ class TestRunTestExecutionsView:
                 scenario=scenario_with_prompt_version,
                 status=CallExecution.CallStatus.COMPLETED,
                 simulation_call_type=CallExecution.SimulationCallType.TEXT,
+                call_metadata={"harness_outcome_status": receipt_status},
                 deleted=deleted,
             )
             registration = HostedHarnessScenario.objects.create(
@@ -1863,6 +1965,143 @@ class TestRunTestExecutionsView:
         assert row["outcome_passed"] == 1
         assert row["outcome_failed"] == 1
         assert row["outcome_skipped"] == 1
+        assert row["measured"] == 2
+        assert row["pass_rate"] == 50.0
+
+    def test_get_run_test_executions_counts_graded_outcomes_as_the_run_detail(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        scenario_with_prompt_version,
+        organization,
+        workspace,
+    ):
+        test_execution = _graded_harness_run(
+            run_test_with_v10_scenario,
+            scenario_with_prompt_version,
+            organization,
+            workspace,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        row = next(
+            item
+            for item in response.json()["results"]
+            if item["id"] == str(test_execution.id)
+        )
+        # Every receipt says passed; the graded outcomes do not.
+        assert row["outcome_passed"] == 1
+        assert row["outcome_failed"] == 3
+        assert row["outcome_skipped"] == 1
+        assert row["measured"] == 3
+        assert row["pass_rate"] == 33.33
+        detail = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+        assert detail.status_code == status.HTTP_200_OK, detail.content
+        summary = detail.json()["summary"]
+        assert (row["pass_rate"], row["measured"]) == (
+            summary["pass_rate"],
+            summary["measured"],
+        )
+
+    def test_get_run_test_executions_caches_a_finished_runs_outcomes(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        scenario_with_prompt_version,
+        organization,
+        workspace,
+    ):
+        cache.clear()
+        test_execution = _graded_harness_run(
+            run_test_with_v10_scenario,
+            scenario_with_prompt_version,
+            organization,
+            workspace,
+        )
+        url = f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+
+        def read():
+            response = auth_client.get(url)
+            assert response.status_code == status.HTTP_200_OK, response.content
+            return next(
+                item
+                for item in response.json()["results"]
+                if item["id"] == str(test_execution.id)
+            )
+
+        with patch(
+            "simulate.services.run_results_v3_page.run_calls_queryset",
+            wraps=run_calls_queryset,
+        ) as aggregate:
+            assert read()["pass_rate"] == 33.33
+            assert read()["pass_rate"] == 33.33
+            assert aggregate.call_count == 1
+
+            # Deleting a call moves the key, so the page reads fresh numbers.
+            CallExecution.objects.filter(
+                test_execution=test_execution, status="failed"
+            ).update(deleted=True)
+            assert read()["outcome_failed"] == 2
+            assert aggregate.call_count == 2
+
+            # So does a new eval config.
+            SimulateEvalConfig.objects.create(
+                name="Second eval",
+                eval_template=SimulateEvalConfig.objects.filter(
+                    run_test=run_test_with_v10_scenario
+                )
+                .first()
+                .eval_template,
+                run_test=run_test_with_v10_scenario,
+                mapping={},
+            )
+            read()
+            assert aggregate.call_count == 3
+
+            # A running run is never cached.
+            TestExecution.objects.filter(id=test_execution.id).update(
+                status=TestExecution.ExecutionStatus.RUNNING
+            )
+            read()
+            read()
+            assert aggregate.call_count == 5
+
+    def test_get_run_test_executions_survives_a_refused_cache_write(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        scenario_with_prompt_version,
+        organization,
+        workspace,
+        caplog,
+    ):
+        cache.clear()
+        test_execution = _graded_harness_run(
+            run_test_with_v10_scenario,
+            scenario_with_prompt_version,
+            organization,
+            workspace,
+        )
+
+        with patch.object(cache, "set_many", side_effect=ConnectionError("down")):
+            response = auth_client.get(
+                f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+            )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        row = next(
+            item
+            for item in response.json()["results"]
+            if item["id"] == str(test_execution.id)
+        )
+        assert row["pass_rate"] == 33.33
+        assert "Could not cache the summaries" in caplog.text
 
     def test_get_run_test_executions_times_a_prompt_run_without_deleted_calls(
         self, auth_client, organization, workspace, scenario_with_prompt_version
