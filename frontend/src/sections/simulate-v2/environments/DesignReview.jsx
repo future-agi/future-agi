@@ -18,6 +18,7 @@ export default function DesignReview({
   autoMode,
   onApprove,
   onContinue,
+  framed = false,
 }) {
   const rows = [
     [
@@ -33,6 +34,34 @@ export default function DesignReview({
     ["Scenarios", `${draftCount} to write and check`],
   ];
   const status = parked ? "Parked" : waiting ? "Awaiting approval" : "Approved";
+  /* Framed: the full-width card above every tab, so the one thing to do
+     shows wherever the person is — chat folded or not, any tab. */
+  if (framed)
+    return (
+      <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
+        <Box
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+            bgcolor: "background.paper",
+            overflow: "hidden",
+            "& > div": { borderBottom: 0 },
+          }}
+        >
+          <DesignReview
+            env={env}
+            draftCount={draftCount}
+            waiting={waiting}
+            parked={parked}
+            since={since}
+            autoMode={autoMode}
+            onApprove={onApprove}
+            onContinue={onContinue}
+          />
+        </Box>
+      </Box>
+    );
   return (
     <Box
       sx={{
@@ -99,7 +128,7 @@ export default function DesignReview({
         {parked
           ? `Waiting on you since ${new Date(since).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}. Continue picks up this same proposal.`
           : waiting
-            ? "Nothing is built until you approve. Ask the builder below to change anything first."
+            ? "Nothing is built until you approve. To change something first, ask the builder."
             : "Approved — the build is running from this design."}
       </Typography>
 
@@ -153,4 +182,5 @@ DesignReview.propTypes = {
   autoMode: PropTypes.bool,
   onApprove: PropTypes.func,
   onContinue: PropTypes.func,
+  framed: PropTypes.bool,
 };

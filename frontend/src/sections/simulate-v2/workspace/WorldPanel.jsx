@@ -91,6 +91,7 @@ export default function WorldPanel({
   locked = false,
   buildProgress = null,
   buildDone = null,
+  awaitingApproval = false,
 }) {
   /* The sandbox preview opens from here, or from the header's ⋯ (?sandbox=1). */
   const [params, setParams] = useSearchParams();
@@ -171,7 +172,10 @@ export default function WorldPanel({
     ...fit.missing.map((t) => ({ tool: t, answered: false })),
   ];
   const handlers = buildProgress?.handlers || 0;
-  const rows = inBuild ? allRows.slice(0, handlers) : allRows;
+  /* Awaiting approval, the proposed tools are listed in full — they're part
+     of the design being reviewed; nothing is written yet. */
+  const rows =
+    inBuild && !awaitingApproval ? allRows.slice(0, handlers) : allRows;
   /* Since / Called by only earn columns once they differ row to row — with
      one environment version and one agent version every row said the same. */
   const sinceOf = (t) => since[t.name] || fit.envVersion;
@@ -299,7 +303,12 @@ export default function WorldPanel({
       </Stack>
 
       {inBuild &&
-        (handlers < allRows.length ? (
+        (awaitingApproval ? (
+          <BuildStreamNote
+            waiting
+            label="Handlers and data are written once you approve the design above"
+          />
+        ) : handlers < allRows.length ? (
           <BuildStreamNote
             label="Writing a handler for each tool"
             count={handlers}
@@ -536,6 +545,7 @@ export default function WorldPanel({
 WorldPanel.propTypes = {
   buildProgress: PropTypes.object,
   buildDone: PropTypes.array,
+  awaitingApproval: PropTypes.bool,
   env: PropTypes.object.isRequired,
   envState: PropTypes.object.isRequired,
   patch: PropTypes.func,

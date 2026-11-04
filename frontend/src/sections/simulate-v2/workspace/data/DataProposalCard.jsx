@@ -55,7 +55,12 @@ const GROUPS = [
  * block only what depends on them. Accept selected saves one environment
  * version — the data snapshot runs will pin.
  */
-export default function DataProposalCard({ env, sourceIds, onOpenSource }) {
+export default function DataProposalCard({
+  env,
+  sourceIds,
+  onOpenSource,
+  onSaved,
+}) {
   const { envState, patch } = useEnvState(env.id);
   const gates = useRoleGates();
   const sources = useMemo(
@@ -128,7 +133,10 @@ export default function DataProposalCard({ env, sourceIds, onOpenSource }) {
     });
     const { ruleIds, ...rest } = p;
     patch(rest);
-    setSaved({ label: next, rules: ruleIds.length });
+    /* In a popup, approving closes it: the page shows the new version
+       building. In the builder chat the answer stays in the thread. */
+    if (onSaved) onSaved();
+    else setSaved({ label: next, rules: ruleIds.length });
     return null;
   };
   const omitRows = (item) =>
@@ -318,7 +326,7 @@ export default function DataProposalCard({ env, sourceIds, onOpenSource }) {
     return (
       <Stack spacing={0.5}>
         <Typography sx={{ typography: "s2" }}>
-          {`Saved as environment ${saved.label}. ${saved.rules ? `${saved.rules} rule${saved.rules === 1 ? "" : "s"} added to the contract; ` : ""}proposed scenarios are on the Scenarios tab to review. Runs on ${saved.label} pin this data snapshot; earlier runs keep theirs.`}
+          {`Building environment ${saved.label}${saved.rules ? ` with ${saved.rules} new rule${saved.rules === 1 ? "" : "s"}` : ""} — the page shows its progress. Proposed scenarios go to the Scenarios tab to review. Runs on ${saved.label} pin this data; earlier runs keep theirs.`}
         </Typography>
         <ButtonBase
           onClick={() => onOpenSource?.(null)}
@@ -411,6 +419,7 @@ export default function DataProposalCard({ env, sourceIds, onOpenSource }) {
 }
 
 DataProposalCard.propTypes = {
+  onSaved: PropTypes.func,
   env: PropTypes.object.isRequired,
   sourceIds: PropTypes.array.isRequired,
   onOpenSource: PropTypes.func,

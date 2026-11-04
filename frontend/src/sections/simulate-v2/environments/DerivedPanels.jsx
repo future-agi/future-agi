@@ -107,6 +107,7 @@ export default function DerivedPanels({
   onStartRun,
   scenarioProgress,
   contractProgress,
+  awaitingApproval = false,
 }) {
   const [tab, setTab] = useState(() => firstReadyTab(done));
   const [touched, setTouched] = useState(false);
@@ -189,6 +190,7 @@ export default function DerivedPanels({
         onStartRun,
         contractProgress,
         done,
+        awaitingApproval,
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }),
     [
@@ -202,6 +204,7 @@ export default function DerivedPanels({
       onStartRun,
       contractProgress,
       done,
+      awaitingApproval,
     ],
   );
 
@@ -231,6 +234,8 @@ export default function DerivedPanels({
             }}
             variant="scrollable"
             scrollButtons={false}
+            /* The full-width border above draws the rail. */
+            sx={{ boxShadow: "none" }}
           >
             {(() => {
               /*
@@ -386,6 +391,7 @@ DerivedPanels.propTypes = {
   onStartRun: PropTypes.func,
   scenarioProgress: PropTypes.object,
   contractProgress: PropTypes.object,
+  awaitingApproval: PropTypes.bool,
 };
 
 /*
@@ -482,6 +488,7 @@ function renderPanel(id, ctx) {
     onStartRun,
     contractProgress,
     done,
+    awaitingApproval,
   } = ctx;
   switch (id) {
     case "world":
@@ -493,6 +500,7 @@ function renderPanel(id, ctx) {
           onGo={onGo}
           buildProgress={contractProgress}
           buildDone={done}
+          awaitingApproval={awaitingApproval}
         />
       );
     case "contract":

@@ -487,6 +487,9 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                 <AddSourceMenu
                   anchorEl={addAnchor}
                   multiple={false}
+                  added={(envState.sources || [])
+                    .filter((s) => s.kb && !s.archived)
+                    .map((s) => s.name)}
                   onClose={() => setAddAnchor(null)}
                   onAddFiles={(files) => {
                     if (files[0]) addEvidenceSource(readFile(files[0]));

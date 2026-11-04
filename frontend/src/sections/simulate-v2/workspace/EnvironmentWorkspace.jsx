@@ -65,6 +65,7 @@ import {
 import { agentRecordOf } from "../_mock/envCopy";
 import { foundValuesOf } from "../agents/foundFacts";
 import NextStepBanner from "./NextStepBanner";
+import VersionBuildStrip from "./VersionBuildStrip";
 import DeleteEnvironmentDialog from "../environments/DeleteEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
 import {
@@ -667,6 +668,10 @@ export default function EnvironmentWorkspace() {
     building, so this is Live by default in the prototype.
   */
   const envLive = env.buildStatus !== "building";
+  const awaitingApproval = env.buildStatus === "awaiting_approval";
+  /* A new version building after approved changes (a source's proposal). */
+  const versionBuilding = !!envState.versionBuild;
+  const chipLive = envLive && !versionBuilding;
 
   // Booting the environment is a real thing we do, so we show it happening.
   if (booting) {
@@ -908,6 +913,8 @@ export default function EnvironmentWorkspace() {
     /* An older version is read-only — runs go on the version in use. */
     if (!gates.canRun) return gates.runReason;
     if (viewingOlder) return "Back to current to run";
+    if (versionBuilding)
+      return `Environment ${envLabelOf(env, envState, envState.versionBuild.label)} is building — runs start once it's ready`;
     if (!readiness.ready) return readiness.reason;
     if (firstBlockingGap) return `${firstBlockingGap.title} — see Needs input`;
     if (runnable === 0) {
@@ -922,7 +929,8 @@ export default function EnvironmentWorkspace() {
     gates.canRun &&
     runnable > 0 &&
     !firstBlockingGap &&
-    !viewingOlder;
+    !viewingOlder &&
+    !versionBuilding;
 
   /*
     The one thing standing between this environment and a run, as a banner
@@ -966,6 +974,8 @@ export default function EnvironmentWorkspace() {
   })();
   const nextStep = (() => {
     if (viewingOlder) return null;
+    /* Awaiting approval, the review above is the one next step. */
+    if (env.buildStatus === "awaiting_approval" || versionBuilding) return null;
     /* Sealed runs go ahead on what we read; the review is still worth doing. */
     if (runEnabled)
       return needsFoundCheck(envState.agent)
@@ -1628,9 +1638,13 @@ export default function EnvironmentWorkspace() {
             <Tooltip
               arrow
               title={
-                envLive
-                  ? "Environment is ready. You can edit via the builder or inline."
-                  : "Environment is still being built. Editing resumes when it's ready."
+                awaitingApproval
+                  ? "The design is waiting for your approval. Nothing is built until you approve it."
+                  : versionBuilding
+                    ? "A new version is building from the changes you approved. Runs start once it's ready."
+                    : chipLive
+                      ? "Environment is ready. You can edit via the builder or inline."
+                      : "Environment is still being built. Editing resumes when it's ready."
               }
             >
               <Stack
@@ -1645,15 +1659,26 @@ export default function EnvironmentWorkspace() {
                   flexShrink: 0,
                   whiteSpace: "nowrap",
                   /* Ready is the quiet default — it steps out on narrow screens. */
-                  display: envLive ? { xs: "none", lg: "flex" } : "flex",
-                  color: envLive ? "status.success.fg" : "primary.main",
-                  bgcolor: envLive
-                    ? "status.success.bg"
-                    : "status.discovery.bg",
+                  display:
+                    chipLive && !awaitingApproval
+                      ? { xs: "none", lg: "flex" }
+                      : "flex",
+                  color: awaitingApproval
+                    ? "status.warning.fg"
+                    : chipLive
+                      ? "status.success.fg"
+                      : "primary.main",
+                  bgcolor: awaitingApproval
+                    ? "status.warning.bg"
+                    : chipLive
+                      ? "status.success.bg"
+                      : "status.discovery.bg",
                   border: "1px solid",
-                  borderColor: envLive
-                    ? "status.success.border"
-                    : "status.discovery.border",
+                  borderColor: awaitingApproval
+                    ? "status.warning.border"
+                    : chipLive
+                      ? "status.success.border"
+                      : "status.discovery.border",
                 }}
               >
                 <Box
@@ -1661,8 +1686,12 @@ export default function EnvironmentWorkspace() {
                     width: 6,
                     height: 6,
                     borderRadius: "50%",
-                    bgcolor: envLive ? "status.success.solid" : "primary.main",
-                    animation: envLive
+                    bgcolor: awaitingApproval
+                      ? "status.warning.solid"
+                      : chipLive
+                        ? "status.success.solid"
+                        : "primary.main",
+                    animation: chipLive
                       ? undefined
                       : "env-pulse 1.4s ease-in-out infinite",
                     "@keyframes env-pulse": {
@@ -1673,11 +1702,13 @@ export default function EnvironmentWorkspace() {
                 />
                 {/* "Ready", not "Live" — Live now names how a run reaches the agent (the chip beside it). */}
                 <Typography sx={{ typography: "s3", fontWeight: 600 }}>
-                  {env.buildStatus === "awaiting_approval"
+                  {awaitingApproval
                     ? "Awaiting approval"
-                    : envLive
-                      ? "Ready"
-                      : "Building"}
+                    : versionBuilding
+                      ? `Building ${envLabelOf(env, envState, envState.versionBuild.label)}`
+                      : chipLive
+                        ? "Ready"
+                        : "Building"}
                 </Typography>
               </Stack>
             </Tooltip>
@@ -3072,55 +3103,48 @@ export default function EnvironmentWorkspace() {
       {/* Left at Review design: the same proposal waits here. Approving
           finishes the build; nothing was built before. */}
       {env.buildStatus === "awaiting_approval" && (
-        <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
-          <Box
-            sx={{
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "8px",
-              bgcolor: "background.paper",
-              overflow: "hidden",
-              "& > div": { borderBottom: 0 },
-            }}
-          >
-            <DesignReview
-              env={env}
-              draftCount={env.builtFrom?.scenarioCount || 10}
-              waiting
-              parked={
-                Date.now() - (env.designPendingAt || Date.now()) >
-                DESIGN_PARK_MS
-              }
-              since={env.designPendingAt || Date.now()}
-              autoMode={getBuilderMode() === "auto"}
-              onApprove={() => {
-                const fin = finishBuildPatch(
-                  { ...env, buildStatus: "building" },
-                  envState,
-                );
-                if (!fin) return;
-                dispatch({
-                  type: "patchEnvState",
-                  envId: env.id,
-                  patch: fin.statePatch,
-                });
-                dispatch({
-                  type: "patchEnvironment",
-                  envId: env.id,
-                  patch: { ...fin.envPatch, designPendingAt: null },
-                });
-              }}
-              onContinue={() =>
-                dispatch({
-                  type: "patchEnvironment",
-                  envId: env.id,
-                  patch: { designPendingAt: Date.now() },
-                })
-              }
-            />
-          </Box>
-        </Box>
+        <DesignReview
+          framed
+          env={env}
+          draftCount={env.builtFrom?.scenarioCount || 10}
+          waiting
+          parked={
+            Date.now() - (env.designPendingAt || Date.now()) > DESIGN_PARK_MS
+          }
+          since={env.designPendingAt || Date.now()}
+          autoMode={getBuilderMode() === "auto"}
+          onApprove={() => {
+            const fin = finishBuildPatch(
+              { ...env, buildStatus: "building" },
+              envState,
+            );
+            if (!fin) return;
+            dispatch({
+              type: "patchEnvState",
+              envId: env.id,
+              patch: fin.statePatch,
+            });
+            dispatch({
+              type: "patchEnvironment",
+              envId: env.id,
+              patch: { ...fin.envPatch, designPendingAt: null },
+            });
+          }}
+          onContinue={() =>
+            dispatch({
+              type: "patchEnvironment",
+              envId: env.id,
+              patch: { designPendingAt: Date.now() },
+            })
+          }
+        />
       )}
+      <VersionBuildStrip
+        env={env}
+        envState={envState}
+        patch={patch}
+        onGo={go}
+      />
       {readOnlyEnv && (
         <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
           <Stack

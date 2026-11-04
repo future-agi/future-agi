@@ -1814,6 +1814,11 @@ function Header({
                       );
                     }
                     if (running || !setupDone) {
+                      const wait =
+                        awaitingApproval &&
+                        !(
+                          scenarioProgress?.streaming && scenarioProgress.total
+                        );
                       return (
                         <Stack
                           direction="row"
@@ -1824,8 +1829,14 @@ function Header({
                             py: 0.5,
                             borderRadius: 999,
                             border: "1px solid",
-                            borderColor: "status.discovery.border",
-                            bgcolor: "status.discovery.bg",
+                            /* Waiting on the person, not on us: the list's
+                               warning colour, and no pulse. */
+                            borderColor: wait
+                              ? "status.warning.border"
+                              : "status.discovery.border",
+                            bgcolor: wait
+                              ? "status.warning.bg"
+                              : "status.discovery.bg",
                           }}
                         >
                           <Box
@@ -1833,9 +1844,13 @@ function Header({
                               width: 6,
                               height: 6,
                               borderRadius: "50%",
-                              bgcolor: "status.discovery.solid",
+                              bgcolor: wait
+                                ? "status.warning.solid"
+                                : "status.discovery.solid",
                               flexShrink: 0,
-                              animation: "chip-pulse 1.4s ease-in-out infinite",
+                              animation: wait
+                                ? undefined
+                                : "chip-pulse 1.4s ease-in-out infinite",
                               "@keyframes chip-pulse": {
                                 "0%,100%": {
                                   opacity: 0.4,
@@ -1849,7 +1864,9 @@ function Header({
                             sx={{
                               typography: "s2",
                               fontWeight: 600,
-                              color: "status.discovery.fg",
+                              color: wait
+                                ? "status.warning.fg"
+                                : "status.discovery.fg",
                               fontVariantNumeric: "tabular-nums",
                             }}
                           >
@@ -2238,88 +2255,103 @@ function Deriving({
   return (
     <Box
       sx={{
-        display: "grid",
         height: "100%",
         minHeight: 0,
-        /*
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      {/* Waiting on approval: the review spans the page above the chat and
+          the tabs, so it shows on every tab and with the chat folded. */}
+      {review?.waiting && <DesignReview framed env={env} {...review} />}
+      <Box
+        sx={{
+          display: "grid",
+          flex: 1,
+          minHeight: 0,
+          /*
           Chat narrow, artifacts wide — the shape Lovable, Figma Make and v0
           all landed on for the same reason: the input is a column of text and
           the output is a whole surface. An even split turned the right side
           into a cramped preview of what it should be showing at full size.
           Ratio is ~1:2.6 on desktop; still stacked on mobile.
         */
-        gridTemplateColumns: {
-          xs: "1fr",
-          lg: collapsed ? "48px 1fr" : "minmax(360px, 400px) 1fr",
-        },
-      }}
-    >
-      {collapsed && (
-        <BuilderRail
-          running={running}
-          unseen={unseen}
-          onExpand={() => setCollapsed(false)}
-        />
-      )}
-      {/* One surface, split by a single rule — no card around either side. */}
-      <Box
-        sx={{
-          height: "100%",
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          ...(collapsed && { display: "none" }),
-          /* Widths and colour set separately: a responsive "1px solid"
+          gridTemplateColumns: {
+            xs: "1fr",
+            lg: collapsed ? "48px 1fr" : "minmax(360px, 400px) 1fr",
+          },
+        }}
+      >
+        {collapsed && (
+          <BuilderRail
+            running={running}
+            unseen={unseen}
+            onExpand={() => setCollapsed(false)}
+          />
+        )}
+        {/* One surface, split by a single rule — no card around either side. */}
+        <Box
+          sx={{
+            height: "100%",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            ...(collapsed && { display: "none" }),
+            /* Widths and colour set separately: a responsive "1px solid"
              shorthand resets the colour to the text colour, which drew this
              rule bright white instead of the divider grey. */
-          borderStyle: "solid",
-          borderWidth: 0,
-          borderColor: "divider",
-          borderRightWidth: { xs: 0, lg: 1 },
-          borderBottomWidth: { xs: 1, lg: 0 },
-        }}
-      >
-        {review && <DesignReview env={env} {...review} />}
-        <AssistantConsole
-          onCollapse={() => setCollapsed(true)}
-          turns={turns}
-          running={running}
-          chips={chips}
-          onSend={onSend}
-          onChip={onChip}
-          frozen={env?.buildStatus === "building"}
-          frozenReason="Environment is still being built"
-        />
-      </Box>
-
-      <Box
-        sx={{
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          px: 2,
-        }}
-      >
-        <PanelBoundary>
-          <DerivedPanels
-            env={env}
-            envState={envState}
-            patch={patch}
-            source={source}
-            done={done}
+            borderStyle: "solid",
+            borderWidth: 0,
+            borderColor: "divider",
+            borderRightWidth: { xs: 0, lg: 1 },
+            borderBottomWidth: { xs: 1, lg: 0 },
+          }}
+        >
+          {/* Approved: a short note above the chat. While it waits, the
+            review sits above both columns instead (below). */}
+          {review && !review.waiting && <DesignReview env={env} {...review} />}
+          <AssistantConsole
+            onCollapse={() => setCollapsed(true)}
+            turns={turns}
             running={running}
-            scenarios={scenarios}
-            scenarioProgress={scenarioProgress}
-            contractProgress={contractProgress}
-            evalIds={evalIds}
-            onAddEvals={onAddEvals}
-            onBuilderTurn={onBuilderTurn}
-            onBuilderPrompt={onSend}
-            onStartRun={onRun}
+            chips={chips}
+            onSend={onSend}
+            onChip={onChip}
+            frozen={env?.buildStatus === "building"}
+            frozenReason="Environment is still being built"
           />
-        </PanelBoundary>
+        </Box>
+
+        <Box
+          sx={{
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            px: 2,
+          }}
+        >
+          <PanelBoundary>
+            <DerivedPanels
+              env={env}
+              envState={envState}
+              patch={patch}
+              source={source}
+              done={done}
+              running={running}
+              scenarios={scenarios}
+              scenarioProgress={scenarioProgress}
+              contractProgress={contractProgress}
+              evalIds={evalIds}
+              onAddEvals={onAddEvals}
+              onBuilderTurn={onBuilderTurn}
+              onBuilderPrompt={onSend}
+              onStartRun={onRun}
+              awaitingApproval={!!review?.waiting}
+            />
+          </PanelBoundary>
+        </Box>
       </Box>
     </Box>
   );

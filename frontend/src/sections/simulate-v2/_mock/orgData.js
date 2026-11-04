@@ -20,6 +20,7 @@
   saved snapshot. Week 2: refresh a source with an impact review (keep pinned
   or re-ground), export only what's permitted.
 */
+import { versionBuildOf } from "./versionBuild";
 import {
   envChangePatch,
   nextEnvVersion,
@@ -828,9 +829,24 @@ export const acceptDataPatch = (
     scenarios: [],
     fromSource: true,
   }));
+  const newScenarios = scenarioRows
+    ? scenarioRows(take.filter((i) => i.kind === "scenario"))
+    : [];
+  const nameOf = (id) =>
+    (envState?.sources || []).find((s) => s.id === id)?.name;
   return {
     envVersions: [...list, minted],
     activeEnvVersion: minted.label,
+    /* The new version builds before it's ready; runs wait for it. */
+    versionBuild: versionBuildOf({
+      label: minted.label,
+      from: envState?.activeEnvVersion || list[list.length - 1]?.label || null,
+      rules: rules.length,
+      tables: [
+        ...new Set(tables.map((i) => nameOf(i.cite?.sourceId)).filter(Boolean)),
+      ],
+      scenarios: newScenarios.length,
+    }),
     unsavedEnvChanges: [],
     ruleChanges: [...(envState?.ruleChanges || []), ...ruleChanges],
     dataImports: [
@@ -847,12 +863,7 @@ export const acceptDataPatch = (
         ? { ...s, inEnv: true, snapshot, inVersion: minted.label }
         : s,
     ),
-    scenarios: [
-      ...(envState?.scenarios || []),
-      ...(scenarioRows
-        ? scenarioRows(take.filter((i) => i.kind === "scenario"))
-        : []),
-    ],
+    scenarios: [...(envState?.scenarios || []), ...newScenarios],
     dataMode: tables.length
       ? "private-sample"
       : envState?.dataMode || "synthetic",

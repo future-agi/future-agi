@@ -20,6 +20,7 @@ export default function AddSourceMenu({
   onAddFiles,
   onAddOrg,
   multiple = true,
+  added = [],
 }) {
   const fileRef = useRef(null);
   return (
@@ -58,29 +59,43 @@ export default function AddSourceMenu({
         >
           Choose from Knowledge base
         </Typography>
-        {ORG_SOURCES.map((o) => (
-          <MenuItem key={o.id} onClick={() => onAddOrg(o)} sx={{ gap: 1 }}>
-            <Iconify
-              icon={
-                o.access
-                  ? "solar:document-text-linear"
-                  : "solar:lock-keyhole-minimalistic-linear"
-              }
-              width={16}
-              sx={{ color: "text.secondary" }}
-            />
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography noWrap sx={{ typography: "s2" }}>
-                {o.access ? o.name : `${o.owner} source`}
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {o.access
-                  ? `${o.collection} · revision ${o.revision} · pinned`
-                  : "No access — Request access"}
-              </Typography>
-            </Box>
-          </MenuItem>
-        ))}
+        {ORG_SOURCES.map((o) => {
+          /* A Knowledge base file is added once; a new revision arrives as
+             an update to review, not as a second copy. */
+          const isAdded = o.access && added.includes(o.name);
+          return (
+            <MenuItem
+              key={o.id}
+              disabled={isAdded}
+              onClick={() => onAddOrg(o)}
+              sx={{ gap: 1 }}
+            >
+              <Iconify
+                icon={
+                  isAdded
+                    ? "solar:check-circle-linear"
+                    : o.access
+                      ? "solar:document-text-linear"
+                      : "solar:lock-keyhole-minimalistic-linear"
+                }
+                width={16}
+                sx={{ color: "text.secondary" }}
+              />
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography noWrap sx={{ typography: "s2" }}>
+                  {o.access ? o.name : `${o.owner} source`}
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  {isAdded
+                    ? "Already a source"
+                    : o.access
+                      ? `${o.collection} · revision ${o.revision} · pinned`
+                      : "No access — Request access"}
+                </Typography>
+              </Box>
+            </MenuItem>
+          );
+        })}
         <Typography
           sx={{
             typography: "s3",
@@ -133,6 +148,7 @@ export default function AddSourceMenu({
   );
 }
 AddSourceMenu.propTypes = {
+  added: PropTypes.arrayOf(PropTypes.string),
   anchorEl: PropTypes.any,
   onClose: PropTypes.func.isRequired,
   onAddFiles: PropTypes.func.isRequired,

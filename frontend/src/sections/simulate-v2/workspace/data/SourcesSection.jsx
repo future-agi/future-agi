@@ -130,6 +130,7 @@ export default function SourcesSection({
         onClose={() => setAnchor(null)}
         onAddFiles={addFiles}
         onAddOrg={addOrg}
+        added={sources.filter((s) => s.kb).map((s) => s.name)}
       />
       {!readOnly && pending.length > 0 && (
         <Stack
@@ -334,6 +335,7 @@ export default function SourcesSection({
           <DataProposalCard
             env={env}
             sourceIds={review}
+            onSaved={() => setReview(null)}
             onOpenSource={(id) => {
               setReview(null);
               if (id) setOpen(id);
