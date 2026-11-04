@@ -108991,6 +108991,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           default: false,
         },
+        capability_snapshot: {
+          $ref: "#/definitions/HarnessCapabilityReport",
+        },
         selected_scenario_keys: {
           type: "array",
           items: {
