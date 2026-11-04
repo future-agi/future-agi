@@ -51715,6 +51715,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         failed: zod.number(),
         error: zod.number(),
         inconclusive: zod.number(),
+        no_score: zod.number(),
       }),
     ),
     run_health: zod.object({

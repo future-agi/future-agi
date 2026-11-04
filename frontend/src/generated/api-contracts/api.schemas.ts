@@ -24641,6 +24641,7 @@ export interface RunDashboardRiskApi {
   failed: number;
   error: number;
   inconclusive: number;
+  no_score: number;
 }
 
 export interface RunDashboardHealthApi {

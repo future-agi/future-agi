@@ -155,6 +155,7 @@ class RunDashboardRiskSerializer(serializers.Serializer):
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
     inconclusive = serializers.IntegerField()
+    no_score = serializers.IntegerField()
 
 
 class RunDashboardHealthSerializer(serializers.Serializer):

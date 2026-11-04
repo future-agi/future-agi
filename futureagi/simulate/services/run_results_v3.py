@@ -216,7 +216,8 @@ def call_outcome(
     ]
     if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
         return "failed"
-    if harness_outcome in HARNESS_NO_SCORE:
+    # Platform evals arrive after the receipt; one that passed scores the call.
+    if harness_outcome in HARNESS_NO_SCORE and "passed" not in verdicts:
         return "no_score"
     if "error" in verdicts:
         return "inconclusive"
