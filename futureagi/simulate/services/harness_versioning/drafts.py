@@ -1576,7 +1576,7 @@ def list_drafts(environment: HostedHarnessJob) -> dict[str, Any]:
     entry = live_set(environment)
     body["validation"] = validation_state(environment, entry)
     body["candidates"] = (
-        {piece: entry[f"{piece}_version_id"] for piece in DRAFT_PIECES}
+        {f"{piece}_version_id": entry[f"{piece}_version_id"] for piece in DRAFT_PIECES}
         if entry is not None
         else None
     )
