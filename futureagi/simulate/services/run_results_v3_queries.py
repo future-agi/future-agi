@@ -923,7 +923,8 @@ def run_calls_queryset(
             ),
             When(failed_eval, then=Value("failed")),
             When(
-                call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE),
+                Q(call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE))
+                & ~passed_eval,
                 then=Value("no_score"),
             ),
             When(errored_eval, then=Value("inconclusive")),

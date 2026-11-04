@@ -1388,6 +1388,37 @@ class TestRunResultsV3Views:
         )
         assert row["outcome"] == "failed"
 
+    def test_a_passing_eval_scores_a_call_whose_sub_goals_did_not_apply(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {
+            "harness_outcome_status": "no_score",
+            "hosted_harness_receipt": {"status": "passed", "sub_goals": []},
+        }
+        call.eval_outputs = {
+            "native": {
+                "source": "harness",
+                "name": "Native evaluation",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+                "status": "completed",
+            }
+        }
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+        url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+
+        rows = auth_client.get(url).json()["results"]
+        passed = auth_client.get(
+            url, {"filters": json.dumps({"status": ["passed"]})}
+        ).json()["results"]
+
+        assert next(row for row in rows if row["id"] == str(call.id))["outcome"] == (
+            "passed"
+        )
+        assert str(call.id) in {row["id"] for row in passed}
+
     def test_calls_rows_expose_scoring_states(
         self, auth_client, test_execution, scenario
     ):
