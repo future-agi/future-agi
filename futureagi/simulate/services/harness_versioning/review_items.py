@@ -35,6 +35,7 @@ KINDS = (
 LISTED = {
     "sub_goals.json": ("sub_goal", "sub_goals", "name"),
     "actors.json": ("actor", "actors", "id"),
+    "sub_actors.json": ("actor", "sub_actors", "id"),
     "sources.json": ("source", "sources", "id"),
 }
 # Files whose whole content is read as items above, never as a file of its own.

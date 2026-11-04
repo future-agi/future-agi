@@ -315,3 +315,25 @@ class TestBuckets:
             assert rows[one]["affected"]["count"] == 0
         assert report["selection"]["eligible"] == 10
         assert report["selection"]["grading"]["gradable"] == 10
+
+    def test_voice_case_does_not_need_a_test_message(self, user, workspace, storage):
+        environment = _ten_certified(
+            user,
+            workspace,
+            storage,
+            "as-voice-message",
+            checks={**PASSED, "chat_ingress": "not_applicable"},
+        )
+        version = environment.environment_version
+        HarnessEnvironmentVersion.no_workspace_objects.filter(id=version.id).update(
+            documents={**version.documents, "contract": {"modality": "voice"}}
+        )
+        environment.refresh_from_db()
+
+        report = _select(environment)
+
+        message = _rows(report)["message"]
+        assert message["status"] == "unavailable"
+        assert message["needed_by"] == 0
+        assert message["affected"]["count"] == 0
+        assert report["selection"]["eligible"] == 10

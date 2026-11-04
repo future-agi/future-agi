@@ -1072,6 +1072,24 @@ def test_validate_returns_202_with_job(user, workspace, storage, auth_client):
     assert again["validation"]["job_id"] == body["validation"]["job_id"]
 
 
+def test_drafts_carry_the_candidates_as_save_takes_them(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-poll", storage)
+    _two_actors(auth_client, environment)
+    candidates, digest = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "rejected"},
+    )
+
+    polled = _drafts(auth_client, environment)["candidates"]
+
+    assert polled == candidates
+    saved = _save(auth_client, environment, polled, digest=digest)
+    assert saved.status_code == 200, saved.content
+
+
 def test_a_failed_pairing_is_checked_again_by_a_new_validate(
     user, workspace, storage, auth_client
 ):
