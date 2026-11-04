@@ -1901,8 +1901,8 @@
 
 ### PROMPT-E2E-006 — commit availability and retry are clear in both themes
 
-**Goal:** Commit an existing non-draft prompt version with clear empty, ready, pending and retry states in both themes.
-**Spec:** `flows/prompts/commit-dialog.spec.ts:18`
+**Goal:** Commit an existing non-draft prompt version with clear empty, ready, pending and retry states in both themes.  
+**Spec:** `flows/prompts/commit-dialog.spec.ts:18`  
 **Tags:** —
 
 **User steps:**
