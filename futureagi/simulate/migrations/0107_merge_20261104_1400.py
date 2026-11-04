@@ -4,7 +4,6 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("simulate", "0101_agent_fix_candidate_override"),
         ("simulate", "0106_agent_reading"),

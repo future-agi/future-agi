@@ -101,6 +101,12 @@ from .views.agent_code import (
     AgentCodeFileView,
     AgentCodeTreeView,
 )
+from .views.agent_connect import (
+    AgentConnectView,
+    AgentFoundCheckView,
+    AgentScanDetailView,
+    AgentScanView,
+)
 from .views.agent_setup import StoredAgentView
 from .views.agent_version import (
     ActivateAgentVersionView,
@@ -110,12 +116,6 @@ from .views.agent_version import (
     AgentVersionListView,
     CreateAgentVersionView,
     RestoreAgentVersionView,
-)
-from .views.agent_connect import (
-    AgentConnectView,
-    AgentFoundCheckView,
-    AgentScanDetailView,
-    AgentScanView,
 )
 from .views.agent_versions import (
     AgentBuildPreflightView,
