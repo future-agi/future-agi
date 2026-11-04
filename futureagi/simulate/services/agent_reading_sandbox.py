@@ -8,6 +8,7 @@ import json
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -159,9 +160,14 @@ def _sandbox(source_archive: bytes, job_document: Mapping[str, Any], labels):
             timeout=_PREPARE_TIMEOUT,
         )
         if prepared.exit_code:
+            logger.warning(
+                "reading_source_prepare_failed",
+                exit_code=prepared.exit_code,
+                output_tail=str(prepared.result or "")[-500:],
+            )
             raise HostedHarnessError(
                 "reading_source_prepare_failed",
-                str(prepared.result or "")[-500:],
+                "The source couldn't be prepared for reading. Try again.",
                 status_code=502,
                 retryable=True,
             )
@@ -207,11 +213,16 @@ def _spend(sandbox) -> dict[str, Any] | None:
 
 
 def _crashed(run: SandboxRun) -> dict[str, Any]:
+    logger.warning(
+        "agent_reading_crashed",
+        exit_code=run.exit_code,
+        output_chars=len(run.output or ""),
+    )
     return {
         "domain": "agent",
         "stage": "understanding_agent",
         "code": CRASHED,
-        "message": run.output or f"the reading exited with {run.exit_code}",
+        "message": "Reading the agent stopped before it finished. Try again.",
         "retryable": True,
         "details": {"exit_code": run.exit_code},
     }
@@ -574,6 +585,50 @@ def scan_source(scan_id: UUID | str) -> None:
         "error": AgentScan.Status.ERROR,
     }[str(report["status"])]
     _finish_scan(scan, status, report=report)
+
+
+SCAN_UNAVAILABLE = "scan_unavailable"
+SCAN_TIMED_OUT = "scan_timed_out"
+
+
+def fail_scan(scan_id: UUID | str, *, code: str = SCAN_UNAVAILABLE) -> bool:
+    """Mark a scan that can no longer finish as failed. A finished scan is left
+    alone. Returns whether this call failed it."""
+    now = timezone.now()
+    failed = AgentScan.no_workspace_objects.filter(
+        id=scan_id,
+        status__in=(AgentScan.Status.PENDING, AgentScan.Status.RUNNING),
+    ).update(
+        status=AgentScan.Status.FAILED,
+        failure={
+            "domain": "environment",
+            "stage": "acquiring_source",
+            "code": code,
+            "message": "We couldn't read this source. Try again.",
+            "retryable": True,
+            "details": {},
+        },
+        finished_at=now,
+        updated_at=now,
+    )
+    if failed:
+        logger.warning("agent_scan_abandoned", scan_id=str(scan_id), code=code)
+    return bool(failed)
+
+
+def expire_stale_scan(scan: AgentScan) -> AgentScan:
+    """The scan as it stands, failed when it has run past every attempt it has, as
+    a worker that died never finishes it."""
+    from simulate.tasks.agent_scans import SCAN_DEADLINE_SECONDS
+
+    if scan.status not in (
+        AgentScan.Status.PENDING,
+        AgentScan.Status.RUNNING,
+    ) or scan.created_at > timezone.now() - timedelta(seconds=SCAN_DEADLINE_SECONDS):
+        return scan
+    if fail_scan(scan.id, code=SCAN_TIMED_OUT):
+        scan.refresh_from_db()
+    return scan
 
 
 def _platform_failure(exc: HostedHarnessError) -> dict[str, Any]:

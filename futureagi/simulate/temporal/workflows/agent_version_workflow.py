@@ -84,7 +84,10 @@ class AgentVersionWorkflow:
                     exc,
                 )
                 await self._fail(
-                    input, "agent_reading_unavailable", _cause(exc), retryable=True
+                    input,
+                    "agent_reading_unavailable",
+                    "Reading the agent couldn't finish. Try again.",
+                    retryable=True,
                 )
                 return AgentVersionOutput(version_id=input.version_id, status="failed")
             if step.status == "failed":
@@ -129,8 +132,3 @@ class AgentVersionWorkflow:
             schedule_to_close_timeout=timedelta(hours=1),
             retry_policy=RetryPolicy(maximum_interval=timedelta(minutes=1)),
         )
-
-
-def _cause(exc: ActivityError) -> str:
-    cause = exc.cause
-    return str(getattr(cause, "message", "") or cause or exc)[:500]

@@ -18,6 +18,7 @@ from simulate.serializers.response.agent_connect import (
     AgentScanStartedResponseSerializer,
 )
 from simulate.services import agent_connect
+from simulate.services.agent_reading_sandbox import expire_stale_scan
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope, error_details
@@ -123,6 +124,7 @@ class AgentScanDetailView(_ConnectView):
             raise HostedHarnessError(
                 "scan_not_found", "Scan not found", status_code=404
             )
+        scan = expire_stale_scan(scan)
         return Response(AgentScanResponseSerializer(_scan_body(scan)).data)
 
 
