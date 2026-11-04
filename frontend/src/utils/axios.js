@@ -1408,6 +1408,30 @@ export const endpoints = {
       `${apiPath("/tracer/observation-span/retrieve_loading/")}?observation_span_id=${id}`,
     getTracesForObserveProject: () =>
       apiPath("/tracer/trace/list_traces_of_session/"),
+    insightsConfigs: () => apiPath("/tracer/insights/configs/"),
+    insightsConfig: (configId) =>
+      apiPath("/tracer/insights/configs/{config_id}/", { config_id: configId }),
+    insightsDraft: () => apiPath("/tracer/insights/draft/"),
+    insightsPreview: () => apiPath("/tracer/insights/preview/"),
+    insightsEstimate: () => apiPath("/tracer/insights/estimate/"),
+    insightsRuns: () => apiPath("/tracer/insights/runs/"),
+    insightsRun: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/", { run_id: runId }),
+    insightsRunStop: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/stop/", { run_id: runId }),
+    insightsRunUnits: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/units/", { run_id: runId }),
+    insightsRunMedia: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/media/", { run_id: runId }),
+    insightsRunAsk: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/ask/", { run_id: runId }),
+    instantEvalRuns: () => apiPath("/tracer/instant-eval/runs/"),
+    instantEvalEstimate: () => apiPath("/tracer/instant-eval/estimate/"),
+    instantEvalStart: () => apiPath("/tracer/instant-eval/start/"),
+    instantEvalSummary: () => apiPath("/tracer/instant-eval/summary/"),
+    instantEvalRows: () => apiPath("/tracer/instant-eval/rows/"),
+    instantEvalExport: () => apiPath("/tracer/instant-eval/export/"),
+    instantEvalControl: () => apiPath("/tracer/instant-eval/control/"),
     getAgentGraph: () => apiPath("/tracer/trace/agent_graph/"),
     getTraceForObserveExport: apiPath("/tracer/trace/get_trace_export_data/"),
     getSpansForObserveProject: () =>

@@ -23,7 +23,7 @@ export class ApiClient {
     });
   }
 
-  private async send<T>(method: 'get' | 'post' | 'patch' | 'delete', path: string,
+  private async send<T>(method: 'get' | 'post' | 'put' | 'patch' | 'delete', path: string,
                         opts: { params?: Record<string, string | number>; data?: unknown } = {}): Promise<T> {
     const res = await this.req[method](`${this.baseURL}${path}`, {
       headers: this.headers,
@@ -39,6 +39,7 @@ export class ApiClient {
 
   get<T>(path: string, params?: Record<string, string | number>) { return this.send<T>('get', path, { params }); }
   post<T>(path: string, data?: unknown) { return this.send<T>('post', path, { data }); }
+  put<T>(path: string, data?: unknown) { return this.send<T>('put', path, { data }); }
   patch<T>(path: string, data?: unknown) { return this.send<T>('patch', path, { data }); }
   delete(path: string) { return this.send<void>('delete', path); }
 }
