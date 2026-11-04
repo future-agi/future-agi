@@ -1304,7 +1304,7 @@ class TestUnitTextForV2:
             ):
                 assert project_id == PROJECT
                 arrival_reads.append(list(ids))
-                return {trace_id: arrival for trace_id in ids}
+                return dict.fromkeys(ids, arrival)
 
             def activity_by_trace_ids(self, ids, **kwargs):
                 return []  # This fixture has roots only, not unreadable steps.

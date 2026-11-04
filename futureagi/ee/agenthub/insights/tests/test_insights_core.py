@@ -929,7 +929,10 @@ class TestSavingCategories:
         # finish hands the writer the lens's question when the run has none.
         settings = {"lens": "failures", "question": pipeline.lens_for("failures").title}
         assert self.settle(
-            monkeypatch, category_project, {"lens": "failures", "question": ""}, settings
+            monkeypatch,
+            category_project,
+            {"lens": "failures", "question": ""},
+            settings,
         )
 
     def settle(self, monkeypatch, project, asked: dict, settings: dict) -> bool:
