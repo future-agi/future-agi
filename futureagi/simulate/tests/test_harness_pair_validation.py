@@ -27,6 +27,7 @@ from simulate.services.hosted_harness import (
     project_terminal_job_onto_run,
     record_cleanup,
 )
+from simulate.tests.harness_validation import running_validations, settle_validations
 from simulate.tests.test_harness_agent_versions import _a1, _create
 from simulate.tests.test_harness_agent_versions import _environment as _agent_env
 from simulate.tests.test_harness_agent_versions import (
@@ -709,6 +710,10 @@ class TestAgentMoves:
         assert body["validation"]["state"] == "validating"
         assert body["validation"]["purpose"] == "agent_move"
         assert {"agent", "environment", "suite"} <= set(body["versions"])
+        [waiting] = [
+            one for one in body["versions"]["agent"] if one["id"] == str(a2.id)
+        ]
+        assert waiting["activation_outcome"] == "validating"
 
     @pytest.mark.parametrize("caller", ["activation", "hand", "no_change", "land"])
     def test_after_move_steps_replayed_per_caller(
@@ -741,8 +746,17 @@ class TestAgentMoves:
         stamped = environment.environment_version.agent_version_id == a2.id
         assert stamped == (caller == "no_change")
 
-    @pytest.mark.parametrize("moved", ["agent", "environment", "suite"])
-    def test_success_guard_checks_three_defaults(self, user, workspace, storage, moved):
+    @pytest.mark.parametrize(
+        ("moved", "expected"),
+        [
+            ("agent", "superseded"),
+            ("environment", "validating"),
+            ("suite", "validating"),
+        ],
+    )
+    def test_success_guard_checks_three_defaults(
+        self, user, workspace, storage, moved, expected
+    ):
         environment, a1, a2 = _with_a2(user, workspace, storage, f"pv-guard-{moved}")
         move = validation.agent_move("hand", environment, a2, user=user)
         pair = [environment.environment_version_id, environment.suite_version_id]
@@ -754,8 +768,11 @@ class TestAgentMoves:
         outcome = validation.complete_move(environment, move, pair=tuple(pair))
 
         environment.refresh_from_db()
-        assert outcome == "validating"
+        assert outcome == expected
         assert environment.agent_version_id == a1.id
+        if moved == "agent":
+            # A newer choice of agent stands: nothing validates the older one again.
+            assert not running_validations(environment)
 
     def test_superseded_move_revalidates_once(self, user, workspace, storage):
         environment, a1, a2 = _with_a2(user, workspace, storage, "pv-superseded")
@@ -835,3 +852,269 @@ class TestAgentMoves:
 
         assert outcome == "validating"
         recorded.assert_called_once()
+
+
+def _a3(environment, a1, *, certified=False):
+    """A third checked version; ``certified``: its pairing with the defaults is too."""
+    a3 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "v3"})
+    HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=a3).update(
+        preflight_status="passed"
+    )
+    if certified:
+        _ready(
+            validation.start_validation(
+                environment,
+                a3,
+                environment.environment_version,
+                environment.suite_version,
+                purpose="recheck",
+            ).bundle
+        )
+    return a3
+
+
+class TestNewerChoiceWins:
+    def test_an_older_waiting_move_never_overrides_a_later_hand_move(
+        self, user, workspace, storage
+    ):
+        environment, a1, a2 = _with_a2(user, workspace, storage, "pv-newer-direct")
+        move_agent_default(environment, a2.id, expected_default_id=a1.id, user=user)
+        waiting = _move_job(environment, a2)
+        a3 = _a3(environment, a1, certified=True)
+
+        move_agent_default(environment, a3.id, expected_default_id=a1.id, user=user)
+        _ready(waiting.assembled_bundle)
+        _end(waiting, state="completed")
+
+        environment.refresh_from_db()
+        assert environment.agent_version_id == a3.id
+        assert _activations(a2)[str(environment.id)] == "superseded"
+
+    def test_of_two_waiting_moves_the_later_one_lands(self, user, workspace, storage):
+        environment, a1, a2 = _with_a2(user, workspace, storage, "pv-newer-waiting")
+        a3 = _a3(environment, a1)
+        move_agent_default(environment, a2.id, expected_default_id=a1.id, user=user)
+        move_agent_default(environment, a3.id, expected_default_id=a1.id, user=user)
+
+        settle_validations(environment)
+
+        environment.refresh_from_db()
+        assert environment.agent_version_id == a3.id
+        assert _activations(a2)[str(environment.id)] == "superseded"
+
+    def test_keeping_the_default_by_hand_drops_a_waiting_move(
+        self, user, workspace, storage
+    ):
+        environment, a1, a2 = _with_a2(user, workspace, storage, "pv-newer-keep")
+        move_agent_default(environment, a2.id, expected_default_id=a1.id, user=user)
+
+        move_agent_default(environment, a1.id, expected_default_id=a1.id, user=user)
+        settle_validations(environment)
+
+        environment.refresh_from_db()
+        assert environment.agent_version_id == a1.id
+
+    def test_a_background_move_turned_down_meanwhile_does_not_land(
+        self, user, workspace, storage
+    ):
+        environment, a1, a2 = _with_a2(user, workspace, storage, "pv-newer-turned")
+        move = validation.agent_move("activation", environment, a2, explicit=False)
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(agent_version=a2)
+        runtime.agent_payload = {
+            **(runtime.agent_payload or {}),
+            "requested_at": {str(environment.id): "2026-01-01T00:00:00+00:00"},
+        }
+        runtime.save(update_fields=["agent_payload"])
+        # Moved by hand after it was asked for, while it validated.
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload={
+                **environment.payload,
+                "metadata": {
+                    **environment.payload["metadata"],
+                    HAND_MOVE_KEY: {
+                        "at": "2999-01-01T00:00:00+00:00",
+                        "to": str(a1.id),
+                    },
+                },
+            }
+        )
+        environment.refresh_from_db()
+
+        outcome = validation.complete_move(
+            environment,
+            move,
+            pair=(environment.environment_version_id, environment.suite_version_id),
+        )
+
+        environment.refresh_from_db()
+        assert outcome == "default_moved_by_hand"
+        assert environment.agent_version_id == a1.id
+
+    def test_a_refused_move_after_validating_is_an_outcome_not_an_error(
+        self, user, workspace, storage
+    ):
+        environment, a1, a2 = _with_a2(user, workspace, storage, "pv-move-refused")
+        move = validation.agent_move("hand", environment, a2, user=user)
+
+        with patch(
+            "simulate.services.harness_versioning.versions.move_agent",
+            side_effect=HostedHarnessError(
+                "rollback_unavailable", "no bundle", status_code=409
+            ),
+        ):
+            outcome = validation.complete_move(
+                environment,
+                move,
+                pair=(environment.environment_version_id, environment.suite_version_id),
+            )
+
+        environment.refresh_from_db()
+        assert outcome == "rollback_unavailable"
+        assert environment.agent_version_id == a1.id
+
+    def test_a_move_onto_a_validation_that_just_settled_starts_a_fresh_one(
+        self, user, workspace, storage
+    ):
+        environment = _pending(user, workspace, storage, "pv-carry-race")
+        settled = _start(environment).job
+        _end(settled, state="failed", code="sandbox_disappeared")
+        move = validation.agent_move(
+            "hand", environment, environment.agent_version, user=user
+        )
+
+        # Found running, then settled before the move was carried onto it.
+        with patch.object(validation, "live_validation", return_value=settled):
+            started = _start(environment, purpose="agent_move", move=move)
+
+        assert started.job.id != settled.id
+        assert _job_metadata(started.job)["validation_move"] == move
+        assert "validation_move" not in _job_metadata(settled)
+
+
+class TestRetriedMoves:
+    def test_an_infrastructure_ending_validates_the_move_once_more(
+        self, user, workspace, storage
+    ):
+        environment, a1, a2 = _with_a2(user, workspace, storage, "pv-retry-move")
+        move_agent_default(environment, a2.id, expected_default_id=a1.id, user=user)
+        first = _move_job(environment, a2)
+
+        assert _end(first, state="failed", code="sandbox_disappeared") == "retry"
+
+        [again] = running_validations(environment)
+        assert again.id != first.id
+        assert _job_metadata(again)["validation_move"]["restarts"] == 1
+        assert _activations(a2)[str(environment.id)] == "validating"
+        settle_validations(environment)
+        environment.refresh_from_db()
+        assert environment.agent_version_id == a2.id
+
+    def test_a_move_whose_retry_also_ends_early_is_asked_again(
+        self, user, workspace, storage
+    ):
+        from simulate.services.harness_agent_changes import _settled
+
+        environment, a1, a2 = _with_a2(user, workspace, storage, "pv-retry-twice")
+        _activate_on(environment.id, a2, explicit=True, user=user)
+        _end(_move_job(environment, a2), state="failed", code="sandbox_disappeared")
+
+        [again] = running_validations(environment)
+        _end(again, state="failed", code="sandbox_disappeared")
+
+        assert not running_validations(environment)
+        assert _activations(a2)[str(environment.id)] == "validation_retry"
+        assert not _settled({"outcome": "validation_retry"})
+        assert _settled({"outcome": "validation_retry", "attempts": 3})
+
+
+class TestFailedLanding:
+    def test_a_failed_landing_puts_the_environment_version_back(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
+        settings,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.tests.test_harness_versioning_rebuild import _offered, _turn
+
+        settings.HARNESS_VERSIONING_NUDGES_ENABLED = True
+        with patch.object(validation, "can_validate", return_value=False):
+            environment, nudge, a2, a3 = _offered(
+                user,
+                workspace,
+                storage,
+                "pv-land-failed",
+                auth_client,
+                django_capture_on_commit_callbacks,
+            )
+        e1 = environment.environment_version_id
+        _uncache(environment)
+        with patch(START_WORKFLOW):
+            _turn(environment, nudge, storage)
+        environment.refresh_from_db()
+        assert environment.environment_version_id != e1
+
+        assert settle_validations(environment, passed=False) == ["failed"]
+
+        environment.refresh_from_db()
+        assert (environment.agent_version_id, environment.environment_version_id) == (
+            a2.id,
+            e1,
+        )
+        assert _activations(a3)[str(environment.id)] == "pair_failed"
+
+
+class TestNotUserRuns:
+    def test_a_validation_job_is_not_a_run_anywhere_a_user_looks(
+        self, user, workspace, storage
+    ):
+        from simulate.selectors.runs import (
+            user_environment_runs,
+            user_executions,
+            user_runs,
+        )
+        from simulate.services.harness_environment import annotate_for_list
+
+        environment = _pending(user, workspace, storage, "pv-not-a-run")
+        executions = user_executions().count()
+
+        job = _start(environment).job
+
+        assert not user_environment_runs(environment).exists()
+        assert not HostedHarnessJob.no_workspace_objects.filter(
+            user_runs(), id=job.id
+        ).exists()
+        listed = annotate_for_list(
+            HostedHarnessJob.no_workspace_objects.filter(id=environment.id)
+        ).get()
+        assert listed.simulation_run_count == 0
+        assert user_executions().count() == executions
+
+
+class TestReconcileWithoutSandbox:
+    def test_a_finished_run_whose_attempt_never_got_a_sandbox_is_left_as_is(
+        self, user, workspace, storage, gateway, monkeypatch
+    ):
+        from simulate.services.hosted_harness import register_attempt
+        from simulate.tests.test_harness_versioning_runs import _run
+
+        environment = _environment(user, workspace, "pv-no-sandbox", storage)
+        run = _run(environment)
+        attempt = register_attempt(
+            run.id, endpoint_base_url="https://platform.example"
+        ).attempt
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            state=HostedHarnessJob.State.CANCELED
+        )
+
+        def never(_attempt):
+            raise AssertionError("an attempt with no sandbox has nothing to inspect")
+
+        monkeypatch.setattr(gateway, "inspect", never)
+        polled = gateway.reconcile_completed(attempt)
+
+        assert polled.state == "canceled"

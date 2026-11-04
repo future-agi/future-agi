@@ -709,12 +709,12 @@ class HarnessPairValidationSerializer(serializers.Serializer):
         choices=["not_run", "validating", "ready", "failed", "retry", "unavailable"],
         help_text=(
             "ready: certified together; failed: a check failed; retry: the last"
-            " validation ended before its check did."
+            " validation, or a run, ended before its check did."
         ),
     )
     job_id = serializers.UUIDField(allow_null=True)
     purpose = serializers.ChoiceField(
-        choices=["save", "agent_move", "recheck"], allow_null=True
+        choices=["agent_move", "recheck"], allow_null=True
     )
     finished_at = serializers.DateTimeField(allow_null=True)
     error = serializers.DictField(allow_null=True)

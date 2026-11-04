@@ -1242,10 +1242,15 @@ def _move_agent_default(
     locked: HostedHarnessJob, version_id: Any, expected_default_id: Any, user: Any
 ) -> tuple[HostedHarnessJob, Validation | None]:
     from simulate.models import AgentVersion
-    from simulate.services.harness_agent_versions import hand_move, require_agent_pick
+    from simulate.services.harness_agent_versions import (
+        _record_activation,
+        hand_move,
+        require_agent_pick,
+    )
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
     from simulate.services.harness_versioning.validation import (
         agent_move,
+        drop_waiting_moves,
         start_validation,
     )
 
@@ -1258,6 +1263,8 @@ def _move_agent_default(
     )
     current = locked.agent_version
     if current is not None and current.id == version_id:
+        # Kept by hand: a move still waiting on a validation never lands.
+        drop_waiting_moves(locked, version_id)
         return locked, None
     if (current.id if current is not None else None) != expected_default_id:
         raise _conflict("agent", current)
@@ -1271,7 +1278,8 @@ def _move_agent_default(
         move=agent_move("hand", locked, version, user=user),
     )
     if validation is not None and not validation.ready:
-        # Moved by the validation once the pairing passes.
+        # Moved by the validation once the pairing passes; shown on the version.
+        _record_activation(version.id, {str(locked.id): "validating"})
         return locked, validation
     move_agent(locked, version, moved=hand_move(user, version.id))
     schedule_environment_nudge(

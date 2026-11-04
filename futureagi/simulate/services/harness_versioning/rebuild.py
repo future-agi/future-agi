@@ -1742,6 +1742,7 @@ def _land(
     if trigger is not None and locked.agent_version_id != trigger.id:
         reason = _agent_move_refusal(locked, nudge, trigger)
     agent = trigger if trigger is not None and reason is None else None
+    environment_before = locked.environment_version_id
     # The new pairing is validated before the agent moves; the draft lands for the
     # current agent.
     validate = agent is not None and can_validate(locked, agent.id)
@@ -1775,7 +1776,14 @@ def _land(
             locked.environment_version,
             locked.suite_version,
             purpose="agent_move",
-            move=agent_move("land", locked, agent, user=nudge.answered_by, nudge=nudge),
+            move=agent_move(
+                "land",
+                locked,
+                agent,
+                user=nudge.answered_by,
+                nudge=nudge,
+                from_environment_version_id=environment_before,
+            ),
         )
         if validation is None or validation.ready:
             try:
