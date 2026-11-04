@@ -50,7 +50,7 @@ export const PULSING_DOT_CLASS = "sim-status-dot--pulse";
 export const STATUS_META = {
   in_progress: { role: "info", label: "In progress" },
   inconclusive: { role: "neutral", label: "Inconclusive" },
-  // Nothing the call was meant to test happened in it: neither a pass nor a fail.
+  // Neither a pass nor a fail: every sub-goal not applicable, inconclusive or a mix.
   no_score: { role: "neutral", label: "No score" },
   queued: { role: "neutral", label: "Queued" },
   booting: { role: "info", label: "Provisioning" },
