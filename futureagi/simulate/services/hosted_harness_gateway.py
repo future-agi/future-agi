@@ -155,6 +155,9 @@ _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
 # The raw contract a version was read into, handed to a build so it starts at the
 # world stage instead of reading the agent again.
 _SEED_CONTRACT_PATH = "/work/seed/contract.json"
+# The provider's definition of a Vapi or Retell agent, as the sandbox's
+# agent-learning-kit caches it; a rebuild onto a version reads that version's.
+_PROVIDER_PROFILE_PATH = "/work/provider-import-profile.json"
 _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
@@ -959,7 +962,9 @@ def acquire_source_archive(
     repository = str(source.get("repository") or "")
     ref = str(source.get("ref") or "HEAD")
     if not _SOURCE_REPOSITORY.fullmatch(repository):
-        raise HostedHarnessError("github_repository_invalid", "invalid GitHub repository")
+        raise HostedHarnessError(
+            "github_repository_invalid", "invalid GitHub repository"
+        )
     if ".." in ref or not _SOURCE_REF.fullmatch(ref):
         raise HostedHarnessError("github_ref_invalid", "invalid GitHub ref")
     pinned_commit = str(source.get("commit_sha") or "").lower()
@@ -2470,11 +2475,12 @@ class HostedHarnessGateway:
             source["commit_sha"] = commit_sha
         payload["source"] = source
         # A fresh build from a version already read starts from that reading.
-        seed_contract = (
-            _seed_contract_for(job) if authoring_archive is None else None
-        )
+        seed_contract = _seed_contract_for(job) if authoring_archive is None else None
         if seed_contract is not None:
-            payload["metadata"] = {**(payload.get("metadata") or {}), "seeded_contract": True}
+            payload["metadata"] = {
+                **(payload.get("metadata") or {}),
+                "seeded_contract": True,
+            }
         if payload != job.payload:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
@@ -3377,6 +3383,11 @@ class HostedHarnessGateway:
             )
             if seed_contract is not None:
                 sandbox.fs.upload_file(seed_contract, _SEED_CONTRACT_PATH)
+            # A rebuild onto a provider agent's version sees that version's
+            # definition, not whatever the build fetched.
+            profile = _provider_profile_bytes(agent_version)
+            if profile is not None:
+                sandbox.fs.upload_file(profile, _PROVIDER_PROFILE_PATH)
             overlay = _alk_source_overlay()
             if overlay is not None:
                 sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -4838,9 +4849,7 @@ def _safe_source_member(raw_path: str) -> str:
     return candidate
 
 
-def _seed_contract_for(
-    job: HostedHarnessJob, version_id: Any = None
-) -> bytes | None:
+def _seed_contract_for(job: HostedHarnessJob, version_id: Any = None) -> bytes | None:
     """The raw contract of the version the build is tied to (or of ``version_id``),
     when the sandbox's agent-learning-kit can start from one; None otherwise."""
     if not getattr(settings, "HARNESS_SEED_CONTRACT_ENABLED", False):
@@ -5114,8 +5123,12 @@ def _provider_import_authoring_material(
     agent = payload.get("agent") or {}
     connector = str(agent.get("connector") or "").strip().lower()
     mode = str(agent.get("mode") or "")
-    inspect_connect_only_chat = mode == "connect_only" and connector == "retell_chat"
-    if mode != "provider_import" and not inspect_connect_only_chat:
+    inspect_connect_only = mode == "connect_only" and connector in {
+        "vapi",
+        "retell",
+        "retell_chat",
+    }
+    if mode != "provider_import" and not inspect_connect_only:
         return {}, connector
     secret_name = {
         "vapi": "VAPI_API_KEY",
@@ -5785,6 +5798,84 @@ def _edit_for(folder: str, document: object, suite: list[dict]) -> dict | None:
         ),
         None,
     )
+
+
+def _provider_profile_bytes(agent_version: Any) -> bytes | None:
+    if agent_version is None:
+        return None
+    from simulate.services.provider_profile import profile_bytes_for_version
+
+    return profile_bytes_for_version(agent_version)
+
+
+def _live_sandbox_refs(job: HostedHarnessJob) -> set[str]:
+    """Every live authoring or chat sandbox of the job's environment."""
+    environment = job.environment or job
+    job_ids = [
+        environment.id,
+        *environment.simulation_runs.values_list("id", flat=True),
+    ]
+    refs = set(
+        HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation__job_id__in=job_ids,
+            state__in=(
+                HostedHarnessConversationLease.State.STARTING,
+                HostedHarnessConversationLease.State.ACTIVE,
+            ),
+        ).values_list("provider_ref", flat=True)
+    )
+    attempt = (
+        HostedHarnessAttempt.no_workspace_objects.filter(
+            job=job, attempt_number=job.current_attempt_number
+        )
+        .exclude(provider_ref__isnull=True)
+        .exclude(
+            state__in=(
+                HostedHarnessAttempt.State.FAILED,
+                HostedHarnessAttempt.State.SUPERSEDED,
+                HostedHarnessAttempt.State.CLEANING_UP,
+            )
+        )
+        .first()
+    )
+    if attempt is not None and attempt.provider_ref:
+        refs.add(attempt.provider_ref)
+    return {str(ref) for ref in refs if ref}
+
+
+def push_provider_profile_into_live_sandbox(
+    job: HostedHarnessJob, agent_version: Any
+) -> bool:
+    """Put a version's provider definition into every live workspace of the
+    environment, so a rebuild onto it reads the agent as that version holds it."""
+    profile = _provider_profile_bytes(agent_version)
+    if profile is None:
+        return False
+    refs = _live_sandbox_refs(job)
+    if not refs:
+        return False
+    client = HostedHarnessGateway().client
+    delivered = False
+    for ref in refs:
+        try:
+            sandbox = client.get(ref, request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS)
+            sandbox.fs.upload_file(profile, _PROVIDER_PROFILE_PATH)
+            delivered = True
+        except Exception:  # noqa: BLE001 - a stopped guest is the ordinary case
+            logger.warning(
+                "provider_profile_not_delivered job=%s provider_ref=%s",
+                job.id,
+                ref,
+                exc_info=True,
+            )
+    logger.info(
+        "provider_profile_pushed job=%s agent_version=%s sandboxes=%d delivered=%s",
+        job.id,
+        getattr(agent_version, "id", None),
+        len(refs),
+        delivered,
+    )
+    return delivered
 
 
 def push_scenarios_into_live_sandbox(job: HostedHarnessJob, suite: list[dict]) -> bool:
