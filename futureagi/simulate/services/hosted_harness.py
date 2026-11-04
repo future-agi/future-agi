@@ -1578,6 +1578,71 @@ def rerun_calls_in_run(
     return job
 
 
+def resume_run(test_execution: TestExecution, *, user: Any) -> list[uuid.UUID]:
+    """Run again only the calls an interrupted Run did not finish, as a new attempt of that
+    same Run on its pinned versions, and return those calls. Finished calls keep their
+    results and are neither run nor charged again."""
+    from simulate.selectors.run_resume import (
+        INTERRUPTED_JOB_STATES,
+        RESUMES,
+        resumable_job,
+        unfinished_executions,
+    )
+
+    job = resumable_job(test_execution)
+    if job is None:
+        raise HostedHarnessError(
+            "run_not_resumable", "this run cannot be resumed", status_code=409
+        )
+    if job.state not in INTERRUPTED_JOB_STATES:
+        raise HostedHarnessError(
+            "run_not_interrupted",
+            "only a run that stopped or failed before it finished can be resumed",
+            status_code=409,
+        )
+    unfinished = unfinished_executions(job)
+    if not unfinished:
+        raise HostedHarnessError(
+            "nothing_to_resume", "every call of this run finished", status_code=409
+        )
+    # A resume runs on the versions the run used, never on others.
+    gone = [
+        label
+        for label, pin in (
+            ("agent version", job.agent_version),
+            ("environment version", job.environment_version),
+            ("scenario suite version", job.suite_version),
+            ("assembled bundle", job.assembled_bundle),
+        )
+        if pin is not None and getattr(pin, "deleted", False)
+    ]
+    if gone:
+        raise HostedHarnessError(
+            "resume_version_missing",
+            f"this run used a {', '.join(gone)} that is no longer available",
+            status_code=409,
+        )
+    calls = [execution.call_execution_id for execution in unfinished]
+    resumed = rerun_calls_in_run(test_execution, calls)
+    with transaction.atomic():
+        locked = TestExecution.no_workspace_objects.select_for_update().get(
+            id=test_execution.id
+        )
+        metadata = dict(locked.execution_metadata or {})
+        metadata[RESUMES] = [
+            *(metadata.get(RESUMES) or []),
+            {
+                "at": timezone.now().isoformat(),
+                "by": str(user.id) if user is not None else None,
+                "calls": len(calls),
+            },
+        ]
+        locked.execution_metadata = metadata
+        locked.save(update_fields=["execution_metadata"])
+    logger.info("hosted_run_resumed", job=str(resumed.id), calls=len(calls))
+    return calls
+
+
 def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
     """Narrow a Run's dispatch document to the executions an in-run re-run chose."""
 

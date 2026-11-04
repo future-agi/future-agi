@@ -23920,6 +23920,8 @@ export interface CallExecutionRerunApi {
   call_execution_ids?: string[];
   /** Whether to rerun all call executions in the test execution */
   select_all?: boolean;
+  /** Resume an interrupted run: re-run only the calls that did not finish, as a new attempt of the same run. Takes no call ids and no select_all. */
+  unfinished_only?: boolean;
   /** Fresh job-scoped environment for a repository-backed harness rerun. Values are forwarded to the sandbox and are not persisted. */
   environment_values?: CallExecutionRerunApiEnvironmentValues;
 }
@@ -24751,6 +24753,19 @@ export interface RunAnalyticsV3ResponseApi {
   trends: TrendApi[];
 }
 
+export interface RunResumeEntryApi {
+  at: string;
+  by: string;
+  calls: number;
+}
+
+export interface RunResumeApi {
+  resumable: boolean;
+  finished: number;
+  unfinished: number;
+  history: RunResumeEntryApi[];
+}
+
 export interface RunSummaryApi {
   total: number;
   outcomes: OutcomeCountsApi;
@@ -24783,6 +24798,7 @@ export interface RunExecutionApi {
   trials?: number;
   /** @minLength 1 */
   agent_type: string;
+  resume: RunResumeApi;
   summary: RunSummaryApi;
 }
 
