@@ -2234,3 +2234,24 @@
 - recheck answers 202 with a validating recheck validation, and the report then reads validating with that job
 - the validation is a queued certify-only job of this Environment pinned to its pending bundle, and the default agent did not move
 - the run answers 409 pair_validating and creates no run job
+
+### SIM-E2E-004 — the cases a pairing holds back are bucketed and paged by scenario number
+
+**Goal:** A developer selecting scenarios to run sees how many of them the pairing can run, how many it holds back and why, and pages through the held-back cases  
+**Spec:** `flows/simulate/affected-scenarios.spec.ts:25`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, certified Environment of 53 refund and 2 lookup scenarios whose contract routes issue_refund to production (e2e/lib/harness_environment_seed.py)
+2. read the pairing's readiness for the whole suite (GET capabilities)
+3. page through the blocked cases (GET capabilities/cases?bucket=blocked, then cursor=next)
+4. read the eligible cases
+
+**Backend state verified:**
+
+- the buckets add up to requested: 2 eligible and 53 blocked of 55, each list naming exactly the seeded keys
+- tool routing holds back 53 of 55
+- the blocked cases page 50 at a time by scenario number: the first page ends on its last number as next, the second holds the rest with no next, every case held by tool_routing
+- the eligible page is the two lookups, held by nothing
+- the page numbers are the stored suite members' numbers
