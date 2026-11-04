@@ -32499,6 +32499,10 @@ export const SimulateAgentDefinitionsVersionsChangeCreateParams = zod.object({
 
 export const simulateAgentDefinitionsVersionsChangeCreateBodyPromptMax = 65536;
 
+export const simulateAgentDefinitionsVersionsChangeCreateBodySettingsPhoneNumberMax = 512;
+
+export const simulateAgentDefinitionsVersionsChangeCreateBodySettingsAgentNameMax = 512;
+
 export const simulateAgentDefinitionsVersionsChangeCreateBodySecretValuesMaxOne = 65536;
 
 export const SimulateAgentDefinitionsVersionsChangeCreateBody = zod.object({
@@ -32507,6 +32511,25 @@ export const SimulateAgentDefinitionsVersionsChangeCreateBody = zod.object({
   prompt: zod
     .string()
     .max(simulateAgentDefinitionsVersionsChangeCreateBodyPromptMax)
+    .optional(),
+  settings: zod
+    .object({
+      phone_number: zod
+        .string()
+        .min(1)
+        .max(
+          simulateAgentDefinitionsVersionsChangeCreateBodySettingsPhoneNumberMax,
+        )
+        .optional(),
+      agent_name: zod
+        .string()
+        .min(1)
+        .max(
+          simulateAgentDefinitionsVersionsChangeCreateBodySettingsAgentNameMax,
+        )
+        .optional(),
+      target_speaks_first: zod.boolean().optional(),
+    })
     .optional(),
   secret_values: zod
     .record(

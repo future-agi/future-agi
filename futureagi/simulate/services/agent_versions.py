@@ -392,8 +392,16 @@ def credentials_version(
 
 
 def manual_version(
-    definition: AgentDefinition, *, prompt: str, user: Any = None
+    definition: AgentDefinition,
+    *,
+    prompt: str | None = None,
+    settings: Mapping[str, Any] | None = None,
+    user: Any = None,
 ) -> AgentVersion:
+    """A version from an edited prompt or settings, or the parent when they are the
+    ones it already has."""
+    from simulate.services.harness_agent_changes import edit_agent_config
+
     parent = _parent(definition)
     runtime = _runtime(parent)
     if runtime is not None and runtime.source_kind in (
@@ -405,17 +413,48 @@ def manual_version(
             "A code agent's prompt lives in its source; sync or upload it instead",
             status_code=422,
         )
-    if prompt == (parent.description or ""):
+    if runtime is None:
+        if settings:
+            raise HostedHarnessError(
+                "agent_change_unsupported",
+                "This agent's source doesn't take that change",
+                status_code=422,
+                details={"field": "settings"},
+            )
+        if prompt is None or prompt == (parent.description or ""):
+            return parent
+        return create_agent_version(
+            definition,
+            parent=parent,
+            env=None,
+            prompt=prompt,
+            trigger=Trigger.PROMPT,
+            user=user,
+        )
+    current = dict(runtime.agent_payload or {})
+    edit = edit_agent_config(
+        runtime.source_kind,
+        current,
+        description=parent.description or "",
+        prompt=prompt,
+        settings=settings,
+        settings_field="settings",
+    )
+    if not edit.changed:
         return parent
-    version = create_agent_version(
+    changes: dict[str, Any] = {}
+    if edit.config is not None:
+        changes["agent_payload"] = {**current, "config": edit.config}
+        changes["source"] = dict(runtime.source or {})
+    return create_agent_version(
         definition,
         parent=parent,
         env=None,
-        prompt=prompt,
-        trigger=Trigger.PROMPT,
+        prompt=edit.prompt,
+        trigger=edit.trigger,
         user=user,
+        **changes,
     )
-    return version
 
 
 def change_version(
@@ -426,6 +465,7 @@ def change_version(
     archive_artifact_id: UUID | None = None,
     secret_values: Mapping[str, str] | None = None,
     prompt: str | None = None,
+    settings: Mapping[str, Any] | None = None,
 ) -> VersionChange:
     """One change of ``kind`` to the agent, through the version engine. ``created``
     is whether the call made a version: the same content again, a draft included,
@@ -446,7 +486,9 @@ def change_version(
             definition, secret_values=secret_values or {}, user=user
         )
     elif kind == KIND_MANUAL:
-        version = manual_version(definition, prompt=prompt or "", user=user)
+        version = manual_version(
+            definition, prompt=prompt, settings=settings, user=user
+        )
     else:
         raise HostedHarnessError(
             "kind_unknown", f"unknown kind {kind!r}", status_code=400

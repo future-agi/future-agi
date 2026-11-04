@@ -51133,6 +51133,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 65536,
         },
+        settings: {
+          $ref: "#/definitions/HarnessAgentConfigChange",
+        },
         secret_values: {
           title: "Secret values",
           type: "object",
@@ -90056,6 +90059,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessAgentConfigChange: {
+      type: "object",
+      properties: {
+        phone_number: {
+          title: "Phone number",
+          type: "string",
+          maxLength: 512,
+          minLength: 1,
+        },
+        agent_name: {
+          title: "Agent name",
+          type: "string",
+          maxLength: 512,
+          minLength: 1,
+        },
+        target_speaks_first: {
+          title: "Target speaks first",
+          type: "boolean",
+        },
+      },
+    },
     AgentVersionToolChange: {
       type: "object",
       properties: {
@@ -116617,27 +116641,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
           maximum: 1,
           minimum: 0,
-        },
-      },
-    },
-    HarnessAgentConfigChange: {
-      type: "object",
-      properties: {
-        phone_number: {
-          title: "Phone number",
-          type: "string",
-          maxLength: 512,
-          minLength: 1,
-        },
-        agent_name: {
-          title: "Agent name",
-          type: "string",
-          maxLength: 512,
-          minLength: 1,
-        },
-        target_speaks_first: {
-          title: "Target speaks first",
-          type: "boolean",
         },
       },
     },

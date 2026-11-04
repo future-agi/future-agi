@@ -124326,6 +124326,27 @@
                 }
             }
         },
+        "HarnessAgentConfigChange": {
+            "type": "object",
+            "properties": {
+                "phone_number": {
+                    "title": "Phone number",
+                    "type": "string",
+                    "maxLength": 512,
+                    "minLength": 1
+                },
+                "agent_name": {
+                    "title": "Agent name",
+                    "type": "string",
+                    "maxLength": 512,
+                    "minLength": 1
+                },
+                "target_speaks_first": {
+                    "title": "Target speaks first",
+                    "type": "boolean"
+                }
+            }
+        },
         "AgentVersionChangeRequest": {
             "required": [
                 "kind"
@@ -124351,6 +124372,9 @@
                     "title": "Prompt",
                     "type": "string",
                     "maxLength": 65536
+                },
+                "settings": {
+                    "$ref": "#/definitions/HarnessAgentConfigChange"
                 },
                 "secret_values": {
                     "title": "Secret values",
@@ -132807,27 +132831,6 @@
                     "title": "Call execution count",
                     "description": "How many of the run's calls were queued for grading.",
                     "type": "integer"
-                }
-            }
-        },
-        "HarnessAgentConfigChange": {
-            "type": "object",
-            "properties": {
-                "phone_number": {
-                    "title": "Phone number",
-                    "type": "string",
-                    "maxLength": 512,
-                    "minLength": 1
-                },
-                "agent_name": {
-                    "title": "Agent name",
-                    "type": "string",
-                    "maxLength": 512,
-                    "minLength": 1
-                },
-                "target_speaks_first": {
-                    "title": "Target speaks first",
-                    "type": "boolean"
                 }
             }
         },

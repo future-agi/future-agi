@@ -5,7 +5,10 @@ from simulate.models.agent_definition import (
     AgentDefinitionAuthenticationChoices,
     AgentTypeChoices,
 )
-from simulate.serializers.harness_job import check_credential_values
+from simulate.serializers.harness_job import (
+    HarnessAgentConfigChangeSerializer,
+    check_credential_values,
+)
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 
 
@@ -109,11 +112,12 @@ class AgentVersionCreateRequestSerializer(serializers.Serializer):
 
 class AgentVersionChangeRequestSerializer(serializers.Serializer):
     """One change to a connected agent, by kind: sync the branch, a new upload, a
-    prompt edit for a built-in agent, or changed credentials."""
+    prompt or settings edit, or changed credentials."""
 
     kind = serializers.ChoiceField(choices=("sync", "upload", "credentials", "manual"))
     archive_artifact_id = serializers.UUIDField(required=False)
     prompt = serializers.CharField(required=False, allow_blank=True, max_length=65_536)
+    settings = HarnessAgentConfigChangeSerializer(required=False)
     secret_values = serializers.DictField(
         child=serializers.CharField(max_length=65_536, trim_whitespace=False),
         required=False,
@@ -128,16 +132,16 @@ class AgentVersionChangeRequestSerializer(serializers.Serializer):
     def validate(self, attrs):
         kind = attrs["kind"]
         needed = {
-            "upload": "archive_artifact_id",
-            "manual": "prompt",
-            "credentials": "secret_values",
-        }.get(kind)
-        if needed and needed not in attrs:
-            raise serializers.ValidationError({needed: f"required for kind {kind}"})
+            "upload": ("archive_artifact_id",),
+            "manual": ("prompt", "settings"),
+            "credentials": ("secret_values",),
+        }.get(kind, ())
+        if needed and not any(name in attrs for name in needed):
+            raise serializers.ValidationError({needed[0]: f"required for kind {kind}"})
         extra = [
             name
-            for name in ("archive_artifact_id", "prompt", "secret_values")
-            if name in attrs and name != needed
+            for name in ("archive_artifact_id", "prompt", "settings", "secret_values")
+            if name in attrs and name not in needed
         ]
         if extra:
             raise serializers.ValidationError(
@@ -145,4 +149,6 @@ class AgentVersionChangeRequestSerializer(serializers.Serializer):
             )
         if kind == "credentials" and not attrs["secret_values"]:
             raise serializers.ValidationError({"secret_values": "nothing to change"})
+        if "settings" in attrs and not attrs["settings"]:
+            raise serializers.ValidationError({"settings": "nothing to change"})
         return attrs

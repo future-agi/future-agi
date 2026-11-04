@@ -16306,11 +16306,26 @@ export type AgentVersionChangeRequestApiSecretValues = {
   [key: string]: string;
 };
 
+export interface HarnessAgentConfigChangeApi {
+  /**
+   * @minLength 1
+   * @maxLength 512
+   */
+  phone_number?: string;
+  /**
+   * @minLength 1
+   * @maxLength 512
+   */
+  agent_name?: string;
+  target_speaks_first?: boolean;
+}
+
 export interface AgentVersionChangeRequestApi {
   kind: AgentVersionChangeRequestApiKind;
   archive_artifact_id?: string;
   /** @maxLength 65536 */
   prompt?: string;
+  settings?: HarnessAgentConfigChangeApi;
   secret_values?: AgentVersionChangeRequestApiSecretValues;
 }
 
@@ -19749,20 +19764,6 @@ export interface HarnessEnvironmentRunEvaluationsApi {
 export interface HarnessEnvironmentRunEvaluationsQueuedApi {
   /** How many of the run's calls were queued for grading. */
   call_execution_count: number;
-}
-
-export interface HarnessAgentConfigChangeApi {
-  /**
-   * @minLength 1
-   * @maxLength 512
-   */
-  phone_number?: string;
-  /**
-   * @minLength 1
-   * @maxLength 512
-   */
-  agent_name?: string;
-  target_speaks_first?: boolean;
 }
 
 export interface HarnessAgentPayloadChangeApi {
