@@ -99427,7 +99427,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           type: "string",
-          enum: ["validating", "ready", "failed", "superseded", "expired"],
+          enum: [
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "superseded",
+            "expired",
+          ],
           "x-nullable": true,
         },
       },
@@ -100295,7 +100302,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         state: {
           title: "State",
           type: "string",
-          enum: ["validating", "ready", "failed", "superseded", "unavailable"],
+          enum: [
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "superseded",
+            "unavailable",
+          ],
         },
         job_id: {
           title: "Job id",
@@ -100523,7 +100537,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description:
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           type: "string",
-          enum: ["validating", "ready", "failed", "superseded", "expired"],
+          enum: [
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "superseded",
+            "expired",
+          ],
           "x-nullable": true,
         },
         stale: {

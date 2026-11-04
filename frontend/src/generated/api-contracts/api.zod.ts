@@ -37752,7 +37752,14 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
       candidate_state: zod
-        .enum(["validating", "ready", "failed", "superseded", "expired"])
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "superseded",
+          "expired",
+        ])
         .describe(
           "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
         ),
@@ -37866,7 +37873,14 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
       candidate_state: zod
-        .enum(["validating", "ready", "failed", "superseded", "expired"])
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "superseded",
+          "expired",
+        ])
         .describe(
           "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
         ),
@@ -37980,7 +37994,14 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
       candidate_state: zod
-        .enum(["validating", "ready", "failed", "superseded", "expired"])
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "superseded",
+          "expired",
+        ])
         .describe(
           "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
         ),
@@ -38017,6 +38038,7 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
   validation: zod.object({
     state: zod.enum([
       "validating",
+      "retry",
       "ready",
       "failed",
       "superseded",
@@ -38412,7 +38434,14 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
           candidate_state: zod
-            .enum(["validating", "ready", "failed", "superseded", "expired"])
+            .enum([
+              "validating",
+              "retry",
+              "ready",
+              "failed",
+              "superseded",
+              "expired",
+            ])
             .describe(
               "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
             ),
@@ -38502,7 +38531,14 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
           candidate_state: zod
-            .enum(["validating", "ready", "failed", "superseded", "expired"])
+            .enum([
+              "validating",
+              "retry",
+              "ready",
+              "failed",
+              "superseded",
+              "expired",
+            ])
             .describe(
               "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
             ),
@@ -38590,7 +38626,14 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
           candidate_state: zod
-            .enum(["validating", "ready", "failed", "superseded", "expired"])
+            .enum([
+              "validating",
+              "retry",
+              "ready",
+              "failed",
+              "superseded",
+              "expired",
+            ])
             .describe(
               "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
             ),
@@ -38678,7 +38721,14 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .describe("Whether this environment can discard an agent version.")
             .nullable(),
           candidate_state: zod
-            .enum(["validating", "ready", "failed", "superseded", "expired"])
+            .enum([
+              "validating",
+              "retry",
+              "ready",
+              "failed",
+              "superseded",
+              "expired",
+            ])
             .describe(
               "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
             ),
@@ -38714,6 +38764,7 @@ export const SimulateApiHarnessEnvironmentsDraftsValidateDraftsResponse =
     validation: zod.object({
       state: zod.enum([
         "validating",
+        "retry",
         "ready",
         "failed",
         "superseded",
@@ -40004,7 +40055,14 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
       candidate_state: zod
-        .enum(["validating", "ready", "failed", "superseded", "expired"])
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "superseded",
+          "expired",
+        ])
         .describe(
           "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
         ),
@@ -40090,7 +40148,14 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
       candidate_state: zod
-        .enum(["validating", "ready", "failed", "superseded", "expired"])
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "superseded",
+          "expired",
+        ])
         .describe(
           "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
         ),
@@ -40176,7 +40241,14 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .describe("Whether this environment can discard an agent version.")
         .nullable(),
       candidate_state: zod
-        .enum(["validating", "ready", "failed", "superseded", "expired"])
+        .enum([
+          "validating",
+          "retry",
+          "ready",
+          "failed",
+          "superseded",
+          "expired",
+        ])
         .describe(
           "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
         ),
@@ -40332,7 +40404,14 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
         candidate_state: zod
-          .enum(["validating", "ready", "failed", "superseded", "expired"])
+          .enum([
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "superseded",
+            "expired",
+          ])
           .describe(
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           ),
@@ -40420,7 +40499,14 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
         candidate_state: zod
-          .enum(["validating", "ready", "failed", "superseded", "expired"])
+          .enum([
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "superseded",
+            "expired",
+          ])
           .describe(
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           ),
@@ -40508,7 +40594,14 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
         candidate_state: zod
-          .enum(["validating", "ready", "failed", "superseded", "expired"])
+          .enum([
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "superseded",
+            "expired",
+          ])
           .describe(
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           ),
@@ -40656,7 +40749,14 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
         candidate_state: zod
-          .enum(["validating", "ready", "failed", "superseded", "expired"])
+          .enum([
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "superseded",
+            "expired",
+          ])
           .describe(
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           ),
@@ -40744,7 +40844,14 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
         candidate_state: zod
-          .enum(["validating", "ready", "failed", "superseded", "expired"])
+          .enum([
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "superseded",
+            "expired",
+          ])
           .describe(
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           ),
@@ -40832,7 +40939,14 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .describe("Whether this environment can discard an agent version.")
           .nullable(),
         candidate_state: zod
-          .enum(["validating", "ready", "failed", "superseded", "expired"])
+          .enum([
+            "validating",
+            "retry",
+            "ready",
+            "failed",
+            "superseded",
+            "expired",
+          ])
           .describe(
             "A version built by Validate: its validation while it waits to be saved, or why it was set aside; null for every other version.",
           ),

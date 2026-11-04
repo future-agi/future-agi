@@ -132577,6 +132577,7 @@
                     "type": "string",
                     "enum": [
                         "validating",
+                        "retry",
                         "ready",
                         "failed",
                         "superseded",
@@ -132668,6 +132669,7 @@
                     "type": "string",
                     "enum": [
                         "validating",
+                        "retry",
                         "ready",
                         "failed",
                         "superseded",
@@ -133329,6 +133331,7 @@
                     "type": "string",
                     "enum": [
                         "validating",
+                        "retry",
                         "ready",
                         "failed",
                         "superseded",

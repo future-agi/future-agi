@@ -18895,6 +18895,7 @@ export type HarnessDraftItemApiCandidateState =
 
 export const HarnessDraftItemApiCandidateState = {
   validating: "validating",
+  retry: "retry",
   ready: "ready",
   failed: "failed",
   superseded: "superseded",
@@ -18990,6 +18991,7 @@ export type HarnessDraftValidationApiState =
 
 export const HarnessDraftValidationApiState = {
   validating: "validating",
+  retry: "retry",
   ready: "ready",
   failed: "failed",
   superseded: "superseded",
@@ -19262,6 +19264,7 @@ export type HarnessVersionApiCandidateState =
 
 export const HarnessVersionApiCandidateState = {
   validating: "validating",
+  retry: "retry",
   ready: "ready",
   failed: "failed",
   superseded: "superseded",
