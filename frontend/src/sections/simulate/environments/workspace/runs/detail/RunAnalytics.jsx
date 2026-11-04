@@ -652,7 +652,8 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           rows={dashboard.use_case_risk}
           xKey="scenario"
           series={OUTCOMES.filter(
-            (outcome) => outcome.key !== "no_score" || summary.outcomes?.no_score,
+            (outcome) =>
+              outcome.key !== "no_score" || summary.outcomes?.no_score,
           )}
           horizontal
           height={330}

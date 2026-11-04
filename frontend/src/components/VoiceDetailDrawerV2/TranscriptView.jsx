@@ -372,7 +372,7 @@ const TurnRow = React.forwardRef(
           )}
 
           {turn.role === "sub_actor" && (
-            <Typography sx={{ fontSize: 10, color, fontWeight: 600 }}>
+            <Typography variant="s3" sx={{ color, fontWeight: 600 }}>
               {subActorLabel(turn.speakerName)}
             </Typography>
           )}
