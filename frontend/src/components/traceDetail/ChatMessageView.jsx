@@ -5,6 +5,7 @@ import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import Markdown from "react-markdown";
 import { ToolCallCard } from "src/components/tool-call/ToolCallCard";
+import { normalizeNativeGenAIMessage } from "src/components/traceDetailDrawer/DrawerRightRenderer/nativeGenAIMessages";
 
 // Role badge colors — keyed into palette.accent so each mode gets its own hue;
 // bg/border derive from the resolved accent via alpha for transparency
@@ -88,7 +89,11 @@ function parseMessages(input) {
 }
 
 /** Normalize a message to {role, content} format (handles Gemini parts) */
-function normalizeMessage(msg) {
+function normalizeMessage(message) {
+  const msg =
+    Array.isArray(message?.parts) && message.parts.some((p) => p?.type)
+      ? normalizeNativeGenAIMessage(message)
+      : message;
   if (!msg || typeof msg !== "object")
     return { role: "unknown", content: [String(msg)] };
   const role = msg.role || "unknown";
@@ -112,8 +117,6 @@ function normalizeMessage(msg) {
     const texts = msg.parts.map((p) => {
       if (typeof p === "string") return p;
       if (typeof p?.text === "string") return p.text;
-      // OTel GenAI (including native Anthropic) uses parts[].content.
-      if (p?.type === "text" && typeof p.content === "string") return p.content;
       if (p?.functionCall)
         return `**Tool call:** \`${p.functionCall.name}\`\n\`\`\`json\n${JSON.stringify(p.functionCall.args, null, 2)}\n\`\`\``;
       if (p?.function_call)
@@ -269,7 +272,18 @@ const ChatMessageView = ({
   const messages = useMemo(() => {
     if (attrInputMessages?.length > 0)
       return attrInputMessages.map(normalizeMessage);
-    return parseMessages(input);
+    const parsed = parseMessages(input);
+    if (parsed.length > 0) return parsed;
+    // Native output can select chat preview even when the input is a scalar.
+    if (input != null && input !== "" && !Array.isArray(input)) {
+      return [
+        {
+          role: "user",
+          content: [typeof input === "string" ? input : JSON.stringify(input)],
+        },
+      ];
+    }
+    return [];
   }, [input, attrInputMessages]);
 
   // Native GenAI output is an array, including multiple messages/tool responses.

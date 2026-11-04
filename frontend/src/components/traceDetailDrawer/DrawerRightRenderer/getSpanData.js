@@ -1,4 +1,5 @@
 import { groupFlattenedMessageAttrs } from "./flattenedMessageAttrs";
+import { parseNativeGenAIMessages } from "./nativeGenAIMessages";
 
 /**
  * Get span attributes with backward compatibility.
@@ -85,7 +86,16 @@ export function getLlmData(flatResponse = {}, type = "input") {
   const attributes = getSpanAttributes(flatResponse);
   const data = flatResponse[type] || null;
 
-  const message = extractMessages(attributes, type);
+  // A present hot column is authoritative, including empty/redacted values.
+  // Only fall back to unindexed native attributes when the column is absent.
+  const nativeMessages = parseNativeGenAIMessages(
+    flatResponse[type] !== undefined
+      ? flatResponse[type]
+      : attributes[`gen_ai.${type}.messages`],
+  );
+  const message = nativeMessages.length
+    ? nativeMessages
+    : extractMessages(attributes, type);
 
   return type === "input"
     ? { inputMessage: message, input: data }
