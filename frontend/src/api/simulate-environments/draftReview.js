@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   sampleDraftReview,
   withSampleDecisions,
-  withoutSampleFailure,
+  withSampleFailureDismissed,
 } from "./_fixtures/draftReview";
 import {
   DraftReviewSchema,
@@ -52,11 +52,12 @@ export function useDecideChanges(envId) {
   });
 }
 
-// (failed change id): stop showing it. The sample only; nothing to call yet.
+// (failed change id, dismissed): set it aside or bring it back. The sample only;
+// nothing to call yet.
 export function useDismissFailedChange(envId) {
   const queryClient = useQueryClient();
-  return (id) =>
+  return (id, dismissed = true) =>
     queryClient.setQueryData(draftReviewKey(envId), (review) =>
-      review ? withoutSampleFailure(review, id) : review,
+      review ? withSampleFailureDismissed(review, id, dismissed) : review,
     );
 }

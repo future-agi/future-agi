@@ -5,10 +5,12 @@ import {
   groupChanges,
   keptChanges,
   recheckedKeys,
+  rejectBlock,
+  restoreBlock,
+  reviewCounts,
   saveLine,
   sourceLine,
   sourceLink,
-  undoBlock,
 } from "../reviewView";
 
 const change = (overrides) => ({
@@ -134,22 +136,53 @@ describe("kept changes", () => {
   });
 });
 
-describe("undoBlock", () => {
-  it("holds Undo while a kept change needs this one", () => {
-    const actor = change({ id: "actor:boss", kind: "actor" });
-    const scenario = change({
-      id: "scenario:s",
-      kind: "scenario",
-      summary: "Change tests of s",
-      depends_on: ["actor:boss"],
-    });
-    expect(undoBlock(actor, [actor, scenario])).toEqual({
+describe("reject and restore order", () => {
+  const actor = change({
+    id: "actor:boss",
+    kind: "actor",
+    summary: "Add boss",
+  });
+  const scenario = change({
+    id: "scenario:s",
+    kind: "scenario",
+    summary: "Change tests of s",
+    depends_on: ["actor:boss"],
+  });
+
+  it("holds Reject while a kept change needs this one", () => {
+    expect(rejectBlock(actor, [actor, scenario])).toEqual({
       by: "Change tests of s",
     });
     expect(
-      undoBlock(actor, [actor, { ...scenario, decision: "rejected" }]),
+      rejectBlock(actor, [actor, { ...scenario, decision: "rejected" }]),
     ).toBeNull();
-    expect(undoBlock(scenario, [actor, scenario])).toBeNull();
+    expect(rejectBlock(scenario, [actor, scenario])).toBeNull();
+  });
+
+  it("holds Restore while something this one needs is rejected", () => {
+    const rejectedActor = { ...actor, decision: "rejected" };
+    const rejectedScenario = { ...scenario, decision: "rejected" };
+    expect(
+      restoreBlock(rejectedScenario, [rejectedActor, rejectedScenario]),
+    ).toEqual({ by: "Add boss" });
+    expect(
+      restoreBlock(rejectedActor, [rejectedActor, rejectedScenario]),
+    ).toBeNull();
+    expect(
+      restoreBlock(rejectedScenario, [actor, rejectedScenario]),
+    ).toBeNull();
+  });
+});
+
+describe("reviewCounts", () => {
+  it("counts each decision and what's still waiting", () => {
+    expect(
+      reviewCounts([
+        change({ decision: "accepted" }),
+        change({ decision: "rejected" }),
+        change(),
+      ]),
+    ).toEqual({ total: 3, accepted: 1, rejected: 1, undecided: 1 });
   });
 });
 

@@ -258,8 +258,10 @@ export const withSampleDecisions = (review, decisions) =>
     review.failed,
   );
 
-export const withoutSampleFailure = (review, id) =>
+export const withSampleFailureDismissed = (review, id, dismissed) =>
   reviewOf(
     review.changes,
-    review.failed.filter((one) => one.id !== id),
+    review.failed.map((one) =>
+      one.id === id ? { ...one, dismissed: dismissed || undefined } : one,
+    ),
   );

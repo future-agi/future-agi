@@ -79,7 +79,7 @@ const KEPT = {
   id: "rule:a",
   piece: "environment",
   kind: "rule",
-  decision: null,
+  decision: "accepted",
   revalidate: ["s1", "s2"],
 };
 const saveButton = () => screen.getByRole("button", { name: /^Save version/ });
@@ -129,10 +129,40 @@ describe("DraftBar", () => {
     expect(saveButton()).toHaveTextContent("Save version v3");
   });
 
-  it("offers no Save when only failed changes are left", () => {
+  it("sends Save to the review while a change is undecided", async () => {
+    const onReview = vi.fn();
+    state.review = { changes: [{ ...KEPT, decision: null }], failed: [] };
+    render(<DraftBar env={ENV} onReview={onReview} />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Review and save" }),
+    );
+    expect(onReview).toHaveBeenCalled();
+    expect(saveMutate).not.toHaveBeenCalled();
+  });
+
+  it("keeps the way back to a review where every change is rejected", () => {
     state.review = {
       changes: [{ ...KEPT, decision: "rejected" }],
-      failed: [{ id: "f" }],
+      failed: [],
+    };
+    render(<DraftBar env={ENV} />);
+    expect(
+      screen.getByRole("button", { name: /1 rejected edit/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Save version/ })).toBeNull();
+  });
+
+  it("doesn't save the real draft from a sample review", async () => {
+    state.review = { is_sample: true, changes: [KEPT], failed: [] };
+    render(<DraftBar env={ENV} />);
+    await userEvent.click(saveButton());
+    expect(saveMutate).not.toHaveBeenCalled();
+  });
+
+  it("offers no Save when only failed changes are left", () => {
+    state.review = {
+      changes: [],
+      failed: [{ id: "f" }, { id: "gone", dismissed: true }],
     };
     render(<DraftBar env={ENV} />);
     expect(

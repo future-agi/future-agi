@@ -9,10 +9,16 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { REVIEW_COPY as COPY } from "../workspace.constants";
-import { diffLines, sourceLine, sourceLink, undoBlock } from "./reviewView";
+import ChangeDecision from "./ChangeDecision";
+import {
+  diffLines,
+  rejectBlock,
+  restoreBlock,
+  sourceLine,
+  sourceLink,
+} from "./reviewView";
 
 const DIFF_LINES_SHOWN = 12;
 // A long file name gives way before the row's title does.
@@ -113,13 +119,15 @@ export default function ChangeRow({
   change,
   changes,
   canEdit,
-  onUndo,
+  onDecide,
   onOpen,
 }) {
   const [expanded, setExpanded] = useState(false);
   const lines = diffLines(change);
   const source = change.sources?.[0];
-  const block = undoBlock(change, changes);
+  const heldFromReject = rejectBlock(change, changes);
+  const heldFromRestore = restoreBlock(change, changes);
+  const rejected = change.decision === "rejected";
   const link = sourceLink(source);
   return (
     <Box
@@ -152,7 +160,17 @@ export default function ChangeRow({
         </IconButton>
         <Box flex={1} minWidth={0}>
           <OverflowTooltip title={change.summary}>
-            <Typography noWrap sx={{ typography: "s1" }}>
+            <Typography
+              noWrap
+              sx={{
+                typography: "s1",
+                // Rejected: still listed until the save, so it can come back.
+                ...(rejected && {
+                  color: "text.tertiary",
+                  textDecoration: "line-through",
+                }),
+              }}
+            >
               {change.summary}
             </Typography>
           </OverflowTooltip>
@@ -186,35 +204,16 @@ export default function ChangeRow({
           </OverflowTooltip>
         </Button>
         {canEdit && (
-          <CustomTooltip
-            show={Boolean(block)}
-            size="small"
-            arrow
-            title={block ? COPY.undoBlocked(block.by) : ""}
-          >
-            <span>
-              {/* Held, not disabled: a disabled button can't take focus, and
-                  the reason it's held would be out of reach by keyboard. */}
-              <Button
-                size="small"
-                color="inherit"
-                data-review-focus
-                className={block ? "Mui-disabled" : undefined}
-                aria-disabled={block ? true : undefined}
-                aria-label={
-                  block
-                    ? `${COPY.undo}. ${COPY.undoBlocked(block.by)}`
-                    : undefined
-                }
-                startIcon={
-                  <Iconify icon="solar:undo-left-round-linear" width={14} />
-                }
-                onClick={block ? undefined : onUndo}
-              >
-                {COPY.undo}
-              </Button>
-            </span>
-          </CustomTooltip>
+          <ChangeDecision
+            decision={change.decision}
+            rejectReason={
+              heldFromReject ? COPY.rejectBlocked(heldFromReject.by) : null
+            }
+            restoreReason={
+              heldFromRestore ? COPY.restoreBlocked(heldFromRestore.by) : null
+            }
+            onDecide={onDecide}
+          />
         )}
       </Stack>
       <Collapse in={expanded} unmountOnExit>
@@ -239,7 +238,8 @@ ChangeRow.propTypes = {
   // Every change in the review, to see which kept one needs this.
   changes: PropTypes.arrayOf(PropTypes.object).isRequired,
   canEdit: PropTypes.bool,
-  onUndo: PropTypes.func,
+  // (decision or null): decide this change, or clear its decision.
+  onDecide: PropTypes.func,
   // (source link): go to where the change came from.
   onOpen: PropTypes.func,
 };
