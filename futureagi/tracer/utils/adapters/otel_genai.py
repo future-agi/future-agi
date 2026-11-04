@@ -37,7 +37,6 @@ _OPERATION_KIND_MAP = {
     "embeddings": "EMBEDDING",
     "rerank": "RERANKER",
     "execute_tool": "TOOL",
-    "invoke_agent": "AGENT",
 }
 
 # gen_ai.system values → normalized provider name
@@ -186,14 +185,14 @@ class OtelGenAIAdapter(BaseTraceAdapter):
             if has_output
             else _extract_messages(attributes, "gen_ai.output.messages", _COMPLETION_RE)
         )
-        if not has_input:
+        native_input = attributes.get("gen_ai.input.messages")
+        if not has_input and (
+            "gen_ai.input.messages" not in attributes
+            or isinstance(parse_json_attr(native_input), list)
+        ):
             instructions = _content_parts(attributes.get("gen_ai.system_instructions"))
             if instructions:
                 input_messages.insert(0, {"role": "system", "content": instructions})
-
-        conversation = attributes.get("gen_ai.conversation.id")
-        if isinstance(conversation, str) and conversation:
-            attributes.setdefault(SpanAttributes.SESSION_ID, conversation)
 
         # --- Determine span kind ---
         span_kind = next(
@@ -240,15 +239,15 @@ class OtelGenAIAdapter(BaseTraceAdapter):
                 (
                     "output",
                     has_output,
-                    first_not_none(
-                        attributes.get("gen_ai.tool.call.result"),
+                    attributes.get(
+                        "gen_ai.tool.call.result",
                         attributes.get("anthropic.tool_result.content"),
                     ),
                 ),
             ):
                 if not present and value is not None:
                     # Keep JSON scalars (notably false and zero) decodable too.
-                    if isinstance(value, (bool, int, float)):
+                    if isinstance(value, bool | int | float):
                         value = json.dumps(value)
                     set_io_value(attributes, key, value)
 

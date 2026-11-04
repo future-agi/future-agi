@@ -36,8 +36,7 @@ import (
 // futureagi/tracer/utils/trace_ingestion.py `_parse_otel_request` reads it).
 // Django reads these literal keys directly — NOT via AttributeRegistry
 // aliasing (that path only covers span_kind/model/provider/tokens) — so the
-// collector uses these literals, with gen_ai.conversation.id as a fallback
-// only when session.id is absent.
+// collector reads these literals after version-qualified normalization.
 const (
 	attrUserID       = "user.id"
 	attrUserIDType   = "user.id.type"
@@ -162,7 +161,6 @@ var spanKindSynonyms = map[string]string{
 	"text_completion":  "llm",
 	"embeddings":       "embedding",
 	"execute_tool":     "tool",
-	"invoke_agent":     "agent",
 	"invoke":           "chain",
 }
 
@@ -590,9 +588,6 @@ type spanIdentity struct {
 //	    presence (comma-ok), NOT truthiness. No project_type gate (Django stamps
 //	    the session for any project type; only end_user is observe-gated).
 //
-// A non-empty string gen_ai.conversation.id supplies the session name only
-// when session.id is absent, matching native GenAI normalization in Python.
-//
 // The user.id / session.id values are coerced with AsString() so a numeric id
 // matches Python's f-string str() (and never loses precision via the float64
 // attrs_number tier). user.id.type is normalized + sentinel-mapped exactly like
@@ -629,14 +624,7 @@ func newSpanIdentity(attrs pcommon.Map, projectID, orgID, projectType string) sp
 
 	// ── session half (independent gate; no project_type requirement) ────────
 	if pid, ok := canonicalUUID(projectID); ok {
-		v, present := attrs.Get(attrSessionID)
-		if !present {
-			// Native GenAI conversation IDs are non-empty strings. An explicit
-			// session.id, even empty, keeps precedence over this fallback.
-			v, present = attrs.Get("gen_ai.conversation.id")
-			present = present && v.Type() == pcommon.ValueTypeStr && v.Str() != ""
-		}
-		if present {
+		if v, present := attrs.Get(attrSessionID); present {
 			name := v.AsString()
 			id.hasSession = true
 			id.sessionID = detid.TraceSessionID(pid, name).String()

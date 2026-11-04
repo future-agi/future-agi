@@ -32,6 +32,20 @@
       "session_fallback": "gen_ai.conversation.id",
       "summary_operations": [],
       "evidence": "google-gemini/gemini-cli 6814e00d6b148c3a1d57244d5d7040f7c541009d: trace.ts TRACER_NAME=gemini-cli/TRACER_VERSION=v1. Scope version is the schema version, NOT a released CLI support claim."
+    },
+    {
+      "id": "anthropic-csharp-native-12.56-13.3",
+      "scope_name": "com.anthropic.sdk.csharp",
+      "scope_versions": [
+        "12.56.0",
+        "13.3.0"
+      ],
+      "operations": {
+        "invoke_agent": "agent"
+      },
+      "session_fallback": "gen_ai.conversation.id",
+      "summary_operations": [],
+      "evidence": "Published Anthropic 12.56.0 and 13.3.0 OTLP captures in tracer/tests/fixtures/anthropic_csharp: tool_runner is orchestration; each messages.create owns its usage. Other versions are not qualified."
     }
   ],
   "usage_prefixes": [

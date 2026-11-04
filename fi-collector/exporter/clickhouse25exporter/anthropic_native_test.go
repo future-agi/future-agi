@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/detid"
+	"github.com/future-agi/future-agi/fi-collector/pkg/normalization"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
@@ -41,6 +42,8 @@ func TestAnthropicNativeCaptures(t *testing.T) {
 		for _, scenario := range []string{"content", "binary-content", "truncation", "concurrent", "tool-content", "tool-metadata"} {
 			t.Run(version+"/"+scenario, func(t *testing.T) {
 				traces := loadAnthropicFixture(t, version, scenario)
+				// The shared qualifier prepares once; conversion must be idempotent.
+				normalization.Prepare(traces)
 				before, _ := (&ptrace.ProtoMarshaler{}).MarshalTraces(traces)
 				rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 				if err != nil {
@@ -201,6 +204,8 @@ func TestNativeConversationFallback(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			traces := contentSpan(func(attrs pcommon.Map) { _ = attrs.FromRaw(tc.attrs) })
+			traces.ResourceSpans().At(0).ScopeSpans().At(0).Scope().SetName("com.anthropic.sdk.csharp")
+			traces.ResourceSpans().At(0).ScopeSpans().At(0).Scope().SetVersion("13.3.0")
 			traces.ResourceSpans().At(0).Resource().Attributes().PutStr("fi.project_id", orProjectID)
 			rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 			if err != nil {

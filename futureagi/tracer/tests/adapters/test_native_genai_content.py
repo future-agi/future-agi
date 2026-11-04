@@ -14,6 +14,7 @@ def convert(attributes, monkeypatch):
     monkeypatch.setattr("tracer.utils.otel.calculate_cost_from_tokens", lambda **_: 0)
     monkeypatch.setattr("tracer.utils.otel.calculate_cost", lambda **_: 0)
     span = {
+        "scope": {"name": "com.anthropic.sdk.csharp", "version": "13.3.0"},
         "attributes": deepcopy(attributes),
         "name": "native contract",
         "project_name": "native-contract",
@@ -221,7 +222,7 @@ def test_legacy_indexed_messages_still_work(monkeypatch):
         ("raw.input", "raw.output"),
     ],
 )
-@pytest.mark.parametrize("value", ["explicit", "", "[]"])
+@pytest.mark.parametrize("value", ["explicit", "", "[]", None, False, 0])
 @pytest.mark.parametrize("operation", ["chat", "execute_tool"])
 def test_explicit_legacy_io_wins_over_native_content(
     input_key, output_key, value, operation, monkeypatch
@@ -248,7 +249,7 @@ def test_explicit_legacy_io_wins_over_native_content(
         }
     )
     obs = convert(attrs, monkeypatch)["observation_span"]
-    expected = {"explicit": "explicit", "": None, "[]": []}[value]
+    expected = None if value == "" else [] if value == "[]" else value
     assert obs["input"] == expected and obs["output"] == expected
 
 

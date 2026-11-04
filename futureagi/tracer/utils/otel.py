@@ -14,6 +14,7 @@ from litellm import cost_per_token, model_cost
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
+from tracer.utils.content_attributes import content_attribute
 from tracer.utils.normalization import (
     CONTRACT,
     normalize_span,
@@ -845,27 +846,8 @@ def convert_otel_span_to_observation_span(
             or attributes.get(SpanAttributes.OUTPUT_VALUE, "")
         )
 
-        # Process input value
-        input_val = attributes.get("fi.llm.input", None) or attributes.get(
-            SpanAttributes.INPUT_VALUE, None
-        )
-        if input_val in [None, "", "[]", []]:
-            if attributes.get(SpanAttributes.RAW_INPUT) is not None:
-                input_val = attributes.get(SpanAttributes.RAW_INPUT, None)
-        if input_val in [None, "", "[]", []]:
-            input_val = attributes.get("gen_ai.input.messages")
-        input_val = decoder.parse_nested_json(input_val) if input_val else None
-
-        # Process output value
-        output_val = attributes.get("fi.llm.output", None) or attributes.get(
-            SpanAttributes.OUTPUT_VALUE, None
-        )
-        if output_val in [None, "", "[]", []]:
-            if attributes.get(SpanAttributes.RAW_OUTPUT) is not None:
-                output_val = attributes.get(SpanAttributes.RAW_OUTPUT, None)
-        if output_val in [None, "", "[]", []]:
-            output_val = attributes.get("gen_ai.output.messages")
-        output_val = decoder.parse_nested_json(output_val) if output_val else None
+        input_val = decoder.parse_nested_json(content_attribute(attributes, "input"))
+        output_val = decoder.parse_nested_json(content_attribute(attributes, "output"))
 
         end_user = None
         if attributes.get(SpanAttributes.USER_ID):
@@ -1520,30 +1502,8 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
             f"Project not found for version data: project_name={project_name}, project_type={project_type}"
         )
 
-    # Process Input/Output
-    input_val = attributes.get("fi.llm.input") or attributes.get(
-        SpanAttributes.INPUT_VALUE
-    )
-    if (
-        input_val in [None, "", "[]", []]
-        and attributes.get(SpanAttributes.RAW_INPUT) is not None
-    ):
-        input_val = attributes.get(SpanAttributes.RAW_INPUT)
-    if input_val in [None, "", "[]", []]:
-        input_val = attributes.get("gen_ai.input.messages")
-    input_val = DECODER.parse_nested_json(input_val) if input_val else None
-
-    output_val = attributes.get("fi.llm.output") or attributes.get(
-        SpanAttributes.OUTPUT_VALUE
-    )
-    if (
-        output_val in [None, "", "[]", []]
-        and attributes.get(SpanAttributes.RAW_OUTPUT) is not None
-    ):
-        output_val = attributes.get(SpanAttributes.RAW_OUTPUT)
-    if output_val in [None, "", "[]", []]:
-        output_val = attributes.get("gen_ai.output.messages")
-    output_val = DECODER.parse_nested_json(output_val) if output_val else None
+    input_val = DECODER.parse_nested_json(content_attribute(attributes, "input"))
+    output_val = DECODER.parse_nested_json(content_attribute(attributes, "output"))
 
     # Prepare End User data
     end_user = None

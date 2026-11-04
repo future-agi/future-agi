@@ -61,7 +61,7 @@ def normalize_attributes(
                 result["fi.source.operation"] = operation
         session = result.get(profile["session_fallback"])
         if (
-            not result.get("session.id")
+            "session.id" not in result
             and isinstance(session, str)
             and 0 < len(session.encode("utf-8")) <= 4096
         ):
