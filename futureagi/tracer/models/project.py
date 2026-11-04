@@ -75,7 +75,7 @@ class Project(BaseModel):
     metadata = models.JSONField(null=True, blank=True)
     # Server-owned fence for materialization racing source deletion.
     analysis_source_generation = models.PositiveBigIntegerField(
-        default=0, editable=False
+        default=0, db_default=0, editable=False
     )
     config = models.JSONField(default=list, null=True, blank=True)
     session_config = models.JSONField(default=list, null=True, blank=True)
