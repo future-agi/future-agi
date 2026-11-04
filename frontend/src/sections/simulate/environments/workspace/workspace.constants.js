@@ -501,6 +501,74 @@ export const RUN_DIALOG_COPY = {
   starting: "Starting…",
 };
 
+// The review of unsaved changes, before they become a version.
+const SAVE_KIND = {
+  spec: "Environment spec edit",
+  environment: "Environment edit",
+  scenarios: "Scenario edit",
+};
+const SAVE_TARGET = { environment: "environment", suite: "scenarios" };
+const scenarioWord = (n) => `${n} scenario${n === 1 ? "" : "s"}`;
+export const REVIEW_COPY = {
+  title: "Review changes",
+  subtitle: (n, label) =>
+    `${n} unsaved edit${n === 1 ? "" : "s"} since ${label ? `environment ${label}` : "the saved version"}. Keep or undo each one, then save. Runs use ${label || "the saved version"} until they're saved.`,
+  empty: "Nothing waiting. Every edit is saved.",
+  groupTitle: (label, n) => `${label} · ${n}`,
+  failed: "Couldn't apply",
+  failedMeta: ({ source_id: source, scenarios }) => {
+    let held = "no scenario depends on it";
+    if (scenarios?.length) {
+      const more =
+        scenarios.length > 3 ? ` and ${scenarios.length - 3} more` : "";
+      held = `holds up ${scenarios.slice(0, 3).join(", ")}${more}`;
+    }
+    return [
+      source && `From ${source}`,
+      held,
+      "the rest of the draft saves without it",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  },
+  fix: "Fix",
+  fixIn: (name) => `Fix in ${name}`,
+  dismiss: "Dismiss",
+  noSource: "Source not recorded",
+  fromChat: "From the builder chat",
+  fromFile: (name) => `From ${name}`,
+  byHand: "By hand",
+  fromUpdate: "From an agent update",
+  openInChat: "Open in chat",
+  openFile: (name) => `Open ${name}`,
+  open: "Open",
+  undo: "Undo",
+  undoBlocked: (title) => `"${title}" needs this. Undo that one first.`,
+  showChange: "Show the change",
+  hideChange: "Hide the change",
+  andMore: (n) => `and ${n} more`,
+  rechecked: (n) =>
+    `These change what's graded, so ${scenarioWord(n)} get${n === 1 ? "s" : ""} rechecked when you save`,
+  showWhich: "Show which",
+  hide: "Hide",
+  comparability: ({ rechecked, exact }) =>
+    `${scenarioWord(rechecked)} pair with past runs as Rechecked if their gates pass, outdated if not; ${exact} compare exactly. Agent, scenario set and evals don't move.`,
+  nameLabel: "Name this version (optional)",
+  namePlaceholder: "For example: Refund window from the 2026 policy",
+  discardAll: "Discard all",
+  discardTitle: (n) => `Discard ${n} edit${n === 1 ? "" : "s"}?`,
+  discardBody: (label) =>
+    `The world goes back to ${label ? `environment ${label}` : "the saved version"} as it was saved. This can't be undone.`,
+  discard: "Discard",
+  saveLine: ({ kind, piece, next, rechecked }) =>
+    `${SAVE_KIND[kind]} → ${SAVE_TARGET[piece]}${next ? ` ${next}` : ""} · ${scenarioWord(rechecked)} rechecked`,
+  save: (next) => (next ? `Save release ${next}` : "Save release"),
+  unsavedEdits: (n) => `${n} unsaved edit${n === 1 ? "" : "s"}`,
+  couldntApply: (n) => `${n} change${n === 1 ? "" : "s"} couldn't apply`,
+  sampleSaved: "Sample data: nothing was saved.",
+  sampleDiscarded: "Sample data: nothing was discarded.",
+};
+
 // Unsaved changes (drafts) to the environment and its scenarios, made live
 // together by one Save. Counts and names only.
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
