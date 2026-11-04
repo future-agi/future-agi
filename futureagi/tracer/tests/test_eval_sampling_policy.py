@@ -1210,6 +1210,9 @@ def test_live_row_watermark_includes_children_and_tombstones(row_type):
     assert "max(s.source_arrival) AS arrival" in sql
     assert "FROM dependency_source AS s GROUP BY row_id" in sql
     assert "s.id AS span_id, d.arrival AS arrival" in sql
+    if row_type == "sessions":
+        assert "FROM sampling_source" in sql
+        assert "sampling_source FINAL" not in sql
     assert "r.arrival >= %(sp_floor)s" in sql
 
 

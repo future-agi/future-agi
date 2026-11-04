@@ -4142,12 +4142,17 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             c for c in (resolved_session_clause, user_membership_clause) if c
         ]
         where_clause = f"WHERE {' AND '.join(outer_clauses)}" if outer_clauses else ""
+        # Sampling supplies an already deduplicated CTE, not a MergeTree table.
+        # ClickHouse rejects FINAL on that CTE; ordinary session reads keep FINAL.
+        table_source = (
+            self.TABLE if self.TABLE == "sampling_source" else f"{self.TABLE} FINAL"
+        )
         if not include_usage:
             return f"""FROM (
                 SELECT {", ".join(outer_select)}
                 FROM (
                     SELECT {", ".join(scan_cols)}
-                    FROM {self.TABLE} FINAL
+                    FROM {table_source}
                     {base_predicates}
                 ) AS rs
                 {remap_left_join("rs.trace_session_id", "trace_session_id_remap", "ts_remap")}
@@ -4170,7 +4175,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 SELECT {", ".join(outer_select)}
                 FROM (
                     SELECT {", ".join(scan_cols)}
-                    FROM {self.TABLE} FINAL
+                    FROM {table_source}
                     {base_predicates}
                 ) AS rs
                 LEFT JOIN ts_survivor_map AS ts_remap

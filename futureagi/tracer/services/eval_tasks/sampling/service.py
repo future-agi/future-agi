@@ -616,7 +616,10 @@ def _freeze_closed(
 def reconcile_policy(task: EvalTask) -> ReconcileResult:
     from tracer.models.observation_span import EvalEntryStatus, EvalLogger
     from tracer.selectors.eval_tasks.row_resolver import ResolvedRowSet
-    from tracer.services.eval_tasks.entries import materialize_pending
+    from tracer.services.eval_tasks.entries import (
+        materialize_pending,
+        soft_delete_eval_results,
+    )
     from tracer.services.eval_tasks.reconciler import (
         ReconcileResult,
         _continuous_requires_full_reclassification,
@@ -649,7 +652,7 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                 )
                 | ~Q(output_metadata___task_selection__sampling__policy_version=version)
             )
-            result = ReconcileResult(dropped=stale.update(deleted=True, deleted_at=now))
+            result = ReconcileResult(dropped=soft_delete_eval_results(stale))
         witnesses = TraceWitnessReader(task)
         live_windows = (
             prepare_live_members(
@@ -693,12 +696,10 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
             result.dropped += dropped
         with fence.write() as locked:
             current_evals = locked.evals.values_list("id", flat=True)
-            result.dropped += (
+            result.dropped += soft_delete_eval_results(
                 EvalLogger.objects.filter(
                     eval_task_id=str(locked.id), status=EvalEntryStatus.PENDING
-                )
-                .exclude(custom_eval_config_id__in=current_evals)
-                .update(deleted=True, deleted_at=now)
+                ).exclude(custom_eval_config_id__in=current_evals)
             )
         result.dropped += revalidate_pending(
             task, policy, version, cohort, sampling_clock(), page_write=fence.write
