@@ -990,26 +990,176 @@ def test_a_cycle_of_parents_and_a_removal_that_leaves_a_parent_dangling_are_refu
     assert "lead's parent is boss; change it first." in dangling.json()["message"]
 
 
-@pytest.mark.parametrize("failure", ["gone", "unreadable"])
-def test_a_version_whose_files_are_gone_or_unreadable_keeps_its_cast_unknown(
+@pytest.mark.parametrize("failure", ["gone", "unreadable", "invalid_actors_json"])
+def test_an_unknown_cast_on_either_side_shows_no_actor_diff_rather_than_all_added_or_removed(
     failure, user, workspace, storage
 ):
     from unittest.mock import patch
 
     from minio.error import S3Error
 
-    from simulate.services.harness_versioning import versions
+    from simulate.services.harness_versioning import hashing, versions
 
-    environment = _built(user, workspace, f"actors-files-{failure}")
-    version = environment.environment_version
+    environment = _built(user, workspace, f"actors-unknown-{failure}")
+    base = environment.environment_version
+    known = {"manager": "digest-1", "colleague": "digest-2"}
+    # As a version saved before actor digests were recorded.
+    base.documents = {
+        k: v for k, v in (base.documents or {}).items() if k != "actor_digests"
+    }
     raised = {
         "gone": {
             "side_effect": S3Error("NoSuchKey", "gone", "key", "request", "host", None)
         },
         "unreadable": {"return_value": b"not an archive"},
-    }[failure]
+    }.get(failure)
+    if failure == "invalid_actors_json":
+        base.documents["actor_digests"] = hashing.actor_digests(
+            {"actors.json": b"{not json"}
+        )
 
-    with patch.object(versions.archives, "get_archive", **raised):
-        documents = versions.with_actor_digests(version, {"contract": {}})
+    with patch.object(
+        versions.archives,
+        "get_archive",
+        **(raised or {"wraps": versions.archives.get_archive}),
+    ):
+        diff, summary = versions.environment_change(base, {}, {"actor_digests": known})
+    # And the other way: a cast that cannot be read now never reads as every actor removed.
+    later, later_summary = versions.environment_change(
+        type(base)(documents={"actor_digests": known}),
+        {},
+        {"actor_digests": hashing.actor_digests({"actors.json": b"{not json"})},
+    )
 
-    assert documents == {"contract": {}}
+    assert diff["actors"] is None and "actor" not in summary
+    assert later["actors"] is None and "actor" not in later_summary
+
+
+def test_a_replace_never_moves_an_actor_between_the_call_and_the_world(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-no-move")
+    colleague = {"id": "colleague", "name": "Jordan", "channel": "audio_mix"}
+    _add(auth_client, environment, colleague)
+    _add(auth_client, environment, {"id": "coworker", "name": "Sam"})
+    url = f"{BASE}/{environment.id}/actors/"
+
+    into_world = auth_client.put(
+        f"{url}colleague/",
+        {"actor": {"name": "Jordan", "side": "caller"}},
+        format="json",
+    )
+    onto_call = auth_client.put(
+        f"{url}coworker/",
+        {"actor": {"name": "Sam", "channel": "audio_mix"}},
+        format="json",
+    )
+
+    assert (into_world.status_code, into_world.json()["error"]) == (
+        400,
+        "actor_invalid",
+    )
+    assert into_world.json()["message"] == (
+        "colleague speaks on the call; remove it and add it again to change that"
+    )
+    assert (onto_call.status_code, onto_call.json()["error"]) == (400, "actor_invalid")
+    assert "coworker acts in the world" in onto_call.json()["message"]
+    cast = {one["id"]: one for one in auth_client.get(url).json()["actors"]}
+    assert "channel" in cast["colleague"] and "channel" not in cast["coworker"]
+
+
+def test_an_edit_landing_while_another_reads_the_draft_is_never_overwritten(
+    user, workspace, storage
+):
+    from unittest.mock import patch
+
+    from simulate.services import harness_actors
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    environment = _built(user, workspace, "actors-race")
+    harness_actors.write_actor_edit(
+        environment,
+        op="create",
+        actor_id="manager",
+        body=MANAGER,
+        user=user,
+        expected_revision=None,
+    )
+    real = harness_actors.drafts.edit_sides
+    raced = []
+
+    def edit_lands_meanwhile(env):
+        sides = real(env)
+        if not raced:
+            raced.append(True)
+            harness_actors.write_actor_edit(
+                env,
+                op="create",
+                actor_id="coworker",
+                body={"name": "Sam"},
+                user=user,
+                expected_revision=None,
+            )
+        return sides
+
+    with patch.object(
+        harness_actors.drafts, "edit_sides", side_effect=edit_lands_meanwhile
+    ):
+        with pytest.raises(HostedHarnessError) as refused:
+            harness_actors.write_actor_edit(
+                environment,
+                op="replace",
+                actor_id="manager",
+                body={**MANAGER, "goal": "Approve fast"},
+                user=user,
+                expected_revision=None,
+            )
+
+    assert refused.value.code == "draft_changed"
+    assert [one["id"] for one in harness_actors.read_actors(environment)["actors"]] == [
+        "manager",
+        "coworker",
+    ]
+
+
+def test_an_edit_stamps_only_the_fields_it_changed(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_versioning.drafts import edit_sides
+
+    chat = {"origin": "chat", "fields": {"name": "chat", "goal": "chat"}}
+    environment = record_tests._environment(user, workspace, "actors-stamped")
+    record_authoring(
+        environment,
+        _authoring(
+            contract=CRM_CONTRACT,
+            **{
+                "actors.json": json.dumps(
+                    {
+                        "actors": [
+                            {
+                                "id": "manager",
+                                "name": "Priya",
+                                "goal": "Old",
+                                "provenance": chat,
+                            }
+                        ]
+                    }
+                )
+            },
+        ),
+        origin="authoring",
+    )
+
+    edited = auth_client.put(
+        f"{BASE}/{environment.id}/actors/manager/",
+        {"actor": {"name": "Priya", "goal": "New", "provenance": {"origin": "client"}}},
+        format="json",
+    )
+
+    assert edited.status_code == 200, edited.content
+    [stored] = json.loads(edit_sides(environment)["environment"]["actors.json"])[
+        "actors"
+    ]
+    assert stored["provenance"]["origin"] == "editor"
+    assert stored["provenance"]["fields"] == {"name": "chat", "goal": "editor"}

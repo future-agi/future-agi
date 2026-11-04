@@ -483,7 +483,21 @@ def _edited(
     if index is None:
         raise _not_found(actor_id)
     if op == "replace":
-        actors[index] = _stamped({**body, "id": actor_id}, user)
+        after = _stamped({**body, "id": actor_id}, user, before=actors[index])
+        if _is_sub_actor(after) != _is_sub_actor(actors[index]):
+            # Scenarios include it under its own kind, so a move would leave them pointing at nobody.
+            raise HostedHarnessError(
+                "actor_invalid",
+                f"{actor_id} "
+                + (
+                    "speaks on the call"
+                    if _is_sub_actor(actors[index])
+                    else "acts in the world"
+                )
+                + "; remove it and add it again to change that",
+                status_code=400,
+            )
+        actors[index] = after
         return actors
     using = _scenarios_using(suite_documents(suite_files), actor_id)
     if using:
@@ -548,9 +562,10 @@ def write_actor_edit(
             "actor_id_mismatch", "an actor's id never changes", status_code=400
         )
     actor_id = given
+    # The draft is read before its files, so an edit landing in between fails the write's revision check.
+    draft = drafts.fresh_draft(environment, "environment")
     sides = drafts.edit_sides(environment)
     environment_files, suite_files = sides["environment"], sides["suite"]
-    draft = drafts.fresh_draft(environment, "environment")
     if expected_revision is not None and expected_revision != (
         draft.revision if draft is not None else 0
     ):
@@ -604,9 +619,20 @@ def write_actor_edit(
     return _cast_view(environment_files, suite_files, written.environment)
 
 
-def _stamped(actor: ActorRecord, user: User | None) -> ActorRecord:
-    """Who set the record: set here, never taken from a client."""
-    fields = {name: "editor" for name in actor if name not in ("id", "provenance")}
+def _stamped(
+    actor: ActorRecord, user: User | None, *, before: ActorRecord | None = None
+) -> ActorRecord:
+    """Who set the record and each field this edit changed: set here, never taken from a client."""
+    old = before or {}
+    skipped = {"id", "provenance", *(_SUB_ACTOR_CAST if _is_sub_actor(actor) else ())}
+    fields = {
+        **((old.get("provenance") or {}).get("fields") or {}),
+        **{
+            name: "editor"
+            for name, value in actor.items()
+            if name not in skipped and (before is None or old.get(name) != value)
+        },
+    }
     return {
         **actor,
         "provenance": {
