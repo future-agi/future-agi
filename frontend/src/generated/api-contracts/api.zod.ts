@@ -37952,7 +37952,7 @@ export const SimulateApiHarnessEnvironmentsCapabilityCasesResponse = zod.object(
         by: zod
           .array(zod.string().min(1))
           .describe(
-            "The rows that put the case in its bucket, or pair_failed (a validation failed the pairing, so runs are refused), not_proved_here or unknown_need.",
+            "The rows that put the case in its bucket, or pair_validating (the pairing is being checked, so runs are refused until it ends), pair_failed (a validation failed the pairing, so runs are refused), not_proved_here or unknown_need.",
           ),
       }),
     ),
