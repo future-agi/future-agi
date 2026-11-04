@@ -13,6 +13,11 @@ on:
         description: "Branch to deploy"
         required: false
         default: "dev"
+      repair_spa_routes:
+        description: "Install the guarded dev-only SPA route rewrite"
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   deploy:
@@ -72,6 +77,15 @@ jobs:
       - name: Sync dist/ to S3
         run: |
           aws s3 sync dist/ s3://${{ secrets.DEV_S3_BUCKET_NAME }}/ --delete
+
+      - name: Repair dev SPA routes
+        if: github.event_name == 'workflow_dispatch' && inputs.repair_spa_routes
+        env:
+          DEV_DISTRIBUTION_ID: ${{ secrets.DEV_CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          python ../scripts/deploy-dev-spa-router.py \
+            --distribution-id "$DEV_DISTRIBUTION_ID" \
+            --code ../deploy/dev-cdn/spa-router.js
 
       - name: Invalidate CloudFront cache
         run: |
