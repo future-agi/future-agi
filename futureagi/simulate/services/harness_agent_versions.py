@@ -1023,6 +1023,7 @@ def create_agent_version(
                 version.description,
                 source_kind,
                 source_facts,
+                payload.get("config"),
             )
             version.save(update_fields=["configuration_snapshot", "updated_at"])
             runtime.agent_version = version
@@ -2402,14 +2403,22 @@ def _own_snapshot_facts(
     description: str,
     source_kind: str,
     source: Mapping[str, Any] | None,
+    config: Mapping[str, Any] | None = None,
 ) -> None:
-    """The snapshot reads the definition: a version's own prompt and phone number are
-    what it stands for. Without a prompt of its own it keeps the definition's."""
+    """The snapshot reads the definition: a version's own prompt, phone number,
+    LiveKit agent name and who speaks first are what it stands for. Without one of
+    its own it keeps the definition's."""
     if description:
         snapshot["description"] = description
     phone_number = (source or {}).get("phone_number")
     if source_kind == HarnessAgentVersionRuntime.SourceKind.PHONE and phone_number:
         snapshot["contact_number"] = phone_number
+    agent_name = (source or {}).get("agent_name")
+    if source_kind == HarnessAgentVersionRuntime.SourceKind.LIVEKIT and agent_name:
+        snapshot["livekit_agent_name"] = agent_name
+    speaks_first = (config or {}).get("target_speaks_first")
+    if isinstance(speaks_first, bool):
+        snapshot["target_speaks_first"] = speaks_first
 
 
 def resnapshot_version(version_id: Any, definition_id: Any = None) -> None:
@@ -2429,7 +2438,13 @@ def resnapshot_version(version_id: Any, definition_id: Any = None) -> None:
         and row.trigger != Trigger.CREATION
     ):
         # A changed version keeps its own prompt and phone number, as when made.
-        _own_snapshot_facts(snapshot, fresh.description, row.source_kind, row.source)
+        _own_snapshot_facts(
+            snapshot,
+            fresh.description,
+            row.source_kind,
+            row.source,
+            (row.agent_payload or {}).get("config"),
+        )
     if snapshot != fresh.configuration_snapshot:
         AgentVersion._base_manager.filter(id=fresh.id).update(
             configuration_snapshot=snapshot
