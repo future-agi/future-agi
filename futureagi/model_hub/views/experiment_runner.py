@@ -1530,6 +1530,132 @@ class ExperimentRunner:
 
 
 # Standalone functions for Celery tasks
+def _emit_experiment_root_span(
+    *,
+    trace_id,
+    span_id,
+    start_ns,
+    end_ns,
+    row_context,
+    organization_id,
+    workspace_id,
+    error=None,
+):
+    """Emit the root (row-execution) span for an experiment row (issue #2665).
+
+    Best-effort: emission failure is logged and swallowed.
+    """
+    try:
+        from tracer.services.dataset_tracing import (
+            SPAN_KIND_CHAIN,
+            build_span,
+            emit_dataset_spans,
+            identity_attributes,
+        )
+
+        attributes = identity_attributes(
+            dataset_id=row_context.get("dataset_id"),
+            row_id=row_context.get("row_id"),
+            column_id=row_context.get("column_id"),
+            variant=row_context.get("variant"),
+            source=row_context.get("source"),
+        )
+        if error is not None:
+            attributes["error.message"] = str(error)
+
+        span = build_span(
+            name="experiment.run.row",
+            trace_id=trace_id,
+            span_id=span_id,
+            parent_span_id=None,
+            start_time=start_ns,
+            end_time=end_ns,
+            span_kind=SPAN_KIND_CHAIN,
+            attributes=attributes,
+            status_code="ERROR" if error is not None else "OK",
+        )
+
+        emit_dataset_spans(
+            [span],
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
+    except Exception:  # noqa: BLE001 - tracing is best-effort
+        logger.exception(
+            "experiment_root_span_emit_failed",
+            trace_id=trace_id,
+            span_id=span_id,
+        )
+
+
+def _emit_experiment_render_span(
+    *,
+    trace_id,
+    span_id,
+    parent_span_id,
+    start_ns,
+    end_ns,
+    template,
+    rendered,
+    row_context,
+    organization_id,
+    workspace_id,
+):
+    """Emit the template-render span for an experiment row (issue #2665).
+
+    Best-effort: emission failure is logged and swallowed.
+    """
+    try:
+        from tracer.services.dataset_tracing import (
+            ATTR_INPUT_VALUE,
+            ATTR_OPERATION,
+            ATTR_OUTPUT_VALUE,
+            SPAN_KIND_CHAIN,
+            build_span,
+            emit_dataset_spans,
+            identity_attributes,
+        )
+
+        attributes = {
+            ATTR_OPERATION: "render",
+            ATTR_INPUT_VALUE: template,
+            ATTR_OUTPUT_VALUE: rendered,
+        }
+        attributes.update(
+            identity_attributes(
+                dataset_id=row_context.get("dataset_id"),
+                row_id=row_context.get("row_id"),
+                column_id=row_context.get("column_id"),
+                variant=row_context.get("variant"),
+                source=row_context.get("source"),
+            )
+        )
+
+        span = build_span(
+            name="prompt.render",
+            trace_id=trace_id,
+            span_id=span_id,
+            parent_span_id=parent_span_id,
+            start_time=start_ns,
+            end_time=end_ns,
+            span_kind=SPAN_KIND_CHAIN,
+            attributes=attributes,
+            status_code="OK",
+        )
+
+        emit_dataset_spans(
+            [span],
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
+    except Exception:  # noqa: BLE001 - tracing is best-effort
+        logger.exception(
+            "experiment_render_span_emit_failed",
+            trace_id=trace_id,
+            span_id=span_id,
+        )
+
+
 def _process_row_impl(
     row_id: uuid.UUID,
     column_id: uuid.UUID,
@@ -1550,6 +1676,24 @@ def _process_row_impl(
         dataset = column.dataset
         experiment = ExperimentsTable.objects.get(id=experiment_id, deleted=False)
 
+        # Issue #2665: one trace per row execution, distinguishable by variant.
+        from tracer.services.dataset_tracing import (
+            new_span_id,
+            new_trace_id,
+            now_ns,
+        )
+
+        trace_id = new_trace_id()
+        row_span_id = new_span_id()
+        row_start_ns = now_ns()
+        row_context = {
+            "dataset_id": str(dataset_id),
+            "row_id": str(row_id),
+            "column_id": str(column_id),
+            "variant": str(column_id),  # experiment variant == result column
+            "source": "experiment",
+        }
+
         status = CellStatus.PASS.value
         unsupported_exception = False
         tools_config = []
@@ -1568,6 +1712,9 @@ def _process_row_impl(
             except Exception:
                 pass
 
+        render_span_id = new_span_id()
+        render_start_ns = now_ns()
+        template = messages
         try:
             messages = populate_placeholders(
                 messages, dataset_id, row_id, column_id, model_name=model,
@@ -1579,6 +1726,24 @@ def _process_row_impl(
         except ValueError as e:
             unsupported_exception = True
             raise e
+        finally:
+            render_end_ns = now_ns()
+            _emit_experiment_render_span(
+                trace_id=trace_id,
+                span_id=render_span_id,
+                parent_span_id=row_span_id,
+                start_ns=render_start_ns,
+                end_ns=render_end_ns,
+                template=template,
+                rendered=messages,
+                row_context=row_context,
+                organization_id=str(experiment.dataset.organization.id),
+                workspace_id=(
+                    str(experiment.dataset.workspace.id)
+                    if experiment.dataset.workspace
+                    else None
+                ),
+            )
 
         run_prompt = RunPrompt(
             model=model,
@@ -1601,7 +1766,11 @@ def _process_row_impl(
             ),
         )
 
-        response, value_info = run_prompt.litellm_response()
+        response, value_info = run_prompt.litellm_response(
+            trace_id=trace_id,
+            parent_span_id=row_span_id,
+            row_context=row_context,
+        )
         value_info["reason"] = value_info.get("data", {}).get("response")
 
     except Exception as e:
@@ -1626,6 +1795,22 @@ def _process_row_impl(
             close_old_connections()
             return
 
+        # Issue #2665: emit the root span so an errored row still leaves a trace.
+        _emit_experiment_root_span(
+            trace_id=trace_id,
+            span_id=row_span_id,
+            start_ns=row_start_ns,
+            end_ns=now_ns(),
+            row_context=row_context,
+            organization_id=str(experiment.dataset.organization.id),
+            workspace_id=(
+                str(experiment.dataset.workspace.id)
+                if experiment.dataset.workspace
+                else None
+            ),
+            error="row execution failed",
+        )
+
         # Save the cell with ERROR status before potentially re-raising
         Cell.objects.update_or_create(
             dataset=dataset,
@@ -1635,6 +1820,8 @@ def _process_row_impl(
                 "value_infos": json.dumps(value_info),
                 "value": str(response),
                 "status": status,
+                "trace_id": trace_id,
+                "span_id": row_span_id,
             },
         )
 
@@ -1653,6 +1840,22 @@ def _process_row_impl(
         close_old_connections()
         return
 
+    # Issue #2665: emit the root row-execution span on the success path.
+    _emit_experiment_root_span(
+        trace_id=trace_id,
+        span_id=row_span_id,
+        start_ns=row_start_ns,
+        end_ns=now_ns(),
+        row_context=row_context,
+        organization_id=str(experiment.dataset.organization.id),
+        workspace_id=(
+            str(experiment.dataset.workspace.id)
+            if experiment.dataset.workspace
+            else None
+        ),
+        error=None,
+    )
+
     Cell.objects.update_or_create(
         dataset=dataset,
         column=column,
@@ -1661,6 +1864,8 @@ def _process_row_impl(
             "value_infos": json.dumps(value_info),
             "value": str(response),
             "status": status,
+            "trace_id": trace_id,
+            "span_id": row_span_id,
         },
     )
 
