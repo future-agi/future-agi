@@ -8,6 +8,7 @@ from django.conf import settings
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -332,6 +333,10 @@ class SecretKeyAPIViewSet(ViewSet):
                 "masked_secret_key": mask_key(org_key.secret_key),
             }
             return self._gm.success_response(response)
+        except APIException:
+            # A refusal with its own status and code, such as an environment a coding
+            # agent key cannot be bound to.
+            raise
         except Exception:
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("UNABLE_TO_GENERATE_KEY"))

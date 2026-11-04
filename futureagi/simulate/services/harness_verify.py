@@ -10,6 +10,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from simulate.authentication import CodingAgentNeedsSuiteVersion
 from simulate.models import HarnessSuiteMember, HostedHarnessJob, TestExecution
 from simulate.selectors.held_back import (
     HELD_BACK_METADATA_KEY,
@@ -67,6 +68,25 @@ def ensure_held_back(environment: HostedHarnessJob) -> HeldBack | None:
             locked.save(update_fields=["payload", "updated_at"])
     environment.payload = locked.payload
     return chosen
+
+
+def require_held_back(environment: HostedHarnessJob) -> HeldBack:
+    """``ensure_held_back`` for a coding agent's call. Without a suite version nothing
+    can be hidden, so the call is refused rather than served every case."""
+    chosen = ensure_held_back(environment)
+    if chosen is None:
+        raise no_held_back()
+    return chosen
+
+
+def no_held_back() -> HostedHarnessError:
+    """The refusal of a coding agent's call when nothing can be held back from it; the
+    same code its key gets at authentication."""
+    return HostedHarnessError(
+        CodingAgentNeedsSuiteVersion.default_code,
+        str(CodingAgentNeedsSuiteVersion.default_detail),
+        status_code=CodingAgentNeedsSuiteVersion.status_code,
+    )
 
 
 def start_verify(

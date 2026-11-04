@@ -489,7 +489,22 @@ class TestRunsACodingAgentAsksFor:
             HTTP_IDEMPOTENCY_KEY=idempotency_key,
         )
 
-    def test_a_held_back_case_is_refused_without_naming_it(
+    def test_a_held_back_case_reads_as_an_unknown_one(
+        self, api_client, environment, keys
+    ):
+        hidden = ensure_held_back(environment).scenario_keys[0]
+
+        held = self._run(api_client, keys.coder, environment, [hidden], "held")
+        unknown = self._run(api_client, keys.coder, environment, ["no-such"], "none")
+
+        assert held.status_code == unknown.status_code == 400, held.content
+        assert held.json()["error"] == unknown.json()["error"]
+        assert held.json()["error"] == "scenario_selection_unknown"
+        assert held.json()["message"].replace(hidden, "KEY") == unknown.json()[
+            "message"
+        ].replace("no-such", "KEY")
+
+    def test_a_mixed_selection_names_only_what_it_sent(
         self, api_client, environment, keys
     ):
         chosen = ensure_held_back(environment)
@@ -499,8 +514,9 @@ class TestRunsACodingAgentAsksFor:
         )
 
         assert response.status_code == 400, response.content
-        assert response.json()["error"] == "scenario_held_back"
-        assert chosen.scenario_keys[0] not in response.content.decode()
+        assert response.json()["error"] == "scenario_selection_unknown"
+        shown = set(_suite_keys(environment)) - set(chosen.scenario_keys)
+        assert not any(key in response.json()["message"] for key in shown)
 
     def test_the_first_run_chooses_the_set_before_it_checks(
         self, api_client, environment, keys
@@ -557,8 +573,58 @@ class TestRunsACodingAgentAsksFor:
             idempotency_key="fix-or-chat",
         )
 
-        assert refused.value.code == "scenario_held_back"
+        assert refused.value.code == "scenario_selection_unknown"
         assert created and allowed.verify_of_id is None
+
+    def test_the_service_refuses_a_coding_agent_without_a_held_back_set(
+        self, environment
+    ):
+        assert held_back(environment) is None
+
+        with pytest.raises(HostedHarnessError) as refused:
+            create_selected_harness_run(
+                environment,
+                scenario_keys=_suite_keys(environment),
+                trials=1,
+                idempotency_key="coder",
+                coding_agent_key_id=str(uuid4()),
+            )
+
+        assert refused.value.code == "coding_agent_needs_suite_version"
+        assert refused.value.status_code == 409
+
+
+class TestWithoutASuiteVersion:
+    """Nothing can be held back without a suite version, so a coding agent is refused
+    rather than shown every case."""
+
+    def test_require_held_back_refuses(self, user, workspace, storage, settings):
+        from simulate.services.harness_verify import require_held_back
+        from simulate.tests.test_harness_versioning_backfill import _legacy
+
+        settings.HARNESS_VERSIONING_ENABLED = False
+        legacy = _legacy(user, workspace, "no-suite", storage)
+        assert legacy.suite_version_id is None
+
+        with pytest.raises(HostedHarnessError) as refused:
+            require_held_back(legacy)
+
+        assert refused.value.code == "coding_agent_needs_suite_version"
+        assert refused.value.status_code == 409
+
+    def test_the_reads_refuse_rather_than_hide_nothing(self, environment, keys):
+        from simulate.views.harness_environment import _held_back_from
+
+        coder = SimpleNamespace(org_api_key=keys.coder)
+        person = SimpleNamespace(org_api_key=keys.user)
+        with patch(
+            "simulate.services.harness_verify.ensure_held_back", return_value=None
+        ):
+            with pytest.raises(HostedHarnessError) as refused:
+                _held_back_from(coder, environment)
+            assert _held_back_from(person, environment) == ()
+
+        assert refused.value.code == "coding_agent_needs_suite_version"
 
 
 class TestWhatACodingAgentReads:

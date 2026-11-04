@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, NamedTuple
 from uuid import UUID
 
 from django.conf import settings
+from rest_framework import status
 from rest_framework.authentication import BaseAuthentication, get_authorization_header
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import APIException, NotFound, PermissionDenied
 
 if TYPE_CHECKING:
     from accounts.models import OrgApiKey
@@ -302,11 +303,38 @@ CODING_AGENT_ROUTES: dict[tuple[str, str], _Target | None] = {
 }
 
 
+class CodingAgentNeedsSuiteVersion(APIException):
+    """No case can be held back from a coding agent whose environment has no suite
+    version, or on an install with versioning off; its key is refused, so it is never
+    served every case."""
+
+    status_code = status.HTTP_409_CONFLICT
+    default_code = "coding_agent_needs_suite_version"
+    default_detail = (
+        "A coding agent key needs an environment with a scenario version and"
+        " versioning on, to hold cases back from it"
+    )
+
+
+def _can_hold_back(environment_id: UUID) -> bool:
+    """Whether the environment has a suite version to hold cases back from."""
+    from simulate.models import HostedHarnessJob
+    from simulate.services.harness_versioning.versions import versioning_enabled
+
+    return (
+        versioning_enabled()
+        and HostedHarnessJob.no_workspace_objects.filter(
+            id=environment_id, suite_version__isnull=False
+        ).exists()
+    )
+
+
 def refuse_coding_agent_request(request, org_api_key: OrgApiKey) -> None:
     """Raise unless ``request`` is a call in ``CODING_AGENT_ROUTES`` that this coding
     agent key may make.
 
-    Fails closed: a request with no resolved route is refused. Another environment
+    Fails closed: a request with no resolved route is refused, and so is every call
+    while the key's environment has nothing to hold back (409). Another environment
     is a 403. A run, execution or call id is a 404 unless it belongs to a user run
     of the key's environment that this key started, as ``coding_agent_key_id`` in
     the run's metadata records. A person's runs of the same environment can
@@ -321,6 +349,8 @@ def refuse_coding_agent_request(request, org_api_key: OrgApiKey) -> None:
             "A coding agent key cannot make this call",
             code="coding_agent_route_refused",
         )
+    if not _can_hold_back(environment_id):
+        raise CodingAgentNeedsSuiteVersion()
     target = CODING_AGENT_ROUTES[route]
     if target is None:
         return
@@ -353,11 +383,12 @@ def refuse_coding_agent_request(request, org_api_key: OrgApiKey) -> None:
 
 def bindable_environment(request, environment_id: UUID) -> HostedHarnessJob | None:
     """The environment, if the caller of ``request`` can see it, that a coding agent
-    key they mint may be bound to; same tenancy as the environment routes."""
+    key they mint may be bound to; same tenancy as the environment routes. One it
+    could hold nothing back on is refused (409), as every call of the key would be."""
     from simulate.models import HostedHarnessJob
     from simulate.services.harness_provider import request_organization, scope_jobs
 
-    return scope_jobs(
+    environment = scope_jobs(
         HostedHarnessJob.no_workspace_objects.filter(
             id=environment_id,
             organization=request_organization(request),
@@ -365,3 +396,6 @@ def bindable_environment(request, environment_id: UUID) -> HostedHarnessJob | No
         ),
         request,
     ).first()
+    if environment is not None and not _can_hold_back(environment.id):
+        raise CodingAgentNeedsSuiteVersion()
+    return environment

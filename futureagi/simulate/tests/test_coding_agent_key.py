@@ -25,6 +25,7 @@ from simulate.models import (
     AgentDefinition,
     AgentFixRun,
     CallExecution,
+    HarnessSuiteVersion,
     HostedHarnessJob,
     RunTest,
     Scenarios,
@@ -85,14 +86,38 @@ def _run(environment, key=None, **fields):
     return SimpleNamespace(job=job, execution=execution, call=call)
 
 
+def _versioned(environment):
+    """``environment`` with a suite version, which a coding agent key needs."""
+    suite = HarnessSuiteVersion.no_workspace_objects.create(
+        job=environment,
+        organization_id=environment.organization_id,
+        workspace_id=environment.workspace_id,
+        version_number=1,
+        status="active",
+        origin="manual",
+        hash="sha256:" + uuid.uuid4().hex * 2,
+        archive_object_key="harness-suites/x.tar.gz",
+        archive_sha256="",
+        archive_size=0,
+    )
+    environment.suite_version = suite
+    environment.save(update_fields=["suite_version", "updated_at"])
+    return environment
+
+
 @pytest.fixture
 def environment(db, workspace):
-    return _job(workspace)
+    return _versioned(_job(workspace))
 
 
 @pytest.fixture
 def other_environment(db, workspace):
-    return _job(workspace)
+    return _versioned(_job(workspace))
+
+
+@pytest.fixture(autouse=True)
+def versioning_on(settings):
+    settings.HARNESS_VERSIONING_ENABLED = True
 
 
 @pytest.fixture
@@ -239,6 +264,29 @@ class TestMinting:
             assert response.status_code == status.HTTP_404_NOT_FOUND
         assert not OrgApiKey.no_workspace_objects.filter(name="fixer").exists()
 
+    @pytest.mark.parametrize("why", ["no_suite_version", "versioning_off"])
+    def test_an_environment_with_nothing_to_hold_back_is_refused(
+        self, auth_client, workspace, settings, why
+    ):
+        environment = _job(workspace)
+        if why == "versioning_off":
+            _versioned(environment)
+            settings.HARNESS_VERSIONING_ENABLED = False
+
+        response = auth_client.post(
+            MINT_URL,
+            {
+                "key_name": "fixer",
+                "type": "coding_agent",
+                "simulation_environment_id": str(environment.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_409_CONFLICT, response.content
+        assert _code(response) == "coding_agent_needs_suite_version"
+        assert not OrgApiKey.no_workspace_objects.filter(name="fixer").exists()
+
     def test_a_plain_mint_still_makes_a_user_key(self, auth_client):
         response = auth_client.post(MINT_URL, {"key_name": "person"}, format="json")
 
@@ -312,6 +360,28 @@ class TestRoutes:
             f"/simulate/test-executions/{run.execution.id}/",
         ):
             assert _get(api_client, coding_key, path).status_code == 200, path
+
+    @pytest.mark.parametrize("why", ["no_suite_version", "versioning_off"])
+    def test_every_call_is_refused_when_nothing_can_be_held_back(
+        self, api_client, coding_key, user_key, environment, run, settings, why
+    ):
+        if why == "versioning_off":
+            settings.HARNESS_VERSIONING_ENABLED = False
+        else:
+            HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+                suite_version=None
+            )
+
+        for path in (
+            f"/simulate/api/harness-environments/{environment.id}/",
+            f"/simulate/api/harness-jobs/{run.job.id}/",
+            f"/simulate/test-executions/{run.execution.id}/",
+        ):
+            refused = _get(api_client, coding_key, path)
+            assert refused.status_code == status.HTTP_409_CONFLICT, path
+            assert _code(refused) == "coding_agent_needs_suite_version", path
+        person = f"/simulate/api/harness-environments/{environment.id}/"
+        assert _get(api_client, user_key, person).status_code == status.HTTP_200_OK
 
     @pytest.mark.parametrize("which", ["check_run", "human_run"])
     def test_runs_it_did_not_start_or_never_sees_read_as_missing(

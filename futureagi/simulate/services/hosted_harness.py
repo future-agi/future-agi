@@ -298,9 +298,9 @@ def create_selected_harness_run(
     A rerun of a pinned run (``rerun_of``) keeps that run's pins; ``picks`` win over
     both, per piece. A ``fix_run`` marks the Run as one of its check runs, and
     ``verify`` as a verify of the environment's held-back cases. A Run a coding agent
-    asks for (``coding_agent_key_id``) is stamped with its key and may not select a
-    held-back case. ``seed`` and ``parallelism`` replace the environment's; each
-    defaults to what it has.
+    asks for (``coding_agent_key_id``) is stamped with its key, and a held-back case
+    in it is refused as an unknown one. ``seed`` and ``parallelism`` replace the
+    environment's; each defaults to what it has.
     """
 
     if environment.environment_id is not None:
@@ -396,6 +396,18 @@ def create_selected_harness_run(
         by_key = {
             registration.scenario_key: registration for registration in registrations
         }
+        from simulate.selectors.held_back import HELD_BACK_METADATA_KEY, held_back
+
+        if coding_agent_key_id is not None:
+            chosen = held_back(environment)
+            if chosen is None:
+                from simulate.services.harness_verify import no_held_back
+
+                raise no_held_back()
+            # A held-back case reads as one the environment does not have, so the
+            # refusal tells a coding agent no more than an unknown key would.
+            for key in chosen.scenario_keys:
+                by_key.pop(key, None)
         missing = [key for key in scenario_keys if key not in by_key]
         if missing and pins is not None:
             # A rerun of an environment or of an unpinned run selects keys the default
@@ -420,17 +432,6 @@ def create_selected_harness_run(
             raise HostedHarnessError(
                 "scenario_selection_unknown",
                 f"scenario keys do not belong to this environment: {missing}",
-                status_code=400,
-            )
-        from simulate.selectors.held_back import HELD_BACK_METADATA_KEY, held_back
-
-        chosen = held_back(environment) if coding_agent_key_id is not None else None
-        if chosen is not None and set(scenario_keys) & set(chosen.scenario_keys):
-            # Which ones is not said: the caller may only learn that some are held back.
-            raise HostedHarnessError(
-                "scenario_held_back",
-                "the selection includes scenarios held back to verify the agent;"
-                " run without them",
                 status_code=400,
             )
         if pins is not None and pins.assembles:

@@ -67,7 +67,7 @@ from simulate.services.harness_provider import (
     request_workspace,
     scope_jobs,
 )
-from simulate.services.harness_verify import ensure_held_back, start_verify
+from simulate.services.harness_verify import require_held_back, start_verify
 from simulate.services.harness_versioning import read as version_reads
 from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
 from tfc.utils.api_contracts import validated_request
@@ -114,8 +114,7 @@ def _held_back_from(request, job) -> tuple[str, ...]:
     chosen on its first read; none for anyone else."""
     if coding_agent_key(request) is None:
         return ()
-    chosen = ensure_held_back(job)
-    return chosen.scenario_keys if chosen is not None else ()
+    return require_held_back(job).scenario_keys
 
 
 def _uuid_or_none(value):
