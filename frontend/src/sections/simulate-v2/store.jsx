@@ -150,6 +150,9 @@ const initialState = {
      whether scenarios may be built from production — the Error Feed and
      production conversations replayed word for word. */
   workspaceSettings: { productionScenarios: true },
+  /* Actors your team saved to the shared library from an environment —
+     offered under Add existing in every environment. */
+  libraryActors: [],
 };
 
 /* The signed-in user's workspace role — mock: an admin, who can preview the
@@ -952,6 +955,21 @@ function reducer(state, action) {
           ...(state.workspaceSettings || {}),
           [action.key]: action.value,
         },
+      };
+    }
+
+    /* An environment's own actor saved to the shared library (or updated
+       there): one copy, offered everywhere. */
+    case "saveLibraryActor": {
+      const rest = (state.libraryActors || []).filter(
+        (a) => a.id !== action.actor.id,
+      );
+      return {
+        ...state,
+        libraryActors: [
+          ...rest,
+          { ...action.actor, owner: "you", savedAt: new Date().toISOString() },
+        ],
       };
     }
 

@@ -18,6 +18,8 @@ import {
   Menu,
 } from "@mui/material";
 import CopyCommandButton from "../components/CopyCommandButton";
+import { ConfirmDialog } from "src/components/custom-dialog";
+import { useSimStore } from "../store";
 import { enqueueSnackbar } from "notistack";
 import { personaFor } from "../_mock/scenarios";
 import { stampNewBatch } from "../_mock/addScenarios";
@@ -63,6 +65,25 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
   const navigate = useNavigate();
   const [editing, setEditing] = useState(null);
   const cast = actorsOf(env, envState);
+  /* The shared library: built-in actors, then the ones your team saved. */
+  const { state: simState, dispatch } = useSimStore();
+  const teamLibrary = simState.libraryActors || [];
+  const library = [
+    ...ACTOR_LIBRARY,
+    ...teamLibrary.filter((a) => !ACTOR_LIBRARY.some((b) => b.id === a.id)),
+  ];
+  /* How many environments have a saved actor in their cast. */
+  const usedIn = (id) =>
+    Object.values(simState.byEnv || {}).filter((es) =>
+      (es?.actors || []).includes(id),
+    ).length;
+  const saveToLibrary = (a) => {
+    dispatch({ type: "saveLibraryActor", actor: a });
+    enqueueSnackbar(
+      `${a.name} is in the library — Add existing offers it in every environment.`,
+      { variant: "success" },
+    );
+  };
 
   /*
     Only the actors already in the environment render — the "Library"
@@ -91,12 +112,18 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
   /* Saving an actor in this cast changes how its episodes play out here —
      kept on the environment, so the next version and every run read it. */
   const saved = (actor, fields) => {
-    if (actor?.id && cast.includes(actor.id))
+    if (actor?.id && cast.includes(actor.id)) {
       patch(actorEditPatch(envState, actor.id, fields));
-    /* A new actor is this environment's own, added to the cast. */ else if (
-      !actor?.id
-    )
-      patch(createActorPatch(env, envState, fields));
+    } else if (!actor?.id) {
+      /* A new actor is this environment's own, added to the cast — made by
+         the person, so already reviewed, not the builder's proposal. */
+      const made = createActorPatch(env, envState, fields);
+      const id = made.actors[made.actors.length - 1];
+      patch({
+        ...made,
+        actorsReviewed: [...(envState.actorsReviewed || []), id],
+      });
+    }
     setEditing(null);
   };
   const primary = primaryActorOf(envState);
@@ -106,11 +133,25 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
     [inCast, primary],
   );
   const [libAnchor, setLibAnchor] = useState(null);
-  const notInCast = ACTOR_LIBRARY.filter((a) => !cast.includes(a.id));
+  /* The library actor waiting for a yes before it joins this world. */
+  const [adding, setAdding] = useState(null);
+  const notInCast = library
+    .filter((a) => !cast.includes(a.id))
+    .map((a) => (a.savedAt ? { ...a, usedBy: usedIn(a.id) } : a));
   const addExisting = (a) => {
-    setLibAnchor(null);
+    setAdding(null);
     patch({
       actors: [...cast, a.id],
+      /* Picked by the person, so already reviewed. */
+      actorsReviewed: [...(envState.actorsReviewed || []), a.id],
+      /* A saved actor joins as this environment's own copy of the library one. */
+      ...(a.savedAt &&
+        !(envState.customActors || []).some((x) => x.id === a.id) && {
+          customActors: [
+            ...(envState.customActors || []),
+            { ...a, fromLibrary: true },
+          ],
+        }),
       ...envChangePatch(envState, "actors", `Added ${a.name}`),
     });
   };
@@ -219,21 +260,88 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
               onClose={() => setLibAnchor(null)}
               slotProps={{ paper: { sx: { width: 340 } } }}
             >
-              {notInCast.map((a) => (
-                <MenuItem
-                  key={a.id}
-                  onClick={() => addExisting(a)}
-                  sx={{ display: "block", whiteSpace: "normal" }}
-                >
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                    {a.name}
-                  </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    {`${actorKindOf(a).label} · ${a.goal}`}
-                  </Typography>
-                </MenuItem>
-              ))}
+              {/* One shared library: built-in actors and ones your team
+                  saved. Grouped by what they are. */}
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  px: 2,
+                  pt: 0.5,
+                  pb: 1,
+                }}
+              >
+                Ready-made actors, shared across environments. Each one behaves
+                the same wherever it&apos;s used.
+              </Typography>
+              {[
+                ["person", "People"],
+                ["external-agent", "Other agents"],
+              ].flatMap(([kind, title]) => {
+                const group = notInCast.filter(
+                  (a) => actorKindOf(a).id === kind,
+                );
+                if (!group.length) return [];
+                return [
+                  <Typography
+                    key={`h-${kind}`}
+                    sx={{
+                      typography: "s3",
+                      fontWeight: 600,
+                      color: "text.secondary",
+                      px: 2,
+                      pt: 1,
+                      pb: 0.5,
+                    }}
+                  >
+                    {title}
+                  </Typography>,
+                  ...group.map((a) => (
+                    <MenuItem
+                      key={a.id}
+                      onClick={() => {
+                        setLibAnchor(null);
+                        setAdding(a);
+                      }}
+                      sx={{ display: "block", whiteSpace: "normal" }}
+                    >
+                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                        {a.name}
+                      </Typography>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
+                        {a.goal}
+                      </Typography>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
+                        {`${a.owner === "system" ? "Built in" : "Saved by your team"}${a.usedBy ? ` · used in ${a.usedBy} environment${a.usedBy === 1 ? "" : "s"}` : ""}`}
+                      </Typography>
+                    </MenuItem>
+                  )),
+                ];
+              })}
             </Menu>
+            <ConfirmDialog
+              open={!!adding}
+              onClose={() => setAdding(null)}
+              title={adding ? `Add ${adding.name}?` : ""}
+              content={
+                adding
+                  ? `${adding.blurb || adding.goal} Adding an actor changes the world, so it becomes part of the next environment version. Runs already done keep the cast they had.`
+                  : ""
+              }
+              action={
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={() => adding && addExisting(adding)}
+                >
+                  Add actor
+                </Button>
+              }
+            />
           </>
         )}
         {!locked && (
@@ -379,6 +487,16 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
                 onEdit={locked ? null : () => setEditing(a)}
                 onReset={locked || !a.edited ? null : () => reset(a.id)}
                 onBranches={locked ? null : () => proposeBranches(a)}
+                inLibrary={
+                  !a.custom ||
+                  a.fromLibrary ||
+                  teamLibrary.some((x) => x.id === a.id)
+                }
+                onSaveToLibrary={
+                  locked || !a.custom || a.fromLibrary
+                    ? null
+                    : () => saveToLibrary(a)
+                }
                 action={
                   !locked && (
                     <Tooltip arrow title="Remove from this environment">
@@ -509,6 +627,8 @@ function ActorRow({
   onBranches,
   proposed = false,
   onAccept,
+  inLibrary = true,
+  onSaveToLibrary = null,
 }) {
   const [open, setOpen] = useState(false);
   const pressure = getPressure(actor.pressure);
@@ -688,6 +808,35 @@ function ActorRow({
           </Tooltip>
         )}
         <Box sx={{ flexShrink: 0 }}>
+          {/* An actor made here stays here until it's saved to the library. */}
+          {onSaveToLibrary && !inLibrary && (
+            <Tooltip
+              arrow
+              title="Offer it under Add existing in every environment"
+            >
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={onSaveToLibrary}
+                sx={{
+                  color: "text.primary",
+                  borderColor: "divider",
+                  flexShrink: 0,
+                  mr: proposed && onAccept ? 1 : 0,
+                }}
+              >
+                Save to library
+              </Button>
+            </Tooltip>
+          )}
+          {onSaveToLibrary && inLibrary && (
+            <Typography
+              component="span"
+              sx={{ typography: "s3", color: "text.tertiary", mr: 1 }}
+            >
+              In library
+            </Typography>
+          )}
           {proposed && onAccept && (
             <Button
               size="small"
@@ -797,6 +946,8 @@ function ActorRow({
   );
 }
 ActorRow.propTypes = {
+  inLibrary: PropTypes.bool,
+  onSaveToLibrary: PropTypes.func,
   proposed: PropTypes.bool,
   onAccept: PropTypes.func,
   actor: PropTypes.object,
