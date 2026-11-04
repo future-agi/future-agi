@@ -61,6 +61,8 @@ _OFFERED = frozenset(
 # nothing recorded is still going to move it.
 _WAIT_LIMIT = timedelta(hours=1)
 # Kept per version, never inherited by a child.
+# The environments a version was offered to.
+OFFERED_KEY = "offered_to_environments"
 _OWN_PAYLOAD_KEYS = (
     "legacy_secret_refs",
     "secret_refs",
@@ -70,6 +72,7 @@ _OWN_PAYLOAD_KEYS = (
     "requested_at",
     "created_for_environment",
     "discarded_by",
+    OFFERED_KEY,
 )
 _PROVIDER_ALIASES = {
     ProviderType.VAPI: CONNECTOR_ALIASES["vapi"],
@@ -1955,10 +1958,36 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
             ),
         )
         return []
-    _record_activation(version.id, dict.fromkeys(others, "not_requested"))
+    # A version made on the Agents page is offered; one another environment's
+    # change made is that environment's.
+    outcome = (
+        "offered" if not payload.get("created_for_environment") else "not_requested"
+    )
+    _record_activation(version.id, dict.fromkeys(others, outcome))
+    record_offers(version.id, others)
     for environment_id in others:
         schedule_environment_nudge(environment_id, version.id, default_moved=False)
     return _activate(version, requested)
+
+
+def record_offers(version_id: Any, environment_ids: Iterable[Any]) -> None:
+    """Remember the environments a version was offered to: each may list and pick it,
+    as it may a version it asked for."""
+    offered = [str(one) for one in environment_ids]
+    if not offered:
+        return
+    with transaction.atomic():
+        runtime = _side_row(version_id, lock=True)
+        if runtime is None:
+            return
+        stored = runtime.agent_payload or {}
+        known = list(stored.get(OFFERED_KEY) or [])
+        merged = list(dict.fromkeys([*known, *offered]))
+        if merged == known:
+            return
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            agent_payload={**stored, OFFERED_KEY: merged}, updated_at=timezone.now()
+        )
 
 
 def _recent(at: Any) -> bool:
@@ -2411,7 +2440,8 @@ def lineage_version_ids(
     environment: HostedHarnessJob, definition_id: Any
 ) -> set[str] | None:
     """The versions of an environment-owned agent this environment lists and picks:
-    its default and those it asked for. ``None`` for any other agent."""
+    its default, those it asked for and those it was offered. ``None`` for any other
+    agent."""
     if definition_id is None or not environment_owned(definition_id):
         return None
     # Not the default's lineage: a creation reusing another environment's version
@@ -2423,6 +2453,7 @@ def lineage_version_ids(
         version_id,
         requested_by,
         created_for,
+        offered_to,
     ) in HarnessAgentVersionRuntime.no_workspace_objects.filter(
         agent_definition_id=definition_id,
         organization_id=environment.organization_id,
@@ -2430,8 +2461,11 @@ def lineage_version_ids(
         "agent_version_id",
         "agent_payload__requested_by_environments",
         "agent_payload__created_for_environment",
+        f"agent_payload__{OFFERED_KEY}",
     ):
-        if requested_here(requested_by, created_for, environment.id):
+        if requested_here(requested_by, created_for, environment.id) or str(
+            environment.id
+        ) in {str(one) for one in offered_to or []}:
             allowed.add(str(version_id))
     return allowed
 

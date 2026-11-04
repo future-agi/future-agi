@@ -27,7 +27,12 @@ export const WORKSPACE_TABS = [
     icon: "solar:shield-check-linear",
     badge: "evals",
   },
-  { id: "runs", label: "Runs", icon: "solar:play-circle-linear", badge: "runs" },
+  {
+    id: "runs",
+    label: "Runs",
+    icon: "solar:play-circle-linear",
+    badge: "runs",
+  },
   // Shown only when the environment has versioning switched on.
   { id: "versions", label: "Versions", icon: "solar:history-linear" },
   {
@@ -104,7 +109,8 @@ export const WORKSPACE_COPY = {
     generic: "Setup incomplete",
     starting: "Starting a run",
     notReady: "This environment hasn't finished building",
-    noRunTest: "This environment isn't linked to a run yet. Rebuild it to run simulations.",
+    noRunTest:
+      "This environment isn't linked to a run yet. Rebuild it to run simulations.",
     detailFailed: "This environment's details didn't load. Retry them first.",
     detailLoading: "Loading this environment's details",
   },
@@ -290,6 +296,11 @@ export const AGENT_VERSIONS_COPY = {
     environment_gone: "Not made default: the environment was deleted",
     not_requested:
       "Not made default: its credentials were changed for another environment",
+    offered: "Offered to this environment: rebuild from its card to use it",
+    pinned: "Not made default: this environment is pinned to its version",
+    unmeasured: "Offered: the change couldn't be judged yet, so nothing moved",
+    major_change:
+      "Offered: tools or rules changed, so this environment was not moved",
     not_bound: "Not made default: this environment can't use this version",
     rerun_only: "Made for a single rerun; not used as the default",
     failed: "Not made default: something went wrong; make it default by hand",
