@@ -31,6 +31,7 @@ import {
   useStartScan,
 } from "src/api/agents/agentConnect";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
+import { parseGitHubInput } from "src/pages/dashboard/harness/requestMapper";
 import { GITHUB_INSTALL_OUTCOMES } from "src/sections/settings/integrations/constants";
 import Field from "src/sections/simulate/environments/components/Field";
 import { CONNECT_AGENT_PATH, CONNECTED_AGENTS_PATH } from "../agentsTabs";

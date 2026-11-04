@@ -8,6 +8,7 @@ const mockNavigate = vi.fn();
 const mockGitHubConnection = vi.fn();
 const mockRepositories = vi.fn();
 const mockBranches = vi.fn();
+const mockStartScan = vi.fn();
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -18,6 +19,12 @@ vi.mock("src/api/integrations", () => ({
   useGitHubConnection: (...args) => mockGitHubConnection(...args),
   useSourceRepositories: (...args) => mockRepositories(...args),
   useSourceBranches: (...args) => mockBranches(...args),
+}));
+
+vi.mock("src/api/agents/agentConnect", () => ({
+  useStartScan: () => ({ mutate: mockStartScan, isPending: false }),
+  useAgentScan: () => ({ data: null, isLoading: false, isError: false }),
+  useConnectAgent: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock("src/hooks/use-debounce", () => ({ useDebounce: (value) => value }));
@@ -52,6 +59,7 @@ describe("ConnectAgentPage", () => {
   beforeEach(() => {
     auth.role = "Member";
     mockNavigate.mockReset();
+    mockStartScan.mockReset();
     mockGitHubConnection.mockReturnValue({ data: null, isLoading: false, isError: false });
     mockRepositories.mockReturnValue({ data: [], isFetching: false, isError: false });
     mockBranches.mockReturnValue({ data: [], isFetching: false });
@@ -137,7 +145,7 @@ describe("ConnectAgentPage", () => {
     expect(mockRepositories).not.toHaveBeenCalled();
   });
 
-  it("picks a repository on its default branch and keeps Connect agent for later", () => {
+  it("picks a repository on its default branch and finds the agents in it", () => {
     mockGitHubConnection.mockReturnValue({ data: CONNECTION, isLoading: false, isError: false });
     mockRepositories.mockReturnValue({ data: [REPOSITORY], isFetching: false, isError: false });
     mockBranches.mockReturnValue({
@@ -154,8 +162,18 @@ describe("ConnectAgentPage", () => {
 
     expect(mockBranches).toHaveBeenLastCalledWith("connection-1", 7);
     expect(screen.getByText("trunk")).toBeInTheDocument();
-    expect(screen.getByText("Reading the agent and creating it are coming soon")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Connect agent" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Find agents" }));
+
+    expect(mockStartScan).toHaveBeenCalledWith(
+      {
+        kind: "github",
+        repository: "acme/support-agent",
+        ref: "trunk",
+        visibility: "private",
+        repository_id: 7,
+      },
+      expect.any(Object),
+    );
   });
 
   it("takes a public repository link instead of the app", () => {
