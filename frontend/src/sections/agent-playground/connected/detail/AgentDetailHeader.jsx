@@ -19,6 +19,7 @@ import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { paths } from "src/routes/paths";
 import { sourceLabel } from "../connectedAgentLabels";
 import AddVersionDialog from "./AddVersionDialog";
+import SyncAgentDialog from "./SyncAgentDialog";
 import UploadVersionDialog from "./UploadVersionDialog";
 import { newVersionAction } from "./newVersionAction";
 import AgentMoreMenu from "./AgentMoreMenu";
@@ -91,6 +92,9 @@ function NewVersionButton({ agent }) {
       )}
       {adding && next.kind === "manual" && (
         <AddVersionDialog agent={agent} open onClose={() => setAdding(false)} />
+      )}
+      {adding && next.kind === "edit" && (
+        <SyncAgentDialog agent={agent} onClose={() => setAdding(false)} />
       )}
     </>
   );

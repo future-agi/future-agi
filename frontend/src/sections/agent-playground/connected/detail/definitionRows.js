@@ -128,7 +128,7 @@ export const reachRows = (facts) => {
         label: "Voice",
         value: join([
           numbers.length ? "Phone call" : "Web call",
-          typeof facts.inbound === "boolean"
+          facts.provider !== "phone" && typeof facts.inbound === "boolean"
             ? facts.inbound
               ? "inbound"
               : "outbound"
