@@ -732,3 +732,67 @@ class TestApi:
         assert header["capability_snapshot"] == run.capability_snapshot
         assert header["capability_snapshot"]["answer"]["kind"] == "ready"
         assert _get(auth_client, environment.id).json()["answer"]["kind"] == "blocked"
+
+
+class TestDoneWhen:
+    def test_production_only_refund_tool_blocks_routing_then_goes_stale(
+        self, user, workspace, storage, auth_client
+    ):
+        """A reference agent with a production-only refund tool: tool routing is
+        Blocked with its reason and fix, every other row reads its real status, and
+        the report turns Stale once the agent version changes."""
+        environment, a2 = _with_a2(user, workspace, storage, "rd-done-when")
+        _certify(environment, storage)
+        _built(environment, contract=PRODUCTION_ONLY)
+
+        body = _get(auth_client, environment.id).json()
+
+        rows = _rows(body)
+        routing = rows["tool_routing"]
+        assert routing["status"] == "blocked"
+        assert routing["reason_code"] == "production_only"
+        assert routing["reason"] == (
+            "Unsupported for this controlled test: issue_refund reaches production"
+        )
+        assert routing["fix"] == {
+            "type": "tool_routing",
+            "target": "issue_refund",
+            "action": "Point issue_refund at the test world",
+            "would": "issue_refund lands in the test world and its probe passes",
+            "recheck": {
+                "scope": "pair",
+                "method": "POST",
+                "path": f"{BASE}/{environment.id}/capabilities/recheck/",
+            },
+        }
+        assert {
+            one: rows[one]["status"]
+            for one in ("start", "message", "tool_discovery", "state", "reset")
+        } == dict.fromkeys(
+            ("start", "message", "tool_discovery", "state", "reset"), "supported"
+        )
+        assert body["answer"]["kind"] == "blocked"
+        contract = HarnessCapabilityReportSerializer(data=body)
+        assert contract.is_valid(), contract.errors
+        assert body["counts"] == {
+            "blocked": 1,
+            "stale": 0,
+            "untested": 10,
+            "partial": 0,
+            "unavailable": 0,
+            "supported": 5,
+        }
+
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            agent_version=a2
+        )
+        after = _get(auth_client, environment.id).json()
+
+        assert after["pairing"]["agent_version"]["id"] == str(a2.id)
+        assert after["answer"]["kind"] == "stale"
+        routing = _rows(after)["tool_routing"]
+        assert (routing["status"], routing["was"], routing["stale_because"]) == (
+            "stale",
+            "blocked",
+            "agent_version",
+        )
