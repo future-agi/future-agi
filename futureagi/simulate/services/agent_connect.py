@@ -21,6 +21,7 @@ from simulate.models import (
 )
 from simulate.services.harness_agent_versions import (
     CONNECTED_OWNER,
+    advisory_xact_lock,
     create_agent_version,
 )
 from simulate.services.hosted_harness import HostedHarnessError
@@ -116,6 +117,20 @@ def start_scan(
     return scan
 
 
+def connect_lock_name(
+    organization_id: Any, workspace_id: Any, source: Mapping[str, Any]
+) -> str:
+    """One name per agent a source connects, so two connects of it queue."""
+    if source.get("kind") == "archive":
+        identity = f"archive:{source.get('archive_artifact_id')}"
+    else:
+        identity = (
+            f"github:{str(source.get('repository') or '').lower()}"
+            f":{source.get('subfolder') or ''}"
+        )
+    return f"agent-connect:{organization_id}:{workspace_id}:{identity}"
+
+
 def existing_connected_agent(
     organization_id: Any, workspace_id: Any, source: Mapping[str, Any]
 ) -> tuple[AgentDefinition, AgentVersion] | None:
@@ -181,6 +196,7 @@ def connect_agent(
     if cleaned.get("kind") == "github" and not cleaned.get("commit_sha"):
         cleaned["commit_sha"] = branch_head_of(organization.id, workspace_id, cleaned)
     with transaction.atomic():
+        advisory_xact_lock(connect_lock_name(organization.id, workspace_id, cleaned))
         found = existing_connected_agent(organization.id, workspace_id, cleaned)
         if found is not None:
             return Connected(*found, created=False)
