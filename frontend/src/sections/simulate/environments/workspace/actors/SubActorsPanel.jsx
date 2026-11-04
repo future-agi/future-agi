@@ -2,9 +2,9 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import SectionCard from "../../components/SectionCard";
 import { genderLabel } from "../scenarios/personaLabels";
-import { CONTRACT_COPY } from "./contract.constants";
+import { ACTORS_COPY } from "./actors.constants";
 
-const C = CONTRACT_COPY.subActors;
+const C = ACTORS_COPY.subActors;
 
 /**
  * The environment's sub-actors: people on the person's side who are not the

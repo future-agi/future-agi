@@ -25,9 +25,9 @@ export const DERIVING_LABEL = {
 };
 
 // The tab rail on the building pane: the workspace tabs, rendered pointer-dead.
-// Runs, Improvements and Versions are left out — an environment that is still
-// building (or failed to build) has no runs, no fixes and no versions yet.
-const NOT_WHILE_BUILDING = new Set(["runs", "improvements", "versions"]);
+// Actors, Runs, Improvements and Versions are left out — an environment that is
+// still building (or failed to build) has no draft, runs, fixes or versions yet.
+const NOT_WHILE_BUILDING = new Set(["actors", "runs", "improvements", "versions"]);
 export const BUILDING_TABS = WORKSPACE_TABS.filter((t) => !NOT_WHILE_BUILDING.has(t.id));
 
 export const CONSOLE_COPY = {
