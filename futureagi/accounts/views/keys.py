@@ -34,7 +34,6 @@ from analytics.utils import (
     track_mixpanel_event,
 )
 from model_hub.models.api_key import mask_key
-from simulate.authentication import bindable_environment
 from tfc.constants.roles import RolePermissions
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
@@ -296,6 +295,9 @@ class SecretKeyAPIViewSet(ViewSet):
             environment_id = request.validated_data.get("simulation_environment_id")
             workspace = None
             if key_type == "coding_agent":
+                # Imported here: accounts cannot depend on simulate at load.
+                from simulate.authentication import bindable_environment
+
                 environment = bindable_environment(request, environment_id)
                 if environment is None:
                     return self._gm.not_found("Environment not found")

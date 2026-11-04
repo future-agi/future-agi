@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID
 
 from accounts.authentication import is_coding_agent_key
+from accounts.models import OrgApiKey
 from simulate.models import HostedHarnessExecution, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix import HELD_BACK_VERIFIED_MIN
 from simulate.selectors.agent_fix import FINISHED_RUN_STATES
@@ -46,7 +47,7 @@ def held_back(environment: HostedHarnessJob) -> HeldBack | None:
     )
 
 
-def coding_agent_key(request: Any) -> Any | None:
+def coding_agent_key(request: Any) -> OrgApiKey | None:
     """The coding agent API key the request authenticated with, else ``None``."""
     return request.org_api_key if is_coding_agent_key(request) else None
 

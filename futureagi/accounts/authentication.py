@@ -34,7 +34,6 @@ from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.saml_credential import SamlCredentialInvalid, validate_saml_credential
 from accounts.services.workspace_membership import create_workspace_membership
-from simulate.authentication import refuse_coding_agent_request
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import is_oss
 from tfc.utils.api_errors import (
@@ -222,6 +221,9 @@ class APIKeyAuthentication(BaseAuthentication):
             # agent being fixed; it may make only its loop's calls, on its own
             # environment.
             if org_api_key.type == "coding_agent":
+                # Imported here: accounts cannot depend on simulate at load.
+                from simulate.authentication import refuse_coding_agent_request
+
                 refuse_coding_agent_request(request, org_api_key)
 
             # Validate that the API key has a valid organization
@@ -714,6 +716,8 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
         if org_api_key.type == "ingest":
             raise AuthenticationFailed("ingest keys cannot call the API")
         if org_api_key.type == "coding_agent":
+            from simulate.authentication import refuse_coding_agent_request
+
             refuse_coding_agent_request(request, org_api_key)
 
         # Resolve user (same logic as parent class)
