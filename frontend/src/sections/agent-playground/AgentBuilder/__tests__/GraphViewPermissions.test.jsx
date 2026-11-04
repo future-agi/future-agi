@@ -23,21 +23,35 @@ vi.mock("../../store", () => ({
   useAgentPlaygroundStoreShallow: (selector) => selector(mocks.state),
   useWorkflowRunStoreShallow: (selector) => selector(mocks.workflow),
 }));
-vi.mock("../../hooks/useCanEditAgent", () => ({ default: () => mocks.permission }));
+vi.mock("../../hooks/useCanEditAgent", () => ({
+  default: () => mocks.permission,
+}));
 vi.mock("../saveDraftContext", () => ({
   useSaveDraftContext: () => ({ ensureDraft: vi.fn() }),
 }));
 vi.mock("../hooks/useAddNodeOptimistic", () => ({
   default: () => ({ addNode: vi.fn() }),
 }));
-vi.mock("../nodes", () => ({ PromptNode: () => null, AgentNode: () => null, EvalNode: () => null }));
+vi.mock("../nodes", () => ({
+  PromptNode: () => null,
+  AgentNode: () => null,
+  EvalNode: () => null,
+}));
 vi.mock("../edges", () => ({ AnimatedEdge: () => null }));
-vi.mock("../../components/ConfirmationDialog", () => ({ ConfirmationDialog: mocks.dialog }));
+vi.mock("../../components/ConfirmationDialog", () => ({
+  ConfirmationDialog: mocks.dialog,
+}));
 vi.mock("src/api/agent-playground/agent-playground", () => ({
-  createConnectionApi: vi.fn(), deleteConnectionApi: vi.fn(), updateNodeApi: vi.fn(), deleteNodeApi: vi.fn(),
+  createConnectionApi: vi.fn(),
+  deleteConnectionApi: vi.fn(),
+  updateNodeApi: vi.fn(),
+  deleteNodeApi: vi.fn(),
 }));
 
-const deletion = { nodes: [{ id: "node-1", data: { label: "Saved node" } }], edges: [] };
+const deletion = {
+  nodes: [{ id: "node-1", data: { label: "Saved node" } }],
+  edges: [],
+};
 
 describe("Unit: GraphView deletion permissions", () => {
   beforeEach(() => {
@@ -46,24 +60,31 @@ describe("Unit: GraphView deletion permissions", () => {
     mocks.workflow.isRunning = false;
   });
 
-  it.each(["read-only", "running"])("rejects node and edge deletions when %s", async (mode) => {
-    mocks.permission.isReadOnly = mode === "read-only";
-    mocks.workflow.isRunning = mode === "running";
-    render(<GraphView />);
-    const props = mocks.flow.mock.lastCall[0];
-    expect(props.deleteKeyCode).toBeNull();
-    await expect(props.onBeforeDelete(deletion)).resolves.toBe(false);
-    await expect(props.onBeforeDelete({ nodes: [], edges: [{ id: "edge-1" }] })).resolves.toBe(false);
-    expect(mocks.dialog.mock.lastCall[0].open).toBe(false);
-    expect(mocks.state.setGraphData).not.toHaveBeenCalled();
-  });
+  it.each(["read-only", "running"])(
+    "rejects node and edge deletions when %s",
+    async (mode) => {
+      mocks.permission.isReadOnly = mode === "read-only";
+      mocks.workflow.isRunning = mode === "running";
+      render(<GraphView />);
+      const props = mocks.flow.mock.lastCall[0];
+      expect(props.deleteKeyCode).toBeNull();
+      await expect(props.onBeforeDelete(deletion)).resolves.toBe(false);
+      await expect(
+        props.onBeforeDelete({ nodes: [], edges: [{ id: "edge-1" }] }),
+      ).resolves.toBe(false);
+      expect(mocks.dialog.mock.lastCall[0].open).toBe(false);
+      expect(mocks.state.setGraphData).not.toHaveBeenCalled();
+    },
+  );
 
   it("requests confirmation for an editable node and respects cancel", async () => {
     render(<GraphView />);
     const props = mocks.flow.mock.lastCall[0];
     expect(props.deleteKeyCode).toEqual(["Backspace", "Delete"]);
     let pending;
-    act(() => { pending = props.onBeforeDelete(deletion); });
+    act(() => {
+      pending = props.onBeforeDelete(deletion);
+    });
     expect(mocks.dialog.mock.lastCall[0].open).toBe(true);
     act(() => mocks.dialog.mock.lastCall[0].onClose());
     await expect(pending).resolves.toBe(false);

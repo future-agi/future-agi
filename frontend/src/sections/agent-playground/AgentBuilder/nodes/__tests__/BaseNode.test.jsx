@@ -120,9 +120,11 @@ describe("Unit: BaseNode", () => {
 
     await user.tab();
 
-    expect(screen.getByRole("button", {
-      name: "Delete canvas node: Agent node",
-    })).toHaveFocus();
+    expect(
+      screen.getByRole("button", {
+        name: "Delete canvas node: Agent node",
+      }),
+    ).toHaveFocus();
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Delete node");
     expect(mockHandleDeleteClick).not.toHaveBeenCalled();
   });
@@ -131,9 +133,11 @@ describe("Unit: BaseNode", () => {
     useBaseNodeState.mockReturnValue({ ...defaultState, isReadOnly: true });
     renderBaseNode();
 
-    expect(screen.queryByRole("button", {
-      name: /delete canvas node/i,
-    })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: /delete canvas node/i,
+      }),
+    ).not.toBeInTheDocument();
     await userEvent.setup().tab();
     expect(mockHandleDeleteClick).not.toHaveBeenCalled();
   });

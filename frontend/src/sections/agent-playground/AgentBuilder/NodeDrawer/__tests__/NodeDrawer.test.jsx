@@ -167,8 +167,12 @@ describe("Unit: NodeDrawer", () => {
 
     await user.tab();
     await user.tab();
-    expect(screen.getByRole("button", { name: "Close node editor" })).toHaveFocus();
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Close");
+    expect(
+      screen.getByRole("button", { name: "Close node editor" }),
+    ).toHaveFocus();
+    expect(
+      await screen.findByRole("tooltip", { name: "Close" }),
+    ).toHaveTextContent("Close");
     await user.keyboard("{Enter}");
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
@@ -178,8 +182,12 @@ describe("Unit: NodeDrawer", () => {
     permissionMocks.isReadOnly = true;
     renderDrawer();
 
-    expect(screen.queryByRole("button", { name: "Delete node" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Close node editor" })).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Delete node" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Close node editor" }),
+    ).toBeEnabled();
     expect(storeMocks.deleteNode).not.toHaveBeenCalled();
   });
 
@@ -189,36 +197,57 @@ describe("Unit: NodeDrawer", () => {
     expect(screen.getByRole("button", { name: "Delete node" })).toBeDisabled();
   });
 
-  it.each(["read-only", "running"])("guards an already-open confirmation when the graph becomes %s", async (mode) => {
-    const user = userEvent.setup();
-    const view = renderDrawer();
-    await user.click(screen.getByRole("button", { name: "Delete node" }));
-    if (mode === "read-only") permissionMocks.isReadOnly = true;
-    else workflowMocks.isRunning = true;
-    view.rerender(
-      <ThemeProvider theme={theme}>
-        <NodeDrawer open onClose={vi.fn()} node={node} width={520}
-          isResizing={false} onResizeStart={vi.fn()} />
-      </ThemeProvider>,
-    );
+  it.each(["read-only", "running"])(
+    "guards an already-open confirmation when the graph becomes %s",
+    async (mode) => {
+      const user = userEvent.setup();
+      const view = renderDrawer();
+      await user.click(screen.getByRole("button", { name: "Delete node" }));
+      if (mode === "read-only") permissionMocks.isReadOnly = true;
+      else workflowMocks.isRunning = true;
+      view.rerender(
+        <ThemeProvider theme={theme}>
+          <NodeDrawer
+            open
+            onClose={vi.fn()}
+            node={node}
+            width={520}
+            isResizing={false}
+            onResizeStart={vi.fn()}
+          />
+        </ThemeProvider>,
+      );
 
-    await user.click(within(screen.getByRole("dialog", { name: "Delete Node" }))
-      .getByRole("button", { name: "Delete", exact: true }));
-    expect(storeMocks.deleteNode).not.toHaveBeenCalled();
-    expect(draftMocks.ensureDraft).not.toHaveBeenCalled();
-    expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
-  });
+      await user.click(
+        within(screen.getByRole("dialog", { name: "Delete Node" })).getByRole(
+          "button",
+          { name: "Delete", exact: true },
+        ),
+      );
+      expect(storeMocks.deleteNode).not.toHaveBeenCalled();
+      expect(draftMocks.ensureDraft).not.toHaveBeenCalled();
+      expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+    },
+  );
 
   it("deletes an existing draft using the store's version_id", async () => {
     const user = userEvent.setup();
     renderDrawer();
     await user.click(screen.getByRole("button", { name: "Delete node" }));
-    await user.click(within(screen.getByRole("dialog", { name: "Delete Node" }))
-      .getByRole("button", { name: "Delete", exact: true }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Delete Node" })).getByRole(
+        "button",
+        { name: "Delete", exact: true },
+      ),
+    );
 
-    await waitFor(() => expect(apiMocks.deleteNodeApi).toHaveBeenCalledWith({
-      graphId: "graph-1", versionId: "version-1", nodeId: "node-1",
-    }));
+    await waitFor(() =>
+      expect(apiMocks.deleteNodeApi).toHaveBeenCalledWith({
+        graphId: "graph-1",
+        versionId: "version-1",
+        nodeId: "node-1",
+      }),
+    );
     expect(storeMocks.deleteNode).toHaveBeenCalledWith("node-1");
   });
 
@@ -227,10 +256,16 @@ describe("Unit: NodeDrawer", () => {
     const user = userEvent.setup();
     renderDrawer();
     await user.click(screen.getByRole("button", { name: "Delete node" }));
-    await user.click(within(screen.getByRole("dialog", { name: "Delete Node" }))
-      .getByRole("button", { name: "Delete", exact: true }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Delete Node" })).getByRole(
+        "button",
+        { name: "Delete", exact: true },
+      ),
+    );
 
-    await waitFor(() => expect(storeMocks.setGraphData).toHaveBeenCalledWith([node], []));
+    await waitFor(() =>
+      expect(storeMocks.setGraphData).toHaveBeenCalledWith([node], []),
+    );
     expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
   });
 
