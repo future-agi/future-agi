@@ -482,6 +482,7 @@ export const dataProposalOf = (
             sourceId: s.id,
             ref: `${s.name} · p.${p.page}`,
             excerpt: p.text,
+            at: p.id,
           },
           rule: p.rule,
         }),
@@ -661,6 +662,7 @@ export const dataProposalOf = (
       cite: {
         sourceId: orders.id,
         ref: `${orders.name} · ${o.order_id}`,
+        at: o.order_id,
         excerpt: `${o.order_id}, delivered ${o.delivered_at}, $${((o.amount_cents || 0) / 100).toFixed(2)}`,
       },
       facts: [
@@ -815,6 +817,7 @@ export const acceptDataPatch = (
     ...take.filter((i) => i.kind === "rule").map((i) => i.cite?.sourceId),
     ...(chosen ? [chosen.sourceId] : []),
   ];
+  const ruleCites = take.filter((i) => i.kind === "rule").map((i) => i.cite);
   const tables = take.filter((i) => i.kind === "table");
   const actorItems = take.filter((i) => i.kind === "actor");
   const toolItems = take.filter((i) => i.kind === "tool");
@@ -848,6 +851,7 @@ export const acceptDataPatch = (
     sourceName:
       (envState?.sources || []).find((s) => s.id === ruleSources[n])?.name ||
       null,
+    cite: ruleCites[n] || null,
   }));
   const newScenarios = scenarioRows
     ? scenarioRows(take.filter((i) => i.kind === "scenario"))
@@ -947,7 +951,8 @@ export const draftDataPatches = (
     nameOf(take.find((i) => i.kind === kind)?.cite?.sourceId);
   let cur = envState;
   const patches = [];
-  const add = (fields, kind, detail, file, build) => {
+  const citeOf = (kind) => take.find((i) => i.kind === kind)?.cite || null;
+  const add = (fields, kind, detail, file, build, cite = null) => {
     const edit = envChangePatch(cur, kind, detail);
     const list = edit.unsavedEnvChanges;
     /* Each change carries what it replaced and its file, so it can be
@@ -962,6 +967,8 @@ export const draftDataPatches = (
             ...list[list.length - 1],
             before: beforeOfFields(cur, fields),
             source: file ? `file:${file}` : "hand",
+            /* Where in the file: a passage or a row, so Open lands on it. */
+            ...(cite && { cite }),
             ...(build && { build }),
           },
         ],
@@ -984,6 +991,7 @@ export const draftDataPatches = (
         `Rule ${r.id} added: ${r.to}`,
         r.sourceName,
         { kind: "rules", id: r.id },
+        r.cite,
       ),
     );
   (rest.dataImports || []).slice(had("dataImports")).forEach((t, n) => {
@@ -1000,6 +1008,7 @@ export const draftDataPatches = (
       `Table ${t.name} seeded from ${file || "your records"} · ${t.rows} rows`,
       file,
       { kind: "tables", name: t.name, rows: t.rows, source: file },
+      take.find((i) => i.kind === "table" && i.table?.name === t.name)?.cite,
     );
   });
   const rows = (rest.scenarios || []).slice(had("scenarios"));
@@ -1010,6 +1019,7 @@ export const draftDataPatches = (
       `${rows.length} proposed scenario${rows.length === 1 ? "" : "s"} added`,
       fileOf("scenario"),
       { kind: "scenarios", ids: rows.map((r) => r.id) },
+      citeOf("scenario"),
     );
   const ACTOR_KEYS = ["customActors", "actorEdits", "actors"];
   const actorFields = Object.fromEntries(
@@ -1024,6 +1034,8 @@ export const draftDataPatches = (
         .map((i) => i.title)
         .join(" · ") || "Actors from the file",
       fileOf("actor"),
+      null,
+      citeOf("actor"),
     );
   if (rest.toolEnv)
     add(
@@ -1034,6 +1046,8 @@ export const draftDataPatches = (
         .map((i) => i.title)
         .join(" · ") || "Approval rules on tools",
       fileOf("tool"),
+      null,
+      citeOf("tool"),
     );
   if (rest.startingState)
     add(
@@ -1041,6 +1055,8 @@ export const draftDataPatches = (
       "seed",
       take.find((i) => i.kind === "state")?.title || "Starting state set",
       fileOf("state"),
+      null,
+      citeOf("state"),
     );
 
   const failed = proposal.items

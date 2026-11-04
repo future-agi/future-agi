@@ -61,8 +61,18 @@ export const sourceLinkOf = (c, envState) => {
   if (c.source?.startsWith("file:")) {
     const name = c.source.slice(5);
     const file = (envState?.sources || []).find((x) => x.name === name);
+    /* The place in the file — "p.1", "O-104" — when the change knows it. */
+    const where = c.cite?.ref?.startsWith(`${name} · `)
+      ? c.cite.ref.slice(name.length + 3)
+      : null;
     return file
-      ? { kind: "file", label: `Open ${name}`, sourceId: file.id }
+      ? {
+          kind: "file",
+          label: `Open ${name}`,
+          sourceId: file.id,
+          at: c.cite?.at || null,
+          where,
+        }
       : { kind: "tab", label: "Open" };
   }
   return { kind: "tab", label: "Open" };

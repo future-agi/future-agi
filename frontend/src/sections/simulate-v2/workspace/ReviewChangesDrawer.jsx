@@ -95,7 +95,10 @@ export default function ReviewChangesDrawer({
       onClose();
       focusChatAt(c.at);
     } else if (link.kind === "file")
-      goTab("world", `?source=${encodeURIComponent(link.sourceId)}`);
+      goTab(
+        "world",
+        `?source=${encodeURIComponent(link.sourceId)}${link.at ? `&at=${encodeURIComponent(link.at)}` : ""}`,
+      );
     else goTab(tab);
   };
   const names = cost?.scenarioNames || [];
@@ -322,7 +325,9 @@ export default function ReviewChangesDrawer({
                                   color: "text.tertiary",
                                 }}
                               >
-                                {[src, when(c.at)].filter(Boolean).join(" · ")}
+                                {[src, link.where, when(c.at)]
+                                  .filter(Boolean)
+                                  .join(" · ")}
                               </Typography>
                             </Box>
                             <Button

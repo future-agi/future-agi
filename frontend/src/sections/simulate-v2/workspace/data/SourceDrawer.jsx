@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -88,6 +88,7 @@ export default function SourceDrawer({
   envState,
   patch,
   sourceId,
+  focusAt = null,
   readOnly = false,
 }) {
   const source = (envState.sources || []).find((s) => s.id === sourceId);
@@ -96,6 +97,11 @@ export default function SourceDrawer({
   const [exporting, setExporting] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const fileRef = useRef(null);
+  /* Opened from a change in Review changes: show what was read, at the
+     passage or row the change came from. */
+  useEffect(() => {
+    if (focusAt) setTab("preview");
+  }, [sourceId, focusAt]);
   if (!source) return <SideDrawer open={false} onClose={onClose} />;
   const p = source.parsed || {};
   const all = envState.sources || [];
@@ -106,6 +112,11 @@ export default function SourceDrawer({
   const joins = joinsOf(source, all);
   const exp = exportPreviewOf(source);
   const nextLabel = nextSnapshotLabel(env, envState);
+  /* The sample row is the one a change cited (its key value). */
+  const focusRow =
+    !!focusAt &&
+    p.kind === "table" &&
+    Object.values(p.sample || {}).includes(focusAt);
 
   const TABS = [
     ["preview", "What was read"],
@@ -229,16 +240,22 @@ export default function SourceDrawer({
                 {p.passages.map((x) => (
                   <Box
                     key={x.id}
+                    ref={(el) =>
+                      el &&
+                      x.id === focusAt &&
+                      el.scrollIntoView({ block: "center" })
+                    }
                     sx={{
                       p: 1.25,
                       border: "1px solid",
                       borderColor: "divider",
                       borderRadius: 1,
+                      ...(x.id === focusAt && { bgcolor: "action.selected" }),
                     }}
                   >
                     <Typography
                       sx={{ typography: "s3", color: "text.tertiary" }}
-                    >{`Page ${x.page}${x.rule ? " · cited by a rule" : ""}`}</Typography>
+                    >{`Page ${x.page}${x.rule ? " · cited by a rule" : ""}${x.id === focusAt ? " · the change came from here" : ""}`}</Typography>
                     <Typography sx={{ typography: "s2" }}>{x.text}</Typography>
                   </Box>
                 ))}
@@ -253,11 +270,19 @@ export default function SourceDrawer({
                 <Typography
                   sx={{ typography: "s3", color: "text.tertiary" }}
                 >{`${p.format} · ${p.accepted.toLocaleString()} of ${p.rows.toLocaleString()} rows accepted`}</Typography>
+                {focusRow && (
+                  <Typography
+                    sx={{ typography: "s3", color: "text.secondary" }}
+                  >
+                    {`Row ${focusAt} — the change came from this row`}
+                  </Typography>
+                )}
                 <Box
                   sx={{
                     border: "1px solid",
                     borderColor: "divider",
                     borderRadius: 1,
+                    ...(focusRow && { bgcolor: "action.selected" }),
                   }}
                 >
                   {p.columns.map((c) => (
@@ -806,5 +831,6 @@ SourceDrawer.propTypes = {
   envState: PropTypes.object,
   patch: PropTypes.func,
   sourceId: PropTypes.string,
+  focusAt: PropTypes.string,
   readOnly: PropTypes.bool,
 };

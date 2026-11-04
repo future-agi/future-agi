@@ -307,6 +307,25 @@ const GAP_AREA_TO_STEP = {
  * a linear wizard you fall out of. The rail doubles as navigation and as the
  * "what is still missing before I can run" answer.
  */
+/* What of a chat turn can be stored: what was said, not its live cards.
+   The greeting is written fresh each visit. */
+const CHAT_KEPT = 200;
+const storableTurn = (t) => {
+  if (t.id === "ws-greet") return null;
+  const text =
+    t.role === "user"
+      ? t.text
+      : (t.steps || [])
+          .filter((x) => x.kind === "note" && typeof x.text === "string")
+          .map((x) => x.text)
+          .join("\n\n");
+  return text ? { id: t.id, role: t.role, text } : null;
+};
+const restoredTurn = (t) =>
+  t.role === "user"
+    ? t
+    : { id: t.id, role: t.role, steps: [{ kind: "note", text: t.text }] };
+
 export default function EnvironmentWorkspace() {
   const { envId, step = "overview" } = useParams();
   const navigate = useNavigate();
@@ -534,11 +553,14 @@ export default function EnvironmentWorkspace() {
   /* The conversation belongs to one environment: opening another (the same
      screen, a new id) starts its own, instead of greeting with the last one's name. */
   const turnsEnvRef = useRef(null);
+  /* The environment whose saved chat is loaded — saving waits for it. */
+  const chatLoadedFor = useRef(null);
   useEffect(() => {
-    if (!env) return;
+    if (!env || !state.hydrated) return;
     const switched =
       turnsEnvRef.current !== null && turnsEnvRef.current !== env.id;
     turnsEnvRef.current = env.id;
+    chatLoadedFor.current = env.id;
     setTurns((prev) =>
       prev.length && !switched
         ? prev
@@ -558,9 +580,26 @@ export default function EnvironmentWorkspace() {
                 },
               ],
             },
+            ...(latestEnvState.current.chatHistory || []).map(restoredTurn),
           ],
     );
-  }, [env?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [env?.id, state.hydrated]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* The chat is kept with the environment, so a reload still has it and
+     Open in chat (Review changes) finds the message an edit came from. */
+  useEffect(() => {
+    if (!env || chatLoadedFor.current !== env.id) return;
+    const kept = turns.map(storableTurn).filter(Boolean).slice(-CHAT_KEPT);
+    const had = latestEnvState.current.chatHistory || [];
+    const last = (l) => l[l.length - 1];
+    if (
+      kept.length === had.length &&
+      last(kept)?.id === last(had)?.id &&
+      last(kept)?.text === last(had)?.text
+    )
+      return;
+    storePatch({ chatHistory: kept });
+  }, [turns]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Module-level pub/sub for builder-prompt suggestions. The Edit-scenario
      drawer's suggestion pills emit here; we append the message directly
@@ -644,7 +683,7 @@ export default function EnvironmentWorkspace() {
         setFocusTurnId(sent?.x.id || null);
         if (!sent)
           enqueueSnackbar(
-            "That message is from an earlier visit, so it isn't in this chat any more.",
+            "That message is older than this chat keeps, so it can't be shown.",
             { variant: "info" },
           );
       }),

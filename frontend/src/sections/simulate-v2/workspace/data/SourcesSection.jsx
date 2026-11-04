@@ -54,12 +54,15 @@ export default function SourcesSection({
   /* The open source lives in the URL (?source=), so a citation in builder chat can open it. */
   const [params, setParams] = useSearchParams();
   const open = params.get("source");
+  /* The place in it a change came from (a passage or a row), if any. */
+  const openAt = params.get("at");
   const setOpen = (id) =>
     setParams(
       (p) => {
         const n = new URLSearchParams(p);
         if (id) n.set("source", id);
         else n.delete("source");
+        n.delete("at");
         return n;
       },
       { replace: true },
@@ -322,6 +325,7 @@ export default function SourcesSection({
         envState={envState}
         patch={patch}
         sourceId={open}
+        focusAt={openAt}
         readOnly={readOnly}
       />
       <ClosableDialog
