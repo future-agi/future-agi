@@ -5,9 +5,9 @@ from rest_framework import serializers
 from simulate.models import HarnessNudge
 from simulate.serializers.harness_job import (
     TARGET_SYSTEM_PROMPT_MAX_CHARS,
+    HarnessAgentConfigChangeSerializer,
     HarnessRunPinnedVersionsSerializer,
     HarnessRunWarningSerializer,
-    phone_number_error,
 )
 from simulate.serializers.requests.run_test_evals import (
     EvalConfigUpdateRequestSerializer,
@@ -612,18 +612,6 @@ class HarnessAgentCredentialsResponseSerializer(serializers.Serializer):
     """The agent version a credential change made; its check runs next."""
 
     agent_version = HarnessVersionSerializer()
-
-
-class HarnessAgentConfigChangeSerializer(StrictInputSerializer):
-    phone_number = serializers.CharField(max_length=512, required=False)
-    agent_name = serializers.CharField(max_length=512, required=False)
-    target_speaks_first = serializers.BooleanField(required=False)
-
-    def validate_phone_number(self, value):
-        error = phone_number_error(value)
-        if error:
-            raise serializers.ValidationError(error)
-        return value.strip()
 
 
 class HarnessAgentPayloadChangeSerializer(StrictInputSerializer):

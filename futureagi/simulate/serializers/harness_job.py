@@ -12,6 +12,7 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
 from simulate.services.harness_credentials import agent_version_secret_ref
+from tfc.utils.api_serializers import StrictInputSerializer
 from tfc.utils.serializer_fields import JsonValueField
 
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
@@ -191,6 +192,18 @@ def phone_number_error(value: str) -> str | None:
 
 
 TARGET_SYSTEM_PROMPT_MAX_CHARS = 65_536
+
+
+class HarnessAgentConfigChangeSerializer(StrictInputSerializer):
+    phone_number = serializers.CharField(max_length=512, required=False)
+    agent_name = serializers.CharField(max_length=512, required=False)
+    target_speaks_first = serializers.BooleanField(required=False)
+
+    def validate_phone_number(self, value):
+        error = phone_number_error(value)
+        if error:
+            raise serializers.ValidationError(error)
+        return value.strip()
 
 
 class HarnessAgentSerializer(serializers.Serializer):
