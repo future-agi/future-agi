@@ -30,31 +30,26 @@ export default function TaskPanels({ leftPanel, rightPanel }) {
         minWidth: 0,
       }}
     >
-      <Tabs
-        value={pane}
-        onChange={(_, next) => setPane(next)}
-        aria-label="Task workspace"
-        sx={{
-          px: 2,
-          flexShrink: 0,
-          display: narrow ? "flex" : "none",
-          "& .Mui-selected": { color: "text.primary" },
-          "& .MuiTabs-indicator": { bgcolor: "text.primary" },
-        }}
-      >
-        <Tab
-          value="left"
-          id="task-settings-tab"
-          aria-controls="task-settings-panel"
-          label="Task settings"
-        />
-        <Tab
-          value="right"
-          id="task-row-tab"
-          aria-controls="task-row-panel"
-          label="Matching row"
-        />
-      </Tabs>
+      <Box sx={{ px: 2, flexShrink: 0, display: narrow ? "block" : "none" }}>
+        <Tabs
+          value={pane}
+          onChange={(_, next) => setPane(next)}
+          aria-label="Task workspace"
+        >
+          <Tab
+            value="left"
+            id="task-settings-tab"
+            aria-controls="task-settings-panel"
+            label="Task settings"
+          />
+          <Tab
+            value="right"
+            id="task-row-tab"
+            aria-controls="task-row-panel"
+            label="Matching row"
+          />
+        </Tabs>
+      </Box>
       <Box
         sx={{
           flex: 1,

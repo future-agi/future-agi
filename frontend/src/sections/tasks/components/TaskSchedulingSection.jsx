@@ -194,7 +194,7 @@ export default function TaskSchedulingSection({ control, isEdit = false }) {
               {start.value && end.value && (
                 <Box
                   component="span"
-                  sx={{ fontSize: "10px", fontWeight: 500, ml: 0.5 }}
+                  sx={{ fontSize: "12px", fontWeight: 500, ml: 0.5 }}
                 >{`(${formatTimeWindow(start.value, end.value, { isCustom: preset.value === "Custom" })})`}</Box>
               )}
             </Typography>

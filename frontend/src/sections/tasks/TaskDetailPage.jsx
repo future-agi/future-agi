@@ -702,7 +702,6 @@ const TaskDetailPage = () => {
               disabled={!testState.canTest || !canEditTask}
               onClick={() => previewRef.current?.runTest()}
               startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
-              sx={{ textTransform: "none", fontWeight: 500, minWidth: 120 }}
             >
               Test on this row
             </LoadingButton>
@@ -712,7 +711,6 @@ const TaskDetailPage = () => {
               onClick={() => openConfirm("save")}
               loading={isUpdating}
               disabled={!canEditTask}
-              sx={{ textTransform: "none", fontWeight: 500, minWidth: 140 }}
             >
               Save
             </LoadingButton>

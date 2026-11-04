@@ -240,7 +240,6 @@ const TaskCreatePage = () => {
             variant="outlined"
             size="small"
             onClick={() => navigate(cancelDestination)}
-            sx={{ textTransform: "none", fontWeight: 500 }}
           >
             Cancel
           </Button>
@@ -251,7 +250,6 @@ const TaskCreatePage = () => {
             disabled={!testState.canTest || !canCreateTask}
             onClick={() => previewRef.current?.runTest()}
             startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
-            sx={{ textTransform: "none", fontWeight: 500, minWidth: 120 }}
           >
             Test on this row
           </LoadingButton>
@@ -261,7 +259,6 @@ const TaskCreatePage = () => {
             onClick={handleSubmit(onSubmit)}
             loading={isPending}
             disabled={!canCreateTask}
-            sx={{ textTransform: "none", fontWeight: 500, minWidth: 140 }}
           >
             Create task
           </LoadingButton>
