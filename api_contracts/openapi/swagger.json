@@ -131330,7 +131330,7 @@
             "properties": {
                 "state": {
                     "title": "State",
-                    "description": "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+                    "description": "ready: certified together; failed: a check failed; retry: the last validation, or a run, ended before its check did.",
                     "type": "string",
                     "enum": [
                         "not_run",
@@ -131351,7 +131351,6 @@
                     "title": "Purpose",
                     "type": "string",
                     "enum": [
-                        "save",
                         "agent_move",
                         "recheck"
                     ],

@@ -37301,10 +37301,10 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         "unavailable",
       ])
       .describe(
-        "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+        "ready: certified together; failed: a check failed; retry: the last validation, or a run, ended before its check did.",
       ),
     job_id: zod.string().uuid(),
-    purpose: zod.enum(["save", "agent_move", "recheck"]),
+    purpose: zod.enum(["agent_move", "recheck"]),
     finished_at: zod.string().datetime({ offset: true }),
     error: zod.record(zod.string(), zod.string()),
   }),
@@ -52361,10 +52361,10 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
               "unavailable",
             ])
             .describe(
-              "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+              "ready: certified together; failed: a check failed; retry: the last validation, or a run, ended before its check did.",
             ),
           job_id: zod.string().uuid(),
-          purpose: zod.enum(["save", "agent_move", "recheck"]),
+          purpose: zod.enum(["agent_move", "recheck"]),
           finished_at: zod.string().datetime({ offset: true }),
           error: zod.record(zod.string(), zod.string()),
         }),

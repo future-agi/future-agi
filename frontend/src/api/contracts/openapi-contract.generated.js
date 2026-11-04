@@ -98927,7 +98927,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         state: {
           title: "State",
           description:
-            "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+            "ready: certified together; failed: a check failed; retry: the last validation, or a run, ended before its check did.",
           type: "string",
           enum: [
             "not_run",
@@ -98947,7 +98947,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         purpose: {
           title: "Purpose",
           type: "string",
-          enum: ["save", "agent_move", "recheck"],
+          enum: ["agent_move", "recheck"],
           "x-nullable": true,
         },
         finished_at: {
