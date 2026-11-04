@@ -111,6 +111,12 @@ from .views.agent_version import (
     CreateAgentVersionView,
     RestoreAgentVersionView,
 )
+from .views.agent_connect import (
+    AgentConnectView,
+    AgentFoundCheckView,
+    AgentScanDetailView,
+    AgentScanView,
+)
 from .views.agent_versions import (
     AgentBuildPreflightView,
     AgentVersionChangeView,
@@ -366,6 +372,18 @@ urlpatterns = [
         AgentBuildPreflightView.as_view(),
         name="agent-build-preflight",
     ),
+    path(
+        "agent-definitions/<uuid:agent_id>/found-check/",
+        AgentFoundCheckView.as_view(),
+        name="agent-found-check",
+    ),
+    path("agents/scan/", AgentScanView.as_view(), name="agents-scan"),
+    path(
+        "agents/scan/<uuid:scan_id>/",
+        AgentScanDetailView.as_view(),
+        name="agents-scan-detail",
+    ),
+    path("agents/connect/", AgentConnectView.as_view(), name="agents-connect"),
     path(
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/code/tree/",
         AgentCodeTreeView.as_view(),

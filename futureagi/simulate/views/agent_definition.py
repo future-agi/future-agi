@@ -39,6 +39,7 @@ from simulate.serializers.response.agent_definition import (
 from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
+from simulate.services.agent_connect import found_check_required
 from simulate.services.agent_definition import (
     delete_agents,
     is_masked,
@@ -58,11 +59,11 @@ from simulate.services.harness_agent_versions import (
     connected_agent,
     environment_owned,
 )
+from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.production_project import (
     ProductionProjectError,
     link_production_project,
 )
-from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.ee_stub import _ee_stub
 
@@ -484,6 +485,10 @@ class AgentDefinitionDetailView(APIView):
                         if environment_owned(agent.id)
                         else None
                     ),
+                    "found_check": {
+                        "required": found_check_required(agent),
+                        "done_at": agent.found_checked_at,
+                    },
                 },
                 status=status.HTTP_200_OK,
             )

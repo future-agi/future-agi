@@ -167,6 +167,14 @@ class ObserveProjectRefSerializer(serializers.Serializer):
     name = serializers.CharField()
 
 
+class AgentFoundCheckSerializer(serializers.Serializer):
+    """Whether what the first reading found still waits to be confirmed, and when
+    it was."""
+
+    required = serializers.BooleanField()
+    done_at = serializers.DateTimeField(allow_null=True)
+
+
 class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
     """
     Response serializer for GET /agent-definitions/ (list).
@@ -264,6 +272,7 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
     observe_project = ObserveProjectRefSerializer(read_only=True, allow_null=True)
     connected = serializers.BooleanField(read_only=True)
     managed_by = RunEnvironmentRefSerializer(read_only=True, allow_null=True)
+    found_check = AgentFoundCheckSerializer(read_only=True)
 
     class Meta(AgentDefinitionResponseSerializer.Meta):
         fields = [
@@ -278,6 +287,7 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
             "observe_project",
             "connected",
             "managed_by",
+            "found_check",
         ]
         read_only_fields = fields
 
