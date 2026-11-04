@@ -1213,6 +1213,9 @@ def test_live_row_watermark_includes_children_and_tombstones(row_type):
     if row_type == "sessions":
         assert "FROM sampling_source" in sql
         assert "sampling_source FINAL" not in sql
+        assert "FROM sampling_source PREWHERE" not in sql
+        assert "sum(cost) AS total_cost" in sql
+        assert "member_trace_usage" not in sql
     assert "r.arrival >= %(sp_floor)s" in sql
 
 
