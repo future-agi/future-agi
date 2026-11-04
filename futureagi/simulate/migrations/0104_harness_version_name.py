@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('simulate', '0105_hosted_job_capability_snapshot'),
+        ('simulate', '0103_hosted_job_capability_snapshot'),
     ]
 
     operations = [
