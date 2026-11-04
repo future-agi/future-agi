@@ -2,10 +2,8 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
-// Actors section (ActorsPanel) is commented out below — it was a dummy cast from
-// the fixture ACTOR_LIBRARY, not backed by §6. To be picked up later.
-// import ActorsPanel from "./ActorsPanel";
 import CapabilityGraph from "../overview/CapabilityGraph";
+import { VOICE_ONLY_SURFACES } from "../scenarios/scenarioEditor.constants";
 import SubActorsPanel from "./SubActorsPanel";
 import WorldActorsPanel from "./WorldActorsPanel";
 import WorldInternalsSection from "./WorldInternalsSection";
@@ -154,24 +152,17 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
           <WorldActorsPanel
             envId={env.id}
             locked={locked}
-            callerSide={env.surface === "voice" || env.subActors?.length > 0}
+            callerSide={
+              VOICE_ONLY_SURFACES.includes(env.surface) ||
+              env.subActors?.length > 0
+            }
           />
         </Box>
       ) : (
         env.subActors?.length > 0 && (
-          <Box sx={{ mb: 2 }}>
-            <SubActorsPanel subActors={env.subActors} />
-          </Box>
+          <SubActorsPanel subActors={env.subActors} />
         )
       )}
-
-      {/*
-        Actors section removed — it was a dummy cast from the fixture
-        ACTOR_LIBRARY (not backed by §6), and actors were also dropped from the
-        capability graph (now Personas only). To be picked up later if a real
-        actors field lands.
-        <ActorsPanel env={env} envState={envState} patch={patch} onGo={onGo} locked={locked} />
-      */}
     </Box>
   );
 }

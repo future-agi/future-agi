@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent } from "src/utils/test-utils";
 
 const mutate = vi.fn();
 let actorsData;
+let actorsState;
 
 vi.mock("src/api/simulate-environments/versions", () => ({
-  useActors: () => ({ data: actorsData }),
+  useActors: () => ({ data: actorsData, ...actorsState }),
   useActorView: () => ({
     data: {
       sees: [
@@ -74,6 +75,16 @@ const cast = (actors, extra = {}) => ({
   actions: ACTIONS,
   channels: CHANNELS,
   loudness: { channels: ["audio_mix"], automatic: [0.333, 0.667] },
+  record_schemas: {
+    "actors.json": {
+      properties: {
+        id: {
+          pattern: "^[a-z0-9_]{1,64}$",
+          description: "1 to 64 lowercase letters, digits or underscores",
+        },
+      },
+    },
+  },
   ...extra,
 });
 // Open an MUI select by its label and pick an option by its text.
@@ -86,6 +97,61 @@ describe("WorldActorsPanel", () => {
   beforeEach(() => {
     mutate.mockReset();
     actorsData = cast([MANAGER]);
+    actorsState = { isLoading: false, isError: false };
+  });
+
+  it("says the actors are loading, with no count and nothing to add yet", () => {
+    actorsData = undefined;
+    actorsState = { isLoading: true, isError: false };
+    render(<WorldActorsPanel envId="env-1" callerSide />);
+    expect(screen.getByText("Loading the actors…")).toBeInTheDocument();
+    expect(screen.getByText("Actors")).toBeInTheDocument();
+    expect(screen.queryByText("Actors (0)")).toBeNull();
+    expect(screen.queryByText("Add someone in the world")).toBeNull();
+    expect(screen.queryByText("Add someone on the caller's side")).toBeNull();
+  });
+
+  it("says the actors could not be loaded and offers nothing to add", () => {
+    actorsData = undefined;
+    actorsState = { isLoading: false, isError: true };
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The actors could not be loaded. Refresh the page to try again.",
+    );
+    expect(screen.queryByText("Actors (0)")).toBeNull();
+    expect(screen.queryByText("Add someone in the world")).toBeNull();
+  });
+
+  it("keeps a cast already read when a refresh fails", () => {
+    actorsState = { isLoading: false, isError: true };
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.getByText("Actors (1)")).toBeInTheDocument();
+    expect(screen.getByText("Add someone in the world")).toBeInTheDocument();
+  });
+
+  it("checks a typed id against the id rule the cast is sent with", () => {
+    actorsData = cast([], {
+      record_schemas: {
+        "actors.json": { properties: { id: { pattern: "^[a-z]{1,3}$" } } },
+      },
+    });
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("Add someone in the world"));
+    fireEvent.change(screen.getByLabelText(/^Name/), {
+      target: { value: "Sam" },
+    });
+    fireEvent.change(screen.getByLabelText("Id"), {
+      target: { value: "abcd" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Save to draft" }),
+    ).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Id"), {
+      target: { value: "abc" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Save to draft" }),
+    ).not.toBeDisabled();
   });
 
   it("lists the cast with what each may do, when they come in, and says the changes are unsaved", () => {

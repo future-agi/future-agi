@@ -93,7 +93,10 @@ export const CONTRACT_COPY = {
   },
 
   worldActors: {
-    title: (n) => `Actors (${n})`,
+    title: (n) => (n == null ? "Actors" : `Actors (${n})`),
+    loading: "Loading the actors…",
+    loadFailed:
+      "The actors could not be loaded. Refresh the page to try again.",
     subtitle:
       "Everyone the agent deals with who is not the agent: people beside the caller on the call, and people and systems in the world. Edits wait in the draft until you save.",
     unsaved: "Unsaved changes: saved with the environment's other changes",
@@ -203,8 +206,7 @@ export const CONTRACT_COPY = {
       fallbacks: { silent: "Nothing happens", decline: "They decline" },
       answeredBy: (name) => `${name} answers instead`,
       fallbackLabel: (id) =>
-        ({ silent: "Nothing happens", decline: "They decline" })[id] ||
-        `${id} answers instead`,
+        CONTRACT_COPY.worldActors.form.fallbacks[id] || `${id} answers instead`,
       channel: "How they join the call",
       loudness: "How loud, next to the caller (optional)",
       loudnessAutomatic: (low, high) =>

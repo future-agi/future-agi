@@ -176,18 +176,27 @@ export const saveDrafts = async (envId, { drafts, idempotencyKey }) =>
 export const discardDraft = async (envId, piece) =>
   (await axios.delete(discardDraftPath(envId, piece))).data;
 
-// The cast the next run uses (the draft's when there is one) and one actor's view:
-// what it sees and may do, and what it never sees.
+/**
+ * The cast the next run uses (the draft's when there is one), with the record schemas, world actions,
+ * channels and loudness an actor can be given.
+ * @param {string} envId
+ */
 export const getActors = async (envId) =>
   (await axios.get(actorsPath(envId))).data;
-export const getActorView = async (envId, actorId, scenarioKey) =>
-  (
-    await axios.get(actorPath(envId, actorId), {
-      params: scenarioKey ? { scenario_key: scenarioKey } : {},
-    })
-  ).data;
-// An actor edit writes the environment draft; `revision` is the draft revision
-// the cast was read at, so an edit made elsewhere is refused, never overwritten.
+/**
+ * One actor's view: what it sees and may do, and what it never sees. 404 `actor_not_found` for an unknown id.
+ * @param {string} envId
+ * @param {string} actorId
+ */
+export const getActorView = async (envId, actorId) =>
+  (await axios.get(actorPath(envId, actorId))).data;
+/**
+ * Create, replace or delete one actor in the environment draft; resolves to the cast after it.
+ * `revision` is the draft revision the cast was read at, so an edit made elsewhere is refused with
+ * `draft_changed`, never overwritten.
+ * @param {string} envId
+ * @param {{ op: "create"|"replace"|"delete", actor?: Object, actorId?: string, revision: number }} change
+ */
 export const editActor = async (envId, { op, actor, actorId, revision }) => {
   if (op === "create") {
     return (
@@ -240,11 +249,7 @@ export const draftsKey = (envId) => [
 ];
 // Under the drafts, so whatever refreshes the drafts refreshes the cast too.
 export const actorsKey = (envId) => [...draftsKey(envId), "actors"];
-export const actorViewKey = (envId, actorId, scenarioKey) => [
-  ...actorsKey(envId),
-  actorId,
-  scenarioKey ?? null,
-];
+export const actorViewKey = (envId, actorId) => [...actorsKey(envId), actorId];
 
 export const runPlanKey = (envId, picks = {}) => [
   ...environmentVersionsKey(envId),
@@ -753,6 +758,11 @@ export function useSaveDrafts(envId) {
   });
 }
 
+/**
+ * The environment's cast; see `getActors`.
+ * @param {string} envId
+ * @param {{ enabled?: boolean }} [options]
+ */
 export function useActors(envId, { enabled = true } = {}) {
   return useQuery({
     queryKey: actorsKey(envId),
@@ -763,24 +773,28 @@ export function useActors(envId, { enabled = true } = {}) {
   });
 }
 
-export function useActorView(
-  envId,
-  actorId,
-  scenarioKey,
-  { enabled = true } = {},
-) {
+/**
+ * One actor's view; see `getActorView`.
+ * @param {string} envId
+ * @param {string} actorId
+ * @param {{ enabled?: boolean }} [options]
+ */
+export function useActorView(envId, actorId, { enabled = true } = {}) {
   return useQuery({
-    queryKey: actorViewKey(envId, actorId, scenarioKey),
-    queryFn: () => getActorView(envId, actorId, scenarioKey),
+    queryKey: actorViewKey(envId, actorId),
+    queryFn: () => getActorView(envId, actorId),
     enabled: Boolean(envId && actorId) && enabled,
     retry: retryUnlessNotFound,
     meta: { errorHandled: true },
   });
 }
 
-// Create, replace or remove one actor in the draft. The answer is the cast, so it
-// seeds the list; the drafts (the Save bar) are asked again. A refusal because the
-// draft moved on refreshes the cast so the user edits what is current.
+/**
+ * Create, replace or remove one actor in the draft. The answer is the cast, so it seeds the list; the
+ * drafts (the Save bar) are asked again. A refusal because the draft moved on refreshes the cast so the
+ * user edits what is current.
+ * @param {string} envId
+ */
 export function useEditActor(envId) {
   const queryClient = useQueryClient();
   return useMutation({
