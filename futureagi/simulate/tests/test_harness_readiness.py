@@ -716,3 +716,19 @@ class TestApi:
         assert response.status_code == 202, response.content
         assert response.json()["validation"]["state"] == "unavailable"
         assert HostedHarnessJob.no_workspace_objects.count() == jobs
+
+    def test_run_header_shows_the_snapshot_it_was_created_with(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = _environment(user, workspace, storage, "rd-api-header")
+        _certify(environment, storage)
+        run = _run(environment)
+        _built(environment, contract=PRODUCTION_ONLY)
+
+        header = auth_client.get(
+            f"/simulate/v3/test-executions/{run.test_execution_id}/calls/"
+        ).json()["execution"]
+
+        assert header["capability_snapshot"] == run.capability_snapshot
+        assert header["capability_snapshot"]["answer"]["kind"] == "ready"
+        assert _get(auth_client, environment.id).json()["answer"]["kind"] == "blocked"
