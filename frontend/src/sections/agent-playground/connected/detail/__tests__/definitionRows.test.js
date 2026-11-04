@@ -226,6 +226,46 @@ describe("reachRows", () => {
     expect(rows["Phone number"]).toBeUndefined();
   });
 
+  it("says nothing about inbound or outbound for a phone agent", () => {
+    const rows = byLabel(
+      reachRows(
+        factsOf(
+          { source: "phone" },
+          {
+            config: {
+              provider: "phone",
+              agent_type: "voice",
+              inbound: false,
+              contact_number: "+14155550100",
+              target_speaks_first: true,
+            },
+          },
+        ),
+      ),
+    );
+    expect(rows.Voice.value).not.toMatch(/inbound|outbound/);
+    expect(rows.Voice.value).toBe("Phone call · agent speaks first");
+  });
+
+  it("still says inbound for a Vapi voice agent", () => {
+    const rows = byLabel(
+      reachRows(
+        factsOf(
+          { source: "vapi" },
+          {
+            config: {
+              provider: "vapi",
+              agent_type: "voice",
+              inbound: true,
+              contact_number: "+14155550100",
+            },
+          },
+        ),
+      ),
+    );
+    expect(rows.Voice.value).toBe("Phone call · inbound");
+  });
+
   it("describes a chat agent and how many conversations at once", () => {
     const rows = byLabel(
       reachRows(
@@ -278,7 +318,8 @@ describe("storedAgentRows", () => {
       "gpt-4.1 · temperature 0.3 · max 1024 tokens",
     );
     expect(rows.Voice.value).toBe("sonic-en · cartesia · en · speed 1");
-    expect(rows.Prompts.value).toBe(
+    expect(rows.Prompts).toBeUndefined();
+    expect(rows.Prompt.value).toBe(
       "# ROLE\nYou are the Uber phone-booking assistant.",
     );
     expect(rows["Tools · 2"].items).toEqual([
@@ -288,6 +329,23 @@ describe("storedAgentRows", () => {
     expect(rows.Telephony.items).toEqual(["+14155550199 · twilio"]);
     expect(rows["Tracing library"].value).toBe("None");
     expect(rows.Gaps.items).toEqual(["Flow not described"]);
+  });
+
+  it("says Prompts when the stored Agent has several behaviours", () => {
+    const rows = byLabel(
+      storedAgentRows({
+        ...details,
+        agent: {
+          ...details.agent,
+          behaviour: [
+            { id: "main", instructions: "Greet the caller." },
+            { id: "refund", instructions: "Handle the refund." },
+          ],
+        },
+      }),
+    );
+    expect(rows.Prompt).toBeUndefined();
+    expect(rows.Prompts.value).toBe("Greet the caller.\n\nHandle the refund.");
   });
 
   it("has no provider block for a code agent", () => {

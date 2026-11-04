@@ -204,9 +204,14 @@ describe("AgentDetailLayout", () => {
   it("offers an upload for an uploaded agent", async () => {
     serve({ ...CODE, source: "archive" });
     renderAt(`${base(CODE)}/overview`);
+    const upload = await screen.findByRole("button", {
+      name: "Upload new version",
+    });
+    expect(upload).toBeEnabled();
+    fireEvent.click(upload);
     expect(
-      await screen.findByRole("button", { name: "Upload new version" }),
-    ).toBeDisabled();
+      await screen.findByText(`Upload v${CODE.version_count + 1}`),
+    ).toBeInTheDocument();
   });
 
   it("blocks Delete while an environment tests the agent", async () => {
