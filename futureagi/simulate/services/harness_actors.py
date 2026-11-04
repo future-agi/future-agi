@@ -398,7 +398,9 @@ def _record_problems(
         subject = (
             "The id"
             if where == "id"
-            else f"{actor_id}'s {where}:" if where else f"{actor_id}:"
+            else f"{actor_id}'s {where}:"
+            if where
+            else f"{actor_id}:"
         )
         problems.append(f"{subject} {_reason(error)}.")
     for path, field in (rules.get("equal_when_set") or {}).items():
@@ -585,11 +587,7 @@ def write_actor_edit(
     once the draft is written. `actor_id` is the id in the address, if any; a create may give it in the body instead.
     """
     # The scenario count and the review decision are read-side only; they are never written into a record.
-    body = {
-        name: value
-        for name, value in (body or {}).items()
-        if name not in _READ_ONLY_FIELDS
-    }
+    body = {name: value for name, value in (body or {}).items() if name not in _READ_ONLY_FIELDS}
     given = body.pop("id", None) or actor_id
     if op != "delete" and not given:
         raise HostedHarnessError(
