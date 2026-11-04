@@ -64424,6 +64424,11 @@ export const TracerObservationSpanGetGraphMethodsBody = zod.object({
 });
 
 export const tracerObservationSpanGetGraphMethodsResponseStatusDefault = true;
+export const tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerObservationSpanGetGraphMethodsResponseResultQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -64465,6 +64470,35 @@ export const TracerObservationSpanGetGraphMethodsResponse = zod.object({
             timestamp: zod.string().min(1),
             value: zod.number(),
             primary_traffic: zod.number().optional(),
+            cost_coverage: zod
+              .object({
+                status: zod.enum(["complete", "partial", "unknown"]),
+                known_subtotal: zod
+                  .number()
+                  .min(
+                    tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin,
+                  )
+                  .describe(
+                    "Sum in USD of known observed contributions, never an average.",
+                  ),
+                known_fact_count: zod
+                  .number()
+                  .min(
+                    tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with known cost, including zero.",
+                  ),
+                unknown_fact_count: zod
+                  .number()
+                  .min(
+                    tracerObservationSpanGetGraphMethodsResponseResultDataItemCostCoverageUnknownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with unknown cost, not missing requests.",
+                  ),
+              })
+              .optional(),
           })
           .describe(
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -67045,6 +67079,11 @@ export const TracerProjectGetGraphDataQueryParams = zod.object({
 });
 
 export const tracerProjectGetGraphDataResponseStatusDefault = true;
+export const tracerProjectGetGraphDataResponseResultCostCoverageItemKnownSubtotalMin = 0;
+
+export const tracerProjectGetGraphDataResponseResultCostCoverageItemKnownFactCountMin = 0;
+
+export const tracerProjectGetGraphDataResponseResultCostCoverageItemUnknownFactCountMin = 0;
 
 export const TracerProjectGetGraphDataResponse = zod.object({
   status: zod.boolean().default(tracerProjectGetGraphDataResponseStatusDefault),
@@ -67053,6 +67092,38 @@ export const TracerProjectGetGraphDataResponse = zod.object({
       .object({})
       .passthrough()
       .describe("Any valid JSON value."),
+    cost_coverage: zod
+      .array(
+        zod.object({
+          status: zod.enum(["complete", "partial", "unknown"]),
+          known_subtotal: zod
+            .number()
+            .min(
+              tracerProjectGetGraphDataResponseResultCostCoverageItemKnownSubtotalMin,
+            )
+            .describe(
+              "Sum in USD of known observed contributions, never an average.",
+            ),
+          known_fact_count: zod
+            .number()
+            .min(
+              tracerProjectGetGraphDataResponseResultCostCoverageItemKnownFactCountMin,
+            )
+            .describe(
+              "Observed additive monetary facts with known cost, including zero.",
+            ),
+          unknown_fact_count: zod
+            .number()
+            .min(
+              tracerProjectGetGraphDataResponseResultCostCoverageItemUnknownFactCountMin,
+            )
+            .describe(
+              "Observed additive monetary facts with unknown cost, not missing requests.",
+            ),
+          timestamp: zod.string().min(1),
+        }),
+      )
+      .optional(),
     system_metric_statistics: zod
       .record(zod.string(), zod.enum(["count", "sum", "mean", "percentage"]))
       .optional()
@@ -67139,12 +67210,49 @@ export const TracerProjectGetUserGraphDataBody = zod.object({
 });
 
 export const tracerProjectGetUserGraphDataResponseStatusDefault = true;
+export const tracerProjectGetUserGraphDataResponseResultCostCoverageItemKnownSubtotalMin = 0;
+
+export const tracerProjectGetUserGraphDataResponseResultCostCoverageItemKnownFactCountMin = 0;
+
+export const tracerProjectGetUserGraphDataResponseResultCostCoverageItemUnknownFactCountMin = 0;
 
 export const TracerProjectGetUserGraphDataResponse = zod.object({
   status: zod
     .boolean()
     .default(tracerProjectGetUserGraphDataResponseStatusDefault),
   result: zod.object({
+    cost_coverage: zod
+      .array(
+        zod.object({
+          status: zod.enum(["complete", "partial", "unknown"]),
+          known_subtotal: zod
+            .number()
+            .min(
+              tracerProjectGetUserGraphDataResponseResultCostCoverageItemKnownSubtotalMin,
+            )
+            .describe(
+              "Sum in USD of known observed contributions, never an average.",
+            ),
+          known_fact_count: zod
+            .number()
+            .min(
+              tracerProjectGetUserGraphDataResponseResultCostCoverageItemKnownFactCountMin,
+            )
+            .describe(
+              "Observed additive monetary facts with known cost, including zero.",
+            ),
+          unknown_fact_count: zod
+            .number()
+            .min(
+              tracerProjectGetUserGraphDataResponseResultCostCoverageItemUnknownFactCountMin,
+            )
+            .describe(
+              "Observed additive monetary facts with unknown cost, not missing requests.",
+            ),
+          timestamp: zod.string().min(1),
+        }),
+      )
+      .optional(),
     session: zod.array(
       zod.record(
         zod.string(),
@@ -67372,6 +67480,11 @@ export const TracerProjectGetUsersAggregateGraphDataBody = zod.object({
 
 export const tracerProjectGetUsersAggregateGraphDataResponseStatusDefault =
   true;
+export const tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerProjectGetUsersAggregateGraphDataResponseResultQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -67413,6 +67526,35 @@ export const TracerProjectGetUsersAggregateGraphDataResponse = zod.object({
             timestamp: zod.string().min(1),
             value: zod.number(),
             primary_traffic: zod.number().optional(),
+            cost_coverage: zod
+              .object({
+                status: zod.enum(["complete", "partial", "unknown"]),
+                known_subtotal: zod
+                  .number()
+                  .min(
+                    tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin,
+                  )
+                  .describe(
+                    "Sum in USD of known observed contributions, never an average.",
+                  ),
+                known_fact_count: zod
+                  .number()
+                  .min(
+                    tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageKnownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with known cost, including zero.",
+                  ),
+                unknown_fact_count: zod
+                  .number()
+                  .min(
+                    tracerProjectGetUsersAggregateGraphDataResponseResultDataItemCostCoverageUnknownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with unknown cost, not missing requests.",
+                  ),
+              })
+              .optional(),
           })
           .describe(
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -69604,6 +69746,14 @@ export const TracerSharedTracesReadParams = zod.object({
 
 export const tracerSharedTracesReadResponseStatusDefault = true;
 
+export const tracerSharedTracesReadResponseResultCostCoverageKnownSubtotalMin = 0;
+
+export const tracerSharedTracesReadResponseResultCostCoverageKnownFactCountMin = 0;
+
+export const tracerSharedTracesReadResponseResultCostCoverageUnknownFactCountMin = 0;
+
+export const tracerSharedTracesReadResponseResultCaptureCoverageRequestCountMin = 0;
+
 export const TracerSharedTracesReadResponse = zod.object({
   status: zod.boolean().default(tracerSharedTracesReadResponseStatusDefault),
   result: zod.object({
@@ -69662,6 +69812,52 @@ export const TracerSharedTracesReadResponse = zod.object({
       }),
     ),
     summary: zod.object({}).passthrough(),
+    cost_coverage: zod
+      .object({
+        status: zod.enum(["complete", "partial", "unknown"]),
+        known_subtotal: zod
+          .number()
+          .min(tracerSharedTracesReadResponseResultCostCoverageKnownSubtotalMin)
+          .describe(
+            "Sum in USD of known observed contributions, never an average.",
+          ),
+        known_fact_count: zod
+          .number()
+          .min(
+            tracerSharedTracesReadResponseResultCostCoverageKnownFactCountMin,
+          )
+          .describe(
+            "Observed additive monetary facts with known cost, including zero.",
+          ),
+        unknown_fact_count: zod
+          .number()
+          .min(
+            tracerSharedTracesReadResponseResultCostCoverageUnknownFactCountMin,
+          )
+          .describe(
+            "Observed additive monetary facts with unknown cost, not missing requests.",
+          ),
+      })
+      .optional(),
+    capture_coverage: zod
+      .object({
+        scope: zod.enum(["observed_requests"]),
+        source_summary_present: zod.boolean(),
+        request_count: zod
+          .number()
+          .min(
+            tracerSharedTracesReadResponseResultCaptureCoverageRequestCountMin,
+          )
+          .describe(
+            "Observed request spans only; never inferred from source summary totals.",
+          ),
+        coverage_unknown: zod
+          .boolean()
+          .describe(
+            "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+          ),
+      })
+      .optional(),
     graph: zod.object({}).passthrough(),
   }),
 });
@@ -70049,6 +70245,11 @@ export const TracerTraceSessionGetSessionGraphDataBody = zod.object({
 });
 
 export const tracerTraceSessionGetSessionGraphDataResponseStatusDefault = true;
+export const tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerTraceSessionGetSessionGraphDataResponseResultQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -70090,6 +70291,35 @@ export const TracerTraceSessionGetSessionGraphDataResponse = zod.object({
             timestamp: zod.string().min(1),
             value: zod.number(),
             primary_traffic: zod.number().optional(),
+            cost_coverage: zod
+              .object({
+                status: zod.enum(["complete", "partial", "unknown"]),
+                known_subtotal: zod
+                  .number()
+                  .min(
+                    tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownSubtotalMin,
+                  )
+                  .describe(
+                    "Sum in USD of known observed contributions, never an average.",
+                  ),
+                known_fact_count: zod
+                  .number()
+                  .min(
+                    tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageKnownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with known cost, including zero.",
+                  ),
+                unknown_fact_count: zod
+                  .number()
+                  .min(
+                    tracerTraceSessionGetSessionGraphDataResponseResultDataItemCostCoverageUnknownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with unknown cost, not missing requests.",
+                  ),
+              })
+              .optional(),
           })
           .describe(
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -70327,6 +70557,8 @@ export const TracerTraceSessionListSessionsQueryParams = zod.object({
     ),
 });
 
+export const tracerTraceSessionListSessionsResponseResultTraceCaptureCoverageRequestCountMin = 0;
+
 export const tracerTraceSessionListSessionsResponseResultMetadataNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
 
@@ -70340,9 +70572,45 @@ export const tracerTraceSessionListSessionsResponseResultMetadataQueryAppliedFil
   new RegExp("^[0-9a-f]{64}$");
 export const tracerTraceSessionListSessionsResponseResultMetadataQueryAppliedFilterCountMin = 0;
 
+export const tracerTraceSessionListSessionsResponseResultTableItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionListSessionsResponseResultTableItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionListSessionsResponseResultTableItemCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceSessionListSessionsResponseResultTableItemCaptureCoverageRequestCountMin = 0;
+
 export const TracerTraceSessionListSessionsResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
+    trace_capture_coverage: zod
+      .record(
+        zod.string(),
+        zod.record(
+          zod.string(),
+          zod.object({
+            scope: zod.enum(["observed_requests"]),
+            source_summary_present: zod.boolean(),
+            request_count: zod
+              .number()
+              .min(
+                tracerTraceSessionListSessionsResponseResultTraceCaptureCoverageRequestCountMin,
+              )
+              .describe(
+                "Observed request spans only; never inferred from source summary totals.",
+              ),
+            coverage_unknown: zod
+              .boolean()
+              .describe(
+                "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+              ),
+          }),
+        ),
+      )
+      .optional()
+      .describe(
+        "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
+      ),
     metadata: zod.object({
       total_rows: zod.number(),
       total_rows_exact: zod.number().nullish(),
@@ -70407,6 +70675,54 @@ export const TracerTraceSessionListSessionsResponse = zod.object({
           created_at: zod.string().datetime({ offset: true }).nullish(),
           duration: zod.number().nullish(),
           total_cost: zod.number().nullish(),
+          cost_coverage: zod
+            .object({
+              status: zod.enum(["complete", "partial", "unknown"]),
+              known_subtotal: zod
+                .number()
+                .min(
+                  tracerTraceSessionListSessionsResponseResultTableItemCostCoverageKnownSubtotalMin,
+                )
+                .describe(
+                  "Sum in USD of known observed contributions, never an average.",
+                ),
+              known_fact_count: zod
+                .number()
+                .min(
+                  tracerTraceSessionListSessionsResponseResultTableItemCostCoverageKnownFactCountMin,
+                )
+                .describe(
+                  "Observed additive monetary facts with known cost, including zero.",
+                ),
+              unknown_fact_count: zod
+                .number()
+                .min(
+                  tracerTraceSessionListSessionsResponseResultTableItemCostCoverageUnknownFactCountMin,
+                )
+                .describe(
+                  "Observed additive monetary facts with unknown cost, not missing requests.",
+                ),
+            })
+            .optional(),
+          capture_coverage: zod
+            .object({
+              scope: zod.enum(["observed_requests"]),
+              source_summary_present: zod.boolean(),
+              request_count: zod
+                .number()
+                .min(
+                  tracerTraceSessionListSessionsResponseResultTableItemCaptureCoverageRequestCountMin,
+                )
+                .describe(
+                  "Observed request spans only; never inferred from source summary totals.",
+                ),
+              coverage_unknown: zod
+                .boolean()
+                .describe(
+                  "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+                ),
+            })
+            .optional(),
           total_tokens: zod.number().nullish(),
           total_traces_count: zod.number().nullish(),
           first_message: jsonValueSchema
@@ -70515,6 +70831,8 @@ export const TracerTraceSessionListSessionsCreateBody = zod.object({
     ),
 });
 
+export const tracerTraceSessionListSessionsCreateResponseResultTraceCaptureCoverageRequestCountMin = 0;
+
 export const tracerTraceSessionListSessionsCreateResponseResultMetadataNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
 
@@ -70527,6 +70845,14 @@ export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryResu
 export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
 export const tracerTraceSessionListSessionsCreateResponseResultMetadataQueryAppliedFilterCountMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultTableItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultTableItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultTableItemCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceSessionListSessionsCreateResponseResultTableItemCaptureCoverageRequestCountMin = 0;
 
 export const TracerTraceSessionListSessionsCreateResponse =
   TracerTraceSessionListSessionsResponse;
@@ -70659,10 +70985,66 @@ export const TracerTraceSessionQueryQueryParams = zod.object({
     .default(tracerTraceSessionQueryQueryPageSizeDefault),
 });
 
+export const tracerTraceSessionQueryResponseResultCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionQueryResponseResultCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionQueryResponseResultCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceSessionQueryResponseResultCaptureCoverageRequestCountMin = 0;
+
 export const TracerTraceSessionQueryResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
     session_metadata: zod.record(zod.string(), zod.unknown()),
+    cost_coverage: zod
+      .object({
+        status: zod.enum(["complete", "partial", "unknown"]),
+        known_subtotal: zod
+          .number()
+          .min(
+            tracerTraceSessionQueryResponseResultCostCoverageKnownSubtotalMin,
+          )
+          .describe(
+            "Sum in USD of known observed contributions, never an average.",
+          ),
+        known_fact_count: zod
+          .number()
+          .min(
+            tracerTraceSessionQueryResponseResultCostCoverageKnownFactCountMin,
+          )
+          .describe(
+            "Observed additive monetary facts with known cost, including zero.",
+          ),
+        unknown_fact_count: zod
+          .number()
+          .min(
+            tracerTraceSessionQueryResponseResultCostCoverageUnknownFactCountMin,
+          )
+          .describe(
+            "Observed additive monetary facts with unknown cost, not missing requests.",
+          ),
+      })
+      .optional(),
+    capture_coverage: zod
+      .object({
+        scope: zod.enum(["observed_requests"]),
+        source_summary_present: zod.boolean(),
+        request_count: zod
+          .number()
+          .min(
+            tracerTraceSessionQueryResponseResultCaptureCoverageRequestCountMin,
+          )
+          .describe(
+            "Observed request spans only; never inferred from source summary totals.",
+          ),
+        coverage_unknown: zod
+          .boolean()
+          .describe(
+            "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+          ),
+      })
+      .optional(),
     response: zod.array(zod.record(zod.string(), zod.unknown())),
     next: zod.boolean(),
   }),
@@ -70708,6 +71090,14 @@ export const TracerTraceSessionQueryCreateBody = zod.object({
     .max(tracerTraceSessionQueryCreateBodyPageSizeMax)
     .default(tracerTraceSessionQueryCreateBodyPageSizeDefault),
 });
+
+export const tracerTraceSessionQueryCreateResponseResultCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceSessionQueryCreateResponseResultCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceSessionQueryCreateResponseResultCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceSessionQueryCreateResponseResultCaptureCoverageRequestCountMin = 0;
 
 export const TracerTraceSessionQueryCreateResponse =
   TracerTraceSessionQueryResponse;
@@ -70810,6 +71200,12 @@ export const tracerTraceAgentGraphResponseResultNodesItemTotalTokensMin = 0;
 
 export const tracerTraceAgentGraphResponseResultNodesItemTotalCostMin = 0;
 
+export const tracerTraceAgentGraphResponseResultNodesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphResponseResultNodesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphResponseResultNodesItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceAgentGraphResponseResultNodesItemErrorCountMin = 0;
 
 export const tracerTraceAgentGraphResponseResultNodesItemTraceCountMin = 0;
@@ -70824,6 +71220,12 @@ export const tracerTraceAgentGraphResponseResultEdgesItemTotalTokensMin = 0;
 
 export const tracerTraceAgentGraphResponseResultEdgesItemTotalCostMin = 0;
 
+export const tracerTraceAgentGraphResponseResultEdgesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphResponseResultEdgesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphResponseResultEdgesItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceAgentGraphResponseResultEdgesItemErrorCountMin = 0;
 
 export const tracerTraceAgentGraphResponseResultEdgesItemTraceCountMin = 0;
@@ -70835,6 +71237,12 @@ export const tracerTraceAgentGraphResponseResultPathEdgesItemAvgLatencyMsMin = 0
 export const tracerTraceAgentGraphResponseResultPathEdgesItemTotalTokensMin = 0;
 
 export const tracerTraceAgentGraphResponseResultPathEdgesItemTotalCostMin = 0;
+
+export const tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerTraceAgentGraphResponseResultPathEdgesItemErrorCountMin = 0;
 
@@ -70868,6 +71276,35 @@ export const TracerTraceAgentGraphResponse = zod.object({
         total_cost: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultNodesItemTotalCostMin),
+        cost_coverage: zod
+          .object({
+            status: zod.enum(["complete", "partial", "unknown"]),
+            known_subtotal: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultNodesItemCostCoverageKnownSubtotalMin,
+              )
+              .describe(
+                "Sum in USD of known observed contributions, never an average.",
+              ),
+            known_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultNodesItemCostCoverageKnownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with known cost, including zero.",
+              ),
+            unknown_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultNodesItemCostCoverageUnknownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with unknown cost, not missing requests.",
+              ),
+          })
+          .optional(),
         error_count: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultNodesItemErrorCountMin),
@@ -70899,6 +71336,35 @@ export const TracerTraceAgentGraphResponse = zod.object({
         total_cost: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultEdgesItemTotalCostMin),
+        cost_coverage: zod
+          .object({
+            status: zod.enum(["complete", "partial", "unknown"]),
+            known_subtotal: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultEdgesItemCostCoverageKnownSubtotalMin,
+              )
+              .describe(
+                "Sum in USD of known observed contributions, never an average.",
+              ),
+            known_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultEdgesItemCostCoverageKnownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with known cost, including zero.",
+              ),
+            unknown_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultEdgesItemCostCoverageUnknownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with unknown cost, not missing requests.",
+              ),
+          })
+          .optional(),
         error_count: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultEdgesItemErrorCountMin),
@@ -70929,6 +71395,35 @@ export const TracerTraceAgentGraphResponse = zod.object({
         total_cost: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultPathEdgesItemTotalCostMin),
+        cost_coverage: zod
+          .object({
+            status: zod.enum(["complete", "partial", "unknown"]),
+            known_subtotal: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageKnownSubtotalMin,
+              )
+              .describe(
+                "Sum in USD of known observed contributions, never an average.",
+              ),
+            known_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageKnownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with known cost, including zero.",
+              ),
+            unknown_fact_count: zod
+              .number()
+              .min(
+                tracerTraceAgentGraphResponseResultPathEdgesItemCostCoverageUnknownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with unknown cost, not missing requests.",
+              ),
+          })
+          .optional(),
         error_count: zod
           .number()
           .min(tracerTraceAgentGraphResponseResultPathEdgesItemErrorCountMin),
@@ -71001,6 +71496,12 @@ export const tracerTraceAgentGraphCreateResponseResultNodesItemTotalTokensMin = 
 
 export const tracerTraceAgentGraphCreateResponseResultNodesItemTotalCostMin = 0;
 
+export const tracerTraceAgentGraphCreateResponseResultNodesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultNodesItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceAgentGraphCreateResponseResultNodesItemErrorCountMin = 0;
 
 export const tracerTraceAgentGraphCreateResponseResultNodesItemTraceCountMin = 0;
@@ -71015,6 +71516,12 @@ export const tracerTraceAgentGraphCreateResponseResultEdgesItemTotalTokensMin = 
 
 export const tracerTraceAgentGraphCreateResponseResultEdgesItemTotalCostMin = 0;
 
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultEdgesItemCostCoverageUnknownFactCountMin = 0;
+
 export const tracerTraceAgentGraphCreateResponseResultEdgesItemErrorCountMin = 0;
 
 export const tracerTraceAgentGraphCreateResponseResultEdgesItemTraceCountMin = 0;
@@ -71026,6 +71533,12 @@ export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemAvgLatencyMsM
 export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemTotalTokensMin = 0;
 
 export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemTotalCostMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerTraceAgentGraphCreateResponseResultPathEdgesItemErrorCountMin = 0;
 
@@ -71260,6 +71773,11 @@ export const TracerTraceGetGraphMethodsBody = zod.object({
 });
 
 export const tracerTraceGetGraphMethodsResponseStatusDefault = true;
+export const tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerTraceGetGraphMethodsResponseResultQueryAppliedFilterSha256RegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -71301,6 +71819,35 @@ export const TracerTraceGetGraphMethodsResponse = zod.object({
             timestamp: zod.string().min(1),
             value: zod.number(),
             primary_traffic: zod.number().optional(),
+            cost_coverage: zod
+              .object({
+                status: zod.enum(["complete", "partial", "unknown"]),
+                known_subtotal: zod
+                  .number()
+                  .min(
+                    tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownSubtotalMin,
+                  )
+                  .describe(
+                    "Sum in USD of known observed contributions, never an average.",
+                  ),
+                known_fact_count: zod
+                  .number()
+                  .min(
+                    tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageKnownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with known cost, including zero.",
+                  ),
+                unknown_fact_count: zod
+                  .number()
+                  .min(
+                    tracerTraceGetGraphMethodsResponseResultDataItemCostCoverageUnknownFactCountMin,
+                  )
+                  .describe(
+                    "Observed additive monetary facts with unknown cost, not missing requests.",
+                  ),
+              })
+              .optional(),
           })
           .describe(
             "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -71800,6 +72347,8 @@ export const TracerTraceListTracesOfSessionQueryParams = zod.object({
   interval: zod.string().optional(),
 });
 
+export const tracerTraceListTracesOfSessionResponseResultTraceCaptureCoverageRequestCountMin = 0;
+
 export const tracerTraceListTracesOfSessionResponseResultMetadataNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
 
@@ -71816,6 +72365,34 @@ export const tracerTraceListTracesOfSessionResponseResultMetadataQueryAppliedFil
 export const TracerTraceListTracesOfSessionResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
+    trace_capture_coverage: zod
+      .record(
+        zod.string(),
+        zod.record(
+          zod.string(),
+          zod.object({
+            scope: zod.enum(["observed_requests"]),
+            source_summary_present: zod.boolean(),
+            request_count: zod
+              .number()
+              .min(
+                tracerTraceListTracesOfSessionResponseResultTraceCaptureCoverageRequestCountMin,
+              )
+              .describe(
+                "Observed request spans only; never inferred from source summary totals.",
+              ),
+            coverage_unknown: zod
+              .boolean()
+              .describe(
+                "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+              ),
+          }),
+        ),
+      )
+      .optional()
+      .describe(
+        "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
+      ),
     metadata: zod.object({
       total_rows: zod.number(),
       total_rows_exact: zod.number().nullish(),
@@ -71977,6 +72554,8 @@ export const TracerTraceListTracesOfSessionCreateBody = zod.object({
     ),
   interval: zod.string().optional(),
 });
+
+export const tracerTraceListTracesOfSessionCreateResponseResultTraceCaptureCoverageRequestCountMin = 0;
 
 export const tracerTraceListTracesOfSessionCreateResponseResultMetadataNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -72398,6 +72977,14 @@ export const TracerTraceReadQueryParams = zod.object({
 
 export const tracerTraceReadResponseStatusDefault = true;
 
+export const tracerTraceReadResponseResultCostCoverageKnownSubtotalMin = 0;
+
+export const tracerTraceReadResponseResultCostCoverageKnownFactCountMin = 0;
+
+export const tracerTraceReadResponseResultCostCoverageUnknownFactCountMin = 0;
+
+export const tracerTraceReadResponseResultCaptureCoverageRequestCountMin = 0;
+
 export const TracerTraceReadResponse = zod.object({
   status: zod.boolean().default(tracerTraceReadResponseStatusDefault),
   result: zod.object({
@@ -72449,6 +73036,46 @@ export const TracerTraceReadResponse = zod.object({
       }),
     ),
     summary: zod.object({}).passthrough(),
+    cost_coverage: zod
+      .object({
+        status: zod.enum(["complete", "partial", "unknown"]),
+        known_subtotal: zod
+          .number()
+          .min(tracerTraceReadResponseResultCostCoverageKnownSubtotalMin)
+          .describe(
+            "Sum in USD of known observed contributions, never an average.",
+          ),
+        known_fact_count: zod
+          .number()
+          .min(tracerTraceReadResponseResultCostCoverageKnownFactCountMin)
+          .describe(
+            "Observed additive monetary facts with known cost, including zero.",
+          ),
+        unknown_fact_count: zod
+          .number()
+          .min(tracerTraceReadResponseResultCostCoverageUnknownFactCountMin)
+          .describe(
+            "Observed additive monetary facts with unknown cost, not missing requests.",
+          ),
+      })
+      .optional(),
+    capture_coverage: zod
+      .object({
+        scope: zod.enum(["observed_requests"]),
+        source_summary_present: zod.boolean(),
+        request_count: zod
+          .number()
+          .min(tracerTraceReadResponseResultCaptureCoverageRequestCountMin)
+          .describe(
+            "Observed request spans only; never inferred from source summary totals.",
+          ),
+        coverage_unknown: zod
+          .boolean()
+          .describe(
+            "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+          ),
+      })
+      .optional(),
     graph: zod.object({}).passthrough(),
   }),
 });
@@ -74610,6 +75237,11 @@ export const TracerUsersListQueryParams = zod.object({
 });
 
 export const tracerUsersListResponseStatusDefault = true;
+export const tracerUsersListResponseResultTableItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerUsersListResponseResultTableItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerUsersListResponseResultTableItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerUsersListResponseResultNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");
@@ -74621,6 +75253,35 @@ export const TracerUsersListResponse = zod.object({
       zod.object({
         user_id: zod.string().min(1).optional(),
         total_cost: zod.number(),
+        cost_coverage: zod
+          .object({
+            status: zod.enum(["complete", "partial", "unknown"]),
+            known_subtotal: zod
+              .number()
+              .min(
+                tracerUsersListResponseResultTableItemCostCoverageKnownSubtotalMin,
+              )
+              .describe(
+                "Sum in USD of known observed contributions, never an average.",
+              ),
+            known_fact_count: zod
+              .number()
+              .min(
+                tracerUsersListResponseResultTableItemCostCoverageKnownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with known cost, including zero.",
+              ),
+            unknown_fact_count: zod
+              .number()
+              .min(
+                tracerUsersListResponseResultTableItemCostCoverageUnknownFactCountMin,
+              )
+              .describe(
+                "Observed additive monetary facts with unknown cost, not missing requests.",
+              ),
+          })
+          .optional(),
         total_tokens: zod.number().optional(),
         input_tokens: zod.number().optional(),
         output_tokens: zod.number().optional(),
@@ -74735,6 +75396,11 @@ export const TracerUsersCreateBody = zod.object({
 });
 
 export const tracerUsersCreateResponseStatusDefault = true;
+export const tracerUsersCreateResponseResultTableItemCostCoverageKnownSubtotalMin = 0;
+
+export const tracerUsersCreateResponseResultTableItemCostCoverageKnownFactCountMin = 0;
+
+export const tracerUsersCreateResponseResultTableItemCostCoverageUnknownFactCountMin = 0;
 
 export const tracerUsersCreateResponseResultNextCursorFingerprintRegExp =
   new RegExp("^[0-9a-f]{64}$");

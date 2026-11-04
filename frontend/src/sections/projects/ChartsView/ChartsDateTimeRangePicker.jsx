@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import { Box, Button, ButtonGroup, Typography } from "@mui/material";
 import React, { useEffect, useRef, useState } from "react";
 import { DateRangeButtonOptions } from "src/utils/constants";
@@ -118,7 +119,7 @@ const ChartsDateTimeRangePicker = ({
 
   const getDateOptionTitle = (option, isSelected) => {
     if (option === "Custom" && isSelected) {
-      return `${format(new Date(dateFilter[0]), "dd/MM/yyyy")} - ${format(new Date(dateFilter[1]), "dd/MM/yyyy")}`;
+      return `${format(new Date(dateFilter[0]), "dd/MM/yyyy")} - ${format(getDateRangeDisplayEnd(dateFilter), "dd/MM/yyyy")}`;
     }
 
     return option;
@@ -200,6 +201,7 @@ const ChartsDateTimeRangePicker = ({
         open={isDatePickerOpen}
         onClose={() => setIsDatePickerOpen(false)}
         anchorEl={customDatePickerAnc?.current}
+        value={dateFilter}
         setDateFilter={setDateFilter}
         setDateOption={setDateOption}
       />

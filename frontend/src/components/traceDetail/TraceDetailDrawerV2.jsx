@@ -2,6 +2,8 @@ import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 import PropTypes from "prop-types";
 import {
+  Alert,
+  AlertTitle,
   Box,
   Button,
   Drawer,
@@ -21,6 +23,7 @@ import { useCreatePromptDraft } from "src/api/develop/prompt";
 import { getOutputFormatFromCatalogType } from "src/sections/develop-detail/RunPrompt/common";
 import logger from "src/utils/logger";
 import DrawerHeader from "./DrawerHeader";
+import { CaptureCoverageNotice } from "./TraceDetailPanel";
 import DrawerToolbar from "./DrawerToolbar";
 import TraceDisplayPanel, { DEFAULT_VIEW_CONFIG } from "./TraceDisplayPanel";
 import {
@@ -533,11 +536,21 @@ const TraceDetailDrawerV2 = ({
     sharedToken,
     open && sharedToken ? traceId : null,
   );
-  const { data, isLoading } = sharedToken ? sharedTrace : ownTrace;
+  const {
+    data: traceData,
+    isLoading,
+    isError,
+    error,
+    isFetching,
+    refetch,
+  } = sharedToken ? sharedTrace : ownTrace;
+  // A failed refresh must not present cached spans or totals as current data.
+  const data = isError ? undefined : traceData;
+  const accessDenied = error?.statusCode === 401 || error?.statusCode === 403;
 
   const handleRefresh = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["trace-detail", traceId] });
-  }, [queryClient, traceId]);
+    refetch();
+  }, [refetch]);
 
   const rawSpans = data?.observation_spans;
   const summary = data?.summary;
@@ -1178,6 +1191,10 @@ const TraceDetailDrawerV2 = ({
           </Box>
         )}
 
+        {!isError && !isLoading && (
+          <CaptureCoverageNotice coverage={data?.capture_coverage} />
+        )}
+
         {/* Main content area */}
         <Box
           data-drawer-content
@@ -1192,7 +1209,36 @@ const TraceDetailDrawerV2 = ({
             overflow: "hidden",
           }}
         >
-          {isImagineActive ? (
+          {isError ? (
+            <Box sx={{ p: 3, width: "100%" }}>
+              <Alert
+                severity="error"
+                action={
+                  !accessDenied && (
+                    <Button
+                      color="inherit"
+                      size="small"
+                      onClick={handleRefresh}
+                      disabled={isFetching}
+                    >
+                      {isFetching ? "Retrying…" : "Retry"}
+                    </Button>
+                  )
+                }
+              >
+                <AlertTitle>Unable to load trace</AlertTitle>
+                {error?.statusCode === 401
+                  ? "Sign in again to view this trace."
+                  : error?.statusCode === 403
+                    ? "You do not have permission to view this trace. Ask your workspace administrator for access."
+                    : error?.statusCode === 404
+                      ? "This trace is no longer available or cannot be accessed from this view. Return to the trace list and select another trace."
+                      : error?.statusCode === 503
+                        ? "The trace service is unavailable. Try again. If this continues, ask your administrator to check service availability and trace size limits."
+                        : "The trace could not be loaded. Try again, or contact your administrator if the problem continues."}
+              </Alert>
+            </Box>
+          ) : isImagineActive ? (
             <ImagineTab
               traceId={traceId}
               projectId={projectId}
@@ -1396,9 +1442,13 @@ const TraceDetailDrawerV2 = ({
                           )}
                         </Typography>
                         <Typography variant="caption">
-                          {formatTokenCount(summary.total_tokens)} tokens
+                          {formatTokenCount(summary.total_tokens)}{" "}
+                          {data?.capture_coverage
+                            ? "observed tokens"
+                            : "tokens"}
                         </Typography>
                         <Typography variant="caption">
+                          {data?.capture_coverage && "Observed cost: "}
                           {formatCost(summary.total_cost)}
                         </Typography>
                       </Box>
