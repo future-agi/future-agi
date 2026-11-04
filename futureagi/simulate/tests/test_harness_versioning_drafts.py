@@ -1570,8 +1570,16 @@ class TestApi:
 
         assert response.status_code == 200
         body = response.json()
-        assert set(body) == {"environment", "suite", "set_aside"}
+        assert set(body) == {
+            "environment",
+            "suite",
+            "set_aside",
+            "validation",
+            "candidates",
+        }
         assert body["environment"] is None and body["set_aside"] == []
+        # Nothing validated yet.
+        assert (body["validation"], body["candidates"]) == (None, None)
         suite = body["suite"]
         assert suite["status"] == "draft" and suite["label"] is None
         assert suite["stale"] is False and suite["revision"] == 1

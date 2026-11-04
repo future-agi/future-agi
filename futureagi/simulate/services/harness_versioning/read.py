@@ -27,6 +27,7 @@ from simulate.models import (
     HostedHarnessJob,
     RunTest,
 )
+from simulate.models.harness_versioning import DiscardReason, VersionStatus
 from simulate.services.harness_versioning import diffs
 from simulate.services.harness_versioning.versions import (
     versioning_enabled,
@@ -161,7 +162,13 @@ def _newest_first(queryset: QuerySet) -> QuerySet:
     )
 
 
-def _piece_item(version: Any, default_id: Any, *, suite: bool) -> dict[str, Any]:
+def _piece_item(
+    version: Any,
+    default_id: Any,
+    *,
+    suite: bool,
+    candidate_states: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     return {
         "id": str(version.id),
         "label": _label(version.version_number),
@@ -192,7 +199,18 @@ def _piece_item(version: Any, default_id: Any, *, suite: bool) -> dict[str, Any]
         "requested_here": None,
         "pickable": None,
         "discardable": None,
+        "candidate_state": _candidate_state(version, candidate_states or {}),
     }
+
+
+def _candidate_state(version: Any, states: Mapping[str, str]) -> str | None:
+    """How History labels a candidate: validating, ready or failed while it is the live one, superseded or expired
+    once set aside."""
+    if version.status == VersionStatus.CANDIDATE:
+        return states.get(str(version.id), "superseded")
+    if version.discard_reason in (DiscardReason.SUPERSEDED, DiscardReason.EXPIRED):
+        return version.discard_reason
+    return None
 
 
 def _agent_definition_id(job: HostedHarnessJob) -> Any:
@@ -492,6 +510,7 @@ def _agent_item(
         and not _held_elsewhere(
             version, getattr(runtime, "asked_for", None), environment_id
         ),
+        "candidate_state": None,
     }
 
 
@@ -522,7 +541,9 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
         .defer(*_PIECE_DEFERRED)
     )
     from simulate.services.harness_agent_versions import _default_lineage
+    from simulate.services.harness_versioning.candidates import candidate_states
 
+    states = candidate_states(job)
     agents = _agent_versions(job)
     runtimes = _runtimes(job, agents)
     parents = _parent_agent_versions(job, runtimes)
@@ -540,11 +561,19 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
             for version in agents
         ],
         "environment": [
-            _piece_item(version, job.environment_version_id, suite=False)
+            _piece_item(
+                version,
+                job.environment_version_id,
+                suite=False,
+                candidate_states=states,
+            )
             for version in environments
         ],
         "suite": [
-            _piece_item(version, job.suite_version_id, suite=True) for version in suites
+            _piece_item(
+                version, job.suite_version_id, suite=True, candidate_states=states
+            )
+            for version in suites
         ],
     }
 

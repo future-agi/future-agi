@@ -304,41 +304,9 @@ def test_a_write_adds_one_source_to_each_item_it_moved_and_a_retry_adds_none():
 
 
 def test_a_chat_change_is_the_person_s_through_the_harness_with_the_message_it_answered():
-    import json as _json
     from types import SimpleNamespace
 
-    from simulate.services.harness_versioning.review import (
-        PROVENANCE_FILE,
-        chat_citations,
-        record_sources,
-    )
-
-    published = {
-        PROVENANCE_FILE: b"\n".join(
-            _json.dumps(one).encode()
-            for one in (
-                {
-                    "message_id": "m1",
-                    "tool": "fix_tool",
-                    "items": ["tool:issue_refund"],
-                },
-                "not an object",
-                {
-                    "message_id": "m2",
-                    "tool": "change_world",
-                    "items": ["tool:issue_refund", "file:world.sqlite"],
-                },
-            )
-        )
-        + b"\nnot json"
-    }
-    cited = chat_citations(published)
-    assert cited["tool:issue_refund"] == {
-        "message_id": "m2",
-        "tool": "change_world",
-        "used": [],
-        "note": "",
-    }
+    from simulate.services.harness_versioning.review import record_sources
 
     default = _tree({"tools": TOOLS})
     edited = _tree(
@@ -352,13 +320,10 @@ def test_a_chat_change_is_the_person_s_through_the_harness_with_the_message_it_a
         user=SimpleNamespace(id="u-1"),
         revision=4,
         at="t",
-        cited=cited,
+        message_id="m2",
     )["tool:issue_refund"]
     assert source["agent"] == {"kind": "harness", "on_behalf_of": "u-1"}
-    assert (source["tool"], source["used"]) == (
-        "change_world",
-        [{"kind": "message", "id": "m2"}],
-    )
+    assert source["used"] == [{"kind": "message", "id": "m2"}]
 
 
 def test_a_world_store_change_is_world_state_with_its_rows_added_removed_and_changed_per_table():
@@ -426,49 +391,15 @@ def test_every_change_but_a_scenario_rename_is_graded():
     assert graded({"kind": "scenario", "action": "removed", "fields": []})
 
 
-def test_a_source_names_the_file_and_row_a_change_came_from_and_the_harness_note():
-    import json as _json
+def test_a_source_names_the_file_and_row_a_change_came_from():
     from types import SimpleNamespace
 
-    from simulate.services.harness_versioning.review import (
-        PROVENANCE_FILE,
-        chat_citations,
-        record_sources,
-    )
+    from simulate.services.harness_versioning.review import record_sources
 
-    row = {
-        "kind": "source",
-        "source_id": "src-1",
-        "version": 2,
-        "locator": "row 14",
-        "secret": "dropped",
-    }
-    published = {
-        PROVENANCE_FILE: _json.dumps(
-            {
-                "message_id": "m1",
-                "tool": "fix_tool",
-                "items": ["tool:issue_refund"],
-                "used": [row, "junk"],
-                "note": "the policy caps refunds at $50",
-            }
-        ).encode()
-    }
     default = _tree({"tools": TOOLS})
     edited = _tree(
         {"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}]}
     )
-
-    [chat] = record_sources(
-        None,
-        default,
-        edited,
-        origin="chat",
-        user=SimpleNamespace(id="u-1"),
-        revision=1,
-        at="t",
-        cited=chat_citations(published),
-    )["tool:issue_refund"]
     [imported] = record_sources(
         None,
         default,
@@ -480,12 +411,56 @@ def test_a_source_names_the_file_and_row_a_change_came_from_and_the_harness_note
         used=[{"kind": "source", "source_id": "src-1", "locator": "row 3"}],
     )["tool:issue_refund"]
 
-    assert chat["used"] == [
-        {"kind": "message", "id": "m1"},
-        {"kind": "source", "source_id": "src-1", "version": "2", "locator": "row 14"},
-    ]
-    assert chat["note"] == "the policy caps refunds at $50"
     assert (imported["origin"], imported["used"]) == (
         "file_import",
         [{"kind": "source", "source_id": "src-1", "locator": "row 3"}],
     )
+
+
+RULE = "Never refund more than the order total"
+AMENDMENT = f"rule added — {RULE}: the policy caps refunds"
+
+
+def _rule_and_tool():
+    """A draft where one write added a rule with its amendment line, and another changed a tool."""
+    default = _tree(
+        {"tools": TOOLS, "amendments": ["tool removed — old_tool: no seam"]}
+    )
+    draft = _tree(
+        {
+            "tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}],
+            "hard_constraints": [RULE],
+            "amendments": ["tool removed — old_tool: no seam", AMENDMENT],
+        }
+    )
+    return default, draft, compute_changes(default, draft)
+
+
+def test_accepted_rule_keeps_its_amendment():
+    default, draft, changes = _rule_and_tool()
+    rule = next(one["id"] for one in changes if one["kind"] == "rule")
+    composed = json.loads(
+        compose_accepted(
+            default, draft, changes, {rule: "accepted", "tool:issue_refund": "rejected"}
+        )["contract.json"]
+    )
+    assert composed["hard_constraints"] == [RULE]
+    assert composed["amendments"] == ["tool removed — old_tool: no seam", AMENDMENT]
+    assert composed["tools"] == TOOLS
+
+
+def test_rejected_rule_leaves_no_amendment():
+    default, draft, changes = _rule_and_tool()
+    rule = next(one["id"] for one in changes if one["kind"] == "rule")
+    composed = json.loads(
+        compose_accepted(
+            default, draft, changes, {rule: "rejected", "tool:issue_refund": "accepted"}
+        )["contract.json"]
+    )
+    assert not composed.get("hard_constraints")
+    assert composed["amendments"] == ["tool removed — old_tool: no seam"]
+    # With nothing accepted, the contract is the saved one, byte for byte, so the version is the saved one.
+    nothing = compose_accepted(
+        default, draft, changes, {rule: "rejected", "tool:issue_refund": "rejected"}
+    )
+    assert nothing["contract.json"] == default["contract.json"]

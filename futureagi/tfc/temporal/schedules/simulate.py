@@ -87,4 +87,11 @@ SIMULATE_SCHEDULES: list[ScheduleConfig] = [
         queue="default",
         description="Move open environment rebuilds along and retry agent activations that waited for a busy environment",
     ),
+    ScheduleConfig(
+        schedule_id="discard-expired-harness-candidates",
+        activity_name="discard_expired_harness_candidates",
+        interval_seconds=86400,
+        queue="default",
+        description="Discard environment versions built by Validate that nobody saved within a week",
+    ),
 ]

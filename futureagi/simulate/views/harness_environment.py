@@ -24,6 +24,8 @@ from simulate.serializers.harness_environment import (
     HarnessDraftSaveResponseSerializer,
     HarnessDraftSaveSerializer,
     HarnessDraftsSerializer,
+    HarnessDraftValidateResponseSerializer,
+    HarnessDraftValidateSerializer,
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
     HarnessEnvironmentDetailSerializer,
@@ -482,14 +484,43 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         )
 
     @validated_request(
+        request_serializer=HarnessDraftValidateSerializer,
+        responses={
+            200: HarnessDraftValidateResponseSerializer,
+            202: HarnessDraftValidateResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="drafts/validate")
+    def validate_drafts(self, request, pk=None):
+        """Build candidate versions from the reviewed drafts and start validating them; 202 while it runs."""
+        from simulate.services.harness_versioning.candidates import validate_drafts
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        result, running = validate_drafts(
+            job,
+            expected_revisions=body["expected_revisions"],
+            expected_review_digest=body.get("expected_review_digest"),
+            user=request.user,
+        )
+        return Response(
+            result, status=status.HTTP_202_ACCEPTED if running else status.HTTP_200_OK
+        )
+
+    @validated_request(
         request_serializer=HarnessDraftSaveSerializer,
         responses={200: HarnessDraftSaveResponseSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path=r"drafts/save")
     def save_drafts(self, request, pk=None):
-        """Make every named draft live together; returns the new defaults and every
+        """Make every named draft, or the validated candidates, live together; returns the new defaults and every
         version."""
+        from simulate.services.harness_versioning.candidates import promote_candidates
         from simulate.services.harness_versioning.drafts import SaveRequest, save_drafts
 
         version_reads.require_versioning()
@@ -497,6 +528,17 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if job is None:
             return self._not_found()
         body = request.validated_data
+        if "candidates" in body:
+            return Response(
+                promote_candidates(
+                    job,
+                    {name: str(value) for name, value in body["candidates"].items()},
+                    expected_review_digest=body.get("expected_review_digest"),
+                    name=body.get("name") or "",
+                    idempotency_key=body["idempotency_key"],
+                    user=request.user,
+                )
+            )
         return Response(
             save_drafts(
                 job,

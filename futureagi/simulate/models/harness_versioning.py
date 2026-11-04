@@ -19,6 +19,8 @@ from tfc.utils.base_model import BaseModel
 
 class VersionStatus(models.TextChoices):
     DRAFT = "draft", "Draft"
+    # Built from a reviewed draft and waiting for its validation; never a default and never runnable.
+    CANDIDATE = "candidate", "Candidate"
     ACTIVE = "active", "Active"
     DISCARDED = "discarded", "Discarded"
 
@@ -47,6 +49,8 @@ class DiscardReason(models.TextChoices):
     USER = "user", "User"
     SET_ASIDE_BY_REBUILD = "set_aside_by_rebuild", "Set aside by rebuild"
     REBUILD_RESTORED = "rebuild_restored", "Rebuild restored"
+    SUPERSEDED = "superseded", "Superseded"
+    EXPIRED = "expired", "Expired"
 
 
 class _HarnessPieceVersion(BaseModel):

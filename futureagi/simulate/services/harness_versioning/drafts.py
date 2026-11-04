@@ -627,6 +627,7 @@ def record_draft(
     pieces: set[str] | None = None,
     nudge: Any = None,
     used: list[dict[str, Any]] | None = None,
+    message_id: str = "",
 ) -> DraftWrite | None:
     """Write an edited authoring tree into the environment's drafts.
 
@@ -634,8 +635,9 @@ def record_draft(
     piece's one draft; one equal to its default discards the draft. ``expected`` is the
     drafts the writer started from: another edit since refuses with ``draft_changed``.
     ``pieces`` limits the writes and the check (both by default); ``nudge`` tags a draft
-    this call creates; ``used`` is what the writer read (a file and its row) and becomes part of each moved item's
-    source. ``None`` once drafts no longer apply: the caller saves as before.
+    this call creates; ``used`` is what the writer read (a file and its row) and ``message_id`` the chat message the
+    write answered, both part of each moved item's source. ``None`` once drafts no longer apply: the caller saves as
+    before.
     """
     from simulate.services.hosted_harness_conversation import (
         require_checkpoint_scenarios,
@@ -752,10 +754,7 @@ def record_draft(
                 values["documents"]["exempt_keys"] = sorted(exempt)
             if workspace_sealed is not None:
                 values["documents"]["workspace_sealed"] = workspace_sealed
-            from simulate.services.harness_versioning.review import (
-                chat_citations,
-                record_sources,
-            )
+            from simulate.services.harness_versioning.review import record_sources
 
             values["documents"]["provenance"] = record_sources(
                 (draft.documents or {}).get("provenance") if fresh else None,
@@ -765,7 +764,7 @@ def record_draft(
                 user=user,
                 revision=draft.revision + 1 if fresh else 1,
                 at=timezone.now().isoformat(),
-                cited=chat_citations(published),
+                message_id=message_id,
                 used=used,
             )
             replaced = draft if draft is not None and not fresh else None
@@ -1251,6 +1250,48 @@ def _saved_body(locked: HostedHarnessJob, saved: Mapping[str, Any]) -> dict[str,
     }
 
 
+def replayed_save(
+    locked: HostedHarnessJob, idempotency_key: str, pieces: set[str] | None = None
+) -> dict[str, Any] | None:
+    """The answer of the Save this key already made, or ``None`` for a new key; a key used for other ``pieces``
+    is refused."""
+    metadata = (locked.payload or {}).get("metadata") or {}
+    earlier = (metadata.get("draft_saves") or {}).get(idempotency_key)
+    if not isinstance(earlier, dict):
+        return None
+    if pieces is not None and set(earlier.get("pieces") or {}) != pieces:
+        raise HostedHarnessError(
+            "idempotency_key_reused",
+            "This request key was already used for another save; save again",
+            status_code=409,
+        )
+    return _saved_body(locked, _replayed(locked, earlier["pieces"]))
+
+
+def remember_save(
+    locked: HostedHarnessJob,
+    idempotency_key: str,
+    activated: Mapping[str, tuple[Any, bool]],
+) -> None:
+    """Keep what a Save made under its key, so a repeat answers the same; only the newest are kept."""
+    payload = dict(locked.payload or {})
+    metadata = dict(payload.get("metadata") or {})
+    saves = {
+        key: entry
+        for key, entry in (metadata.get("draft_saves") or {}).items()
+        if isinstance(entry, dict)
+    }
+    saves[idempotency_key] = {
+        "pieces": {piece: str(version.id) for piece, (version, _) in activated.items()},
+        "at": timezone.now().isoformat(),
+    }
+    newest = sorted(saves.items(), key=lambda item: str(item[1].get("at") or ""))
+    metadata["draft_saves"] = dict(newest[-DRAFT_SAVES_KEPT:])
+    payload["metadata"] = metadata
+    locked.payload = payload
+    locked.save(update_fields=["payload", "updated_at"])
+
+
 def save_drafts(
     environment: HostedHarnessJob,
     requests: Mapping[str, SaveRequest],
@@ -1258,7 +1299,11 @@ def save_drafts(
     idempotency_key: str,
     user: Any,
 ) -> dict[str, Any]:
-    """Make every requested draft live together; the same key repeats the same Save."""
+    """Make every requested draft live together; the same key repeats the same Save.
+
+    Where the environment's pairings can be validated, a reviewed draft goes through Validate and its candidates are
+    saved instead (`validation_required`); a plain Save of an undecided draft works as before.
+    """
     pieces = set(requests)
     with transaction.atomic():
         locked = _lock_environment(environment)
@@ -1266,16 +1311,27 @@ def save_drafts(
         require_not_busy(locked, first)
         require_no_rebuild(locked, piece=first)
         require_chat_idle(locked)
-        metadata = (locked.payload or {}).get("metadata") or {}
-        earlier = (metadata.get("draft_saves") or {}).get(idempotency_key)
-        if isinstance(earlier, dict):
-            if set(earlier.get("pieces") or {}) != pieces:
-                raise HostedHarnessError(
-                    "idempotency_key_reused",
-                    "This request key was already used for another save; save again",
-                    status_code=409,
-                )
-            return _saved_body(locked, _replayed(locked, earlier["pieces"]))
+        replayed = replayed_save(locked, idempotency_key, pieces)
+        if replayed is not None:
+            return replayed
+        expected_review_digest = next(
+            (
+                one.expected_review_digest
+                for one in requests.values()
+                if one.expected_review_digest
+            ),
+            None,
+        )
+        from simulate.services.harness_versioning import candidates
+
+        if candidates.validation_available(locked) and (
+            expected_review_digest or candidates.any_decision(locked)
+        ):
+            raise _error(
+                "validation_required",
+                "Validate the reviewed changes first, then save the validated versions",
+                409,
+            )
         for piece in DRAFT_PIECES:
             if piece not in pieces:
                 continue
@@ -1316,18 +1372,7 @@ def save_drafts(
                 )
         from simulate.services.harness_versioning.review import apply_review
 
-        apply_review(
-            locked,
-            pieces,
-            expected_review_digest=next(
-                (
-                    one.expected_review_digest
-                    for one in requests.values()
-                    if one.expected_review_digest
-                ),
-                None,
-            ),
-        )
+        apply_review(locked, pieces, expected_review_digest=expected_review_digest)
         drafts = {
             piece: open_draft(locked, piece).id
             for piece in DRAFT_PIECES
@@ -1341,24 +1386,9 @@ def save_drafts(
             activated,
             name=next((one.name for one in requests.values() if one.name), ""),
         )
-        payload = dict(locked.payload or {})
-        metadata = dict(payload.get("metadata") or {})
-        saves = {
-            key: entry
-            for key, entry in (metadata.get("draft_saves") or {}).items()
-            if isinstance(entry, dict)
-        }
-        saves[idempotency_key] = {
-            "pieces": {
-                piece: str(version.id) for piece, (version, _) in activated.items()
-            },
-            "at": timezone.now().isoformat(),
-        }
-        newest = sorted(saves.items(), key=lambda item: str(item[1].get("at") or ""))
-        metadata["draft_saves"] = dict(newest[-DRAFT_SAVES_KEPT:])
-        payload["metadata"] = metadata
-        locked.payload = payload
-        locked.save(update_fields=["payload", "updated_at"])
+        remember_save(locked, idempotency_key, activated)
+        # Candidates an earlier Validate built from these drafts are now out of date.
+        candidates.discard_candidates(locked)
         transaction.on_commit(lambda: retire_chat_runtime(locked))
     actor = getattr(user, "id", None)
     for piece, (version, created) in activated.items():
@@ -1398,6 +1428,10 @@ def discard_draft(environment: HostedHarnessJob, piece: str, *, user: Any) -> bo
         if draft is None:
             return False
         _discard(draft, user=user)
+        from simulate.services.harness_versioning.candidates import discard_candidates
+
+        # Candidates built from these edits go with them.
+        discard_candidates(locked)
         transaction.on_commit(lambda: retire_chat_runtime(locked))
     logger.info(
         "harness_draft_discarded environment=%s piece=%s reason=user", locked.id, piece
@@ -1439,6 +1473,10 @@ def restore_draft(
     if piece == "suite":
         values["documents"]["pairs"] = _pairs(locked, prepared.scenarios)
         values["documents"]["exempt_keys"] = sorted(_exempt(draft))
+    # Where each change came from and what the person decided on it come back with the draft.
+    for kept in ("provenance", "review"):
+        if (draft.documents or {}).get(kept):
+            values["documents"][kept] = draft.documents[kept]
     for name, value in values.items():
         setattr(draft, name, value)
     draft.status = VersionStatus.DRAFT
@@ -1530,6 +1568,18 @@ def list_drafts(environment: HostedHarnessJob) -> dict[str, Any]:
     body["set_aside"] = [
         _draft_item(one, environment) for one in set_aside[:SET_ASIDE_SHOWN]
     ]
+    from simulate.services.harness_versioning.candidates import (
+        live_set,
+        validation_state,
+    )
+
+    entry = live_set(environment)
+    body["validation"] = validation_state(environment, entry)
+    body["candidates"] = (
+        {piece: entry[f"{piece}_version_id"] for piece in DRAFT_PIECES}
+        if entry is not None
+        else None
+    )
     return body
 
 

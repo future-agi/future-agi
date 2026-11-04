@@ -8,6 +8,7 @@ from tfc.temporal.drop_in import temporal_activity
 
 __all__ = [
     "check_harness_nudges",
+    "discard_expired_harness_candidates",
     "finish_harness_nudge_turn",
     "raise_harness_environment_nudge",
     "reconcile_harness_environment_nudges",
@@ -110,6 +111,20 @@ def tick_harness_nudges() -> dict[str, int]:
     close_old_connections()
     try:
         return tick_nudges()
+    finally:
+        close_old_connections()
+
+
+@temporal_activity(time_limit=300, max_retries=0, queue="default")
+def discard_expired_harness_candidates() -> int:
+    """Discard candidate versions nobody saved within a week."""
+    from simulate.services.harness_versioning.candidates import (
+        discard_expired_candidates,
+    )
+
+    close_old_connections()
+    try:
+        return discard_expired_candidates()
     finally:
         close_old_connections()
 

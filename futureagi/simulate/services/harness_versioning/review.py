@@ -13,13 +13,16 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jsonpatch
 
 from simulate.services.harness_versioning import archives, hashing
 from simulate.services.harness_versioning.diffs import _CONTRACT_IGNORED_FIELDS
 from simulate.services.harness_versioning.references import ALL, affects, depends_on
+
+if TYPE_CHECKING:
+    from simulate.services.hosted_harness import HostedHarnessError
 
 # Kinds in the order a review lists them.
 KINDS = (
@@ -449,7 +452,69 @@ def compose_accepted(
                 f"{change['id']} changed after the review: {exc}",
                 [change["id"]],
             ) from exc
+    _carry_amendments(default, draft, files, changes, decisions)
     return files
+
+
+# The em dash the harness puts between an amendment's action and its subject.
+_AMENDMENT_DASH = "\u2014"
+
+
+def _amendment_owner(entry: str, changes: list[dict[str, Any]]) -> str | None:
+    """The change an amendment line records, read from the line's subject. The harness writes `rule added`, `rule
+    removed`, `tool removed` and `tool corrected` lines as the action, a dash, the rule or tool, then `: <why>`, and a
+    contract field change as `<field> <was> -> <now>: <why>`."""
+    for change in changes:
+        if change["kind"] in ("rule", "tool"):
+            subject = (
+                change["patch"][0]["value"]
+                if change["kind"] == "rule" and change["patch"]
+                else change["key"]
+            )
+            if f"{_AMENDMENT_DASH} {subject}: " in entry:
+                return change["id"]
+        elif change["kind"] == "contract_field" and entry.startswith(
+            f"{change['key']} "
+        ):
+            return change["id"]
+    return None
+
+
+def _carry_amendments(
+    default: Mapping[str, bytes],
+    draft: Mapping[str, bytes],
+    files: dict[str, bytes],
+    changes: list[dict[str, Any]],
+    decisions: Mapping[str, str],
+) -> None:
+    """The contract's amendment log keeps the lines the draft added for accepted changes, and lines that record no
+    change under review, and drops the lines of rejected ones."""
+    if "contract.json" not in files:
+        return
+    contract = _json(files["contract.json"])
+    edited = _json(draft.get("contract.json", b"null"))
+    if not isinstance(contract, dict) or not isinstance(edited, dict):
+        return
+    kept = list(
+        (_json(default.get("contract.json", b"null")) or {}).get("amendments") or []
+    )
+    for entry in edited.get("amendments") or []:
+        if entry in kept:
+            continue
+        owner = _amendment_owner(str(entry), changes)
+        if owner is None or decisions.get(owner) == "accepted":
+            kept.append(entry)
+    if kept == list(contract.get("amendments") or []):
+        return
+    _put(
+        files,
+        "contract.json",
+        {**contract, "amendments": kept} if kept else _without(contract, "amendments"),
+    )
+
+
+def _without(body: dict[str, Any], field: str) -> dict[str, Any]:
+    return {name: value for name, value in body.items() if name != field}
 
 
 DECISIONS = ("accepted", "rejected")
@@ -457,6 +522,16 @@ DECISIONS = ("accepted", "rejected")
 
 def _decisions(draft: Any) -> dict[str, dict[str, Any]]:
     return dict(((draft.documents or {}).get("review") or {}).get("decisions") or {})
+
+
+def held_decisions(draft: Any, files: Mapping[str, bytes]) -> dict[str, str]:
+    """The decisions on a draft that still hold, by item: each only while its item is as it was when decided."""
+    items = item_index(files)
+    return {
+        item_id: entry["decision"]
+        for item_id, entry in _decisions(draft).items()
+        if item_id in items and entry.get("draft_digest") == items[item_id].digest
+    }
 
 
 def _piece_changes(environment: Any, piece: str, draft: Any) -> list[dict[str, Any]]:
@@ -639,35 +714,39 @@ def record_decisions(
     return draft_review(environment)
 
 
-def apply_review(
-    locked: Any, pieces: set[str], *, expected_review_digest: str | None
-) -> None:
-    """Before Save makes drafts live: when the person rejected any change, rewrite each draft as the saved version
-    plus exactly the accepted changes. With no decision at all, Save keeps today's behaviour (the whole draft).
+def review_stale() -> HostedHarnessError:
+    from simulate.services.harness_versioning.drafts import _error
 
-    Refuses a review that moved since the person looked (`review_stale`) or one with a change still undecided
-    (`review_undecided`), naming the changes.
-    """
-    from simulate.services.harness_versioning import archives
-    from simulate.services.harness_versioning.drafts import (
-        _content,
-        _error,
-        _piece_files,
-        _prepared,
-        open_draft,
+    return _error(
+        "review_stale",
+        "The changes moved since you reviewed them; review them again",
+        409,
     )
 
-    review = draft_review(locked)
-    if expected_review_digest and expected_review_digest != review["review_digest"]:
-        raise _error(
-            "review_stale",
-            "The changes moved since you reviewed them; review them again",
-            409,
-        )
-    refused = {one["id"] for one in review["changes"] if one["decision"] == "rejected"}
+
+def check_review(
+    review: Mapping[str, Any],
+    expected_review_digest: str | None,
+    *,
+    digest_required: bool,
+) -> None:
+    """Refuse a review that cannot be saved as decided. Once any change is decided: the digest the person saw must be
+    current (required when ``digest_required``), no change may be left undecided, and no accepted change may need a
+    rejected one."""
+    from simulate.services.harness_versioning.drafts import _error
+
+    changes = review["changes"]
+    decided = any(one["decision"] for one in changes)
+    if expected_review_digest != review["review_digest"] and (
+        expected_review_digest or (decided and digest_required)
+    ):
+        raise review_stale()
+    if not decided:
+        return
+    refused = {one["id"] for one in changes if one["decision"] == "rejected"}
     needs = [
         (one["id"], other)
-        for one in review["changes"]
+        for one in changes
         if one["decision"] == "accepted"
         for other in one.get("depends_on") or []
         if other in refused
@@ -679,69 +758,112 @@ def apply_review(
             409,
             pairs=[{"change": change, "needs": other} for change, other in needs],
         )
-    rejected = {
-        one["piece"] for one in review["changes"] if one["decision"] == "rejected"
-    } & pieces
-    if any(one["decision"] for one in review["changes"]):
-        # What the person decided, kept with the version it becomes, so its summary and diff are the approved ones.
-        for piece in pieces:
-            draft = open_draft(locked, piece, lock=True)
-            kept = [
-                {
-                    name: one[name]
-                    for name in (
-                        "id",
-                        "kind",
-                        "key",
-                        "action",
-                        "summary",
-                        "decision",
-                        "affects",
-                        "graded",
-                        "revalidate",
-                    )
-                }
-                for one in review["changes"]
-                if one["piece"] == piece
-            ]
-            draft.documents = {**(draft.documents or {}), "review_changes": kept}
-            draft.save(update_fields=["documents", "updated_at"])
-    if not rejected:
-        return
+    if undecided := [one["id"] for one in changes if not one["decision"]]:
+        raise _error(
+            "review_undecided",
+            "Every change needs a decision before Save.",
+            409,
+            changes=undecided,
+        )
+
+
+_KEPT_CHANGE_FIELDS = (
+    "id",
+    "kind",
+    "key",
+    "action",
+    "summary",
+    "decision",
+    "affects",
+    "graded",
+    "revalidate",
+)
+
+
+def review_changes(review: Mapping[str, Any], piece: str) -> list[dict[str, Any]]:
+    """What the person decided on one piece's changes, kept with the version it becomes, so its summary and proofs
+    follow the approved changes."""
+    return [
+        {name: one[name] for name in _KEPT_CHANGE_FIELDS}
+        for one in review["changes"]
+        if one["piece"] == piece
+    ]
+
+
+def composed_files(
+    locked: Any, piece: str, draft: Any, review: Mapping[str, Any]
+) -> dict[str, bytes]:
+    """A drafted piece's files with exactly the accepted changes: the saved version plus those changes when any of
+    the piece's changes was rejected, else the draft's own files."""
+    from simulate.services.harness_versioning.drafts import _error, _piece_files
+
+    changes = [one for one in review["changes"] if one["piece"] == piece]
+    if not any(one["decision"] == "rejected" for one in changes):
+        return _piece_files(locked, piece, draft)
     decisions = {
         one["id"]: one["decision"] for one in review["changes"] if one["decision"]
     }
-    for piece in sorted(rejected):
+    try:
+        return compose_accepted(
+            _piece_files(locked, piece, draft.parent) if draft.parent_id else {},
+            _piece_files(locked, piece, draft),
+            changes,
+            decisions,
+        )
+    except ReviewRefused as refused:
+        raise _error(
+            refused.code, str(refused), 409, changes=refused.changes
+        ) from refused
+
+
+def apply_review(
+    locked: Any, pieces: set[str], *, expected_review_digest: str | None
+) -> None:
+    """Before a Save that cannot be validated makes drafts live: when the person decided any change, rewrite each
+    draft with a rejected change as the saved version plus exactly the accepted changes, inside the Save's
+    transaction. With no decision at all, Save keeps today's behaviour (the whole draft).
+    """
+    from simulate.services.harness_versioning.drafts import (
+        _content,
+        _piece_files,
+        _prepared,
+        open_draft,
+    )
+
+    review = draft_review(locked)
+    check_review(review, expected_review_digest, digest_required=False)
+    if not any(one["decision"] for one in review["changes"]):
+        return
+    rejected = {
+        one["piece"] for one in review["changes"] if one["decision"] == "rejected"
+    }
+    for piece in sorted(pieces):
         draft = open_draft(locked, piece, lock=True)
-        default = draft.parent
-        changes = [one for one in review["changes"] if one["piece"] == piece]
-        try:
-            composed = compose_accepted(
-                _piece_files(locked, piece, default) if default is not None else {},
-                _piece_files(locked, piece, draft),
-                changes,
-                decisions,
-            )
-        except ReviewRefused as refused:
-            raise _error(
-                refused.code, str(refused), 409, changes=refused.changes
-            ) from refused
+        kept = {
+            "review": (draft.documents or {}).get("review"),
+            "review_changes": review_changes(review, piece),
+        }
+        if piece not in rejected:
+            draft.documents = {**(draft.documents or {}), **kept}
+            draft.save(update_fields=["documents", "updated_at"])
+            continue
+        composed = composed_files(locked, piece, draft, review)
         other = "suite" if piece == "environment" else "environment"
-        other_draft = open_draft(locked, other)
-        other_version = other_draft or getattr(locked, f"{other}_version")
-        files = {**composed, **_piece_files(locked, other, other_version)}
-        _, prepared = _prepared(locked, files)
-        body = (
-            (prepared.environment_key, prepared.environment_body)
-            if piece == "environment"
-            else (prepared.suite_key, prepared.suite_body)
+        other_version = open_draft(locked, other) or getattr(locked, f"{other}_version")
+        _, prepared = _prepared(
+            locked, {**composed, **_piece_files(locked, other, other_version)}
         )
-        archives.put_archive(*body)
-        values = _content(locked, piece, prepared, origin=draft.origin, default=default)
-        values["documents"]["review"] = (draft.documents or {}).get("review")
-        values["documents"]["review_changes"] = (draft.documents or {}).get(
-            "review_changes"
+        archives.put_archive(
+            *(
+                (prepared.environment_key, prepared.environment_body)
+                if piece == "environment"
+                else (prepared.suite_key, prepared.suite_body)
+            )
         )
+        values = _content(
+            locked, piece, prepared, origin=draft.origin, default=draft.parent
+        )
+        values["documents"].update(kept)
         for name, value in values.items():
             setattr(draft, name, value)
         draft.save()
@@ -843,13 +965,13 @@ def record_sources(
     user: Any,
     revision: int,
     at: str,
-    cited: Mapping[str, Mapping[str, Any]] | None = None,
+    message_id: str = "",
     used: list[dict[str, Any]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Where each change came from: every item this write moved gets one source (who, through what, at which draft
-    revision), appended to the sources it already had. A retried write at the same revision adds nothing. `used`
-    is what the writer read for every item it moved, such as the file and row an import took it from.
-    """
+    revision), appended to the sources it already had. A retried write at the same revision adds nothing. A chat
+    write names the person's message it answered (`message_id`); `used` is what the writer read for every item it
+    moved, such as the file and row an import took it from."""
     out = {key: list(value) for key, value in (provenance or {}).items()}
     old, new = item_index(before), item_index(after)
     moved = sorted(
@@ -858,13 +980,20 @@ def record_sources(
         if (old[item_id].digest if item_id in old else None)
         != (new[item_id].digest if item_id in new else None)
     )
-    source = {
-        "origin": origin,
-        "agent": (
-            {"kind": "user", "user_id": str(getattr(user, "id", "") or "")}
+    person = str(getattr(user, "id", "") or "") if user is not None else ""
+    if message_id:
+        # A chat change belongs to the person whose message it answered, made through the harness.
+        agent = {"kind": "harness", "on_behalf_of": person}
+        used = [{"kind": "message", "id": message_id}, *(used or [])]
+    else:
+        agent = (
+            {"kind": "user", "user_id": person}
             if user is not None
             else {"kind": "harness"}
-        ),
+        )
+    source = {
+        "origin": origin,
+        "agent": agent,
         "at": at,
         "draft_revision": revision,
         **({"used": list(used)} if used else {}),
@@ -873,71 +1002,6 @@ def record_sources(
         listed = out.setdefault(item_id, [])
         if any(one.get("draft_revision") == revision for one in listed):
             continue
-        chat = (cited or {}).get(item_id)
-        if chat:
-            # A chat change belongs to the person whose message it answered, made through the harness.
-            listed.append(
-                {
-                    **source,
-                    "agent": {
-                        "kind": "harness",
-                        "on_behalf_of": source["agent"].get("user_id", ""),
-                    },
-                    "tool": chat.get("tool", ""),
-                    "used": [
-                        {"kind": "message", "id": chat.get("message_id", "")},
-                        *(chat.get("used") or []),
-                    ],
-                    **({"note": chat["note"]} if chat.get("note") else {}),
-                }
-            )
-        else:
-            listed.append(source)
+        listed.append(source)
         del listed[:-SOURCES_PER_CHANGE]
-    return out
-
-
-PROVENANCE_FILE = ".futureagi-provenance.jsonl"
-
-
-def _used(value: Any) -> list[dict[str, Any]]:
-    """The files and rows a chat call read, as the provenance line names them; anything else is dropped."""
-    out = []
-    for one in value if isinstance(value, list) else []:
-        if (
-            isinstance(one, dict)
-            and one.get("kind") == "source"
-            and one.get("source_id")
-        ):
-            out.append(
-                {
-                    name: str(one[name])
-                    for name in ("kind", "source_id", "version", "digest", "locator")
-                    if one.get(name)
-                }
-            )
-    return out
-
-
-def chat_citations(published: Mapping[str, bytes]) -> dict[str, dict[str, Any]]:
-    """Per item, the chat tool call that last moved it, the person's message that call answered, what the call read
-    (a file and its row) and its note, from the builder chat's provenance file in a published tree.
-    """
-    out: dict[str, dict[str, Any]] = {}
-    for line in (
-        (published.get(PROVENANCE_FILE) or b"").decode("utf-8", "replace").splitlines()
-    ):
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(entry, dict):
-            continue
-        for item_id in entry.get("items") or []:
-            out[str(item_id)] = {
-                "message_id": str(entry.get("message_id") or ""),
-                "tool": str(entry.get("tool") or ""),
-                "used": _used(entry.get("used")),
-                "note": str(entry.get("note") or "")[:280],
-            }
     return out

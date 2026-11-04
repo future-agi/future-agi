@@ -493,6 +493,7 @@ def create_selected_harness_run(
             "default_pair_sealed",
             "conversation_checkpoints",
             "draft_saves",
+            "draft_validation",
             "observability_refusal",
         ):
             child_metadata.pop(key, None)

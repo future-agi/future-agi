@@ -28,6 +28,8 @@ _RULES_BEFORE_DECLARED = Path(__file__).with_name(
 )
 # Fields the platform writes on a record, beside the ones its rules declare.
 _PLATFORM_FIELDS = ("provenance",)
+# Fields a read adds to a record: how many scenarios include it, and the decision taken on it in review.
+_READ_ONLY_FIELDS = ("scenarios", "review_decision")
 # A sub-actor is a person on the caller's side; the cast shows it so.
 _SUB_ACTOR_CAST = {"kind": "person", "side": "caller"}
 
@@ -46,6 +48,7 @@ class ActorRecord(TypedDict, total=False):
     activation: dict[str, Any] | None
     provenance: dict[str, Any]
     scenarios: int
+    review_decision: Literal["accepted", "rejected"] | None
 
 
 class ActorRules(TypedDict, total=False):
@@ -204,13 +207,17 @@ def _cast_view(
     suite_files: dict[str, bytes],
     draft: Any,
 ) -> Cast:
+    from simulate.services.harness_versioning.review import held_decisions
+
     rules = actor_rules(environment_files)
     documents = suite_documents(suite_files)
+    decided = held_decisions(draft, environment_files) if draft is not None else {}
     return {
         "actors": [
             {
                 **one,
                 "scenarios": len(_scenarios_using(documents, str(one.get("id") or ""))),
+                "review_decision": decided.get(f"actor:{one.get('id')}"),
             }
             for one in _cast(environment_files)
         ],
@@ -577,8 +584,12 @@ def write_actor_edit(
     `actor_invalid` (400), `actor_id_missing` and `actor_id_mismatch` (400), and retires the builder chat's runtime
     once the draft is written. `actor_id` is the id in the address, if any; a create may give it in the body instead.
     """
-    # The scenario count is read-side only; it is never written into a record.
-    body = {name: value for name, value in (body or {}).items() if name != "scenarios"}
+    # The scenario count and the review decision are read-side only; they are never written into a record.
+    body = {
+        name: value
+        for name, value in (body or {}).items()
+        if name not in _READ_ONLY_FIELDS
+    }
     given = body.pop("id", None) or actor_id
     if op != "delete" and not given:
         raise HostedHarnessError(
