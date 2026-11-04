@@ -25,6 +25,7 @@ import {
 } from "../_mock/editReview";
 import { focusChatAt } from "./reviewChangesBus";
 import { getActor } from "../_mock/actors";
+import { toolSettingOf } from "../_mock/toolEnv";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -110,6 +111,15 @@ export default function ReviewChangesDrawer({
       ["actors", "actorEdits", "customActors"].includes(field)
         ? getActor(id, envState)?.name
         : null,
+    /* A tool never set before had its default tier — "Recorded → Simulated". */
+    baseOf: (field, key) => {
+      if (field !== "toolEnv") return null;
+      const tool = (env?.tools || []).find((t) => t.name === key) || {
+        name: key,
+      };
+      const { [key]: _set, ...rest } = envState?.toolEnv || {};
+      return { tier: toolSettingOf(tool, { ...envState, toolEnv: rest }).tier };
+    },
   };
 
   return (

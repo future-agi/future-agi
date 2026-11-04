@@ -180,6 +180,8 @@ const ruleTextBefore = (id, earlier, baseRules = []) => {
  * wording when a rule's words changed — shown struck through above the new.
  * Compared with the field as it stands now, so a later edit to the same field
  * shows in it too. `opts.nameOfId(field, id)` names ids (an actor's id → name).
+ * `opts.baseOf(field, key)` gives what an entry never set before held (a
+ * tool's default tier).
  */
 export const diffOf = (c, envState, opts = {}) => {
   const out = [];
@@ -212,7 +214,8 @@ export const diffOf = (c, envState, opts = {}) => {
     }
     if (was?.__sub) {
       Object.entries(was.__sub).forEach(([sk, o]) => {
-        const prev = o === ABSENT ? undefined : o;
+        /* Never set before: it had its default (a tool's starting tier). */
+        const prev = o === ABSENT ? opts.baseOf?.(k, sk) : o;
         const cur = now?.[sk];
         const who = nameId(k, sk);
         if (isMap(prev) || isMap(cur)) {
@@ -263,9 +266,13 @@ export const diffOf = (c, envState, opts = {}) => {
     }
     /* A keyed map set for the first time (or cleared): one line per entry. */
     if ((isMap(now) && !isMap(old)) || (isMap(old) && !isMap(now))) {
-      const from = isMap(old) ? old : {};
+      const was = isMap(old) ? old : {};
       const to = isMap(now) ? now : {};
-      [...new Set([...Object.keys(from), ...Object.keys(to)])]
+      const keys = [...new Set([...Object.keys(was), ...Object.keys(to)])];
+      const from = Object.fromEntries(
+        keys.map((key) => [key, was[key] ?? opts.baseOf?.(k, key)]),
+      );
+      keys
         .filter((key) => !same(from[key], to[key]))
         .forEach((key) => {
           const who = nameId(k, key);
