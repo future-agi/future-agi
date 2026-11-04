@@ -529,6 +529,19 @@ describe("WorldActorsPanel", () => {
     expect(mutate).not.toHaveBeenCalled();
   });
 
+  it("offers the full name in a tooltip only when it is cut off", async () => {
+    render(<WorldActorsPanel envId="env-1" locked />);
+    const name = screen.getByText(/Priya Raman/);
+    fireEvent.mouseEnter(name);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    fireEvent.mouseLeave(name);
+    Object.defineProperty(name, "scrollWidth", { value: 200 });
+    Object.defineProperty(name, "clientWidth", { value: 100 });
+    fireEvent.mouseEnter(name);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Priya Raman");
+  });
+
   it("shows Not set for a value with nothing in it", () => {
     render(<WorldActorsPanel envId="env-1" locked />);
     fireEvent.click(screen.getByText("What they see"));

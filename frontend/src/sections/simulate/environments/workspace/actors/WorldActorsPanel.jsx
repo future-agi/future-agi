@@ -12,6 +12,7 @@ import {
 import { ConfirmDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import {
   useActors,
   useActorView,
@@ -19,19 +20,17 @@ import {
 } from "src/api/simulate-environments/versions";
 import SectionCard from "../../components/SectionCard";
 import { genderLabel } from "../scenarios/personaLabels";
-import { ClampCell, TruncTooltip } from "../scenarios/ScenarioTableCells";
 import ActorForm from "./ActorForm";
 import { hidden, readable, speaks } from "./actorUtils";
 import { ACTORS_COPY } from "./actors.constants";
 
 const C = ACTORS_COPY.worldActors;
 const CHANNEL_LABELS = ACTORS_COPY.subActors.channels;
-const TWO_LINES = {
-  wordBreak: "break-word",
-  display: "-webkit-box",
-  WebkitLineClamp: 2,
-  WebkitBoxOrient: "vertical",
-  overflow: "hidden",
+// Only as wide as its text, so the tooltip sits over the text, not the middle of the row.
+const ONE_LINE = {
+  display: "inline-block",
+  maxWidth: "100%",
+  verticalAlign: "top",
 };
 const OUTLINED = { color: "text.primary", borderColor: "divider", flexShrink: 0 };
 
@@ -332,23 +331,35 @@ function ActorRow({
           onClick={() => setOpen((o) => !o)}
           sx={{ cursor: "pointer" }}
         >
-          <TruncTooltip
-            title={[actor.name, actor.role].filter(Boolean).join(" · ")}
-          >
-            <Typography
-              sx={{ typography: "s1", fontWeight: 600, ...TWO_LINES }}
+          <Box>
+            <OverflowTooltip
+              title={[actor.name, actor.role].filter(Boolean).join(" · ")}
             >
-              {actor.name}
-              {actor.role ? (
-                <Box
-                  component="span"
-                  sx={{ color: "text.secondary", fontWeight: 400 }}
-                >{` · ${actor.role}`}</Box>
-              ) : null}
-            </Typography>
-          </TruncTooltip>
+              <Typography
+                noWrap
+                sx={{ typography: "s1", fontWeight: 600, ...ONE_LINE }}
+              >
+                {actor.name}
+                {actor.role ? (
+                  <Box
+                    component="span"
+                    sx={{ color: "text.secondary", fontWeight: 400 }}
+                  >{` · ${actor.role}`}</Box>
+                ) : null}
+              </Typography>
+            </OverflowTooltip>
+          </Box>
           {actor.goal ? (
-            <ClampCell text={`${C.wants}: ${actor.goal}`} lines={2} />
+            <Box>
+              <OverflowTooltip title={`${C.wants}: ${actor.goal}`}>
+                <Typography
+                  noWrap
+                  sx={{ typography: "s1", color: "text.secondary", ...ONE_LINE }}
+                >
+                  {`${C.wants}: ${actor.goal}`}
+                </Typography>
+              </OverflowTooltip>
+            </Box>
           ) : null}
           <Typography
             sx={{
@@ -366,12 +377,7 @@ function ActorRow({
           alignItems="center"
           sx={{ flexShrink: 0 }}
         >
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={() => setOpen((o) => !o)}
-            sx={OUTLINED}
-          >
+          <Button size="small" onClick={() => setOpen((o) => !o)}>
             {open ? C.hideView : C.showView}
           </Button>
           {!locked && (
