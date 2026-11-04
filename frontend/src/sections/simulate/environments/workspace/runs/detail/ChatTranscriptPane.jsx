@@ -6,11 +6,11 @@ import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import CallParticipants from "src/components/VoiceDetailDrawerV2/CallParticipants";
 import OtherPartyName from "src/components/VoiceDetailDrawerV2/OtherPartyName";
+import WorldActorAction from "src/components/VoiceDetailDrawerV2/WorldActorAction";
 import { DEFAULT_ROLE_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
 import {
   isOtherRole,
   otherParties,
-  worldActorLabel,
 } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 
 const ROLE_LABEL = { agent: "Assistant", customer: "Customer" };
@@ -117,23 +117,28 @@ export default function ChatTranscriptPane({ turns, customerName }) {
             <Typography
               sx={{
                 typography: "s3",
-                color: (theme) =>
-                  s.role === "world_actor"
-                    ? theme.palette.data?.[4] || theme.palette.text.subtitle
-                    : theme.palette.text.subtitle,
+                color: "text.subtitle",
                 fontVariantNumeric: "tabular-nums",
               }}
             >
               {turnStamp(s, i)} ·{" "}
-              {s.role === "world_actor" ? (
-                worldActorLabel(s.speakerName)
-              ) : isOtherRole(s.role) ? (
+              {isOtherRole(s.role) ? (
                 <OtherPartyName party={s} color="text.subtitle" />
               ) : (
                 ROLE_LABEL[s.role] || s.role
               )}
             </Typography>
-            {s.text && <Typography sx={{ typography: "s1", mt: 0.25 }}>{s.text}</Typography>}
+            {s.role === "world_actor" && s.text ? (
+              <Box sx={{ mt: 0.25 }}>
+                <WorldActorAction text={s.text} />
+              </Box>
+            ) : (
+              s.text && (
+                <Typography sx={{ typography: "s1", mt: 0.25 }}>
+                  {s.text}
+                </Typography>
+              )
+            )}
             {Array.isArray(s.toolCalls) &&
               s.toolCalls.map((c, ci) => <ToolCall key={ci} call={c} />)}
           </Box>

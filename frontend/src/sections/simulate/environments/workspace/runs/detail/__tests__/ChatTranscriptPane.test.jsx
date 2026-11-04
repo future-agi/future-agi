@@ -53,7 +53,7 @@ describe("ChatTranscriptPane", () => {
     expect(screen.queryByText("On the call:")).toBeNull();
   });
 
-  it("names a world actor's turn as theirs, with an unnamed one read as someone", () => {
+  it("names a world actor with their role and shows their action as an event", async () => {
     render(
       <ChatTranscriptPane
         turns={[
@@ -61,15 +61,22 @@ describe("ChatTranscriptPane", () => {
           {
             role: "world_actor",
             speakerName: "Pat Lee",
-            text: "Action · crm.approve_discount",
+            actorRole: "store manager",
+            text: 'Refused · crm.approve_discount\n→ args: {"percent":20}',
           },
-          { role: "world_actor", text: "Action · crm.reject_discount" },
+          { role: "world_actor", text: "crm.reject_discount" },
         ]}
       />,
     );
 
-    expect(screen.getByText(/Pat Lee \(in the world\)/)).toBeInTheDocument();
-    expect(screen.getByText(/Someone \(in the world\)/)).toBeInTheDocument();
-    expect(screen.queryByText(/world_actor/)).toBeNull();
+    expect(screen.getAllByText("Pat Lee · store manager")).toHaveLength(2);
+    expect(screen.getAllByText("Someone")).toHaveLength(2);
+    expect(
+      screen.getByText("Refused · crm.approve_discount"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/args:/)).toBeNull();
+    expect(screen.queryByText(/world_actor|in the world/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(screen.getByText(/args:/)).toBeInTheDocument();
   });
 });

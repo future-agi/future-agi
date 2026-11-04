@@ -23,7 +23,7 @@ export const normalizeRole = (role) => {
 };
 
 // Roles of anyone on the call other than the agent and the customer.
-const OTHER_ROLES = new Set(["sub_actor"]);
+const OTHER_ROLES = new Set(["sub_actor", "world_actor"]);
 export const isOtherRole = (role) => OTHER_ROLES.has(role);
 
 // `Name · role`; a call stored before roles were kept shows just the name.
@@ -43,9 +43,6 @@ export const otherParties = (turns = []) => {
   }
   return [...seen.values()];
 };
-
-// A world actor acts through the world's own actions, never speaking on the call.
-export const worldActorLabel = (name) => `${name || "Someone"} (in the world)`;
 
 export const getContent = (item) => {
   const raw = item?.content ?? item?.message ?? item?.text ?? "";

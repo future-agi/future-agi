@@ -687,14 +687,23 @@ describe("callTranscript", () => {
           name: "approve",
           actor_id: "manager",
           outcome: "committed",
+          actor_role: "store manager",
           result: {},
         },
+        { name: "approve", actor_id: "manager" },
       ],
     });
     expect(turns.map((turn) => turn.text.split("\n")[0])).toEqual([
       "Failed · approve",
       "Refused · approve",
-      "Action · approve",
+      "Committed · approve",
+      "approve",
+    ]);
+    expect(turns.map((turn) => turn.actorRole)).toEqual([
+      "",
+      "",
+      "store manager",
+      "",
     ]);
     expect(turns[0].text).toContain("× error: crm returned 503");
     expect(turns[1].text).toContain("× error: not permitted");

@@ -27,12 +27,12 @@ import {
   formatClock,
   isOtherRole,
   otherParties,
-  worldActorLabel,
 } from "./transcriptUtils";
 import { DEFAULT_ROLE_LABELS } from "./constants";
 import FunctionCallContent from "./FunctionCallContent";
 import OtherPartyName from "./OtherPartyName";
 import CallParticipants from "./CallParticipants";
+import WorldActorAction from "./WorldActorAction";
 import { statusColors } from "src/utils/runStatus";
 
 // Highlight query matches in a string — returns React nodes.
@@ -332,7 +332,7 @@ const TurnRow = React.forwardRef(
               ? "action.hover"
               : isFunctionCall
                 ? "background.neutral"
-                : isOtherRole(turn.role) || turn.role === "world_actor"
+                : isOtherRole(turn.role)
                   ? alpha(color, 0.08)
                   : "transparent",
           transition: "background-color 80ms",
@@ -379,11 +379,6 @@ const TurnRow = React.forwardRef(
 
           {isOtherRole(turn.role) && (
             <OtherPartyName party={turn} color={color} />
-          )}
-          {turn.role === "world_actor" && (
-            <Typography variant="s3" sx={{ color, fontWeight: 600 }}>
-              {worldActorLabel(turn.speakerName)}
-            </Typography>
           )}
 
           {showTemporalMetadata &&
@@ -479,6 +474,11 @@ const TurnRow = React.forwardRef(
           {isFunctionCall ? (
             <FunctionCallContent
               calls={turn.toolCalls}
+              renderText={(text) => highlightMatches(text, query)}
+            />
+          ) : turn.role === "world_actor" ? (
+            <WorldActorAction
+              text={turn.content}
               renderText={(text) => highlightMatches(text, query)}
             />
           ) : query ? (
