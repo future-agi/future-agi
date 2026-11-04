@@ -4,7 +4,7 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -400,9 +400,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         identifier = _uuid_or_none(verify_id)
         run = verify_run(job, identifier) if identifier is not None else None
         if run is None:
-            return Response(
-                {"detail": "Verify not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+            raise NotFound("Verify not found")
         return Response(verify_result(run))
 
     @validated_request(responses={200: HarnessDraftsSerializer})
