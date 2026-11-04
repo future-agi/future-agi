@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -25,27 +26,44 @@ PROVIDERS = (VAPI, RETELL)
 _BASE_URLS = {VAPI: "https://api.vapi.ai", RETELL: "https://api.retellai.com"}
 _TIMEOUT = (5, 30)
 _REDACTED = "[redacted]"
-_SECRET_MARKERS = (
-    "secret",
-    "token",
-    "api_key",
-    "apikey",
-    "credential",
-    "authorization",
+_SECRET_WORDS = frozenset(
+    {
+        "secret",
+        "token",
+        "password",
+        "passwd",
+        "credential",
+        "credentials",
+        "authorization",
+        "apikey",
+        "cookie",
+    }
 )
+_SECRET_PAIRS = (("api", "key"), ("private", "key"), ("access", "key"))
+_KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 MAIN_UNIT = "main"
 SETUP_HASH_PREFIX = "sh1:"
 PLATFORM_SDK_VERSION = "platform"
 _NAME_MAX = 255
 
 
+def _secret_key(key: str) -> bool:
+    """Whether a key names a secret, read word by word so ``maxTokens`` stays and
+    ``X-API-Key`` does not."""
+    words = [word.lower() for word in _KEY_WORDS.findall(key)]
+    if _SECRET_WORDS.intersection(words):
+        return True
+    return any(pair in zip(words, words[1:], strict=False) for pair in _SECRET_PAIRS)
+
+
 def _safe(value: Any, key: str = "") -> Any:
-    """Provider configuration safe to keep: secrets and URL queries removed, the
-    same way agent-learning-kit's provider import keeps a profile."""
-    lowered = key.lower()
-    if any(marker in lowered for marker in _SECRET_MARKERS):
+    """Provider configuration safe to keep: secrets, header values and URL queries
+    removed, the same way agent-learning-kit's provider import keeps a profile."""
+    if _secret_key(key):
         return _REDACTED
     if isinstance(value, Mapping):
+        if key.lower() == "headers":
+            return {str(k): _REDACTED for k in value}
         return {str(k): _safe(item, str(k)) for k, item in value.items()}
     if isinstance(value, list):
         return [_safe(item, key) for item in value]
