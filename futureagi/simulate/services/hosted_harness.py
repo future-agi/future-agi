@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 import structlog
@@ -620,21 +621,27 @@ def create_selected_harness_run(
             child.environment_version = pins.environment_version
             child.suite_version = pins.suite_version
             child.assembled_bundle = pins.assembled_bundle
-            from simulate.services.harness_readiness import run_snapshot
+            from simulate.services.harness_readiness import store_run_snapshot
 
-            child.capability_snapshot = run_snapshot(
-                environment,
-                agent_version=pins.agent_version,
-                environment_version=pins.environment_version,
-                suite_version=pins.suite_version,
-                runtime=pins.runtime,
+            # Once committed: reading the evidence may download an archive, which
+            # never happens under the environment's lock.
+            transaction.on_commit(
+                partial(
+                    store_run_snapshot,
+                    child.id,
+                    environment,
+                    agent_version=pins.agent_version,
+                    environment_version=pins.environment_version,
+                    suite_version=pins.suite_version,
+                    runtime=pins.runtime,
+                    bundle=pins.assembled_bundle,
+                )
             )
             pin_fields = [
                 "agent_version",
                 "environment_version",
                 "suite_version",
                 "assembled_bundle",
-                "capability_snapshot",
             ]
         child.save(
             update_fields=[

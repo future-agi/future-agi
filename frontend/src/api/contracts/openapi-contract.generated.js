@@ -99156,7 +99156,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         state: {
           title: "State",
           description:
-            "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+            "ready: certified together; failed: a check failed; retry: the last validation, or a run, ended before its check did.",
           type: "string",
           enum: [
             "not_run",
@@ -99176,7 +99176,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         purpose: {
           title: "Purpose",
           type: "string",
-          enum: ["save", "agent_move", "recheck"],
+          enum: ["agent_move", "recheck"],
           "x-nullable": true,
         },
         finished_at: {
@@ -128609,6 +128609,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessCapabilityFixRecheck: {
+      description:
+        "How to read the row again once fixed; null when this pairing is certified already, so only a new agent or environment version (checked on its own) can change it.",
       required: ["scope", "method", "path"],
       type: "object",
       properties: {
@@ -128628,6 +128630,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+      "x-nullable": true,
     },
     HarnessEnvironmentSubActorPersona: {
       type: "object",

@@ -41,6 +41,7 @@ from simulate.services.run_results_v3_queries import (
     build_run_comparison,
     run_calls_queryset,
 )
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_agent_fix_services import (
     BASE_AGENT,
     KEYS,
@@ -74,10 +75,7 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
 from simulate.views.run_results_v3 import _execution_payload
 from tfc.ee_gating import EEFeature, FeatureUnavailable
 
-pytestmark = [
-    pytest.mark.django_db,
-    pytest.mark.usefixtures("moves_without_validation"),
-]
+pytestmark = pytest.mark.django_db
 
 BASE = "/simulate/api/agent-fix-runs"
 ENGINE = "/simulate/api/agent-fix-engine"
@@ -1172,8 +1170,9 @@ class TestUserApi:
 
         assert (response.status_code, response.json()) == (
             200,
-            {"outcome": "activated"},
+            {"outcome": "validating"},
         )
+        settle_validations(environment)
         environment.refresh_from_db()
         assert environment.agent_version_id == candidate.agent_version_id
 
@@ -1835,7 +1834,8 @@ class TestUserApi:
             "fix_override_reason_required",
             before,
         )
-        assert (shipped.status_code, shipped.json()) == (200, {"outcome": "activated"})
+        assert (shipped.status_code, shipped.json()) == (200, {"outcome": "validating"})
+        settle_validations(environment)
         environment.refresh_from_db()
         assert environment.agent_version_id == candidate.agent_version_id
         override = self._override(auth_client, fix_run)

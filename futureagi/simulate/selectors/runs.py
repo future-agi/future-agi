@@ -1,8 +1,9 @@
 """The runs a user sees and acts on.
 
 A fix's check runs are ordinary runs of the environment's run test that only the fix
-reads. Every user-facing list, count, comparison and action starts from these
-selectors, so none of them reaches a check run. Internal paths (ingestion, teardown,
+reads, and a pairing's validation job certifies and runs nothing. Every user-facing
+list, count, comparison and action starts from these selectors, so none of them
+reaches either. Internal paths (ingestion, teardown,
 cleanup, billing and the fix itself) query the models directly and keep them.
 """
 
@@ -30,4 +31,6 @@ def user_runs(path: str = "") -> Q:
     ``simulation_runs__`` from an environment). Anything else uses the selectors
     above.
     """
-    return Q(**{f"{path}fix_run__isnull": True})
+    return Q(**{f"{path}fix_run__isnull": True}) & ~Q(
+        **{f"{path}payload__contains": {"metadata": {"certify_only": True}}}
+    )
