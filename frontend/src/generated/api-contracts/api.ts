@@ -60719,7 +60719,8 @@ export const getSimulateApiHarnessEnvironmentsVerifyUrl = (id: string) => {
 
 /**
  * Verify an agent version on the held-back cases, in a run no user read shows.
-Each version is verified once: asking again returns that verify.
+Its live or completed verify is final: asking again returns it. After one that
+failed or was canceled, asking again starts a new one.
  */
 export const simulateApiHarnessEnvironmentsVerify = async (
   id: string,
@@ -60861,7 +60862,7 @@ export const getSimulateApiHarnessEnvironmentsVersionsCreateAgentVersionUrl = (
 /**
  * A new agent version from an upload, a prompt edit or a settings edit; it is
 checked next, then made this environment's default unless make_default is
-false.
+false. A coding agent key's version is never made the default.
  */
 export const simulateApiHarnessEnvironmentsVersionsCreateAgentVersion = async (
   id: string,
@@ -61550,10 +61551,8 @@ export const getSimulateApiHarnessJobsReadUrl = (id: string) => {
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the public backend selected by
-``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
-selects its managed sandbox runtime.
- * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ * One harness job. A coding agent key reads its own run narrowly: its status,
+results and ids, never the stage outputs, which name every case of the suite.
  */
 export const simulateApiHarnessJobsRead = async (
   id: string,

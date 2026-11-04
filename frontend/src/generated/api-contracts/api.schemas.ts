@@ -19261,7 +19261,7 @@ export interface HarnessEnvironmentRunEvaluationsQueuedApi {
 }
 
 export interface HarnessVerifyCreateApi {
-  /** The agent version to verify; each version is verified once. */
+  /** The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts. */
   agent_version_id: string;
   /**
    * @minimum 1
@@ -19359,7 +19359,7 @@ export interface HarnessAgentVersionCreateApi {
    */
   prompt?: string;
   agent_payload?: HarnessAgentPayloadChangeApi;
-  /** False only checks the new version: once it passes, a run can pick it and a move makes it the default. */
+  /** False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default. */
   make_default?: boolean;
 }
 

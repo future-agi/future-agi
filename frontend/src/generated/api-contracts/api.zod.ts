@@ -39144,7 +39144,8 @@ export const SimulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluationsBody =
 
 /**
  * Verify an agent version on the held-back cases, in a run no user read shows.
-Each version is verified once: asking again returns that verify.
+Its live or completed verify is final: asking again returns it. After one that
+failed or was canceled, asking again starts a new one.
  */
 export const SimulateApiHarnessEnvironmentsVerifyParams = zod.object({
   id: zod.string(),
@@ -39157,7 +39158,9 @@ export const SimulateApiHarnessEnvironmentsVerifyBody = zod.object({
   agent_version_id: zod
     .string()
     .uuid()
-    .describe("The agent version to verify; each version is verified once."),
+    .describe(
+      "The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts.",
+    ),
   trials: zod
     .number()
     .min(1)
@@ -39479,7 +39482,7 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
 /**
  * A new agent version from an upload, a prompt edit or a settings edit; it is
 checked next, then made this environment's default unless make_default is
-false.
+false. A coding agent key's version is never made the default.
  */
 export const SimulateApiHarnessEnvironmentsVersionsCreateAgentVersionParams =
   zod.object({
@@ -39491,9 +39494,6 @@ export const simulateApiHarnessEnvironmentsVersionsCreateAgentVersionBodyPromptM
 export const simulateApiHarnessEnvironmentsVersionsCreateAgentVersionBodyAgentPayloadConfigPhoneNumberMax = 512;
 
 export const simulateApiHarnessEnvironmentsVersionsCreateAgentVersionBodyAgentPayloadConfigAgentNameMax = 512;
-
-export const simulateApiHarnessEnvironmentsVersionsCreateAgentVersionBodyMakeDefaultDefault =
-  true;
 
 export const SimulateApiHarnessEnvironmentsVersionsCreateAgentVersionBody =
   zod.object({
@@ -39532,11 +39532,9 @@ export const SimulateApiHarnessEnvironmentsVersionsCreateAgentVersionBody =
       .optional(),
     make_default: zod
       .boolean()
-      .default(
-        simulateApiHarnessEnvironmentsVersionsCreateAgentVersionBodyMakeDefaultDefault,
-      )
+      .optional()
       .describe(
-        "False only checks the new version: once it passes, a run can pick it and a move makes it the default.",
+        "False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default.",
       ),
   });
 
@@ -41125,10 +41123,8 @@ export const SimulateApiHarnessJobsSourceUploadBody = zod.object({
 });
 
 /**
- * Validates the v1.6 request contract and delegates execution to the public backend selected by
-``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
-selects its managed sandbox runtime.
- * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ * One harness job. A coding agent key reads its own run narrowly: its status,
+results and ids, never the stage outputs, which name every case of the suite.
  */
 export const SimulateApiHarnessJobsReadParams = zod.object({
   id: zod.string(),

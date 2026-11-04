@@ -296,8 +296,8 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @swagger_auto_schema(responses={200: HarnessJobReadSerializer})
     def retrieve(self, request, pk=None):
-        """One job; a coding agent reads its own run with only the fields fi uses, never
-        the stage outputs, which name every case of the suite."""
+        """One harness job. A coding agent key reads its own run narrowly: its status,
+        results and ids, never the stage outputs, which name every case of the suite."""
         response = get_harness_provider().retrieve(request, pk)
         if coding_agent_key(request) is None or response.status_code != 200:
             return response

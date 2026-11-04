@@ -52266,7 +52266,7 @@
         "/simulate/api/harness-environments/{id}/verify/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_verify",
-                "description": "Verify an agent version on the held-back cases, in a run no user read shows.\nEach version is verified once: asking again returns that verify.",
+                "description": "Verify an agent version on the held-back cases, in a run no user read shows.\nIts live or completed verify is final: asking again returns it. After one that\nfailed or was canceled, asking again starts a new one.",
                 "parameters": [
                     {
                         "name": "data",
@@ -52381,7 +52381,7 @@
         "/simulate/api/harness-environments/{id}/versions/agent/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_versions_create_agent_version",
-                "description": "A new agent version from an upload, a prompt edit or a settings edit; it is\nchecked next, then made this environment's default unless make_default is\nfalse.",
+                "description": "A new agent version from an upload, a prompt edit or a settings edit; it is\nchecked next, then made this environment's default unless make_default is\nfalse. A coding agent key's version is never made the default.",
                 "parameters": [
                     {
                         "name": "data",
@@ -52927,8 +52927,7 @@
         "/simulate/api/harness-jobs/{id}/": {
             "get": {
                 "operationId": "simulate_api_harness-jobs_read",
-                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
+                "description": "One harness job. A coding agent key reads its own run narrowly: its status,\nresults and ids, never the stage outputs, which name every case of the suite.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -132921,7 +132920,7 @@
             "properties": {
                 "agent_version_id": {
                     "title": "Agent version id",
-                    "description": "The agent version to verify; each version is verified once.",
+                    "description": "The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts.",
                     "type": "string",
                     "format": "uuid"
                 },
@@ -133086,9 +133085,8 @@
                 },
                 "make_default": {
                     "title": "Make default",
-                    "description": "False only checks the new version: once it passes, a run can pick it and a move makes it the default.",
-                    "type": "boolean",
-                    "default": true
+                    "description": "False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default.",
+                    "type": "boolean"
                 }
             }
         },

@@ -66128,9 +66128,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         make_default: {
           title: "Make default",
           description:
-            "False only checks the new version: once it passes, a run can pick it and a move makes it the default.",
+            "False only checks the new version: once it passes, a run can pick it and a move makes it the default. Omitted, it is true, except for a coding agent key, whose push is never the default.",
           type: "boolean",
-          default: true,
         },
       },
     },
@@ -68242,7 +68241,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         agent_version_id: {
           title: "Agent version id",
           description:
-            "The agent version to verify; each version is verified once.",
+            "The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts.",
           type: "string",
           format: "uuid",
         },
