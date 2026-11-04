@@ -622,6 +622,7 @@ import type {
   HarnessConversationTranscriptAppendResponseApi,
   HarnessConversationWorkspaceResponseApi,
   HarnessDefaultMoveApi,
+  HarnessDefaultMoveValidatingApi,
   HarnessDraftSaveApi,
   HarnessDraftSaveResponseApi,
   HarnessDraftsApi,
@@ -61068,15 +61069,22 @@ export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 = {
   status: 200;
 };
 
-export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse202 = {
+  data: HarnessDefaultMoveValidatingApi;
+  status: 202;
 };
 
-export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess =
-  simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 & {
-    headers: Headers;
-  };
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 202>;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess = (
+  | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200
+  | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse202
+) & {
+  headers: Headers;
+};
 export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseError =
   simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault & {
     headers: Headers;
@@ -61096,7 +61104,7 @@ export const getSimulateApiHarnessEnvironmentsVersionsMoveDefaultUrl = (
 
 /**
  * Make an agent, environment or suite version the default; returns every
-version.
+version. An agent move that waits for its pairing to validate is a 202.
  */
 export const simulateApiHarnessEnvironmentsVersionsMoveDefault = async (
   id: string,

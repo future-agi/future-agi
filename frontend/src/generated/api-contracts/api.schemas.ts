@@ -19477,6 +19477,46 @@ export interface HarnessDefaultMoveApi {
   expected_default_id: string | null;
 }
 
+/**
+ * ready: certified together; failed: a check failed; retry: the last validation ended before its check did.
+ */
+export type HarnessPairValidationApiState =
+  (typeof HarnessPairValidationApiState)[keyof typeof HarnessPairValidationApiState];
+
+export const HarnessPairValidationApiState = {
+  not_run: "not_run",
+  validating: "validating",
+  ready: "ready",
+  failed: "failed",
+  retry: "retry",
+  unavailable: "unavailable",
+} as const;
+
+export type HarnessPairValidationApiPurpose =
+  (typeof HarnessPairValidationApiPurpose)[keyof typeof HarnessPairValidationApiPurpose];
+
+export const HarnessPairValidationApiPurpose = {
+  save: "save",
+  agent_move: "agent_move",
+  recheck: "recheck",
+} as const;
+
+export type HarnessPairValidationApiError = { [key: string]: string };
+
+export interface HarnessPairValidationApi {
+  /** ready: certified together; failed: a check failed; retry: the last validation ended before its check did. */
+  state: HarnessPairValidationApiState;
+  job_id: string;
+  purpose: HarnessPairValidationApiPurpose;
+  finished_at: string;
+  error: HarnessPairValidationApiError;
+}
+
+export interface HarnessDefaultMoveValidatingApi {
+  versions: HarnessVersionsApi;
+  validation: HarnessPairValidationApi;
+}
+
 export type HarnessVersionDiffApiDiff = { [key: string]: unknown };
 
 /**

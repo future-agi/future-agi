@@ -52591,7 +52591,7 @@
         "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_versions_move_default",
-                "description": "Make an agent, environment or suite version the default; returns every\nversion.",
+                "description": "Make an agent, environment or suite version the default; returns every\nversion. An agent move that waits for its pairing to validate is a 202.",
                 "parameters": [
                     {
                         "name": "data",
@@ -52607,6 +52607,12 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/HarnessVersions"
+                        }
+                    },
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessDefaultMoveValidating"
                         }
                     },
                     "default": {
@@ -133546,6 +133552,77 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                }
+            }
+        },
+        "HarnessPairValidation": {
+            "required": [
+                "state",
+                "job_id",
+                "purpose",
+                "finished_at",
+                "error"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "description": "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+                    "type": "string",
+                    "enum": [
+                        "not_run",
+                        "validating",
+                        "ready",
+                        "failed",
+                        "retry",
+                        "unavailable"
+                    ]
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "purpose": {
+                    "title": "Purpose",
+                    "type": "string",
+                    "enum": [
+                        "save",
+                        "agent_move",
+                        "recheck"
+                    ],
+                    "x-nullable": true
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessDefaultMoveValidating": {
+            "required": [
+                "versions",
+                "validation"
+            ],
+            "type": "object",
+            "properties": {
+                "versions": {
+                    "$ref": "#/definitions/HarnessVersions"
+                },
+                "validation": {
+                    "$ref": "#/definitions/HarnessPairValidation"
                 }
             }
         },

@@ -39948,7 +39948,7 @@ export const SimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse =
 
 /**
  * Make an agent, environment or suite version the default; returns every
-version.
+version. An agent move that waits for its pairing to validate is a 202.
  */
 export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultParams =
   zod.object({

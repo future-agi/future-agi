@@ -29092,6 +29092,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             200: {
               $ref: "#/definitions/HarnessVersions",
             },
+            202: {
+              $ref: "#/definitions/HarnessDefaultMoveValidating",
+            },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
             },
@@ -66880,6 +66883,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessDefaultMoveValidating: {
+      required: ["versions", "validation"],
+      type: "object",
+      properties: {
+        versions: {
+          $ref: "#/definitions/HarnessVersions",
+        },
+        validation: {
+          $ref: "#/definitions/HarnessPairValidation",
+        },
+      },
+    },
     HarnessDraftSave: {
       required: ["drafts", "idempotency_key"],
       type: "object",
@@ -99491,6 +99506,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         available: {
           title: "Available",
           type: "boolean",
+        },
+      },
+    },
+    HarnessPairValidation: {
+      required: ["state", "job_id", "purpose", "finished_at", "error"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          description:
+            "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+          type: "string",
+          enum: [
+            "not_run",
+            "validating",
+            "ready",
+            "failed",
+            "retry",
+            "unavailable",
+          ],
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        purpose: {
+          title: "Purpose",
+          type: "string",
+          enum: ["save", "agent_move", "recheck"],
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          "x-nullable": true,
         },
       },
     },
