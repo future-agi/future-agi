@@ -46,6 +46,7 @@ import {
   UnscoredEval,
 } from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
+import { STATUS_META } from "../../runs.constants";
 
 // The theme hides every border on a table's last row, which here is the head
 // row and the final call row. The column dividers are cell left borders, so put
@@ -120,8 +121,8 @@ const unscoredSummary = (t) => {
   const count = (result) =>
     (t.subGoalResults || []).filter((goal) => goal.result === result).length;
   return [
-    [count("not_applicable"), "not applicable"],
-    [count("inconclusive"), "inconclusive"],
+    [count("not_applicable"), STATUS_META.not_applicable.label.toLowerCase()],
+    [count("inconclusive"), STATUS_META.inconclusive.label.toLowerCase()],
   ]
     .filter(([n]) => n)
     .map(([n, label]) => `${n} ${label}`)
@@ -352,7 +353,10 @@ export default function TraceTable({
                   {t.subGoalResults.map((goal, goalIndex) => {
                     const verdict =
                       goal.result === "not_applicable"
-                        ? { label: "Not applicable", color: "text.disabled" }
+                        ? {
+                            label: STATUS_META.not_applicable.label,
+                            color: "text.disabled",
+                          }
                         : runOutcome(
                             goal.passed === true
                               ? "passed"

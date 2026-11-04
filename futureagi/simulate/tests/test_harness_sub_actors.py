@@ -390,3 +390,133 @@ def test_a_pinned_suite_version_keeps_each_scenario_s_sub_actors():
         _member_content({"name": "a", "sub_actors": included})["sub_actors"] == included
     )
     assert "sub_actors" not in _member_content({"name": "a"})
+
+
+@pytest.mark.django_db
+def test_a_hostile_sub_actor_filter_value_matches_nothing_and_never_errors(
+    organization, workspace
+):
+    from simulate.services.run_results_v3_queries import apply_run_call_query
+
+    call = _ingest(
+        organization,
+        workspace,
+        "results-hostile",
+        CallExecution.SimulationCallType.TEXT,
+        {"messages": []},
+        {},
+    )
+    call.call_metadata = {
+        **(call.call_metadata or {}),
+        "harness_sub_actors": {
+            "summary": [{"sub_actor": "friend", "name": "Rowan", "delivered": 1}]
+        },
+    }
+    call.save(update_fields=["call_metadata"])
+    calls = CallExecution.objects.filter(id=call.id)
+
+    for hostile in (
+        'friend" || @.delivered > 0 || @.sub_actor == "x',
+        "friend\\",
+        "$who",
+    ):
+        assert not apply_run_call_query(
+            calls, {"filters": {"sub_actor": [hostile]}}
+        ).exists()
+        assert apply_run_call_query(
+            calls, {"filters": {"sub_actor_not": [hostile]}}
+        ).exists()
+    assert apply_run_call_query(calls, {"filters": {"sub_actor": ["friend"]}}).exists()
+
+
+def test_a_filter_value_the_database_cannot_hold_is_refused():
+    from simulate.views.run_results_v3 import RunCallFiltersSerializer
+
+    for value in ("\x00", "\ud800"):
+        query = RunCallFiltersSerializer(data={"filters": {"sub_actor": [value]}})
+        assert not query.is_valid()
+    assert RunCallFiltersSerializer(
+        data={"filters": {"sub_actor": ["friend", "none"]}}
+    ).is_valid()
+
+
+@pytest.mark.django_db
+def test_a_built_bundle_s_sub_actor_list_is_stored_once_and_an_empty_one_is_not(
+    organization, workspace
+):
+    from simulate.models import HostedHarnessStageOutput
+    from simulate.services.hosted_harness_gateway import _persist_bundle_stage_outputs
+
+    one = {"sub_actors": _LIST["sub_actors"][:1]}
+
+    def persisted(key, listing):
+        job, _ = create_hosted_job(
+            organization, _payload(), idempotency_key=key, workspace=workspace
+        )
+        files = {"sub_actors.json": listing}
+        with (
+            patch(
+                "simulate.services.hosted_harness_gateway._load_bundle_file",
+                side_effect=lambda manifest, path, job: files.get(path),
+            ),
+            patch(
+                "simulate.services.hosted_harness_gateway._load_bundle_scenarios",
+                return_value=[],
+            ),
+        ):
+            _persist_bundle_stage_outputs(job, {})
+            _persist_bundle_stage_outputs(job, {})
+        return list(
+            HostedHarnessStageOutput.no_workspace_objects.filter(
+                job=job, kind="sub_actors"
+            ).values_list("title", "summary", "data")
+        )
+
+    assert persisted("bundle-one", one) == [("Sub-actors", "1 sub-actor", one)]
+    assert persisted("bundle-empty", {"sub_actors": []}) == []
+    assert persisted("bundle-none", None) == []
+
+
+def test_a_pinned_version_s_sub_actor_list_replaces_the_run_s_own():
+    from simulate.services.hosted_harness import pinned_stage_outputs
+
+    listed = {"kind": "sub_actors", "data": _LIST}
+    version = SimpleNamespace(documents={"stage_outputs": [listed]})
+    assert pinned_stage_outputs(version, SimpleNamespace(documents={})) == {
+        "sub_actors": listed
+    }
+
+
+@pytest.mark.django_db
+def test_the_scenario_filter_names_the_environment_s_own_sub_actors(
+    organization, workspace
+):
+    from simulate.models import HostedHarnessStageOutput
+    from simulate.services.harness_environment import sub_actor_labels
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="labels", workspace=workspace
+    )
+    assert sub_actor_labels(job) == {"none": "Simulated user only"}
+    HostedHarnessStageOutput.no_workspace_objects.create(
+        job=job, title="Sub-actors", summary="", kind="sub_actors", data=_LIST
+    )
+    assert sub_actor_labels(job) == {
+        "none": "Simulated user only",
+        "friend": "Rowan",
+        "partner": "Sam",
+    }
+
+
+def test_stored_sub_actor_shapes_keep_only_well_formed_entries():
+    from simulate.services.harness_scenarios import sub_actor_entries
+    from simulate.services.hosted_harness_ingestion import _sub_actor_record
+
+    assert sub_actor_entries([{"id": "friend", "trigger": "soon"}, "x"]) == [
+        {"id": "friend", "instruction": "", "trigger": {}}
+    ]
+    assert sub_actor_entries({"id": "friend"}) is None
+    assert _sub_actor_record(
+        {"summary": [{"sub_actor": "friend"}, "x"], "events": "x", "extra": 1}
+    ) == {"summary": [{"sub_actor": "friend"}]}
+    assert _sub_actor_record(["x"]) is None

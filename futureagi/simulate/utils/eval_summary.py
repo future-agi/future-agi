@@ -160,8 +160,10 @@ def _calculate_config_stats(eval_config, outputs):
         raise ValueError(f"Invalid output type: {output_type}")
 
 
+NOT_APPLICABLE_OUTPUT = "Not applicable"
+INCONCLUSIVE_OUTPUT = "Inconclusive"
 # Results that are neither a pass nor a fail, so no pass rate counts them.
-UNSCORED_OUTPUTS = frozenset({"Not applicable", "Inconclusive"})
+UNSCORED_OUTPUTS = frozenset({NOT_APPLICABLE_OUTPUT, INCONCLUSIVE_OUTPUT})
 
 
 def _calculate_pass_fail_stats(eval_config, outputs):
@@ -200,8 +202,8 @@ def _calculate_pass_fail_stats(eval_config, outputs):
             "fail": fail_rate,
             "pass_count": pass_count,
             "fail_count": fail_count,
-            "not_applicable_count": unscored["Not applicable"],
-            "inconclusive_count": unscored["Inconclusive"],
+            "not_applicable_count": unscored[NOT_APPLICABLE_OUTPUT],
+            "inconclusive_count": unscored[INCONCLUSIVE_OUTPUT],
         },
     }
 

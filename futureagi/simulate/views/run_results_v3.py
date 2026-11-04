@@ -141,6 +141,10 @@ class RunCallFiltersSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Filter '{field}' must be a list of strings."
                 )
+            # Refuses null and surrogate characters, which the database cannot hold.
+            serializers.ListField(
+                child=serializers.CharField(allow_blank=True)
+            ).run_validation(selected)
         invalid_statuses = {
             *value.get("status", []),
             *value.get("status_not", []),

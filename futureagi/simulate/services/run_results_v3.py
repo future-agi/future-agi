@@ -29,7 +29,10 @@ from simulate.services.harness_scenarios import (
     call_row_metadata,
     pinned_scenarios,
 )
-from simulate.services.hosted_harness_ingestion import sub_goal_result
+from simulate.services.hosted_harness_ingestion import (
+    SUB_GOAL_PASSED,
+    sub_goal_result,
+)
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
 from simulate.services.run_results_v3_scoring import (
     ERRORED_EVAL_STATUSES,
@@ -684,7 +687,7 @@ def build_call_rows(
             result = sub_goal_result(item) if isinstance(item, dict) else None
             entry = {
                 "name": str(name),
-                "passed": {"pass": True, "fail": False}.get(result),
+                "passed": SUB_GOAL_PASSED.get(result),
             }
             if result in ("not_applicable", "inconclusive"):
                 entry.update(result=result, reason=str(item.get("reason") or ""))
