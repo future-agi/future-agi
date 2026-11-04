@@ -1358,6 +1358,16 @@ class MetricRefreshAttempt(models.Model):
             )
         if to_state not in cls.TRANSITIONS.get(from_state, ()):
             raise ValueError("unsupported attempt transition")
+        attempt = cls.objects.get(id=attempt_id)
+        if (
+            attempt.source_ceilings.get("range_compaction")
+            or attempt.compaction_ranges.exists()
+        ):
+            from tracer.services.derived_metrics.compaction_ranges import (
+                validate_registry,
+            )
+
+            validate_registry(attempt, verified=to_state == cls.State.VERIFIED)
         condition = Q(
             id=attempt_id, state=from_state, fencing_epoch=epoch, lease_token=token
         )
@@ -1690,6 +1700,235 @@ class MetricAttemptBatch(models.Model):
             raise MetricFencingError("the refresh lease is not held at this epoch")
 
 
+class MetricCompactionRange(models.Model):
+    """Private immutable key bounds and versioned receipts, never row payloads.
+
+    All changes use fenced transitions. Submission history is append-only in the
+    existing metric_submission outbox, which survives removal of this private row.
+    """
+
+    class State(models.TextChoices):
+        PLANNED = "planned"
+        FROZEN = "frozen"
+        INSERTING = "inserting"
+        VERIFIED = "verified"
+        INVALIDATED = "invalidated"
+
+    id = models.BigAutoField(primary_key=True)
+    attempt = models.ForeignKey(
+        MetricRefreshAttempt, on_delete=models.CASCADE, related_name="compaction_ranges"
+    )
+    table_kind = models.CharField(
+        max_length=32, choices=MetricAttemptBatch.Table.choices
+    )
+    bucket = models.PositiveSmallIntegerField()
+    month = models.PositiveIntegerField(default=0)
+    ordinal = models.PositiveIntegerField()
+    lower_key = models.JSONField(null=True)
+    upper_key = models.JSONField(null=True)
+    source_sha256 = models.CharField(max_length=64)
+    schema_sha256 = models.CharField(max_length=64)
+    algorithm = models.CharField(max_length=40)
+    shard_identity = models.JSONField()
+    plan_sha256 = models.CharField(max_length=64, default="", blank=True)
+    row_count = models.PositiveBigIntegerField(default=0)
+    sequence_first = models.PositiveBigIntegerField(default=0)
+    sequence_last = models.PositiveBigIntegerField(default=0)
+    expected_bytes = models.PositiveBigIntegerField(default=0)
+    digest = models.CharField(max_length=64, default="", blank=True)
+    state = models.CharField(
+        max_length=16, choices=State.choices, default=State.PLANNED
+    )
+    verified_count = models.PositiveBigIntegerField(null=True)
+    verified_bytes = models.PositiveBigIntegerField(null=True)
+    verified_digest = models.CharField(max_length=64, default="", blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    frozen_at = models.DateTimeField(null=True)
+    inserting_at = models.DateTimeField(null=True)
+    verified_at = models.DateTimeField(null=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["attempt", "state"], name="metric_range_attempt_state")
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["attempt", "table_kind", "month", "bucket", "ordinal"],
+                name="metric_range_key",
+            ),
+            models.CheckConstraint(
+                condition=Q(table_kind__in=MetricAttemptBatch.Table.values),
+                name="metric_range_table",
+            ),
+            models.CheckConstraint(
+                condition=Q(bucket__lt=8), name="metric_range_bucket"
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    state__in=[
+                        "planned",
+                        "frozen",
+                        "inserting",
+                        "verified",
+                        "invalidated",
+                    ]
+                ),
+                name="metric_range_state",
+            ),
+            models.CheckConstraint(
+                condition=Q(row_count=0, sequence_first=0, sequence_last=0)
+                | Q(
+                    row_count__gt=0,
+                    sequence_first__gte=1,
+                    sequence_last=F("sequence_first") + F("row_count") - 1,
+                    sequence_last__lte=MAX_ROW_SEQUENCE,
+                ),
+                name="metric_range_sequences",
+            ),
+            models.CheckConstraint(
+                condition=~Q(state="verified")
+                | Q(
+                    verified_count__isnull=False,
+                    verified_bytes__isnull=False,
+                    verified_at__isnull=False,
+                    verified_count=F("row_count"),
+                    verified_bytes=F("expected_bytes"),
+                    verified_digest=F("digest"),
+                ),
+                name="metric_range_verified",
+            ),
+            models.CheckConstraint(
+                condition=Q(state__in=["planned", "invalidated"])
+                | Q(
+                    frozen_at__isnull=False,
+                    digest__regex=r"^[0-9a-f]{64}$",
+                    plan_sha256__regex=r"^[0-9a-f]{64}$",
+                ),
+                name="metric_range_frozen",
+            ),
+        ]
+
+    def __repr__(self):
+        return f"<MetricCompactionRange {self.table_kind} state={self.state} rows={self.row_count}>"
+
+    __str__ = __repr__
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise MetricLedgerConflict(
+                "compaction ranges change only by fenced transitions"
+            )
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def plan(cls, attempt_id, *, epoch, token, now=None, **descriptor):
+        now = _now(now)
+        with transaction.atomic():
+            attempt = MetricRefreshAttempt._locked_open(
+                attempt_id, epoch, token, now, "prepared"
+            )
+            if attempt.ledger_sealed_at or not attempt.source_ceilings.get(
+                "range_compaction"
+            ):
+                raise MetricStateConflict("range planning is not permitted")
+            if descriptor.get("table_kind") not in MetricAttemptBatch.Table.values:
+                raise ValueError("invalid compaction range table")
+            identity = {
+                name: descriptor[name]
+                for name in ("table_kind", "month", "bucket", "ordinal")
+            }
+            existing = cls.objects.filter(attempt_id=attempt_id, **identity).first()
+            if existing:
+                if any(
+                    getattr(existing, name) != value
+                    for name, value in descriptor.items()
+                ):
+                    raise MetricLedgerConflict("compaction range plan changed")
+                return existing
+            return cls.objects.create(
+                attempt_id=attempt_id, created_at=now, **descriptor
+            )
+
+    @classmethod
+    def _locked(cls, range_id, epoch, token, now, attempt_state):
+        row = cls.objects.get(id=range_id)
+        attempt = MetricRefreshAttempt._locked_open(
+            row.attempt_id, epoch, token, now, attempt_state
+        )
+        if attempt.expires_at <= now:
+            raise MetricStateConflict("attempt expired")
+        return cls.objects.select_for_update().get(id=range_id)
+
+    @classmethod
+    def freeze(
+        cls,
+        range_id,
+        *,
+        count,
+        first,
+        last,
+        digest,
+        byte_count,
+        plan_sha256,
+        epoch,
+        token,
+        now=None,
+    ):
+        now = _now(now)
+        with transaction.atomic():
+            row = cls._locked(range_id, epoch, token, now, "prepared")
+            if row.state != "planned" or row.attempt.ledger_sealed_at:
+                raise MetricStateConflict("compaction range is already frozen")
+            if not re.fullmatch(r"[0-9a-f]{64}", digest) or not re.fullmatch(
+                r"[0-9a-f]{64}", plan_sha256
+            ):
+                raise ValueError("invalid compaction range digest")
+            cls.objects.filter(id=range_id, state="planned").update(
+                state="frozen",
+                row_count=count,
+                sequence_first=first,
+                sequence_last=last,
+                digest=digest,
+                expected_bytes=byte_count,
+                plan_sha256=plan_sha256,
+                frozen_at=now,
+            )
+
+    @classmethod
+    def begin_insert(cls, range_id, *, epoch, token, now=None):
+        now = _now(now)
+        with transaction.atomic():
+            row = cls._locked(range_id, epoch, token, now, "staging")
+            if row.state not in {"frozen", "inserting"}:
+                raise MetricStateConflict("compaction range is not insertable")
+            cls.objects.filter(id=range_id, state="frozen").update(
+                state="inserting", inserting_at=now
+            )
+
+    @classmethod
+    def verify(cls, range_id, actual, *, epoch, token, now=None):
+        now = _now(now)
+        with transaction.atomic():
+            row = cls._locked(range_id, epoch, token, now, "staging")
+            if row.state not in {"inserting", "verified"}:
+                raise MetricStateConflict("compaction range has not been submitted")
+            if actual != {
+                "count": row.row_count,
+                "bytes": row.expected_bytes,
+                "sha256": row.digest,
+            }:
+                raise MetricLedgerConflict(
+                    "compaction range is not independently visible"
+                )
+            cls.objects.filter(id=range_id, state="inserting").update(
+                state="verified",
+                verified_count=actual["count"],
+                verified_bytes=actual["bytes"],
+                verified_digest=actual["sha256"],
+                verified_at=now,
+            )
+
+
 class MetricReadManifest(models.Model):
     """Immutable committed read state: a checkpoint plus exact delta attempts.
 
@@ -1869,6 +2108,21 @@ class MetricReadManifest(models.Model):
             for field in MetricProjectRefresh.MONOTONE_FIELDS:
                 if field in cursors and cursors[field] < getattr(refresh, field):
                     raise MetricStateConflict(f"{field} cannot move backwards")
+            if (
+                attempt.source_ceilings.get("range_compaction")
+                or attempt.compaction_ranges.exists()
+            ):
+                from tracer.services.derived_metrics.compaction_ranges import (
+                    visibility_receipts as range_receipts,
+                )
+
+                expected_ranges = range_receipts(attempt)
+                if (visibility_receipts or {}).get("ranges") != expected_ranges:
+                    raise MetricLedgerConflict(
+                        "checkpoint range visibility envelope changed"
+                    )
+                if parent is None or parent.revoked_at is not None:
+                    raise MetricStateConflict("checkpoint source was revoked")
             committed = MetricRefreshAttempt.objects.filter(
                 id=attempt.id,
                 state=MetricRefreshAttempt.State.VERIFIED,
@@ -2394,6 +2648,7 @@ class MetricErasureRequest(models.Model):
             | ~Q(
                 store_payload__protocol__in=[
                     "metric_submission",
+                    "metric_checkpoint_layout",
                     "metric_expiry",
                     "metric_policy_replan",
                     "metric_omission",

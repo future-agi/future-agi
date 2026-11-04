@@ -34,6 +34,12 @@ class Recorder:
     def identity(self):
         return ["test-shard", "test_database"]
 
+    def assert_checkpoint_schema(self):
+        pass
+
+    def checkpoint_group(self, project_id):
+        return 0
+
     def freeze_select(self, *args, **kwargs):
         return self.payload
 
@@ -453,19 +459,45 @@ def test_published_checkpoint_schedules_gc_when_layout_maintenance_fails(
     callbacks = []
     monkeypatch.setattr(transaction, "on_commit", callbacks.append)
 
-    def reject_shared_partition(_project):
+    def reject_shared_partition(_project, *, deadline=None):
         raise MetricVisibilityError("checkpoint partition consolidation cap exceeded")
 
     monkeypatch.setattr(
         writer.store, "consolidate_checkpoint", reject_shared_partition, raising=False
     )
-    with pytest.raises(MetricVisibilityError, match="consolidation cap exceeded"):
+    with pytest.raises(MetricVisibilityError, match="committed_layout_pending"):
         writer.compact()
     published = MetricProjectRefresh.for_project(writer.lease.project_id).head_manifest
     assert published.published_by.purpose == "compaction"
     assert len(callbacks) == 1
     assert callbacks[0].__self__ is writer
     assert callbacks[0].__func__ is writer.collect_garbage.__func__
+    from tracer.models.derived_metric import MetricErasureRequest, MetricRefreshAttempt
+
+    pending = MetricErasureRequest.objects.get(
+        deletion_key=f"checkpoint-layout:{published.published_by_id}"
+    )
+    assert pending.status == "queued"
+    # An incremental head must retain the checkpoint's maintenance obligation.
+    incremental = writer.begin()
+    writer.seal(incremental)
+    descendant = writer.stage_and_publish(incremental)
+    assert descendant.checkpoint_attempt_id == published.checkpoint_attempt_id
+    attempts = MetricRefreshAttempt.objects.count()
+    monkeypatch.setattr(
+        writer.store, "consolidate_checkpoint", lambda *_args, **_kwargs: None
+    )
+    compacted = writer.compact()
+    assert compacted.id != descendant.id
+    assert compacted.published_by.parent_manifest_id == descendant.id
+    assert (
+        MetricProjectRefresh.for_project(writer.lease.project_id).head_manifest_id
+        == compacted.id
+    )
+    assert MetricRefreshAttempt.objects.count() == attempts + 1
+    pending.refresh_from_db()
+    assert pending.status == "done"
+    assert len(callbacks) == 3
 
 
 @pytest.mark.django_db

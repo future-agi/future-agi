@@ -20,6 +20,12 @@ from types import MappingProxyType
 PROJECT_PARTITION = "cityHash64(project_id) % 32"
 PROJECT_SHARD_KEY = "cityHash64(project_id)"
 BUCKET_PARTITION = "toYYYYMM(bucket_start)"
+# Only field checkpoints hold a complete unit population per pinned generation.
+# unit_id is immutable in their logical key; ownership and timestamps are not.
+FIELD_CHECKPOINT_BUCKETS = 8
+FIELD_CHECKPOINT_PARTITION = (
+    f"(cityHash64(project_id) % 32, cityHash64(unit_id) % {FIELD_CHECKPOINT_BUCKETS})"
+)
 
 FIELD_VALUE_SCHEMA = (
     ("org_id", "UUID"),
@@ -248,7 +254,7 @@ FIELD_CHECKPOINT = MetricTable(
     FIELD_VALUES.schema_file,
     FIELD_VALUE_SCHEMA,
     "_version",
-    PROJECT_PARTITION,
+    FIELD_CHECKPOINT_PARTITION,
     FIELD_VALUE_KEY,
 )
 BUCKET_TOTALS = MetricTable(

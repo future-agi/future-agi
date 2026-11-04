@@ -37,6 +37,51 @@ def manifest(project=None, *, checkpoint=True, delta=True):
     )
 
 
+def test_checkpoint_hash_pruning_is_correlated_and_checkpoint_only():
+    head = manifest()
+    field = uuid4()
+    sql, params = committed_rows_select(
+        FIELD_VALUES,
+        head,
+        org_id=uuid4(),
+        project_id=head.project_id,
+        key_in={("field_id", "unit_id"): ((field, "a"), (field, "b"))},
+    )
+    assert sql.count("cityHash64(unit_id) %% 8") == 1
+    assert "(field_id, unit_id) IN" in sql
+    checkpoint, delta = sql.split(" UNION ALL ")
+    assert "SELECT cityHash64(arrayJoin(%(pub_unit_partitions)s)) %% 8" in checkpoint
+    assert "cityHash64" not in delta
+    assert params["pub_unit_partitions"] == ["a", "b"]
+    assert params["pub_base"] == tuple(head.allowed_attempts()[:1])
+    assert params["pub_deltas"] == tuple(head.allowed_attempts()[1:])
+
+
+def test_cell_hydration_prunes_only_the_checkpoint_branch():
+    from tracer.services.derived_metrics.queries import Scope
+    from tracer.services.derived_metrics.unit_reads import committed_unit_values_select
+
+    scope = Scope(uuid4(), uuid4(), uuid4())
+    base, delta, field = uuid4(), uuid4(), uuid4()
+    ids = (str(uuid4()), str(uuid4()))
+    sql, params = committed_unit_values_select(
+        scope,
+        field,
+        1,
+        ids,
+        {"checkpoint_attempt_id": base, "delta_attempt_ids": (delta,)},
+    )
+    *checkpoint_branches, delta_sql = sql.split(" UNION ALL ")
+    assert len(checkpoint_branches) == 8
+    for bucket, branch in enumerate(checkpoint_branches):
+        assert f"cityHash64(unit_id) %% 8 = {bucket}" in branch
+        assert f"WHERE cityHash64(unit) %% 8 = {bucket}" in branch
+        assert "unit_id IN (SELECT unit" in branch
+        assert "attempt_id = %(field_read_checkpoint)s" in branch
+    assert "cityHash64" not in delta_sql
+    assert params["field_read_unit_partitions"] == list(ids)
+
+
 def key_value(kind):
     if kind == "UUID":
         return str(uuid4())
@@ -773,7 +818,10 @@ def test_capture_is_one_exhausted_stream_partitioned_by_emitted_keys():
     assert len(client.calls) == 1
     sql, _, kw = client.calls[0]
     assert "formatRow('RowBinary'" in sql and "LIMIT" not in sql
-    assert kw["chunk_size"] == kw["settings"]["max_block_size"] == 1
+    assert kw["chunk_size"] == 1
+    assert kw["settings"]["max_block_size"] == 500
+    assert kw["query_id"].startswith("metric-source-capture-")
+    assert kw["settings"]["result_overflow_mode"] == "throw"
     assert kw["settings"]["result_overflow_mode"] == "throw"
     assert kw["settings"]["max_result_rows"] == 2
     assert "source_rows" in pages[0].select()[1]["captured_source_schema"]
@@ -1044,7 +1092,48 @@ def test_checkpoint_payload_cap_is_explicit_and_legacy_plans_still_replay():
         FrozenRows((), row_limit=MAX_COMPACTION_ROWS + 1)
 
 
-def test_checkpoint_consolidation_is_partition_scoped_and_capped():
+def test_checkpoint_optimize_uses_actual_partition_id_and_hard_limits():
+    from tracer.services.derived_metrics.publication import ClickHousePublicationStore
+
+    timeouts, statements = [], []
+    socket = SimpleNamespace(gettimeout=lambda: 300, settimeout=timeouts.append)
+
+    def execute(sql, params, **kwargs):
+        statements.append((sql, params, kwargs))
+        return SimpleNamespace(packet_generator=iter(()))
+
+    store = ClickHousePublicationStore(
+        SimpleNamespace(
+            connection=SimpleNamespace(socket=socket, force_connect=lambda: None),
+            execute_with_progress=execute,
+        )
+    )
+    store.optimize_checkpoint("actual-tuple-id", "durable-query-id", 60)
+    assert len(statements) == 1
+    sql, params, options = statements[0]
+    assert (
+        sql
+        == "OPTIMIZE TABLE metric_field_values_checkpoint PARTITION ID %(partition)s FINAL"
+    )
+    assert params == {"partition": "actual-tuple-id"}
+    assert options["query_id"] == "durable-query-id"
+    assert options["settings"]["max_execution_time"] == 60
+    assert options["settings"]["max_threads"] == 2
+    assert options["settings"]["max_memory_usage"] == 512 * 1024**2
+    assert all(0 < timeout <= 60 for timeout in timeouts[:-1])
+    assert timeouts[-1] == 300
+    for seconds in (0, 61):
+        with pytest.raises(ValueError, match="deadline"):
+            store.optimize_checkpoint("actual-tuple-id", "another-query-id", seconds)
+    assert len(statements) == 1
+    # Real tuple byte/part guards and durable timeout/replay obligations are
+    # exercised by test_metric_checkpoint_partitioning_clickhouse.py.
+
+
+@pytest.mark.parametrize(
+    "engine", ["ReplicatedReplacingMergeTree", "SharedReplacingMergeTree"]
+)
+def test_checkpoint_maintenance_requires_qualified_writer_coordination(engine):
     from tracer.services.derived_metrics.publication import (
         ClickHousePublicationStore,
         MetricVisibilityError,
@@ -1052,25 +1141,13 @@ def test_checkpoint_consolidation_is_partition_scoped_and_capped():
 
     store = ClickHousePublicationStore(object())
     statements = []
-    layouts = iter([("12", 6, 1024), ("12", 1, 1024)])
-    store.checkpoint_layout = lambda _project: next(layouts)
-    store.execute = lambda sql, params: statements.append((sql, params))
-    store.consolidate_checkpoint(uuid4())
-    assert statements == [
-        (
-            "OPTIMIZE TABLE metric_field_values_checkpoint PARTITION ID %(partition)s FINAL",
-            {"partition": "12"},
-        )
-    ]
-    for parts, size in [(513, 1024), (2, 2 * 1024**3 + 1)]:
-        store.checkpoint_layout = lambda _project, parts=parts, size=size: (
-            "12",
-            parts,
-            size,
-        )
-        with pytest.raises(MetricVisibilityError, match="cap exceeded"):
-            store.consolidate_checkpoint(uuid4())
-    assert len(statements) == 1
-    store.checkpoint_layout = lambda _project: ("12", 2, 1024)
-    with pytest.raises(MetricVisibilityError, match="overlapping"):
+
+    def execute(sql, params):
+        statements.append(sql)
+        return [(engine,)]
+
+    store.execute = execute
+    with pytest.raises(MetricVisibilityError, match="topology is not qualified"):
         store.consolidate_checkpoint(uuid4())
+    assert len(statements) == 1 and "system.tables" in statements[0]
+    assert not any("OPTIMIZE" in sql for sql in statements)

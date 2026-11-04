@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from hashlib import sha256
+from time import monotonic
 
 from tracer.models.derived_metric import MetricGenerationPin, MetricStateConflict
 from tracer.services.derived_metrics.deletion_protocol import (
@@ -21,6 +22,8 @@ from tracer.services.derived_metrics.storage import (
     BUCKET_CHECKPOINT,
     BUCKET_TOTALS,
     FIELD_CHECKPOINT,
+    FIELD_CHECKPOINT_BUCKETS,
+    FIELD_CHECKPOINT_PARTITION,
     FIELD_VALUES,
     TABLES,
 )
@@ -48,6 +51,19 @@ WRITE_SETTINGS = {
 
 class MetricVisibilityError(MetricStateConflict):
     code = "metric_visibility_unavailable"
+
+
+class MetricCheckpointLayoutPending(MetricVisibilityError):
+    code = "committed_layout_pending"
+
+
+@dataclass(frozen=True)
+class CheckpointPartition:
+    partition: str
+    partition_id: str
+    active_parts: int
+    rows: int
+    bytes_on_disk: int
 
 
 @dataclass(frozen=True, repr=False)
@@ -152,8 +168,69 @@ class ClickHousePublicationStore:
     def __init__(self, client):
         self.client = client
 
+    @contextmanager
+    def compaction_budget(self, deadline):
+        """One invocation budget, including preparation, digesting and staging.
+
+        A client deadline excludes an ambiguous write; it does not claim that
+        the server stopped. Durable submission obligations remain with callers.
+        """
+        previous = getattr(self, "_compaction_deadline", None)
+        self._compaction_deadline = min(previous, deadline) if previous else deadline
+        try:
+            yield
+        finally:
+            self._compaction_deadline = previous
+
     def execute(self, sql, params=None, **kwargs):
-        return self.client.execute(sql, params or {}, settings=WRITE_SETTINGS, **kwargs)
+        deadline = getattr(self, "_compaction_deadline", None)
+        if deadline is None:
+            return self.client.execute(
+                sql, params or {}, settings=WRITE_SETTINGS, **kwargs
+            )
+        seconds = min(WRITE_SETTINGS["max_execution_time"], int(deadline - monotonic()))
+        if seconds < 1:
+            raise MetricVisibilityError("checkpoint compaction deadline exceeded")
+        statement_deadline = min(deadline, monotonic() + seconds)
+        connection = self.client.connection
+        old_connect = connection.connect_timeout
+        old_receive = connection.send_receive_timeout
+        socket = connection.socket
+        old_timeout = socket.gettimeout() if socket is not None else None
+        try:
+            connection.connect_timeout = min(old_connect, seconds)
+            connection.send_receive_timeout = min(old_receive, seconds)
+            if socket is not None:
+                socket.settimeout(seconds)
+            result = self.client.execute_with_progress(
+                sql,
+                params or {},
+                settings={**WRITE_SETTINGS, "max_execution_time": seconds},
+                **kwargs,
+            )
+            socket = connection.socket
+            packets = iter(result.packet_generator)
+            while True:
+                remaining = statement_deadline - monotonic()
+                if remaining <= 0:
+                    raise MetricVisibilityError(
+                        "checkpoint compaction statement timed out"
+                    )
+                socket.settimeout(min(old_receive, remaining))
+                try:
+                    packet = next(packets)
+                except StopIteration:
+                    break
+                result.store(packet)
+            return result.get_result()
+        except BaseException:
+            self.client.disconnect()
+            raise
+        finally:
+            connection.connect_timeout = old_connect
+            connection.send_receive_timeout = old_receive
+            if socket is not None and connection.socket is socket:
+                socket.settimeout(old_receive if old_timeout is None else old_timeout)
 
     def identity(self):
         engines = self.execute(
@@ -220,6 +297,8 @@ class ClickHousePublicationStore:
 
     def insert(self, table, payload):
         if payload.rows:
+            if table == FIELD_CHECKPOINT:
+                self.assert_checkpoint_schema()
             structure = ", ".join(f"{name} {kind}" for name, kind in table.schema)
             self.execute(
                 f"INSERT INTO {table.name} ({', '.join(table.columns)}) "
@@ -256,47 +335,95 @@ class ClickHousePublicationStore:
             raise MetricVisibilityError("frozen batch not visible on selected shard")
         return {"count": len(actual.rows), "sha256": actual.digest}
 
-    def checkpoint_layout(self, project_id):
-        """Conservative overlap bound: one active part cannot overlap another.
+    def assert_checkpoint_schema(self):
+        """IF NOT EXISTS cannot change an existing preview table's partition key.
 
-        Hash partitions can contain other projects and pinned checkpoints. Count
-        ALL their parts/bytes before scheduling a merge, not just this attempt.
+        Fail before writing; a nonempty old table needs a reviewed shadow copy
+        and cutover retaining every reachable attempt. Never auto-drop it.
         """
-        partition = self.execute(
-            "SELECT toString(cityHash64(toUUID(%(project)s)) %% 32)",
+        rows = self.execute(
+            "SELECT partition_key FROM system.tables WHERE database = currentDatabase() AND name = %(table)s",
+            {"table": FIELD_CHECKPOINT.name},
+        )
+        expected = FIELD_CHECKPOINT_PARTITION.replace(" ", "")
+        actual = rows[0][0].replace(" ", "") if len(rows) == 1 else ""
+        if actual not in {expected, "tuple" + expected}:
+            raise MetricVisibilityError(
+                "checkpoint partition schema requires reviewed cutover"
+            )
+
+    def checkpoint_group(self, project_id):
+        return self.execute(
+            "SELECT cityHash64(toUUID(%(project)s)) %% 32",
             {"project": str(project_id)},
         )[0][0]
-        parts, size = self.execute(
-            "SELECT count(), sum(bytes_on_disk) FROM system.parts "
-            "WHERE database = currentDatabase() AND table = %(table)s "
-            "AND partition_id = %(partition)s AND active",
-            {"table": FIELD_CHECKPOINT.name, "partition": partition},
-        )[0]
-        return partition, parts, size
 
-    def consolidate_checkpoint(self, project_id):
-        """One bounded partition merge, never whole-table FINAL or schema tuning.
+    def checkpoint_layout(self, project_id):
+        """Actual tuple IDs and ALL colliding-project/pinned-attempt bytes.
 
-        The publication remains committed if maintenance times out. Replaying
-        stage_and_publish retries this idempotent layout step before reporting
-        compaction success. A large shared partition fails closed for scheduling
-        rather than issuing an unbounded merge.
+        Tuple partition IDs are opaque; use system.parts.partition_id rather
+        than constructing IDs from the displayed partition expression.
         """
-        partition, parts, size = self.checkpoint_layout(project_id)
-        if parts <= 1:
-            return
-        if parts > 512 or size > 2 * 1024 * 1024 * 1024:
-            raise MetricVisibilityError(
-                "checkpoint partition consolidation cap exceeded"
-            )
-        self.execute(
-            f"OPTIMIZE TABLE {FIELD_CHECKPOINT.name} PARTITION ID %(partition)s FINAL",
-            {"partition": partition},
+        self.assert_checkpoint_schema()
+        rows = self.execute(
+            "SELECT partition, partition_id, count(), sum(rows), sum(bytes_on_disk) "
+            "FROM system.parts WHERE database = currentDatabase() AND table = %(table)s "
+            "AND active AND replaceAll(partition, ' ', '') IN "
+            "(SELECT concat('(', toString(cityHash64(toUUID(%(project)s)) %% 32), "
+            f"',', toString(number), ')') FROM numbers({FIELD_CHECKPOINT_BUCKETS})) "
+            "GROUP BY partition, partition_id ORDER BY partition",
+            {"table": FIELD_CHECKPOINT.name, "project": str(project_id)},
         )
-        if self.checkpoint_layout(project_id)[1] > 1:
-            raise MetricVisibilityError(
-                "checkpoint partition still has overlapping parts"
+        if len(rows) > FIELD_CHECKPOINT_BUCKETS:
+            raise MetricVisibilityError("checkpoint partition layout is invalid")
+        return tuple(CheckpointPartition(*row) for row in rows)
+
+    def optimize_checkpoint(self, partition_id, query_id, seconds):
+        """Bound the whole client receive loop, not only each idle socket read.
+
+        A timeout disconnects this client but is NOT proof the merge stopped.
+        The caller retains its durable query-id obligation for reconciliation.
+        """
+        if not 0 < seconds <= 60:
+            raise ValueError("invalid checkpoint statement deadline")
+        deadline = monotonic() + seconds
+        connection = self.client.connection
+        # The preceding identity/layout reads established this local connection.
+        # force_connect also claims the driver's query-execution lock, so only
+        # execute_with_progress may call it when submitting this statement.
+        socket = connection.socket
+        if socket is None:
+            raise MetricVisibilityError("checkpoint local connection unavailable")
+        old_timeout = socket.gettimeout()
+        try:
+            socket.settimeout(seconds)
+            progress = self.client.execute_with_progress(
+                f"OPTIMIZE TABLE {FIELD_CHECKPOINT.name} PARTITION ID %(partition)s FINAL",
+                {"partition": partition_id},
+                query_id=query_id,
+                settings={**WRITE_SETTINGS, "max_execution_time": seconds},
             )
+            packets = iter(progress.packet_generator)
+            while True:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise MetricVisibilityError("checkpoint layout statement timed out")
+                socket.settimeout(remaining)
+                try:
+                    next(packets)
+                except StopIteration:
+                    break
+        except BaseException:
+            self.client.disconnect()
+            raise
+        finally:
+            if connection.socket is socket:
+                socket.settimeout(old_timeout)
+
+    def consolidate_checkpoint(self, project_id, *, deadline=None):
+        from tracer.services.derived_metrics.compaction import consolidate_checkpoint
+
+        return consolidate_checkpoint(self, project_id, deadline=deadline)
 
     def assert_visible(self, manifest):
         receipts = manifest.visibility_receipts
@@ -304,6 +431,28 @@ class ClickHousePublicationStore:
             raise MetricVisibilityError(
                 "manifest visibility is not proven on this shard"
             )
+        ranges = receipts.get("ranges")
+        if ranges is not None or receipts.get("format") == 2:
+            from tracer.services.derived_metrics.compaction_ranges import ALGORITHM
+
+            allowed = {str(attempt) for _, attempt in manifest.allowed_attempts()}
+            if (
+                receipts.get("format") != 2
+                or not isinstance(ranges, list)
+                or not ranges
+                or any(
+                    not isinstance(receipt, dict)
+                    or receipt.get("attempt") not in allowed
+                    or not isinstance(receipt.get("registry"), dict)
+                    or receipt["registry"].get("algorithm") != ALGORITHM
+                    or not isinstance(receipt["registry"].get("sha256"), str)
+                    or len(receipt["registry"]["sha256"]) != 64
+                    or type(receipt["registry"].get("count")) is not int
+                    or receipt["registry"]["count"] < 56
+                    for receipt in ranges
+                )
+            ):
+                raise MetricVisibilityError("invalid range visibility envelope")
 
 
 @contextmanager

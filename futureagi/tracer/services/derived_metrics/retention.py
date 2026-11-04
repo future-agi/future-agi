@@ -172,11 +172,24 @@ def _purge_terminal_payloads(
     # Legacy writers duplicated private repair keysets outside the purgeable
     # ledger. Privacy cleanup cannot wait for those audit rows' history TTL.
     MetricRefreshAttempt.scrub_private_cursor_metadata(project_id)
-    return _terminal_payloads(
-        project_id,
-        recovery_attempt=recovery_attempt,
-        through_generation=through_generation,
-    ).delete()[0]
+    from tracer.models.derived_metric import MetricCompactionRange
+
+    ranges = MetricCompactionRange.objects.filter(
+        attempt__project_id=project_id, attempt__state__in=["committed", "aborted"]
+    )
+    if through_generation is not None:
+        ranges = ranges.filter(attempt__generation__lte=through_generation)
+    # Bounds can identify erased subjects. The independent nonidentifying
+    # submission outbox survives this deletion and still fences late writes.
+    removed = ranges.delete()[0]
+    return (
+        removed
+        + _terminal_payloads(
+            project_id,
+            recovery_attempt=recovery_attempt,
+            through_generation=through_generation,
+        ).delete()[0]
+    )
 
 
 def _delete(store, table, predicate, params):
@@ -1255,6 +1268,7 @@ def purge_by_scope(store, request, *, writer=None):
         if request.store_payload.get("protocol") in {
             "metric_expiry",
             "metric_submission",
+            "metric_checkpoint_layout",
             "metric_policy_replan",
             "metric_omission",
         }:

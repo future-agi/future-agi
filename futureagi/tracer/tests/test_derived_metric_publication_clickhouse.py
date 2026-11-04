@@ -400,7 +400,9 @@ def test_keyset_batches_and_checkpoint_stream_without_offset_or_payload_recopies
     batches = checkpoint.published_by.batches.filter(
         table_name="field_values"
     ).order_by("batch_no")
-    assert list(batches.values_list("row_count", flat=True)) == [500, 500, 1]
+    # Checkpoint transport has its own 50,000-row / 4-MiB cap. The normal
+    # incremental writer above must still use its three 500-row pages.
+    assert list(batches.values_list("row_count", flat=True)) == [1001]
     assert all(
         b.row_sequence_last - b.row_sequence_first + 1 == b.row_count for b in batches
     )

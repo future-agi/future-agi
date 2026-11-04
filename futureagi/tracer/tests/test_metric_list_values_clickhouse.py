@@ -317,6 +317,7 @@ def test_epoch_field_and_queue_timestamp_cannot_manufacture_anchor_authority(
     assert result["counts"] == {"eligible": 0, "evaluated": 0, "missing": 0}
 
 
+@pytest.mark.django_db(transaction=True)
 def test_semantic_earliest_member_deletion_then_retention_shrink_uses_live_anchor(
     cells,
 ):
@@ -431,6 +432,7 @@ def test_latest_committed_revision_collapses_before_status_retention_and_deletio
     assert draft.state == "prepared"
 
 
+@pytest.mark.django_db(transaction=True)
 def test_checkpoint_and_old_pin_keep_matching_definition_labels_and_manifest(cells):
     writer, metric, version, scope, now = cells
     row = field_row(metric, now)
@@ -571,6 +573,7 @@ def test_foreign_workspace_scope_is_rejected(cells):
         )
 
 
+@pytest.mark.django_db(transaction=True)
 def test_50_random_page_ids_local_timings_include_pin_receipts_and_gc_guard(
     cells, record_property
 ):
