@@ -340,7 +340,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             raise version_reads.version_not_found()
         return Response(version_reads.suite_members(job, identifier))
 
-    @validated_request(responses={200: HarnessActorListSerializer}, operation_id="simulate_api_harness-environments_actors")
+    @validated_request(
+        responses={200: HarnessActorListSerializer},
+        operation_id="simulate_api_harness-environments_actors",
+    )
     @action(detail=True, methods=["get"], url_path="actors")
     def actors(self, request, pk=None):
         """The environment's cast as the next run would use it: the draft's when there is one."""
@@ -378,7 +381,13 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        return Response(actor_view(job, actor_id, scenario_key=request.validated_query_data.get("scenario_key")))
+        return Response(
+            actor_view(
+                job,
+                actor_id,
+                scenario_key=request.validated_query_data.get("scenario_key"),
+            )
+        )
 
     @validated_request(
         request_serializer=HarnessActorWriteSerializer,
@@ -411,7 +420,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if job is None:
             return self._not_found()
         if op == "delete":
-            actor, revision = None, request.validated_query_data.get("expected_revision")
+            actor, revision = (
+                None,
+                request.validated_query_data.get("expected_revision"),
+            )
         else:
             actor = dict(request.validated_data["actor"])
             revision = request.validated_data.get("expected_revision")
@@ -425,11 +437,21 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 actor_id = given
             elif given != actor_id:
                 return Response(
-                    {"error": "actor_id_mismatch", "message": "an actor's id never changes"},
+                    {
+                        "error": "actor_id_mismatch",
+                        "message": "an actor's id never changes",
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
         return Response(
-            write_actor_edit(job, op=op, actor_id=actor_id, body=actor, user=request.user, expected_revision=revision)
+            write_actor_edit(
+                job,
+                op=op,
+                actor_id=actor_id,
+                body=actor,
+                user=request.user,
+                expected_revision=revision,
+            )
         )
 
     @validated_request(responses={200: HarnessDraftsSerializer})

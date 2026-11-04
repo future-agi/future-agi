@@ -91,7 +91,12 @@
     "from": "tool_entrypoints",
     "route": "endpoint",
     "tool": "tool",
-    "separator": "."
+    "separator": ".",
+    "method": "method",
+    "methods": [
+      "POST"
+    ],
+    "placeholder": "{"
   },
   "loudness": {
     "channels": [
@@ -107,7 +112,7 @@
   ],
   "channels": {
     "audio_mix": "a voice near the person that speaks up whenever it has something to say, which the agent may hear",
-    "audio_handoff": "someone who takes the phone from the person for a few turns, then hands it back",
+    "audio_handoff": "someone who takes the phone from the person for a few turns to say something of their own, then hands it back; the person's request stays the person's, so they never carry it on, confirm it or finish it",
     "ivr": "a phone menu on the person's own line that answers a call the agent places, before the person, and puts the call through to them"
   },
   "formats": {
@@ -263,6 +268,7 @@
           "type": "string"
         },
         "name": {
+          "maxLength": 80,
           "minLength": 1,
           "title": "Name",
           "type": "string"
@@ -283,6 +289,7 @@
         },
         "role": {
           "default": "",
+          "maxLength": 160,
           "title": "Role",
           "type": "string"
         },
@@ -422,11 +429,13 @@
           "type": "string"
         },
         "name": {
+          "maxLength": 80,
           "title": "Name",
           "type": "string"
         },
         "role": {
           "default": "",
+          "maxLength": 160,
           "title": "Role",
           "type": "string"
         },

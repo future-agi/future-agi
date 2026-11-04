@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from rest_framework import serializers
 
 from model_hub.serializers.contracts import JsonObjectRequestField
@@ -1013,10 +1015,20 @@ class HarnessNudgeAnswerSerializer(serializers.Serializer):
     answer = serializers.ChoiceField(choices=("yes", "no"))
 
 
+# Bounds every field of one actor record together; each field's own limit comes from the sealed rules.
+ACTOR_RECORD_MAX_CHARS = 65_536
+
+
 class HarnessActorRecordField(JsonObjectRequestField):
-    """One actor record, in the shape its environment's actor rules declare (`record_schemas` on the cast); checked
-    against those rules on write, so a field a newer release adds passes through unchanged.
-    """
+    """One actor record, checked on write against its environment's sealed rules (`record_schemas`)."""
+
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        if len(json.dumps(value, ensure_ascii=False)) > ACTOR_RECORD_MAX_CHARS:
+            raise serializers.ValidationError(
+                f"Keep an actor under {ACTOR_RECORD_MAX_CHARS} characters."
+            )
+        return value
 
 
 class HarnessActorWriteSerializer(serializers.Serializer):

@@ -203,7 +203,9 @@ def test_an_actor_is_replaced_and_removed_in_the_draft_and_its_id_never_changes(
     # A replace without an id keeps the one in the address; a create without one is refused.
     unnamed = {key: value for key, value in MANAGER.items() if key != "id"}
     kept = auth_client.put(url, {"actor": unnamed}, format="json")
-    anonymous = auth_client.post(f"{BASE}/{environment.id}/actors/", {"actor": unnamed}, format="json")
+    anonymous = auth_client.post(
+        f"{BASE}/{environment.id}/actors/", {"actor": unnamed}, format="json"
+    )
     removed = auth_client.delete(url)
     missing = auth_client.delete(url)
 
@@ -213,7 +215,10 @@ def test_an_actor_is_replaced_and_removed_in_the_draft_and_its_id_never_changes(
         and replaced.json()["actors"][0]["goal"] == "Approve fast"
     )
     assert kept.status_code == 200
-    assert (anonymous.status_code, anonymous.json()["error"]) == (400, "actor_id_missing")
+    assert (anonymous.status_code, anonymous.json()["error"]) == (
+        400,
+        "actor_id_missing",
+    )
     assert removed.status_code == 200 and removed.json()["actors"] == []
     assert (missing.status_code, missing.json()["error"]) == (404, "actor_not_found")
     # Removing the only actor leaves nothing to review: no empty actors.json, so no draft.
@@ -246,19 +251,6 @@ def test_a_view_hides_another_actor_s_private_material(
     )
 
 
-def test_an_actor_in_a_scenario_cannot_be_removed():
-    from simulate.services.harness_actors import _scenarios_using
-
-    suite = [
-        {
-            "scenario_key": "discount-approved",
-            "actors": [{"id": "manager", "instruction": "Approve it"}],
-        }
-    ]
-    assert _scenarios_using(suite, "manager") == ["discount-approved"]
-    assert _scenarios_using(suite, "coworker") == []
-
-
 def test_the_actor_routes_need_versioning(
     user, workspace, storage, auth_client, settings
 ):
@@ -276,23 +268,55 @@ def test_the_actor_routes_need_versioning(
 def test_an_actor_a_scenario_includes_is_not_removed(
     user, workspace, storage, auth_client
 ):
-    from unittest.mock import patch
+    from simulate.tests.test_harness_versioning_record import _scenario
 
-    environment = _built(user, workspace, "actors-in-use")
+    documents = [
+        _scenario(NAMES[0], actors=[{"id": "manager", "instruction": "Approve it"}]),
+        _scenario(NAMES[1], sub_actors=[{"id": "colleague"}]),
+    ]
+    environment = record_tests._environment(user, workspace, "actors-in-use")
+    record_authoring(
+        environment,
+        _authoring(
+            contract=CRM_CONTRACT,
+            **{
+                "scenarios.json": json.dumps(documents),
+                **{
+                    f"scenarios/{one['name']}/scenario.json": json.dumps(one)
+                    for one in documents
+                },
+            },
+        ),
+        origin="authoring",
+    )
     _add(auth_client, environment, MANAGER)
+    _add(
+        auth_client,
+        environment,
+        {"id": "colleague", "name": "Jordan", "channel": "audio_mix"},
+    )
+    _add(auth_client, environment, {"id": "coworker", "name": "Sam"})
 
-    with patch(
-        "simulate.services.harness_actors._scenarios_using",
-        return_value=["discount-approved"],
-    ):
-        refused = auth_client.delete(f"{BASE}/{environment.id}/actors/manager/")
-
-    assert (refused.status_code, refused.json()["error"]) == (409, "actor_in_use")
-    assert "discount-approved" in refused.json()["message"]
-    assert [
-        one["id"]
+    counts = {
+        one["id"]: one["scenarios"]
         for one in auth_client.get(f"{BASE}/{environment.id}/actors/").json()["actors"]
-    ] == ["manager"]
+    }
+    manager = auth_client.delete(f"{BASE}/{environment.id}/actors/manager/")
+    colleague = auth_client.delete(f"{BASE}/{environment.id}/actors/colleague/")
+    coworker = auth_client.delete(f"{BASE}/{environment.id}/actors/coworker/")
+
+    assert counts == {"manager": 1, "colleague": 1, "coworker": 0}
+    assert (manager.status_code, manager.json()["error"]) == (409, "actor_in_use")
+    assert (
+        "Priya Raman is in 1 scenario (book-ride-airport)" in manager.json()["message"]
+    )
+    assert (colleague.status_code, colleague.json()["error"]) == (409, "actor_in_use")
+    assert "cancel-active-ride" in colleague.json()["message"]
+    assert coworker.status_code == 200, coworker.content
+    assert sorted(one["id"] for one in coworker.json()["actors"]) == [
+        "colleague",
+        "manager",
+    ]
 
 
 def test_in_a_scenario_others_see_the_caller_s_situation_and_the_caller_does_not_get_it_twice(
@@ -725,7 +749,7 @@ def test_a_sub_actor_never_takes_the_name_of_a_caller_it_is_with():
     colleague = {"id": "colleague", "name": "Jordan Taylor", "channel": "audio_mix"}
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
-            "simulate.services.harness_versioning.versions.suite_documents",
+            "simulate.services.harness_actors.suite_documents",
             lambda files: [json.loads(raw) for raw in files.values()],
         )
         # The caller of a scenario that does not include the sub-actor may share its name.
@@ -748,7 +772,12 @@ def test_world_actions_keep_only_routes_an_actor_can_send_to_when_the_rules_say_
         ]
     }
     files = {"contract.json": json.dumps(contract).encode()}
-    naming = {"from": "tool_entrypoints", "route": "endpoint", "tool": "tool", "separator": "."}
+    naming = {
+        "from": "tool_entrypoints",
+        "route": "endpoint",
+        "tool": "tool",
+        "separator": ".",
+    }
     sealed = {**naming, "method": "method", "methods": ["POST"], "placeholder": "{"}
 
     def names(rules):
@@ -757,3 +786,216 @@ def test_world_actions_keep_only_routes_an_actor_can_send_to_when_the_rules_say_
     assert names(sealed) == ["crm.approve"]
     # Rules sealed before methods and placeholders were named keep every route.
     assert names(naming) == ["crm.approve", "crm.read", "orders.{order_id}.cancel"]
+
+
+def test_every_actor_has_an_id_its_routes_can_reach_and_a_name(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-id-rule")
+    slash = _add(
+        auth_client, environment, {"id": "a/b", "name": "", "channel": "audio_mix"}
+    )
+    long = _add(
+        auth_client,
+        environment,
+        {"id": "a" * 100, "name": "Jordan", "channel": "audio_mix"},
+    )
+    unnamed = _add(auth_client, environment, {"id": "sam", "name": ""})
+
+    assert (slash.status_code, slash.json()["error"]) == (400, "actor_invalid")
+    assert (
+        "The id 'a/b' is not valid; use 1 to 64 lowercase letters, digits or underscores."
+        in slash.json()["message"]
+    )
+    assert "a/b's name: it cannot be empty." in slash.json()["message"]
+    assert (long.status_code, long.json()["error"]) == (400, "actor_invalid")
+    assert "The id 'aaaa" in long.json()["message"]
+    assert (unnamed.status_code, unnamed.json()["error"]) == (400, "actor_invalid")
+    assert "sam's name: it cannot be empty." in unnamed.json()["message"]
+    assert auth_client.get(f"{BASE}/{environment.id}/actors/").json()["actors"] == []
+
+
+def test_an_actor_s_fields_are_bounded_on_the_server(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-bounded")
+    long_name = _add(auth_client, environment, {**MANAGER, "name": "N" * 81})
+    long_role = _add(
+        auth_client,
+        environment,
+        {
+            "id": "colleague",
+            "name": "Jordan",
+            "role": "R" * 161,
+            "channel": "audio_mix",
+        },
+    )
+    huge = _add(auth_client, environment, {**MANAGER, "goal": "G" * 70_000})
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+
+    assert "manager's name: use at most 80 characters." in long_name.json()["message"]
+    assert (
+        "colleague's role: use at most 160 characters." in long_role.json()["message"]
+    )
+    assert huge.status_code == 400
+    assert "Keep an actor under 65536 characters." in huge.content.decode()
+    # The editor reads its limits from the schemas the cast is sent with.
+    for file in ("actors.json", "sub_actors.json"):
+        properties = listed["record_schemas"][file]["properties"]
+        assert (properties["name"]["maxLength"], properties["role"]["maxLength"]) == (
+            80,
+            160,
+        )
+    assert listed["actors"] == []
+
+
+def test_a_bad_actor_written_elsewhere_never_blocks_an_edit_to_another(
+    user, workspace, storage, auth_client
+):
+    environment = record_tests._environment(user, workspace, "actors-bad-elsewhere")
+    record_authoring(
+        environment,
+        _authoring(
+            contract=CRM_CONTRACT,
+            **{"actors.json": json.dumps({"actors": [{"id": "Old Id", "name": ""}]})},
+        ),
+        origin="authoring",
+    )
+
+    added = _add(auth_client, environment, MANAGER)
+    edited_bad = auth_client.put(
+        f"{BASE}/{environment.id}/actors/Old Id/",
+        {"actor": {"name": ""}},
+        format="json",
+    )
+
+    assert added.status_code == 200, added.content
+    assert [one["id"] for one in added.json()["actors"]] == ["Old Id", "manager"]
+    assert (edited_bad.status_code, edited_bad.json()["error"]) == (
+        400,
+        "actor_invalid",
+    )
+
+
+@pytest.mark.parametrize(
+    "actors_json",
+    [
+        "{not json",
+        json.dumps({"actors": ["manager"]}),
+        json.dumps({"actors": "manager"}),
+    ],
+)
+def test_an_unreadable_actors_file_is_a_plain_conflict(
+    actors_json, user, workspace, storage, auth_client
+):
+    environment = record_tests._environment(user, workspace, "actors-unreadable")
+    record_authoring(
+        environment,
+        _authoring(contract=CRM_CONTRACT, **{"actors.json": actors_json}),
+        origin="authoring",
+    )
+
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/")
+    added = _add(auth_client, environment, MANAGER)
+
+    for response in (listed, added):
+        assert (response.status_code, response.json()["error"]) == (
+            409,
+            "actors_unreadable",
+        )
+        assert response.json()["message"] == (
+            "This environment's actors.json cannot be read; ask the builder chat to fix it"
+        )
+
+
+def test_an_environment_in_another_workspace_has_no_actors_here(
+    user, workspace, storage, auth_client
+):
+    from accounts.models.workspace import Workspace
+
+    other = Workspace.objects.create(
+        name="Other workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    environment = _built(user, other, "actors-other-workspace")
+    url = f"{BASE}/{environment.id}/actors/"
+
+    responses = [
+        auth_client.get(url),
+        _add(auth_client, environment, MANAGER),
+        auth_client.get(f"{url}manager/"),
+        auth_client.put(f"{url}manager/", {"actor": MANAGER}, format="json"),
+        auth_client.delete(f"{url}manager/"),
+    ]
+
+    assert [one.status_code for one in responses] == [404] * 5
+    assert fresh_draft_of(environment) is None
+
+
+def fresh_draft_of(environment):
+    from simulate.services.harness_versioning.drafts import fresh_draft
+
+    return fresh_draft(environment, "environment")
+
+
+def test_unknown_actors_and_scenarios_and_a_stale_removal_are_refused(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-unknown")
+    _add(auth_client, environment, MANAGER)
+    url = f"{BASE}/{environment.id}/actors/"
+
+    unknown = auth_client.get(f"{url}nobody/")
+    no_scenario = auth_client.get(
+        f"{url}manager/", {"scenario_key": "no-such-scenario"}
+    )
+    stale = auth_client.delete(f"{url}manager/?expected_revision=0")
+
+    assert (unknown.status_code, unknown.json()["error"]) == (404, "actor_not_found")
+    assert (no_scenario.status_code, no_scenario.json()["error"]) == (
+        404,
+        "scenario_not_found",
+    )
+    assert (stale.status_code, stale.json()["error"]) == (409, "draft_changed")
+    assert [one["id"] for one in auth_client.get(url).json()["actors"]] == ["manager"]
+
+
+def test_a_cycle_of_parents_and_a_removal_that_leaves_a_parent_dangling_are_refused(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-cycle")
+    url = f"{BASE}/{environment.id}/actors/"
+    _add(auth_client, environment, {"id": "boss", "name": "Ana"})
+    _add(auth_client, environment, {"id": "lead", "name": "Bo", "parent": "boss"})
+
+    cycle = auth_client.put(
+        f"{url}boss/", {"actor": {"name": "Ana", "parent": "lead"}}, format="json"
+    )
+    dangling = auth_client.delete(f"{url}boss/")
+
+    assert (cycle.status_code, cycle.json()["error"]) == (400, "actor_invalid")
+    assert "boss is in a cycle of parent links; break it." in cycle.json()["message"]
+    assert (dangling.status_code, dangling.json()["error"]) == (400, "actor_invalid")
+    assert "lead's parent is boss; change it first." in dangling.json()["message"]
+
+
+def test_a_version_whose_files_are_gone_keeps_its_cast_unknown(
+    user, workspace, storage
+):
+    from unittest.mock import patch
+
+    from minio.error import S3Error
+
+    from simulate.services.harness_versioning import versions
+
+    environment = _built(user, workspace, "actors-files-gone")
+    version = environment.environment_version
+    gone = S3Error("NoSuchKey", "gone", "key", "request", "host", None)
+
+    with patch.object(versions.archives, "get_archive", side_effect=gone):
+        documents = versions.with_actor_digests(version, {"contract": {}})
+
+    assert documents == {"contract": {}}

@@ -310,7 +310,11 @@ def actor_digests(environment: Mapping[str, bytes]) -> dict[str, str]:
         for actor in (body.get(key) if isinstance(body, dict) else None) or []:
             if isinstance(actor, dict) and actor.get("id"):
                 digests[str(actor["id"])] = canonical_digest(
-                    {field: value for field, value in actor.items() if field != "provenance"}
+                    {
+                        field: value
+                        for field, value in actor.items()
+                        if field != "provenance"
+                    }
                 )
     return digests
 
