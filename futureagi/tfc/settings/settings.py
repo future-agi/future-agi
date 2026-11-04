@@ -1635,18 +1635,15 @@ del _runtime_numeric_settings
 CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
 
 # Operational SQL workbench budgets, not edition/pricing entitlements.
-SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H = int(os.getenv("SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H", "1500"))
-SQL_WORKBENCH_MAX_ORG_QUERIES_24H = int(os.getenv("SQL_WORKBENCH_MAX_ORG_QUERIES_24H", "30000"))
-SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H = int(os.getenv("SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H", str(128 * 1024 * 1024)))
-SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H = int(os.getenv("SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H", str(512 * 1024 * 1024)))
-# Advisory pre-run estimates per user per minute (index analysis only).
-SQL_WORKBENCH_ESTIMATES_PER_MINUTE = int(os.getenv("SQL_WORKBENCH_ESTIMATES_PER_MINUTE", "30"))
-# An identical query by the same person returns their completed result from
-# this many seconds ago instead of scanning again (0 turns reuse off; max 3600).
-SQL_WORKBENCH_RESULT_CACHE_SECONDS = int(os.getenv("SQL_WORKBENCH_RESULT_CACHE_SECONDS", "60"))
-_sql_audit_retention = os.getenv("SQL_WORKBENCH_AUDIT_RETENTION_DAYS", "").strip()
-SQL_WORKBENCH_AUDIT_RETENTION_DAYS = int(_sql_audit_retention) if _sql_audit_retention else None
-
+from .sql_workbench import (  # noqa: E402,F401
+    SQL_WORKBENCH_AUDIT_RETENTION_DAYS,
+    SQL_WORKBENCH_ESTIMATES_PER_MINUTE,
+    SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H,
+    SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H,
+    SQL_WORKBENCH_MAX_ORG_QUERIES_24H,
+    SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H,
+    SQL_WORKBENCH_RESULT_CACHE_SECONDS,
+)
 
 # Where the eval runner reads span data from.
 #   "postgres"   — current behavior; reads from tracer_observation_span (Django ORM)

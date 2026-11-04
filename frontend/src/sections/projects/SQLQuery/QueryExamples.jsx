@@ -7,27 +7,53 @@ import {
   ListItemText,
   Typography,
 } from "@mui/material";
+import { META_TEXT_SX } from "./queryUiConfig";
 
 // Vetted example queries from the catalog API. Each is ordinary SQL that the
 // server compiles and scopes like any typed query; using one replaces the
 // editor text (the page offers Undo).
-export default function QueryExamples({ examples, datasets, onUse }) {
+export default function QueryExamples({
+  examples,
+  datasets,
+  onUse,
+  search = "",
+}) {
   if (!examples?.length) return null;
   const unavailable = new Set(
     (datasets || [])
       .filter((dataset) => dataset.available === false)
       .map((dataset) => dataset.name),
   );
+  const matches = examples.filter((example) =>
+    `${example.title} ${example.description} ${example.datasets?.join(" ")} ${example.sql}`
+      .toLowerCase()
+      .includes(search.trim().toLowerCase()),
+  );
   return (
-    <Box component="details" sx={{ px: 2, py: 0.5 }}>
+    <Box sx={{ py: 1 }}>
       <Typography
-        component="summary"
-        sx={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}
+        sx={{ px: 2, typography: "s1", fontWeight: "fontWeightSemiBold" }}
       >
         Example queries ({examples.length})
       </Typography>
+      <Typography
+        sx={{
+          display: "block",
+          px: 2,
+          pb: 1,
+          typography: "s3",
+          color: "text.secondary",
+        }}
+      >
+        Start with vetted SQL. Replaces the editor; Undo is available.
+      </Typography>
+      {!matches.length && (
+        <Typography role="status" sx={{ p: 2, typography: "s2" }}>
+          No matching examples. Try a dataset name.
+        </Typography>
+      )}
       <List dense disablePadding aria-label="Example queries">
-        {examples.map((example) => {
+        {matches.map((example) => {
           const missing = (example.datasets || []).filter((name) =>
             unavailable.has(name),
           );
@@ -40,19 +66,52 @@ export default function QueryExamples({ examples, datasets, onUse }) {
               onClick={() => !missing.length && onUse(example)}
               aria-label={`Use example: ${example.title}`}
               title={example.description}
-              sx={{ px: 1, py: 0.25 }}
+              sx={{
+                px: 2,
+                py: 1,
+                borderTop: 1,
+                borderColor: "divider",
+                "&.Mui-focusVisible": {
+                  outline: "2px solid",
+                  outlineColor: "primary.main",
+                  outlineOffset: -2,
+                },
+              }}
             >
               <ListItemText
                 primary={example.title}
                 secondary={
-                  missing.length
-                    ? `Needs ${missing.join(", ")} (unavailable)`
-                    : example.datasets.join(" · ")
+                  <>
+                    <Box component="span" sx={{ display: "block", my: 0.5 }}>
+                      {example.description}
+                    </Box>
+                    {missing.length ? (
+                      <Box
+                        component="span"
+                        sx={{
+                          display: "block",
+                          typography: "s3",
+                        }}
+                      >
+                        {`Needs ${missing.join(", ")} (unavailable)`}
+                      </Box>
+                    ) : (
+                      <Box
+                        component="span"
+                        sx={{
+                          ...META_TEXT_SX,
+                          display: "block",
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        {example.datasets?.join(" · ")}
+                      </Box>
+                    )}
+                  </>
                 }
-                primaryTypographyProps={{ fontSize: 12 }}
                 secondaryTypographyProps={{
-                  fontSize: 10,
-                  fontFamily: "monospace",
+                  component: "div",
+                  sx: { typography: "s2", color: "text.secondary" },
                 }}
               />
             </ListItemButton>
@@ -64,6 +123,7 @@ export default function QueryExamples({ examples, datasets, onUse }) {
 }
 
 QueryExamples.propTypes = {
+  search: PropTypes.string,
   examples: PropTypes.arrayOf(
     PropTypes.shape({
       id: PropTypes.string.isRequired,

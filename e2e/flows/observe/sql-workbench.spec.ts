@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { request, type Page, type TestInfo } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import { sendTrace } from '../../lib/otlp';
@@ -19,16 +20,15 @@ type Execution = { id: string; project_id: string; state: string; error: string;
 // Perturb each expected value in an independent run; never change the seed with it.
 const EXPECTED_SPAN_COUNT = 2;
 const EXPECTED_ROW_COUNT = 1;
-
-test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard query', {
+test('OBS-E2E-053: an analyst saves a scoped SQL result as a live dashboard query', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-052', area: 'observe',
+    id: 'OBS-E2E-053', area: 'observe',
     userGoal: 'An analyst runs a project-scoped query, shares its definition with project members, and adds it to a dashboard.',
     steps: [
       'send a trace with two independently named spans to a new project',
       'open Observe Query and run a grouped span query using the SQL editor',
-      'inspect the exact result table and save a project-shared query',
+      'inspect exact rows, switch Table/Chart tabs, download CSV/Parquet, and save a project-shared query',
       'add the saved query to a dashboard using the Query page',
       'open the dashboard and verify it reruns the saved query',
     ],
@@ -99,12 +99,38 @@ test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard quer
       await expect(cells.nth(0).getByRole('cell')).toHaveText([child, '1'], { timeout: UI_READY });
       await expect(cells.nth(1).getByRole('cell')).toHaveText([root, '1'], { timeout: UI_READY });
       await attachPage(page, testInfo, 'sql-ui-result-table');
+      const resultView = page.getByRole('tablist', { name: 'Result view' });
+      await resultView.getByRole('tab', { name: 'Chart', exact: true }).click();
+      await expect(resultView.getByRole('tab', { name: 'Chart', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByRole('img', { name: 'n by name. Exact values are available in Table view.', exact: true })).toBeVisible();
+      await resultView.getByRole('tab', { name: 'Table', exact: true }).click();
+      await expect(resultView.getByRole('tab', { name: 'Table', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await expect(cells.nth(0).getByRole('cell')).toHaveText([child, '1']);
+      await expect(cells.nth(1).getByRole('cell')).toHaveText([root, '1']);
+      for (const format of ['CSV', 'Parquet']) {
+        await page.getByRole('button', { name: 'Download', exact: true }).click();
+        const downloading = page.waitForEvent('download', { timeout: UI_READY });
+        await page.getByRole('menu').getByRole('menuitem', { name: format, exact: true }).click();
+        const download = await downloading;
+        expect(download.suggestedFilename()).toBe(`query-results.${format.toLowerCase()}`);
+        expect(await download.failure()).toBeNull();
+        const path = await download.path();
+        expect(path).not.toBeNull();
+        const bytes = await readFile(path!);
+        if (format === 'CSV') {
+          expect(bytes.toString('utf8').trim().split(/\r?\n/)).toEqual(['name,n', `${child},1`, `${root},1`]);
+        } else {
+          expect(bytes.subarray(0, 4).toString()).toBe('PAR1');
+          expect(bytes.subarray(-4).toString()).toBe('PAR1');
+        }
+      }
       await page.getByRole('button', { name: 'Save query', exact: true }).click();
-      await page.getByLabel('Query name', { exact: true }).fill(queryName);
-      await page.getByLabel('Visibility', { exact: true }).click();
-      await page.getByRole('option', { name: 'Project members', exact: true }).click();
+      const saveDialog = page.getByRole('dialog', { name: /^Save query/ });
+      await saveDialog.getByRole('textbox', { name: 'Query name', exact: true }).fill(queryName);
+      await saveDialog.getByRole('radiogroup', { name: 'Visibility', exact: true })
+        .getByRole('radio', { name: /^Project members/ }).check();
       const savedResponse = page.waitForResponse((res) => res.url().endsWith(SAVED) && res.request().method() === 'POST', { timeout: UI_READY });
-      await page.getByRole('dialog').getByRole('button', { name: 'Save', exact: true }).click();
+      await saveDialog.getByRole('button', { name: 'Save', exact: true }).click();
       expect((await savedResponse).status()).toBe(201);
       await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: UI_READY });
       await attachPage(page, testInfo, 'sql-ui-saved-query');
@@ -117,11 +143,13 @@ test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard quer
     expect(saved[0].visibility).toBe('project');
     await test.step('UI: attach the saved reference to the dashboard', async () => {
       await page.getByRole('button', { name: 'Add to dashboard', exact: true }).click();
-      await page.getByLabel('Dashboard', { exact: true }).click();
+      const dashboardDialog = page.getByRole('dialog', { name: /^Add to dashboard/ });
+      await dashboardDialog.getByLabel('Dashboard', { exact: true }).click();
       await page.getByRole('option', { name: dashboardName, exact: true }).click();
       const added = page.waitForResponse((res) => res.url().includes(`/saved-sql-query/${saved[0].id}/add-widget/`) && res.request().method() === 'POST', { timeout: UI_READY });
-      await page.getByRole('button', { name: 'Add query', exact: true }).click();
+      await dashboardDialog.getByRole('button', { name: 'Add query', exact: true }).click();
       expect((await added).status()).toBe(201);
+      await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: UI_READY });
     }, { timeout: UI_READY });
     const widgets = await probe.pg<{ id: string; query_config: { source: string; saved_query_id: string; project_id: string } }>(
       'SELECT w.id,w.query_config FROM tracer_dashboardwidget w JOIN tracer_dashboard d ON d.id=w.dashboard_id WHERE d.id=$1 AND d.workspace_id=$2 AND w.name=$3 AND w.deleted=false',

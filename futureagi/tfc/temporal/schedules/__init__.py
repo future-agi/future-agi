@@ -26,8 +26,8 @@ from tfc.temporal.schedules.model_hub import MODEL_HUB_SCHEDULES
 from tfc.temporal.schedules.outbox_cdc import OUTBOX_CDC_SCHEDULES
 from tfc.temporal.schedules.retention import RETENTION_SCHEDULES
 from tfc.temporal.schedules.saml import SAML_SCHEDULES
-from tfc.temporal.schedules.sql_workbench import SQL_WORKBENCH_SCHEDULES
 from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
+from tfc.temporal.schedules.sql_workbench import SQL_WORKBENCH_SCHEDULES
 from tfc.temporal.schedules.tracer import TRACER_SCHEDULES
 
 # All schedules to be registered

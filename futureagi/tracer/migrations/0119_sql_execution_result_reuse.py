@@ -5,21 +5,22 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('accounts', '0028_merge_authtoken_scope_and_simulation_agent_key'),
-        ('tracer', '0118_merge_sql_workbench_and_simulation_project'),
+        ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key"),
+        ("tracer", "0118_merge_sql_workbench_and_simulation_project"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='sqlexecution',
-            name='cache_key',
-            field=models.CharField(blank=True, default='', max_length=64),
+            model_name="sqlexecution",
+            name="cache_key",
+            field=models.CharField(blank=True, default="", max_length=64),
         ),
         migrations.AddIndex(
-            model_name='sqlexecution',
-            index=models.Index(fields=['created_by', 'cache_key'], name='sql_result_reuse_idx'),
+            model_name="sqlexecution",
+            index=models.Index(
+                fields=["created_by", "cache_key"], name="sql_result_reuse_idx"
+            ),
         ),
     ]

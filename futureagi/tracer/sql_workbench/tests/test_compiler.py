@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,7 +16,7 @@ from tracer.sql_workbench.examples import EXAMPLES
 
 @pytest.fixture
 def scope():
-    end = datetime(2026, 10, 21, tzinfo=timezone.utc)
+    end = datetime(2026, 10, 21, tzinfo=UTC)
     return Scope(
         uuid4(),
         uuid4(),
@@ -1132,3 +1132,37 @@ def test_functions_outside_the_analytical_set_are_rejected(query):
 )
 def test_parametric_aggregates_accept_their_bounds(query):
     compile_query(query, _gallery_scope())
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT count() FROM sessions",
+        "SELECT count(*) FROM sessions",
+        "SELECT id, first_seen FROM sessions",
+        "WITH s AS (SELECT id FROM sessions) SELECT count(*) FROM s",
+        "SELECT s.id FROM (SELECT id FROM sessions) AS s",
+    ],
+)
+def test_sessions_without_locale_skip_span_enrichment(scope, sql):
+    compiled = compile_query(sql, scope)
+    assert "analytics.spans" not in compiled
+    assert str(scope.project_id) in compiled
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM sessions",
+        "SELECT s.* FROM sessions s",
+        "SELECT locale FROM sessions",
+        "WITH s AS (SELECT locale AS lang FROM sessions) SELECT lang FROM s",
+        "SELECT id FROM sessions WHERE locale = 'en'",
+    ],
+)
+def test_sessions_keep_locale_when_referenced(scope, sql):
+    assert "analytics.spans" in compile_query(sql, scope)
+
+
+def test_direct_bi_session_view_keeps_locale(scope):
+    assert "LEFT JOIN" in sources(scope)["sessions"]

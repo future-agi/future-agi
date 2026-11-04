@@ -78,9 +78,21 @@ export default function useSQLExecution(
         }
       } catch (e) {
         if (!controller.signal.aborted && generation.current === current) {
-          setError(errorMessage(e));
-          // Keep the id for Cancel, but do not poll an unreachable service forever.
-          if (Date.now() < deadline) timer = setTimeout(poll, 3000);
+          const inaccessible = [403, 404].includes(e?.statusCode);
+          if (inaccessible || Date.now() >= deadline) {
+            // Local status only: losing contact does not cancel the server job.
+            // Retain its id for diagnostics, but release Run/Retry.
+            activeJob.current = null;
+            setJob((value) => ({ ...value, state: "unavailable" }));
+            setError(
+              inaccessible
+                ? "This query is no longer accessible. Check your project access, then run again."
+                : "Query status unavailable. Polling stopped; the server query was not cancelled. Run again to retry.",
+            );
+          } else {
+            setError(errorMessage(e));
+            timer = setTimeout(poll, 3000);
+          }
         }
       }
     };
@@ -126,7 +138,7 @@ export default function useSQLExecution(
             }
             return;
           } catch (e) {
-            const status = e?.statusCode ?? e?.response?.status;
+            const status = e?.statusCode;
             const remaining = deadline - Date.now();
             if (
               !retryAdmission ||

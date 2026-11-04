@@ -15,11 +15,11 @@ import { nativeCaptureStages } from "./native-capture-stages";
 test.use({ viewport: { width: 1440, height: 900 } });
 
 test(
-  "OBS-E2E-053: native source accounting retains exact usage and known, zero and unknown costs",
+  "OBS-E2E-054: native source accounting retains exact usage and known, zero and unknown costs",
   {
     tag: ["@flow"],
     annotation: flowAnnotation({
-      id: "OBS-E2E-053",
+      id: "OBS-E2E-054",
       area: "observe",
       userGoal:
         "A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero",

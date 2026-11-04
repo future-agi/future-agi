@@ -175,9 +175,12 @@ const ObserveTabBar = ({
             setIsSavingView(false);
           },
           onError: (err) => {
-            enqueueSnackbar(getRequestErrorMessage(err, "Failed to create view"), {
-              variant: "error",
-            });
+            enqueueSnackbar(
+              getRequestErrorMessage(err, "Failed to create view"),
+              {
+                variant: "error",
+              },
+            );
             setIsSavingView(false);
           },
         },
@@ -242,7 +245,9 @@ const ObserveTabBar = ({
       if (isNaN(num) || num < 1 || num > 9) return;
 
       if (num <= 3) {
-        const fixedTab = visibleFixedTabs.find((tab) => tab.shortcut === String(num));
+        const fixedTab = visibleFixedTabs.find(
+          (tab) => tab.shortcut === String(num),
+        );
         if (fixedTab) onTabChange(fixedTab.key);
       } else {
         const idx = num - 4;
@@ -283,9 +288,12 @@ const ObserveTabBar = ({
         { id: viewId, name: newName },
         {
           onError: (err) =>
-            enqueueSnackbar(getRequestErrorMessage(err, "Failed to rename view"), {
-              variant: "error",
-            }),
+            enqueueSnackbar(
+              getRequestErrorMessage(err, "Failed to rename view"),
+              {
+                variant: "error",
+              },
+            ),
         },
       );
       // Always exit edit mode — a lingering rename state would re-submit on blur.

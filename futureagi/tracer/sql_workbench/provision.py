@@ -2,7 +2,8 @@
 
 import hashlib
 import re
-from datetime import timezone
+import secrets
+from datetime import UTC
 
 import sqlglot
 from sqlglot import exp
@@ -40,7 +41,8 @@ def direct_access_ddl(scope: Scope, *, database, principal, password, cidr):
         raise ValueError("Restrict the account to a specific BI/notebook network.")
     view_db = name(f"sql_{principal}")
     definer = name(f"sqld_{principal}")
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    salt = secrets.token_hex(32)
+    password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
     profile = ", ".join(
         (
             f"{key} = '{value}' READONLY"
@@ -52,18 +54,16 @@ def direct_access_ddl(scope: Scope, *, database, principal, password, cidr):
     profile += ", max_concurrent_queries_for_user = 2 READONLY"
     statements = [
         f"CREATE USER {definer} IDENTIFIED WITH no_password HOST NONE SETTINGS {profile}",
-        f"CREATE USER {principal} IDENTIFIED WITH sha256_hash BY '{password_hash}' HOST IP '{network}' SETTINGS {profile}",
+        f"CREATE USER {principal} IDENTIFIED WITH sha256_hash BY '{password_hash}' SALT '{salt}' HOST IP '{network}' SETTINGS {profile}",
         f"CREATE DATABASE {view_db}",
     ]
     # BI views are rolling windows, never stale snapshots pinned at provisioning.
     templates = {}
     boundaries = {
-        scope.start.astimezone(timezone.utc).strftime(
+        scope.start.astimezone(UTC).strftime(
             "%Y-%m-%d %H:%M:%S.%f"
         ): f"now64(6, 'UTC') - INTERVAL {int((scope.end - scope.start).total_seconds())} SECOND",
-        scope.end.astimezone(timezone.utc).strftime(
-            "%Y-%m-%d %H:%M:%S.%f"
-        ): "now64(6, 'UTC')",
+        scope.end.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f"): "now64(6, 'UTC')",
     }
     for dataset, source in sources(scope).items():
         tree = sqlglot.parse_one(source, read="clickhouse")
@@ -118,7 +118,8 @@ def service_access_ddl(
         )
     if eval_table not in {"tracer_eval_logger", "tracer_eval_logger_v2"}:
         raise ValueError("Unsupported evaluation table.")
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    salt = secrets.token_hex(32)
+    password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
     profile = ", ".join(
         (
             f"{key} = '{value}' READONLY"
@@ -132,7 +133,7 @@ def service_access_ddl(
     # Every other setting stays immutable under readonly = 1.
     profile += ", additional_table_filters CHANGEABLE_IN_READONLY"
     statements = [
-        f"CREATE USER {principal} IDENTIFIED WITH sha256_hash BY '{password_hash}' HOST IP '{network}' SETTINGS {profile}"
+        f"CREATE USER {principal} IDENTIFIED WITH sha256_hash BY '{password_hash}' SALT '{salt}' HOST IP '{network}' SETTINGS {profile}"
     ]
     tables = [
         "spans",

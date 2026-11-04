@@ -40,10 +40,10 @@ const usage = (tokens: number, cost: number): OtlpAttributes => ({
   'gen_ai.request.model': 'openai/gpt-4o-mini',
 });
 
-test('OBS-E2E-054: OpenRouter-shaped traces keep coherent usage through filters, sorting and details', {
+test('OBS-E2E-052: OpenRouter-shaped traces keep coherent usage through filters, sorting and details', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-054', area: 'observe',
+    id: 'OBS-E2E-052', area: 'observe',
     userGoal: 'A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details',
     steps: [
       'ingest empty-root generation/attempt trees, tiny/zero costs, nested summaries, parent-only and independent-call controls',

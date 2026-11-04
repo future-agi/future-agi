@@ -13,8 +13,7 @@ import {
   TablePagination,
   TableRow,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
+  Tab,
   Typography,
   useTheme,
 } from "@mui/material";
@@ -27,6 +26,66 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import Iconify from "src/components/iconify";
+import { SegmentedTabs } from "src/components/tabs/tabs";
+import { MetaLine } from "./queryUi";
+
+// Result table styling follows the shared DataTable (Environments, Evals,
+// Datasets): 13px Inter, muted medium-weight headers, solid row dividers and a
+// hover tint. Values stay on one line; the full value is in the cell title.
+const TABLE_CONTAINER_SX = {
+  maxHeight: 440,
+  border: 1,
+  borderColor: "divider",
+  borderRadius: 1,
+  "& .MuiTableCell-root": {
+    typography: "s2_1",
+    px: 1.5,
+    py: 1,
+    borderBottom: "1px solid",
+    borderColor: "divider",
+    whiteSpace: "nowrap",
+    maxWidth: 360,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    fontVariantNumeric: "tabular-nums",
+  },
+  "& .MuiTableCell-head": {
+    py: 1.25,
+    color: "text.secondary",
+    fontWeight: "fontWeightMedium",
+    bgcolor: "background.paper",
+    backgroundImage: "none",
+  },
+  "& .MuiTableRow-root:last-of-type .MuiTableCell-body": {
+    borderBottom: "none",
+  },
+};
+
+const RESULT_TAB_SX = {
+  gap: 0.75,
+  "& .MuiTab-iconWrapper": { m: 0 },
+  // Production disables ripples; keep focus distinct from the selected view.
+  "&.Mui-focusVisible": {
+    outline: "2px solid",
+    outlineColor: "text.primary",
+    outlineOffset: "-3px",
+  },
+};
+
+const TYPE_SX = {
+  ml: 0.75,
+  typography: "s3",
+  fontFamily: "monospace",
+  color: "text.secondary",
+  fontWeight: "fontWeightRegular",
+};
+
+const EMPTY_VALUE_SX = {
+  typography: "s2_1",
+  fontFamily: "monospace",
+  color: "text.secondary",
+};
 
 export const numericColumns = (columns, rows) =>
   columns.filter(
@@ -39,7 +98,13 @@ export const numericColumns = (columns, rows) =>
       ),
   );
 
-export default function QueryResults({ result, chart = {}, onChartChange }) {
+export default function QueryResults({
+  result,
+  chart = {},
+  onChartChange,
+  presentation,
+  showEditorGuidance = true,
+}) {
   const theme = useTheme();
   const patternId = useId().replace(/:/g, "");
   const [page, setPage] = useState(0);
@@ -49,6 +114,9 @@ export default function QueryResults({ result, chart = {}, onChartChange }) {
   const columns = result?.columns || [];
   const rows = result?.rows || [];
   const numeric = numericColumns(columns, rows);
+  const numericIndexes = new Set(
+    columns.flatMap((c, i) => (numeric.includes(c) ? [i] : [])),
+  );
   const xName = columns.some((c) => c.name === x) ? x : columns[0]?.name || "";
   const yName = numeric.some((c) => c.name === y) ? y : numeric[0]?.name || "";
   const xi = columns.findIndex((c) => c.name === xName);
@@ -57,8 +125,8 @@ export default function QueryResults({ result, chart = {}, onChartChange }) {
     .slice(0, 50)
     .map((row) => ({ category: String(row[xi] ?? "NULL"), value: row[yi] }));
   const ink = theme.palette.text.secondary;
-  const color = theme.palette.mode === "dark" ? "#9085e9" : "#6250d6";
-  const surface = theme.palette.mode === "dark" ? "#1a1a19" : "#fcfcfb";
+  const color = theme.palette.primary.main;
+  const surface = theme.palette.background.paper;
   useEffect(() => {
     setPage(0);
   }, [result]);
@@ -69,12 +137,45 @@ export default function QueryResults({ result, chart = {}, onChartChange }) {
         : { type: "table" },
     );
   }, [mode, xName, yName, onChartChange]);
+  if (!result?.columns && (presentation || !showEditorGuidance))
+    return (
+      <Box sx={{ px: 1, py: 2 }}>
+        <Typography
+          sx={{ typography: "s1", fontWeight: "fontWeightSemiBold", mb: 0.5 }}
+        >
+          {presentation?.title || "Waiting for query results"}
+        </Typography>
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          {presentation?.description ||
+            "Results will appear here when available."}
+        </Typography>
+      </Box>
+    );
   if (!result?.columns)
     return (
-      <Typography color="text.secondary" sx={{ p: 3 }}>
-        Run a query to inspect its results. Start with a count or a small time
-        window.
-      </Typography>
+      <Box sx={{ px: 1, py: 2 }}>
+        <Typography
+          sx={{ typography: "s1", fontWeight: "fontWeightSemiBold", mb: 0.5 }}
+        >
+          Your results appear here
+        </Typography>
+        <Typography
+          sx={{ typography: "s2", color: "text.secondary", maxWidth: 440 }}
+        >
+          Run a query to inspect its results. Start with a count or a small time
+          window.
+        </Typography>
+        <Typography
+          sx={{
+            display: "block",
+            mt: 1,
+            typography: "s3",
+            color: "text.secondary",
+          }}
+        >
+          Explore fields in Catalog or choose a vetted query in Examples.
+        </Typography>
+      </Box>
     );
   return (
     <Stack spacing={2} sx={{ minWidth: 0 }}>
@@ -85,21 +186,38 @@ export default function QueryResults({ result, chart = {}, onChartChange }) {
         flexWrap="wrap"
         useFlexGap
       >
-        <ToggleButtonGroup
-          size="small"
-          exclusive
+        {/* The platform's segmented control (SegmentedTabs): one bordered
+            strip with a filled pill on the selected view. */}
+        <SegmentedTabs
           value={mode}
           onChange={(_, value) => value && setMode(value)}
           aria-label="Result view"
         >
-          <ToggleButton value="table">Table</ToggleButton>
-          <ToggleButton value="bar" disabled={!numeric.length}>
-            Chart
-          </ToggleButton>
-        </ToggleButtonGroup>
-        <Typography variant="caption" color="text.secondary">
-          {rows.length.toLocaleString()} rows · {result.elapsed_ms} ms
-        </Typography>
+          <Tab
+            value="table"
+            label="Table"
+            icon={<Iconify icon="solar:server-square-linear" width={16} />}
+            iconPosition="start"
+            sx={RESULT_TAB_SX}
+          />
+          <Tab
+            value="bar"
+            label="Chart"
+            disabled={!numeric.length}
+            icon={<Iconify icon="solar:chart-2-linear" width={16} />}
+            iconPosition="start"
+            sx={RESULT_TAB_SX}
+          />
+        </SegmentedTabs>
+        <MetaLine
+          role="group"
+          aria-label="Result details"
+          parts={[
+            `${rows.length.toLocaleString()} rows`,
+            `${columns.length.toLocaleString()} columns`,
+            `${result.elapsed_ms} ms`,
+          ]}
+        />
         {mode === "bar" && (
           <>
             <TextField
@@ -108,6 +226,7 @@ export default function QueryResults({ result, chart = {}, onChartChange }) {
               label="Category"
               value={xName}
               onChange={(e) => setX(e.target.value)}
+              InputProps={{ sx: { typography: "s2" } }}
               sx={{ minWidth: 140 }}
             >
               {columns.map((c) => (
@@ -122,6 +241,7 @@ export default function QueryResults({ result, chart = {}, onChartChange }) {
               label="Value"
               value={yName}
               onChange={(e) => setY(e.target.value)}
+              InputProps={{ sx: { typography: "s2" } }}
               sx={{ minWidth: 140 }}
             >
               {numeric.map((c) => (
@@ -145,11 +265,13 @@ export default function QueryResults({ result, chart = {}, onChartChange }) {
         </Alert>
       ) : mode === "bar" ? (
         <>
-          <Typography variant="subtitle2">
+          <Typography
+            sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}
+          >
             {yName} by {xName}
           </Typography>
           {rows.length > 50 && (
-            <Typography variant="caption">
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
               Chart shows the first 50 result rows. The table and downloads
               contain all returned rows.
             </Typography>
@@ -220,54 +342,50 @@ export default function QueryResults({ result, chart = {}, onChartChange }) {
         </>
       ) : (
         <>
-          <TableContainer
-            sx={{
-              maxHeight: 440,
-              border: 1,
-              borderColor: "divider",
-              borderRadius: 1,
-            }}
-          >
+          <TableContainer sx={TABLE_CONTAINER_SX}>
             <Table stickyHeader size="small" aria-label="SQL query results">
               <TableHead>
                 <TableRow>
-                  {columns.map((c) => (
+                  {columns.map((c, j) => (
                     <TableCell
                       key={c.name}
-                      sx={{ whiteSpace: "nowrap", fontFamily: "monospace" }}
+                      align={numericIndexes.has(j) ? "right" : "left"}
+                      title={`${c.name} · ${c.type}`}
                     >
                       {c.name}
-                      <Typography
-                        component="div"
-                        variant="caption"
-                        color="text.secondary"
-                      >
+                      <Box component="span" sx={TYPE_SX}>
                         {c.type}
-                      </Typography>
+                      </Box>
                     </TableCell>
                   ))}
                 </TableRow>
               </TableHead>
               <TableBody>
                 {rows.slice(page * 50, page * 50 + 50).map((row, i) => (
-                  <TableRow key={page * 50 + i}>
+                  <TableRow key={page * 50 + i} hover>
                     {row.map((value, j) => (
                       <TableCell
                         key={columns[j].name}
-                        sx={{
-                          maxWidth: 480,
-                          overflowWrap: "anywhere",
-                          fontVariantNumeric: "tabular-nums",
-                        }}
+                        align={numericIndexes.has(j) ? "right" : "left"}
+                        title={
+                          value != null && value !== ""
+                            ? String(value)
+                            : undefined
+                        }
                       >
                         {value == null ? (
-                          <Typography
-                            component="span"
-                            variant="caption"
-                            color="text.secondary"
-                          >
+                          <Box component="span" sx={EMPTY_VALUE_SX}>
                             NULL
-                          </Typography>
+                          </Box>
+                        ) : value === "" ? (
+                          <Box
+                            component="span"
+                            title="Empty string"
+                            aria-label="Empty string"
+                            sx={EMPTY_VALUE_SX}
+                          >
+                            &apos;&apos;
+                          </Box>
                         ) : (
                           String(value)
                         )}
@@ -285,6 +403,14 @@ export default function QueryResults({ result, chart = {}, onChartChange }) {
             rowsPerPageOptions={[50]}
             page={page}
             onPageChange={(_, value) => setPage(value)}
+            sx={{
+              mt: "0 !important",
+              "& .MuiTablePagination-toolbar": { minHeight: 40, height: 40 },
+              "& .MuiTablePagination-displayedRows": {
+                typography: "s2",
+                color: "text.secondary",
+              },
+            }}
           />
         </>
       )}
@@ -295,4 +421,9 @@ QueryResults.propTypes = {
   result: PropTypes.object,
   chart: PropTypes.object,
   onChartChange: PropTypes.func,
+  presentation: PropTypes.shape({
+    title: PropTypes.string.isRequired,
+    description: PropTypes.string.isRequired,
+  }),
+  showEditorGuidance: PropTypes.bool,
 };

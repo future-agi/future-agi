@@ -1886,7 +1886,28 @@
 - Custom links and views send and keep their stored range verbatim and list no span
 - opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
 
-### OBS-E2E-052 — an analyst saves a scoped SQL result as a live dashboard query
+### OBS-E2E-052 — OpenRouter-shaped traces keep coherent usage through filters, sorting and details
+
+**Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details  
+**Spec:** `flows/observe/openrouter-usage.spec.ts:43`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest empty-root generation/attempt trees, tiny/zero costs, nested summaries, parent-only and independent-call controls
+2. select Total Tokens greater than 20 in the real Filter panel and cross a real page boundary
+3. scroll to Tokens and Total Cost, sort each ascending and descending, and compare complete UI/API pages with the independent oracle
+4. inspect tiny-cost and usage-control trace details
+5. inspect first-generation session messages and exact Users identities
+
+**Backend state verified:**
+
+- A: exact latest source hierarchy, usage, project type and user linkage retain the scoped fixture identities
+- B: actual filter/sort requests and two complete pages equal the canonical usage oracle with exact total, stable ties and no duplicates
+- C: trace/span/session API precision and UI displays retain positive subprecision costs, nested 18, equal independent calls and parent-only usage
+- D: session first-generation messages and Users UI/API identities equal the scoped storage facts
+
+### OBS-E2E-053 — an analyst saves a scoped SQL result as a live dashboard query
 
 **Goal:** An analyst runs a project-scoped query, shares its definition with project members, and adds it to a dashboard.  
 **Spec:** `flows/observe/sql-workbench.spec.ts:23`  
@@ -1896,7 +1917,7 @@
 
 1. send a trace with two independently named spans to a new project
 2. open Observe Query and run a grouped span query using the SQL editor
-3. inspect the exact result table and save a project-shared query
+3. inspect exact rows, switch Table/Chart tabs, download CSV/Parquet, and save a project-shared query
 4. add the saved query to a dashboard using the Query page
 5. open the dashboard and verify it reruns the saved query
 
@@ -1908,7 +1929,7 @@
 - the saved project query and dashboard widget persist the same scoped query reference
 - the dashboard starts a new personal execution of the saved query and shows the same exact rows
 
-### OBS-E2E-053 — native source accounting retains exact usage and known, zero and unknown costs
+### OBS-E2E-054 — native source accounting retains exact usage and known, zero and unknown costs
 
 **Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero  
 **Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:17`  
@@ -1930,27 +1951,6 @@
 - trace API totals and grid distinguish zero from unknown costs
 - session fallback and explicit identities match exact source membership
 - filtered and sorted API, replay and DOM IDs match independent expected sets and order, with exact counts and no lower-bound marker
-
-### OBS-E2E-054 — OpenRouter-shaped traces keep coherent usage through filters, sorting and details
-
-**Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details  
-**Spec:** `flows/observe/openrouter-usage.spec.ts:43`  
-**Tags:** —
-
-**User steps:**
-
-1. ingest empty-root generation/attempt trees, tiny/zero costs, nested summaries, parent-only and independent-call controls
-2. select Total Tokens greater than 20 in the real Filter panel and cross a real page boundary
-3. scroll to Tokens and Total Cost, sort each ascending and descending, and compare complete UI/API pages with the independent oracle
-4. inspect tiny-cost and usage-control trace details
-5. inspect first-generation session messages and exact Users identities
-
-**Backend state verified:**
-
-- A: exact latest source hierarchy, usage, project type and user linkage retain the scoped fixture identities
-- B: actual filter/sort requests and two complete pages equal the canonical usage oracle with exact total, stable ties and no duplicates
-- C: trace/span/session API precision and UI displays retain positive subprecision costs, nested 18, equal independent calls and parent-only usage
-- D: session first-generation messages and Users UI/API identities equal the scoped storage facts
 
 ### OBS-E2E-056 — native sessions preserve exact membership, costs and trace navigation
 

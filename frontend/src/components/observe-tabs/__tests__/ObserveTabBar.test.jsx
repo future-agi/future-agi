@@ -23,6 +23,8 @@ const renderWithCtx = ({
   getViewConfig = () => ({}),
   activeTab = "traces",
   selectedTab,
+  projectSource,
+  onTabChange = () => {},
 } = {}) => {
   // resolveTabType reads selectedTab from the URL (not getTabType).
   window.history.pushState(
@@ -44,7 +46,8 @@ const renderWithCtx = ({
       <ObserveTabBar
         projectId="p1"
         activeTab={activeTab}
-        onTabChange={() => {}}
+        onTabChange={onTabChange}
+        projectSource={projectSource}
       />
     </ObserveHeaderContext.Provider>,
   );
@@ -62,6 +65,42 @@ const typeAndSubmit = async (name) => {
   const saveBtn = screen.getByRole("button", { name: /save|create/i });
   fireEvent.click(saveBtn);
 };
+
+describe("ObserveTabBar — Query integration", () => {
+  beforeEach(() => {
+    mockSavedViewsList = [];
+  });
+
+  it.each([undefined, "simulator"])(
+    "keeps Query visible for %s projects without shifting saved-view shortcuts",
+    (projectSource) => {
+      const onTabChange = vi.fn();
+      mockSavedViewsList = [
+        { id: "saved", name: "Saved traces", tab_type: "traces" },
+      ];
+      renderWithCtx({ projectSource, onTabChange });
+      fireEvent.click(screen.getByRole("button", { name: /^Query/ }));
+      expect(onTabChange).toHaveBeenLastCalledWith("query");
+      onTabChange.mockClear();
+      fireEvent.keyDown(document, { key: "2" });
+      if (projectSource === "simulator") {
+        expect(onTabChange).not.toHaveBeenCalled();
+        expect(screen.queryByRole("button", { name: /^Sessions/ })).toBeNull();
+        expect(screen.queryByRole("button", { name: /^Users/ })).toBeNull();
+      } else {
+        expect(onTabChange).toHaveBeenLastCalledWith("sessions");
+        expect(screen.getByRole("button", { name: /^Users/ })).toBeVisible();
+      }
+      fireEvent.keyDown(document, { key: "4" });
+      expect(onTabChange).toHaveBeenLastCalledWith("view-saved");
+    },
+  );
+
+  it("does not create a trace-list saved view from the SQL tab", () => {
+    renderWithCtx({ activeTab: "query" });
+    expect(document.querySelector("[data-create-view-btn]")).toBeDisabled();
+  });
+});
 
 describe("ObserveTabBar — Save View snapshots current filters", () => {
   beforeEach(() => {

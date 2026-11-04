@@ -1213,6 +1213,95 @@ values for these settings at startup. Deploy the backend and frontend together.
     setups = ["S", "D", "H"]
     text = "Where the sidebar's Help entry points."
 
+  [[part.section]]
+  heading = "SQL workbench"
+  body = '''
+Pass execution credentials to the backend and dedicated `sql_workbench` worker.
+Compose uses the shared `.env` through `env_file`. Helm uses `secrets.extra` or
+its existing Secret references; never store credentials in chart values committed
+to source control. Estimator credentials are optional and consumed only by the API.
+`EXACT_AGGREGATION_TASK_QUEUE` routes workflow/control and retention work;
+interactive scans always run on the separate bounded `sql_workbench` queue.
+'''
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_CH_USER"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Application-only read-only ClickHouse principal. Backend and SQL worker; required to run queries; cannot be the normal admin account."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_CH_PASSWORD"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Secret for the dedicated execution principal. Backend and SQL worker; at least 24 characters when provisioning; never supply the admin password."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_CH_SECURE"]
+    default = "false"
+    setups = ["S", "D", "H"]
+    text = "Native TLS for backend and SQL worker, with certificate verification enabled. Set true for a TLS listener."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_ESTIMATE_CH_USER"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Optional, separate estimator principal on the backend only. Missing credentials disable estimates, never queries."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_ESTIMATE_CH_PASSWORD"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Optional estimator secret on the backend only. At least 24 characters when provisioning; never reuse the execution account."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_DERIVED_METRICS_ENABLED"]
+    default = "false"
+    setups = ["S", "D", "H"]
+    text = "Backend and SQL worker. Enable only after the derived metrics schema and read-only grants are installed."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_RESULT_CACHE_SECONDS"]
+    default = "60"
+    setups = ["S", "D", "H"]
+    text = "Backend and SQL worker. Integer 0 to 3600; 0 disables same-actor exact-scope result reuse."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H"]
+    default = "1500"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer ceiling on one actor's rolling 24-hour query submissions."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_MAX_ORG_QUERIES_24H"]
+    default = "30000"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer ceiling on organization-wide rolling 24-hour query submissions."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H"]
+    default = "134217728"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer byte budget for one actor, including in-flight reservations."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H"]
+    default = "536870912"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer organization byte budget, including in-flight reservations."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_ESTIMATES_PER_MINUTE"]
+    default = "30"
+    setups = ["S", "D", "H"]
+    text = "Backend. Positive integer per-actor advisory-estimate rate ceiling."
+
+    [[part.section.row]]
+    keys = ["SQL_WORKBENCH_AUDIT_RETENTION_DAYS"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Retention worker. Unset preserves audit metadata indefinitely; a positive integer opts into deletion of expired terminal records older than this many days. Result bodies always expire after 24 hours."
+
 [[part]]
 heading = "4. Advanced tuning"
 body = '''

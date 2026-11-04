@@ -62,6 +62,17 @@ services:
     depends_on:
       sql-workbench-bootstrap:
         condition: service_completed_successfully
+  worker-sql-workbench:
+    restart: "no"
+    volumes: !reset []
+    environment:
+      DJANGO_SETTINGS_MODULE: tfc.settings.e2e
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      SQL_WORKBENCH_CH_USER: e2e_sql_service
+      SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
+    depends_on:
+      sql-workbench-bootstrap:
+        condition: service_completed_successfully
   sql-workbench-bootstrap:
     image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
     entrypoint: ["python", "/app/backend/bootstrap_sql.py"]

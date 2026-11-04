@@ -58,6 +58,35 @@ describe("QueryExamples", () => {
     expect(onUse).not.toHaveBeenCalled();
   });
 
+  it("searches descriptions and datasets while retaining the vetted SQL", () => {
+    const onUse = vi.fn();
+    const { rerender } = render(
+      <QueryExamples
+        examples={examples}
+        datasets={datasets}
+        onUse={onUse}
+        search="per model"
+      />,
+    );
+    expect(screen.getByText(examples[0].description)).toBeVisible();
+    expect(screen.queryByText(examples[1].title)).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: `Use example: ${examples[0].title}` }),
+    );
+    expect(onUse).toHaveBeenCalledWith(examples[0]);
+    rerender(
+      <QueryExamples
+        examples={examples}
+        datasets={datasets}
+        onUse={onUse}
+        search="no match"
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No matching examples",
+    );
+  });
+
   it("renders nothing without examples", () => {
     const { container } = render(
       <QueryExamples examples={[]} datasets={datasets} onUse={vi.fn()} />,

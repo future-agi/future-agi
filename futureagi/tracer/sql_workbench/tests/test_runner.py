@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import patch
 from uuid import uuid4
@@ -130,7 +130,7 @@ def test_query_budgets_include_each_resource():
 def test_direct_access_has_per_table_policies_and_no_base_grants_to_login():
     from datetime import timedelta
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     scope = Scope(uuid4(), uuid4(), uuid4(), now - timedelta(days=1), now, (uuid4(),))
     statements = direct_access_ddl(
         scope,
@@ -166,14 +166,14 @@ def test_direct_access_has_per_table_policies_and_no_base_grants_to_login():
 def test_direct_access_rejects_malicious_or_open_configuration(field, value):
     from datetime import timedelta
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     scope = Scope(uuid4(), uuid4(), uuid4(), now - timedelta(days=1), now)
-    kwargs = dict(
-        database="analytics",
-        principal="bi_reader",
-        password="secret" * 5,
-        cidr="10.3.0.0/24",
-    )
+    kwargs = {
+        "database": "analytics",
+        "principal": "bi_reader",
+        "password": "secret" * 5,
+        "cidr": "10.3.0.0/24",
+    }
     kwargs[field] = value
     with pytest.raises(ValueError):
         direct_access_ddl(scope, **kwargs)
@@ -186,8 +186,10 @@ def test_loose_server_profile_fails_closed():
         runner.verify_profile(client)
 
 
-def test_watchdog_cancellation_has_exactly_one_socket_reader():
+@pytest.mark.parametrize("reason", ["cancel", "timeout", "deadline", "control"])
+def test_watchdog_cancellation_has_exactly_one_socket_reader(monkeypatch, reason):
     import threading
+
     from tracer.sql_workbench.runner import QueryCancelled
 
     reading = threading.Event()
@@ -214,38 +216,59 @@ def test_watchdog_cancellation_has_exactly_one_socket_reader():
             self.cancelled = True
             signalled.set()
 
+    def control():
+        if reading.is_set() and reason == "deadline":
+            raise runner.QueryDeadlineExpired()
+        if reading.is_set() and reason == "control":
+            raise ConnectionError("private details")
+        return reading.is_set() and reason == "cancel"
+
+    if reason == "timeout":
+        monkeypatch.setattr(
+            runner.time, "monotonic", lambda: 31 if reading.is_set() else 0
+        )
+    expected = {
+        "cancel": QueryCancelled,
+        "timeout": runner.QueryTimedOut,
+        "deadline": runner.QueryDeadlineExpired,
+        "control": runner.QueryControlLost,
+    }[reason]
     client = BlockingClient([])
     with (
         patch("clickhouse_driver.Client", return_value=client),
         patch.object(runner, "connection_config", return_value={}),
     ):
-        with pytest.raises(QueryCancelled):
+        with pytest.raises(expected):
             runner.run(
                 "SELECT n FROM bounded",
                 uuid4(),
-                reading.is_set,
+                control,
                 table_filters=FILTERS,
             )
     assert readers == {main_thread}
     assert client.cancelled and client.closed
 
 
-def test_temporal_dispatch_targets_shipped_exact_aggregation_queue():
-    from tracer.sql_workbench.tasks import execute_sql
+@pytest.mark.parametrize("queue", ["tasks_xl", "exact_aggregation"])
+def test_temporal_dispatch_targets_shipped_control_queue(queue):
     from tfc.temporal.common.registry import TEMPORAL_ACTIVITY_MODULES
+    from tracer.sql_workbench.tasks import execute_sql
 
     assert "tracer.sql_workbench.tasks" in TEMPORAL_ACTIVITY_MODULES
     assert execute_sql._is_temporal_activity
-    assert execute_sql._metadata["queue"] == "exact_aggregation"
+    assert execute_sql._metadata["queue"] == "sql_workbench"
     assert execute_sql._metadata["max_retries"] == 0
     with patch(
         "tfc.temporal.drop_in.runner.start_activity", return_value="sql-query-test"
     ) as start:
         execute_sql.apply_async(
-            args=["job"], task_id="sql-query-test", dispatch_timeout_seconds=5
+            args=["job"],
+            queue=queue,
+            task_id="sql-query-test",
+            dispatch_timeout_seconds=5,
         )
     assert start.call_args.args[0] == "tracer.sql_workbench.execute"
-    assert start.call_args.kwargs["queue"] == "exact_aggregation"
+    assert start.call_args.kwargs["queue"] == queue
     assert start.call_args.kwargs["dispatch_timeout_seconds"] == 5
 
 
@@ -368,7 +391,7 @@ def test_a_run_still_contended_after_the_retry_window_fails(monkeypatch):
         patch("clickhouse_driver.Client", return_value=client),
         patch.object(runner, "connection_config", return_value={}),
     ):
-        with pytest.raises(SimultaneousQueries):
+        with pytest.raises(runner.QueryBusy, match="busy"):
             runner.run(
                 "SELECT n FROM scoped", uuid4(), lambda: False, table_filters=FILTERS
             )
@@ -420,3 +443,88 @@ def test_service_profile_allows_only_the_scope_filter_to_change():
     assert "additional_table_filters CHANGEABLE_IN_READONLY" in statement
     assert statement.count("CHANGEABLE_IN_READONLY") == 1
     assert "readonly = 1 READONLY" in statement
+
+
+@pytest.mark.parametrize("kind", ["service", "estimate", "direct"])
+def test_provisioned_password_hashes_have_independent_salts(kind):
+    import hashlib
+    import re
+
+    from tracer.sql_workbench.provision import service_access_ddl
+
+    password = "synthetic-long-credential-for-salt-test"
+    clauses = []
+    for _ in range(2):
+        kwargs = {
+            "database": "analytics",
+            "principal": "salt_test",
+            "password": password,
+            "cidr": "10.2.0.0/24",
+        }
+        if kind == "direct":
+            from datetime import timedelta
+
+            end = datetime.now(UTC)
+            scope = Scope(uuid4(), uuid4(), uuid4(), end - timedelta(days=1), end, ())
+            statements = direct_access_ddl(scope, **kwargs)
+        else:
+            statements = service_access_ddl(**kwargs, estimate=kind == "estimate")
+        ddl = "\n".join(statements)
+        assert password not in ddl
+        match = re.search(r"sha256_hash BY '([0-9a-f]{64})' SALT '([0-9a-f]{64})'", ddl)
+        assert match
+        digest, salt = match.groups()
+        assert digest == hashlib.sha256((password + salt).encode()).hexdigest()
+        clauses.append((digest, salt))
+    assert clauses[0] != clauses[1]
+
+
+def test_server_execution_timeout_has_safe_typed_error():
+    client = Contended([[("n", "Int64")], (1,)], busy=1, code=159)
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        with pytest.raises(runner.QueryTimedOut, match="30-second"):
+            runner.run(
+                "SELECT n FROM bounded", uuid4(), lambda: False, table_filters=FILTERS
+            )
+    assert client.closed and client.sent == 1
+
+
+@pytest.mark.parametrize("kind", ["socket", "driver"])
+def test_native_socket_timeout_has_safe_typed_error(kind):
+    from clickhouse_driver.errors import SocketTimeoutError
+
+    class TimedOut(Client):
+        def execute_iter(self, query, **kwargs):
+            if kind == "driver":
+                raise SocketTimeoutError("transport details")
+            raise TimeoutError("transport details")
+
+    client = TimedOut([])
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        with pytest.raises(runner.QueryTimedOut, match="30-second"):
+            runner.run(
+                "SELECT n FROM bounded", uuid4(), lambda: False, table_filters=FILTERS
+            )
+    assert client.closed
+
+
+def test_output_rows_do_not_poll_the_control_database():
+    from unittest.mock import Mock
+
+    check = Mock(return_value=False)
+    client = Client([[("n", "Int64")], *[(i,) for i in range(1000)]])
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        output = runner.run(
+            "SELECT n FROM bounded", uuid4(), check, table_filters=FILTERS
+        )
+    assert len(output["rows"]) == 1000
+    assert check.call_count < 10

@@ -20,7 +20,7 @@ dependencies = [
 
     "clickhouse-driver",
     "sqlglot==28.10.1",
-    "pyarrow>=20,<24",
+    "pyarrow>=23.0.1,<24",
     "clickhouse-cityhash==1.0.2.5",
     "lz4==4.4.5",
     # HTTP-based CH client used by tracer/services/clickhouse/v2/apply_schema.py.

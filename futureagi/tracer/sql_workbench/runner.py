@@ -64,6 +64,30 @@ class QueryCancelled(Exception):
     pass
 
 
+class QueryTimedOut(QueryUnavailable):
+    def __init__(self):
+        super().__init__(
+            "Query exceeded the 30-second execution limit. Narrow the window or simplify the query."
+        )
+
+
+class QueryDeadlineExpired(QueryUnavailable):
+    def __init__(self):
+        super().__init__("Query deadline expired. Run the query again.")
+
+
+class QueryControlLost(QueryUnavailable):
+    def __init__(self):
+        super().__init__(
+            "Query stopped because its control connection was unavailable. Retry later."
+        )
+
+
+class QueryBusy(QueryUnavailable):
+    def __init__(self):
+        super().__init__("SQL service is busy. Retry in a few seconds.")
+
+
 # The shared service principal runs at most max_concurrent_queries_for_user
 # statements at once. ClickHouse turns a statement away with this code before
 # it reads anything, so a run retries its opening statements for a short,
@@ -81,21 +105,21 @@ def connection_config():
         raise QueryUnavailable(
             "Configure the dedicated read-only SQL connection first."
         )
-    return dict(
-        host=config["CH25_HOST"],
-        port=int(config.get("CH25_TCP_PORT") or 9000),
-        database=config["CH25_DATABASE"],
-        user=username,
-        password=password,
-        secure=os.environ.get("SQL_WORKBENCH_CH_SECURE", "false").lower() == "true",
-        verify=True,
-        connect_timeout=3,
-        send_receive_timeout=MAX_SECONDS + 2,
+    return {
+        "host": config["CH25_HOST"],
+        "port": int(config.get("CH25_TCP_PORT") or 9000),
+        "database": config["CH25_DATABASE"],
+        "user": username,
+        "password": password,
+        "secure": os.environ.get("SQL_WORKBENCH_CH_SECURE", "false").lower() == "true",
+        "verify": True,
+        "connect_timeout": 3,
+        "send_receive_timeout": MAX_SECONDS + 2,
         # readonly=1 profiles reject client-supplied setting assignments; the
         # provisioned profile exempts only additional_table_filters. Verify the
         # server-side ceilings below, then send reads carrying that one filter.
-        client_name="futureagi-sql-workbench",
-    )
+        "client_name": "futureagi-sql-workbench",
+    }
 
 
 PROFILE_MESSAGE = (
@@ -138,13 +162,13 @@ def verify_profile(client, *, estimate=False):
 def cell(value):
     if isinstance(value, int) and not isinstance(value, bool):
         return value if abs(value) <= 2**53 - 1 else str(value)
-    if value is None or isinstance(value, (str, bool)):
+    if value is None or isinstance(value, str | bool):
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, Decimal):
         return str(value)
-    if isinstance(value, (datetime, date)):
+    if isinstance(value, datetime | date):
         return value.isoformat()
     if isinstance(value, UUID):
         return str(value)
@@ -160,6 +184,7 @@ def run(compiled_sql, query_id, cancelled, *, table_filters):
     to every read of each physical source, independently of the AST rewrite.
     """
     from clickhouse_driver import Client
+    from clickhouse_driver.errors import SocketTimeoutError
 
     if (
         not isinstance(table_filters, str)
@@ -171,26 +196,43 @@ def run(compiled_sql, query_id, cancelled, *, table_filters):
     client = Client(**connection_config())
     stop = threading.Event()
     aborted = threading.Event()
+    abort_reason = []
     started = time.monotonic()
+
+    def check_control():
+        if aborted.is_set():
+            raise abort_reason[0]
+        try:
+            user_cancelled = cancelled()
+        except QueryDeadlineExpired:
+            raise
+        except Exception as exc:
+            raise QueryControlLost() from exc
+        if user_cancelled:
+            raise QueryCancelled()
+        if time.monotonic() - started >= MAX_SECONDS:
+            raise QueryTimedOut()
 
     def monitor():
         from django.db import close_old_connections
 
         try:
             while not stop.wait(0.5):
-                # Fail closed on a lost database/control-plane connection.
                 try:
-                    should_cancel = (
-                        time.monotonic() - started > MAX_SECONDS or cancelled()
-                    )
-                except Exception:
-                    should_cancel = True
-                if should_cancel:
+                    check_control()
+                except (QueryCancelled, QueryUnavailable) as exc:
+                    abort_reason.append(exc)
                     aborted.set()
                     try:
                         client.connection.send_cancel()
                     except Exception:
-                        pass
+                        # The native reader still owns the socket and its timeout;
+                        # never drain it from this watchdog thread.
+                        import logging
+
+                        logging.getLogger(__name__).warning(
+                            "SQL cancellation send failed"
+                        )
                     return
         finally:
             close_old_connections()
@@ -200,8 +242,7 @@ def run(compiled_sql, query_id, cancelled, *, table_filters):
         retry_until = time.monotonic() + START_RETRY_SECONDS
         delay = 0.05
         while True:
-            if aborted.is_set() or cancelled():
-                raise QueryCancelled()
+            check_control()
             try:
                 verify_profile(client)
                 # Native cancellation targets THIS connection, not KILL
@@ -221,11 +262,10 @@ def run(compiled_sql, query_id, cancelled, *, table_filters):
                 header = next(stream)
                 break
             except Exception as exc:
-                if (
-                    getattr(exc, "code", None) != TOO_MANY_SIMULTANEOUS_QUERIES
-                    or time.monotonic() + delay > retry_until
-                ):
+                if getattr(exc, "code", None) != TOO_MANY_SIMULTANEOUS_QUERIES:
                     raise
+                if time.monotonic() + delay > retry_until:
+                    raise QueryBusy() from exc
                 # The rejected statement read nothing; reconnect and retry.
                 client.disconnect()
                 time.sleep(delay)
@@ -237,8 +277,11 @@ def run(compiled_sql, query_id, cancelled, *, table_filters):
         size = len(json.dumps(columns).encode())
         truncated = False
         for record in stream:
+            # Only the watchdog polls PostgreSQL during a scan, not each row.
             if aborted.is_set():
-                raise QueryCancelled()
+                raise abort_reason[0]
+            if time.monotonic() - started >= MAX_SECONDS:
+                raise QueryTimedOut()
             if len(rows) == MAX_RESULT_ROWS:
                 truncated = True
                 client.connection.send_cancel()
@@ -250,8 +293,7 @@ def run(compiled_sql, query_id, cancelled, *, table_filters):
                     "Result exceeds 8 MB. Aggregate or narrow the query."
                 )
             rows.append(row)
-        if aborted.is_set() or cancelled():
-            raise QueryCancelled()
+        check_control()
         return {
             "columns": columns,
             "rows": rows,
@@ -261,6 +303,12 @@ def run(compiled_sql, query_id, cancelled, *, table_filters):
             "elapsed_ms": round((time.monotonic() - started) * 1000),
         }
     except Exception as exc:
+        if aborted.is_set():
+            raise abort_reason[0] from exc
+        if getattr(exc, "code", None) == 159 or isinstance(
+            exc, SocketTimeoutError | TimeoutError
+        ):
+            raise QueryTimedOut() from exc
         if getattr(exc, "code", None) in {60, 81, 497}:
             raise QueryUnavailable(
                 "SQL catalog source unavailable. Apply its schema and read-only grants."
@@ -374,7 +422,9 @@ def derived_metrics_availability():
     ):
         return False, "Derived metrics schema is not enabled."
     import re
+
     from clickhouse_driver import Client
+
     from .catalog import COLUMNS
 
     client = None
