@@ -947,7 +947,7 @@
 ### ESC-E2E-009 — Pick a sensitivity preset instead of typing thresholds
 
 **Goal:** An administrator picks a sensitivity preset instead of typing eight thresholds, and exactly that preset is saved for the workspace  
-**Spec:** `flows/error-feed/escalation-presets.spec.ts:26`  
+**Spec:** `flows/error-feed/escalation-presets.spec.ts:31`  
 **Tags:** —
 
 **User steps:**

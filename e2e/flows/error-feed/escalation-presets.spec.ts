@@ -16,6 +16,11 @@ function preset(dialog: Locator, label: string) {
     .getByRole('button', { name: new RegExp(`^${label}:`) });
 }
 
+// The Fine-tune "Edited" chip renders only while Custom is selected.
+function edited(dialog: Locator) {
+  return dialog.getByText('Edited', { exact: true });
+}
+
 async function expectPressed(dialog: Locator, label: string) {
   const pressed = dialog.getByRole('group', { name: 'Sensitivity', exact: true })
     .getByRole('button', { pressed: true });
@@ -37,7 +42,7 @@ test('ESC-E2E-009: Pick a sensitivity preset instead of typing thresholds', {
       'picking Balanced stores the server defaults in PG and the API, revision +3'],
   }),
 }, async ({ browser, scopeActors, scopeProbe }, testInfo) => {
-  // Five bounded save/reopen rounds plus actor provisioning (120s).
+  // Three bounded open/save rounds plus actor provisioning (120s).
   test.setTimeout(900_000);
   const actor = scopeActors.ownerA;
   await testInfo.attach('actor', { contentType: 'application/json', body: JSON.stringify({
@@ -50,9 +55,11 @@ test('ESC-E2E-009: Pick a sensitivity preset instead of typing thresholds', {
 
   await test.step('UI: Balanced is the default and Calm fills all eight values', async () => {
     await expectPressed(dialog, 'Balanced');
+    await expect(edited(dialog)).toHaveCount(0);
     await expectValues(dialog, defaults);
     await preset(dialog, 'Calm').click();
     await expectPressed(dialog, 'Calm');
+    await expect(edited(dialog)).toHaveCount(0);
     await expectValues(dialog, CALM);
     await saveSettings(page, dialog);
   });
@@ -66,7 +73,7 @@ test('ESC-E2E-009: Pick a sensitivity preset instead of typing thresholds', {
     await expectValues(dialog, CALM);
     await dialog.getByRole('spinbutton', { name: LABELS.min_findings, exact: true }).fill('60');
     await expectPressed(dialog, 'Custom');
-    await expect(dialog.getByText('Edited', { exact: true })).toBeVisible({ timeout: UI_READY });
+    await expect(edited(dialog)).toBeVisible({ timeout: UI_READY });
     await saveSettings(page, dialog);
   });
   await expectStored(scopeProbe, actor, tuned, initial.revision + 2);
@@ -77,6 +84,7 @@ test('ESC-E2E-009: Pick a sensitivity preset instead of typing thresholds', {
     await expectValues(dialog, tuned);
     await preset(dialog, 'Balanced').click();
     await expectPressed(dialog, 'Balanced');
+    await expect(edited(dialog)).toHaveCount(0);
     await expectValues(dialog, defaults);
     await saveSettings(page, dialog);
   });
