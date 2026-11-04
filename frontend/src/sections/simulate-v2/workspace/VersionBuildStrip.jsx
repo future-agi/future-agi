@@ -30,7 +30,9 @@ export default function VersionBuildStrip({ env, envState, patch, onGo }) {
   }, [build]);
 
   const prog = versionBuildProgress(build, now);
-  const label = build ? envLabelOf(env, envState, build.label) : "";
+  const label = build
+    ? build.shownLabel || envLabelOf(env, envState, build.label)
+    : "";
 
   useEffect(() => {
     if (!build || !prog?.done || finished.current === build.at) return;

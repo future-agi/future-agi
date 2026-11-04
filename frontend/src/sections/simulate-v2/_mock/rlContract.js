@@ -35,6 +35,8 @@ import {
   environmentVersions,
   envLineage,
   holdsInEnv,
+  envChangePatch,
+  editsLandInPlace,
   nextEnvVersion,
   pendingEnvChanges,
   WORLD_CONFIG_KEYS,
@@ -1012,16 +1014,31 @@ export const contractEditPlan = (env, envState, edit) => {
     };
   };
 
+  /* Once a run pins the version, the correction joins the unsaved changes
+     instead (TH-8931): reviewed in Review changes with the rest, saved there. */
+  const draft = !editsLandInPlace(envState);
+  const draftPatch = (latest = envState) => {
+    const now = new Date().toISOString();
+    const label = nextEnvVersion(env, latest).label;
+    return {
+      ...apply(latest, label, now),
+      ...envChangePatch(latest, kind, detail),
+    };
+  };
+
   return {
     ok: true,
     title,
     subject,
     next,
     affected,
-    costLine,
+    costLine: draft
+      ? `${n ? `${plural(n, "scenario")} ${subject} will be marked Re-check when you save.` : `There are no scenarios ${subject}, so none needs a re-check.`} It joins your unsaved changes, to review and save with the rest.`
+      : costLine,
     detail,
     kind,
-    patch,
+    draft,
+    patch: draft ? draftPatch : patch,
   };
 };
 

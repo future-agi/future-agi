@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Box, Stack, Typography, Button, Tooltip } from "@mui/material";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
@@ -14,6 +14,7 @@ import {
 } from "../_mock/versions";
 import { envLabelOf, pendingCostOf } from "../_mock/envVersionKinds";
 import ReviewChangesDrawer from "./ReviewChangesDrawer";
+import { onOpenReviewChanges } from "./reviewChangesBus";
 import { envVersionNameOf } from "../_mock/codeRefs";
 import { currentEnvSnapshot } from "../_mock/envSnapshot";
 import useEnvViewAs from "./useEnvViewAs";
@@ -65,6 +66,9 @@ export default function VersionBar({
   const [historyAnchor, setHistoryAnchor] = useState(null);
   /* The unsaved edits, in Review changes; Discard asks first. */
   const [editsAnchor, setEditsAnchor] = useState(null);
+  const failedCount = (envState?.failedEnvChanges || []).length;
+  /* Opened from elsewhere too — a file's proposal just added to the draft. */
+  useEffect(() => onOpenReviewChanges(() => setEditsAnchor(true)), []);
   const [discarding, setDiscarding] = useState(false);
   const discardPatch = pending.length
     ? discardEnvChangesPatch(env, envState)
@@ -174,51 +178,62 @@ export default function VersionBar({
         {/* Drift is said once, by the chip in the environment header. */}
         <Box flex={1} />
 
-        {pending.length > 0 && !viewAs && (
-          <Stack direction="row" alignItems="center" spacing={0.75}>
-            <Button
-              size="small"
-              onClick={() => setEditsAnchor(true)}
-              endIcon={
-                <Iconify icon="solar:alt-arrow-right-linear" width={14} />
-              }
-              sx={{
-                minWidth: 0,
-                color: "text.secondary",
-                typography: "s3",
-                fontWeight: 400,
-                fontVariantNumeric: "tabular-nums",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {`${pending.length} unsaved edit${pending.length === 1 ? "" : "s"} · `}
-              <Box
-                component="span"
-                sx={{ color: "text.secondary", fontWeight: 600, ml: 0.5 }}
-              >
-                {cost?.text}
-              </Box>
-            </Button>
-            {canEdit && (
+        {(pending.length > 0 ||
+          (envState?.failedEnvChanges || []).length > 0) &&
+          !viewAs && (
+            <Stack direction="row" alignItems="center" spacing={0.75}>
               <Button
                 size="small"
-                variant="outlined"
-                onClick={() =>
-                  onSave ? onSave() : patch(saveEnvChangesPatch(env, envState))
+                onClick={() => setEditsAnchor(true)}
+                endIcon={
+                  <Iconify icon="solar:alt-arrow-right-linear" width={14} />
                 }
                 sx={{
                   minWidth: 0,
-                  flexShrink: 0,
+                  color: "text.secondary",
+                  typography: "s3",
+                  fontWeight: 400,
+                  fontVariantNumeric: "tabular-nums",
                   whiteSpace: "nowrap",
-                  color: "text.primary",
-                  borderColor: "divider",
                 }}
               >
-                {`Save release ${cost?.label}`}
+                {pending.length ? (
+                  <>
+                    {`${pending.length} unsaved edit${pending.length === 1 ? "" : "s"} · `}
+                    <Box
+                      component="span"
+                      sx={{ color: "text.secondary", fontWeight: 600, ml: 0.5 }}
+                    >
+                      {cost?.text}
+                    </Box>
+                  </>
+                ) : (
+                  /* Saved, with a change that couldn't apply still waiting for a fix. */
+                  `${failedCount} change${failedCount === 1 ? "" : "s"} couldn't apply`
+                )}
               </Button>
-            )}
-          </Stack>
-        )}
+              {canEdit && pending.length > 0 && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() =>
+                    onSave
+                      ? onSave()
+                      : patch(saveEnvChangesPatch(env, envState))
+                  }
+                  sx={{
+                    minWidth: 0,
+                    flexShrink: 0,
+                    whiteSpace: "nowrap",
+                    color: "text.primary",
+                    borderColor: "divider",
+                  }}
+                >
+                  {`Save release ${cost?.label}`}
+                </Button>
+              )}
+            </Stack>
+          )}
         <ReviewChangesDrawer
           open={!!editsAnchor}
           onClose={() => setEditsAnchor(null)}
@@ -233,9 +248,11 @@ export default function VersionBar({
             setEditsAnchor(null);
             setDiscarding(true);
           }}
-          onSave={() => {
+          onSave={(note) => {
             setEditsAnchor(null);
-            onSave ? onSave() : patch(saveEnvChangesPatch(env, envState));
+            onSave
+              ? onSave(note)
+              : patch(saveEnvChangesPatch(env, envState, { note }));
           }}
         />
         <ConfirmDialog

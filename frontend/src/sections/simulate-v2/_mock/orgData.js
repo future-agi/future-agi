@@ -21,6 +21,7 @@
   or re-ground), export only what's permitted.
 */
 import { versionBuildOf } from "./versionBuild";
+import { beforeOfFields } from "./editReview";
 import {
   envChangePatch,
   nextEnvVersion,
@@ -780,7 +781,14 @@ export const acceptDataPatch = (
   envState,
   proposal,
   picked,
-  { conflictPick, scenarioRows, edits = {}, cast = [], inVersion = null } = {},
+  {
+    conflictPick,
+    scenarioRows,
+    edits = {},
+    cast = [],
+    inVersion = null,
+    shownLabel = null,
+  } = {},
 ) => {
   const now = new Date().toISOString();
   const take = proposal.items.filter(
@@ -854,6 +862,7 @@ export const acceptDataPatch = (
       /* The new version builds before it's ready; runs wait for it. */
       versionBuild: versionBuildOf({
         label: minted.label,
+        shownLabel,
         from:
           envState?.activeEnvVersion || list[list.length - 1]?.label || null,
         rules: ruleChanges.map((r) => r.id),
@@ -903,6 +912,153 @@ export const acceptDataPatch = (
     }),
     ruleIds: ruleChanges.map((r) => r.id),
   };
+};
+
+/**
+ * A file's proposal, accepted into the environment's unsaved changes rather
+ * than saved straight away (TH-8931): one change per rule, table, set of
+ * scenarios, actors, tool rule or starting state — each with its file as the
+ * source and what it builds — so Review changes lists them, each can be
+ * undone, and Save makes the version. Items that can't apply come back as
+ * `failed`, with their reason and the scenarios they hold up.
+ * Returns { patches, failed }: patches to dispatch in order.
+ */
+export const draftDataPatches = (
+  env,
+  envState,
+  proposal,
+  picked,
+  opts = {},
+) => {
+  const label = nextEnvVersion(env, envState).label;
+  const { ruleIds: _ruleIds, ...rest } = acceptDataPatch(
+    env,
+    envState,
+    proposal,
+    picked,
+    { ...opts, inVersion: label },
+  );
+  const nameOf = (id) =>
+    (envState?.sources || []).find((x) => x.id === id)?.name || null;
+  const take = proposal.items.filter(
+    (i) => picked.includes(i.id) && !i.blocking,
+  );
+  const fileOf = (kind) =>
+    nameOf(take.find((i) => i.kind === kind)?.cite?.sourceId);
+  let cur = envState;
+  const patches = [];
+  const add = (fields, kind, detail, file, build) => {
+    const edit = envChangePatch(cur, kind, detail);
+    const list = edit.unsavedEnvChanges;
+    /* Each change carries what it replaced and its file, so it can be
+       undone on its own and Review changes can name where it came from. */
+    const p = {
+      ...fields,
+      ...edit,
+      ...(list && {
+        unsavedEnvChanges: [
+          ...list.slice(0, -1),
+          {
+            ...list[list.length - 1],
+            before: beforeOfFields(cur, fields),
+            source: file ? `file:${file}` : "hand",
+            ...(build && { build }),
+          },
+        ],
+      }),
+    };
+    patches.push(p);
+    cur = { ...cur, ...p };
+  };
+  /* The files join the environment first — not a change of their own. */
+  patches.push({ sources: rest.sources });
+  cur = { ...cur, sources: rest.sources };
+
+  const had = (k) => (envState?.[k] || []).length;
+  (rest.ruleChanges || [])
+    .slice(had("ruleChanges"))
+    .forEach((r) =>
+      add(
+        { ruleChanges: [...(cur.ruleChanges || []), r] },
+        "rules",
+        `Rule ${r.id} added: ${r.to}`,
+        r.sourceName,
+        { kind: "rules", id: r.id },
+      ),
+    );
+  (rest.dataImports || []).slice(had("dataImports")).forEach((t, n) => {
+    const file = nameOf(t.sourceId);
+    add(
+      {
+        dataImports: [...(cur.dataImports || []), t],
+        ...(n === 0 &&
+          rest.dataMode !== cur.dataMode && {
+            dataMode: rest.dataMode,
+          }),
+      },
+      "seed",
+      `Table ${t.name} seeded from ${file || "your records"} · ${t.rows} rows`,
+      file,
+      { kind: "tables", name: t.name, rows: t.rows, source: file },
+    );
+  });
+  const rows = (rest.scenarios || []).slice(had("scenarios"));
+  if (rows.length)
+    add(
+      { scenarios: [...(cur.scenarios || []), ...rows] },
+      "scenarios",
+      `${rows.length} proposed scenario${rows.length === 1 ? "" : "s"} added`,
+      fileOf("scenario"),
+      { kind: "scenarios", ids: rows.map((r) => r.id) },
+    );
+  const ACTOR_KEYS = ["customActors", "actorEdits", "actors"];
+  const actorFields = Object.fromEntries(
+    ACTOR_KEYS.filter((k) => k in rest).map((k) => [k, rest[k]]),
+  );
+  if (Object.keys(actorFields).length)
+    add(
+      actorFields,
+      "actors",
+      take
+        .filter((i) => i.kind === "actor")
+        .map((i) => i.title)
+        .join(" · ") || "Actors from the file",
+      fileOf("actor"),
+    );
+  if (rest.toolEnv)
+    add(
+      { toolEnv: rest.toolEnv },
+      "toolbehaviour",
+      take
+        .filter((i) => i.kind === "tool")
+        .map((i) => i.title)
+        .join(" · ") || "Approval rules on tools",
+      fileOf("tool"),
+    );
+  if (rest.startingState)
+    add(
+      { startingState: rest.startingState },
+      "seed",
+      take.find((i) => i.kind === "state")?.title || "Starting state set",
+      fileOf("state"),
+    );
+
+  const failed = proposal.items
+    .filter((i) => i.blocking)
+    .map((i) => {
+      const sourceId =
+        i.sourceId || i.cite?.sourceId || i.options?.[0]?.sourceId;
+      return {
+        id: `fail-${i.id}-${Date.now().toString(36)}`,
+        detail: i.title,
+        reason: i.detail || "It couldn't be applied.",
+        source: nameOf(sourceId),
+        sourceId,
+        scenarios: i.affects || [],
+        at: new Date().toISOString(),
+      };
+    });
+  return { patches, failed };
 };
 
 /* ── after import: usage, refresh, export ───────────────────────────────── */

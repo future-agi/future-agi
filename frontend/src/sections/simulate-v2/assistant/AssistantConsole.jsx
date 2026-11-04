@@ -49,6 +49,7 @@ export default function StudioConsole({
   frozen = false,
   frozenReason,
   onCollapse,
+  focusTurnId = null,
 }) {
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState([]);
@@ -242,7 +243,27 @@ export default function StudioConsole({
                   <ChatTurn key={t.id} turn={t} chat={chat} />
                 ))}
               {turns.map((turn, i) => (
-                <Stack key={turn.id} spacing={4}>
+                <Stack
+                  key={turn.id}
+                  spacing={4}
+                  /* The message a reviewed change came from: scrolled to and
+                     marked, so "Open in chat" lands on it. */
+                  ref={(el) =>
+                    el &&
+                    turn.id === focusTurnId &&
+                    el.scrollIntoView({ block: "center", behavior: "smooth" })
+                  }
+                  sx={
+                    turn.id === focusTurnId
+                      ? {
+                          bgcolor: "action.selected",
+                          borderRadius: "8px",
+                          p: 1,
+                          m: -1,
+                        }
+                      : undefined
+                  }
+                >
                   <Turn turn={turn} />
                   {chat.turns
                     .filter((t) => t.anchor === i + 1)
@@ -588,6 +609,7 @@ export default function StudioConsole({
 }
 
 StudioConsole.propTypes = {
+  focusTurnId: PropTypes.string,
   onCollapse: PropTypes.func,
   turns: PropTypes.array,
   running: PropTypes.bool,

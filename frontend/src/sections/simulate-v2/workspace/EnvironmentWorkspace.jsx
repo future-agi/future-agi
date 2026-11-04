@@ -66,6 +66,7 @@ import { agentRecordOf } from "../_mock/envCopy";
 import { foundValuesOf } from "../agents/foundFacts";
 import NextStepBanner from "./NextStepBanner";
 import VersionBuildStrip, { VersionChangeNote } from "./VersionBuildStrip";
+import { onFocusChat } from "./reviewChangesBus";
 import { changedTabsOf } from "../_mock/versionBuild";
 import {
   addDesignFilesPatch,
@@ -366,6 +367,9 @@ export default function EnvironmentWorkspace() {
   /* The builder console, unified with the build/review screen. A prototype
      chat: mock replies, seeded greeting once the env resolves. */
   const [turns, setTurns] = useState([]);
+  /* "Open in chat" from Review changes: the message the edit came from —
+     the last one sent before it. */
+  const [focusTurnId, setFocusTurnId] = useState(null);
   const [chatRunning, setChatRunning] = useState(false);
   /* Builder pane can fold down to a rail so the panels get the full width.
      Remembered per browser — a viewer convenience, not shared state. */
@@ -628,6 +632,26 @@ export default function EnvironmentWorkspace() {
     /* No run is made here — the first run is started from Run simulation. */
   }, [env?.id, state.hydrated]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(
+    () =>
+      onFocusChat((at) => {
+        const t = new Date(at || 0).getTime();
+        const sent = turns
+          .map((x) => ({ x, ms: Number(String(x.id).split("-")[1]) || 0 }))
+          .filter(({ x, ms }) => x.role === "user" && ms && ms <= t + 1000)
+          .sort((a, b) => b.ms - a.ms)[0];
+        setCollapsed(false);
+        setFocusTurnId(sent?.x.id || null);
+        if (!sent)
+          enqueueSnackbar(
+            "That message is from an earlier visit, so it isn't in this chat any more.",
+            { variant: "info" },
+          );
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [turns],
+  );
+
   /* "New in vN" labels clear once their tab has been looked at: leaving a
      tab that showed them marks it seen. */
   const lastStep = useRef(step);
@@ -813,9 +837,15 @@ export default function EnvironmentWorkspace() {
   /* Saving: straight through, unless a teammate saved this environment
      while these edits were being made — then both changes are shown first. */
   const clash = teammateSaveOf(env, envState);
-  const requestSave = (after) => {
+  const requestSave = (after, note) => {
     if (clash) return setClashReq({ after: after || null });
-    patch(saveEnvChangesPatch(env, envState));
+    /* The number Review changes showed on Save is the one the build names. */
+    patch(
+      saveEnvChangesPatch(env, envState, {
+        note,
+        shownLabel: pendingCostOf(env, envState)?.label,
+      }),
+    );
     return after?.();
   };
   /* Runs always use a saved version; with edits unsaved, the person picks —
@@ -935,7 +965,7 @@ export default function EnvironmentWorkspace() {
     if (!gates.canRun) return gates.runReason;
     if (viewingOlder) return "Back to current to run";
     if (versionBuilding)
-      return `Environment ${envLabelOf(env, envState, envState.versionBuild.label)} is building — runs start once it's ready`;
+      return `Environment ${envState.versionBuild.shownLabel || envLabelOf(env, envState, envState.versionBuild.label)} is building — runs start once it's ready`;
     if (!readiness.ready) return readiness.reason;
     if (firstBlockingGap) return `${firstBlockingGap.title} — see Needs input`;
     if (runnable === 0) {
@@ -1444,7 +1474,9 @@ export default function EnvironmentWorkspace() {
                   multiSelect: false,
                   options: [
                     {
-                      label: `Save release ${plan.next}`,
+                      label: plan.draft
+                        ? "Add to unsaved changes"
+                        : `Save release ${plan.next}`,
                       description: plan.detail,
                     },
                     {
@@ -1469,8 +1501,15 @@ export default function EnvironmentWorkspace() {
                     say(again.error);
                     return;
                   }
-                  patch(again.patch(latest));
+                  /* From the chat: Review changes names it as the source. */
+                  patch({ ...again.patch(latest), changeSource: "chat" });
                   const n = again.affected.length;
+                  if (again.draft) {
+                    say(
+                      `Added to your unsaved changes — ${again.detail}. Review changes lists it with this message as its source; save there to make environment ${again.next}.`,
+                    );
+                    return;
+                  }
                   say(
                     `Saved as environment ${again.next} — ${again.detail}. ${n ? `${n} scenario${n === 1 ? " is" : "s are"} marked Re-check on the Scenarios tab.` : "No scenario needed a re-check."} The Contract tab shows the change.`,
                   );
@@ -1747,7 +1786,7 @@ export default function EnvironmentWorkspace() {
                   {awaitingApproval
                     ? "Awaiting approval"
                     : versionBuilding
-                      ? `Building ${envLabelOf(env, envState, envState.versionBuild.label)}`
+                      ? `Building ${envState.versionBuild.shownLabel || envLabelOf(env, envState, envState.versionBuild.label)}`
                       : chipLive
                         ? "Ready"
                         : "Building"}
@@ -3304,7 +3343,7 @@ export default function EnvironmentWorkspace() {
         patch={patch}
         locked={readOnlyEnv}
         onOpenHistory={() => go("history")}
-        onSave={() => requestSave()}
+        onSave={(note) => requestSave(null, note)}
       />
       {nextStep && (
         <Box sx={{ px: 3, pt: 1.5 }}>
@@ -3387,6 +3426,7 @@ export default function EnvironmentWorkspace() {
           <AssistantConsole
             onCollapse={() => setCollapsed(true)}
             turns={turns}
+            focusTurnId={focusTurnId}
             running={chatRunning}
             chips={chips}
             onSend={sendChat}

@@ -13,6 +13,8 @@
  * scenario someone rewrote in between.
  */
 
+import { versionBuildOf } from "./versionBuild";
+
 const iso = (daysAgo) => new Date(Date.now() - daysAgo * 86400000).toISOString();
 
 /* ── environment versions ────────────────────────────────────────────────── */
@@ -22,6 +24,14 @@ const iso = (daysAgo) => new Date(Date.now() - daysAgo * 86400000).toISOString()
  * handlers, rules. Scenarios carry the version they were proved against, so a
  * world change that invalidates a proof is visible rather than silent.
  */
+/* The earliest run's start, a minute earlier — when a build with no recorded time must have existed. */
+const firstRunAt = (envState) => {
+  const t = (envState?.runs || [])
+    .map((r) => new Date(r.startedAt || r.at || r.createdAt || 0).getTime())
+    .filter((x) => x > 0);
+  return t.length ? new Date(Math.min(...t) - 60000).toISOString() : null;
+};
+
 export const environmentVersions = (env, envState) => {
   /* Minted versions win. An environment with none recorded has exactly one:
      its first build. (It used to be handed an invented three-version history,
@@ -32,7 +42,10 @@ export const environmentVersions = (env, envState) => {
   const list = stored?.length ? [...stored].reverse() : [{
     id: `${env?.id}-v1`,
     label: "v1",
-    createdAt: env?.adoptedAt || new Date().toISOString(),
+    /* Without a recorded build time, the first build came before its first
+       run — never "now", or saving the next version would stamp both with
+       the same moment and fold them into one snapshot. */
+    createdAt: env?.adoptedAt || firstRunAt(envState) || new Date().toISOString(),
     note: envState?.agent ? "First build, read from the agent." : "First build.",
     scenarios: envState?.scenarios?.length || 0,
     changed: ["contract", "seed"],
@@ -187,12 +200,33 @@ export const discardEnvChangesPatch = (env, envState) => {
 };
 
 /** Save the pending edits as the next version, which runs then use. */
-export const saveEnvChangesPatch = (env, envState) => {
+export const saveEnvChangesPatch = (env, envState, { note, shownLabel } = {}) => {
   const list = envState?.envVersions?.length
     ? envState.envVersions
     : [...environmentVersions(env, envState)].reverse();
-  const minted = nextEnvVersion(env, envState);
-  return { envVersions: [...list, minted], activeEnvVersion: minted.label, unsavedEnvChanges: [], draftBase: undefined };
+  const named = note?.trim() || null;
+  const minted = nextEnvVersion(env, envState, named ? { note: named } : {});
+  /* Changes a file proposed build in place: new tables seed, rules and
+     scenarios appear (versionBuild.js). Hand and chat edits need no build. */
+  const built = pendingEnvChanges(envState).map((c) => c.build).filter(Boolean);
+  const pick = (kind) => built.filter((b) => b.kind === kind);
+  const versionBuild = built.length
+    ? versionBuildOf({
+      label: minted.label,
+      shownLabel: shownLabel || null,
+      from: envState?.activeEnvVersion || null,
+      rules: pick("rules").map((b) => b.id),
+      tables: pick("tables").map(({ name, rows, source }) => ({ name, rows, source })),
+      scenarios: pick("scenarios").flatMap((b) => b.ids || []),
+    })
+    : null;
+  return {
+    envVersions: [...list, { ...minted, ...(named && { name: named }) }],
+    activeEnvVersion: minted.label,
+    unsavedEnvChanges: [],
+    draftBase: undefined,
+    ...(versionBuild && { versionBuild }),
+  };
 };
 
 /** The next environment version, given what already exists. */

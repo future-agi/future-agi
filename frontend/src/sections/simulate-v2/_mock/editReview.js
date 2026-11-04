@@ -55,6 +55,238 @@ export const sourceLabelOf = (c) => {
   return "By hand";
 };
 
+/** Where an edit came from, as somewhere to go: the chat message, the file, or its tab. */
+export const sourceLinkOf = (c, envState) => {
+  if (c.source === "chat") return { kind: "chat", label: "Open in chat" };
+  if (c.source?.startsWith("file:")) {
+    const name = c.source.slice(5);
+    const file = (envState?.sources || []).find((x) => x.name === name);
+    return file
+      ? { kind: "file", label: `Open ${name}`, sourceId: file.id }
+      : { kind: "tab", label: "Open" };
+  }
+  return { kind: "tab", label: "Open" };
+};
+
+/* A record's name in a diff line: what a person would call it. */
+const nameOf = (v) =>
+  v == null || v === ""
+    ? "none"
+    : typeof v === "boolean"
+      ? v
+        ? "yes"
+        : "no"
+      : typeof v !== "object"
+        ? String(v)
+        : v.name || v.title || v.to || v.text || v.label || v.id || "an item";
+const keyOf = (v) =>
+  v && typeof v === "object" ? v.id || v.name || JSON.stringify(v) : String(v);
+
+/* What each part of the world is called in the product. */
+const FIELD_LABEL = {
+  ruleChanges: "Rules",
+  dataImports: "Tables",
+  scenarios: "Scenarios",
+  actors: "Cast",
+  customActors: "Actors",
+  actorEdits: "Actors",
+  toolEnv: "Tools",
+  startingState: "Starting state",
+  sources: "Sources",
+  dataMode: "World data",
+  useCaseChanges: "Use cases",
+};
+/* Stored values, as the screens say them. */
+const VALUE_LABEL = {
+  dataMode: {
+    synthetic: "generated",
+    "private-sample": "your records (a private sample)",
+  },
+  tier: {
+    stub: "Fixed",
+    replay: "Recorded",
+    sim: "Simulated",
+    stateful: "Simulated",
+    live: "Live",
+  },
+};
+/* What an unset field means — no data mode is generated data. */
+const DEFAULT_VALUE = { dataMode: "synthetic" };
+/* A record's fields, as the screens name them. Internal ones are left out. */
+const FIELD_NAME = {
+  title: "title",
+  name: "name",
+  task: "task",
+  situation: "situation",
+  expected: "passes when",
+  outcome: "passes when",
+  persona: "caller",
+  tier: "answers with",
+  approval: "approval",
+  faults: "faults",
+  goal: "goal",
+  blurb: "role",
+  entry: "joins",
+  canApprove: "can approve",
+  approvalScope: "approves",
+  rows: "rows",
+  role: "role",
+  visibility: "who reads it",
+  status: "state",
+};
+const valueOf = (field, raw) => {
+  const v = raw ?? DEFAULT_VALUE[field];
+  return (
+    VALUE_LABEL[field]?.[v] ??
+    (v && typeof v === "object" && !Array.isArray(v)
+      ? nameOf(v)
+      : Array.isArray(v)
+        ? `${v.length} item${v.length === 1 ? "" : "s"}`
+        : nameOf(v))
+  );
+};
+
+/* The fields that differ between two versions of one record, readably. */
+const fieldChangesOf = (a, b) =>
+  [...new Set([...Object.keys(a || {}), ...Object.keys(b || {})])]
+    .filter((f) => FIELD_NAME[f] && !same(a?.[f], b?.[f]))
+    .map((f) =>
+      a?.[f] === undefined
+        ? `${FIELD_NAME[f]}: ${valueOf(f, b?.[f])}`
+        : `${FIELD_NAME[f]}: ${valueOf(f, a?.[f])} → ${valueOf(f, b?.[f])}`,
+    );
+
+/* A rule's words just before an entry: its last earlier change, else the base rule. */
+const ruleTextBefore = (id, earlier, baseRules = []) => {
+  const last = [...earlier].reverse().find((r) => r.id === id && r.to);
+  if (last) return last.to;
+  const n = Number(String(id).replace(/^R/, ""));
+  return baseRules[n - 1] || null;
+};
+
+/**
+ * What an edit changed, as before → after lines a person can read:
+ * [{ field, sign: "+" | "−" | "~", text, before? }]. `before` is the old
+ * wording when a rule's words changed — shown struck through above the new.
+ * Compared with the field as it stands now, so a later edit to the same field
+ * shows in it too. `opts.nameOfId(field, id)` names ids (an actor's id → name).
+ */
+export const diffOf = (c, envState, opts = {}) => {
+  const out = [];
+  const nameId = (field, v) =>
+    (typeof v === "string" && opts.nameOfId?.(field, v)) || nameOf(v);
+  Object.entries(c?.before || {}).forEach(([k, was]) => {
+    const field = FIELD_LABEL[k];
+    if (!field) return;
+    const now = envState?.[k];
+    const old = was === ABSENT ? undefined : was;
+
+    /* Rules: each entry says what happened to one rule. */
+    if (k === "ruleChanges") {
+      const earlier = old || [];
+      (now || []).slice(earlier.length).forEach((r) => {
+        const prev = ruleTextBefore(r.id, earlier, opts.baseRules);
+        if (r.kind === "added")
+          out.push({ field, sign: "+", text: `${r.id}: ${r.to}` });
+        else if (r.kind === "removed")
+          out.push({ field, sign: "−", text: `${r.id}: ${prev || "removed"}` });
+        else if (!r.removal)
+          out.push({
+            field,
+            sign: "~",
+            text: `${r.id}: ${r.to}`,
+            before: prev ? `${r.id}: ${prev}` : null,
+          });
+      });
+      return;
+    }
+    if (was?.__sub) {
+      Object.entries(was.__sub).forEach(([sk, o]) => {
+        const prev = o === ABSENT ? undefined : o;
+        const cur = now?.[sk];
+        const who = nameId(k, sk);
+        if (isMap(prev) || isMap(cur)) {
+          const lines = fieldChangesOf(prev, cur);
+          (lines.length ? lines : ["changed"]).forEach((l) =>
+            out.push({ field, sign: "~", text: `${who} · ${l}` }),
+          );
+        } else
+          out.push({
+            field,
+            sign: "~",
+            text: `${who}: ${valueOf(sk, prev)} → ${valueOf(sk, cur)}`,
+          });
+      });
+      return;
+    }
+    if (Array.isArray(old) || Array.isArray(now)) {
+      const a = old || [];
+      const b = now || [];
+      const ak = new Map(a.map((x) => [keyOf(x), x]));
+      const bk = new Map(b.map((x) => [keyOf(x), x]));
+      bk.forEach((x, key) => {
+        if (!ak.has(key)) out.push({ field, sign: "+", text: nameId(k, x) });
+        else if (!same(ak.get(key), x)) {
+          /* Changed in place: say which of its fields moved. */
+          const lines = fieldChangesOf(ak.get(key), x);
+          out.push({
+            field,
+            sign: "~",
+            text: `${nameId(k, x)}${lines.length ? ` — ${lines.join("; ")}` : ""}`,
+          });
+        }
+      });
+      ak.forEach((x, key) => {
+        if (!bk.has(key)) out.push({ field, sign: "−", text: nameId(k, x) });
+      });
+      return;
+    }
+    /* The starting state: the facts every run starts from. */
+    if (k === "startingState") {
+      const facts = (now?.facts || []).map((f) => nameOf(f?.text || f));
+      out.push({
+        field,
+        sign: old ? "~" : "+",
+        text: facts.length ? facts.join("; ") : "cleared",
+      });
+      return;
+    }
+    /* A keyed map set for the first time (or cleared): one line per entry. */
+    if ((isMap(now) && !isMap(old)) || (isMap(old) && !isMap(now))) {
+      const from = isMap(old) ? old : {};
+      const to = isMap(now) ? now : {};
+      [...new Set([...Object.keys(from), ...Object.keys(to)])]
+        .filter((key) => !same(from[key], to[key]))
+        .forEach((key) => {
+          const who = nameId(k, key);
+          const lines =
+            isMap(from[key]) || isMap(to[key])
+              ? fieldChangesOf(from[key], to[key])
+              : [`${valueOf(key, from[key])} → ${valueOf(key, to[key])}`];
+          lines.forEach((l) =>
+            out.push({
+              field,
+              sign: from[key] ? "~" : "+",
+              text: `${who} · ${l}`,
+            }),
+          );
+        });
+      return;
+    }
+    if (!same(old, now))
+      out.push({
+        field,
+        sign: "~",
+        text:
+          isMap(old) || isMap(now)
+            ? fieldChangesOf(old, now).join("; ") ||
+              `${nameOf(old)} → ${nameOf(now)}`
+            : `${valueOf(k, old)} → ${valueOf(k, now)}`,
+      });
+  });
+  return out;
+};
+
 const isMap = (v) => v && typeof v === "object" && !Array.isArray(v);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -86,6 +318,14 @@ const partsOf = (before) =>
 const overlaps = (a, b) =>
   a.some((x) =>
     b.some((y) => x === y || x === y.split(".")[0] || y === x.split(".")[0]),
+  );
+
+/** What `fields` replace in `prev`, kept the way an edit's `before` is. */
+export const beforeOfFields = (prev, fields) =>
+  Object.fromEntries(
+    Object.keys(fields)
+      .filter((k) => !BOOKKEEPING.has(k))
+      .map((k) => [k, beforeOf(prev?.[k], fields[k])]),
   );
 
 /**

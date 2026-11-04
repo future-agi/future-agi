@@ -75,6 +75,8 @@ export const pendingCostOf = (env, envState) => {
     stored: next.label,
     world: `E ${next.label}`,
     scenarios: n,
+    /* Which ones, by name — the notice names them. */
+    scenarioNames: dependent.map((r) => [r.title || r.name || r.task || r.id, r.persona?.name].filter(Boolean).join(" · ")),
     text: `${spec ? "Environment spec edit" : "Environment edit"} → environment ${label} · ${n ? `${plural(n, "scenario")} rechecked` : "no scenario rechecked"}`,
     comparability: n
       ? `${plural(n, "scenario")} pair with past runs as Rechecked if their gates pass, outdated if not; ${rows.length - n} compare exactly. Agent, scenario set and evals don't move.`

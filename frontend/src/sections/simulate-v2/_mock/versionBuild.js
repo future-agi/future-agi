@@ -23,6 +23,7 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 /** What a version build will do, from the changes it carries. */
 export function versionBuildOf({
   label,
+  shownLabel = null,
   from,
   rules = [],
   tables = [],
@@ -50,6 +51,8 @@ export function versionBuildOf({
   ].filter(Boolean);
   return {
     label,
+    /* The number the person saw on Save ("v2"); `label` is the stored one. */
+    shownLabel,
     from,
     at: now || Date.now(),
     steps,
@@ -110,7 +113,14 @@ export function changeOf(build, kind, now = Date.now()) {
     }
     return 0;
   };
-  return { label: build.label, state, shown, total, ids, rowsOf };
+  return {
+    label: build.shownLabel || build.label,
+    state,
+    shown,
+    total,
+    ids,
+    rowsOf,
+  };
 }
 
 /** What a finished build leaves to point out: { label, rules, tables, scenarios, unseen }. */
@@ -120,7 +130,7 @@ export function versionNewsOf(build) {
   const kinds = ["rules", "tables", "scenarios"].filter((k) => c[k]?.length);
   if (!kinds.length) return null;
   return {
-    label: build.label,
+    label: build.shownLabel || build.label,
     rules: c.rules,
     tables: c.tables.map((t) => t.name),
     scenarios: c.scenarios,

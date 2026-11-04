@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { createElement, useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -9,15 +9,18 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { enqueueSnackbar } from "notistack";
+import { closeSnackbar, enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { useEnvState } from "../../store";
 import { useRoleGates } from "../../_mock/previewRole";
 import {
   acceptDataPatch,
   dataProposalOf,
+  draftDataPatches,
   sourceEditPatch,
 } from "../../_mock/orgData";
+import { editsLandInPlace } from "../../_mock/versions";
+import { openReviewChanges } from "../reviewChangesBus";
 import { nextSnapshotLabel } from "../../_mock/envSnapshot";
 import { personaFor } from "../../_mock/scenarios";
 import { stampNewBatch } from "../../_mock/addScenarios";
@@ -125,7 +128,47 @@ export default function DataProposalCard({
   const accept = () => {
     if (!gates.canEdit)
       return enqueueSnackbar(gates.editReason, { variant: "info" });
+    /* Once a run has pinned the version, a file's changes join the unsaved
+       changes and are reviewed and saved with the rest (Review changes). */
+    if (!editsLandInPlace(envState)) {
+      const { patches, failed } = draftDataPatches(
+        env,
+        envState,
+        proposal,
+        picked,
+        { conflictPick, scenarioRows, edits, cast },
+      );
+      patches.forEach((x) => patch(x));
+      if (failed.length)
+        patch({
+          failedEnvChanges: [...(envState.failedEnvChanges || []), ...failed],
+        });
+      const n = patches.length - 1;
+      enqueueSnackbar(
+        `Added ${n} change${n === 1 ? "" : "s"} to your unsaved changes${failed.length ? ` · ${failed.length} couldn't apply` : ""}. Review and save them to make the version.`,
+        {
+          variant: "success",
+          action: (key) =>
+            createElement(
+              Button,
+              {
+                size: "small",
+                color: "inherit",
+                onClick: () => {
+                  closeSnackbar(key);
+                  openReviewChanges();
+                },
+              },
+              "Review changes",
+            ),
+        },
+      );
+      if (onSaved) onSaved();
+      else setSaved({ label: next, rules: 0, draft: true });
+      return null;
+    }
     const p = acceptDataPatch(env, envState, proposal, picked, {
+      shownLabel: next,
       conflictPick,
       scenarioRows,
       edits,
@@ -326,7 +369,9 @@ export default function DataProposalCard({
     return (
       <Stack spacing={0.5}>
         <Typography sx={{ typography: "s2" }}>
-          {`Building environment ${saved.label}${saved.rules ? ` with ${saved.rules} new rule${saved.rules === 1 ? "" : "s"}` : ""} — the page shows its progress. Proposed scenarios go to the Scenarios tab to review. Runs on ${saved.label} pin this data; earlier runs keep theirs.`}
+          {saved.draft
+            ? "Added to your unsaved changes. Review them — each with this file as its source — and save them as the next version from N unsaved edits under the header."
+            : `Building environment ${saved.label}${saved.rules ? ` with ${saved.rules} new rule${saved.rules === 1 ? "" : "s"}` : ""} — the page shows its progress. Proposed scenarios go to the Scenarios tab to review. Runs on ${saved.label} pin this data; earlier runs keep theirs.`}
         </Typography>
         <ButtonBase
           onClick={() => onOpenSource?.(null)}
@@ -411,7 +456,9 @@ export default function DataProposalCard({
           disabled={!count}
           onClick={accept}
         >
-          {`Accept ${count} and save as ${next}`}
+          {editsLandInPlace(envState)
+            ? `Accept ${count} and save as ${next}`
+            : `Add ${count} to unsaved changes`}
         </Button>
       </Stack>
     </Box>

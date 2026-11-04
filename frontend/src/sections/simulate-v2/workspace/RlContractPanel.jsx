@@ -844,7 +844,11 @@ function ContractEditDialog({ edit, env, envState, onClose, onApply }) {
               disabled={!plan.ok}
               onClick={() => onApply(plan)}
             >
-              {plan.ok ? `Create environment ${plan.next}` : "Create version"}
+              {plan.ok
+                ? plan.draft
+                  ? "Add to unsaved changes"
+                  : `Create environment ${plan.next}`
+                : "Create version"}
             </Button>
           </span>
         </Tooltip>
