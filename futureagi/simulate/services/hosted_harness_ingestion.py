@@ -1216,6 +1216,10 @@ def receipt_outcome_status(body: dict[str, Any]) -> str:
     return body["status"]
 
 
+# A sub-goal's pass or fail as `passed`; any other result has no pass or fail.
+SUB_GOAL_PASSED = {"pass": True, "fail": False}
+
+
 def sub_goal_result(goal: dict[str, Any]) -> str | None:
     """pass, fail, not_applicable or inconclusive; a receipt from before verdicts reads from `held`."""
     if goal.get("verdict"):
@@ -1240,7 +1244,7 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "name": str(goal["name"]),
                 "kind": "judge" if goal.get("judged") else "checkpoint",
-                "passed": {"pass": True, "fail": False}.get(result),
+                "passed": SUB_GOAL_PASSED.get(result),
                 "reason": str(goal.get("reason") or ""),
                 **({"result": result} if result not in ("pass", "fail") else {}),
             }
