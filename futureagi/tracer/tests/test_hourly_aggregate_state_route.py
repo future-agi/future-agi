@@ -240,13 +240,14 @@ def test_state_source_scopes_by_the_predicate_it_is_given():
         # the exact path (test_latency_graph_routing).
     ],
 )
-def test_graph_never_reports_the_aggregate_states_as_exact(metric_id):
+def test_graph_never_reports_the_aggregate_states_as_exact(metric_id, monkeypatch):
     """The states are per part, not latest-live.
 
     ``test_hourly_aggregate_state_exactness_ch25`` shows the numbers that
     make this false on a real ClickHouse.
     """
 
+    monkeypatch.setattr(graph_dispatch, "estimate_raw_graph_scan_rows", lambda **_: 11)
     analytics = mock.Mock()
     analytics.supports_per_query_read_settings = True
     analytics.execute_ch_query.return_value = SimpleNamespace(
@@ -256,6 +257,9 @@ def test_graph_never_reports_the_aggregate_states_as_exact(metric_id):
                 "avg_latency": 12.5,
                 "total_tokens": 900,
                 "avg_cost": 0.002,
+                "cost_known_subtotal": 0.022,
+                "known_cost_fact_count": 11,
+                "unknown_cost_fact_count": 0,
                 "traffic_count": 11,
                 "prompt_tokens": 600,
                 "completion_tokens": 300,

@@ -10,6 +10,7 @@ from tracer.services.clickhouse.query_builders.base import _unix_microseconds
 from tracer.services.clickhouse.query_builders.trace_usage import (
     USAGE_COLUMNS,
     usage_aggregate_sql,
+    usage_coverage_sql,
 )
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
@@ -54,10 +55,11 @@ class ObserveUsageFilterBuilderV2(ClickHouseFilterBuilderV2):
         lhs = f"({identity})" if self._org_scoped else identity
         return f"""{lhs} IN (
             SELECT {identity} FROM (
-                SELECT project_id, trace_id, {usage_aggregate_sql()}
+                SELECT project_id, trace_id, {usage_aggregate_sql(coverage="usage_coverage")}
                 FROM (
                     SELECT id, parent_span_id, name, observation_type, project_id,
-                           cost, total_tokens, prompt_tokens, completion_tokens, trace_id
+                           cost, total_tokens, prompt_tokens, completion_tokens, trace_id,
+                           {usage_coverage_sql(attrs="attrs_string")} AS usage_coverage
                     FROM spans FINAL
                     PREWHERE {self._project_scope_predicate()}
                         {self._candidate_filter("trace_id")}
@@ -151,9 +153,11 @@ class ObserveTraceListQueryBuilderV2(TraceListQueryBuilderV2):
                     argMaxIf(tuple({root_fields}),
                         tuple(live.start_time, live.id, live.observation_type, live.service_name),
                         {root_condition}) AS root,
-                    {usage_aggregate_sql(prefix="live.")}
+                    {usage_aggregate_sql(prefix="live.", coverage="live.usage_coverage")}
                 FROM (
-                    SELECT {source_columns} FROM spans FINAL
+                    SELECT {source_columns},
+                        {usage_coverage_sql(attrs="attrs_string")} AS usage_coverage
+                    FROM spans FINAL
                     PREWHERE {self.project_filter_sql()}
                         AND trace_id IN (
                             SELECT trace_id FROM spans

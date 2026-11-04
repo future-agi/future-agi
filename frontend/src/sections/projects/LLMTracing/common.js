@@ -730,6 +730,14 @@ export const getTraceListColumnDefs = (col) => {
       const column = params?.colDef?.context?.sourceColumn;
       const colId = column?.id;
 
+      // A qualified null cost means unknown pricing, not an empty cell. Keep
+      // its observed-only explanation reachable through the actual grid path.
+      if (
+        params.data?._captureCoverage?.coverage_unknown &&
+        RENDERER_CONFIG.costColumns.includes(colId)
+      ) {
+        return { component: CustomTraceRenderer };
+      }
       // The tags column stays interactive even when empty so a first tag can
       // be added via its "+ Tag" affordance. Other columns render nothing when
       // empty (valueFormatter shows "-").

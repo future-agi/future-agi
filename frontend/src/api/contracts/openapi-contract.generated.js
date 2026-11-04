@@ -105804,6 +105804,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-json-value": true,
           description: "Any valid JSON value.",
         },
+        cost_coverage: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CostCoverageBucket",
+          },
+        },
         system_metric_statistics: {
           title: "System metric statistics",
           description:
@@ -105853,6 +105859,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["session", "trace", "cost", "input_tokens", "output_tokens"],
       type: "object",
       properties: {
+        cost_coverage: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/CostCoverageBucket",
+          },
+        },
         session: {
           type: "array",
           items: {
@@ -111800,6 +111812,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Summary",
           type: "object",
         },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
+        },
+        capture_coverage: {
+          $ref: "#/definitions/CaptureCoverage",
+        },
         graph: {
           title: "Graph",
           type: "object",
@@ -111994,6 +112012,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["metadata", "table", "config"],
       type: "object",
       properties: {
+        trace_capture_coverage: {
+          title: "Trace capture coverage",
+          description:
+            "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            additionalProperties: {
+              $ref: "#/definitions/CaptureCoverage",
+            },
+          },
+        },
         metadata: {
           $ref: "#/definitions/TraceObserveListMetadata",
         },
@@ -112055,6 +112085,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: true,
         },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
+        },
+        capture_coverage: {
+          $ref: "#/definitions/CaptureCoverage",
+        },
         response: {
           type: "array",
           items: {
@@ -112072,6 +112108,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["metadata", "table", "config"],
       type: "object",
       properties: {
+        trace_capture_coverage: {
+          title: "Trace capture coverage",
+          description:
+            "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            additionalProperties: {
+              $ref: "#/definitions/CaptureCoverage",
+            },
+          },
+        },
         metadata: {
           $ref: "#/definitions/TraceSessionListMetadata",
         },
@@ -120930,6 +120978,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
           "x-nullable": true,
         },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
+        },
       },
     },
     MetricSerializerNameAndId: {
@@ -121179,6 +121230,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Details",
           type: "object",
           "x-nullable": true,
+        },
+      },
+    },
+    CostCoverageBucket: {
+      required: [
+        "status",
+        "known_subtotal",
+        "known_fact_count",
+        "unknown_fact_count",
+        "timestamp",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["complete", "partial", "unknown"],
+        },
+        known_subtotal: {
+          title: "Known subtotal",
+          description:
+            "Sum in USD of known observed contributions, never an average.",
+          type: "number",
+          minimum: 0,
+        },
+        known_fact_count: {
+          title: "Known fact count",
+          description:
+            "Observed additive monetary facts with known cost, including zero.",
+          type: "integer",
+          minimum: 0,
+        },
+        unknown_fact_count: {
+          title: "Unknown fact count",
+          description:
+            "Observed additive monetary facts with unknown cost, not missing requests.",
+          type: "integer",
+          minimum: 0,
+        },
+        timestamp: {
+          title: "Timestamp",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -124518,6 +124612,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
           minimum: 0,
         },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
+        },
         error_count: {
           title: "Error count",
           type: "integer",
@@ -124592,6 +124689,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "number",
           minimum: 0,
         },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
+        },
         error_count: {
           title: "Error count",
           type: "integer",
@@ -124613,6 +124713,76 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         member_count: {
           title: "Member count",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    CaptureCoverage: {
+      required: [
+        "scope",
+        "source_summary_present",
+        "request_count",
+        "coverage_unknown",
+      ],
+      type: "object",
+      properties: {
+        scope: {
+          title: "Scope",
+          type: "string",
+          enum: ["observed_requests"],
+        },
+        source_summary_present: {
+          title: "Source summary present",
+          type: "boolean",
+        },
+        request_count: {
+          title: "Request count",
+          description:
+            "Observed request spans only; never inferred from source summary totals.",
+          type: "integer",
+          minimum: 0,
+        },
+        coverage_unknown: {
+          title: "Coverage unknown",
+          description:
+            "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+          type: "boolean",
+        },
+      },
+    },
+    CostCoverage: {
+      required: [
+        "status",
+        "known_subtotal",
+        "known_fact_count",
+        "unknown_fact_count",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["complete", "partial", "unknown"],
+        },
+        known_subtotal: {
+          title: "Known subtotal",
+          description:
+            "Sum in USD of known observed contributions, never an average.",
+          type: "number",
+          minimum: 0,
+        },
+        known_fact_count: {
+          title: "Known fact count",
+          description:
+            "Observed additive monetary facts with known cost, including zero.",
+          type: "integer",
+          minimum: 0,
+        },
+        unknown_fact_count: {
+          title: "Unknown fact count",
+          description:
+            "Observed additive monetary facts with unknown cost, not missing requests.",
           type: "integer",
           minimum: 0,
         },
@@ -124890,6 +125060,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Total cost",
           type: "number",
           "x-nullable": true,
+        },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
+        },
+        capture_coverage: {
+          $ref: "#/definitions/CaptureCoverage",
         },
         total_tokens: {
           title: "Total tokens",
@@ -125811,6 +125987,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         total_cost: {
           title: "Total cost",
           type: "number",
+        },
+        cost_coverage: {
+          $ref: "#/definitions/CostCoverage",
         },
         total_tokens: {
           title: "Total tokens",

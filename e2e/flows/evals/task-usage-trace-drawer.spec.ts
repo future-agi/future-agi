@@ -19,6 +19,17 @@ const UI_READY = 60_000;
 interface UsageRun { id: string; eval_name: string | null; trace_id: string | null; span_id: string | null }
 interface UsageBody { result: { logs: { results: UsageRun[]; count: number } } }
 
+// Mirror columns: futureagi/tracer/services/clickhouse/schema.py (CDC_EVAL_LOGGER)
+// and tracer/models/observation_span.py (EvalLogger): id is UUID, task/span are strings.
+interface MirroredEvalRow {
+  id: string;
+  eval_task_id: string | null;
+  trace_id: string | null;
+  observation_span_id: string | null;
+  status: string;
+  eval_explanation: string | null;
+}
+
 test.beforeAll(() => { inspectManagedMock({ evalBackground: true }); });
 test.use({ evalBackground: true, viewport: { width: 1600, height: 1100 } });
 
@@ -27,21 +38,25 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
   annotation: flowAnnotation({
     id: 'EVAL-E2E-006', area: 'evals',
     userGoal: 'Open the trace behind an eval task result without leaving the task Usage tab',
-    steps: ['seed a trace and run an eval task over it through the mock judge',
-      'open the task Usage tab and click its run',
-      'read the run panel Trace ID and Span ID',
-      'click Open trace and read the drawer',
-      'press Esc to close the drawer, then Esc again to close the run panel'],
+    steps: ['seed the same native two-span trace and run the same eval task via the managed mock judge',
+      'verify the task and exact PG child/root outcomes',
+      'wait for the completed child\'s exact CDC mirror row, then verify its run/task/span identity and unique verdict',
+      'open Usage and click the exact successful run',
+      'read the seeded Trace ID and Span ID in the run panel',
+      'open the trace drawer on the evaluated child and its Evals tab',
+      'press Esc to close only the drawer, then Esc to close the run panel'],
     backendChecks: ['the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored',
+      'the completed evaluation\'s exact run, task, span and verdict reach the ClickHouse mirror before drawer navigation',
       'the Usage runs response carries only the completed run, with the seeded trace and span IDs',
       'the run panel shows the seeded trace and span IDs',
       'the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open',
       'the first Esc closes only the drawer and the second closes the run panel'],
   }),
 }, async ({ page, actor, probe, mockModel }, testInfo) => {
-  // EVAL_RESULT (90 s) for the Temporal task, then navigation and four UI_READY
-  // waits; the runs list reads Postgres, so no CDC budget is spent.
-  test.setTimeout(300_000);
+  // SPAN_VISIBLE (15 s) + EVAL_RESULT (90 s) + CDC_VISIBLE (180 s)
+  // + 6 * UI_READY (360 s: navigation, Usage request, run panel, drawer, two closes)
+  // + 30 s for seeding. Usage reads PG; the trace drawer reads the CDC mirror.
+  test.setTimeout(675_000);
   const req = await request.newContext();
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const projectName = `e2e-usage-drawer-${suffix}`;
@@ -101,6 +116,30 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
       return { evaluated: bySpan.get(evaluatedSpanId)!.id, root: bySpan.get(seeded.spanIds[0])!.id };
     });
     const runId = runs.evaluated;
+    await test.step('storage lane: the exact completed run reaches the CDC mirror', async () => {
+      // As in eval-task.spec.ts, PG task completion does not imply CDC visibility.
+      // FINAL folds pending/running/terminal versions; the exact PG run id prevents
+      // another result for this span from satisfying readiness for the drawer.
+      // Keep the polled rows so identity and verdict assertions inspect that same state.
+      let rows: MirroredEvalRow[] = [];
+      try {
+        await expect.poll(async () => {
+          rows = await probe.ch<MirroredEvalRow>(
+            `SELECT id, eval_task_id, trace_id, observation_span_id, status, eval_explanation
+             FROM tracer_eval_logger FINAL
+             WHERE id={r:UUID} AND eval_task_id={t:String} AND observation_span_id={s:String}`,
+            { r: runId, t: taskId, s: evaluatedSpanId });
+          return rows.map(row => row.status);
+        }, POLL.CDC_VISIBLE).toEqual(['completed']);
+        expect(rows[0]).toMatchObject({ id: runId, eval_task_id: taskId, trace_id: seeded.traceId,
+          observation_span_id: evaluatedSpanId, status: 'completed' });
+        expect(rows[0].eval_explanation).toBe(`${verdict} saw llm`);
+      } finally {
+        // Allowlisted synthetic identities, lifecycle state and verdict only; attach
+        // even on failure without re-querying or including metadata/credentials.
+        await testInfo.attach('ch-result.json', { contentType: 'application/json', body: JSON.stringify(rows) });
+      }
+    });
     const position = '1 / 1';
 
     await test.step('Usage: the run panel shows the seeded trace and span', async () => {
