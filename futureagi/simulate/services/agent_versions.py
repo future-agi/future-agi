@@ -39,6 +39,10 @@ Trigger = HarnessAgentVersionRuntime.Trigger
 SourceKind = HarnessAgentVersionRuntime.SourceKind
 Status = HarnessAgentVersionRuntime.PreflightStatus
 
+# The SDK version a document the platform mapped itself is stored under.
+_PLATFORM_SDK_VERSION = "platform"
+# The provider a connector reads its agent from, when the two names differ.
+_SYNC_PROVIDERS = {"retell_chat": "retell"}
 KIND_SYNC = "sync"
 KIND_UPLOAD = "upload"
 KIND_CREDENTIALS = "credentials"
@@ -187,9 +191,13 @@ def branch_head_of(organization_id: Any, workspace_id: Any, source: dict[str, An
 
 
 def sync_version(definition: AgentDefinition, *, user: Any = None) -> AgentVersion:
-    """A version at the branch's current head, or the parent when it is at the head."""
+    """A version at the branch's current head, or the parent when it is at the head.
+    A Vapi or Retell agent syncs from its provider instead."""
     parent = _parent(definition)
-    source = _github_source(_runtime(parent))
+    runtime = _runtime(parent)
+    if runtime is not None and runtime.source_kind == SourceKind.PROVIDER:
+        return provider_sync(definition, parent, runtime, user=user)
+    source = _github_source(runtime)
     head_sha = _branch_head(definition, source)
     if head_sha.lower() == str(source.get("commit_sha") or "").lower():
         return parent
@@ -206,6 +214,126 @@ def sync_version(definition: AgentDefinition, *, user: Any = None) -> AgentVersi
         user=user,
     )
     return version
+
+
+def provider_sync(
+    definition: AgentDefinition,
+    parent: AgentVersion,
+    runtime: HarnessAgentVersionRuntime,
+    *,
+    user: Any = None,
+) -> AgentVersion:
+    """Read the agent as its provider holds it now. The first Sync records what it
+    found on the parent; a later one that finds a change makes a version carrying
+    the new document, and the parent stands when nothing changed."""
+    from simulate.models.agent_setup import AgentVersionSetup
+    from simulate.services.agent_definition import resolve_api_key_for_version
+    from simulate.services.agent_setup import (
+        AgentStoreError,
+        store_agent,
+        stored_agent,
+    )
+    from simulate.services.provider_profile import (
+        PROVIDERS,
+        profile_digest,
+        profile_document,
+        read_profile,
+    )
+
+    source = dict(runtime.source or {})
+    connector = str(source.get("provider") or definition.provider or "")
+    provider = _SYNC_PROVIDERS.get(connector, connector)
+    if provider not in PROVIDERS:
+        raise HostedHarnessError(
+            "sync_unsupported",
+            "Only an agent connected from GitHub, Vapi or Retell can be synced",
+            status_code=422,
+        )
+    assistant_id = str(source.get("assistant_id") or definition.assistant_id or "")
+    modality = (
+        "chat"
+        if connector == "retell_chat"
+        or definition.agent_type != AgentDefinition.AgentTypeChoices.VOICE
+        else "voice"
+    )
+    profile = read_profile(
+        provider,
+        assistant_id=assistant_id,
+        api_key=resolve_api_key_for_version(parent) or "",
+        modality=modality,
+    )
+    digest = profile_digest(profile)
+    document = profile_document(provider, assistant_id, profile, modality=modality)
+    known = source.get("profile_digest")
+    current = stored_agent(parent.id, include_stale=True)
+    if known is None and current is None:
+        # The first look at this agent: what it holds now is what the parent is.
+        try:
+            store_agent(
+                agent_version_id=parent.id,
+                agent=document,
+                sdk_version=_PLATFORM_SDK_VERSION,
+                origin=AgentVersionSetup.Origin.READING,
+            )
+        except AgentStoreError as exc:
+            logger.warning(
+                "provider_sync_not_stored",
+                agent_version_id=str(parent.id),
+                code=exc.code,
+            )
+        _remember_digest(runtime, digest)
+        return parent
+    changed = (
+        known != digest
+        if known is not None
+        else (current or {}).get("setup_hash") != document["setup_hash"]
+    )
+    if not changed:
+        if known is None:
+            _remember_digest(runtime, digest)
+        return parent
+    prompt = "\n\n".join(
+        str(unit.get("instructions") or "")
+        for unit in document["behaviour"]
+        if unit.get("instructions")
+    )
+    version = create_agent_version(
+        definition,
+        parent=parent,
+        env=None,
+        source={"kind": "provider", "profile_digest": digest},
+        prompt=prompt or None,
+        trigger=Trigger.PROVIDER_SYNC,
+        user=user,
+    )
+    try:
+        store_agent(
+            agent_version_id=version.id,
+            agent=document,
+            sdk_version=_PLATFORM_SDK_VERSION,
+            origin=AgentVersionSetup.Origin.READING,
+        )
+    except AgentStoreError as exc:
+        if exc.code != "setup_outcome_already_stored":
+            logger.warning(
+                "provider_sync_not_stored",
+                agent_version_id=str(version.id),
+                code=exc.code,
+            )
+    logger.info(
+        "provider_sync_version",
+        agent_definition_id=str(definition.id),
+        version_id=str(version.id),
+        provider=provider,
+        tools=len(document["tools"]),
+    )
+    return version
+
+
+def _remember_digest(runtime: HarnessAgentVersionRuntime, digest: str) -> None:
+    HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+        source={**(runtime.source or {}), "profile_digest": digest}
+    )
 
 
 def upload_version(

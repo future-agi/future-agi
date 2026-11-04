@@ -334,7 +334,12 @@ def store_agent(
     ``replace_reading`` it replaces a document a reading stored; any other second
     document is refused."""
     try:
-        version = _checked_version(agent_version_id, agent, sdk_version)
+        version = _checked_version(
+            agent_version_id,
+            agent,
+            sdk_version,
+            listed_provider=origin != AgentVersionSetup.Origin.READING,
+        )
         existing = _first_write(
             agent_version_id,
             lambda: _insert_agent(version, agent, sdk_version, origin=origin),
@@ -410,7 +415,11 @@ def setup_outcome(agent_version_id: UUID) -> SetupOutcome | None:
 
 
 def _checked_version(
-    agent_version_id: UUID, agent: dict, sdk_version: str
+    agent_version_id: UUID,
+    agent: dict,
+    sdk_version: str,
+    *,
+    listed_provider: bool = True,
 ) -> AgentVersion:
     try:
         text = json.dumps(agent, ensure_ascii=False, allow_nan=False)
@@ -428,25 +437,34 @@ def _checked_version(
     except _Invalid:
         raise AgentStoreError("agent_invalid") from None
     if agent["kind"] == "hosted":
-        _check_hosted(version, agent["provider_ref"], sdk_version)
+        _check_hosted(
+            version, agent["provider_ref"], sdk_version, listed=listed_provider
+        )
     return version
 
 
 def _check_hosted(
-    version: AgentVersion, provider_ref: dict[str, Any], sdk_version: str
+    version: AgentVersion,
+    provider_ref: dict[str, Any],
+    sdk_version: str,
+    *,
+    listed: bool = True,
 ) -> None:
-    from simulate.services.provider_list import (
-        ProviderListNotPublished,
-        ProviderListVersionNotFound,
-        read_provider_list,
-    )
+    """A hosted document names a provider the SDK publishes, unless the platform
+    mapped it itself (``listed`` off), and the assistant the version's key is for."""
+    if listed:
+        from simulate.services.provider_list import (
+            ProviderListNotPublished,
+            ProviderListVersionNotFound,
+            read_provider_list,
+        )
 
-    try:
-        snapshot = read_provider_list(sdk_version=sdk_version)
-    except (ProviderListNotPublished, ProviderListVersionNotFound):
-        raise AgentStoreError("agent_schema_unavailable") from None
-    if provider_ref["provider"] not in snapshot.providers:
-        raise AgentStoreError("provider_not_listed")
+        try:
+            snapshot = read_provider_list(sdk_version=sdk_version)
+        except (ProviderListNotPublished, ProviderListVersionNotFound):
+            raise AgentStoreError("agent_schema_unavailable") from None
+        if provider_ref["provider"] not in snapshot.providers:
+            raise AgentStoreError("provider_not_listed")
     credentials = ProviderCredentials.no_workspace_objects.filter(
         agent_version=version
     ).first()

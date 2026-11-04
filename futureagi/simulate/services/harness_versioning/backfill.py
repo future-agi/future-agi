@@ -512,6 +512,8 @@ def legacy_source(payload: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
         {
             "provider": connector,
             "assistant_id": config.get("assistant_id") or config.get("agent_id"),
+            # What the provider held when the version was made; a Sync compares it.
+            "profile_digest": source.get("profile_digest"),
         }
     )
 
