@@ -21,7 +21,7 @@ export default function WorldActorAction({
         {details.length > 0 && (
           <ButtonBase
             aria-expanded={open}
-            aria-controls={detailsId}
+            aria-controls={open ? detailsId : undefined}
             aria-label={`${WORLD_ACTION_DETAILS}: ${event}`}
             onClick={(e) => {
               e.stopPropagation();

@@ -9,6 +9,7 @@ from simulate.services.harness_versioning.versions import record_authoring
 from simulate.tests import test_harness_versioning_record as record_tests
 from simulate.tests.test_harness_amend_archive import NAMES
 from simulate.tests.test_harness_versioning_api import _versioned
+from simulate.tests.test_harness_versioning_backfill import _legacy
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
@@ -269,9 +270,13 @@ def test_the_actor_routes_need_versioning(
 def test_an_environment_built_before_versioning_reads_its_actors(
     user, workspace, storage, auth_client, authored
 ):
-    from simulate.tests.test_harness_versioning_backfill import _legacy
-
-    environment = _legacy(user, workspace, f"actors-legacy-{authored}", storage)
+    environment = _legacy(
+        user,
+        workspace,
+        f"actors-legacy-{authored}",
+        storage,
+        body=_authoring(contract=CRM_CONTRACT),
+    )
     if not authored:
         environment.payload["metadata"].pop("authoring_object_key")
         environment.save(update_fields=["payload"])
@@ -279,7 +284,8 @@ def test_an_environment_built_before_versioning_reads_its_actors(
     response = auth_client.get(f"{BASE}/{environment.id}/actors/")
 
     assert response.status_code == 200
-    assert response.json()["source"] == "saved"
+    # Read from its authored files when it has them, so the world's actions show; nothing when it has none.
+    assert bool(response.json()["actions"]) is authored
 
 
 def test_an_actor_a_scenario_includes_is_not_removed(
