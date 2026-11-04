@@ -20,6 +20,7 @@ from simulate.serializers.harness_environment import (
 from simulate.services import harness_readiness
 from simulate.services.harness_readiness import report as report_module
 from simulate.services.harness_versioning import archives, assembly
+from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_agent_versions import _a1, _create
 from simulate.tests.test_harness_agent_versions import _environment as _agent_env
 from simulate.tests.test_harness_agent_versions import (
@@ -966,18 +967,22 @@ class TestReviewFollowUps:
         assert "start" not in fix["action"].replace(labels["start"], "")
 
     @pytest.mark.parametrize(
-        ("code", "state", "answer"),
+        ("code", "source", "state", "answer"),
         [
-            ("authoring_runtime_validation_failed", "failed", "blocked"),
-            ("sandbox_disappeared", "retry", "ready"),
+            ("authoring_runtime_validation_failed", "validation", "failed", "blocked"),
+            ("authoring_runtime_validation_failed", None, "retry", "ready"),
+            ("sandbox_disappeared", None, "retry", "ready"),
         ],
     )
     def test_only_a_check_that_ran_reads_a_failed_pairing(
-        self, user, workspace, storage, code, state, answer
+        self, user, workspace, storage, code, source, state, answer
     ):
-        environment = _environment(user, workspace, storage, f"rd-run-failed-{state}")
+        environment = _environment(
+            user, workspace, storage, f"rd-run-failed-{code[:8]}-{state}"
+        )
+        error = {"code": code} if source is None else {"code": code, "source": source}
         HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
-            state="failed", object_key=None, error={"code": code}
+            state="failed", object_key=None, error=error
         )
         _built(environment)
 
@@ -986,6 +991,28 @@ class TestReviewFollowUps:
         assert report["validation"]["state"] == state
         assert report["validation"]["error"] == {"code": code}
         assert report["answer"]["kind"] == answer
+
+    @pytest.mark.parametrize("source", ["validation", None])
+    def test_the_answer_reads_pair_failed_only_when_the_run_gate_refuses(
+        self, user, workspace, storage, source
+    ):
+        environment = _environment(user, workspace, storage, f"rd-gate-{source}")
+        error = {"code": "certify_incomplete"}
+        if source is not None:
+            error["source"] = source
+        HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
+            state="failed", object_key=None, error=error
+        )
+        _built(environment)
+
+        reason = _report(environment)["answer"]["reason_code"]
+        try:
+            _run(environment, key=f"gate-{source}")
+            refused = None
+        except HostedHarnessError as refusal:
+            refused = refusal.code
+
+        assert reason == refused
 
     def test_an_unreadable_archive_is_read_again_only_after_a_while(
         self, user, workspace, storage

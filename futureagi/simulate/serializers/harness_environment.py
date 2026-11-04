@@ -708,8 +708,9 @@ class HarnessPairValidationSerializer(serializers.Serializer):
     state = serializers.ChoiceField(
         choices=["not_run", "validating", "ready", "failed", "retry", "unavailable"],
         help_text=(
-            "ready: certified together; failed: a check failed; retry: the last"
-            " validation, or a run, ended before its check did."
+            "ready: certified together; failed: a validation's check failed, so runs"
+            " are refused; retry: the last validation ended before its check did, or"
+            " a run failed the pairing."
         ),
     )
     job_id = serializers.UUIDField(allow_null=True)
