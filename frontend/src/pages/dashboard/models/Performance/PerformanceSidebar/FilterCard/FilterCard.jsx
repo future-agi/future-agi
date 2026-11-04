@@ -13,7 +13,7 @@ const FilterCard = ({
 }) => {
   return (
     <Paper
-      elevation={2}
+      variant="outlined"
       sx={{ padding: "14px", display: "flex", flexDirection: "column" }}
     >
       <Box
@@ -26,7 +26,7 @@ const FilterCard = ({
         <Box sx={{ display: "flex", alignItems: "center" }}>
           <IconButton size="small" onClick={() => cloneFilter(index)}>
             <Iconify
-              icon="bxs:duplicate"
+              icon="solar:copy-linear"
               width={16}
               height={16}
               sx={{ color: "text.secondary" }}

@@ -1,9 +1,9 @@
 import { request } from '@playwright/test';
 import { test, expect } from '../lib/fixtures';
 import { E2E } from '../lib/env';
-import { provisionActor } from '../lib/provisioning';
+import { provisionActor, type UserInfo } from '../lib/provisioning';
 
-test('provisionActor creates an isolated, API-usable tenant', async () => {
+test('provisionActor creates an isolated, API-usable tenant without demo seeding', async ({ probe }) => {
   const req = await request.newContext({ baseURL: E2E.apiUrl });
   const actor = await provisionActor(req, 'selftest');
   expect(actor.organizationId).toMatch(/^[0-9a-f-]{36}$/);
@@ -13,6 +13,14 @@ test('provisionActor creates an isolated, API-usable tenant', async () => {
   // The authed client works and is scoped to the fresh org.
   const info = await actor.api.get<{ organization: { id: string } }>('/accounts/user-info/');
   expect(info.organization.id).toBe(actor.organizationId);
+  // No pending work can populate this supposedly empty tenant later.
+  const rows = await probe.pg<{ projects: string; datasets: string; intents: string }>(`
+    SELECT
+      (SELECT count(*) FROM tracer_project WHERE organization_id = $1) AS projects,
+      (SELECT count(*) FROM model_hub_dataset WHERE organization_id = $1) AS datasets,
+      (SELECT count(*) FROM accounts_demoseedrequest WHERE organization_id = $1) AS intents`,
+    [actor.organizationId]);
+  expect(rows).toEqual([{ projects: '0', datasets: '0', intents: '0' }]);
   // Two actors never share a tenant.
   const actor2 = await provisionActor(req, 'selftest2');
   expect(actor2.organizationId).not.toBe(actor.organizationId);
@@ -26,4 +34,17 @@ test('authenticated page fixture lands on the dashboard', async ({ page, actor }
   const userInfo = page.waitForResponse(r => r.url().includes('/accounts/user-info/') && r.status() === 200);
   await page.reload();
   await userInfo;
+});
+
+test('the ordinary actor is a new org: created in this run, restricted to Environments', async ({ actor, probe }, testInfo) => {
+  // The database's own clock: Colima's VM clock can drift from the host's.
+  const rows = await probe.pg<{ fresh: boolean }>(
+    "SELECT created_at > now() - interval '6 hours' AS fresh FROM accounts_organization WHERE id = $1",
+    [actor.organizationId]);
+  expect(rows).toEqual([{ fresh: true }]);
+
+  const info = await actor.api.get<UserInfo>('/accounts/user-info/');
+  expect(info.organization.id).toBe(actor.organizationId);
+  // Both stacks set the cutoff to 2026-10-01T00:00:00Z, before any run's signup.
+  expect(info.restrict_simulate_to_environments).toBe(true);
 });

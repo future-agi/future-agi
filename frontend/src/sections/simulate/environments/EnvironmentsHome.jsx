@@ -1,13 +1,32 @@
 import { useEffect } from "react";
 import { Box, Stack, Tab, Tabs, Typography } from "@mui/material";
+import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import useEnvironmentsTab from "./hooks/useEnvironmentsTab";
 import { resetEnvironmentsEntryState } from "./store/useEnvironmentsStore";
 import BuildEnvironmentTab from "./BuildEnvironmentTab";
 import MyEnvironmentsTab from "./MyEnvironmentsTab";
-import { ENTRY_TAB, ENVIRONMENTS_HEADER, ENV_TABS_SX } from "./environmentOptions";
+import PersonasTab from "./PersonasTab";
+import { ENTRY_TAB, ENVIRONMENTS_HEADER } from "./environmentOptions";
+
+const TAB_PANELS = {
+  [ENTRY_TAB.BUILD]: BuildEnvironmentTab,
+  [ENTRY_TAB.MY]: MyEnvironmentsTab,
+  [ENTRY_TAB.PERSONAS]: PersonasTab,
+};
 
 export default function EnvironmentsHome() {
   const { tab, setTab } = useEnvironmentsTab();
+  const TabPanel = TAB_PANELS[tab];
+
+  const onTabChange = (next) => {
+    // Keeps the event the old Personas menu item fired.
+    if (next === ENTRY_TAB.PERSONAS) {
+      trackEvent(Events.navigationPersonasClicked, {
+        [PropertyName.click]: true,
+      });
+    }
+    setTab(next);
+  };
 
   // The draft must survive the hop to the build page, so the matrix starts clean
   // on mount instead of clearing on unmount. Only the entry/build slice is
@@ -27,7 +46,7 @@ export default function EnvironmentsHome() {
       >
         <Stack direction="row" alignItems="flex-start" spacing={1.5} flex={1} minWidth={0}>
           <Box>
-            <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
+            <Typography sx={{ typography: "m1", fontWeight: 600 }}>
               {ENVIRONMENTS_HEADER.title}
             </Typography>
             <Typography sx={{ typography: "s1", color: "text.secondary" }}>
@@ -37,16 +56,16 @@ export default function EnvironmentsHome() {
         </Stack>
       </Stack>
 
-      {/* Tab rail — matches the product's other tab bars (HarnessDetail): tabs
-          flush, padding-spaced, one continuous underline against the divider. */}
+      {/* Tab rail — the theme's tabs, unstyled, over one divider. */}
       <Box sx={{ px: 2, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
-        <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={ENV_TABS_SX}>
+        <Tabs sx={{ boxShadow: "none" }} value={tab} onChange={(_, v) => onTabChange(v)}>
           <Tab value={ENTRY_TAB.BUILD} disableRipple label="Build environment" />
           <Tab value={ENTRY_TAB.MY} disableRipple label="My Environments" />
+          <Tab value={ENTRY_TAB.PERSONAS} disableRipple label="Personas" />
         </Tabs>
       </Box>
 
-      {tab === ENTRY_TAB.BUILD ? <BuildEnvironmentTab /> : <MyEnvironmentsTab />}
+      <TabPanel />
     </Box>
   );
 }

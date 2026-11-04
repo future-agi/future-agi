@@ -12,32 +12,25 @@ import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { ENTRY_TAB } from "../environmentOptions";
 import {
   DELETE_DIALOG_COPY,
-  DELETE_TONE,
   BUILD_STATUS,
   ENV_STATUS,
 } from "../myEnvironments.constants";
 import CancelBuildControl from "../buildEnvironment/building/CancelBuildControl";
-import SurfaceIcon from "../components/SurfaceIcon";
 import LivePill from "./LivePill";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
-// EnvVersionPin renders a mock "env v3" version from a fixture fallback
-// (_fixtures/versions.js) — there is no real version field in the environments
-// contract yet. Hidden in the header until the contract exposes one.
-// import EnvVersionPin from "./EnvVersionPin";
+import EnvVersionPin from "./EnvVersionPin";
 import ForkMenu from "./ForkMenu";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
-// The environment workspace header: back to the list, the channel icon, the
-// name + Live pill + env-version pin, the primary "Run simulation" action, and
+// The environment workspace header: back to the list, the
+// name + status badge + env-version pin, the primary "Run simulation" action, and
 // (for a regular, unlocked env) the Fork overflow. Run simulation is the
 // product's own navigation — a built env opens its execution detail, otherwise
-// the product's run entry. `locked` = template-seeded until forked: the pin is
-// read-only and the overflow is hidden (Fork lives on the Overview card there).
+// the product's run entry. `locked` = template-seeded until forked: the overflow
+// is hidden (Fork lives on the Overview card there).
 export default function WorkspaceHeader({
   env,
-  // patch is still passed by the parent for the version pin; re-add it here when
-  // the commented-out <EnvVersionPin> below is restored.
   envState,
   canRun,
   runBlockedReason,
@@ -46,6 +39,7 @@ export default function WorkspaceHeader({
   onFork,
   onStartRun,
   selectionActive = false,
+  scenarioCount: serverScenarioCount,
 }) {
   const navigate = useNavigate();
   const [renameOpen, setRenameOpen] = useState(false);
@@ -55,7 +49,7 @@ export default function WorkspaceHeader({
   // Scenarios tab takes over the primary Run, so the header yields while one is
   // active.
   const [headerTrials, setHeaderTrials] = useState(1);
-  const scenarioCount = envState?.scenarios?.length ?? 0;
+  const scenarioCount = serverScenarioCount ?? envState?.scenarios?.length ?? 0;
   // Cancel is offered only while the build is actually running (not once it has
   // failed/canceled). CancelBuildControl self-hides otherwise.
   const building =
@@ -85,22 +79,21 @@ export default function WorkspaceHeader({
       sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
     >
       <CustomTooltip show title={WORKSPACE_COPY.back} size="small" arrow>
-        <Button
+        <IconButton
           aria-label={WORKSPACE_COPY.back}
           // Back to the environment list on its My Environments tab — the root
           // alone defaults to Build, which dropped you on an empty builder.
           onClick={() => navigate(`${paths.dashboard.simulate.environments.root}?tab=${ENTRY_TAB.MY}`)}
-          sx={{ minWidth: 32, width: 32, height: 32, p: 0, color: "text.subtitle" }}
+          sx={{ color: "text.subtitle" }}
         >
-          <Iconify icon="solar:alt-arrow-left-linear" width={18} />
-        </Button>
+          <Iconify icon="solar:alt-arrow-left-linear" width={16} />
+        </IconButton>
       </CustomTooltip>
-
-      <SurfaceIcon surface={env.surface} size={36} />
 
       <Box minWidth={0} flex={1}>
         <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography noWrap sx={{ typography: "s1_2", fontWeight: "fontWeightBold" }}>
+          {/* Object header: the name is 15/600 (as on every object page), not a 20px page title. */}
+          <Typography noWrap sx={{ typography: "m1", fontWeight: 600 }}>
             {env.name}
           </Typography>
           <LivePill env={env} />
@@ -116,10 +109,10 @@ export default function WorkspaceHeader({
               </IconButton>
             </CustomTooltip>
           )}
-          {/* Mock version pin hidden until the contract exposes a real version:
-              <EnvVersionPin env={env} envState={envState} patch={patch} readOnly={locked} /> */}
+          {/* The default environment version; hidden while versioning is off. */}
+          <EnvVersionPin env={env} />
         </Stack>
-        <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
+        <Typography noWrap sx={{ typography: "s1", color: "text.subtitle" }}>
           {env.tagline}
         </Typography>
       </Box>
@@ -145,7 +138,6 @@ export default function WorkspaceHeader({
                 disabled={!canRun}
                 onClick={() => onStartRun?.(undefined, headerTrials)}
                 startIcon={<Iconify icon="solar:play-bold" width={15} />}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
               >
                 {WORKSPACE_COPY.run}
               </Button>
@@ -179,26 +171,19 @@ export default function WorkspaceHeader({
           onClose={() => setConfirmDelete(false)}
           title={DELETE_DIALOG_COPY.title}
           content={
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              <b>{env.name}</b> {DELETE_DIALOG_COPY.body}
+            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+              <Box component="span" sx={{ fontWeight: 600 }}>{env.name}</Box> {DELETE_DIALOG_COPY.body}
             </Typography>
           }
           action={
             <Button
               size="small"
               variant="contained"
+              color="error"
               disabled={deleteEnv.isPending}
               onClick={() => {
                 setConfirmDelete(false);
                 onDelete();
-              }}
-              sx={{
-                bgcolor: DELETE_TONE.main,
-                color: "common.white",
-                "&:hover": { bgcolor: DELETE_TONE.hover },
-                typography: "s2",
-                fontWeight: "fontWeightBold",
-                paddingX: "24px",
               }}
             >
               {DELETE_DIALOG_COPY.confirm}
@@ -222,13 +207,11 @@ WorkspaceHeader.propTypes = {
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
     }),
+    versioning: PropTypes.shape({ enabled: PropTypes.bool }),
   }).isRequired,
   envState: PropTypes.shape({
-    envVersions: PropTypes.arrayOf(PropTypes.shape({ label: PropTypes.string })),
-    activeEnvVersion: PropTypes.string,
     scenarios: PropTypes.arrayOf(PropTypes.any),
   }).isRequired,
-  patch: PropTypes.func.isRequired,
   canRun: PropTypes.bool,
   runBlockedReason: PropTypes.string,
   locked: PropTypes.bool,
@@ -238,4 +221,5 @@ WorkspaceHeader.propTypes = {
   onStartRun: PropTypes.func,
   // True while a scenario selection owns the primary Run; hides the header's.
   selectionActive: PropTypes.bool,
+  scenarioCount: PropTypes.number,
 };

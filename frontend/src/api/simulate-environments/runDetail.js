@@ -225,6 +225,10 @@ export function useRunDetail(
         ? execution.selected_scenario_keys
         : undefined,
       trials: execution.trials ?? 1,
+      pinnedAgentVersion: execution.pinned_agent_version ?? null,
+      environmentVersion: execution.environment_version ?? null,
+      suiteVersion: execution.suite_version ?? null,
+      agentDiffers: Boolean(execution.agent_differs),
     };
   }, [execution, envName, summary]);
   const stats = useMemo(
@@ -646,6 +650,37 @@ export function useCallExecutionV3Detail(callExecId, enabled = true, options) {
       return isScoring || isLocalizing ? 3000 : false;
     },
   });
+}
+
+const traceRow = (raw) => ({
+  traceId: raw.trace_id,
+  name: raw.name ?? null,
+  startTime: raw.start_time ?? null,
+  status: raw.status ?? null,
+  latencyMs: raw.latency_ms ?? null,
+});
+
+export function useCallTraces(executionId, callExecutionId) {
+  const query = useQuery({
+    queryKey: ["simulation-call-traces-v3", executionId, callExecutionId],
+    queryFn: async () => {
+      const response = await axios.get(
+        endpoints.runResultsV3.traces(executionId),
+        { params: { call_execution_id: callExecutionId } },
+      );
+      return response.data;
+    },
+    enabled: !!executionId && !!callExecutionId,
+  });
+  const traces = useMemo(
+    () => (query.data?.traces ?? []).map(traceRow),
+    [query.data],
+  );
+  return {
+    projectId: query.data?.project_id ?? null,
+    traces,
+    isError: query.isError,
+  };
 }
 
 /**

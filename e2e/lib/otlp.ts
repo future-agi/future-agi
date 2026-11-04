@@ -12,6 +12,17 @@ export type OtlpAttributeValue = string | number | boolean
   | readonly OtlpAttributeValue[] | { readonly [key: string]: OtlpAttributeValue };
 export type OtlpAttributes = Readonly<Record<string, OtlpAttributeValue>>;
 
+/** Extra members of the same trace. IDs and parents are explicit so a fixture
+ * can describe nesting without relying on the order in which spans are sent. */
+export interface AdditionalSpan {
+  spanId: string;
+  parentSpanId: string;
+  name: string;
+  attributes?: OtlpAttributes;
+  startTimeUnixNano?: bigint | string;
+  endTimeUnixNano?: bigint | string;
+}
+
 export interface SendTraceConfig {
   collectorUrl: string; apiKey: string; secretKey: string; projectName: string;
   rootName?: string;
@@ -32,6 +43,9 @@ export interface SendTraceConfig {
   /** e.g. project_type: 'observe' for converter user identity. projectName owns
    *  project_name/service.name; caller attributes cannot override those two. */
   resourceAttributes?: OtlpAttributes;
+  /** Absent/empty preserves the original two-span payload byte for byte. Extra
+   * spans have no inherited attributes and default to the trace's time range. */
+  additionalSpans?: readonly AdditionalSpan[];
 }
 
 type AnyValue = { stringValue: string } | { doubleValue: number } | { boolValue: boolean }
@@ -83,10 +97,33 @@ export async function sendTrace(req: APIRequestContext, cfg: SendTraceConfig): P
   if (end < start) throw new Error('OTLP end timestamp must not precede start');
   const rootName = cfg.rootName ?? 'e2e.root';
 
+  const extras = (cfg.additionalSpans ?? []).map((item) => {
+    const spanStart = timestamp(item.startTimeUnixNano ?? start);
+    const spanEnd = timestamp(item.endTimeUnixNano ?? end);
+    if (spanEnd < spanStart) throw new Error('OTLP end timestamp must not precede start');
+    return { ...item, spanId: hexId(item.spanId, 16),
+      parentSpanId: hexId(item.parentSpanId, 16), start: spanStart, end: spanEnd };
+  });
+  const parents = new Map<string, string | undefined>([[rootId, undefined], [childId, rootId]]);
+  for (const item of extras) {
+    if (parents.has(item.spanId)) throw new Error('OTLP span IDs must be unique');
+    parents.set(item.spanId, item.parentSpanId);
+  }
+  for (const item of extras) {
+    if (!parents.has(item.parentSpanId)) throw new Error('OTLP parent must belong to this trace');
+    const seen = new Set<string>();
+    let current: string | undefined = item.spanId;
+    while (current !== undefined) {
+      if (seen.has(current)) throw new Error('OTLP parent cycle (including self-parent)');
+      seen.add(current);
+      current = parents.get(current);
+    }
+  }
+
   const span = (spanId: string, parentSpanId: string | undefined, name: string,
-                extraAttrs: ReturnType<typeof attr>[] = []) => ({
+                extraAttrs: ReturnType<typeof attr>[] = [], spanStart = start, spanEnd = end) => ({
     traceId: wireTraceId, spanId, parentSpanId, name, kind: 1,
-    startTimeUnixNano: String(start), endTimeUnixNano: String(end),
+    startTimeUnixNano: String(spanStart), endTimeUnixNano: String(spanEnd),
     attributes: extraAttrs, status: { code: 1 },
   });
 
@@ -103,6 +140,9 @@ export async function sendTrace(req: APIRequestContext, cfg: SendTraceConfig): P
           span(childId, rootId, cfg.childName ?? 'e2e.llm-call',
             Object.entries({ 'fi.span.kind': 'llm', ...cfg.childAttributes })
               .map(([key, value]) => attr(key, value))),
+          ...extras.map((item) => span(item.spanId, item.parentSpanId, item.name,
+            Object.entries(item.attributes ?? {}).map(([key, value]) => attr(key, value)),
+            item.start, item.end)),
         ],
       }],
     }],
@@ -113,5 +153,5 @@ export async function sendTrace(req: APIRequestContext, cfg: SendTraceConfig): P
     data: payload,
   });
   if (res.status() >= 300) throw new Error(`collector ${res.status()}: ${await res.text()}`);
-  return { traceId, spanIds: [rootId, childId], projectName: cfg.projectName };
+  return { traceId, spanIds: [rootId, childId, ...extras.map((item) => item.spanId)], projectName: cfg.projectName };
 }

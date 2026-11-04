@@ -21,7 +21,7 @@ export default function ScenarioCount({ value, onChange }) {
         borderColor: valid ? "divider" : "error.main",
       }}
     >
-      <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
+      <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
         Scenarios to generate
       </Typography>
       <Stack

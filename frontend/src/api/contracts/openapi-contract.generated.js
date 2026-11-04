@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1070,
+  endpointCount: 1107,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -2414,7 +2414,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/TeamCreateResponse",
           },
           400: {
-            $ref: "#/definitions/AccountsErrorResponse",
+            $ref: "#/definitions/TeamCreateErrorResponse",
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -2508,7 +2508,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/TeamCreateResponse",
           },
           400: {
-            $ref: "#/definitions/AccountsErrorResponse",
+            $ref: "#/definitions/TeamCreateErrorResponse",
           },
           401: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -27107,7 +27107,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/AgentDefinitionResponse",
+            $ref: "#/definitions/AgentDefinitionDetailResponse",
           },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
@@ -27164,6 +27164,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/runs/": {
+      get: {
+        operationId: "simulate_agent-definitions_runs_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 20,
+              default: 5,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentRunsResponse",
+          },
+          404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
@@ -27261,6 +27291,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/AgentVersionActivateResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/agent/": {
+      get: {
+        operationId: "simulate_agent-definitions_versions_agent_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/StoredAgentResponse",
           },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
@@ -27577,6 +27630,314 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           500: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/brief/": {
+      get: {
+        operationId: "simulate_api_agent-fix-engine_brief",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/candidates/": {
+      post: {
+        operationId: "simulate_api_agent-fix-engine_candidates",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AgentFixCandidateCreated",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/check-runs/": {
+      post: {
+        operationId: "simulate_api_agent-fix-engine_check_runs",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentFixCheckRunRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/AgentFixCheckRunCreated",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/check-runs/{run_id}/": {
+      get: {
+        operationId: "simulate_api_agent-fix-engine_check_run",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/report/": {
+      post: {
+        operationId: "simulate_api_agent-fix-engine_report",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentFixEngineReport",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixEngineState",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/source/": {
+      get: {
+        operationId: "simulate_api_agent-fix-engine_source",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/v1/chat/completions": {
+      post: {
+        operationId: "simulate_api_agent-fix-engine_v1_chat_completions_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          type: "object",
+          additionalProperties: true,
+        },
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-runs/": {
+      get: {
+        operationId: "simulate_api_agent-fix-runs_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          environment_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixRunList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "simulate_api_agent-fix-runs_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentFixLaunch",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AgentFixRun",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-runs/launch-options/": {
+      get: {
+        operationId: "simulate_api_agent-fix-runs_launch_options",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          source_run_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixLaunchOptions",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-runs/{id}/": {
+      get: {
+        operationId: "simulate_api_agent-fix-runs_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixRunDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/":
+      {
+        post: {
+          operationId: "simulate_api_agent-fix-runs_candidates_make_default",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/AgentFixShip",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentFixMakeDefault",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/patch/": {
+      get: {
+        operationId: "simulate_api_agent-fix-runs_candidates_candidate_patch",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            type: "string",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/":
+      {
+        post: {
+          operationId: "simulate_api_agent-fix-runs_candidates_pull_request",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/AgentFixShip",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentFixPullRequest",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/agent-fix-runs/{id}/retry/": {
+      post: {
+        operationId: "simulate_api_agent-fix-runs_retry",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AgentFixRun",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-runs/{id}/stop/": {
+      post: {
+        operationId: "simulate_api_agent-fix-runs_stop",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixRun",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -28146,6 +28507,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               maximum: 100,
             },
           },
+          agent_definition_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
         },
         responses: {
           200: {
@@ -28192,6 +28560,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       delete: {
         operationId: "simulate_api_harness-environments_delete",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/compare/": {
+      get: {
+        operationId: "simulate_api_harness-environments_compare",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          execution_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          against_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessCompare",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/drafts/": {
+      get: {
+        operationId: "simulate_api_harness-environments_drafts",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessDrafts",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/drafts/save/": {
+      post: {
+        operationId: "simulate_api_harness-environments_drafts_save_drafts",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessDraftSave",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessDraftSaveResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/drafts/{piece}/": {
+      delete: {
+        operationId: "simulate_api_harness-environments_discard_draft",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
@@ -28291,6 +28741,111 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/nudges/": {
+      get: {
+        operationId: "simulate_api_harness-environments_nudges",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          state: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "array",
+            items: {
+              $ref: "#/definitions/HarnessNudge",
+            },
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": {
+      post: {
+        operationId: "simulate_api_harness-environments_nudges_answer_nudge",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessNudgeAnswer",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessNudge",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/stop/": {
+      post: {
+        operationId: "simulate_api_harness-environments_nudges_stop_nudge",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessNudge",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/run-plan/": {
+      get: {
+        operationId: "simulate_api_harness-environments_run_plan",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          agent_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          environment_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          suite_version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessRunPlan",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/run/": {
       post: {
         operationId: "simulate_api_harness-environments_run",
@@ -28345,6 +28900,155 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             202: {
               $ref: "#/definitions/HarnessEnvironmentRunEvaluationsQueued",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/versions/": {
+      get: {
+        operationId: "simulate_api_harness-environments_versions",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessVersions",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/versions/agent/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_versions_create_agent_version",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessAgentVersionCreate",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessAgentCredentialsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/discard/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_versions_agent_discard_agent_version",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/EmptyRequest",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessVersions",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/retry/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_versions_agent_retry_agent_version",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/EmptyRequest",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/HarnessVersions",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
+      {
+        get: {
+          operationId:
+            "simulate_api_harness-environments_versions_suite_suite_members",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {},
+          responses: {
+            200: {
+              type: "array",
+              items: {
+                $ref: "#/definitions/HarnessSuiteMember",
+              },
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_versions_move_default",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessDefaultMove",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessVersions",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/diff/":
+      {
+        get: {
+          operationId:
+            "simulate_api_harness-environments_versions_version_diff",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            against: {
+              required: false,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessVersionDiff",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -28443,14 +29147,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       post: {
         operationId: "simulate_api_harness-jobs_secret_values",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: {
           $ref: "#/definitions/HarnessSecretValues",
         },
         queryParameters: {},
         responses: {
-          201: {
-            $ref: "#/definitions/HarnessSecretValues",
+          202: {
+            $ref: "#/definitions/HarnessAgentCredentialsResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29044,6 +29748,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessConversationWorkspaceResponse",
           },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness/github/webhook/": {
+      post: {
+        operationId: "simulate_api_harness_github_webhook_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessGitHubPush",
+        },
+        queryParameters: {},
+        responses: {
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -32095,7 +32815,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/ErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/ErrorResponse",
+          },
           500: {
+            $ref: "#/definitions/ErrorResponse",
+          },
+          503: {
             $ref: "#/definitions/ErrorResponse",
           },
           default: {
@@ -32269,6 +32995,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/v3/test-executions/{test_execution_id}/reliability/": {
+      get: {
+        operationId: "simulate_v3_test_execution_reliability",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/Reliability",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/v3/test-executions/{test_execution_id}/traces/": {
+      get: {
+        operationId: "simulate_v3_test_execution_traces",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          call_execution_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/RunTracesV3Response",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -36845,6 +37616,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
+          test_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          call_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
           project_id: {
             required: false,
             schema: {
@@ -38427,6 +39212,72 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/shared/{token}/sidebar/": {
+      get: {
+        operationId: "tracer_shared_sidebar_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          trace_id: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/FeedSidebarApiResponse",
+          },
+          401: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          403: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          404: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          410: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/shared/{token}/traces/{trace_id}/": {
+      get: {
+        operationId: "tracer_shared_traces_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/TraceDetailResponse",
+          },
+          401: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          403: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          404: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          410: {
+            $ref: "#/definitions/SharedLinkResolveError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/trace-annotation/get_annotation_values/": {
       get: {
         operationId: "tracer_trace-annotation_get_annotation_values",
@@ -39832,6 +40683,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
+          sort_params: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              default: "[]",
+            },
+          },
           project_id: {
             required: false,
             schema: {
@@ -40103,6 +40962,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
+          test_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          call_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
           trace_id: {
             required: false,
             schema: {
@@ -40154,6 +41027,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
+          test_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          call_execution_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
           project_id: {
             required: false,
             schema: {
@@ -47385,9 +48272,318 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentDefinitionDetailResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        agent_name: {
+          title: "Agent name",
+          description: "Name of the AI agent",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        agent_type: {
+          title: "Agent type",
+          type: "string",
+          enum: ["voice", "text"],
+          readOnly: true,
+        },
+        contact_number: {
+          title: "Contact number",
+          description: "Phone number associated with the AI agent",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        inbound: {
+          title: "Inbound",
+          description: "Whether the agent handles inbound calls",
+          type: "boolean",
+          readOnly: true,
+        },
+        target_speaks_first: {
+          title: "Target speaks first",
+          description:
+            "Whether the target agent speaks first (greets) in a hosted voice simulation. True: the simulator waits for the target's greeting; False: the simulator opens the conversation; null: derive from inbound/outbound. Retell targets always let the simulator open (SDK limitation).",
+          type: "boolean",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        description: {
+          title: "Description",
+          description:
+            "Detailed description of the AI agent's purpose and capabilities",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        assistant_id: {
+          title: "Assistant id",
+          description: "External identifier for the assistant",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        provider: {
+          title: "Provider",
+          description: "Provider of the AI agent",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        language: {
+          title: "Language",
+          description: "Language of the agent",
+          type: "string",
+          enum: [
+            "ar",
+            "bg",
+            "zh",
+            "cs",
+            "da",
+            "nl",
+            "en",
+            "fi",
+            "fr",
+            "de",
+            "el",
+            "hi",
+            "hu",
+            "id",
+            "it",
+            "ja",
+            "ko",
+            "ms",
+            "no",
+            "pl",
+            "pt",
+            "ro",
+            "ru",
+            "sk",
+            "es",
+            "sv",
+            "tr",
+            "uk",
+            "vi",
+          ],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        languages: {
+          type: "array",
+          items: {
+            title: "Languages",
+            description: "Language of the agent",
+            type: "string",
+            enum: [
+              "ar",
+              "bg",
+              "zh",
+              "cs",
+              "da",
+              "nl",
+              "en",
+              "fi",
+              "fr",
+              "de",
+              "el",
+              "hi",
+              "hu",
+              "id",
+              "it",
+              "ja",
+              "ko",
+              "ms",
+              "no",
+              "pl",
+              "pt",
+              "ro",
+              "ru",
+              "sk",
+              "es",
+              "sv",
+              "tr",
+              "uk",
+              "vi",
+            ],
+          },
+          readOnly: true,
+          "x-nullable": true,
+        },
+        authentication_method: {
+          title: "Authentication method",
+          type: "string",
+          enum: ["api_key"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        websocket_url: {
+          title: "Websocket url",
+          description:
+            "WebSocket URL for real-time communication with the agent",
+          type: "string",
+          format: "uri",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        websocket_headers: {
+          title: "Websocket headers",
+          description: "Headers to be sent to the websocket server",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        workspace: {
+          title: "Workspace",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        knowledge_base: {
+          title: "Knowledge base",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        organization: {
+          title: "Organization",
+          description: "Organization this agent definition belongs to",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        api_key: {
+          title: "Api key",
+          type: "string",
+          readOnly: true,
+        },
+        observability_provider: {
+          title: "Observability provider",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        model: {
+          title: "Model",
+          description: "Model of the agent",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        model_details: {
+          title: "Model details",
+          description: "Details of the model",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        livekit_url: {
+          title: "Livekit url",
+          type: "string",
+          readOnly: true,
+        },
+        livekit_api_key: {
+          title: "Livekit api key",
+          type: "string",
+          readOnly: true,
+        },
+        livekit_agent_name: {
+          title: "Livekit agent name",
+          type: "string",
+          readOnly: true,
+        },
+        livekit_config_json: {
+          title: "Livekit config json",
+          type: "string",
+          readOnly: true,
+        },
+        livekit_max_concurrency: {
+          title: "Livekit max concurrency",
+          type: "string",
+          readOnly: true,
+        },
+        versions: {
+          type: "array",
+          items: {
+            type: "string",
+            "x-nullable": true,
+          },
+          readOnly: true,
+        },
+        active_version: {
+          title: "Active version",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          readOnly: true,
+          "x-nullable": true,
+        },
+        version_count: {
+          title: "Version count",
+          type: "integer",
+          readOnly: true,
+        },
+        agent_kind: {
+          title: "Agent kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        environment_count: {
+          title: "Environment count",
+          type: "integer",
+          readOnly: true,
+        },
+        observability_enabled: {
+          title: "Observability enabled",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
     AgentDefinitionEditRequest: {
       type: "object",
       properties: {
+        observability_enabled: {
+          title: "Observability enabled",
+          type: "boolean",
+        },
         agent_name: {
           title: "Agent name",
           type: "string",
@@ -47750,6 +48946,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        agent_kind: {
+          title: "Agent kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        version_count: {
+          title: "Version count",
+          type: "integer",
+          readOnly: true,
+        },
+        environment_count: {
+          title: "Environment count",
+          type: "integer",
+          readOnly: true,
+        },
+        environments: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunEnvironmentRef",
+          },
+          readOnly: true,
+        },
       },
     },
     AgentDefinitionResponse: {
@@ -48007,6 +49234,660 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Livekit max concurrency",
           type: "string",
           readOnly: true,
+        },
+      },
+    },
+    AgentFixCandidateCreated: {
+      required: ["candidate_id", "agent_version_id", "preflight_status"],
+      type: "object",
+      properties: {
+        candidate_id: {
+          title: "Candidate id",
+          type: "string",
+          format: "uuid",
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixCheckRunCreated: {
+      required: ["run_id"],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AgentFixCheckRunRequest: {
+      required: ["label", "agent_version_id", "scenario_keys", "trials"],
+      type: "object",
+      properties: {
+        label: {
+          title: "Label",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          minItems: 1,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          maximum: 20,
+          minimum: 1,
+        },
+        repeat: {
+          title: "Repeat",
+          type: "integer",
+          default: 1,
+          maximum: 20,
+          minimum: 1,
+        },
+      },
+    },
+    AgentFixEngineReport: {
+      required: ["stage"],
+      type: "object",
+      properties: {
+        stage: {
+          title: "Stage",
+          type: "string",
+          maxLength: 32,
+          minLength: 1,
+        },
+        step: {
+          title: "Step",
+          type: "string",
+          enum: ["reproduce", "search", "verify", "done"],
+          "x-nullable": true,
+        },
+        plan: {
+          $ref: "#/definitions/AgentFixPlan",
+        },
+        diagnosis: {
+          $ref: "#/definitions/AgentFixDiagnosis",
+        },
+        candidates: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCandidateUpdate",
+          },
+          default: [],
+        },
+        ending: {
+          title: "Ending",
+          type: "string",
+          enum: [
+            "ready",
+            "no_improvement",
+            "not_reproduced",
+            "out_of_budget",
+            "failed",
+          ],
+          "x-nullable": true,
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+          default: "",
+        },
+        failure: {
+          $ref: "#/definitions/AgentFixEngineFailure",
+        },
+        winner_candidate_id: {
+          title: "Winner candidate id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixEngineState: {
+      required: ["state"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixLaunch: {
+      required: [
+        "source_run_id",
+        "target_scenario_keys",
+        "surfaces",
+        "budget_credits",
+        "max_minutes",
+      ],
+      type: "object",
+      properties: {
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          format: "uuid",
+        },
+        target_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 200,
+          minItems: 1,
+        },
+        protected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          default: [],
+          maxItems: 200,
+        },
+        surfaces: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["prompt", "tools", "settings", "code"],
+          },
+          minItems: 1,
+        },
+        locked_paths: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 512,
+            minLength: 1,
+          },
+          default: [],
+        },
+        budget_credits: {
+          title: "Budget credits",
+          type: "integer",
+          maximum: 50000,
+          minimum: 1,
+        },
+        max_minutes: {
+          title: "Max minutes",
+          type: "integer",
+          maximum: 1440,
+          minimum: 1,
+        },
+      },
+    },
+    AgentFixLaunchOptions: {
+      required: [
+        "source_run",
+        "environment",
+        "agent",
+        "scenarios",
+        "suggested",
+        "surfaces",
+        "defaults",
+        "limits",
+        "blocked",
+      ],
+      type: "object",
+      properties: {
+        source_run: {
+          $ref: "#/definitions/AgentFixLaunchSourceRun",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixLaunchEnvironment",
+        },
+        agent: {
+          $ref: "#/definitions/AgentFixAgent",
+        },
+        scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixLaunchScenario",
+          },
+        },
+        suggested: {
+          $ref: "#/definitions/AgentFixLaunchSuggested",
+        },
+        surfaces: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixLaunchSurface",
+          },
+        },
+        defaults: {
+          $ref: "#/definitions/AgentFixLaunchDefaults",
+        },
+        limits: {
+          $ref: "#/definitions/AgentFixLaunchLimits",
+        },
+        blocked: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+      },
+    },
+    AgentFixMakeDefault: {
+      required: ["outcome"],
+      type: "object",
+      properties: {
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixPullRequest: {
+      required: ["pull_request_url"],
+      type: "object",
+      properties: {
+        pull_request_url: {
+          title: "Pull request url",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixRun: {
+      required: [
+        "number",
+        "environment_id",
+        "source_run_id",
+        "source_run_number",
+        "base_agent_version_id",
+        "plan",
+        "diagnosis",
+        "request",
+        "spent_credits",
+        "committed_credits",
+        "report",
+        "failure",
+        "retried_from_id",
+        "candidates",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixEnvironment",
+        },
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        source_run_number: {
+          title: "Source run number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        base_agent_version_id: {
+          title: "Base agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        agent: {
+          $ref: "#/definitions/AgentFixAgent",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "queued",
+            "running",
+            "stopping",
+            "ready",
+            "no_improvement",
+            "not_reproduced",
+            "out_of_budget",
+            "stopped",
+            "failed",
+          ],
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+          maxLength: 32,
+        },
+        step: {
+          title: "Step",
+          description: "A finished fix is done, whatever the engine last said.",
+          type: "string",
+          enum: ["reproduce", "search", "verify", "done"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        plan: {
+          $ref: "#/definitions/AgentFixPlan",
+        },
+        diagnosis: {
+          $ref: "#/definitions/AgentFixDiagnosis",
+        },
+        request: {
+          $ref: "#/definitions/AgentFixRequest",
+        },
+        spent_credits: {
+          title: "Spent credits",
+          type: "number",
+        },
+        committed_credits: {
+          title: "Committed credits",
+          type: "number",
+        },
+        report: {
+          $ref: "#/definitions/AgentFixReport",
+        },
+        failure: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        retried_from_id: {
+          title: "Retried from id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+          readOnly: true,
+        },
+        limited_validation: {
+          title: "Limited validation",
+          type: "boolean",
+          readOnly: true,
+        },
+        check_runs: {
+          description: "The base version's runs; each candidate lists its own.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCheckRun",
+          },
+          readOnly: true,
+        },
+        candidates: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCandidate",
+          },
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    AgentFixRunDetail: {
+      required: [
+        "number",
+        "environment_id",
+        "source_run_id",
+        "source_run_number",
+        "base_agent_version_id",
+        "plan",
+        "diagnosis",
+        "request",
+        "spent_credits",
+        "committed_credits",
+        "report",
+        "failure",
+        "retried_from_id",
+        "candidates",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixEnvironment",
+        },
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        source_run_number: {
+          title: "Source run number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        base_agent_version_id: {
+          title: "Base agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        agent: {
+          $ref: "#/definitions/AgentFixAgent",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "queued",
+            "running",
+            "stopping",
+            "ready",
+            "no_improvement",
+            "not_reproduced",
+            "out_of_budget",
+            "stopped",
+            "failed",
+          ],
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+          maxLength: 32,
+        },
+        step: {
+          title: "Step",
+          description: "A finished fix is done, whatever the engine last said.",
+          type: "string",
+          enum: ["reproduce", "search", "verify", "done"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        plan: {
+          $ref: "#/definitions/AgentFixPlan",
+        },
+        diagnosis: {
+          $ref: "#/definitions/AgentFixDiagnosis",
+        },
+        request: {
+          $ref: "#/definitions/AgentFixRequest",
+        },
+        spent_credits: {
+          title: "Spent credits",
+          type: "number",
+        },
+        committed_credits: {
+          title: "Committed credits",
+          type: "number",
+        },
+        report: {
+          $ref: "#/definitions/AgentFixReport",
+        },
+        failure: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        retried_from_id: {
+          title: "Retried from id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+          readOnly: true,
+        },
+        limited_validation: {
+          title: "Limited validation",
+          type: "boolean",
+          readOnly: true,
+        },
+        check_runs: {
+          description: "The base version's runs; each candidate lists its own.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCheckRun",
+          },
+          readOnly: true,
+        },
+        candidates: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCandidate",
+          },
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        eval_warnings: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixEvalWarning",
+          },
+          readOnly: true,
+        },
+      },
+    },
+    AgentFixRunList: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixRun",
+          },
+        },
+      },
+    },
+    AgentFixShip: {
+      type: "object",
+      properties: {
+        override_reason: {
+          title: "Override reason",
+          type: "string",
+          default: "",
+          maxLength: 2000,
         },
       },
     },
@@ -48374,6 +50255,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentRunsResponse: {
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessRunSummary",
+          },
+          readOnly: true,
+        },
+      },
+    },
     AgentVersionActivateResponse: {
       type: "object",
       properties: {
@@ -48510,7 +50403,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         observability_enabled: {
           title: "Observability enabled",
           type: "boolean",
-          default: false,
         },
       },
     },
@@ -48750,6 +50642,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Is latest",
           type: "string",
           readOnly: true,
+        },
+        agent_kind: {
+          title: "Agent kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        api_key: {
+          title: "Api key",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
         },
         created_at: {
           title: "Created at",
@@ -56293,6 +58199,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+      additionalProperties: false,
     },
     DatasetBehaviorRequest: {
       type: "object",
@@ -61722,6 +63629,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "object",
             additionalProperties: {
               type: "object",
+              "x-json-value": true,
+              description: "Any valid JSON value.",
             },
           },
         },
@@ -61771,6 +63680,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -61783,6 +63694,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         routing: {
@@ -61790,6 +63703,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         cache: {
@@ -61797,6 +63712,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         rate_limiting: {
@@ -61804,6 +63721,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         budgets: {
@@ -61811,6 +63730,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         cost_tracking: {
@@ -61818,6 +63739,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         ip_acl: {
@@ -61825,6 +63748,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         alerting: {
@@ -61832,6 +63757,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         privacy: {
@@ -61839,6 +63766,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         tool_policy: {
@@ -61846,6 +63775,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         mcp: {
@@ -61853,6 +63784,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         a2a: {
@@ -61860,6 +63793,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         audit: {
@@ -61867,6 +63802,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         model_database: {
@@ -61881,6 +63818,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -61949,6 +63888,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -61978,6 +63919,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -62009,6 +63952,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           default: {},
         },
@@ -62772,6 +64717,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessAgentCredentialsResponse: {
+      required: ["agent_version"],
+      type: "object",
+      properties: {
+        agent_version: {
+          $ref: "#/definitions/HarnessVersion",
+        },
+      },
+    },
+    HarnessAgentVersionCreate: {
+      type: "object",
+      properties: {
+        archive_artifact_id: {
+          title: "Archive artifact id",
+          description: "A folder uploaded through source-upload.",
+          type: "string",
+          format: "uuid",
+        },
+        prompt: {
+          title: "Prompt",
+          type: "string",
+          maxLength: 65536,
+          minLength: 1,
+        },
+        agent_payload: {
+          $ref: "#/definitions/HarnessAgentPayloadChange",
+        },
+      },
+    },
     HarnessArtifactUploadResponse: {
       required: ["artifact_id", "duplicate"],
       type: "object",
@@ -62784,6 +64758,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         duplicate: {
           title: "Duplicate",
           type: "boolean",
+        },
+      },
+    },
+    HarnessCompare: {
+      required: [
+        "execution_id",
+        "against_execution_id",
+        "pairs",
+        "summary",
+        "versions",
+      ],
+      type: "object",
+      properties: {
+        execution_id: {
+          title: "Execution id",
+          type: "string",
+          format: "uuid",
+        },
+        against_execution_id: {
+          title: "Against execution id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        pairs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessComparePair",
+          },
+        },
+        summary: {
+          $ref: "#/definitions/HarnessCompareSummary",
+        },
+        versions: {
+          $ref: "#/definitions/HarnessCompareVersions",
         },
       },
     },
@@ -63007,6 +65016,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "string",
               "x-nullable": true,
             },
+          },
+        },
+        drafts: {
+          title: "Drafts",
+          description:
+            "The unsaved changes by piece, where the environment has drafts.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
           },
         },
       },
@@ -63328,6 +65347,75 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Size",
           type: "integer",
           minimum: 0,
+        },
+      },
+    },
+    HarnessDefaultMove: {
+      required: ["expected_default_id"],
+      type: "object",
+      properties: {
+        expected_default_id: {
+          title: "Expected default id",
+          description:
+            "The default the caller saw; a newer default refuses the move.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessDraftSave: {
+      required: ["drafts", "idempotency_key"],
+      type: "object",
+      properties: {
+        drafts: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessDraftSaveItem",
+          },
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          description: "Repeating a Save with the same key repeats its answer.",
+          type: "string",
+          pattern: "^[A-Za-z0-9_-]+$",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+    },
+    HarnessDraftSaveResponse: {
+      required: ["saved", "versions"],
+      type: "object",
+      properties: {
+        saved: {
+          title: "Saved",
+          description: "Each saved piece's new default version, by piece.",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/HarnessVersion",
+          },
+        },
+        versions: {
+          $ref: "#/definitions/HarnessVersions",
+        },
+      },
+    },
+    HarnessDrafts: {
+      required: ["environment", "suite", "set_aside"],
+      type: "object",
+      properties: {
+        environment: {
+          $ref: "#/definitions/HarnessDraftItem",
+        },
+        suite: {
+          $ref: "#/definitions/HarnessDraftItem",
+        },
+        set_aside: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessDraftItem",
+          },
         },
       },
     },
@@ -63678,6 +65766,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessGitHubPush: {
+      required: ["ref", "repository"],
+      type: "object",
+      properties: {
+        ref: {
+          title: "Ref",
+          type: "string",
+          maxLength: 512,
+          minLength: 1,
+        },
+        deleted: {
+          title: "Deleted",
+          type: "boolean",
+          default: false,
+        },
+        repository: {
+          $ref: "#/definitions/HarnessGitHubPushRepository",
+        },
+      },
+    },
     HarnessIngressProxyRequest: {
       type: "object",
       properties: {
@@ -63821,10 +65929,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Metadata",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           default: {},
+        },
+        credential_values: {
+          title: "Credential values",
+          description:
+            "Agent credential values by name; stored with the environment's first agent version, never echoed.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 65536,
+            minLength: 1,
+          },
         },
       },
     },
@@ -63917,6 +66038,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           "x-nullable": true,
         },
+        versioning: {
+          $ref: "#/definitions/HarnessVersioningFlags",
+        },
       },
     },
     HarnessManifest: {
@@ -63966,6 +66090,135 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           pattern: "^sha256:[0-9a-f]{64}$",
           minLength: 1,
+        },
+      },
+    },
+    HarnessNudge: {
+      required: [
+        "id",
+        "target",
+        "state",
+        "facts",
+        "trigger_agent_version",
+        "base_agent_version",
+        "base_environment_version",
+        "base_suite_version",
+        "result_environment_version",
+        "result_suite_version",
+        "summary",
+        "error",
+        "closed_at",
+        "queued_behind_input",
+        "can_stop",
+        "replaced_by",
+        "card_message_id",
+        "answered_by",
+        "answered_at",
+        "created_at",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        target: {
+          title: "Target",
+          type: "string",
+          enum: ["environment", "suite"],
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "pending",
+            "answered_no",
+            "queued",
+            "running",
+            "applied",
+            "no_change",
+            "replaced",
+            "failed",
+          ],
+        },
+        facts: {
+          $ref: "#/definitions/HarnessNudgeFacts",
+        },
+        trigger_agent_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        base_agent_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        base_environment_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        base_suite_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        result_environment_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        result_suite_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        summary: {
+          title: "Summary",
+          type: "object",
+          "x-nullable": true,
+        },
+        error: {
+          $ref: "#/definitions/HarnessNudgeError",
+        },
+        closed_at: {
+          title: "Closed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        queued_behind_input: {
+          title: "Queued behind input",
+          type: "boolean",
+        },
+        can_stop: {
+          title: "Can stop",
+          type: "boolean",
+        },
+        replaced_by: {
+          $ref: "#/definitions/HarnessNudgeReplacement",
+        },
+        card_message_id: {
+          title: "Card message id",
+          description: "The nudge's card in the environment's chat.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        answered_by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        answered_at: {
+          title: "Answered at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    HarnessNudgeAnswer: {
+      required: ["answer"],
+      type: "object",
+      properties: {
+        answer: {
+          title: "Answer",
+          type: "string",
+          enum: ["yes", "no"],
         },
       },
     },
@@ -64025,8 +66278,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Metadata",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           default: {},
         },
@@ -64037,7 +66292,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "string",
-            maxLength: 4096,
+            maxLength: 65536,
           },
         },
       },
@@ -64204,6 +66459,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maximum: 20,
           minimum: 1,
         },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        suite_version_id: {
+          title: "Suite version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
       },
     },
     HarnessRunCreateResponse: {
@@ -64218,6 +66491,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_calls",
         "state",
         "stage",
+        "versions",
+        "warnings",
       ],
       type: "object",
       properties: {
@@ -64271,6 +66546,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Stage",
           type: "string",
           minLength: 1,
+        },
+        versions: {
+          $ref: "#/definitions/HarnessRunPinnedVersions",
+        },
+        warnings: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessRunWarning",
+          },
+        },
+      },
+    },
+    HarnessRunPlan: {
+      required: ["versions", "warnings", "bundle_cached"],
+      type: "object",
+      properties: {
+        versions: {
+          $ref: "#/definitions/HarnessRunPinnedVersions",
+        },
+        warnings: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessRunWarning",
+          },
+        },
+        bundle_cached: {
+          title: "Bundle cached",
+          description:
+            "Whether the run replays a cached bundle (true) or prepares one (false); null when it runs without one, as the defaults do before their bundle is cached.",
+          type: "boolean",
+          "x-nullable": true,
         },
       },
     },
@@ -64344,6 +66650,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        agent: {
+          title: "Agent",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
         run_test_id: {
           title: "Run test id",
           type: "string",
@@ -64389,17 +66703,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessSecretValues: {
-      required: ["environment_values"],
+      required: ["environment_values", "environment_id"],
       type: "object",
       properties: {
         environment_values: {
           title: "Environment values",
+          description:
+            "Values by name; may be empty only when an environment's files are given.",
           type: "object",
           additionalProperties: {
             type: "string",
             maxLength: 65536,
             minLength: 1,
           },
+        },
+        environment_id: {
+          title: "Environment id",
+          description:
+            "Change this environment's agent credentials: the values make its next agent version.",
+          type: "string",
+          format: "uuid",
+        },
+        files: {
+          description:
+            "Credential files staged through secret-files/, by their refs.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/SecretReference",
+          },
+          maxItems: 10,
         },
       },
     },
@@ -64424,6 +66756,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         total_bytes: {
           title: "Total bytes",
           type: "integer",
+        },
+      },
+    },
+    HarnessSuiteMember: {
+      required: ["scenario_key", "number", "name", "use_case"],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        use_case: {
+          title: "Use case",
+          type: "string",
         },
       },
     },
@@ -64489,6 +66844,58 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Upgrade cta",
           type: "object",
           "x-nullable": true,
+        },
+      },
+    },
+    HarnessVersionDiff: {
+      required: ["summary", "diff"],
+      type: "object",
+      properties: {
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        diff: {
+          title: "Diff",
+          type: "object",
+          "x-nullable": true,
+        },
+        includes_draft_edits: {
+          title: "Includes draft edits",
+          description:
+            "A rebuild made someone's unsaved edits live with this version.",
+          type: "boolean",
+        },
+        snapshot_diff: {
+          title: "Snapshot diff",
+          description:
+            "Those unsaved edits, against the default they started from.",
+          type: "object",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessVersions: {
+      required: ["agent", "environment", "suite"],
+      type: "object",
+      properties: {
+        agent: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessVersion",
+          },
+        },
+        environment: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessVersion",
+          },
+        },
+        suite: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessVersion",
+          },
         },
       },
     },
@@ -73201,6 +75608,108 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    Reliability: {
+      required: [
+        "trials",
+        "scenarios",
+        "consistent_pass",
+        "passed_at_least_once",
+        "repeated",
+        "flaky",
+        "flip_rate",
+        "k",
+        "inconclusive",
+        "pass_hat_1",
+        "pass_hat_k",
+        "pass_hat_k_scenarios",
+        "pass_hat_k_passed",
+        "pass_hat_k_excluded",
+        "trials_passed",
+        "trials_evaluated",
+        "pass_rate_interval",
+        "rows",
+      ],
+      type: "object",
+      properties: {
+        trials: {
+          title: "Trials",
+          type: "integer",
+        },
+        scenarios: {
+          title: "Scenarios",
+          type: "integer",
+        },
+        consistent_pass: {
+          title: "Consistent pass",
+          type: "integer",
+        },
+        passed_at_least_once: {
+          title: "Passed at least once",
+          type: "integer",
+        },
+        repeated: {
+          title: "Repeated",
+          type: "integer",
+        },
+        flaky: {
+          title: "Flaky",
+          type: "integer",
+        },
+        flip_rate: {
+          title: "Flip rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        k: {
+          title: "K",
+          type: "integer",
+          "x-nullable": true,
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+        pass_hat_1: {
+          title: "Pass hat 1",
+          type: "number",
+          "x-nullable": true,
+        },
+        pass_hat_k: {
+          title: "Pass hat k",
+          type: "number",
+          "x-nullable": true,
+        },
+        pass_hat_k_scenarios: {
+          title: "Pass hat k scenarios",
+          type: "integer",
+        },
+        pass_hat_k_passed: {
+          title: "Pass hat k passed",
+          type: "integer",
+        },
+        pass_hat_k_excluded: {
+          title: "Pass hat k excluded",
+          type: "integer",
+        },
+        trials_passed: {
+          title: "Trials passed",
+          type: "integer",
+        },
+        trials_evaluated: {
+          title: "Trials evaluated",
+          type: "integer",
+        },
+        pass_rate_interval: {
+          $ref: "#/definitions/ReliabilityInterval",
+        },
+        rows: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ReliabilityRow",
+          },
+        },
+      },
+    },
     RenewGroupingFeature: {
       required: ["lease_token", "action"],
       type: "object",
@@ -74631,6 +77140,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Row count",
           type: "integer",
           readOnly: true,
+        },
+      },
+    },
+    RunTracesV3Response: {
+      required: ["project_id", "traces"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        traces: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunTrace",
+          },
         },
       },
     },
@@ -76120,7 +78647,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         resource_type: {
           title: "Resource type",
           type: "string",
-          enum: ["trace", "dashboard", "project", "call_execution"],
+          enum: [
+            "trace",
+            "dashboard",
+            "project",
+            "call_execution",
+            "error_feed_issue",
+          ],
         },
         resource_id: {
           title: "Resource id",
@@ -76171,6 +78704,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "dataset",
             "project",
             "call_execution",
+            "error_feed_issue",
           ],
           readOnly: true,
         },
@@ -76249,6 +78783,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "dataset",
             "project",
             "call_execution",
+            "error_feed_issue",
           ],
           readOnly: true,
         },
@@ -76393,6 +78928,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "dataset",
             "project",
             "call_execution",
+            "error_feed_issue",
           ],
         },
         resource_id: {
@@ -77609,6 +80145,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    StoredAgentResponse: {
+      required: ["agent", "sdk_version", "stored_at", "setup_stale"],
+      type: "object",
+      properties: {
+        agent: {
+          $ref: "#/definitions/StoredAgent",
+        },
+        sdk_version: {
+          title: "Sdk version",
+          type: "string",
+          minLength: 1,
+        },
+        stored_at: {
+          title: "Stored at",
+          type: "string",
+          format: "date-time",
+        },
+        setup_stale: {
+          title: "Setup stale",
+          type: "boolean",
+        },
+      },
+    },
     StreamStatusResponse: {
       required: ["status", "result"],
       type: "object",
@@ -78116,6 +80675,118 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    TeamCreateErrorResponse: {
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "object",
+          "x-nullable": true,
+          description:
+            "String error message or structured account/login error metadata.",
+          "x-string-or-object": true,
+          properties: {
+            error: {
+              type: "string",
+            },
+            error_code: {
+              type: "string",
+            },
+            message: {
+              type: "string",
+            },
+            blocked: {
+              type: "boolean",
+            },
+            remaining_attempts: {
+              type: "integer",
+            },
+            block_time: {
+              type: "integer",
+            },
+            block_time_remaining: {
+              type: "integer",
+            },
+            created_members: {
+              type: "array",
+              items: {
+                $ref: "#/definitions/TeamCreatedMemberResponse",
+              },
+            },
+            workspace: {
+              $ref: "#/definitions/WorkspaceSummary",
+            },
+            errors: {
+              type: "array",
+              items: {
+                $ref: "#/definitions/TeamCreateErrorItem",
+              },
+            },
+          },
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
         },
       },
     },
@@ -79562,6 +82233,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
     TraceObserveListQuery: {
       type: "object",
       properties: {
+        sort_params: {
+          title: "Sort params",
+          type: "string",
+          default: "[]",
+          minLength: 1,
+          description: "JSON-encoded list of sort params.",
+        },
         project_id: {
           title: "Project id",
           type: "string",
@@ -82603,6 +85281,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "org_level",
         "ws_level",
         "effective_level",
+        "restrict_simulate_to_environments",
       ],
       type: "object",
       properties: {
@@ -82723,6 +85402,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Org 2fa grace ends at",
           type: "string",
           format: "date-time",
+        },
+        restrict_simulate_to_environments: {
+          title: "Restrict simulate to environments",
+          type: "boolean",
         },
       },
     },
@@ -85008,6 +87691,579 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunEnvironmentRef: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixCandidateUpdate: {
+      required: ["candidate_id", "outcome"],
+      type: "object",
+      properties: {
+        candidate_id: {
+          title: "Candidate id",
+          type: "string",
+          format: "uuid",
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["pending", "rejected", "finalist", "winner"],
+        },
+        verdict: {
+          $ref: "#/definitions/AgentFixVerdict",
+        },
+      },
+    },
+    AgentFixDiagnosis: {
+      type: "object",
+      properties: {
+        causes: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixEngineFailure: {
+      required: ["owner", "code", "message"],
+      type: "object",
+      properties: {
+        owner: {
+          title: "Owner",
+          type: "string",
+          enum: ["ours", "user"],
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          maxLength: 500,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixPlan: {
+      required: [
+        "target",
+        "held_back",
+        "must_pass",
+        "max_candidates",
+        "repeats",
+        "baseline_spread_pts",
+      ],
+      type: "object",
+      properties: {
+        target: {
+          title: "Target",
+          type: "integer",
+          minimum: 0,
+        },
+        held_back: {
+          title: "Held back",
+          type: "integer",
+          minimum: 0,
+        },
+        must_pass: {
+          title: "Must pass",
+          type: "integer",
+          minimum: 0,
+        },
+        protected: {
+          title: "Protected",
+          type: "integer",
+          default: 0,
+          minimum: 0,
+        },
+        max_candidates: {
+          title: "Max candidates",
+          type: "integer",
+          minimum: 0,
+        },
+        repeats: {
+          title: "Repeats",
+          type: "integer",
+          minimum: 0,
+        },
+        baseline_spread_pts: {
+          title: "Baseline spread pts",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixAgent: {
+      required: ["name", "kind", "version_id", "version_number", "ref"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixFailure: {
+      required: ["code", "message"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixLaunchDefaults: {
+      required: ["surfaces", "budget_credits", "max_minutes"],
+      type: "object",
+      properties: {
+        surfaces: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["prompt", "tools", "settings", "code"],
+          },
+        },
+        budget_credits: {
+          title: "Budget credits",
+          type: "integer",
+        },
+        max_minutes: {
+          title: "Max minutes",
+          type: "integer",
+        },
+      },
+    },
+    AgentFixLaunchEnvironment: {
+      required: ["id", "name", "version"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixLaunchLimits: {
+      required: [
+        "budget_credits_max",
+        "max_minutes_max",
+        "scenarios_min",
+        "scenarios_max",
+      ],
+      type: "object",
+      properties: {
+        budget_credits_max: {
+          title: "Budget credits max",
+          type: "integer",
+        },
+        max_minutes_max: {
+          title: "Max minutes max",
+          type: "integer",
+        },
+        scenarios_min: {
+          title: "Scenarios min",
+          type: "integer",
+        },
+        scenarios_max: {
+          title: "Scenarios max",
+          type: "integer",
+        },
+      },
+    },
+    AgentFixLaunchScenario: {
+      required: ["key", "name", "passed", "failing_sub_goals"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        passed: {
+          title: "Passed",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        failing_sub_goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AgentFixLaunchSourceRun: {
+      required: ["id", "number", "state", "finished_at"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixLaunchSuggested: {
+      required: ["target_scenario_keys", "protected_scenario_keys"],
+      type: "object",
+      properties: {
+        target_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        protected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AgentFixLaunchSurface: {
+      required: ["id", "label", "allowed", "reason"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          enum: ["prompt", "tools", "settings", "code"],
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        allowed: {
+          title: "Allowed",
+          type: "boolean",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixCandidate: {
+      required: ["attempt", "agent_version_id", "version_number", "verdict"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        attempt: {
+          title: "Attempt",
+          type: "integer",
+          maximum: 32767,
+          minimum: 0,
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["pending", "rejected", "finalist", "winner"],
+        },
+        verdict: {
+          $ref: "#/definitions/AgentFixVerdict",
+        },
+        check_runs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCheckRun",
+          },
+          readOnly: true,
+        },
+        override: {
+          $ref: "#/definitions/AgentFixOverride",
+        },
+        pull_request_url: {
+          title: "Pull request url",
+          type: "string",
+          format: "uri",
+          maxLength: 512,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    AgentFixCheckRun: {
+      required: ["run_id", "test_execution_id", "label", "state"],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        test_execution_id: {
+          title: "Test execution id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixEnvironment: {
+      required: ["name", "version", "default_agent_version_id"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+          "x-nullable": true,
+        },
+        default_agent_version_id: {
+          title: "Default agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixReport: {
+      required: ["ending", "summary", "winner_candidate_id"],
+      type: "object",
+      properties: {
+        ending: {
+          title: "Ending",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        winner_candidate_id: {
+          title: "Winner candidate id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixRequest: {
+      required: [
+        "target_scenario_keys",
+        "failing_sub_goals",
+        "surfaces",
+        "locked_paths",
+        "budget_credits",
+        "max_minutes",
+      ],
+      type: "object",
+      properties: {
+        target_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        protected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+        held_back_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+        failing_sub_goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        surfaces: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        locked_paths: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        budget_credits: {
+          title: "Budget credits",
+          type: "number",
+        },
+        max_minutes: {
+          title: "Max minutes",
+          type: "integer",
+        },
+      },
+    },
+    AgentFixEvalWarning: {
+      required: [
+        "name",
+        "pass_rate",
+        "base_pass_rate",
+        "trials",
+        "base_trials",
+      ],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+        },
+        base_pass_rate: {
+          title: "Base pass rate",
+          type: "number",
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+        },
+        base_trials: {
+          title: "Base trials",
+          type: "integer",
+        },
+      },
+    },
     AgentPromptOptimiserGraphSeries: {
       type: "object",
       properties: {
@@ -85388,6 +88644,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/AgentPromptOptimiserColumnConfig",
           },
           readOnly: true,
+        },
+      },
+    },
+    HarnessRunSummary: {
+      required: [
+        "kind",
+        "test_execution_id",
+        "run_test_id",
+        "run_test_name",
+        "run_number",
+        "status",
+        "environment",
+        "agent_version",
+        "outcome_passed",
+        "outcome_failed",
+        "outcome_skipped",
+        "started_at",
+        "completed_at",
+      ],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["environment", "simulate"],
+        },
+        test_execution_id: {
+          title: "Test execution id",
+          type: "string",
+          format: "uuid",
+        },
+        run_test_id: {
+          title: "Run test id",
+          type: "string",
+          format: "uuid",
+        },
+        run_test_name: {
+          title: "Run test name",
+          type: "string",
+        },
+        run_number: {
+          title: "Run number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        environment: {
+          $ref: "#/definitions/RunEnvironmentRef",
+        },
+        agent_version: {
+          $ref: "#/definitions/AgentVersionRef",
+        },
+        outcome_passed: {
+          title: "Outcome passed",
+          type: "integer",
+          "x-nullable": true,
+        },
+        outcome_failed: {
+          title: "Outcome failed",
+          type: "integer",
+          "x-nullable": true,
+        },
+        outcome_skipped: {
+          title: "Outcome skipped",
+          type: "integer",
+          "x-nullable": true,
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
       },
     },
@@ -88898,6 +92236,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
         },
+        order: {
+          title: "Order",
+          description:
+            "Legacy input accepted for compatibility; rows are appended in request order.",
+          type: "integer",
+        },
         cells: {
           type: "array",
           items: {
@@ -88906,6 +92250,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           default: [],
         },
       },
+      additionalProperties: false,
     },
     DatasetCellValue: {
       type: "object",
@@ -92710,6 +96055,344 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessVersion: {
+      required: [
+        "id",
+        "label",
+        "status",
+        "is_default",
+        "created_at",
+        "created_by",
+        "origin",
+        "summary",
+        "hash",
+        "parent_id",
+        "derived_from_agent_version_id",
+        "scenario_count",
+        "source",
+        "prompt",
+        "preflight_status",
+        "preflight_report",
+        "preflighted_at",
+        "check_started_at",
+        "credential_names",
+        "required_variable_names",
+        "activation_outcome",
+        "requested_here",
+        "pickable",
+        "discardable",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["draft", "active", "discarded"],
+        },
+        is_default: {
+          title: "Is default",
+          type: "boolean",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        created_by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        hash: {
+          title: "Hash",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        parent_id: {
+          title: "Parent id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        derived_from_agent_version_id: {
+          title: "Derived from agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+          "x-nullable": true,
+        },
+        source: {
+          title: "Source",
+          description: "An agent version's non-secret source facts.",
+          type: "object",
+          "x-nullable": true,
+        },
+        prompt: {
+          title: "Prompt",
+          description:
+            "The default agent version's prompt; null on every other item.",
+          type: "string",
+          "x-nullable": true,
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_report: {
+          title: "Preflight report",
+          description:
+            "An agent version's last check: check statuses and names only.",
+          type: "object",
+          "x-nullable": true,
+        },
+        preflighted_at: {
+          title: "Preflighted at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        check_started_at: {
+          title: "Check started at",
+          description: "When an agent version's latest check was asked for.",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        credential_names: {
+          description:
+            "An agent version's credential names, provider keys included.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        required_variable_names: {
+          description:
+            "The variables an agent version's source reads, when known.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        activation_outcome: {
+          title: "Activation outcome",
+          description:
+            "Why a passed agent version is or isn't this environment's default, as last recorded.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        requested_here: {
+          title: "Requested here",
+          description: "Whether this environment asked for an agent version.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        pickable: {
+          title: "Pickable",
+          description:
+            "Whether an agent version can be picked for a run of this environment or made its default.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        discardable: {
+          title: "Discardable",
+          description: "Whether this environment can discard an agent version.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessAgentPayloadChange: {
+      required: ["config"],
+      type: "object",
+      properties: {
+        config: {
+          $ref: "#/definitions/HarnessAgentConfigChange",
+        },
+      },
+    },
+    HarnessComparePair: {
+      required: [
+        "scenario_key",
+        "scenario",
+        "band",
+        "verdict",
+        "difference",
+        "interval",
+        "current",
+        "against",
+        "changed_sub_goals",
+        "reason",
+        "removed_in",
+      ],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          minLength: 1,
+        },
+        band: {
+          title: "Band",
+          type: "string",
+          enum: ["paired", "criteria_changed", "new", "not_applicable"],
+        },
+        verdict: {
+          title: "Verdict",
+          type: "string",
+          enum: [
+            "improved",
+            "regressed",
+            "no_meaningful_change",
+            "inconclusive",
+          ],
+          "x-nullable": true,
+        },
+        difference: {
+          title: "Difference",
+          description: "Pass-rate change in percentage points.",
+          type: "number",
+          "x-nullable": true,
+        },
+        interval: {
+          $ref: "#/definitions/HarnessCompareInterval",
+        },
+        current: {
+          $ref: "#/definitions/HarnessCompareSide",
+        },
+        against: {
+          $ref: "#/definitions/HarnessCompareSide",
+        },
+        changed_sub_goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        removed_in: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+      },
+    },
+    HarnessCompareSummary: {
+      required: [
+        "paired",
+        "improved",
+        "regressed",
+        "no_meaningful_change",
+        "inconclusive",
+        "criteria_changed",
+        "new",
+        "not_applicable",
+        "current_pass_rate",
+        "against_pass_rate",
+        "margin",
+      ],
+      type: "object",
+      properties: {
+        paired: {
+          title: "Paired",
+          type: "integer",
+        },
+        improved: {
+          title: "Improved",
+          type: "integer",
+        },
+        regressed: {
+          title: "Regressed",
+          type: "integer",
+        },
+        no_meaningful_change: {
+          title: "No meaningful change",
+          type: "integer",
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+        criteria_changed: {
+          title: "Criteria changed",
+          type: "integer",
+        },
+        new: {
+          title: "New",
+          type: "integer",
+        },
+        not_applicable: {
+          title: "Not applicable",
+          type: "integer",
+        },
+        current_pass_rate: {
+          title: "Current pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        against_pass_rate: {
+          title: "Against pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        margin: {
+          title: "Margin",
+          type: "number",
+        },
+      },
+    },
+    HarnessCompareVersions: {
+      required: ["current", "against"],
+      type: "object",
+      properties: {
+        current: {
+          $ref: "#/definitions/HarnessRunPinnedVersions",
+        },
+        against: {
+          $ref: "#/definitions/HarnessRunPinnedVersions",
+        },
+      },
+    },
     HarnessConversationEvent: {
       required: [
         "schema_version",
@@ -92964,6 +96647,258 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
         },
       },
+    },
+    HarnessDraftSaveItem: {
+      required: ["piece", "expected_parent_id"],
+      type: "object",
+      properties: {
+        piece: {
+          title: "Piece",
+          type: "string",
+          enum: ["environment", "suite"],
+        },
+        expected_parent_id: {
+          title: "Expected parent id",
+          description: "The draft's parent the caller saw.",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        expected_revision: {
+          title: "Expected revision",
+          description: "The draft's revision the caller saw.",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    HarnessDraftItem: {
+      required: [
+        "id",
+        "label",
+        "status",
+        "is_default",
+        "created_at",
+        "created_by",
+        "origin",
+        "summary",
+        "hash",
+        "parent_id",
+        "derived_from_agent_version_id",
+        "scenario_count",
+        "source",
+        "prompt",
+        "preflight_status",
+        "preflight_report",
+        "preflighted_at",
+        "check_started_at",
+        "credential_names",
+        "required_variable_names",
+        "activation_outcome",
+        "requested_here",
+        "pickable",
+        "discardable",
+        "stale",
+        "revision",
+        "last_edited_by",
+        "updated_at",
+        "parent_label",
+        "default_label",
+        "changes",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["draft", "active", "discarded"],
+        },
+        is_default: {
+          title: "Is default",
+          type: "boolean",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        created_by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        hash: {
+          title: "Hash",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        parent_id: {
+          title: "Parent id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        derived_from_agent_version_id: {
+          title: "Derived from agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+          "x-nullable": true,
+        },
+        source: {
+          title: "Source",
+          description: "An agent version's non-secret source facts.",
+          type: "object",
+          "x-nullable": true,
+        },
+        prompt: {
+          title: "Prompt",
+          description:
+            "The default agent version's prompt; null on every other item.",
+          type: "string",
+          "x-nullable": true,
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_report: {
+          title: "Preflight report",
+          description:
+            "An agent version's last check: check statuses and names only.",
+          type: "object",
+          "x-nullable": true,
+        },
+        preflighted_at: {
+          title: "Preflighted at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        check_started_at: {
+          title: "Check started at",
+          description: "When an agent version's latest check was asked for.",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        credential_names: {
+          description:
+            "An agent version's credential names, provider keys included.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        required_variable_names: {
+          description:
+            "The variables an agent version's source reads, when known.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        activation_outcome: {
+          title: "Activation outcome",
+          description:
+            "Why a passed agent version is or isn't this environment's default, as last recorded.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        requested_here: {
+          title: "Requested here",
+          description: "Whether this environment asked for an agent version.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        pickable: {
+          title: "Pickable",
+          description:
+            "Whether an agent version can be picked for a run of this environment or made its default.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        discardable: {
+          title: "Discardable",
+          description: "Whether this environment can discard an agent version.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        stale: {
+          title: "Stale",
+          description:
+            "Whether the default moved since the draft started; Save refuses it.",
+          type: "boolean",
+        },
+        revision: {
+          title: "Revision",
+          description: "Bumped on every edit to the draft.",
+          type: "integer",
+        },
+        last_edited_by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+        },
+        parent_label: {
+          title: "Parent label",
+          description: "The version the draft started from.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        default_label: {
+          title: "Default label",
+          description: "The piece's default now.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        changes: {
+          title: "Changes",
+          description:
+            "Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+          },
+        },
+      },
+      "x-nullable": true,
     },
     HarnessEnvironmentOfferedEval: {
       required: [
@@ -93532,6 +97467,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runs_count",
         "last_updated",
         "created_at",
+        "last_run",
       ],
       type: "object",
       properties: {
@@ -93605,6 +97541,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Created at",
           type: "string",
           format: "date-time",
+        },
+        last_run: {
+          $ref: "#/definitions/HarnessRunSummary",
         },
       },
     },
@@ -93700,6 +97639,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Message",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    HarnessGitHubPushRepository: {
+      required: ["full_name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "integer",
+          minimum: 1,
+          "x-nullable": true,
+        },
+        full_name: {
+          title: "Full name",
+          type: "string",
+          maxLength: 256,
+          minLength: 1,
+        },
+        default_branch: {
+          title: "Default branch",
+          type: "string",
+          maxLength: 256,
+          "x-nullable": true,
         },
       },
     },
@@ -94085,8 +98048,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Metadata",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         runtime: {
@@ -94309,6 +98274,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessVersioningFlags: {
+      required: ["enabled", "nudges_enabled"],
+      type: "object",
+      properties: {
+        enabled: {
+          title: "Enabled",
+          type: "boolean",
+        },
+        nudges_enabled: {
+          title: "Nudges enabled",
+          type: "boolean",
+        },
+      },
+    },
     HarnessManifestEntry: {
       required: ["artifact_id", "kind", "size"],
       type: "object",
@@ -94338,6 +98317,158 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+    },
+    HarnessNudgeError: {
+      required: ["code"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          description:
+            "stopped_by_user, stopped_by_newer, environment_deleted, checks_failed, no_report, not_runnable, turn_failed, turn_interrupted, rebuild_not_started, rebuild_stuck, landing_failed, or a refused save's code.",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        problems: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessNudgeProblem",
+          },
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessNudgeFacts: {
+      type: "object",
+      properties: {
+        source: {
+          title: "Source",
+          description:
+            "The agent source's kind, whether it changed, and its from/to ids.",
+          type: "object",
+        },
+        changed_files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessNudgeFile",
+          },
+        },
+        files_total: {
+          title: "Files total",
+          type: "integer",
+          "x-nullable": true,
+        },
+        files_truncated: {
+          title: "Files truncated",
+          type: "boolean",
+        },
+        reversed: {
+          title: "Reversed",
+          description: "A roll back to an earlier commit.",
+          type: "boolean",
+        },
+        files_unavailable: {
+          title: "Files unavailable",
+          description:
+            "Why the file changes aren't listed: private_repository, no_commit, repository_changed, not_linear, rate_limited, github_error, archive_missing, archive_unreadable or archive_too_large.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        prompt_changed: {
+          title: "Prompt changed",
+          type: "boolean",
+        },
+        variables: {
+          $ref: "#/definitions/HarnessNudgeVariables",
+        },
+        settings_changed: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        agent_default_moved: {
+          title: "Agent default moved",
+          description:
+            "Whether the agent version is already this environment's default.",
+          type: "boolean",
+        },
+        environment_diff: {
+          title: "Environment diff",
+          type: "object",
+          "x-nullable": true,
+        },
+        environment_summary: {
+          title: "Environment summary",
+          type: "string",
+        },
+        from_environment_version_id: {
+          title: "From environment version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessNudgeReplacement: {
+      required: ["id", "trigger_label"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        trigger_label: {
+          title: "Trigger label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessVersionPerson: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
+    },
+    RunVersionLabel: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     HarnessPreflightCheck: {
       required: ["id", "label", "status", "detail", "missing", "fix"],
@@ -94536,6 +98667,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         judged: {
           title: "Judged",
           type: "boolean",
+        },
+      },
+    },
+    HarnessRunPinnedVersions: {
+      required: ["agent", "environment", "suite"],
+      type: "object",
+      properties: {
+        agent: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        environment: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        suite: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+      },
+    },
+    HarnessRunWarning: {
+      required: ["code", "message", "piece"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        piece: {
+          title: "Piece",
+          type: "string",
+          enum: ["agent", "environment", "suite"],
+          "x-nullable": true,
         },
       },
     },
@@ -99418,6 +103586,112 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ReliabilityInterval: {
+      required: ["low", "high", "effective_n", "scenarios", "evaluated"],
+      type: "object",
+      properties: {
+        low: {
+          title: "Low",
+          type: "number",
+        },
+        high: {
+          title: "High",
+          type: "number",
+        },
+        effective_n: {
+          title: "Effective n",
+          type: "number",
+        },
+        scenarios: {
+          title: "Scenarios",
+          type: "integer",
+        },
+        evaluated: {
+          title: "Evaluated",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    ReliabilityRow: {
+      required: [
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+        "scenario",
+        "scenario_key",
+        "runs",
+        "evaluated",
+        "pass_rate",
+        "verdict",
+        "call_ids",
+      ],
+      type: "object",
+      properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
+        passed: {
+          title: "Passed",
+          type: "integer",
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+        },
+        error: {
+          title: "Error",
+          type: "integer",
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          minLength: 1,
+        },
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        runs: {
+          title: "Runs",
+          type: "integer",
+        },
+        evaluated: {
+          title: "Evaluated",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        verdict: {
+          title: "Verdict",
+          type: "string",
+          enum: ["passed", "failed", "flaky", "not_evaluated"],
+        },
+        call_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     AgentDefinitionNested: {
       required: ["agent_name", "description"],
       type: "object",
@@ -99987,60 +104261,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Provider",
           type: "string",
           minLength: 1,
-        },
-      },
-    },
-    Reliability: {
-      required: [
-        "trials",
-        "scenarios",
-        "consistent_pass",
-        "passed_at_least_once",
-        "repeated",
-        "flaky",
-        "flip_rate",
-        "pass_rate_interval",
-        "rows",
-      ],
-      type: "object",
-      properties: {
-        trials: {
-          title: "Trials",
-          type: "integer",
-        },
-        scenarios: {
-          title: "Scenarios",
-          type: "integer",
-        },
-        consistent_pass: {
-          title: "Consistent pass",
-          type: "integer",
-        },
-        passed_at_least_once: {
-          title: "Passed at least once",
-          type: "integer",
-        },
-        repeated: {
-          title: "Repeated",
-          type: "integer",
-        },
-        flaky: {
-          title: "Flaky",
-          type: "integer",
-        },
-        flip_rate: {
-          title: "Flip rate",
-          type: "number",
-          "x-nullable": true,
-        },
-        pass_rate_interval: {
-          $ref: "#/definitions/ReliabilityInterval",
-        },
-        rows: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/ReliabilityRow",
-          },
         },
       },
     },
@@ -100692,6 +104912,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        environment_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        suite_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        pinned_agent_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        agent_differs: {
+          title: "Agent differs",
+          type: "boolean",
+          default: false,
+        },
         selected_scenario_keys: {
           type: "array",
           items: {
@@ -101131,6 +105365,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           "x-nullable": true,
         },
+        environment_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        suite_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        pinned_agent_version: {
+          $ref: "#/definitions/RunVersionLabel",
+        },
+        agent_differs: {
+          title: "Agent differs",
+          type: "boolean",
+          readOnly: true,
+        },
       },
     },
     RunTestNameResult: {
@@ -101146,6 +105394,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Run test name",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    RunTrace: {
+      required: [
+        "trace_id",
+        "name",
+        "start_time",
+        "status",
+        "latency_ms",
+        "call_execution_id",
+      ],
+      type: "object",
+      properties: {
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          "x-nullable": true,
+        },
+        start_time: {
+          title: "Start time",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          "x-nullable": true,
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "integer",
+          "x-nullable": true,
+        },
+        call_execution_id: {
+          title: "Call execution id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
         },
       },
     },
@@ -102407,6 +106700,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Widget count",
           type: "integer",
         },
+        issue: {
+          $ref: "#/definitions/FeedDetailCore",
+        },
+        overview: {
+          $ref: "#/definitions/OverviewResponse",
+        },
+        traces: {
+          $ref: "#/definitions/TracesTabResponse",
+        },
+        trends: {
+          $ref: "#/definitions/TrendsTabResponse",
+        },
+        sidebar: {
+          $ref: "#/definitions/FeedSidebar",
+        },
       },
     },
     SignupResult: {
@@ -102845,6 +107153,105 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    StoredAgent: {
+      required: [
+        "schema_version",
+        "type",
+        "kind",
+        "name",
+        "provider_ref",
+        "behaviour",
+        "tools",
+        "model",
+        "voice",
+        "telephony",
+        "supports",
+        "direction_answer",
+        "gaps",
+        "instrumentation",
+        "setup_hash",
+      ],
+      type: "object",
+      properties: {
+        schema_version: {
+          title: "Schema version",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        provider_ref: {
+          $ref: "#/definitions/StoredProviderRef",
+        },
+        behaviour: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/StoredBehaviourUnit",
+          },
+        },
+        tools: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/StoredTool",
+          },
+        },
+        model: {
+          $ref: "#/definitions/StoredModel",
+        },
+        voice: {
+          $ref: "#/definitions/StoredVoice",
+        },
+        telephony: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/StoredTelephony",
+          },
+        },
+        supports: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        direction_answer: {
+          title: "Direction answer",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        gaps: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        instrumentation: {
+          title: "Instrumentation",
+          type: "string",
+          minLength: 1,
+        },
+        setup_hash: {
+          title: "Setup hash",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     StreamStatusResult: {
       required: ["stream_status"],
       type: "object",
@@ -103113,6 +107520,124 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    TeamCreateErrorItem: {
+      required: ["error"],
+      type: "object",
+      properties: {
+        index: {
+          title: "Index",
+          type: "integer",
+        },
+        email: {
+          title: "Email",
+          type: "string",
+          format: "email",
+          minLength: 1,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    TeamCreatedMemberResponse: {
+      required: [
+        "id",
+        "email",
+        "name",
+        "organization_role",
+        "organization",
+        "created_at",
+        "status",
+        "role",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        email: {
+          title: "Email",
+          type: "string",
+          format: "email",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          "x-nullable": true,
+        },
+        organization_role: {
+          title: "Organization role",
+          type: "string",
+          "x-nullable": true,
+        },
+        organization: {
+          $ref: "#/definitions/AccountOrganizationDetail",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          "x-nullable": true,
+        },
+        goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        invite_email_warning: {
+          title: "Invite email warning",
+          description:
+            "Member was added, but the invitation email could not be sent.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    WorkspaceSummary: {
+      required: ["id", "name", "display_name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        display_name: {
+          title: "Display name",
+          type: "string",
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        is_default: {
+          title: "Is default",
+          type: "boolean",
+        },
+      },
+    },
     CreateMember: {
       required: ["email", "name"],
       type: "object",
@@ -103178,7 +107703,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         created_members: {
           type: "array",
           items: {
-            $ref: "#/definitions/AccountUserItemResponse",
+            $ref: "#/definitions/TeamCreatedMemberResponse",
           },
         },
         workspace: {
@@ -105888,34 +110413,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    WorkspaceSummary: {
-      required: ["id", "name", "display_name"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-        },
-        name: {
-          title: "Name",
-          type: "string",
-          minLength: 1,
-        },
-        display_name: {
-          title: "Display name",
-          type: "string",
-        },
-        description: {
-          title: "Description",
-          type: "string",
-        },
-        is_default: {
-          title: "Is default",
-          type: "boolean",
-        },
-      },
-    },
     AdminInvoiceLineItem: {
       required: [
         "line_type",
@@ -105999,6 +110496,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
         display_unit: {
           title: "Display unit",
           type: "string",
+        },
+      },
+    },
+    AgentFixVerdict: {
+      required: ["accepted", "reason", "must_pass_regressions"],
+      type: "object",
+      properties: {
+        accepted: {
+          title: "Accepted",
+          type: "boolean",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+        target_pass_rate: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          "x-nullable": true,
+        },
+        held_back_pass_rate: {
+          type: "array",
+          items: {
+            type: "number",
+          },
+          "x-nullable": true,
+        },
+        must_pass_regressions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        must_pass_within_noise: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+        tiers: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixVerdictTier",
+          },
+          default: [],
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixOverride: {
+      required: ["allowed", "regressions", "reason", "by", "at"],
+      type: "object",
+      properties: {
+        allowed: {
+          title: "Allowed",
+          type: "boolean",
+        },
+        regressions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        by: {
+          $ref: "#/definitions/HarnessVersionPerson",
+        },
+        at: {
+          title: "At",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
       },
     },
@@ -106222,6 +110801,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
         },
       },
+    },
+    AgentVersionRef: {
+      required: ["id", "version_number"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
     },
     AlertOption: {
       required: ["value", "label"],
@@ -107232,6 +111827,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "Any valid JSON value.",
         },
       },
+      additionalProperties: false,
     },
     DatasetCellMetadata: {
       type: "object",
@@ -110490,6 +115086,82 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessAgentConfigChange: {
+      type: "object",
+      properties: {
+        phone_number: {
+          title: "Phone number",
+          type: "string",
+          maxLength: 512,
+          minLength: 1,
+        },
+        agent_name: {
+          title: "Agent name",
+          type: "string",
+          maxLength: 512,
+          minLength: 1,
+        },
+        target_speaks_first: {
+          title: "Target speaks first",
+          type: "boolean",
+        },
+      },
+    },
+    HarnessCompareInterval: {
+      description: "Newcombe 95% interval of the difference.",
+      required: ["low", "high"],
+      type: "object",
+      properties: {
+        low: {
+          title: "Low",
+          type: "number",
+        },
+        high: {
+          title: "High",
+          type: "number",
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessCompareSide: {
+      required: [
+        "passed",
+        "trials",
+        "undecided",
+        "pass_rate",
+        "eval_pass_rate",
+      ],
+      type: "object",
+      properties: {
+        passed: {
+          title: "Passed",
+          type: "integer",
+        },
+        trials: {
+          title: "Trials",
+          description: "Trials a verdict was reached on.",
+          type: "integer",
+        },
+        undecided: {
+          title: "Undecided",
+          description:
+            "Trials that ran to an end but a sub-goal check was undecided.",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        eval_pass_rate: {
+          title: "Eval pass rate",
+          description: "Context only; never decides the verdict.",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessEnvironmentEvalInput: {
       required: ["key", "source", "label"],
       type: "object",
@@ -110981,6 +115653,116 @@ export const OPENAPI_CONTRACT = Object.freeze({
         error: {
           title: "Error",
           type: "string",
+        },
+      },
+    },
+    HarnessNudgeProblem: {
+      required: ["item", "kind", "message", "in_your_unsaved_edits"],
+      type: "object",
+      properties: {
+        item: {
+          title: "Item",
+          type: "string",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+        },
+        in_your_unsaved_edits: {
+          title: "In your unsaved edits",
+          type: "boolean",
+        },
+      },
+    },
+    HarnessNudgeFile: {
+      required: [
+        "path",
+        "status",
+        "previous_path",
+        "additions",
+        "deletions",
+        "has_patch",
+        "patch_omitted",
+      ],
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["added", "removed", "modified", "renamed", "copied"],
+        },
+        previous_path: {
+          title: "Previous path",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        additions: {
+          title: "Additions",
+          type: "integer",
+          "x-nullable": true,
+        },
+        deletions: {
+          title: "Deletions",
+          type: "integer",
+          "x-nullable": true,
+        },
+        has_patch: {
+          title: "Has patch",
+          type: "boolean",
+        },
+        patch_omitted: {
+          title: "Patch omitted",
+          description:
+            "Why the file's patch isn't kept: secret_path, too_large, binary, budget or redaction_unavailable.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessNudgeVariables: {
+      required: ["added", "removed", "changed", "unknown"],
+      type: "object",
+      properties: {
+        added: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        removed: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        changed: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        unknown: {
+          description:
+            "Names whose values couldn't be read, so they may have changed.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -113673,104 +118455,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    ReliabilityInterval: {
-      required: ["low", "high", "effective_n", "evaluated", "clusters"],
-      type: "object",
-      properties: {
-        low: {
-          title: "Low",
-          type: "number",
-        },
-        high: {
-          title: "High",
-          type: "number",
-        },
-        effective_n: {
-          title: "Effective n",
-          type: "number",
-        },
-        evaluated: {
-          title: "Evaluated",
-          type: "integer",
-        },
-        clusters: {
-          title: "Clusters",
-          type: "integer",
-        },
-      },
-      "x-nullable": true,
-    },
-    ReliabilityRow: {
-      required: [
-        "queued",
-        "in_progress",
-        "passed",
-        "failed",
-        "error",
-        "inconclusive",
-        "scenario",
-        "scenario_key",
-        "runs",
-        "evaluated",
-        "pass_rate",
-        "verdict",
-      ],
-      type: "object",
-      properties: {
-        queued: {
-          title: "Queued",
-          type: "integer",
-        },
-        in_progress: {
-          title: "In progress",
-          type: "integer",
-        },
-        passed: {
-          title: "Passed",
-          type: "integer",
-        },
-        failed: {
-          title: "Failed",
-          type: "integer",
-        },
-        error: {
-          title: "Error",
-          type: "integer",
-        },
-        inconclusive: {
-          title: "Inconclusive",
-          type: "integer",
-        },
-        scenario: {
-          title: "Scenario",
-          type: "string",
-          minLength: 1,
-        },
-        scenario_key: {
-          title: "Scenario key",
-          type: "string",
-          minLength: 1,
-        },
-        runs: {
-          title: "Runs",
-          type: "integer",
-        },
-        evaluated: {
-          title: "Evaluated",
-          type: "integer",
-        },
-        pass_rate: {
-          title: "Pass rate",
-          type: "number",
-          "x-nullable": true,
-        },
-        verdict: {
-          title: "Verdict",
-          type: "string",
-          enum: ["passed", "failed", "flaky", "not_evaluated"],
-        },
-      },
-    },
     RunDashboardBreakdown: {
       required: ["key", "label", "total", "segments", "headline"],
       type: "object",
@@ -115262,6 +119946,176 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    StoredBehaviourUnit: {
+      required: ["id", "shape", "instructions", "tools", "transitions"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        shape: {
+          title: "Shape",
+          type: "string",
+          minLength: 1,
+        },
+        instructions: {
+          title: "Instructions",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        tools: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        transitions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    StoredModel: {
+      required: ["provider", "name", "temperature", "max_tokens"],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        temperature: {
+          title: "Temperature",
+          type: "number",
+          "x-nullable": true,
+        },
+        max_tokens: {
+          title: "Max tokens",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    StoredProviderRef: {
+      required: ["provider", "id", "version"],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    StoredTelephony: {
+      required: ["number", "provider", "direction_supported"],
+      type: "object",
+      properties: {
+        number: {
+          title: "Number",
+          type: "string",
+          minLength: 1,
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        direction_supported: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    StoredTool: {
+      required: ["name", "description", "kind", "parameters", "endpoint"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        parameters: {
+          title: "Parameters",
+          type: "object",
+          "x-nullable": true,
+        },
+        endpoint: {
+          $ref: "#/definitions/StoredToolEndpoint",
+        },
+      },
+    },
+    StoredVoice: {
+      required: ["provider", "voice_id", "language", "speed"],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        voice_id: {
+          title: "Voice id",
+          type: "string",
+          minLength: 1,
+        },
+        language: {
+          title: "Language",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        speed: {
+          title: "Speed",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
     SyntheticDatasetConfigPayload: {
       type: "object",
       properties: {
@@ -115308,27 +120162,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         num_columns: {
           title: "Num columns",
           type: "integer",
-        },
-      },
-    },
-    TeamCreateErrorItem: {
-      required: ["error"],
-      type: "object",
-      properties: {
-        index: {
-          title: "Index",
-          type: "integer",
-        },
-        email: {
-          title: "Email",
-          type: "string",
-          format: "email",
-          minLength: 1,
-        },
-        error: {
-          title: "Error",
-          type: "string",
-          minLength: 1,
         },
       },
     },
@@ -116070,6 +120903,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         avg_score: {
           title: "Avg score",
           type: "number",
+          "x-nullable": true,
         },
         p50_latency: {
           title: "P50 latency",
@@ -116082,6 +120916,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         avg_turns: {
           title: "Avg turns",
           type: "number",
+          "x-nullable": true,
         },
       },
     },
@@ -117330,6 +122165,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           "x-nullable": true,
+        },
+      },
+    },
+    AgentFixVerdictTier: {
+      required: ["name", "status"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["passed", "failed", "pending", "skipped"],
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          default: "",
         },
       },
     },
@@ -118774,6 +123630,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+    },
+    StoredToolEndpoint: {
+      required: ["url"],
+      type: "object",
+      properties: {
+        url: {
+          title: "Url",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
     },
     TeamWorkspaceSummary: {
       required: ["id", "name", "role"],

@@ -1,7 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, TextField } from "@mui/material";
+import { Box, Stack, Typography, Button, TextField, Checkbox } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 /**
@@ -92,32 +91,32 @@ export default function AskUserQuestionCard({
   return (
     <Box
       sx={{
-        borderRadius: 2,
+        borderRadius: "8px",
         border: "1px solid",
-        borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.12 : 0.09),
+        borderColor: "divider",
         bgcolor: "background.paper",
         overflow: "hidden",
       }}
     >
       {/* header */}
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.75, py: 1.25 }}>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1.5 }}>
         <Box
           sx={{
-            px: 0.75, py: 0.125, borderRadius: 999, flexShrink: 0,
-            bgcolor: (t) => alpha("#B45309", t.palette.mode === "dark" ? 0.28 : 0.16),
-            color: "#B45309",
-            typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+            px: 0.75, py: 0.25, borderRadius: "4px", flexShrink: 0,
+            bgcolor: "action.selected",
+            color: "text.secondary",
+            typography: "s3", fontWeight: 500, fontVariantNumeric: "tabular-nums",
           }}
         >
           {question.step}/{question.total}
         </Box>
-        <Typography sx={{ typography: "s2", fontWeight: 700, flex: 1, minWidth: 0 }}>
+        <Typography sx={{ typography: "s1", fontWeight: 500, flex: 1, minWidth: 0 }}>
           {question.prompt}
         </Typography>
       </Stack>
 
       {/* options */}
-      <Stack spacing={0.5} sx={{ px: 1.25, pb: 0.75 }}>
+      <Stack spacing={0.5} sx={{ px: 1.5, pb: 1 }}>
         {question.options.map((opt, i) => (
           <AskOptionRow
             key={opt.label}
@@ -143,9 +142,8 @@ export default function AskUserQuestionCard({
               placeholder="Type your own answer here"
               InputProps={{
                 sx: {
-                  typography: "s2",
-                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03),
-                  "& fieldset": { border: "none" },
+                  typography: "m3",
+                  bgcolor: "background.paper",
                 },
               }}
               sx={{ mt: 0.75 }}
@@ -155,37 +153,15 @@ export default function AskUserQuestionCard({
       </Stack>
 
       {/* bottom bar */}
-      <Stack direction="row" alignItems="center" sx={{ px: 1.5, py: 1.25 }}>
+      <Stack direction="row" alignItems="center" sx={{ px: 2, py: 1.5 }}>
         <Box flex={1} />
         <Stack direction="row" spacing={1}>
           {onSkip && (
-            <Button
-              size="small" onClick={skip}
-              sx={{
-                typography: "s2", fontWeight: 600,
-                color: "text.primary",
-                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-                px: 1.5, borderRadius: 1,
-                "&:hover": {
-                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.12 : 0.08),
-                },
-              }}
-            >
+            <Button size="small" variant="outlined" color="inherit" onClick={skip}>
               Skip
             </Button>
           )}
-          <Button
-            size="small" onClick={submit} disabled={!canSubmit}
-            sx={{
-              typography: "s2", fontWeight: 600,
-              color: canSubmit ? "common.white" : "text.disabled",
-              bgcolor: canSubmit ? "#7857FC" : (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.04),
-              px: 1.5, borderRadius: 1,
-              "&:hover": {
-                bgcolor: canSubmit ? "#6B4EE6" : undefined,
-              },
-            }}
-          >
+          <Button size="small" variant="contained" onClick={submit} disabled={!canSubmit}>
             Submit
           </Button>
         </Stack>
@@ -208,55 +184,40 @@ function AskOptionRow({ label, description, selected, multi, index, onSelect, bo
     <Box
       onClick={onSelect}
       sx={{
-        p: 1.25, borderRadius: 1.25, cursor: "pointer",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.05 : 0.03),
-        "&:hover": {
-          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
-        },
+        p: 1.5, borderRadius: "8px", cursor: "pointer",
+        bgcolor: "background.neutral",
+        "&:hover": { bgcolor: "action.hover" },
       }}
     >
-      <Stack direction="row" alignItems="flex-start" spacing={1.25}>
+      <Stack direction="row" alignItems="flex-start" spacing={1.5}>
         <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}>
+          <Typography sx={{ typography: "s1", fontWeight: 500, color: "text.primary" }}>
             {label}
           </Typography>
           {description && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.125 }}>
+            <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>
               {description}
             </Typography>
           )}
         </Box>
         {multi ? (
-          <Box
-            sx={{
-              width: 18, height: 18, borderRadius: 0.5, flexShrink: 0, mt: "1px",
-              display: "grid", placeItems: "center",
-              border: "1.5px solid",
-              borderColor: selected ? "#7857FC" : (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.22 : 0.2),
-              bgcolor: selected ? "#7857FC" : "transparent",
-              transition: "background-color .12s ease, border-color .12s ease",
-            }}
-          >
-            {selected && (
-              <Box
-                component="svg" viewBox="0 0 24 24" fill="none" stroke="#fff"
-                strokeWidth={3.25} strokeLinecap="round" strokeLinejoin="round"
-                sx={{ width: 11, height: 11, display: "block" }}
-              >
-                <polyline points="5,12.5 10,17.5 19,7" />
-              </Box>
-            )}
-          </Box>
+          // The theme's checkbox as a display: the row owns the click.
+          <Checkbox
+            checked={Boolean(selected)}
+            tabIndex={-1}
+            size="small"
+            onChange={() => {}}
+            inputProps={{ "aria-hidden": true }}
+            sx={{ p: 0, flexShrink: 0, pointerEvents: "none" }}
+          />
         ) : (
           <Box
             sx={{
-              minWidth: 22, height: 20, px: 0.75, borderRadius: 0.75, flexShrink: 0, mt: "1px",
+              minWidth: 24, height: 20, px: 0.75, borderRadius: "4px", flexShrink: 0, mt: "1px",
               display: "grid", placeItems: "center",
-              border: "1px solid",
-              borderColor: selected ? "#7857FC" : (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.12),
-              bgcolor: selected ? "#7857FC" : "transparent",
-              color: selected ? "#fff" : "text.subtitle",
-              typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+              bgcolor: selected ? "text.primary" : "action.selected",
+              color: selected ? "background.paper" : "text.secondary",
+              typography: "s3", fontWeight: 500, fontVariantNumeric: "tabular-nums",
             }}
           >
             {index}
@@ -296,22 +257,22 @@ function ResolvedSummary({ question, answer, text }) {
   return (
     <Box
       sx={{
-        borderRadius: 2,
+        borderRadius: "8px",
         border: "1px solid", borderColor: "divider",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
-        px: 1.75, py: 1.25,
+        bgcolor: "background.neutral",
+        px: 2, py: 1.5,
       }}
     >
-      <Typography sx={{ typography: "s2", fontWeight: 700, color: "text.primary" }}>
+      <Typography sx={{ typography: "s1", fontWeight: 500, color: "text.primary" }}>
         {question.prompt}
       </Typography>
       <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mt: 0.75 }}>
         <Iconify
           icon={answer.skipped ? "solar:close-circle-linear" : "solar:check-circle-bold"}
           width={14}
-          sx={{ color: answer.skipped ? "text.subtitle" : "primary.main", flexShrink: 0 }}
+          sx={{ color: answer.skipped ? "text.secondary" : "status.success.solid", flexShrink: 0 }}
         />
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
           {summary}
         </Typography>
       </Stack>

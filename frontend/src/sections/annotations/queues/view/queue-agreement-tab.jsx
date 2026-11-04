@@ -3,8 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Box,
-  Card,
-  CardContent,
   Table,
   TableBody,
   TableCell,
@@ -16,6 +14,7 @@ import {
   Link,
   Stack,
 } from "@mui/material";
+import Section from "src/components/section";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useQueueAgreement } from "src/api/annotation-queues/annotation-queues";
 import { paths } from "src/routes/paths";
@@ -67,9 +66,7 @@ export default function QueueAgreementTab({
   const handleClosePopover = () => setSelection(null);
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   if (!agreement) return null;
@@ -82,8 +79,8 @@ export default function QueueAgreementTab({
   return (
     <Box ref={resultsRef} role="region" aria-label="Agreement results" tabIndex={-1} sx={{ p: 3 }}>
       {/* Overall Agreement */}
-      <Card sx={{ mb: 3 }}>
-        <CardContent sx={{ textAlign: "center" }}>
+      <Section variant="panel" sx={{ mb: 3 }}>
+        <Box sx={{ textAlign: "center" }}>
           <Typography variant="caption" color="text.secondary">
             Overall Agreement
           </Typography>
@@ -95,8 +92,8 @@ export default function QueueAgreementTab({
               Need at least 2 annotators per item to calculate agreement
             </Typography>
           )}
-        </CardContent>
-      </Card>
+        </Box>
+      </Section>
 
       {/* Per-Label Agreement */}
       {labelEntries.length > 0 && (
@@ -110,9 +107,24 @@ export default function QueueAgreementTab({
                 <TableRow>
                   <TableCell sx={{ width: "32%" }}>Label</TableCell>
                   <TableCell>Type</TableCell>
-                  <TableCell align="right">Agreement</TableCell>
-                  <TableCell align="right">Cohen&apos;s Kappa</TableCell>
-                  <TableCell align="right">Disagreements</TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Agreement
+                  </TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Cohen&apos;s Kappa
+                  </TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Disagreements
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -126,7 +138,10 @@ export default function QueueAgreementTab({
                         {label.label_type}
                       </Typography>
                     </TableCell>
-                    <TableCell align="right">
+                    <TableCell
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
+                      align="right"
+                    >
                       <Typography
                         color={getAgreementColor(label.agreement_pct)}
                         fontWeight="fontWeightSemiBold"
@@ -134,12 +149,18 @@ export default function QueueAgreementTab({
                         {formatPct(label.agreement_pct)}
                       </Typography>
                     </TableCell>
-                    <TableCell align="right">
+                    <TableCell
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
+                      align="right"
+                    >
                       {label.cohens_kappa != null
                         ? label.cohens_kappa.toFixed(3)
                         : "—"}
                     </TableCell>
-                    <TableCell align="right">
+                    <TableCell
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
+                      align="right"
+                    >
                       {label.disagreement_count > 0 ? (
                         <Link
                           id={`disagreement-trigger-${id}`}
@@ -193,8 +214,18 @@ export default function QueueAgreementTab({
                 <TableRow>
                   <TableCell>Annotator 1</TableCell>
                   <TableCell>Annotator 2</TableCell>
-                  <TableCell align="right">Agreement</TableCell>
-                  <TableCell align="right">Comparisons</TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Agreement
+                  </TableCell>
+                  <TableCell
+                    sx={{ fontVariantNumeric: "tabular-nums" }}
+                    align="right"
+                  >
+                    Comparisons
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -202,7 +233,10 @@ export default function QueueAgreementTab({
                   <TableRow key={i}>
                     <TableCell>{pair.annotator_1_id}</TableCell>
                     <TableCell>{pair.annotator_2_id}</TableCell>
-                    <TableCell align="right">
+                    <TableCell
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
+                      align="right"
+                    >
                       <Typography
                         color={getAgreementColor(pair.agreement_pct)}
                         fontWeight="fontWeightSemiBold"
@@ -210,7 +244,10 @@ export default function QueueAgreementTab({
                         {formatPct(pair.agreement_pct)}
                       </Typography>
                     </TableCell>
-                    <TableCell align="right">
+                    <TableCell
+                      sx={{ fontVariantNumeric: "tabular-nums" }}
+                      align="right"
+                    >
                       {pair.total_comparisons ?? 0}
                     </TableCell>
                   </TableRow>

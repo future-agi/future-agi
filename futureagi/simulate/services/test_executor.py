@@ -133,8 +133,13 @@ from simulate.models.run_test import CreateCallExecution
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import SimulationCallType
+from simulate.selectors.runs import user_executions
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
-from simulate.services.harness_evals import is_harness_run_test, regrade_mapping
+from simulate.services.harness_evals import (
+    effective_simulation_mapping,
+    is_harness_run_test,
+    regrade_mapping,
+)
 
 try:
     from ee.voice.services.conversation_metrics import ConversationMetricsCalculator
@@ -149,6 +154,7 @@ from simulate.temporal.activities.xl import (
     TRANSCRIPT_DOT_ALIASES,
     assert_recording_slot_available,
     build_simulation_context_map,
+    hosted_assistant_recording,
     stringify_leaf,
     walk_subject_path,
 )
@@ -157,7 +163,10 @@ from simulate.utils.processing_outcomes import (
     build_skipped_eval_output_payload,
     set_processing_skip_metadata,
 )
-from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
+from simulate.utils.test_execution_utils import (
+    eval_source,
+    generate_simulator_agent_prompt,
+)
 from simulate.utils.verdicts import has_stored_verdict
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
@@ -2735,7 +2744,8 @@ class TestExecutor:
             # Check database for completed/failed test executions
             try:
                 test_execution = (
-                    TestExecution.objects.filter(run_test_id=run_test_id)
+                    user_executions()
+                    .filter(run_test_id=run_test_id)
                     .order_by("-created_at")
                     .first()
                 )
@@ -4998,6 +5008,11 @@ class TestExecutor:
                     ):
                         transcript_data[transcript_key] = normalized_recording[key]
 
+            if not transcript_data["assistant_recording"]:
+                transcript_data["assistant_recording"] = hosted_assistant_recording(
+                    call_execution
+                )
+
             # Hosted/ALK ingestion persists recording URLs directly on the call
             # row (and may also provide normalized recording entries above).
             # Evaluation must not require a provider client merely to consume
@@ -5125,7 +5140,9 @@ class TestExecutor:
             if harness_run:
                 mapping = regrade_mapping(eval_config) or {}
             else:
-                mapping = eval_config.mapping.copy() if eval_config.mapping else {}
+                mapping = effective_simulation_mapping(
+                    eval_template, eval_config.mapping or {}
+                )
 
             # Replace mapping values with actual data
             updated_mapping = {}
@@ -5386,7 +5403,7 @@ class TestExecutor:
                 kb_id=eval_config.kb_id,
                 error_localizer=eval_config.error_localizer,
                 workspace=call_execution.test_execution.run_test.workspace,
-                source="simulate",
+                source=eval_source(call_execution.test_execution_id),
                 call_context=_call_context,
             )
 
@@ -5970,7 +5987,9 @@ class TestExecutor:
                         organization=organization,
                         api_call_type=api_call_type,
                         config=source_config,
-                        source="simulate_tool_evaluation",
+                        source=eval_source(
+                            test_execution.id, "simulate_tool_evaluation"
+                        ),
                         source_id=str(test_execution.id),
                         workspace=workspace,
                     )

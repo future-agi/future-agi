@@ -7,9 +7,11 @@ import functools
 import json
 import uuid
 from collections.abc import Iterator
+from dataclasses import asdict
 from itertools import islice
 from typing import Any
 
+import structlog
 from django.db.models import QuerySet
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
@@ -22,8 +24,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.models import CallExecution, TestExecution
+from simulate.selectors.runs import user_executions
+from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
@@ -42,10 +47,12 @@ from simulate.services.run_results_v3_queries import (
     GROUP_FIELDS,
     apply_run_call_query,
     build_run_analytics,
+    build_run_reliability,
     run_call_facets,
     run_call_rows_queryset,
     run_calls_queryset,
 )
+from simulate.services.run_traces_v3 import CallNotInRun, list_run_traces
 from simulate.services.run_results_v3_scan import scan_call_values
 from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
 from simulate.services.scoring_status import (
@@ -57,6 +64,11 @@ from simulate.services.scoring_status import (
 from simulate.services.test_executor import build_eval_configs_map
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.general_methods import GeneralMethods
+from tracer.services.clickhouse.client import CHError
+
+logger = structlog.get_logger(__name__)
 
 
 class JsonObjectField(serializers.JSONField):
@@ -227,6 +239,11 @@ class RunExecutionSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
     ordinal = serializers.IntegerField()
     agent_version = serializers.CharField(allow_null=True)
+    environment_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    suite_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    # ``agent_version`` is the version's name; this is the run's agent pin.
+    pinned_agent_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    agent_differs = serializers.BooleanField(required=False, default=False)
     selected_scenario_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
@@ -365,6 +382,24 @@ class RunCallsV3ResponseSerializer(serializers.Serializer):
     evaluation_columns = EvaluationColumnSerializer(many=True)
 
 
+class RunTraceSerializer(serializers.Serializer):
+    trace_id = serializers.CharField()
+    name = serializers.CharField(allow_null=True, allow_blank=True)
+    start_time = serializers.DateTimeField(allow_null=True)
+    status = serializers.CharField(allow_null=True, allow_blank=True)
+    latency_ms = serializers.IntegerField(allow_null=True)
+    call_execution_id = serializers.UUIDField(allow_null=True)
+
+
+class RunTracesV3QuerySerializer(serializers.Serializer):
+    call_execution_id = serializers.UUIDField()
+
+
+class RunTracesV3ResponseSerializer(serializers.Serializer):
+    project_id = serializers.UUIDField(allow_null=True)
+    traces = RunTraceSerializer(many=True)
+
+
 class AnalyticsExecutionSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     name = serializers.CharField()
@@ -385,8 +420,8 @@ class ReliabilityIntervalSerializer(serializers.Serializer):
     low = serializers.FloatField()
     high = serializers.FloatField()
     effective_n = serializers.FloatField()
+    scenarios = serializers.IntegerField()
     evaluated = serializers.IntegerField()
-    clusters = serializers.IntegerField()
 
 
 class ReliabilityRowSerializer(OutcomeCountsSerializer):
@@ -398,6 +433,7 @@ class ReliabilityRowSerializer(OutcomeCountsSerializer):
     verdict = serializers.ChoiceField(
         choices=["passed", "failed", "flaky", "not_evaluated"]
     )
+    call_ids = serializers.ListField(child=serializers.CharField())
 
 
 class ReliabilitySerializer(serializers.Serializer):
@@ -408,6 +444,15 @@ class ReliabilitySerializer(serializers.Serializer):
     repeated = serializers.IntegerField()
     flaky = serializers.IntegerField()
     flip_rate = serializers.FloatField(allow_null=True)
+    k = serializers.IntegerField(allow_null=True)
+    inconclusive = serializers.IntegerField()
+    pass_hat_1 = serializers.FloatField(allow_null=True)
+    pass_hat_k = serializers.FloatField(allow_null=True)
+    pass_hat_k_scenarios = serializers.IntegerField()
+    pass_hat_k_passed = serializers.IntegerField()
+    pass_hat_k_excluded = serializers.IntegerField()
+    trials_passed = serializers.IntegerField()
+    trials_evaluated = serializers.IntegerField()
     pass_rate_interval = ReliabilityIntervalSerializer(allow_null=True)
     rows = ReliabilityRowSerializer(many=True)
 
@@ -554,9 +599,12 @@ def _execution_payload(
     execution: TestExecution, summary: dict[str, Any]
 ) -> dict[str, Any]:
     version = execution.agent_version or execution.run_test.agent_version
-    ordinal = TestExecution.objects.filter(
-        run_test=execution.run_test, created_at__lte=execution.created_at
-    ).count()
+    pinned = run_version_labels([execution.id]).get(str(execution.id)) or {}
+    ordinal = (
+        user_executions()
+        .filter(run_test=execution.run_test, created_at__lte=execution.created_at)
+        .count()
+    )
     return {
         "id": str(execution.id),
         "run_test_id": str(execution.run_test_id),
@@ -566,6 +614,10 @@ def _execution_payload(
         "completed_at": execution.completed_at,
         "ordinal": ordinal,
         "agent_version": getattr(version, "version_name", None),
+        "environment_version": pinned.get("environment_version"),
+        "suite_version": pinned.get("suite_version"),
+        "pinned_agent_version": pinned.get("agent_version"),
+        "agent_differs": bool(pinned.get("agent_differs")),
         "agent_type": (
             execution.agent_definition.agent_type
             if execution.agent_definition
@@ -577,6 +629,42 @@ def _execution_payload(
         "trials": execution.trials or 1,
         "summary": summary,
     }
+
+
+class RunTracesV3View(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        query_serializer=RunTracesV3QuerySerializer,
+        responses={
+            200: RunTracesV3ResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        },
+        operation_id="simulate_v3_test_execution_traces",
+    )
+    def get(self, request, test_execution_id, *args, **kwargs):
+        execution = _execution_for_request(request, test_execution_id)
+        try:
+            result = list_run_traces(
+                execution,
+                call_execution_id=request.validated_query_data["call_execution_id"],
+            )
+        except CallNotInRun:
+            return GeneralMethods(request=request).bad_request(
+                "call_execution_id is not a call of this run."
+            )
+        except (CHError, TimeoutError) as exc:
+            logger.warning(
+                "run_traces_read_failed",
+                test_execution_id=str(execution.id),
+                error=type(exc).__name__,
+            )
+            return GeneralMethods(request=request).custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Traces are unavailable right now",
+                code="run_traces_unavailable",
+            )
+        return Response(RunTracesV3ResponseSerializer(asdict(result)).data)
 
 
 def _facet_rows(
@@ -790,6 +878,20 @@ class RunAnalyticsV3View(APIView):
     def get(self, request, test_execution_id, *args, **kwargs):
         execution = _execution_for_request(request, test_execution_id)
         return Response(build_run_analytics(execution))
+
+
+class RunReliabilityV3View(APIView):
+    """The reliability block alone, for the run header."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={200: ReliabilitySerializer},
+        operation_id="simulate_v3_test_execution_reliability",
+    )
+    def get(self, request, test_execution_id, *args, **kwargs):
+        execution = _execution_for_request(request, test_execution_id)
+        return Response(build_run_reliability(execution))
 
 
 class _CsvEcho:

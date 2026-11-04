@@ -288,7 +288,9 @@ function composedStandaloneEnvironment(): Record<string, string> {
     .split('\n').filter(line => /^[A-Z_][A-Z0-9_]*=/.test(line))
     .map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
   const compose = parse(readFileSync(new URL('../../docker-compose.yml', import.meta.url), 'utf8'));
-  return Object.fromEntries(Object.entries(compose.services.app.environment as Record<string, unknown>)
+  const overlay = parse(readFileSync(new URL('../stack/docker-compose.standalone-e2e.yml', import.meta.url), 'utf8'));
+  const environment = { ...compose.services.app.environment, ...overlay.services.app.environment };
+  return Object.fromEntries(Object.entries(environment as Record<string, unknown>)
     .map(([key, value]) => [key, String(value ?? '').replace(/\$\{([A-Z0-9_]+)(?::?-([^}]*))?\}/g,
       (_, name: string, fallback?: string) => vars[name] || fallback || '')]));
 }
@@ -366,7 +368,11 @@ function fakeStack(stack: 'standalone' | 'distributed') {
   const services: FakeContainer[] = stack === 'standalone' ? [{ service: 'app', env: composedStandaloneEnvironment(),
     ports: { '3000/tcp': port(E2E.appUrl), '8000/tcp': port(E2E.apiUrl), '8080/tcp': port(E2E.gatewayUrl) },
     extraHosts: ['code-executor:127.0.0.1', 'agentcc-gateway:127.0.0.1'],
-    mounts: [[gatewayConfig, '/etc/futureagi/secrets/agentcc.yaml'], ['/dev/null', '/etc/futureagi/secrets/vertex.json']],
+    mounts: [[gatewayConfig, '/etc/futureagi/secrets/agentcc.yaml'], ['/dev/null', '/etc/futureagi/secrets/vertex.json'],
+      [repoFile('stack/backend/settings_e2e.py'), '/app/backend/tfc/settings/e2e.py'],
+      [repoFile('stack/backend/urls_e2e.py'), '/app/backend/tfc/urls_e2e.py'],
+      [repoFile('stack/backend/e2e_clean_signup.py'), '/app/backend/accounts/views/e2e_clean_signup.py'],
+      [repoFile('stack/backend/e2e_feed_issue.py'), '/app/backend/tracer/views/e2e_feed_issue.py']],
   }, mock, ...stores] : [{ service: 'agentcc-gateway', cmd: ['--config', '/app/config.yaml'],
     entrypoint: ['/app/agentcc-gateway'], ports: { '8080/tcp': port(E2E.gatewayUrl) },
     mounts: [[gatewayConfig, '/app/config.yaml']] }, mock, mockSlack,

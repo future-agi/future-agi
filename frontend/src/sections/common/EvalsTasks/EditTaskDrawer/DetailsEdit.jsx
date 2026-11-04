@@ -12,7 +12,6 @@ import {
   Tabs,
   TextField,
   Typography,
-  useTheme,
 } from "@mui/material";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSelectField } from "src/components/FormSelectField";
@@ -21,7 +20,7 @@ import {
   AccordionDetails,
   AccordionSummary,
 } from "src/sections/develop-detail/AccordianElements";
-import NewTaskFilterBox from "../NewTaskDrawer/NewTaskFilterBox";
+import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import ScheduledRuns from "../NewTaskDrawer/ScheduledRuns";
 import PropTypes from "prop-types";
 import { useGetProjectById } from "src/api/project/evals-task";
@@ -102,7 +101,6 @@ const DetailsEdit = ({
   const { role } = useAuthContext();
   const [isAlert, setIsAlert] = useState(false);
   const [selectedTab, setSelectedTab] = useState("Details");
-  const theme = useTheme();
   const { control, handleSubmit, getValues, setValue } = useForm({
     defaultValues: getDefaultTaskValues(taskDetails, observeId),
     resolver: zodResolver(NewTaskValidationSchema()),
@@ -448,7 +446,7 @@ const DetailsEdit = ({
                   zIndex: 3,
                 }}
               >
-                <Iconify icon="mingcute:close-line" />
+                <Iconify icon="solar:close-linear" />
               </IconButton>
               <Box
                 sx={{
@@ -473,28 +471,11 @@ const DetailsEdit = ({
                     justifyContent: "space-between",
                   }}
                 >
-                  <Tabs
+                  <Tabs sx={{ boxShadow: "none" }}
                     textColor="primary"
                     value={selectedTab}
                     onChange={(e, value) => {
                       setSelectedTab(value);
-                    }}
-                    TabIndicatorProps={{
-                      style: {
-                        backgroundColor: theme.palette.primary.main,
-                      },
-                    }}
-                    sx={{
-                      minHeight: 0,
-                      "& .MuiTab-root": {
-                        margin: "0 !important",
-                        fontWeight: "600",
-                        color: "primary.main",
-                        "&:not(.Mui-selected)": {
-                          color: "text.disabled",
-                          fontWeight: "500",
-                        },
-                      },
                     }}
                   >
                     {TabOptions.map((tab) => (
@@ -503,10 +484,6 @@ const DetailsEdit = ({
                         label={tab.label}
                         value={tab.value}
                         disabled={tab.disabled}
-                        sx={{
-                          margin: theme.spacing(0),
-                          px: theme.spacing(1.875),
-                        }}
                       />
                     ))}
                   </Tabs>
@@ -594,7 +571,7 @@ const DetailsEdit = ({
                           <AccordionSummary>
                             <Typography
                               sx={{
-                                fontSize: "14px",
+                                fontSize: "13px",
                                 color: "text.primary",
                                 fontWeight: 500,
                               }}
@@ -603,16 +580,16 @@ const DetailsEdit = ({
                             </Typography>
                           </AccordionSummary>
                           <AccordionDetails>
-                            <NewTaskFilterBox
-                              getValues={getValues}
-                              setValue={setValue}
-                              attributes={evalAttributes.map((attr) => {
-                                const key = attributeInventoryKey(attr);
-                                return { label: key, value: key };
-                              })}
+                            <TaskFilterBar
                               control={control}
-                              onAttributeSearchChange={setAttributeSearch}
+                              setValue={setValue}
+                              projectId={project}
+                              isSimulator={String(rowType || "")
+                                .toLowerCase()
+                                .startsWith("voice")}
+                              rowType={rowType}
                             />
+                            {/* dev (ffa53a797): load more source attributes under the filters. */}
                             <AttributeInventoryControls
                               {...inventoryControlProps}
                               showSearch={false}
@@ -625,7 +602,7 @@ const DetailsEdit = ({
                         <AccordionSummary>
                           <Typography
                             sx={{
-                              fontSize: "14px",
+                              fontSize: "13px",
                               color: "text.primary",
                               fontWeight: 500,
                             }}
@@ -645,7 +622,7 @@ const DetailsEdit = ({
                         <AccordionSummary>
                           <Typography
                             sx={{
-                              fontSize: "14px",
+                              fontSize: "13px",
                               color: "text.primary",
                               fontWeight: 500,
                             }}

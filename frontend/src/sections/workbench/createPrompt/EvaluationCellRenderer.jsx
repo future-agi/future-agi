@@ -104,7 +104,6 @@ const FormattedReason = ({ title }) => {
             minWidth: "auto",
             color: "text.primary",
             textDecoration: "underline",
-            fontSize: "14px",
             "&:hover": {
               backgroundColor: "transparent",
             },
@@ -262,7 +261,7 @@ const EvaluationCellRenderer = (params) => {
           <Box
             p={1}
             overflow={"auto"}
-            bgcolor={isOutputEmpty && "blue.o10"}
+            bgcolor={isOutputEmpty && "status.info.bg"}
             height={"100%"}
             display={isOutputEmpty && "flex"}
             whiteSpace={"wrap"}
@@ -276,7 +275,7 @@ const EvaluationCellRenderer = (params) => {
                 alignItems={"center"}
               >
                 NA
-                <Typography color={"blue.500"}>
+                <Typography color={"status.info.fg"}>
                   (Hover and click <img src={"/assets/icons/ic_run.svg"} /> to
                   run)
                 </Typography>
