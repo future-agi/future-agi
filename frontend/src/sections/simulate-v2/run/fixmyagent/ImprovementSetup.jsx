@@ -1533,7 +1533,7 @@ function HeldBackLine({ heldBack }) {
         }}
       >
         {heldBack.tooFew
-          ? `Too few held-back scenarios to tell a real fix from noise. The result can only be Limited validation, never Verified. ${heldBack.n} of at least ${heldBack.minimum}; ${heldBack.recommended} recommended.`
+          ? `Too few held-back scenarios to tell a real fix from noise. The result can only be Limited validation, never Verified, and a GitHub pull request would open as a draft with that label. ${heldBack.n} of at least ${heldBack.minimum}; ${heldBack.recommended} recommended.`
           : `${heldBack.n} held back — ${heldBack.recommended} recommended for a surer read.`}
       </Typography>
     </Stack>

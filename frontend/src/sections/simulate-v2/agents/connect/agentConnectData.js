@@ -148,8 +148,8 @@ export const AGENT_CONNECT_GROUPS = [
         name: "Claude Code",
         fix: "Pull request",
         icon: "logos:claude-icon",
-        need: "Your repo · its config and API key",
-        kind: "repo",
+        need: "Its set-up in your repo · your own key",
+        kind: "coding",
         initial: { host: "github", codingAgent: "claude-code" },
       },
       {
@@ -157,8 +157,8 @@ export const AGENT_CONNECT_GROUPS = [
         name: "Codex",
         fix: "Pull request",
         icon: "simple-icons:openai",
-        need: "Your repo · its config and API key",
-        kind: "repo",
+        need: "Its set-up in your repo · your own key",
+        kind: "coding",
         initial: { host: "github", codingAgent: "codex" },
       },
       /* No framework: code that calls the model APIs itself. */
@@ -292,7 +292,15 @@ export const newAgentChoicesFor = (channel) => {
                       .replace(/^SDK adapter · /, "")
                       .replace(/^./, (c) => c.toUpperCase()),
                   }
-                : { ...it, section: it.kind === "upload" ? "upload" : "repo" },
+                : {
+                    ...it,
+                    section:
+                      it.kind === "upload"
+                        ? "upload"
+                        : it.kind === "coding"
+                          ? "coding"
+                          : "repo",
+                  },
             ),
         };
       }
@@ -419,6 +427,12 @@ const CODE_SECTIONS = {
     title: "From a repository",
     reach:
       "Connect where the code lives — we read it and work out the framework.",
+  },
+  /* Coding agents are agents, not places code lives: their own group. */
+  coding: {
+    title: "Coding agents",
+    reach:
+      "Claude Code or Codex with your repository's set-up — run in our sandbox with your own key.",
   },
   sdk: {
     title: "Through our SDK",

@@ -73,8 +73,8 @@ const CAPABILITIES = [
   },
   {
     icon: "solar:code-square-linear",
-    title: "Fixes as draft pull requests",
-    body: "A fix opens as a draft PR with the diagnosis and before/after results. We push only to branches we create; you review and merge.",
+    title: "Fixes as pull requests",
+    body: "A Verified fix opens a pull request with the diagnosis and before/after results; a Limited validation one opens as a draft. We push only to branches we create; you review and merge.",
   },
   {
     icon: "solar:chart-2-linear",
@@ -280,7 +280,7 @@ export default function GithubIntegrationPage() {
           }
         >
           {justConnected.usedIn?.length
-            ? `It's tested in ${justConnected.usedIn.map((u) => u.envName).join(", ")}. Fixes for it open as draft pull requests here.`
+            ? `It's tested in ${justConnected.usedIn.map((u) => u.envName).join(", ")}. Fixes for it open as pull requests here.`
             : "Next, build an environment for it — every fix is proved in simulation first. The first one you build becomes its main environment."}
         </Notice>
       )}
@@ -373,7 +373,7 @@ export default function GithubIntegrationPage() {
             sx={{ typography: "s3", color: "text.subtitle", mt: 2.5 }}
           >
             You choose the repositories on GitHub. We only read code until your
-            first draft PR, then write only to branches we create.
+            first pull request, then write only to branches we create.
           </Typography>
         </Section>
       )}

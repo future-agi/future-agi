@@ -26,6 +26,7 @@ import SetupDrawer from "../../environments/SetupDrawer";
 import { newAgentChoicesFor } from "./agentConnectData";
 import HostedAgentFlow from "./HostedAgentFlow";
 import RepoAgentFlow from "./RepoAgentFlow";
+import CodingAgentFlow from "./CodingAgentFlow";
 import BuiltinAgentFlow from "./BuiltinAgentFlow";
 import FrameworkAgentFlow from "./FrameworkAgentFlow";
 import ClosedPlatformFlow from "./ClosedPlatformFlow";
@@ -314,6 +315,9 @@ export default function ConnectAgentPicker({
           />
         )}
         {choice === "repo" && <RepoAgentFlow {...flowProps} preset={preset} />}
+        {choice === "coding" && (
+          <CodingAgentFlow {...flowProps} title={picked?.meta?.name} />
+        )}
         {choice === "builtin" && <BuiltinAgentFlow {...flowProps} />}
         {choice === CLOSED_WAY.id && (
           <ClosedPlatformFlow {...flowProps} title={CLOSED_WAY.title} />

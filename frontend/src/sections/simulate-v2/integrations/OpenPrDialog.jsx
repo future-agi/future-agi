@@ -30,6 +30,7 @@ import {
   installationOfRepo,
   installedRepos,
   openPr,
+  prFailureOf,
   repoNameOf,
   reviewNounOf,
   useIntegrations,
@@ -179,7 +180,9 @@ export default function OpenPrDialog({
               "Same scenarios, same seed. The check on this PR re-runs them against this branch.",
               "",
             ]),
-        "_Opened by Future AGI as a draft. Nothing changes in your agent until you merge._",
+        limited
+          ? "_Opened by Future AGI as a draft labelled Limited validation. Nothing changes in your agent until you merge._"
+          : "_Opened by Future AGI. Nothing changes in your agent until you merge._",
       ].join("\n"),
     [files, summary, env, draft, proof, validation, limited],
   );
@@ -205,13 +208,28 @@ export default function OpenPrDialog({
     agentName,
     kind,
     host,
+    /* Plan (1 Nov): a Verified candidate opens a normal PR; only a
+       Limited validation one opens as a draft. */
+    draft: limited,
     ...(validation ? { validation: validation.label } : {}),
     ...(draft?.meta || {}),
     ...(meta || {}),
   };
 
+  /* Opening can fail after write access is in place: the base branch moved
+     and now conflicts. The candidate and its label are kept; recheck on the
+     new base, then retry explicitly (plan, "PR action failed"). */
+  const [failure, setFailure] = useState(null);
+  const [rechecked, setRechecked] = useState(false);
+  const [rechecking, setRechecking] = useState(false);
   const send = () => {
     const agentKey = theAgent?.key || envAgentKey(theAgent, env?.id);
+    const failureNow = prFailureOf({ repo, base, rechecked });
+    if (failureNow) {
+      setFailure(failureNow);
+      setStep("failed");
+      return;
+    }
     if (isRepoAgent && !known && repo && agentKey)
       setAgentValues(agentKey, { repoUrl: hostRepoUrlOf(host, repo) });
     const opened = openPr(pr);
@@ -289,9 +307,11 @@ export default function OpenPrDialog({
         )}
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "m3", fontWeight: 600 }}>
-            {asking ? (
+            {step === "failed" ? (
+              `Couldn't open the ${review.long}`
+            ) : asking ? (
               <>
-                {`Allow Future AGI to open draft ${review.long}s on `}
+                {`Allow Future AGI to open ${review.long}s on `}
                 <Box
                   component="span"
                   sx={{ fontFamily: MONO, fontSize: "0.92em" }}
@@ -305,7 +325,7 @@ export default function OpenPrDialog({
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {asking
-              ? `Asked once. ${other ? `${hostLabel} was connected` : "The app was installed"} to read your code only — opening a draft ${review.short} needs write access to a new branch.`
+              ? `Asked once. ${other ? `${hostLabel} was connected` : "The app was installed"} to read your code only — opening a ${review.short} needs write access to a new branch.`
               : subheading ||
                 `The fix goes to review on ${hostLabel}. Nothing changes in your agent until you merge.`}
           </Typography>
@@ -352,6 +372,20 @@ export default function OpenPrDialog({
             </Button>
           </Stack>
         </Box>
+      ) : step === "failed" && failure ? (
+        <Stack spacing={1.25} sx={{ px: 3, pb: 2.5 }}>
+          <Typography sx={{ typography: "s1", color: "text.primary" }}>
+            {failure.reason}
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            {`The candidate, its evidence and its label${validation ? ` (${validation.label})` : ""} are kept — nothing is lost. ${failure.fix}`}
+          </Typography>
+          {rechecked && (
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {`Rebased onto the latest ${base} and checked again — the candidate still passes. Retry to open it.`}
+            </Typography>
+          )}
+        </Stack>
       ) : asking ? (
         <Stack spacing={1.75} sx={{ px: 3, pb: 2.5 }}>
           <Box>
@@ -727,7 +761,56 @@ export default function OpenPrDialog({
           </Button>
         </Stack>
       )}
-      {github && !asking && (
+      {github && step === "failed" && (
+        <Stack
+          direction="row"
+          justifyContent="flex-end"
+          spacing={1}
+          sx={{
+            px: 3,
+            py: 1.75,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Button
+            size="small"
+            onClick={onClose}
+            sx={{ color: "text.secondary" }}
+          >
+            Close
+          </Button>
+          {rechecked ? (
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              onClick={send}
+            >
+              {limited
+                ? `Retry · open draft ${review.long}`
+                : `Retry · open ${review.long}`}
+            </Button>
+          ) : (
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              disabled={rechecking}
+              onClick={() => {
+                setRechecking(true);
+                setTimeout(() => {
+                  setRechecking(false);
+                  setRechecked(true);
+                }, 900);
+              }}
+            >
+              {rechecking ? "Rebasing and checking…" : "Rebase and recheck"}
+            </Button>
+          )}
+        </Stack>
+      )}
+      {github && !asking && step !== "failed" && (
         <Stack
           direction="row"
           justifyContent="flex-end"
@@ -753,7 +836,7 @@ export default function OpenPrDialog({
             disabled={!repo || !title.trim()}
             onClick={submit}
           >
-            {`Open ${review.long}`}
+            {limited ? `Open draft ${review.long}` : `Open ${review.long}`}
           </Button>
         </Stack>
       )}
