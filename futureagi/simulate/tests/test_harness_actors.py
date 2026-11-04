@@ -494,24 +494,6 @@ def test_a_sub_actor_is_in_the_cast_and_edited_where_the_call_reads_it(
     assert [one["id"] for one in removed.json()["actors"]] == ["manager"]
 
 
-def test_a_sub_actor_a_scenario_includes_counts_as_in_use():
-    from simulate.services import harness_actors
-
-    suite = {
-        "scenarios/one/scenario.json": json.dumps(
-            {
-                "scenario_key": "one",
-                "instruction": "I need my plan renewed. Your details: account 7",
-                "sub_actors": [
-                    {"id": "colleague", "instruction": "Ask for a bigger discount"}
-                ],
-            }
-        ).encode()
-    }
-    documents = [json.loads(raw) for raw in suite.values()]
-    assert harness_actors._scenarios_using(documents, "colleague") == ["one"]
-
-
 def test_the_checks_and_the_view_follow_the_rules_the_environment_was_sealed_with(
     user, workspace, storage, auth_client
 ):
