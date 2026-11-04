@@ -82,6 +82,7 @@ const ConversationNode = ({ data, isConnectable, id }) => {
           }}
         />
         <NodeHeader
+          id={id}
           type="conversation"
           title={data?.name}
           badge={
