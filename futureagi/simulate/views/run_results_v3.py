@@ -550,6 +550,10 @@ class FunctionCallSerializer(serializers.Serializer):
     output = serializers.JSONField(required=False)
     duration_ms = serializers.FloatField(required=False)
     start_time_ms = serializers.IntegerField(required=False)
+    # A world actor's action, sealed in the tool trace after the agent's calls, names its actor.
+    actor_id = serializers.CharField(required=False)
+    actor_name = serializers.CharField(required=False)
+    refused = serializers.BooleanField(required=False)
 
     class Meta:
         ref_name = "SimulateRunV3FunctionCall"

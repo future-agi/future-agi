@@ -389,6 +389,10 @@ function relativeTime(row, end = false) {
   return milliseconds == null ? null : milliseconds / 1000;
 }
 
+/**
+ * Each recorded call as a transcript row; a world actor's action reads as theirs.
+ * @param {import("src/generated/api-contracts/api.schemas").SimulateRunV3FunctionCallApi[]} calls
+ */
 export function functionCallTranscriptRows(calls = []) {
   return (Array.isArray(calls) ? calls : []).map((call, index) => {
     const duration = call.duration_ms ?? call.durationMs;

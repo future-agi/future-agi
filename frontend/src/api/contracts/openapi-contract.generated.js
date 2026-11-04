@@ -90385,6 +90385,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Start time ms",
           type: "integer",
         },
+        actor_id: {
+          title: "Actor id",
+          type: "string",
+          minLength: 1,
+        },
+        actor_name: {
+          title: "Actor name",
+          type: "string",
+          minLength: 1,
+        },
+        refused: {
+          title: "Refused",
+          type: "boolean",
+        },
       },
     },
     SubGoalResult: {
