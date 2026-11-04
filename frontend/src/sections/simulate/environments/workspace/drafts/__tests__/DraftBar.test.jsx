@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "src/utils/test-utils";
+import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 // The hooks are stubbed; tests set the drafts and each mutation's state.
-const state = { drafts: undefined, save: {}, discard: {} };
+const state = { drafts: undefined, save: {}, review: null };
 const saveMutate = vi.fn();
-const discardMutate = vi.fn();
 const saveReset = vi.fn();
-const discardReset = vi.fn();
+vi.mock("src/api/simulate-environments/draftReview", () => ({
+  useDraftReview: vi.fn(() => ({ data: state.review })),
+}));
 vi.mock("src/api/simulate-environments/versions", async () => {
   const actual = await vi.importActual(
     "src/api/simulate-environments/versions",
@@ -24,12 +25,10 @@ vi.mock("src/api/simulate-environments/versions", async () => {
       error: null,
       ...state.save,
     })),
-    useDiscardDraft: vi.fn(() => ({
-      mutate: discardMutate,
-      reset: discardReset,
-      isPending: false,
-      error: null,
-      ...state.discard,
+    useEnvironmentVersions: vi.fn(() => ({
+      data: {
+        defaults: { environment: { label: "v2" }, suite: { label: "v3" } },
+      },
     })),
   };
 });
@@ -68,18 +67,21 @@ const both = (overrides = {}) => ({
   set_aside: [],
 });
 
-const saveButton = () => screen.getByRole("button", { name: DRAFTS_COPY.save });
-const discardButton = () =>
-  screen.getByRole("button", { name: DRAFTS_COPY.discard });
+const KEPT = {
+  id: "rule:a",
+  piece: "environment",
+  kind: "rule",
+  decision: null,
+  revalidate: ["s1", "s2"],
+};
+const saveButton = () => screen.getByRole("button", { name: /^Save release/ });
 
 beforeEach(() => {
   state.drafts = both();
   state.save = {};
-  state.discard = {};
+  state.review = { changes: [KEPT], failed: [] };
   saveMutate.mockReset();
-  discardMutate.mockReset();
   saveReset.mockReset();
-  discardReset.mockReset();
 });
 
 describe("DraftBar", () => {
@@ -94,12 +96,28 @@ describe("DraftBar", () => {
     expect(screen.queryByTestId("draft-bar")).toBeNull();
   });
 
-  it("states what each piece changes and who edited last", () => {
+  it("states the edits and what saving makes, and opens the review", async () => {
+    const onReview = vi.fn();
+    render(<DraftBar env={ENV} onReview={onReview} />);
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: /1 unsaved edit.*environment v3.*2 scenarios rechecked/,
+      }),
+    );
+    expect(onReview).toHaveBeenCalled();
+    expect(saveButton()).toHaveTextContent("Save release v3");
+  });
+
+  it("offers no Save when only failed changes are left", () => {
+    state.review = {
+      changes: [{ ...KEPT, decision: "rejected" }],
+      failed: [{ id: "f" }],
+    };
     render(<DraftBar env={ENV} />);
-    const bar = screen.getByRole("region", { name: DRAFTS_COPY.title });
-    expect(bar).toHaveTextContent("environment · 3 changes");
-    expect(bar).toHaveTextContent("scenarios · 2 added, 1 removed, 4 changed");
-    expect(bar).toHaveTextContent("last edited by Asha, 5 minutes ago");
+    expect(
+      screen.getByRole("button", { name: /1 change couldn't apply/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Save release/ })).toBeNull();
   });
 
   it("saves every open piece with the parent and revision it shows", async () => {
@@ -120,28 +138,21 @@ describe("DraftBar", () => {
     expect(screen.getByText(reason)).toBeVisible();
     expect(saveButton()).toBeDisabled();
     expect(saveButton()).toHaveAccessibleDescription(reason);
-    // Discarding is the way out.
-    expect(discardButton()).toBeEnabled();
   });
 
-  it("keeps both buttons off while chat is working, saying why", () => {
+  it("keeps Save off while chat is working, saying why", () => {
     render(<DraftBar env={ENV} busy />);
     expect(screen.getByText(DRAFTS_COPY.busy)).toBeVisible();
     expect(saveButton()).toBeDisabled();
-    expect(discardButton()).toBeDisabled();
     expect(saveButton()).toHaveAccessibleDescription(DRAFTS_COPY.busy);
-    expect(discardButton()).toHaveAccessibleDescription(DRAFTS_COPY.busy);
   });
 
-  it("keeps both buttons off while a rebuild holds the drafts, saying why", () => {
+  it("keeps Save off while a rebuild holds the drafts, saying why", () => {
     render(<DraftBar env={ENV} rebuilding />);
     const reason = DRAFTS_COPY.errors.rebuild_running;
     expect(screen.getByText(reason)).toBeVisible();
     expect(saveButton()).toBeDisabled();
-    expect(discardButton()).toBeDisabled();
     expect(saveButton()).toHaveAccessibleDescription(reason);
-    expect(discardButton()).toHaveAccessibleDescription(reason);
-    expect(screen.getByRole("button", { name: "View changes" })).toBeEnabled();
   });
 
   it("shows the save in progress and blocks a second action", () => {
@@ -150,16 +161,6 @@ describe("DraftBar", () => {
     expect(
       screen.getByRole("button", { name: DRAFTS_COPY.saving }),
     ).toBeDisabled();
-    expect(discardButton()).toBeDisabled();
-  });
-
-  it("shows the discard in progress", () => {
-    state.discard = { isPending: true };
-    render(<DraftBar env={ENV} />);
-    expect(
-      screen.getByRole("button", { name: DRAFTS_COPY.discarding }),
-    ).toBeDisabled();
-    expect(saveButton()).toBeDisabled();
   });
 
   it.each([
@@ -209,33 +210,19 @@ describe("DraftBar", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(DRAFTS_COPY.saveError);
   });
 
-  it("explains a refused discard", () => {
-    state.discard = { error: { statusCode: 409, error: "chat_working" } };
-    render(<DraftBar env={ENV} />);
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      DRAFTS_COPY.errors.chat_working,
-    );
-  });
-
   it("clears a refusal once the drafts it was about change", () => {
     state.save = {
       isError: true,
       error: { statusCode: 409, error: "chat_working" },
     };
-    state.discard = {
-      isError: true,
-      error: { statusCode: 409, error: "chat_working" },
-    };
     const { rerender } = render(<DraftBar env={ENV} />);
     saveReset.mockClear();
-    discardReset.mockClear();
     rerender(<DraftBar env={ENV} />);
     expect(saveReset).not.toHaveBeenCalled();
 
     state.drafts = both({ suite: { revision: 2 } });
     rerender(<DraftBar env={ENV} />);
     expect(saveReset).toHaveBeenCalledTimes(1);
-    expect(discardReset).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a draft_changed refusal over the drafts it refetched", () => {
@@ -247,38 +234,5 @@ describe("DraftBar", () => {
     state.drafts = both({ suite: { revision: 2 } });
     rerender(<DraftBar env={ENV} />);
     expect(saveReset).not.toHaveBeenCalled();
-  });
-
-  it("asks before discarding, then discards every open piece", async () => {
-    render(<DraftBar env={ENV} />);
-    await userEvent.click(discardButton());
-    expect(discardMutate).not.toHaveBeenCalled();
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent(DRAFTS_COPY.discardTitle);
-
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: DRAFTS_COPY.discard }),
-    );
-    expect(discardMutate).toHaveBeenCalledTimes(1);
-    expect(discardMutate).toHaveBeenCalledWith(["environment", "suite"]);
-  });
-
-  it("discards nothing when the question is closed", async () => {
-    render(<DraftBar env={ENV} />);
-    await userEvent.click(discardButton());
-    await screen.findByRole("dialog");
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(discardMutate).not.toHaveBeenCalled();
-  });
-
-  it("opens the first open draft's changes", async () => {
-    const onViewChanges = vi.fn();
-    state.drafts = { environment: null, suite: SUITE_DRAFT, set_aside: [] };
-    render(<DraftBar env={ENV} onViewChanges={onViewChanges} />);
-    await userEvent.click(
-      screen.getByRole("button", { name: DRAFTS_COPY.viewChanges }),
-    );
-    expect(onViewChanges).toHaveBeenCalledWith("suite", "sd");
   });
 });

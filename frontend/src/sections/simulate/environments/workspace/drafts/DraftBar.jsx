@@ -1,24 +1,17 @@
 import PropTypes from "prop-types";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef } from "react";
 import { Box, Button, Stack, Typography } from "@mui/material";
 
-import { ConfirmDialog } from "src/components/custom-dialog";
-import { relativeTime } from "src/utils/format-time";
+import Iconify from "src/components/iconify";
+import { useDraftReview } from "src/api/simulate-environments/draftReview";
 import {
-  useDiscardDraft,
   useDrafts,
+  useEnvironmentVersions,
   useSaveDrafts,
 } from "src/api/simulate-environments/versions";
 import { refusalText } from "../evals/refusalText";
-import { DRAFTS_COPY as COPY } from "../workspace.constants";
-import { changeCount } from "./changeCount";
-
-const pieceLine = (piece, draft) =>
-  `${COPY.pieces[piece]} · ${
-    piece === "suite"
-      ? COPY.suiteChanges(draft.changes)
-      : COPY.environmentChanges(changeCount(draft.changes))
-  }`;
+import { DRAFTS_COPY as COPY, REVIEW_COPY } from "../workspace.constants";
+import { keptChanges, saveLine } from "./reviewView";
 
 // The piece a stale refusal names, else the first stale one.
 const staleText = (drafts, piece) => {
@@ -39,22 +32,26 @@ const errorText = (error, drafts, fallback) => {
   return COPY.errors[error?.error] || refusalText(error, fallback);
 };
 
+const noteSx = { typography: "s3", color: "text.secondary", flexBasis: "100%" };
+
 /**
- * The environment's unsaved changes, under the version bar: what they change,
- * who edited them last, and Save (every open piece at once) or Discard. Shown
+ * The environment's unsaved edits, in the version bar: how many and what saving
+ * them makes, opening Review changes, and Save (every open piece at once). Shown
  * only with versioning on and a draft open.
  */
 export default function DraftBar({
   env,
   busy = false,
   rebuilding = false,
-  onViewChanges,
+  onReview,
 }) {
   const enabled = Boolean(env?.versioning?.enabled);
   const { data: drafts } = useDrafts(env?.id, { enabled });
+  const { data: review } = useDraftReview(env?.id, {
+    enabled: enabled && Boolean(drafts?.any),
+  });
+  const { data: versions } = useEnvironmentVersions(env?.id, { enabled });
   const save = useSaveDrafts(env?.id);
-  const discard = useDiscardDraft(env?.id);
-  const [confirming, setConfirming] = useState(false);
   const staleId = useId();
   const busyId = useId();
   const holdId = useId();
@@ -64,31 +61,25 @@ export default function DraftBar({
   const signature = drafts?.any
     ? drafts.pieces.map((p) => `${drafts[p].id}:${drafts[p].revision}`).join()
     : "";
-  const failed = useRef({});
-  failed.current = {
-    save: save.isError && save.error?.error !== "draft_changed",
-    discard: discard.isError,
-  };
+  const failed = useRef(false);
+  failed.current = save.isError && save.error?.error !== "draft_changed";
   const { reset: resetSave } = save;
-  const { reset: resetDiscard } = discard;
   useEffect(() => {
-    if (failed.current.save) resetSave();
-    if (failed.current.discard) resetDiscard();
-  }, [signature, resetSave, resetDiscard]);
+    if (failed.current) resetSave();
+  }, [signature, resetSave]);
 
   if (!enabled || !drafts?.any) return null;
 
-  const open = drafts.pieces.map((piece) => drafts[piece]);
-  const latest = open.reduce((a, b) =>
-    new Date(b.updatedAt || 0) > new Date(a.updatedAt || 0) ? b : a,
-  );
-  const pending = save.isPending || discard.isPending;
+  const kept = keptChanges(review?.changes);
+  const failedCount = review?.failed?.length || 0;
+  if (!kept.length && !failedCount) return null;
+
+  const line = saveLine(review?.changes, versions);
   const staleReason = drafts.stale ? staleText(drafts) : null;
   const holdReasons = [busy && busyId, rebuilding && holdId].filter(Boolean);
   const saveReasons = [staleReason && staleId, ...holdReasons].filter(Boolean);
 
-  const onSave = () => {
-    discard.reset();
+  const onSave = () =>
     save.mutate(
       drafts.pieces.map((piece) => ({
         piece,
@@ -96,129 +87,71 @@ export default function DraftBar({
         revision: drafts[piece].revision,
       })),
     );
-  };
-  const onDiscard = () => {
-    setConfirming(false);
-    save.reset();
-    discard.mutate(drafts.pieces);
-  };
-
-  let error = null;
-  if (save.error) error = errorText(save.error, drafts, COPY.saveError);
-  else if (discard.error) {
-    error = errorText(discard.error, drafts, COPY.discardError);
-  }
 
   return (
-    <Box
-      component="section"
-      aria-label={COPY.title}
-      data-testid="draft-bar"
-      sx={{
-        px: 2,
-        py: 1,
-        borderBottom: "1px solid",
-        borderColor: "divider",
-        flexShrink: 0,
-        bgcolor: drafts.stale ? "status.warning.bg" : "background.neutral",
-      }}
-    >
+    <>
       <Stack
         direction="row"
         alignItems="center"
-        spacing={1.5}
-        sx={{ flexWrap: "wrap", rowGap: 1 }}
+        spacing={0.75}
+        data-testid="draft-bar"
+        sx={{ ml: "auto" }}
       >
-        <Typography sx={{ typography: "s1", flex: 1, minWidth: 0 }}>
-          <Box component="span" sx={{ fontWeight: 500 }}>
-            {COPY.title}:
-          </Box>{" "}
-          {drafts.pieces
-            .map((piece) => pieceLine(piece, drafts[piece]))
-            .join(", ")}
-          {latest.updatedAt &&
-            ` — ${COPY.lastEdited(latest.lastEditedBy, relativeTime(latest.updatedAt))}`}
-        </Typography>
         <Button
           size="small"
           color="inherit"
-          onClick={() => onViewChanges?.(drafts.pieces[0], open[0].id)}
+          onClick={onReview}
+          endIcon={<Iconify icon="solar:alt-arrow-right-linear" width={14} />}
+          sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
         >
-          {COPY.viewChanges}
+          {kept.length ? (
+            <>
+              <Box component="span" sx={{ fontWeight: "fontWeightRegular" }}>
+                {`${REVIEW_COPY.unsavedEdits(kept.length)} · `}
+              </Box>
+              <Box component="span" sx={{ ml: 0.5 }}>
+                {REVIEW_COPY.saveLine(line)}
+              </Box>
+            </>
+          ) : (
+            REVIEW_COPY.couldntApply(failedCount)
+          )}
         </Button>
-        <Button
-          size="small"
-          variant="outlined"
-          color="inherit"
-          disabled={holdReasons.length > 0 || pending}
-          aria-describedby={holdReasons.join(" ") || undefined}
-          onClick={() => setConfirming(true)}
-        >
-          {discard.isPending ? COPY.discarding : COPY.discard}
-        </Button>
-        <Button
-          size="small"
-          variant="contained"
-          disabled={saveReasons.length > 0 || pending}
-          aria-describedby={saveReasons.join(" ") || undefined}
-          onClick={onSave}
-        >
-          {save.isPending ? COPY.saving : COPY.save}
-        </Button>
+        {kept.length > 0 && (
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            disabled={saveReasons.length > 0 || save.isPending}
+            aria-describedby={saveReasons.join(" ") || undefined}
+            onClick={onSave}
+            sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+          >
+            {save.isPending ? COPY.saving : REVIEW_COPY.save(line.next)}
+          </Button>
+        )}
       </Stack>
       {staleReason && (
-        <Typography
-          id={staleId}
-          sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
-        >
+        <Typography id={staleId} sx={noteSx}>
           {staleReason}
         </Typography>
       )}
       {busy && (
-        <Typography
-          id={busyId}
-          sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
-        >
+        <Typography id={busyId} sx={noteSx}>
           {COPY.busy}
         </Typography>
       )}
       {rebuilding && (
-        <Typography
-          id={holdId}
-          sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
-        >
+        <Typography id={holdId} sx={noteSx}>
           {COPY.errors.rebuild_running}
         </Typography>
       )}
-      {error && (
-        <Typography
-          role="alert"
-          sx={{ typography: "s3", color: "status.danger.fg", mt: 0.5 }}
-        >
-          {error}
+      {save.error && (
+        <Typography role="alert" sx={{ ...noteSx, color: "status.danger.fg" }}>
+          {errorText(save.error, drafts, COPY.saveError)}
         </Typography>
       )}
-      <ConfirmDialog
-        open={confirming}
-        onClose={() => setConfirming(false)}
-        title={COPY.discardTitle}
-        content={
-          <Typography component="span" sx={{ typography: "s1" }}>
-            {COPY.discardBody}
-          </Typography>
-        }
-        action={
-          <Button
-            size="small"
-            variant="contained"
-            color="error"
-            onClick={onDiscard}
-          >
-            {COPY.discard}
-          </Button>
-        }
-      />
-    </Box>
+    </>
   );
 }
 
@@ -229,8 +162,8 @@ DraftBar.propTypes = {
   }),
   // Chat is working or still saving its last turn.
   busy: PropTypes.bool,
-  // A queued or running rebuild holds Save and Discard.
+  // A queued or running rebuild holds Save.
   rebuilding: PropTypes.bool,
-  // (piece, draft version id): show that draft in the Versions tab.
-  onViewChanges: PropTypes.func,
+  // Open Review changes.
+  onReview: PropTypes.func,
 };

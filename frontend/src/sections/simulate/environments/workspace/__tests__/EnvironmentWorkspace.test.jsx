@@ -908,7 +908,8 @@ describe("EnvironmentWorkspace unsaved changes", () => {
         Object.assign(new Error("Not found"), { statusCode: 404 }),
       );
     });
-  const saveButton = () => screen.findByRole("button", { name: "Save" });
+  const saveButton = () =>
+    screen.findByRole("button", { name: /^Save release/ });
 
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
@@ -923,21 +924,19 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     const bar = await screen.findByTestId("draft-bar");
-    expect(bar.previousElementSibling).toHaveTextContent(
-      /shared across agent versions/,
-    );
+    expect(bar.parentElement).toHaveTextContent(/shared across agent versions/);
     expect(await saveButton()).toBeEnabled();
   });
 
-  it("opens the draft in the Versions tab from the bar", async () => {
+  it("opens the review from the bar", async () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     await userEvent.click(
-      await screen.findByRole("button", { name: "View changes" }),
+      await screen.findByRole("button", { name: /unsaved edit/ }),
     );
-    expect(screen.getByTestId("location")).toHaveTextContent(
-      "/dashboard/simulate/environments/job-done?tab=versions&version=environment%3Aed",
-    );
+    expect(
+      await screen.findByRole("dialog", { name: "Review changes" }),
+    ).toBeInTheDocument();
   });
 
   it("shows no bar without drafts", async () => {
@@ -966,7 +965,7 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     expect(await saveButton()).toBeDisabled();
   });
 
-  it("holds Save and Discard while a rebuild is queued, and offers Stop in the composer", async () => {
+  it("holds Save while a rebuild is queued, and offers Stop in the composer", async () => {
     serve({ environment: DRAFT, suite: null, set_aside: [] });
     const drafts = axios.get.getMockImplementation();
     axios.get.mockImplementation((url) =>
@@ -992,9 +991,7 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     const reason = "An update is running; try again when it finishes";
     expect(await screen.findByText(reason)).toBeVisible();
     expect(await saveButton()).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Discard" }),
-    ).toHaveAccessibleDescription(reason);
+    expect(await saveButton()).toHaveAccessibleDescription(reason);
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
   });
 
