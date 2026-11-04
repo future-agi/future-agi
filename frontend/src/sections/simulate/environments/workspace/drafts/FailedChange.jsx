@@ -1,10 +1,15 @@
 import PropTypes from "prop-types";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { REVIEW_COPY as COPY } from "../workspace.constants";
+
+// A long file name gives way before the reason does.
+const FIX_MAX_WIDTH = 200;
 
 /** A change that couldn't apply: why, what it holds up, and how to fix it. */
 export default function FailedChange({ failed, canEdit, onFix, onDismiss }) {
+  const fixText = failed.source_id ? COPY.fixIn(failed.source_id) : COPY.fix;
   return (
     <Stack
       direction="row"
@@ -30,19 +35,32 @@ export default function FailedChange({ failed, canEdit, onFix, onDismiss }) {
           {COPY.failedMeta(failed)}
         </Typography>
       </Box>
-      <Button
+      <CustomTooltip
+        show={Boolean(failed.source_id)}
         size="small"
-        variant="outlined"
-        color="inherit"
-        onClick={onFix}
-        sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+        arrow
+        title={fixText}
       >
-        {failed.source_id ? COPY.fixIn(failed.source_id) : COPY.fix}
-      </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          onClick={onFix}
+          sx={{ flexShrink: 0, maxWidth: FIX_MAX_WIDTH, whiteSpace: "nowrap" }}
+        >
+          <Box
+            component="span"
+            sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
+          >
+            {fixText}
+          </Box>
+        </Button>
+      </CustomTooltip>
       {canEdit && (
         <Button
           size="small"
           color="inherit"
+          data-review-focus
           onClick={onDismiss}
           sx={{ flexShrink: 0, color: "text.secondary" }}
         >

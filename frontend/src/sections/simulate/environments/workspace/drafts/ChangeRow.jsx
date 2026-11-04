@@ -15,6 +15,8 @@ import { diffLines, sourceLine, sourceLink, undoBlock } from "./reviewView";
 
 const MONO = "ui-monospace, Menlo, monospace";
 const DIFF_LINES_SHOWN = 12;
+// A long file name gives way before the row's title does.
+const LINK_MAX_WIDTH = 200;
 
 const SIGN_COLOR = {
   "+": "status.success.fg",
@@ -121,6 +123,7 @@ export default function ChangeRow({
   const lines = diffLines(change);
   const source = change.sources?.[0];
   const block = undoBlock(change, changes);
+  const link = sourceLink(source);
   return (
     <Box
       data-testid={`change-${change.id}`}
@@ -158,14 +161,31 @@ export default function ChangeRow({
             {sourceText(source)}
           </Typography>
         </Box>
-        <Button
+        <CustomTooltip
+          show={link.kind === "file"}
           size="small"
-          color="inherit"
-          onClick={() => onOpen(sourceLink(source))}
-          sx={{ flexShrink: 0, color: "text.secondary", whiteSpace: "nowrap" }}
+          arrow
+          title={linkText(link)}
         >
-          {linkText(sourceLink(source))}
-        </Button>
+          <Button
+            size="small"
+            color="inherit"
+            onClick={() => onOpen(link)}
+            sx={{
+              flexShrink: 0,
+              maxWidth: LINK_MAX_WIDTH,
+              color: "text.secondary",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <Box
+              component="span"
+              sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
+            >
+              {linkText(link)}
+            </Box>
+          </Button>
+        </CustomTooltip>
         {canEdit && (
           <CustomTooltip
             show={Boolean(block)}
@@ -174,14 +194,23 @@ export default function ChangeRow({
             title={block ? COPY.undoBlocked(block.by) : ""}
           >
             <span>
+              {/* Held, not disabled: a disabled button can't take focus, and
+                  the reason it's held would be out of reach by keyboard. */}
               <Button
                 size="small"
                 color="inherit"
-                disabled={Boolean(block)}
+                data-review-focus
+                className={block ? "Mui-disabled" : undefined}
+                aria-disabled={block ? true : undefined}
+                aria-label={
+                  block
+                    ? `${COPY.undo}. ${COPY.undoBlocked(block.by)}`
+                    : undefined
+                }
                 startIcon={
                   <Iconify icon="solar:undo-left-round-linear" width={14} />
                 }
-                onClick={onUndo}
+                onClick={block ? undefined : onUndo}
               >
                 {COPY.undo}
               </Button>
