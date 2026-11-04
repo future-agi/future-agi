@@ -8,6 +8,13 @@ export class ApiError extends Error {
   }
 }
 
+type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
+interface RequestOptions {
+  params?: Record<string, string | number>;
+  data?: unknown;
+  headers?: Record<string, string>;
+}
+
 export class ApiClient {
   constructor(
     private req: APIRequestContext,
@@ -23,18 +30,23 @@ export class ApiClient {
     });
   }
 
-  private async send<T>(method: 'get' | 'post' | 'put' | 'patch' | 'delete', path: string,
-                        opts: { params?: Record<string, string | number>; data?: unknown } = {}): Promise<T> {
+  /** The status and body whatever the status, for a flow that asserts a refusal or a 202. */
+  async request<T = unknown>(method: Method, path: string, opts: RequestOptions = {}): Promise<{ status: number; body: T }> {
     const res = await this.req[method](`${this.baseURL}${path}`, {
-      headers: this.headers,
+      headers: { ...this.headers, ...opts.headers },
       params: opts.params,
       data: opts.data,
     });
     const raw = await res.text();
     let body: unknown;
     try { body = JSON.parse(raw); } catch { body = { raw }; }
-    if (res.status() >= 400) throw new ApiError(res.status(), path, body);
-    return body as T;
+    return { status: res.status(), body: body as T };
+  }
+
+  private async send<T>(method: Method, path: string, opts: RequestOptions = {}): Promise<T> {
+    const { status, body } = await this.request<T>(method, path, opts);
+    if (status >= 400) throw new ApiError(status, path, body);
+    return body;
   }
 
   get<T>(path: string, params?: Record<string, string | number>) { return this.send<T>('get', path, { params }); }

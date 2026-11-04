@@ -36,6 +36,9 @@ services:
       SLACK_API_URL: http://mock-slack:8080/api
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
+      # Environment versions and pair certification, on as in production.
+      HARNESS_VERSIONING_ENABLED: "true"
+      HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
   worker:
     restart: "no"
     # Keep the worker mount-free for the managed-mock attestation as well.
@@ -46,6 +49,8 @@ services:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SLACK_API_URL: http://mock-slack:8080/api
+      HARNESS_VERSIONING_ENABLED: "true"
+      HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
   fi-collector:
     # Collector and consumer must run the same checked-out transport protocol.
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
