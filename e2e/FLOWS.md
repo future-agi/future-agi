@@ -944,6 +944,27 @@
 - real stale PATCH returns 409 and leaves stored values and revision unchanged
 - scoped API and PG policy equal the last successful edit, with exactly two revision increments
 
+### ESC-E2E-009 — Pick a sensitivity preset instead of typing thresholds
+
+**Goal:** An administrator picks a sensitivity preset instead of typing eight thresholds, and exactly that preset is saved for the workspace  
+**Spec:** `flows/error-feed/escalation-presets.spec.ts:26`  
+**Tags:** —
+
+**User steps:**
+
+1. open settings on Balanced with the defaults
+2. pick Calm and see its eight values
+3. save and reopen on Calm
+4. fine-tune one value, see Custom and Edited, save
+5. reopen, pick Balanced, save
+
+**Backend state verified:**
+
+- PG policy holds Calm's eight values, revision +1 and the updating user
+- scoped settings API returns Calm's values
+- a fine-tuned save stores Calm with only min_findings changed, revision +2
+- picking Balanced stores the server defaults in PG and the API, revision +3
+
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
 **Goal:** A saved link to a retired issue opens its surviving issue  
