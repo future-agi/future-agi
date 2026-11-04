@@ -54,7 +54,13 @@ const EditKeyDialog = ({ open, onClose, keyData }) => {
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>Edit API Key</DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} mt={1}>

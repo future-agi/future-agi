@@ -21,7 +21,7 @@ export default function DataImportJobs() {
           whileTap="tap"
           whileHover="hover"
           variants={varHover(1.05)}
-          startIcon={<Iconify icon="material-symbols:edit" />}
+          startIcon={<Iconify icon="solar:pen-linear" />}
           // onClick={columnsPopover.onOpen}
           // sx={{
           //   width: 40,
@@ -37,20 +37,23 @@ export default function DataImportJobs() {
         </Button>
       </Box>
 
-      <Tabs
-        // value={currentTab}
-        // onChange={handleTab}
+      <Box
         sx={{
           px: 2.5,
           boxShadow: (theme) =>
             `inset 0 -2px 0 0 ${alpha(theme.palette.text.disabled, 0.08)}`,
         }}
       >
-        <Tab value={"Cloud DB"} label={"cloudDB"} />
-        <Tab value={"Cloud Storage"} label={"cloudStorage"} />
-        <Tab value={"analytics"} label={"Analytics"} />
-        <Tab value={"local"} label={"Local File"} />
-      </Tabs>
+        <Tabs
+        // value={currentTab}
+        // onChange={handleTab}
+        >
+          <Tab value={"Cloud DB"} label={"cloudDB"} />
+          <Tab value={"Cloud Storage"} label={"cloudStorage"} />
+          <Tab value={"analytics"} label={"Analytics"} />
+          <Tab value={"local"} label={"Local File"} />
+        </Tabs>
+      </Box>
     </>
   );
 }

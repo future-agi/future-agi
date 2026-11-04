@@ -2,7 +2,6 @@ import {
   Box,
   Button,
   Checkbox,
-  Chip,
   FormControlLabel,
   IconButton,
   MenuItem,
@@ -16,6 +15,7 @@ import {
 import PropTypes from "prop-types";
 import React, { useCallback } from "react";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import RequiredMark from "src/components/RequiredMark";
 
@@ -228,22 +228,19 @@ const OutputTypeConfig = ({
                   valueLabelFormat={(v) => v.toFixed(1)}
                   sx={{ width: 80 }}
                 />
-                <Chip
-                  label={score.toFixed(1)}
-                  size="small"
-                  color={
+                {/* Same bands as before the design system: 0.7 and up passes, below 0.3 fails. */}
+                <StatusBadge
+                  role={
                     score >= 0.7
                       ? "success"
                       : score >= 0.3
                         ? "warning"
-                        : "error"
+                        : "danger"
                   }
-                  sx={{
-                    minWidth: 40,
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    height: 24,
-                  }}
+                  label={score.toFixed(1)}
+                  variant="badge"
+                  dot={false}
+                  size="sm"
                 />
                 <IconButton
                   size="small"
@@ -259,12 +256,10 @@ const OutputTypeConfig = ({
             <Button
               size="small"
               color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+              startIcon={<Iconify icon="solar:add-linear" width={14} />}
               onClick={() => handleAddEmptyRow(0.5)}
               disabled={disabled}
               sx={{
-                textTransform: "none",
-                fontSize: "12px",
                 mt: 1,
                 alignSelf: "flex-start",
               }}
@@ -373,12 +368,12 @@ const OutputTypeConfig = ({
                         sx={{
                           width: 10,
                           height: 10,
-                          borderRadius: "2px",
+                          borderRadius: "4px",
                           backgroundColor:
                             val === "pass"
-                              ? "success.main"
+                              ? "status.success.solid"
                               : val === "fail"
-                                ? "error.main"
+                                ? "status.danger.solid"
                                 : "primary.light",
                         }}
                       />
@@ -392,35 +387,35 @@ const OutputTypeConfig = ({
                     </Box>
                   )}
                 >
-                  <MenuItem value="pass" sx={{ fontSize: "13px", gap: 1 }}>
+                  <MenuItem value="pass" sx={{ gap: 1 }}>
                     <Box
                       sx={{
                         width: 10,
                         height: 10,
-                        borderRadius: "2px",
-                        backgroundColor: "success.main",
+                        borderRadius: "4px",
+                        backgroundColor: "status.success.solid",
                       }}
                     />
                     Pass
                   </MenuItem>
-                  <MenuItem value="neutral" sx={{ fontSize: "13px", gap: 1 }}>
+                  <MenuItem value="neutral" sx={{ gap: 1 }}>
                     <Box
                       sx={{
                         width: 10,
                         height: 10,
-                        borderRadius: "2px",
+                        borderRadius: "4px",
                         backgroundColor: "primary.light",
                       }}
                     />
                     Neutral
                   </MenuItem>
-                  <MenuItem value="fail" sx={{ fontSize: "13px", gap: 1 }}>
+                  <MenuItem value="fail" sx={{ gap: 1 }}>
                     <Box
                       sx={{
                         width: 10,
                         height: 10,
-                        borderRadius: "2px",
-                        backgroundColor: "error.main",
+                        borderRadius: "4px",
+                        backgroundColor: "status.danger.solid",
                       }}
                     />
                     Fail
@@ -449,10 +444,9 @@ const OutputTypeConfig = ({
             <Button
               size="small"
               color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+              startIcon={<Iconify icon="solar:add-linear" width={14} />}
               onClick={() => handleAddEmptyRow(0.5)}
               disabled={disabled}
-              sx={{ textTransform: "none", fontSize: "12px" }}
             >
               Add Choice
             </Button>

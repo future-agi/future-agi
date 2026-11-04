@@ -2,6 +2,9 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
+import { statusColors } from "src/utils/runStatus";
 import axiosInstance from "src/utils/axios";
 import { validateContractedRequestConfig } from "src/api/contracts/openapi-contract";
 import GuardrailManagementSection from "./GuardrailManagementSection";
@@ -244,7 +247,11 @@ describe("GuardrailManagementSection", () => {
       </QueryClientProvider>,
     );
 
-    const chip = (await screen.findByText("403")).closest(".MuiChip-root");
-    expect(chip).toHaveClass("MuiChip-colorError");
+    // The status code is a StatusBadge now; a block reads in the danger tint.
+    const badge = (await screen.findByText("403")).parentElement;
+    const theme = createTheme({ palette: palette("light") });
+    expect(badge).toHaveStyle({
+      backgroundColor: statusColors(theme, "danger").bg,
+    });
   });
 });

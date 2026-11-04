@@ -81,7 +81,7 @@ export default function BuildingPane({
           onChange={() => {}}
           variant="scrollable"
           scrollButtons={false}
-          sx={ENV_TABS_SX}
+          sx={{ ...ENV_TABS_SX, boxShadow: "none" }}
         >
           {BUILDING_TABS.map((t) => (
             <Tab key={t.id} value={t.id} label={t.label} />
@@ -90,7 +90,7 @@ export default function BuildingPane({
       </Box>
 
       {/* body */}
-      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto", px: 2.5 }}>
+      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto", px: 2 }}>
         <DerivingAnimation
           label={
             failure

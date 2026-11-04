@@ -332,8 +332,8 @@ const ObserveToolbar = ({
             ref={dateButtonRef}
             variant="outlined"
             size="small"
-            startIcon={<Iconify icon="mdi:calendar-outline" width={16} />}
-            endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+            startIcon={<Iconify icon="solar:calendar-linear" width={16} />}
+            endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
             onClick={(e) => setDateAnchor(e.currentTarget)}
             sx={{ ...pillSx }}
           >
@@ -354,7 +354,7 @@ const ObserveToolbar = ({
                 key={opt.key}
                 selected={dateFilter?.dateOption === opt.key}
                 onClick={() => handleDateOptionChange(opt.key)}
-                sx={{ fontSize: 13, py: 0.75 }}
+                sx={{ py: 0.75 }}
               >
                 {opt.label}
               </MenuItem>
@@ -400,10 +400,10 @@ const ObserveToolbar = ({
               startIcon={
                 hasActiveFilter ? (
                   <Badge variant="dot" color="error" overlap="circular">
-                    <Iconify icon="mdi:filter-outline" width={16} />
+                    <Iconify icon="solar:filter-linear" width={16} />
                   </Badge>
                 ) : (
-                  <Iconify icon="mdi:filter-outline" width={16} />
+                  <Iconify icon="solar:filter-linear" width={16} />
                 )
               }
               onClick={onFilterToggle}
@@ -466,7 +466,7 @@ const ObserveToolbar = ({
             <Button
               variant="outlined"
               size="small"
-              startIcon={<Iconify icon="mdi:content-save-outline" width={16} />}
+              startIcon={<Iconify icon="solar:diskette-linear" width={16} />}
               onClick={() => {
                 if (typeof onSaveView === "function") {
                   onSaveView();
@@ -499,7 +499,7 @@ const ObserveToolbar = ({
           <Button
             variant="outlined"
             size="small"
-            startIcon={<Iconify icon="mdi:tune-vertical" width={16} />}
+            startIcon={<Iconify icon="solar:tuning-2-linear" width={16} />}
             onClick={(e) => setDisplayAnchor(e.currentTarget)}
             sx={{
               ...pillSx,
@@ -547,7 +547,7 @@ const ObserveToolbar = ({
             <Button
               variant="outlined"
               size="small"
-              startIcon={<Iconify icon="mdi:plus" width={16} />}
+              startIcon={<Iconify icon="solar:add-linear" width={16} />}
               onClick={onAddEvals}
               sx={{
                 ...pillSx,

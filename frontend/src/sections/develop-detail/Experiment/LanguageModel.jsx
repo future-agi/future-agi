@@ -175,21 +175,13 @@ const LanguageModel = ({ control, fieldName }) => {
               variant="soft"
               color="primary"
               deleteIcon={
-                <SvgColor
-                  sx={{
-                    height: "14px",
-                    width: "14px",
-                  }}
-                  src="/assets/icons/ic_close.svg"
-                />
+                <SvgColor width={14} src="/assets/icons/ic_close.svg" />
               }
               sx={{
-                height: "26px",
                 padding: (theme) => theme.spacing(0.5, 1),
                 "& .MuiChip-label": {
                   color: "primary.main",
                   typography: "s2",
-                  fontWeight: "fontWeightMedium",
                   padding: 0,
                   marginRight: (theme) => theme.spacing(0.5),
                 },
