@@ -109,7 +109,9 @@ import {
   TrialArtifacts,
 } from "./TrialEvidence";
 import ProviderEvents from "./ProviderEvents";
-import { isTextRehearsal } from "../_mock/compatibility";
+import { COMPAT_STATUS, isTextRehearsal } from "../_mock/compatibility";
+
+import CapabilitySummary from "../compat/CapabilitySummary";
 import ApprovalTimeline from "./ApprovalTimeline";
 import { approvalOf } from "../_mock/approvals";
 import ImprovementRunStrip from "./ImprovementRunStrip";
@@ -565,6 +567,29 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       now      — "Run as configured now": picks up every edit since.
   */
   const sourceRun = (envState.runs || []).find((r) => r.id === runId) || null;
+  /* The capability report as it stood when this run started — kept with it,
+     so a later check doesn't rewrite what this run ran under. */
+  const runCaps = sourceRun?.compat?.rows?.length ? sourceRun.compat : null;
+  /* The worst capability colours the run's Capabilities chip. */
+  const capsWorst = runCaps
+    ? runCaps.rows.reduce(
+        (w, r) =>
+          COMPAT_STATUS[r.status].rank > COMPAT_STATUS[w].rank ? r.status : w,
+        "supported",
+      )
+    : null;
+  /* The report opens over the page, so the header never grows. */
+  const [capsOpen, setCapsOpen] = useState(false);
+  const capsRef = useRef(null);
+  const capsLine = runCaps
+    ? Object.keys(COMPAT_STATUS)
+        .filter((k) => k !== "supported")
+        .sort((a, b) => COMPAT_STATUS[b].rank - COMPAT_STATUS[a].rank)
+        .map((k) => [k, runCaps.rows.filter((r) => r.status === k).length])
+        .filter(([, n]) => n)
+        .map(([k, n]) => `${n} ${COMPAT_STATUS[k].label.toLowerCase()}`)
+        .join(" · ") || "all supported"
+    : null;
   const canSnapshot = !!sourceRun?.finishedAt && !trialMeta;
   /* A snapshot re-run plays its source's pinned versions — say how many of
      those are older than today's text, so a diff against a fresh run isn't
@@ -1269,6 +1294,38 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             <RunSummaryChip summary={report.summary} />
             {/* Sealed · Live · Prompt only, as a mark — its words on hover. */}
             <ProofKindChip proof={report.summary?.proofKind} compact />
+            {/* The capability state the run ran under (TH-8877), as one chip —
+                its counts on hover, the report on click. */}
+            {sourceRun?.finishedAt && (
+              <Tooltip
+                arrow
+                title={
+                  runCaps
+                    ? `${capsLine} — click for the report as it was when the run started`
+                    : "No capability report was taken for this run"
+                }
+              >
+                <Box
+                  ref={capsRef}
+                  {...(runCaps &&
+                    clickable(() => setCapsOpen((v) => !v), {
+                      expanded: capsOpen,
+                    }))}
+                  sx={{
+                    display: "flex",
+                    flexShrink: 0,
+                    ...(runCaps && { ...focusRing, cursor: "pointer" }),
+                  }}
+                >
+                  <StatusBadge
+                    size="sm"
+                    status={COMPAT_STATUS[capsWorst || "untested"].dot}
+                    variant={runCaps ? "badge" : "dot"}
+                    label="Capabilities"
+                  />
+                </Box>
+              </Tooltip>
+            )}
             {/* A CI run's check result sits with the run's own status; where
                 it came from is on the line below. */}
             {sourceRun &&
@@ -1478,6 +1535,8 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 </Tooltip>
               </>
             )}
+            {/* What the agent could do here when the run started; the report on click. */}
+
             {/* The limit kept some from starting: finish them under a new
                 limit — only those; the finished ones aren't run or charged again. */}
             {identity?.budget?.notStarted?.length > 0 && (
@@ -1578,6 +1637,23 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               </Box>
             </Tooltip>
           </Typography>
+          {runCaps && (
+            <Popover
+              open={capsOpen}
+              anchorEl={capsRef.current}
+              onClose={() => setCapsOpen(false)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+              transformOrigin={{ vertical: "top", horizontal: "left" }}
+              PaperProps={{ sx: { width: 560, mt: 0.5 } }}
+            >
+              <CapabilitySummary
+                title="Capabilities when this run started"
+                rows={runCaps.rows}
+                requested={runCaps.requested}
+                testedAt={runCaps.testedAt || null}
+              />
+            </Popover>
+          )}
         </Box>
         <Tooltip arrow title={wideHeader ? "" : "Add evals"}>
           <Button

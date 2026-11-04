@@ -835,7 +835,9 @@ export const runReadiness = (envState, env = null) => {
       !s.retired &&
       !requiredToolsOf(s, known).some((t) => prodTools.includes(t)),
   ).length;
-  if (prodTools.length && (!env || !unaffected))
+  /* Without the environment its cases aren't known here; the run plan then
+     shows which are blocked and asks how to go on (TH-8880). */
+  if (prodTools.length && env && !unaffected)
     return {
       ready: false,
       step: "overview",

@@ -25,6 +25,7 @@ import { agentToolsFor, knownToolsFor, requiredToolsOf } from "./toolFit";
 import { currentAgentVersion, currentEnvVersion } from "./versions";
 import { hashSeed } from "./runStream";
 import { familyOf } from "./testedVersions";
+import { checksStateOf } from "./release";
 
 const agentVersionWord = (v) => (v?.label ? `${v.label} ` : "");
 
@@ -37,6 +38,9 @@ export const COMPAT_STATUS = {
   stale: { label: "Stale", dot: "needs_input", rank: 4 },
   deprecated: { label: "Deprecated", dot: "needs_input", rank: 2 },
 };
+
+/* Read from the environment's build, not from running the agent. */
+const BUILD_ROWS = ["toolSchema", "toolsNeeded", "state", "pinning"];
 
 export const CAPABILITIES = [
   { id: "start", label: "Start and health" },
@@ -69,6 +73,147 @@ const FROM_CHECK = {
 };
 const VOICE = ["voice", "multi"];
 
+/*
+  Each fix (TH-8881 §3.3): its type, what would change the status, and what
+  checking it again takes — the agent (quick, nothing rebuilt) or the world
+  (a rebuild of the environment's bindings, with its cost asked first).
+*/
+const fixOf = (r, { prod, release, missingNames }) => {
+  if (r.status === "supported" || r.blockedBy) return null;
+  const id = r.fixId;
+  if (id === "start")
+    return {
+      type: "Startup",
+      would: "The start command starts the agent and its health check answers.",
+      recheck: "agent",
+    };
+  if (id === "session")
+    return {
+      type: "Message mapping",
+      would: "Turn 2 keeps the session and the agent remembers turn 1.",
+      recheck: "agent",
+    };
+  if (["reply", "taskId", "status", "artifact"].includes(id))
+    return {
+      type: "Message mapping",
+      would: "A test message comes back read from the field you set.",
+      recheck: "agent",
+    };
+  if (id === "tools")
+    return {
+      type: "Tool routing",
+      would: `${prod[0] || "Each tool"} is pointed at the test world, and a re-check sees its call land there.`,
+      recheck: "world",
+    };
+  if (r.repair === "agent")
+    return {
+      type: "Tool routing",
+      would: `The agent version has ${missingNames.join(", ")}.`,
+      recheck: "agent",
+    };
+  if (r.repair === "release")
+    return {
+      type: "Evidence",
+      would: `The environment's release checks pass on ${release.version}.`,
+      recheck: "world",
+    };
+  if (r.repair === "testcall")
+    return {
+      type: "Evidence",
+      would: "A test call reaches the agent and answers.",
+      recheck: "agent",
+    };
+  if (r.status === "deprecated")
+    return {
+      type: "Startup",
+      would: "The agent is moved to the provider's current agent model.",
+      recheck: "agent",
+    };
+  return null;
+};
+
+/* What the check sent and what came back — the evidence behind a result. */
+const checkEvidenceOf = (res, spec, agent, prod) => {
+  const msg = spec?.messageField || "message";
+  const reply = spec?.replyField || "reply";
+  const repo = String(
+    agent?.values?.repoUrl || agent?.definition?.repoUrl || "",
+  )
+    .split("/")
+    .pop();
+  const host = `api.${repo || "your-service"}.com`;
+  switch (res.id) {
+    case "starts":
+      return [
+        { k: "Ran", v: spec?.startCommand || "—" },
+        {
+          k: "Got",
+          v:
+            res.state === "ok"
+              ? `GET ${spec?.health || "/health"} → 200`
+              : res.detail,
+        },
+      ];
+    case "replies":
+      return [
+        { k: "Sent", v: `{ "${msg}": "Where is my order?" }` },
+        { k: "Got", v: `{ "${reply}": "What is your order number?" }` },
+      ];
+    case "continuity":
+      return res.state === "ok"
+        ? [
+            {
+              k: "Turn 2 sent",
+              v: `{ "${msg}": "It's ORD-1042", "${spec?.sessionField}": "test-1" }`,
+            },
+            {
+              k: "Got",
+              v: `{ "${reply}": "Thanks — ORD-1042 was delivered on 28 Sep." }`,
+            },
+          ]
+        : [
+            {
+              k: "Turn 1 got",
+              v: `{ "${reply}": "What is your order number?", "session_id": "test-1" }`,
+            },
+            {
+              k: "Turn 2 sent",
+              v: `{ "${msg}": "It's ORD-1042" } — no session field`,
+            },
+            { k: "Got", v: `{ "${reply}": "What is your order number?" }` },
+          ];
+    case "tools":
+      return res.state === "ok"
+        ? [
+            {
+              k: "Called",
+              v: 'lookup_order(order_id: "ORD-1042") → test world',
+            },
+          ]
+        : [
+            {
+              k: "Called",
+              v: `${prod[0]}(order_id: "ORD-1042", amount: 45.99)`,
+            },
+            {
+              k: "Went to",
+              v: `POST https://${host}/v1/${String(prod[0]).replace(/_/g, "-")} — production. The sandbox stopped it; nothing was sent.`,
+            },
+          ];
+    case "cancel":
+      return [
+        { k: "Sent", v: "cancel mid-turn" },
+        { k: "Got", v: res.detail },
+      ];
+    default:
+      return null;
+  }
+};
+
+/** How long checking the world again takes: a rebuild of its bindings, no run.
+    No credit figure — the plan carries no cost estimate for now (CH-9). */
+export const recheckCostOf = () => ({ minutes: 2 });
+
 /** The cases a full run of this world takes — or the ones asked for. */
 const requestedOf = (envState, scenarioIds) => {
   const live = (envState?.scenarios || []).filter(
@@ -82,7 +227,9 @@ const requestedOf = (envState, scenarioIds) => {
 /**
  * The report for `agent` on `env`: { identity, rows, notNeeded, scope,
  * worst, testedAt, cli }. Each row: { id, label, status, detail, repair?,
- * affected: [scenario ids], blocks: bool }.
+ * affected: [scenario ids], blocks: bool, checkedAt?, evidence?, fixId? }
+ * — the last three when the connection check decided it: when, what it saw,
+ * and which of its repairs fixes it.
  */
 export const compatibilityOf = ({
   env,
@@ -98,6 +245,21 @@ export const compatibilityOf = ({
   const results = Object.fromEntries(
     (test?.results || []).map((r) => [r.id, r]),
   );
+  /* What the last check found before a fix cleared it: the checks it failed
+     read "Fix applied — check to confirm" until the next one runs. */
+  const before =
+    !test && v.connectionTestBefore
+      ? Object.fromEntries(
+          (v.connectionTestBefore.results || []).map((r) => [r.id, r]),
+        )
+      : {};
+  /* Checks that failed and later passed — kept so a fix doesn't just vanish. */
+  const fixed = Object.fromEntries((v.fixedChecks || []).map((f) => [f.id, f]));
+  /* A platform agent's evidence is its test call. */
+  const platformTest = v.platformTest || null;
+  /* The environment's release checks prove world reset and hidden checks. */
+  const release = checksStateOf(env, envState);
+  const releaseAt = release.stale ? null : envState?.releaseChecks?.at || null;
   const surface = env?.surface || "chat";
   const voice = VOICE.includes(surface);
   const connectOnly = isConnectOnly(env);
@@ -149,26 +311,87 @@ export const compatibilityOf = ({
       affected: [],
       ...extra,
     });
-  /* A row from the connection check; Untested until a check ran; Stale when the check is out of date. */
+  /*
+    A row from the connection check (TH-8874): Supported only on a check that
+    passed — never on what kind of agent it is. Untested until a check ran;
+    Stale when the check is out of date, saying what it was.
+  */
   const fromCheck = (id, checkId, affected, fallback) => {
-    if (!checked) return add(id, "supported", fallback, { affected: [] });
+    if (!checked) {
+      /* Built here: it runs here. A platform agent: only a test call proves it. */
+      if (kind !== "platform") return add(id, "supported", fallback);
+      return platformTest
+        ? add(id, "supported", fallback, {
+            checkedAt: platformTest.at,
+            evidence: `Test call (${platformTest.mode || "text"}): ${fallback}`,
+          })
+        : add(
+            id,
+            "untested",
+            `No test call has reached it yet — make one before trusting a run.`,
+            { affected, repair: "testcall" },
+          );
+    }
     const r = results[checkId];
-    if (!r)
+    if (!r) {
+      const was = before[checkId];
+      const applied =
+        v.fixesApplied === "all" ||
+        (v.fixesApplied || []).includes(was?.repair?.id);
+      /* A fix makes the last check out of date: Stale, dated by that
+         check, until a re-check clears it (TH-8877). */
+      const lastAt = v.connectionTestBefore?.at || null;
+      if (was?.state === "failed" && applied)
+        return add(
+          id,
+          "stale",
+          `Fix applied — re-check to confirm. Before the fix: ${was.detail}`,
+          {
+            affected,
+            repair: "test",
+            fixApplied: true,
+            fixedCheck: checkId,
+            checkedAt: lastAt,
+            was: "blocked",
+          },
+        );
+      if (was?.state === "ok")
+        return add(
+          id,
+          "stale",
+          "Was Supported. Checked before the fix — re-check to confirm it still holds.",
+          { affected, repair: "test", checkedAt: lastAt, was: "supported" },
+        );
+      /* Not what was fixed: it stands as the last check found it. */
+      if (was?.state === "failed")
+        return add(id, "blocked", was.detail, {
+          affected,
+          repair: "connection",
+          blocks: true,
+          fixId: was.repair?.id || null,
+          fromLastCheck: true,
+        });
       return add(
         id,
         "untested",
         "No connection check has covered this yet — run it before trusting a run.",
         { affected, repair: "test" },
       );
+    }
     if (staleWhy && r.state === "ok")
-      return add(id, "stale", `${staleWhy}. Last result: ${r.detail}`, {
-        affected,
-        repair: "test",
-      });
+      return add(
+        id,
+        "stale",
+        `Was Supported. ${staleWhy} — re-check before trusting it.`,
+        { affected, repair: "test", checkId, was: "supported" },
+      );
     const status = FROM_CHECK[r.state] || "untested";
     return add(id, status, r.detail, {
       affected: status === "supported" ? [] : affected,
       ...(status === "blocked" && { repair: "connection", blocks: true }),
+      ...(status === "supported" &&
+        fixed[checkId] && { fixedAt: fixed[checkId].at, was: "blocked" }),
+      checkId,
     });
   };
 
@@ -284,7 +507,13 @@ export const compatibilityOf = ({
   }
 
   /* Controlled tool routing — the one that most often blocks cases. */
-  const prod = test?.productionTools || [];
+  /* A production tool the last check found still stands until its own fix. */
+  const toolsFixed =
+    v.fixesApplied === "all" || (v.fixesApplied || []).includes("tools");
+  const prod =
+    test?.productionTools ||
+    (!test && !toolsFixed ? v.connectionTestBefore?.productionTools : null) ||
+    [];
   if (checked && prod.length)
     add(
       "toolRouting",
@@ -294,10 +523,20 @@ export const compatibilityOf = ({
         affected: [...new Set(prod.flatMap(needs))],
         repair: "connection",
         blocks: true,
+        checkId: "tools",
+        fixId: "tools",
       },
     );
-  else if (checked) fromCheck("toolRouting", "tools", writeCases, "");
-  else if (live)
+  else if (checked) {
+    /* The cases the production tool blocked are the ones its fix confirms. */
+    const wasProd = (!test && v.connectionTestBefore?.productionTools) || [];
+    fromCheck(
+      "toolRouting",
+      "tools",
+      wasProd.length ? [...new Set(wasProd.flatMap(needs))] : writeCases,
+      "",
+    );
+  } else if (live)
     add(
       "toolRouting",
       "partial",
@@ -334,7 +573,26 @@ export const compatibilityOf = ({
 
   const notNeeded = [];
   if (voice) {
-    if (kind === "platform" || /livekit|pipecat/i.test(v.framework || ""))
+    if (kind === "platform") {
+      const a = (platformTest?.results || []).find((r) => r.id === "audio");
+      if (a)
+        add(
+          "audio",
+          a.status === "supported" ? "supported" : a.status,
+          a.line,
+          {
+            checkedAt: platformTest.at,
+            ...(a.status !== "supported" && { affected: all }),
+          },
+        );
+      else
+        add(
+          "audio",
+          "untested",
+          "No phone or web test call has measured audio yet — latency and barge-in stay untested, not zero.",
+          { affected: all, repair: "testcall" },
+        );
+    } else if (/livekit|pipecat/i.test(v.framework || ""))
       add(
         "audio",
         "supported",
@@ -411,14 +669,31 @@ export const compatibilityOf = ({
   } else if (code) {
     add("pinning", "supported", "Runs are pinned to the commit they ran.");
   }
-  if (checked) fromCheck("cancel", "cancel", [], "");
+  /*
+    Stop and reset by what the connection can really do (TH-8890): Supported
+    only where we run the agent and confirm it; an agent hosted elsewhere is
+    Partial, saying what that means for spend and trial independence.
+  */
+  const hostedElsewhere =
+    kind === "platform" || (checked && !startsFromCode(agent));
+  if (checked && startsFromCode(agent)) fromCheck("cancel", "cancel", [], "");
+  else if (kind === "platform")
+    add(
+      "cancel",
+      "partial",
+      `Stopping ends our side of the call; ${provider} may keep it open for up to 30 s and bill for it. A stopped run reads Cancel requested until ${provider} confirms the call ended.`,
+    );
+  else if (hostedElsewhere)
+    add(
+      "cancel",
+      "partial",
+      "We stop sending and stop watching; your service may still finish the request it already has. A stopped run reads Cancel requested, not Cancelled.",
+    );
   else
     add(
       "cancel",
-      kind === "platform" ? "supported" : "supported",
-      kind === "platform"
-        ? "Ending the call stops it, confirmed by the platform."
-        : "Stopping ends the turn here.",
+      "supported",
+      "It runs here, so a stop is confirmed when it lands.",
     );
   if (connectOnly)
     add(
@@ -427,11 +702,32 @@ export const compatibilityOf = ({
       "A live system isn't assumed resettable — every attempt starts from whatever state it's in.",
       { affected: all },
     );
-  else
+  else if (hostedElsewhere)
+    add(
+      "reset",
+      "partial",
+      "The world resets between trials, but your agent may keep its own memory from one trial into the next — they may not be independent.",
+    );
+  else if (release.results.resets === "passed")
     add(
       "reset",
       "supported",
-      "The world returns to its seed between attempts.",
+      `The agent and its tools start every trial from the same seed — the Resets release check passed on ${release.version}.`,
+      { checkedAt: releaseAt },
+    );
+  else if (release.results.resets === "failed")
+    add(
+      "reset",
+      "blocked",
+      `Two sessions in a row didn't start from the same state on ${release.version} — trials aren't independent.`,
+      { affected: all, repair: "release", blocks: true, checkedAt: releaseAt },
+    );
+  else
+    add(
+      "reset",
+      "untested",
+      `The Resets release check hasn't run on ${release.version} — run the release checks to prove every trial starts from the same state.`,
+      { affected: all, repair: "release" },
     );
   add(
     "resume",
@@ -452,6 +748,115 @@ export const compatibilityOf = ({
     );
   else add("cost", "supported", "Every call is metered here.");
 
+  /* A row the connection check decided says when, what it saw, and the fix
+     it offered — the Fix on the report opens that same repair. */
+  rows.forEach((r) => {
+    const res = r.checkId && results[r.checkId];
+    if (!res) return;
+    r.checkedAt = test?.at || null;
+    r.evidence = `${res.label}: ${res.detail}`;
+    r.evidenceSteps = checkEvidenceOf(res, spec, agent, prod);
+    r.fixId = res.repair?.id || r.fixId || null;
+    r.fixLabel = res.repair?.label || null;
+  });
+  /* A fix applied since: which repair it was, so its re-check scope is known. */
+  rows.forEach((r) => {
+    if (r.fixedCheck) r.fixId = before[r.fixedCheck]?.repair?.id || null;
+  });
+  /* What the environment's build established is dated by that build —
+     never a Supported with no date behind it. */
+  const builtAt = currentEnvVersion(env, envState)?.createdAt || null;
+  rows.forEach((r) => {
+    if (
+      BUILD_ROWS.includes(r.id) &&
+      !r.checkedAt &&
+      builtAt &&
+      (r.status === "supported" || r.status === "partial")
+    ) {
+      r.checkedAt = builtAt;
+      r.fromBuild = true;
+    }
+  });
+
+  /*
+    Gates (TH-8874 §3.3): when a capability others depend on isn't Supported
+    or Partial, what depends on it reads Untested naming it — one cause, not
+    fifteen. Only what needs the agent running is gated; what's read from its
+    definition (its tools, its pinning) or proved by the world stays.
+  */
+  const RUNTIME = [
+    "message",
+    "continuity",
+    "streaming",
+    "files",
+    "toolRouting",
+    "state",
+    "audio",
+    "browser",
+    "children",
+    "transfer",
+    "trace",
+    "cancel",
+    "resume",
+  ];
+  const GATES = [
+    ["start", (r) => RUNTIME.includes(r.id)],
+    ["message", (r) => ["continuity", "streaming"].includes(r.id)],
+    ["toolSchema", (r) => r.id === "toolRouting"],
+  ];
+  /* Waiting on a re-check after a fix: the last check already says what
+     each row was, so nothing cascades. */
+  const pendingRecheck = !test && !!v.connectionTestBefore;
+  GATES.forEach(([gid, gated]) => {
+    if (pendingRecheck) return;
+    const g = rows.find((r) => r.id === gid);
+    if (!g || ["supported", "partial"].includes(g.status)) return;
+    rows.forEach((r) => {
+      /* A known limit (Partial, Unavailable) holds whatever the check says. */
+      if (
+        r === g ||
+        !gated(r) ||
+        r.status === "unavailable" ||
+        r.status === "partial" ||
+        r.fixApplied ||
+        r.blockedBy
+      )
+        return;
+      Object.assign(r, {
+        status: "untested",
+        blockedBy: g.label,
+        detail: `Waits on ${g.label.toLowerCase()} — ${g.status === "blocked" ? "fix that first" : "check that first"}.`,
+        blocks: false,
+        repair: null,
+        fixId: null,
+        fixApplied: false,
+        evidence: null,
+        evidenceSteps: null,
+        checkedAt: null,
+      });
+    });
+  });
+
+  /* A fix named as the thing to do. */
+  rows.forEach((r) => {
+    if (r.fixId === "tools" && prod[0])
+      r.fixLabel = `Point ${prod[0]} at the test world`;
+    else if (!r.fixLabel && r.fromLastCheck)
+      r.fixLabel = before[r.checkId]?.repair?.label || null;
+  });
+  /* Each row that isn't Supported carries its fix (TH-8881 §3.3). */
+  rows.forEach((r) => {
+    const f = fixOf(r, { prod, release, missingNames });
+    if (f) r.fix = f;
+    /* From the live reply: what the session field should be. */
+    if (r.fixId === "session" && r.status === "blocked")
+      r.suggestion = {
+        label: "Use session_id",
+        why: "Turn 1's reply carried session_id = test-1 — that's the field to send back.",
+        connection: { sessionField: "session_id" },
+      };
+  });
+
   /* Rows in the order the roadmap lists them. */
   rows.sort(
     (a, b) =>
@@ -471,6 +876,17 @@ export const compatibilityOf = ({
         .filter((r) => r.blocks && r.affected.includes(s.id))
         .map((r) => r.label),
     }));
+  /* Untested: needs a capability no check has proved, and nothing it needs
+     is blocked (TH-8881 §3.2). requested = eligible + blocked + untested. */
+  const untestedIds = new Set(
+    rows
+      .filter((r) => r.status === "untested" || r.status === "stale")
+      .flatMap((r) => r.affected)
+      .filter((id) => !blockedIds.has(id)),
+  );
+  const untested = requested
+    .filter((s) => untestedIds.has(s.id))
+    .map((s) => ({ id: s.id, title: s.title || s.name || s.id }));
   const worst = rows.reduce(
     (w, r) =>
       COMPAT_STATUS[r.status].rank > COMPAT_STATUS[w].rank ? r.status : w,
@@ -496,8 +912,11 @@ export const compatibilityOf = ({
     notNeeded,
     scope: {
       requested: requested.length,
-      eligible: requested.length - blocked.length,
+      eligible: requested.length - blocked.length - untested.length,
       blocked,
+      untested,
+      /* What a reviewed run can take: everything not blocked. */
+      runnable: requested.length - blocked.length,
       eligibleIds: requested
         .filter((s) => !blockedIds.has(s.id))
         .map((s) => s.id),
@@ -510,10 +929,160 @@ export const compatibilityOf = ({
     ),
     worst,
     testedAt: test?.at || null,
+    /* The last check before a fix cleared it — never "never checked". */
+    checkedBeforeAt: !test ? v.connectionTestBefore?.at || null : null,
     staleWhy,
     fromCode: startsFromCode(agent),
   };
 };
+
+/**
+ * The report sorted by what it asks of you (TH-8877 feedback: an action page,
+ * not a report): needs — something to fix; waiting — no check has proved it
+ * yet (or a fix waits to be confirmed); limits — what this kind of connection
+ * can't do, nothing to fix; works — Supported.
+ */
+export const capabilityGroupsOf = (report) => {
+  const rows = report?.rows || [];
+  return {
+    needs: rows.filter(
+      (r) =>
+        r.status === "blocked" ||
+        r.status === "deprecated" ||
+        (r.repair === "agent" && r.status !== "supported"),
+    ),
+    waiting: rows.filter(
+      (r) => r.status === "untested" || r.status === "stale",
+    ),
+    limits: rows.filter(
+      (r) => r.status === "partial" || r.status === "unavailable",
+    ),
+    works: rows.filter((r) => r.status === "supported"),
+  };
+};
+
+/**
+ * The one answer at the top — can this agent be tested in this world — and
+ * the one thing to do next. kind: checking | unchecked | blocked | stale |
+ * ready; action: { kind: fix | check | testcall | release | run, row? }.
+ */
+export const capabilityAnswerOf = (report, { checkable, testing } = {}) => {
+  const { needs, waiting } = capabilityGroupsOf(report);
+  const { requested, blocked, untested } = report.scope;
+  const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const fixable = needs.find(
+    (r) =>
+      r.repair === "connection" ||
+      r.repair === "agent" ||
+      r.repair === "release",
+  );
+  const applied = waiting.filter((r) => r.fixApplied);
+  const onCheck = waiting.filter((r) => r.repair === "test");
+  const onRelease = waiting.filter((r) => r.repair === "release");
+  const onCall = waiting.filter((r) => r.repair === "testcall");
+  if (testing)
+    return {
+      kind: "checking",
+      title: "Checking the connection…",
+      body: "Starting the agent, sending two turns and calling its tools against the test world.",
+    };
+  if (blocked.length)
+    return {
+      kind: "blocked",
+      title: `${blocked.length} of ${plural(requested, "case")} can't run — ${plural(needs.filter((r) => r.blocks).length || needs.length, "problem")} to fix`,
+      body:
+        requested - blocked.length
+          ? `The other ${requested - blocked.length} don't depend on ${needs.length === 1 ? "it" : "them"}. Fix it, then re-check — or run just those from the run plan.`
+          : `None can run until ${needs.filter((r) => r.blocks).length > 1 ? "they're" : "it's"} fixed.`,
+      action: fixable ? { kind: "fix", row: fixable } : null,
+    };
+  if (applied.length)
+    return {
+      kind: "stale",
+      title: "Fix applied — re-check to confirm",
+      body: `Checking again confirms ${applied.map((r) => r.label.toLowerCase()).join(", ")} and everything the check covers.`,
+      action: { kind: "check", again: true },
+    };
+  if (checkable && !report.testedAt)
+    return {
+      kind: "unchecked",
+      title: "Not checked yet",
+      body: `Run the connection check before trusting a run. Until then ${plural(untested.length, "case")} ${untested.length === 1 ? "is" : "are"} untested — they'd run, but nothing proves they can be graded.`,
+      action: { kind: "check" },
+    };
+  if (onCall.length)
+    return {
+      kind: "unchecked",
+      title: "No test call yet",
+      body: "Only a test call proves this agent answers and what it lets us measure. Everything that needs it running waits on one.",
+      action: { kind: "testcall", row: onCall[0] },
+    };
+  if (onCheck.length)
+    return {
+      kind: "stale",
+      title: report.staleWhy
+        ? "Checked before something changed"
+        : `${plural(onCheck.length, "capability", "capabilities")} not checked yet`,
+      body: report.staleWhy
+        ? `${report.staleWhy} — re-check before trusting a run.`
+        : "Re-check so every capability the cases need is covered.",
+      action: { kind: "check" },
+    };
+  if (onRelease.length)
+    return {
+      kind: "stale",
+      title: "The environment's release checks haven't run",
+      body: `${onRelease.map((r) => r.label).join(" and ")} ${onRelease.length === 1 ? "is" : "are"} proved by the environment, not the agent. Until its release checks run, ${plural(untested.length, "case")} stay untested.`,
+      action: { kind: "release", row: onRelease[0] },
+    };
+  if (needs.length)
+    return {
+      kind: "stale",
+      title: `${plural(needs.length, "thing")} to look at`,
+      body: "Every case can run, but this connection has something to sort out first.",
+      action: fixable ? { kind: "fix", row: fixable } : null,
+    };
+  return {
+    kind: "ready",
+    title: `Ready — all ${plural(requested, "case")} can run`,
+    body: "Every capability the cases need is proved here. The limits below are what this connection can't grade.",
+    action: { kind: "run" },
+  };
+};
+
+/** "4 of 10 cases" — the requested count stays the denominator. */
+/** What to call the cases waiting on a check: "stale" when everything they
+    wait on was checked before something changed, else "untested". */
+export const waitingWordOf = (report) => {
+  const waiting = (report?.rows || []).filter(
+    (r) =>
+      (r.status === "untested" || r.status === "stale") && r.affected.length,
+  );
+  return waiting.length && waiting.every((r) => r.status === "stale")
+    ? "stale"
+    : "untested";
+};
+
+export const affectsLabel = (n, of) =>
+  `${n} of ${of} case${of === 1 ? "" : "s"}`;
+
+/** The report for an agent record on one of its environments: the agent as
+    connected now (its latest check) on that world. */
+export const agentReportFor = (agent, env, envState) =>
+  env && envState
+    ? compatibilityOf({
+        env,
+        envState,
+        agent: {
+          ...(envState.agent || {}),
+          ...agent,
+          values: {
+            ...(envState.agent?.values || {}),
+            ...(agent?.values || {}),
+          },
+        },
+      })
+    : null;
 
 /** "12 supported · 1 blocked · 2 untested" — the compact summary. */
 export const compatSummaryLine = (report) =>
@@ -530,10 +1099,13 @@ export const compatStampOf = (report, evaluatedIds) => ({
   requested: report.scope.requested,
   evaluated: evaluatedIds.length,
   blocked: report.scope.blocked,
+  testedAt: report.testedAt,
   rows: report.rows.map((r) => ({
     id: r.id,
     label: r.label,
     status: r.status,
+    detail: r.detail,
+    affected: r.affected.length,
   })),
 });
 

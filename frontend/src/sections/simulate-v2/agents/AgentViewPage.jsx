@@ -149,7 +149,7 @@ const TABS = [
   { id: "improvements", label: "Improvements" },
   { id: "connections", label: "Connections" },
   /* Can it run a given world — per capability, with the cases each gap affects. */
-  { id: "compatibility", label: "Compatibility" },
+  { id: "compatibility", label: "Capabilities" },
 ];
 
 /* Old tab ids still arrive in links — each lands on the tab that took its
@@ -470,9 +470,9 @@ export default function AgentViewPage() {
         e?.replication?.cloneName || cloneNameFor(e || { name: u.envName }),
     };
   });
-  const saveValues = (patch, msg) => {
+  const saveValues = (patch, msg, variant = "success") => {
     setAgentValues(agent.key, patch);
-    if (msg) enqueueSnackbar(msg, { variant: "success" });
+    if (msg) enqueueSnackbar(msg, { variant });
   };
   /* Credentials are versioned with the agent: a replaced key is a minor
      version on top of production (v5 → v5.1). It behaves as v5, so no
@@ -1295,10 +1295,13 @@ export default function AgentViewPage() {
           mainEnvId={mainEnv?.envId}
           onPickEnv={(id) => setQuery({ env: id })}
           onSaveValues={saveValues}
+          /* Fix opens the repair that check offered (the start command, the
+             session field, pointing a tool at the test world). */
           onRepair={(row) =>
             setQuery({
               tab: row?.repair === "agent" ? "definition" : "connections",
               env: null,
+              fix: row?.repair === "connection" ? row.fixId || null : null,
             })
           }
         />

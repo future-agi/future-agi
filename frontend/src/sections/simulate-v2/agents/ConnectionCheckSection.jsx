@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Box,
   Button,
@@ -18,7 +19,9 @@ import SettingsSection from "./SettingsSection";
 import { foundValuesOf } from "./foundFacts";
 import TestedVersionsMatrix from "../compat/TestedVersionsMatrix";
 import {
+  checkSavedPatch,
   checksFor,
+  clearedCheckPatch,
   connectionSpecOf,
   connectionStateOf,
   runConnectionCheck,
@@ -167,7 +170,15 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
   const save = () => {
     /* A changed connection is tested again before it's ready. */
     onSaveValues(
-      { connection: draft, connectionTest: null },
+      {
+        connection: draft,
+        /* The field a Fix opened says which repair this was. */
+        ...clearedCheckPatch(
+          agent.values,
+          Object.keys(REPAIR_FIELD).find((k) => REPAIR_FIELD[k] === editing) ||
+            "all",
+        ),
+      },
       "Saved as a draft — test the connection to make it ready.",
     );
     setEditing(null);
@@ -187,15 +198,11 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
           const out = runConnectionCheck(agent, spec, found.tools);
           setTesting(-1);
           onSaveValues(
-            {
-              connectionTest: {
-                at: new Date().toISOString(),
-                ...out,
-              },
-            },
+            checkSavedPatch(agent.values, out),
             out.passed
               ? "Connection ready — every check passed."
               : `${out.results.filter((r) => r.state === "failed").length} check${out.results.filter((r) => r.state === "failed").length === 1 ? "" : "s"} failed — the fix is next to each.`,
+            out.passed ? "success" : "warning",
           );
         },
         STEP_MS * (CHECKS.length + 1),
@@ -209,9 +216,9 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
       onSaveValues(
         {
           connection: { ...spec, toolsRedirected: true },
-          connectionTest: null,
+          ...clearedCheckPatch(agent.values, "tools"),
         },
-        "Its tools now read their address from the environment — test again.",
+        "Its tools now read their address from the environment — re-check to confirm.",
       );
     }
   };
@@ -219,10 +226,44 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
     onSaveValues(
       {
         connection: { ...spec, observeOnly: [...spec.observeOnly, tool] },
-        connectionTest: null,
+        ...clearedCheckPatch(agent.values, "tools"),
       },
       `${tool} will be observed only — scenarios that need it to write stay out of the run.`,
     );
+
+  /* Fix on the Capabilities tab (?fix=) lands here with that repair open:
+     the field it needs, or the failed check marked next to its fix. */
+  const [params, setParams] = useSearchParams();
+  const fixId = params.get("fix");
+  const [marked, setMarked] = useState(null);
+  const markedRef = useRef(null);
+  /* After a failed test the next step is a fix — the one asked for, else the
+     first — so that's the main button and Test again waits behind it. */
+  const nextFix =
+    testing < 0
+      ? marked ||
+        (test?.results || []).find((r) => r.state === "failed" && r.repair)
+          ?.id ||
+        null
+      : null;
+  const testFirst = status.state !== "ready" && !nextFix;
+  useEffect(() => {
+    if (!fixId) return;
+    const r = (test?.results || []).find((x) => x.repair?.id === fixId);
+    if (r && REPAIR_FIELD[fixId]) edit(REPAIR_FIELD[fixId]);
+    else if (r) setMarked(r.id);
+    setParams(
+      (p) => {
+        const n = new URLSearchParams(p);
+        n.delete("fix");
+        return n;
+      },
+      { replace: true },
+    );
+  }, [fixId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (marked) markedRef.current?.scrollIntoView({ block: "center" });
+  }, [marked]);
 
   const asyncTask = spec.method === "async";
   const request = JSON.stringify(
@@ -441,15 +482,15 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
           </Box>
           <Button
             size="small"
-            variant={status.state === "ready" ? "outlined" : "contained"}
-            color={status.state === "ready" ? "inherit" : "primary"}
+            variant={testFirst ? "contained" : "outlined"}
+            color={testFirst ? "primary" : "inherit"}
             disabled={testing >= 0 || !!editing}
             onClick={runTest}
             startIcon={<Iconify icon="solar:play-bold" width={14} />}
             sx={
-              status.state === "ready"
-                ? { borderColor: "divider", flexShrink: 0 }
-                : { flexShrink: 0 }
+              testFirst
+                ? { flexShrink: 0 }
+                : { borderColor: "divider", flexShrink: 0 }
             }
           >
             {testing >= 0
@@ -490,9 +531,14 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
               return (
                 <Stack
                   key={r.id}
+                  ref={r.id === marked ? markedRef : undefined}
                   direction="row"
                   spacing={1.25}
-                  sx={{ px: 2, py: 1.125 }}
+                  sx={{
+                    px: 2,
+                    py: 1.125,
+                    ...(r.id === marked && { bgcolor: "action.selected" }),
+                  }}
                 >
                   <Iconify
                     icon={icon.icon}
@@ -525,9 +571,14 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
                         )}
                       <Button
                         size="small"
-                        variant="outlined"
+                        variant={r.id === nextFix ? "contained" : "outlined"}
+                        color={r.id === nextFix ? "primary" : "inherit"}
                         onClick={() => repair(r)}
-                        sx={{ color: "text.primary", borderColor: "divider" }}
+                        sx={
+                          r.id === nextFix
+                            ? {}
+                            : { color: "text.primary", borderColor: "divider" }
+                        }
                       >
                         {r.repair.label}
                       </Button>

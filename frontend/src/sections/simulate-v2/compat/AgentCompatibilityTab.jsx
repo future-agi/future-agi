@@ -1,29 +1,31 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MenuItem, Select, Stack, Typography } from "@mui/material";
+import { useNavigate } from "react-router-dom";
+import { Button, MenuItem, Select, Stack, Typography } from "@mui/material";
+import { paths } from "src/routes/paths";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import { EmptyState } from "../components/primitives";
 import { envOf } from "../_mock/runGroup";
-import { compatibilityOf } from "../_mock/compatibility";
+import { agentReportFor, recheckCostOf } from "../_mock/compatibility";
 import {
-  CHECKS,
+  checkSavedPatch,
+  checksConnection,
+  checksFor,
   connectionSpecOf,
   runConnectionCheck,
 } from "../_mock/connectionCheck";
 import { foundValuesOf } from "../agents/foundFacts";
-import { familyOf } from "../_mock/testedVersions";
-import { sourceKindOf } from "../_mock/agentRegistry";
-import { SectionCard } from "../components/primitives";
-import CompatibilityReport from "./CompatibilityReport";
-import TestedVersionsMatrix from "./TestedVersionsMatrix";
-import SandboxCertification from "./SandboxCertification";
+import CapabilitiesPanel from "./CapabilitiesPanel";
+
+const STEP_MS = 450;
 
 /**
- * Agent → Compatibility (roadmap release.md): the report for this agent on
- * one of the environments testing it — picked here, the main one first.
- * Run the check and Test again run the connection check here, in place;
- * Repair and Add the tools go to the tab where that is fixed.
+ * Agent → Capabilities (TH-8877): open the agent in one of its environments
+ * — picked here, the main one first — and the Capabilities panel lists each
+ * capability with its status. Re-check runs the connection check here, step
+ * by step; Fix opens the repair for that capability; a re-check that needs
+ * the environment rebuilt asks first.
  */
-const STEP_MS = 450;
 export default function AgentCompatibilityTab({
   agent,
   state,
@@ -33,33 +35,12 @@ export default function AgentCompatibilityTab({
   onRepair,
   onSaveValues,
 }) {
-  /* The connection check, run here: the rows that need it read Checking… */
+  const navigate = useNavigate();
   const [testing, setTesting] = useState(false);
-  const timer = useRef(null);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  const runCheck = () => {
-    if (testing || !onSaveValues) return;
-    setTesting(true);
-    timer.current = setTimeout(
-      () => {
-        const found = foundValuesOf(agent);
-        const out = runConnectionCheck(
-          agent,
-          connectionSpecOf(agent, found),
-          found.tools,
-        );
-        const failed = out.results.filter((r) => r.state === "failed").length;
-        setTesting(false);
-        onSaveValues(
-          { connectionTest: { at: new Date().toISOString(), ...out } },
-          out.passed
-            ? "Connection ready — every check passed."
-            : `${failed} check${failed === 1 ? "" : "s"} failed — Repair is next to each.`,
-        );
-      },
-      STEP_MS * (CHECKS.length + 1),
-    );
-  };
+  const [step, setStep] = useState(-1);
+  const [confirmRebuild, setConfirmRebuild] = useState(null);
+  const timers = useRef([]);
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
   const envs = useMemo(
     () =>
       (agent?.usedIn || [])
@@ -71,40 +52,87 @@ export default function AgentCompatibilityTab({
   const env = envs.find((e) => e.id === envId) || envs[0] || null;
   const envState = env ? state?.byEnv?.[env.id] : null;
   const report = useMemo(
-    () =>
-      env && envState
-        ? compatibilityOf({
-            env,
-            envState,
-            /* The agent as connected now — its latest check — on this world. */
-            agent: {
-              ...(envState.agent || {}),
-              ...agent,
-              values: {
-                ...(envState.agent?.values || {}),
-                ...(agent?.values || {}),
-              },
-            },
-          })
-        : null,
-    [env, envState, agent],
+    () => agentReportFor(agent, env, envState),
+    [agent, env, envState],
   );
   if (!env || !report)
     return (
       <EmptyState
         icon="solar:shield-check-linear"
         title="No environment to check against"
-        body="Compatibility is per world — build or add this agent to an environment, and its report appears here."
+        body="Capabilities are per environment — build or add this agent to one, and what it can do there appears here."
       />
     );
+  const specNow = () => connectionSpecOf(agent, foundValuesOf(agent));
+  const runCheck = () => {
+    if (testing || !onSaveValues) return;
+    const found = foundValuesOf(agent);
+    const spec = connectionSpecOf(agent, found);
+    const steps = checksFor(spec);
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    setTesting(true);
+    setStep(0);
+    steps.forEach((_, i) =>
+      timers.current.push(setTimeout(() => setStep(i + 1), STEP_MS * (i + 1))),
+    );
+    timers.current.push(
+      setTimeout(
+        () => {
+          const out = runConnectionCheck(agent, spec, found.tools);
+          const failed = out.results.filter((r) => r.state === "failed").length;
+          setTesting(false);
+          setStep(-1);
+          onSaveValues(
+            checkSavedPatch(agent.values, out),
+            out.passed
+              ? "Connection ready — every check passed."
+              : `${failed} check${failed === 1 ? "" : "s"} failed — each has a Fix in the list.`,
+            out.passed ? "success" : "warning",
+          );
+        },
+        STEP_MS * (steps.length + 1),
+      ),
+    );
+  };
+  const checkable = checksConnection(agent) && !!onSaveValues;
+  /* A fix to tool routing changes how the environment binds the tool:
+     checking it again rebuilds those bindings — asked first. */
+  const check = () => {
+    const world = report.rows.find(
+      (r) => r.fixApplied && r.fix?.recheck === "world",
+    );
+    if (world) setConfirmRebuild(world);
+    else runCheck();
+  };
+  const checkSteps = testing
+    ? checksFor(specNow()).map((c, i) => ({
+        label: c.label,
+        state: i < step ? "done" : i === step ? "running" : "waiting",
+      }))
+    : null;
+  /* Reset is proved by the environment's release checks; the rest is fixed
+     on the agent. */
+  const repair = (row) => {
+    if (row?.repair === "release")
+      navigate(paths.dashboard.simulate.environmentStep(env.id, "overview"));
+    else onRepair(row);
+  };
+  const cost = recheckCostOf(env);
+  /* Each affected case by its name and caller, as the Scenarios tab reads it. */
   const titles = Object.fromEntries(
-    (envState.scenarios || []).map((s) => [s.id, s.title || s.name]),
+    (envState.scenarios || []).map((s) => [
+      s.id,
+      [s.title || s.name || s.task, s.persona?.name]
+        .filter(Boolean)
+        .join(" · "),
+    ]),
   );
   return (
     <Stack spacing={2}>
       <Stack direction="row" alignItems="center" spacing={1.5}>
         <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          Can it run
+          Environment
         </Typography>
         <Select
           size="small"
@@ -124,35 +152,43 @@ export default function AgentCompatibilityTab({
           ))}
         </Select>
       </Stack>
-      <CompatibilityReport
+      <CapabilitiesPanel
         report={report}
-        agent={agent}
-        env={env}
+        agentName={agent?.name || "this agent"}
+        worldName={env.name}
         titles={titles}
-        onRepair={onRepair}
-        onRetest={onSaveValues ? runCheck : onRepair}
+        checkable={checkable}
         testing={testing}
+        checkSteps={checkSteps}
+        onCheck={onSaveValues ? check : undefined}
+        onRepair={repair}
       />
-      <SectionCard
-        title="Tested versions"
-        subtitle={
-          familyOf(agent, sourceKindOf(agent))
-            ? "Exact versions per agent family, each linked to the diagnostic behind it. This agent's family is open — its own report above is what counts for this world."
-            : "Exact versions per agent family, each linked to the diagnostic behind it. This agent's family isn't listed — it may connect, but nothing about it is certified."
-        }
-        bare
-      >
-        <TestedVersionsMatrix
-          highlight={familyOf(agent, sourceKindOf(agent))?.family || null}
+      {confirmRebuild && (
+        <ConfirmDialog
+          open
+          onClose={() => setConfirmRebuild(null)}
+          PaperProps={{ sx: { maxWidth: 480 } }}
+          title={`Rebuild ${env.name}'s tool bindings to re-check?`}
+          content={
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              {`${confirmRebuild.label} is proved by the environment's build: re-checking it rebuilds how ${env.name} binds the agent's tools — about ${cost.minutes} minutes. No scenario runs.`}
+            </Typography>
+          }
+          action={
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              onClick={() => {
+                setConfirmRebuild(null);
+                runCheck();
+              }}
+            >
+              Rebuild and re-check
+            </Button>
+          }
         />
-      </SectionCard>
-      <SectionCard
-        title="Sandbox"
-        subtitle="How the test sandbox holds up — concurrency, cleanup, isolation — and whether our benchmark runs match the published ones."
-        bare
-      >
-        <SandboxCertification />
-      </SectionCard>
+      )}
     </Stack>
   );
 }

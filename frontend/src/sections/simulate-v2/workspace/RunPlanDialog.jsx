@@ -3,8 +3,8 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
-  Checkbox,
   Collapse,
+  Radio,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -43,10 +43,10 @@ import {
   runLimitsOf,
 } from "../_mock/runLimits";
 import { currentEnvVersion } from "../_mock/versions";
-import { COMPAT_STATUS } from "../_mock/compatibility";
+import CapabilitySummary from "../compat/CapabilitySummary";
+import { waitingWordOf } from "../_mock/compatibility";
 import { platformPreviewOf } from "../_mock/platformPreview";
 import { assistantsFor } from "../_mock/connectAgent";
-import { StatusDot } from "../components/primitives";
 import { delegationEvidenceOf } from "../_mock/handoffs";
 import { membersOf } from "../_mock/improvementPolicy";
 import ClosableDialog from "../components/ClosableDialog";
@@ -186,9 +186,41 @@ export default function RunPlanDialog({
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [limits, setLimits] = useState(() => runLimitsOf(env, envState));
   const [showLimits, setShowLimits] = useState(false);
-  /* Blocked cases: running only the eligible ones is an explicit choice. */
-  const [subsetOk, setSubsetOk] = useState(false);
+  /* Blocked cases are never run silently (TH-8880): Repair, run the reviewed
+     eligible cases, or — where it's allowed — observe only. */
+  const [blockedChoice, setBlockedChoice] = useState(null);
+  const subsetOk = blockedChoice === "eligible" || blockedChoice === "observe";
   const blockedN = compat?.scope?.blocked?.length || 0;
+  const blockingRows = (compat?.rows || []).filter((r) => r.blocks);
+  /* Observing a case changes nothing for a tool that would write to
+     production, a tool the agent lacks, or answers it could read. */
+  const observeWhy = blockingRows.some((r) => r.id === "toolRouting")
+    ? "Not for a tool that reaches production — observing would let it write for real."
+    : blockingRows.some((r) => r.id === "toolsNeeded")
+      ? "The agent doesn't have the tool those cases call — observing can't add it."
+      : blockingRows.some((r) => r.id === "grading")
+        ? "The agent could read the answers — observing can't make a pass mean anything."
+        : null;
+  /* A stop that can't be confirmed is said before a paid run (TH-8890). */
+  const cancelRow = (compat?.rows || []).find(
+    (r) => r.id === "cancel" && r.status === "partial",
+  );
+  /* What the run takes once a choice is made: the reviewed eligible cases,
+     or all of them observed. The requested count stays the denominator. */
+  const runCount =
+    blockedN > 0 && blockedChoice === "eligible"
+      ? compat.scope.runnable
+      : shownCount;
+  /* The cases left out, grouped by what blocks them. */
+  const leftOut = Object.entries(
+    (compat?.scope?.blocked || []).reduce((m, b) => {
+      const k = b.by.join(", ").toLowerCase();
+      (m[k] = m[k] || []).push(String(b.title).replace(/\.$/, ""));
+      return m;
+    }, {}),
+  )
+    .map(([by, list]) => `${list.length} that need ${by}: ${list.join("; ")}`)
+    .join(" · ");
 
   /* Each opening starts from the header's attempts and the current version. */
   useEffect(() => {
@@ -208,7 +240,7 @@ export default function RunPlanDialog({
     setShowBreakdown(false);
     setLimits(runLimitsOf(env, envState));
     setShowLimits(false);
-    setSubsetOk(false);
+    setBlockedChoice(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -231,7 +263,7 @@ export default function RunPlanDialog({
         estimateRunPlan({
           env,
           envState,
-          scenarios: shownCount,
+          scenarios: runCount,
           attempts: Number(attempts) || 0,
           versions,
           evals,
@@ -254,7 +286,7 @@ export default function RunPlanDialog({
     [
       env,
       envState,
-      shownCount,
+      runCount,
       attempts,
       versions,
       evals,
@@ -395,6 +427,100 @@ export default function RunPlanDialog({
               {scopeLead}
             </Typography>
           )}
+          {/* ── capabilities: the agent's report on this world, above the
+              scenario picker — what it can't run here, before spending ── */}
+          {compat && (
+            <CapabilitySummary
+              rows={compat.rows}
+              requested={compat.scope.requested}
+              testedAt={compat.testedAt}
+              onFix={onRepairCompat}
+            >
+              {(blockedN > 0 || cancelRow) && (
+                <Stack spacing={1}>
+                  {blockedN > 0 && (
+                    <>
+                      <Stack direction="row" alignItems="baseline" spacing={1}>
+                        <Typography
+                          sx={{ typography: "s2", fontWeight: 600, flex: 1 }}
+                        >
+                          {`${blockedN} of ${compat.scope.requested} cases can't run with this agent — choose how to go on`}
+                        </Typography>
+                        {onRepairCompat && blockingRows[0] && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => onRepairCompat(blockingRows[0])}
+                            sx={{
+                              color: "text.primary",
+                              borderColor: "divider",
+                            }}
+                          >
+                            Repair
+                          </Button>
+                        )}
+                      </Stack>
+                      {[
+                        {
+                          id: "eligible",
+                          label: `Run the ${compat.scope.runnable} reviewed eligible cases`,
+                          note: `Left out and recorded as not run — ${leftOut}. The result reads ${compat.scope.runnable} evaluated of ${compat.scope.requested} requested.`,
+                          disabled: !compat.scope.runnable,
+                        },
+                        {
+                          id: "observe",
+                          label: "Observation only",
+                          note:
+                            observeWhy ||
+                            "Every case runs, but controlled state checks are unavailable — the result is labelled observed, not graded on state.",
+                          disabled: !!observeWhy,
+                        },
+                      ].map((o) => (
+                        <Stack
+                          key={o.id}
+                          direction="row"
+                          alignItems="flex-start"
+                          spacing={0.75}
+                          onClick={() => !o.disabled && setBlockedChoice(o.id)}
+                          sx={{
+                            cursor: o.disabled ? "default" : "pointer",
+                            opacity: o.disabled ? 0.6 : 1,
+                          }}
+                        >
+                          <Radio
+                            size="small"
+                            checked={blockedChoice === o.id}
+                            disabled={o.disabled}
+                            tabIndex={-1}
+                            sx={{ p: 0, mt: "1px" }}
+                            inputProps={{ "aria-label": o.label }}
+                          />
+                          <Box sx={{ minWidth: 0 }}>
+                            <Typography sx={{ typography: "s2" }}>
+                              {o.label}
+                            </Typography>
+                            <Typography
+                              sx={{ typography: "s3", color: "text.tertiary" }}
+                            >
+                              {o.note}
+                            </Typography>
+                          </Box>
+                        </Stack>
+                      ))}
+                    </>
+                  )}
+                  {cancelRow && (
+                    <Typography
+                      sx={{ typography: "s3", color: "status.warning.fg" }}
+                    >
+                      {`Stop is partial for this agent — ${cancelRow.detail.charAt(0).toLowerCase()}${cancelRow.detail.slice(1)}`}
+                    </Typography>
+                  )}
+                </Stack>
+              )}
+            </CapabilitySummary>
+          )}
+
           {/* ── run setup: agent · environment · suite, read together ── */}
           {(agentChoices.length > 1 || suites.length > 0 || envLabel) && (
             <Box
@@ -552,7 +678,7 @@ export default function RunPlanDialog({
           >
             <Tooltip arrow title={scopeNote || ""}>
               <Box component="span" sx={{ color: "text.primary" }}>
-                {`${shownCount} scenario${shownCount === 1 ? "" : "s"}`}
+                {`${runCount} scenario${runCount === 1 ? "" : "s"}`}
               </Box>
             </Tooltip>
             <span>×</span>
@@ -652,8 +778,36 @@ export default function RunPlanDialog({
             </Box>
           </Stack>
 
+          {/* ── what's in and out (TH-8880): selected · will run · blocked ── */}
+          {blockedN > 0 && !suite && (
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                mt: -1,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {[
+                `${compat.scope.requested} selected`,
+                blockedChoice === "observe"
+                  ? `${compat.scope.requested} will run, observed`
+                  : blockedChoice === "eligible"
+                    ? `${compat.scope.runnable} will run`
+                    : `${compat.scope.runnable} can run`,
+                blockedChoice === "observe"
+                  ? null
+                  : `${blockedN} blocked (${compat.scope.blocked[0]?.by.join(", ").toLowerCase()})`,
+                compat.scope.untested.length
+                  ? `${compat.scope.untested.length} ${waitingWordOf(compat)}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Typography>
+          )}
           {/* ── what's in and out, counted before any ID is resolved ── */}
-          {breakdown && !suite && (
+          {breakdown && !suite && !blockedN && (
             <Typography
               sx={{
                 typography: "s3",
@@ -698,67 +852,6 @@ export default function RunPlanDialog({
               </Typography>
             );
           })()}
-
-          {/* ── compatibility: what this agent can't run here, before spending ── */}
-          {compat && blockedN > 0 && (
-            <Box
-              sx={{
-                border: "1px solid",
-                borderColor: "status.warning.border",
-                borderRadius: "8px",
-                px: 1.5,
-                py: 1,
-              }}
-            >
-              <Stack direction="row" alignItems="center" spacing={0.75}>
-                <StatusDot
-                  status={COMPAT_STATUS.blocked.dot}
-                  size={6}
-                  live={false}
-                />
-                <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
-                  {`${blockedN} of ${compat.scope.requested} requested cases can't run with this agent`}
-                </Typography>
-                {onRepairCompat && (
-                  <Button
-                    size="small"
-                    onClick={onRepairCompat}
-                    sx={{ color: "text.primary", flexShrink: 0 }}
-                  >
-                    Repair
-                  </Button>
-                )}
-              </Stack>
-              {compat.rows
-                .filter((r) => r.blocks)
-                .map((r) => (
-                  <Typography
-                    key={r.id}
-                    sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
-                  >
-                    {`${r.label} · ${r.detail}`}
-                  </Typography>
-                ))}
-              <Stack
-                direction="row"
-                alignItems="flex-start"
-                spacing={0.75}
-                onClick={() => setSubsetOk((v) => !v)}
-                sx={{ mt: 0.75, cursor: "pointer" }}
-              >
-                <Checkbox
-                  size="small"
-                  checked={subsetOk}
-                  tabIndex={-1}
-                  sx={{ p: 0, mt: "1px" }}
-                  inputProps={{ "aria-label": "Run the eligible cases only" }}
-                />
-                <Typography sx={{ typography: "s2" }}>
-                  {`Run the ${compat.scope.eligible} eligible cases. The ${blockedN} blocked stay in the count as not run — the result reads ${compat.scope.eligible} evaluated / ${compat.scope.requested} requested.`}
-                </Typography>
-              </Stack>
-            </Box>
-          )}
 
           {snapshotPick && (
             <CandidateSourcePicker
@@ -1232,13 +1325,23 @@ export default function RunPlanDialog({
                   estimate,
                   limits,
                   compatSubset:
-                    blockedN > 0
+                    blockedN > 0 && blockedChoice === "eligible"
                       ? {
                           ids: compat.scope.eligibleIds,
                           requested: compat.scope.requested,
                           blocked: compat.scope.blocked.map((b) => b.id),
                         }
-                      : null,
+                      : blockedN > 0 && blockedChoice === "observe"
+                        ? {
+                            ids: [
+                              ...compat.scope.eligibleIds,
+                              ...compat.scope.blocked.map((b) => b.id),
+                            ],
+                            requested: compat.scope.requested,
+                            blocked: [],
+                            observation: true,
+                          }
+                        : null,
                 })
               }
             >

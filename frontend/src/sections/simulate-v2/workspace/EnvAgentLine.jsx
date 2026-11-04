@@ -428,7 +428,7 @@ export default function EnvAgentLine({
               minWidth: 0,
             }}
           >
-            {`Compatibility · ${compatSummaryLine(compat)} · ${
+            {`Capabilities · ${compatSummaryLine(compat)} · ${
               compat.scope.blocked.length
                 ? `${compat.scope.blocked.length} of ${compat.scope.requested} cases blocked by this agent`
                 : "no case blocked by this agent"

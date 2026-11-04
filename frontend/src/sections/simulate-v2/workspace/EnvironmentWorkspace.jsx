@@ -3082,9 +3082,13 @@ export default function EnvironmentWorkspace() {
                 })
               : null
           }
-          onRepairCompat={() =>
+          /* Fix on a capability opens its repair on the agent; otherwise its
+             Capabilities tab for this world. */
+          onRepairCompat={(row) =>
             navigate(
-              `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=compatibility&env=${encodeURIComponent(envId)}`,
+              row?.fixId
+                ? `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=connections&fix=${encodeURIComponent(row.fixId)}`
+                : `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=compatibility&env=${encodeURIComponent(envId)}`,
             )
           }
           seedFrom={

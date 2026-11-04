@@ -286,6 +286,24 @@ export const GITHUB_REPOS = [
       },
     ],
   },
+  /* The capability report's reference agent: its refunds post to a
+     hard-coded production URL until it's pointed at the test world. */
+  {
+    name: "acme-inc/refunds-desk",
+    language: "Python",
+    private: true,
+    updated: "3 days ago",
+    agents: [
+      {
+        id: "refunds",
+        name: "Refunds desk",
+        framework: "Direct API calls",
+        entry: "app/main.py",
+        prompts: ["prompts/refunds.md"],
+        tools: 12,
+      },
+    ],
+  },
   {
     name: "acme-inc/travel-chat",
     language: "TypeScript",

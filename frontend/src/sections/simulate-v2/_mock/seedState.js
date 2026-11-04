@@ -14,6 +14,7 @@
 import { getEnvironment } from "./environments";
 import { getRows } from "./scenarios";
 import { derivedEnvironment } from "./builder";
+import { connectionSpecOf, runConnectionCheck } from "./connectionCheck";
 import { PRE_VERSIONING_AGENT_NOTE, PRE_VERSIONING_ENV_NOTE, recordedBeforeVersioning, seededEnvHistory } from "./versions";
 import { baseRunOf, buildImprovement } from "./improvementStart";
 import { DEFAULT_LIMITS, OPT_STATUS, improvementOutcome } from "./optimizationRuns";
@@ -197,10 +198,65 @@ const codeFixImprovement = (env, es) => {
   };
 };
 
+const REFUNDS_DESK_REPO = "https://github.com/acme-inc/refunds-desk";
+/* Ten scenarios, four of which refund: routine, two window rules, an expired card. */
+const REFUNDS_DESK_CASES = [
+  "core-0-routine", "core-4-routine", "core-5-routine", "core-6-routine", "core-7-routine",
+  "rule-0-declined", "rule-0-sympathy", "rule-2-declined", "trap-1-anomaly", "trap-3-recover",
+];
+const refundsDeskAgent = (env) => {
+  const tools = env.tools.map((t) => t.name);
+  const definition = {
+    kind: "repo",
+    repoUrl: REFUNDS_DESK_REPO,
+    ref: "main",
+    entry: "app/main.py",
+    runCommand: "uvicorn app.main:app --port 8080",
+    tools,
+    /* What reading the code found: refunds post to a production URL. */
+    hardCodedTools: ["issue_refund"],
+  };
+  const agent = {
+    name: "Refunds desk",
+    typeId: "chat_webhook",
+    values: {
+      repoUrl: REFUNDS_DESK_REPO,
+      /* The session field was confirmed when it was connected. */
+      connection: { sessionField: "session_id" },
+    },
+    via: "endpoint",
+    sourceKind: "repo",
+    definition,
+    connectedAt: daysAgo(3),
+  };
+  const spec = connectionSpecOf(agent, { runCommand: definition.runCommand });
+  return {
+    ...agent,
+    values: {
+      ...agent.values,
+      connectionTest: { at: daysAgo(1), ...runConnectionCheck(agent, spec, tools) },
+    },
+  };
+};
+
 export function seededState() {
   const built = {
     ...derivedEnvironment({ kind: "repo", value: "https://github.com/acme/returns-line-agent" }),
     adoptedAt: daysAgo(2),
+  };
+  /*
+    The capability report's reference agent (TH-8877): a refunds service
+    from GitHub whose issue_refund URL is hard-coded to production. Its last
+    connection check says so — Controlled tool routing is Blocked for the 4
+    of its 10 scenarios that refund. Fix → Point it at the test world, then
+    Re-check, clears it.
+  */
+  const refundsDesk = {
+    ...derivedEnvironment(
+      { kind: "repo", value: REFUNDS_DESK_REPO, channel: "chat", envName: "Refunds desk environment" },
+      { id: "env-refunds-desk" },
+    ),
+    adoptedAt: daysAgo(3),
   };
   const browser = { ...getEnvironment("env-browser"), adoptedAt: daysAgo(6) };
   const banking = { ...getEnvironment("env-chat-banking"), adoptedAt: daysAgo(1) };
@@ -312,6 +368,11 @@ export function seededState() {
   const builtScenarios = rowsFor(built, ["core", "rules", "traps", "adversarial", "edge"]);
   /* The earlier run was a rule-probe pass, not a full sweep. */
   const builtRuleProbes = rowsFor(built, ["rules"]).slice(0, 3);
+  /* Proved on the current version, so the only thing holding any back is
+     the capability report — what this environment demonstrates. */
+  const refundsScenarios = rowsFor(refundsDesk, ["core", "rules", "traps"])
+    .filter((r) => REFUNDS_DESK_CASES.some((c) => r.id === `${refundsDesk.id}-${c}`))
+    .map((r) => ({ ...r, provedAgainst: "v3", provedOn: ["v3"], provedAt: daysAgo(1) }));
   const browserScenarios = rowsFor(browser, ["core", "traps", "rules", "adversarial", "edge"]);
   const bankingScenarios = rowsFor(banking, ["core", "rules", "traps"]);
   const travelScenarios = rowsFor(travel, ["core", "rules", "traps", "adversarial", "edge"]);
@@ -345,7 +406,7 @@ export function seededState() {
   };
 
   const seeded = {
-    myEnvironments: [voice, afterHours, guestBooking, clinicLine, built, travel, banking, browser],
+    myEnvironments: [voice, afterHours, guestBooking, clinicLine, built, refundsDesk, travel, banking, browser],
     byEnv: {
       // built from an agent, fully set up, run twice
       [built.id]: {
@@ -399,6 +460,23 @@ export function seededState() {
         anyone has done it — which left nothing to demonstrate the chat run,
         the chat transcript or a chat comparison against.
       */
+      [refundsDesk.id]: {
+        agent: refundsDeskAgent(refundsDesk),
+        scenarios: refundsScenarios,
+        /* Its release checks passed on v3: reset and hidden checks are proved,
+           so the only thing in the way is the agent's production tool. */
+        releaseChecks: {
+          version: "v3",
+          at: daysAgo(2),
+          results: { starts: "passed", resets: "passed", reference: "passed", wrong: "passed", leaks: "passed" },
+        },
+        envVersions: seededEnvHistory(refundsDesk, refundsScenarios.length),
+        scenarioSource: "agent",
+        evals: ["task_success", "policy_adherence"],
+        agentVersions: [agentVersion(1, 3, "First version connected.")],
+        runs: [],
+      },
+
       [travel.id]: withCodeFixRun({
         agent: {
           typeId: "chat_webhook",

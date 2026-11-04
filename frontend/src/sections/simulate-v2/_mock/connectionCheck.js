@@ -57,9 +57,55 @@ export const connectionSpecOf = (agent, found = {}) => {
   };
 };
 
+/**
+ * The values a finished check saves. Checks that failed before (in the last
+ * result, or the one a fix cleared) and pass now are kept as fixed, so the
+ * report can say "Fixed · was Blocked" instead of the problem just vanishing.
+ */
+export const checkSavedPatch = (values, out, at = new Date().toISOString()) => {
+  const prev = values?.connectionTestBefore || values?.connectionTest || null;
+  const now = Object.fromEntries(out.results.map((r) => [r.id, r]));
+  const newly = (prev?.results || [])
+    .filter((r) => r.state === "failed" && now[r.id]?.state === "ok")
+    .map((r) => ({ id: r.id, label: r.label, at, was: r.detail }));
+  const kept = (values?.fixedChecks || []).filter(
+    (f) => now[f.id]?.state === "ok" && !newly.some((n) => n.id === f.id),
+  );
+  return {
+    connectionTest: { at, ...out },
+    connectionTestBefore: null,
+    fixesApplied: null,
+    fixedChecks: [...kept, ...newly],
+  };
+};
+
+/**
+ * A changed connection clears its check, keeping what it found for the next,
+ * and which repair was applied (a check's repair id, or "all" for an edit
+ * that could touch anything) — only those read "Fix applied"; the rest stay
+ * as the last check found them.
+ */
+export const clearedCheckPatch = (values, applied = "all") => {
+  const prev = values?.connectionTest ? [] : values?.fixesApplied || [];
+  return {
+    connectionTest: null,
+    connectionTestBefore:
+      values?.connectionTest || values?.connectionTestBefore || null,
+    fixesApplied:
+      applied === "all" || prev === "all"
+        ? "all"
+        : [...new Set([...prev, applied])],
+  };
+};
+
 /* The tool a hard-coded production URL would still send to production —
    one write tool, picked the same way every time for this agent. */
 const productionToolOf = (agent, tools = []) => {
+  /* Reading the code found a hard-coded production URL on this tool. */
+  const named = (agent?.definition?.hardCodedTools || []).find((t) =>
+    tools.includes(t),
+  );
+  if (named) return named;
   const writes = tools.filter((t) => WRITES.test(t));
   if (!writes.length) return null;
   return writes[hashSeed(`${agent?.key || agent?.name}:prod`) % writes.length];
@@ -159,12 +205,21 @@ export const runConnectionCheck = (agent, spec, tools = []) => {
       `${stillLive[0]} still reaches production — its URL is hard-coded, so scenarios that need it can't run against the test world.`,
       { id: "tools", label: "Point it at the test world" },
     );
-  else
+  else {
+    /* A redirected tool is the proof the fix needs — name it, not another. */
+    const redirected = spec.toolsRedirected
+      ? productionToolOf(agent, tools)
+      : null;
     add(
       "tools",
       "ok",
-      `${tools[0] || "lookup_order"} answered with seeded order ORD-1042 — its tools reach the test world${spec.observeOnly.length ? `; ${spec.observeOnly.join(", ")} observed only` : ""}.`,
+      `${
+        redirected
+          ? `${redirected} now lands in the test world, not production`
+          : `${tools[0] || "lookup_order"} answered with seeded order ORD-1042`
+      } — its tools reach the test world${spec.observeOnly.length ? `; ${spec.observeOnly.join(", ")} observed only` : ""}.`,
     );
+  }
 
   if (fromCode)
     add(

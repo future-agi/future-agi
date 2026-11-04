@@ -269,7 +269,7 @@ export function DomainChip({ domain, dense }) {
 
 DomainChip.propTypes = { domain: PropTypes.object, dense: PropTypes.bool };
 
-export function StatusDot({ status, size = 8, live }) {
+export function StatusDot({ status, size = 8, live, hollow = false }) {
   const theme = useTheme();
   const meta = STATUS_META[status] || STATUS_META.queued;
   const color = statusColors(theme, meta.role).solid;
@@ -302,7 +302,10 @@ export function StatusDot({ status, size = 8, live }) {
           width: size,
           height: size,
           borderRadius: "50%",
-          bgcolor: color,
+          /* Hollow: not run yet — the outline, never the fill (DS badge rule). */
+          ...(hollow
+            ? { border: "1.5px solid", borderColor: color }
+            : { bgcolor: color }),
           animation: animate ? `${pulse} 1.6s ease-in-out infinite` : "none",
         }}
       />
@@ -313,6 +316,7 @@ StatusDot.propTypes = {
   status: PropTypes.string,
   size: PropTypes.number,
   live: PropTypes.bool,
+  hollow: PropTypes.bool,
 };
 
 /* The design system's status badge, read through this file's vocabulary. */

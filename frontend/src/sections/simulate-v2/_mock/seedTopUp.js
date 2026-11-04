@@ -53,10 +53,10 @@ import { withProjectLinkRepair } from "./projectLinkRepair";
   has are left exactly as they are, and an environment someone deliberately
   removed stays removed because the marker moves on regardless.
 */
-export const SEED_VERSION = 36;
+export const SEED_VERSION = 37;
 /* Environments a seed version added, so a later top-up adds only those —
    never one someone removed since the last. */
-const ADDED_AT = { 21: ["env-clinic-line"] };
+const ADDED_AT = { 21: ["env-clinic-line"], 37: ["env-refunds-desk"] };
 
 /*
   Nothing stored may hold a raw secret. An agent connected with a pasted key
