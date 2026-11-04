@@ -21,6 +21,7 @@ import {
 import SectionCard from "../../components/SectionCard";
 import { genderLabel } from "../scenarios/personaLabels";
 import ActorForm from "./ActorForm";
+import ActorsSkeleton from "./ActorsSkeleton";
 import { hidden, readable, speaks } from "./actorUtils";
 import { ACTORS_COPY } from "./actors.constants";
 
@@ -94,22 +95,18 @@ export default function WorldActorsPanel({
 
   // A cast already read stays on screen when a refresh fails; the revision check refuses an edit to a stale one.
   const failed = isError && !data;
-  if (isLoading || failed)
+  if (failed)
     return (
       <Box sx={{ p: 2 }}>
         <SectionCard title={C.title} subtitle={C.subtitle}>
           <Box sx={{ px: 1.5, py: 1.5 }}>
-            {failed ? (
-              <Alert severity="error">{C.loadFailed}</Alert>
-            ) : (
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {C.loading}
-              </Typography>
-            )}
+            <Alert severity="error">{C.loadFailed}</Alert>
           </Box>
         </SectionCard>
       </Box>
     );
+  if (isLoading)
+    return <ActorsSkeleton callerSide={callerSide} locked={locked} />;
 
   return (
     <Box sx={{ p: 2 }}>

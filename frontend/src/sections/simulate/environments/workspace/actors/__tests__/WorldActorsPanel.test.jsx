@@ -13,7 +13,12 @@ vi.mock("src/api/simulate-environments/versions", () => ({
         { input: "actor.goal", value: "Approve fast" },
         {
           input: "actor.constraints",
-          value: { may_agree: [], private: [], escalate_when: [], stop_when: [] },
+          value: {
+            may_agree: [],
+            private: [],
+            escalate_when: [],
+            stop_when: [],
+          },
         },
         {
           input: "actor.knowledge",
@@ -104,13 +109,15 @@ describe("WorldActorsPanel", () => {
     actorsState = { isLoading: false, isError: false };
   });
 
-  it("says the actors are loading, with no count and nothing to add yet", () => {
+  it("shows a skeleton of the groups while loading, with no count and nothing to add yet", () => {
     actorsData = undefined;
     actorsState = { isLoading: true, isError: false };
     render(<WorldActorsPanel envId="env-1" callerSide />);
-    expect(screen.getByText("Loading the actors…")).toBeInTheDocument();
-    expect(screen.getByText("Actors")).toBeInTheDocument();
-    expect(screen.queryByText("Actors (0)")).toBeNull();
+    expect(
+      screen.getByRole("progressbar", { name: "Loading the actors…" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("On the caller's side")).toBeInTheDocument();
+    expect(screen.getByText("In the world")).toBeInTheDocument();
     expect(screen.queryByText("Add someone in the world")).toBeNull();
     expect(screen.queryByText("Add someone on the caller's side")).toBeNull();
   });
@@ -496,7 +503,9 @@ describe("WorldActorsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(mutate).not.toHaveBeenCalled();
     fireEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", { name: "Remove" }),
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Remove",
+      }),
     );
     expect(mutate.mock.calls[0][0]).toEqual({
       op: "delete",
@@ -508,14 +517,18 @@ describe("WorldActorsPanel", () => {
     expect(screen.queryByText("Add someone in the world")).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
-    expect(screen.getByRole("button", { name: "What they see" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "What they see" }),
+    ).toBeInTheDocument();
   });
 
   it("sends nothing when the remove dialog is cancelled", () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     fireEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }),
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Cancel",
+      }),
     );
     expect(mutate).not.toHaveBeenCalled();
   });
