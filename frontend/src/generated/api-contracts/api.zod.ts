@@ -37255,9 +37255,8 @@ export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
 });
 
 /**
- * What this environment was shown to support with an agent version (its own when none is named), one status
-per capability, computed now from its build's evidence; Stale once the environment version moved on or the
-agent is another version. No writes.
+ * The run readiness of an agent, environment and suite pairing, computed now;
+an absent id is the environment's default. No writes.
  */
 export const SimulateApiHarnessEnvironmentsCapabilitiesParams = zod.object({
   id: zod.string(),
@@ -37268,22 +37267,67 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesQueryParams = zod.object(
     agent_version_id: zod.string().uuid().optional(),
     environment_version_id: zod.string().uuid().optional(),
     suite_version_id: zod.string().uuid().optional(),
-    keys: zod.array(zod.string().min(1)).optional(),
   },
 );
 
 export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
-  evidence_unreadable: zod
-    .boolean()
-    .describe("The build's evidence could not be read; all is Untested."),
-  environment_version_id: zod.string().min(1),
-  agent_version_id: zod.string().min(1),
-  catalog_version: zod.string().min(1),
-  checked_at: zod.string().min(1),
-  capabilities: zod.array(
+  pairing: zod.object({
+    agent_version: zod.object({
+      id: zod.string().uuid().optional(),
+      label: zod.string().min(1).optional(),
+    }),
+    environment_version: zod.object({
+      id: zod.string().uuid().optional(),
+      label: zod.string().min(1).optional(),
+    }),
+    suite_version: zod.object({
+      id: zod.string().uuid().optional(),
+      label: zod.string().min(1).optional(),
+    }),
+    evidence: zod
+      .enum(["pair_certificate", "build_certificate", "none"])
+      .describe(
+        "pair_certificate: this pairing was certified together; build_certificate: the environment version's build, measured with the agent it was built with.",
+      ),
+  }),
+  validation: zod.object({
+    state: zod
+      .enum([
+        "not_run",
+        "validating",
+        "ready",
+        "failed",
+        "retry",
+        "unavailable",
+      ])
+      .describe(
+        "ready: certified together; failed: a check failed; retry: the last validation ended before its check did.",
+      ),
+    job_id: zod.string().uuid(),
+    purpose: zod.enum(["save", "agent_move", "recheck"]),
+    finished_at: zod.string().datetime({ offset: true }),
+    error: zod.record(zod.string(), zod.string()),
+  }),
+  answer: zod.object({
+    kind: zod.enum(["ready", "blocked", "stale", "unchecked", "validating"]),
+    worst: zod
+      .enum([
+        "supported",
+        "partial",
+        "blocked",
+        "unavailable",
+        "untested",
+        "stale",
+      ])
+      .describe("The worst measured row."),
+    reason_code: zod
+      .string()
+      .min(1)
+      .describe("pair_failed: a check failed without naming an action."),
+  }),
+  areas: zod.array(
     zod.object({
       id: zod.string().min(1),
-      label: zod.string().min(1),
       status: zod.enum([
         "supported",
         "partial",
@@ -37292,59 +37336,88 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         "untested",
         "stale",
       ]),
-      finding: zod.string().min(1),
-      checks: zod.array(zod.record(zod.string(), zod.string())),
-      blocked_by: zod.string().min(1),
-      stale_because: zod.string().min(1),
-      reason_code: zod.string().min(1),
-      reason: zod.string().min(1),
-      fix: zod.object({
-        type: zod.string().min(1),
-        text: zod.string(),
-        target: zod
-          .array(zod.string().min(1))
-          .describe("The tools, fields or checks it names."),
-        repair: zod
-          .string()
-          .min(1)
-          .describe("The screen that repairs it: agent.tools, agent.source..."),
-        flips_when: zod.string().min(1),
-        recheck: zod.object({
-          scope: zod.enum(["agent", "world"]),
-          check: zod.string().min(1),
-          available: zod
-            .boolean()
-            .describe(
-              "False for the world: a rebuild reads it again until a check-only job exists.",
-            ),
-        }),
-        available: zod.boolean(),
-      }),
-      fix_type: zod.string().min(1),
-      needed_by: zod.number(),
-      affected: zod.number(),
-      affected_scenarios: zod.array(zod.string().min(1)),
+      rows: zod.array(zod.string().min(1)),
     }),
   ),
-  selection: zod.object({
-    requested: zod.number(),
-    eligible: zod.number(),
-    blocked: zod.number(),
-    untested: zod.number(),
-    requirements_recorded: zod.boolean(),
-    dropped: zod
-      .array(zod.record(zod.string(), zod.string()))
-      .describe(
-        "Scenarios no longer in the suite; counted in none of the others.",
+  rows: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      label: zod.string().min(1),
+      area: zod.string().min(1),
+      status: zod.enum([
+        "supported",
+        "partial",
+        "blocked",
+        "unavailable",
+        "untested",
+        "stale",
+      ]),
+      measured: zod.boolean(),
+      finding: zod.enum([
+        "passed",
+        "failed",
+        "limited",
+        "not_applicable",
+        "not_run",
+      ]),
+      reason_code: zod.string().min(1),
+      reason: zod.string().min(1),
+      targets: zod.array(
+        zod.object({
+          kind: zod.enum(["tool", "action", "check"]),
+          name: zod.string().min(1),
+          result: zod.string().min(1),
+        }),
       ),
+      blocked_by: zod.string().min(1),
+      stale_because: zod.string().min(1),
+      was: zod.enum([
+        "supported",
+        "partial",
+        "blocked",
+        "unavailable",
+        "untested",
+        "stale",
+      ]),
+      evidence: zod.array(
+        zod.object({
+          check: zod.string().min(1),
+          result: zod
+            .string()
+            .min(1)
+            .describe("A check status, or a ratio such as 3/4."),
+        }),
+      ),
+      checked_at: zod.string().min(1),
+      fix: zod.object({
+        type: zod.string().min(1),
+        target: zod.string().min(1),
+        action: zod.string().min(1),
+        would: zod.string().min(1),
+        recheck: zod.object({
+          scope: zod.enum(["agent", "pair"]),
+          method: zod.enum(["POST"]),
+          path: zod.string().min(1),
+        }),
+      }),
+    }),
+  ),
+  counts: zod.object({
+    supported: zod.number(),
+    partial: zod.number(),
+    blocked: zod.number(),
+    unavailable: zod.number(),
+    untested: zod.number(),
+    stale: zod.number(),
   }),
+  catalog_version: zod.string().min(1),
   rules_version: zod.string().min(1),
   computed_at: zod.string().min(1),
 });
 
 /**
- * Check the agent again (its preflight, when it failed or never finished) so the report reads it anew; the
-world is checked again only by a new build for now. Starts no run.
+ * Validate a pairing again with a run-less check; moves no default. An absent
+id is the environment's default.
  */
 export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesParams =
   zod.object({
@@ -37353,18 +37426,9 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesParams
 
 export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesBody =
   zod.object({
-    scope: zod.enum(["agent", "world", "all"]),
-    check: zod.string().min(1).optional(),
-  });
-
-export const SimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse =
-  zod.object({
-    scope: zod.string().min(1),
-    agent_version_id: zod.string().min(1),
-    state: zod
-      .string()
-      .min(1)
-      .describe("started, or not_needed when the last check passed"),
+    agent_version_id: zod.string().uuid().optional(),
+    environment_version_id: zod.string().uuid().optional(),
+    suite_version_id: zod.string().uuid().optional(),
   });
 
 /**

@@ -59897,9 +59897,8 @@ export const getSimulateApiHarnessEnvironmentsCapabilitiesUrl = (
 };
 
 /**
- * What this environment was shown to support with an agent version (its own when none is named), one status
-per capability, computed now from its build's evidence; Stale once the environment version moved on or the
-agent is another version. No writes.
+ * The run readiness of an agent, environment and suite pairing, computed now;
+an absent id is the environment's default. No writes.
  */
 export const simulateApiHarnessEnvironmentsCapabilities = async (
   id: string,
@@ -59915,20 +59914,20 @@ export const simulateApiHarnessEnvironmentsCapabilities = async (
   );
 };
 
-export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse200 =
+export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse202 =
   {
     data: HarnessCapabilityRecheckResponseApi;
-    status: 200;
+    status: 202;
   };
 
 export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200>;
+    status: Exclude<HTTPStatusCodes, 202>;
   };
 
 export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseSuccess =
-  simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse200 & {
+  simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse202 & {
     headers: Headers;
   };
 export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseError =
@@ -59947,8 +59946,8 @@ export const getSimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesUrl
   };
 
 /**
- * Check the agent again (its preflight, when it failed or never finished) so the report reads it anew; the
-world is checked again only by a new build for now. Starts no run.
+ * Validate a pairing again with a run-less check; moves no default. An absent
+id is the environment's default.
  */
 export const simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilities =
   async (
