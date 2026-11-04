@@ -809,10 +809,10 @@ def _export_datadog(connection, credentials, service, sync_from, sync_to):
 
 def _get_export_queryset(connection, sync_from, sync_to):
     """Build the shared AgentccRequestLog queryset for export platforms."""
-    from agentcc.models import AgentccRequestLog
+    from agentcc.models import AgentccAPIKey, AgentccRequestLog
 
     qs = (
-        AgentccRequestLog.objects.filter(
+        AgentccRequestLog.no_workspace_objects.filter(
             organization=connection.organization,
             deleted=False,
         )
@@ -827,7 +827,17 @@ def _get_export_queryset(connection, sync_from, sync_to):
         .order_by("started_at", "created_at")
     )
     if connection.workspace_id:
-        qs = qs.filter(workspace=connection.workspace)
+        # Gateway ingestion stores org-scoped rows with a null workspace.
+        # Resolve those through the trusted key, never caller metadata or an
+        # org-wide null-workspace fallback that could export another workspace.
+        workspace_keys = AgentccAPIKey.no_workspace_objects.filter(
+            organization=connection.organization,
+            workspace_id=connection.workspace_id,
+        ).values("gateway_key_id")
+        qs = qs.filter(
+            Q(workspace_id=connection.workspace_id)
+            | Q(workspace__isnull=True, api_key_id__in=workspace_keys)
+        )
     return qs
 
 
