@@ -74,10 +74,8 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.DEV_AWS_REGION }}
 
-      - name: Sync dist/ to S3
-        run: |
-          aws s3 sync dist/ s3://${{ secrets.DEV_S3_BUCKET_NAME }}/ --delete
-
+      # Check and apply the optional routing change before replacing assets.
+      # A permission failure must not strand a new asset set without invalidation.
       - name: Repair dev SPA routes
         if: github.event_name == 'workflow_dispatch' && inputs.repair_spa_routes
         env:
@@ -86,6 +84,10 @@ jobs:
           python ../scripts/deploy-dev-spa-router.py \
             --distribution-id "$DEV_DISTRIBUTION_ID" \
             --code ../deploy/dev-cdn/spa-router.js
+
+      - name: Sync dist/ to S3
+        run: |
+          aws s3 sync dist/ s3://${{ secrets.DEV_S3_BUCKET_NAME }}/ --delete
 
       - name: Invalidate CloudFront cache
         run: |
