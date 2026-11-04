@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import { statusColors } from "src/utils/runStatus";
 import React, {
   useState,
@@ -1471,14 +1472,7 @@ ToggleButtons.propTypes = {
   theme: PropTypes.object.isRequired,
 };
 
-function AxisSection({
-  title,
-  config,
-  onChange,
-  theme,
-  showReset,
-  onReset,
-}) {
+function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
   return (
     <Box sx={{ mb: 3 }}>
       <Stack
@@ -4666,10 +4660,7 @@ export default function WidgetEditorView() {
               }}
             >
               <ListItemIcon>
-                <Iconify
-                  icon="solar:trash-bin-trash-linear"
-                  width={16}
-                />
+                <Iconify icon="solar:trash-bin-trash-linear" width={16} />
               </ListItemIcon>
               <ListItemText>Delete</ListItemText>
             </MenuItem>
@@ -4921,7 +4912,9 @@ export default function WidgetEditorView() {
                         ? theme.palette.text.primary
                         : theme.palette.text.secondary,
                     bgcolor:
-                      timePreset === p.value ? "action.selected" : "transparent",
+                      timePreset === p.value
+                        ? "action.selected"
+                        : "transparent",
                     borderRight:
                       i < DATE_PRESETS.length - 1
                         ? `1px solid ${theme.palette.divider}`
@@ -4941,7 +4934,7 @@ export default function WidgetEditorView() {
                     <Iconify icon="solar:calendar-linear" width={16} />
                   )}
                   {p.value === "custom" && customDateRange
-                    ? `${format(customDateRange[0], "MMM dd")} - ${format(customDateRange[1], "MMM dd")}`
+                    ? `${format(customDateRange[0], "MMM dd")} - ${format(getDateRangeDisplayEnd(customDateRange), "MMM dd")}`
                     : p.label}
                 </Box>
               ))}

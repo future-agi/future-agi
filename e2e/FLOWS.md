@@ -1899,6 +1899,69 @@
 - the saved project query and dashboard widget persist the same scoped query reference
 - the dashboard starts a new personal execution of the saved query and shows the same exact rows
 
+### OBS-E2E-054 — native source accounting retains exact usage and known, zero and unknown costs
+
+**Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero
+**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:8`
+**Tags:** —
+
+**User steps:**
+
+1. read parent-only native trace and session list coverage, deliver children later, then replay identical IDs
+2. ingest synthetic Copilot and Gemini trees plus a legacy control, including duplicate delivery
+3. verify exact source identities, normalized counters and session grouping in storage
+4. read exact trace membership and known, zero and unknown costs in the desktop grid
+5. filter by trace name and by zero or positive cost
+6. sort positive costs and the full set both ways, replaying each captured API request
+
+**Backend state verified:**
+
+- root-only, late-child and replay lists keep observed request counts 0, 3, 3 with coverage unknown and unchanged source summary presence
+- source IDs, parents, normalization profiles, summary counters and sanitized event attributes persist exactly
+- trace API totals and grid distinguish zero from unknown costs
+- session fallback and explicit identities match exact source membership
+- filtered and sorted API, replay and DOM IDs match independent expected sets and order, with exact counts and no lower-bound marker
+
+### OBS-E2E-056 — native sessions preserve exact membership, costs and trace navigation
+
+**Goal:** A developer trusts native session totals and opens the intended source trace from ordered conversation history
+**Spec:** `flows/observe/native-session-accounting-navigation.spec.ts:15`
+**Tags:** —
+
+**User steps:**
+
+1. read the exact six seeded session identities in the API and desktop grid
+2. open the two-turn Copilot session and navigate to its first source trace
+3. scroll the grid to inspect observed-only native costs, coverage unknown and exact request and trace counts
+4. open each remaining session and match its history card, source trace, tokens and cost
+
+**Backend state verified:**
+
+- session list and history totals sum all request contributions, not parent summaries
+- two-turn history has exactly the source chronology, 86142 tokens, two traces and 1.20 USD
+- single-trace session API, card and header retain exact membership, token breakdown and known, zero or null cost
+- View Trace opens the exact source trace, without unexpected browser or HTTP errors
+
+### OBS-E2E-057 — native tree, model, tool and timeline details preserve source truth
+
+**Goal:** A developer inspects native model and tool work on a normal desktop with truthful costs and sanitized events
+**Spec:** `flows/observe/native-trace-desktop-detail.spec.ts:7`
+**Tags:** —
+
+**User steps:**
+
+1. open known, zero, unknown and legacy traces from the real grid
+2. select root and model nodes and inspect source IDs and canonical token and cost summaries
+3. inspect Gemini tool output and sanitized exception attributes
+4. switch to timeline and back to tree using the display controls
+
+**Backend state verified:**
+
+- trace detail contains exact source IDs, parents, token contributions and LLM call counts
+- trace and selected model costs preserve known, zero and unknown semantics
+- Copilot links and exception types and Gemini sanitized events survive in the detail API
+- tool output and exception type render in the selected node; unexpected browser and HTTP errors fail
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
