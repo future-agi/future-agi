@@ -1,5 +1,3 @@
-import { BUILD_TONES } from "src/sections/simulate/environments/buildEnvironment/buildTones";
-
 // The one monospace stack the contract uses for observation fields, action
 // verbs and verifier names. Kept as a constant so the string is not repeated
 // across the part components.
@@ -7,26 +5,12 @@ export const MONO_FONT = "ui-monospace, Menlo, monospace";
 
 // The three kinds of verifier that make up the reward spec. The verifiers ARE
 // the evals applied to the environment, given weights — grouped here only for
-// presentation. Colours read from BUILD_TONES.
+// presentation. Each kind is a category, so it takes a data-palette series
+// (`theme.palette.data[series]`), not a status colour.
 export const VERIFIER_KINDS = [
-  {
-    id: "goal",
-    label: "Goal",
-    color: BUILD_TONES.green,
-    blurb: "Did the task get done. Terminal, sparse.",
-  },
-  {
-    id: "rubric",
-    label: "Rubric",
-    color: BUILD_TONES.blue,
-    blurb: "How well, judged per turn. Dense.",
-  },
-  {
-    id: "constraint",
-    label: "Constraints",
-    color: BUILD_TONES.red,
-    blurb: "What must never happen. Penalty.",
-  },
+  { id: "goal", label: "Goal", series: 0, blurb: "Did the task get done. Terminal, sparse." },
+  { id: "rubric", label: "Rubric", series: 1, blurb: "How well, judged per turn. Dense." },
+  { id: "constraint", label: "Constraints", series: 2, blurb: "What must never happen. Penalty." },
 ];
 
 // Every copy string on the contract tab, so nothing is inlined in the JSX.
@@ -36,8 +20,7 @@ export const CONTRACT_COPY = {
     subtitle: "When a run is over, and which kind of over it was",
     notAuthored: "Not authored yet",
     // A built environment's build writes them; a template or fork is never built.
-    notAuthoredBuilt:
-      "The build writes these once it has read how a run of this agent ends.",
+    notAuthoredBuilt: "The build writes these once it has read how a run of this agent ends.",
     notAuthoredUnbuilt: "This environment hasn't been built, so it has none.",
   },
   headingBlurb:
@@ -47,8 +30,7 @@ export const CONTRACT_COPY = {
   parts: {
     adapter: {
       title: "Modality adapter",
-      blurb:
-        "Fixes what an observation and an action are. Everything else is generic.",
+      blurb: "Fixes what an observation and an action are. Everything else is generic.",
     },
     spaces: {
       title: "Observation and action spaces",
@@ -57,8 +39,7 @@ export const CONTRACT_COPY = {
     },
     dynamics: {
       title: "Transition dynamics",
-      blurb:
-        "What moves the world between steps, and it is never only the agent.",
+      blurb: "What moves the world between steps, and it is never only the agent.",
     },
     reward: {
       title: "Reward spec",
@@ -90,8 +71,7 @@ export const CONTRACT_COPY = {
   terminateLabel: "Terminate",
   terminateBlurb: "The episode has a value. Goal verifiers settle.",
   truncateLabel: "Truncate",
-  truncateBlurb:
-    "Not a failure, and not terminal. Bootstrap from the last state.",
+  truncateBlurb: "Not a failure, and not terminal. Bootstrap from the last state.",
   clockLabel: (mode) => `Clock · ${mode}`,
   seedTitle: "Deterministic seed",
 

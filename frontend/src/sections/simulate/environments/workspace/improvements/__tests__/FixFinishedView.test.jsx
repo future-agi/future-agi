@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  render as rtlRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,6 +17,15 @@ import {
   resetFixRunFixtures,
   updateFixtureFixRun,
 } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
+
+// The trials table reads theme.palette.data, so render with the app theme.
+const appTheme = createTheme({ palette: palette("light") });
+// eslint-disable-next-line react/prop-types
+const AppTheme = ({ children }) => (
+  <ThemeProvider theme={appTheme}>{children}</ThemeProvider>
+);
+const render = (ui, options) =>
+  rtlRender(ui, { wrapper: AppTheme, ...options });
 
 vi.mock("src/utils/axios", async (importOriginal) => {
   const { withFakeFixRunsApi } = await import(
@@ -77,7 +93,10 @@ const shipPosts = () =>
 async function confirmShip(user, button) {
   await user.click(await screen.findByRole("button", { name: "Ship" }));
   const dialog = await screen.findByRole("dialog");
-  return { dialog, confirm: within(dialog).getByRole("button", { name: button }) };
+  return {
+    dialog,
+    confirm: within(dialog).getByRole("button", { name: button }),
+  };
 }
 
 beforeEach(() => {
@@ -101,7 +120,9 @@ describe("FixVerdict", () => {
     const breaks = within(screen.getByTestId("must-pass-breaks"));
     expect(breaks.getByText("on-time-cancel")).toBeInTheDocument();
     expect(breaks.getByText(/refund-window/)).toBeInTheDocument();
-    expect(breaks.getByText(/within normal noise, not counted/)).toBeInTheDocument();
+    expect(
+      breaks.getByText(/within normal noise, not counted/),
+    ).toBeInTheDocument();
   });
 
   it("renders a verdict without tiers, here and in the decision drawer", () => {
@@ -117,7 +138,9 @@ describe("FixVerdict", () => {
 
   it("labels limited validation, with the held-back tally only when cases were held back", async () => {
     const { unmount } = renderUi(
-      <FixVerdict fix={fixOf("fix-ready-archive", { limited_validation: true })} />,
+      <FixVerdict
+        fix={fixOf("fix-ready-archive", { limited_validation: true })}
+      />,
     );
     expect(screen.getByText("Limited validation")).toBeInTheDocument();
     expect(
@@ -127,7 +150,9 @@ describe("FixVerdict", () => {
     ).toBeInTheDocument();
     unmount();
     renderUi(
-      <FixVerdict fix={fixOf("fix-ready-no-held", { limited_validation: true })} />,
+      <FixVerdict
+        fix={fixOf("fix-ready-no-held", { limited_validation: true })}
+      />,
     );
     expect(screen.getByText("Limited validation")).toBeInTheDocument();
     expect(screen.queryByText(/Too few to tell/)).toBeNull();
@@ -142,8 +167,20 @@ describe("FixVerdict", () => {
       <FixVerdict
         fix={fixOf("fix-ready-archive", {
           eval_warnings: [
-            { name: "Politeness", pass_rate: 0.6, base_pass_rate: 0.85, trials: 6, base_trials: 6 },
-            { name: "Tone", pass_rate: 0.5, base_pass_rate: 0.75, trials: 4, base_trials: 8 },
+            {
+              name: "Politeness",
+              pass_rate: 0.6,
+              base_pass_rate: 0.85,
+              trials: 6,
+              base_trials: 6,
+            },
+            {
+              name: "Tone",
+              pass_rate: 0.5,
+              base_pass_rate: 0.75,
+              trials: 4,
+              base_trials: 8,
+            },
           ],
         })}
       />,
@@ -152,7 +189,11 @@ describe("FixVerdict", () => {
     expect(screen.getByText("60% vs 85% · 6 trials vs 6")).toBeInTheDocument();
     expect(screen.getByText("50% vs 75% · 4 trials vs 8")).toBeInTheDocument();
     unmount();
-    renderUi(<FixVerdict fix={fixOf("fix-ready-archive", { eval_warnings: undefined })} />);
+    renderUi(
+      <FixVerdict
+        fix={fixOf("fix-ready-archive", { eval_warnings: undefined })}
+      />,
+    );
     expect(screen.queryByText(/platform eval/)).toBeNull();
   });
 });
@@ -167,10 +208,17 @@ describe("FixFinishedView", () => {
       },
     });
     renderUi(
-      <FixFinishedView fix={fix} tab="trials" onTab={vi.fn()} renderTab={() => null} />,
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
     );
     expect(
-      screen.getByText("The engine stopped: the model provider refused the key."),
+      screen.getByText(
+        "The engine stopped: the model provider refused the key.",
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText("The fix did not finish.")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Ship$/ })).toBeNull();
@@ -179,7 +227,10 @@ describe("FixFinishedView", () => {
   it("offers Retry on a retryable failed fix and opens the new fix", async () => {
     const user = userEvent.setup();
     const { unmount } = renderUi(
-      <FinishedActions fix={fixOf("fix-failed", { retryable: false })} onReview={vi.fn()} />,
+      <FinishedActions
+        fix={fixOf("fix-failed", { retryable: false })}
+        onReview={vi.fn()}
+      />,
     );
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
     unmount();
@@ -198,7 +249,9 @@ describe("Ship", () => {
     const github = renderPage("fix-ready-github");
     let { dialog, confirm } = await confirmShip(user, "Open pull request");
     expect(within(dialog).getByText("main @ 0487e25")).toBeInTheDocument();
-    expect(await within(dialog).findByText("instructions.md")).toBeInTheDocument();
+    expect(
+      await within(dialog).findByText("instructions.md"),
+    ).toBeInTheDocument();
     expect(within(dialog).getByText("+3 −1")).toBeInTheDocument();
     expect(within(dialog).queryByText("Repo")).toBeNull();
     expect(shipPosts()).toHaveLength(0);
@@ -246,7 +299,9 @@ describe("Ship", () => {
     const user = userEvent.setup();
     renderPage("fix-ready-archive");
     await user.click((await confirmShip(user, "Make default")).confirm);
-    expect(await screen.findByText("Could not activate v11")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Could not activate v11"),
+    ).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Ship" })).toBeEnabled();
   });
 

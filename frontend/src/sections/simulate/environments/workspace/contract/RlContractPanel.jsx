@@ -1,5 +1,4 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
@@ -10,6 +9,7 @@ import CapabilityGraph from "../overview/CapabilityGraph";
 import SubActorsPanel from "./SubActorsPanel";
 import WorldActorsPanel from "./WorldActorsPanel";
 import WorldInternalsSection from "./WorldInternalsSection";
+import { Label } from "./ContractPart";
 import { CONTRACT_COPY } from "./contract.constants";
 
 // Map the real §6 `end_conditions` onto the episode-card shape. Returns null when
@@ -84,8 +84,8 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
         sx={{ mb: 2 }}
       >
         {!episode ? (
-          <Box sx={{ px: 2.5, py: 2.25 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          <Box sx={{ p: 1.5 }}>
+            <Typography sx={{ typography: "s1", fontWeight: 500 }}>
               {CONTRACT_COPY.endConditions.notAuthored}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -100,10 +100,10 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
           sx={{
             display: "grid", gap: "1px",
             gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
-            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.09 : 0.07),
+            bgcolor: "divider",
           }}
         >
-          <Box sx={{ p: 2.5, bgcolor: "background.paper" }}>
+          <Box sx={{ p: 1.5, bgcolor: "background.paper" }}>
             <Label>Terminate</Label>
             <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}>
               The episode has a value. Goal verifiers settle.
@@ -111,13 +111,13 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
             <Stack spacing={1}>
               {episode.terminate.map((e) => (
                 <Box key={e.when}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>{e.when}</Typography>
+                  <Typography sx={{ typography: "s1", fontWeight: 500 }}>{e.when}</Typography>
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{e.note}</Typography>
                 </Box>
               ))}
             </Stack>
           </Box>
-          <Box sx={{ p: 2.5, bgcolor: "background.paper" }}>
+          <Box sx={{ p: 1.5, bgcolor: "background.paper" }}>
             <Label>Truncate</Label>
             <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}>
               Not a failure, and not terminal. Bootstrap from the last state.
@@ -125,7 +125,7 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
             <Stack spacing={1}>
               {episode.truncate.map((e) => (
                 <Box key={e.when}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>{e.when}</Typography>
+                  <Typography sx={{ typography: "s1", fontWeight: 500 }}>{e.when}</Typography>
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{e.note}</Typography>
                 </Box>
               ))}
@@ -134,14 +134,14 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
         </Box>
         <Stack
           direction="row"
-          spacing={1.75}
+          spacing={1.5}
           alignItems="flex-start"
-          sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
+          sx={{ px: 1.5, py: 1.25, borderTop: "1px solid", borderColor: "divider" }}
         >
           <Iconify icon="solar:clock-circle-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }} />
           <Box>
-            <Typography sx={{ typography: "s2", fontWeight: 700 }}>Clock · {episode.clock.mode}</Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>{episode.clock.note}</Typography>
+            <Typography sx={{ typography: "s1", fontWeight: 500 }}>Clock · {episode.clock.mode}</Typography>
+            <Typography sx={{ typography: "s1", color: "text.secondary" }}>{episode.clock.note}</Typography>
           </Box>
         </Stack>
         </>
@@ -204,12 +204,3 @@ RlContractPanel.propTypes = {
   // A built (harness) environment; a template or fork is never built.
   backed: PropTypes.bool,
 };
-
-function Label({ children }) {
-  return (
-    <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, mb: 1 }}>
-      {children}
-    </Typography>
-  );
-}
-Label.propTypes = { children: PropTypes.node };

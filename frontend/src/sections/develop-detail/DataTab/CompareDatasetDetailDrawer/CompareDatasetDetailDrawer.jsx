@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import CompareDatasetDetailContent from "./CompareDatasetDetailContent";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 export default function CompareDatasetDetailDrawer({
   open,
@@ -67,10 +68,12 @@ export default function CompareDatasetDetailDrawer({
     });
   }, [nextRowId, prevRowId, compareId, queryClient]);
 
+  const covered = useDrawerCovered(open);
   return (
     <Drawer
       anchor="right"
       open={open}
+      sx={coveredDrawerSx(covered)}
       onClose={onClose}
       PaperProps={{
         sx: {
@@ -81,7 +84,7 @@ export default function CompareDatasetDetailDrawer({
           top: 0,
           bottom: 0,
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           overflowX: "hidden",
         },

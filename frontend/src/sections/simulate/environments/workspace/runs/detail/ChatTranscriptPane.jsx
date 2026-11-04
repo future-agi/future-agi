@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import React, { useState } from "react";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Tab, TextField, InputAdornment } from "@mui/material";
 
 import Iconify from "src/components/iconify";
@@ -31,7 +30,7 @@ function ToolCall({ call }) {
       direction="row"
       spacing={1}
       alignItems="flex-start"
-      sx={{ mt: 0.5, px: 1, py: 0.5, borderRadius: 0.75, bgcolor: "background.neutral" }}
+      sx={{ mt: 0.5, px: 1, py: 0.5, borderRadius: "4px", bgcolor: "background.neutral" }}
     >
       <Iconify icon="solar:code-linear" width={13} sx={{ color: "text.subtitle", mt: "2px", flexShrink: 0 }} />
       <Typography
@@ -68,7 +67,6 @@ export default function ChatTranscriptPane({ turns }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           InputProps={{
-            sx: { typography: "s2" },
             startAdornment: (
               <InputAdornment position="start">
                 <Iconify icon="solar:magnifer-linear" width={14} sx={{ color: "text.subtitle" }} />
@@ -89,11 +87,8 @@ export default function ChatTranscriptPane({ turns }) {
             key={i}
             sx={{
               borderLeft: "2px solid",
-              borderColor: (t) => (s.role === "agent" ? t.palette.primary.main : t.palette.text.disabled),
-              bgcolor: (t) =>
-                s.role === "agent"
-                  ? alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.06 : 0.04)
-                  : "background.neutral",
+              borderColor: s.role === "agent" ? "text.secondary" : "text.disabled",
+              bgcolor: s.role === "agent" ? "action.hover" : "background.neutral",
               px: 1.75,
               py: 1.25,
             }}
@@ -103,11 +98,9 @@ export default function ChatTranscriptPane({ turns }) {
                 typography: "s3",
                 color: (theme) =>
                   s.role === "world_actor"
-                    ? theme.palette.mode === "dark"
-                      ? "#f472b6"
-                      : "#db2777"
+                    ? theme.palette.data?.[4] || theme.palette.text.subtitle
                     : theme.palette.text.subtitle,
-                fontFamily: "ui-monospace, Menlo, monospace",
+                fontVariantNumeric: "tabular-nums",
               }}
             >
               {turnStamp(s, i)} ·{" "}

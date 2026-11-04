@@ -6,9 +6,7 @@ import {
   Button,
   Checkbox,
   Chip,
-  Dialog,
   FormControlLabel,
-  IconButton,
   InputBase,
   MenuItem,
   Select,
@@ -17,6 +15,7 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
+import { ClosableDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { paths } from "src/routes/paths";
@@ -162,7 +161,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
 
   if (!options) {
     return (
-      <Dialog
+      <ClosableDialog
         open={open}
         onClose={onClose}
         maxWidth={false}
@@ -170,21 +169,23 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
         PaperProps={{ sx: { maxWidth: 720 } }}
       >
         {optionsError ? (
-          <Stack direction="row" alignItems="center" spacing={2} sx={{ p: 3 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={2}
+            sx={{ p: 3, pr: 6 }}
+          >
             <Typography sx={{ typography: "s2", flex: 1 }}>
               {fixErrorOf(optionsError).message ||
                 "Could not load this run to improve it."}
             </Typography>
-            <Button size="small" variant="outlined" onClick={onClose}>
-              Close
-            </Button>
           </Stack>
         ) : (
           <Typography sx={{ p: 3, typography: "s2", color: "text.subtitle" }}>
             Loading the run…
           </Typography>
         )}
-      </Dialog>
+      </ClosableDialog>
     );
   }
 
@@ -227,7 +228,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
   };
 
   return (
-    <Dialog
+    <ClosableDialog
       open={open}
       onClose={onClose}
       maxWidth={false}
@@ -246,7 +247,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
           borderColor: "divider",
         }}
       >
-        <Box flex={1} minWidth={0}>
+        <Box flex={1} minWidth={0} sx={{ pr: 4 }}>
           <Typography
             sx={{ typography: "s1", fontWeight: 600 }}
           >{`Improve ${agent.name}`}</Typography>
@@ -254,9 +255,6 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
             {`Searches for a better ${agent.name}, scored by this environment`}
           </Typography>
         </Box>
-        <IconButton size="small" onClick={onClose} aria-label="Close">
-          <Iconify icon="mingcute:close-line" width={18} />
-        </IconButton>
       </Stack>
 
       <Box sx={{ px: 2.5, py: 2, overflowY: "auto" }}>
@@ -410,7 +408,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
           Start improvement
         </Button>
       </Stack>
-    </Dialog>
+    </ClosableDialog>
   );
 }
 

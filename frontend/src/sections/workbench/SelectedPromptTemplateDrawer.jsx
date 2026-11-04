@@ -24,6 +24,7 @@ import { usePromptWorkbenchContext } from "./createPrompt/WorkbenchContext";
 import { getRandomId } from "src/utils/utils";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { normalizeModelOption } from "src/components/custom-model-dropdown/common";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
 export const SelectedPromptTemplateDrawer = ({
   open,
@@ -194,6 +195,7 @@ export const SelectedPromptTemplateDrawer = ({
     };
   }, []);
 
+  const covered = useDrawerCovered(open);
   return (
     <>
       <Drawer
@@ -215,6 +217,7 @@ export const SelectedPromptTemplateDrawer = ({
           },
         }}
         open={open}
+        sx={coveredDrawerSx(covered)}
       >
         <Stack
           sx={{
@@ -230,7 +233,7 @@ export const SelectedPromptTemplateDrawer = ({
             size="small"
             startIcon={
               <Iconify
-                icon="formkit:left"
+                icon="solar:arrow-left-linear"
                 width={24}
                 height={24}
                 color={"text.primary"}
@@ -240,10 +243,7 @@ export const SelectedPromptTemplateDrawer = ({
             disabled={isCreatingDraft}
             sx={{
               color: "text.disabled",
-              padding: "4px 12px",
-              height: "30px",
               typography: "s1",
-              fontWeight: "fontWeightMedium",
               "& .MuiButton-startIcon": {
                 marginRight: "10px",
               },
@@ -255,7 +255,7 @@ export const SelectedPromptTemplateDrawer = ({
           <IconButton disabled={isCreatingDraft} onClick={onClose}>
             <Iconify
               color={isCreatingDraft ? "text.disabled" : "text.primary"}
-              icon="mingcute:close-line"
+              icon="solar:close-linear"
             />
           </IconButton>
         </Stack>
@@ -292,11 +292,6 @@ export const SelectedPromptTemplateDrawer = ({
               disabled={isCreatingDraft}
               variant="contained"
               color="primary"
-              sx={{
-                px: "24px",
-                borderRadius: "6px",
-                height: "38px",
-              }}
               onClick={handleWritePrompt}
             >
               <Typography typography="s1" fontWeight={"fontWeightMedium"}>

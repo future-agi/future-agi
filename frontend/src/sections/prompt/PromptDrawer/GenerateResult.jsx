@@ -95,7 +95,7 @@ const GenerateResult = ({
           <Typography
             variant="subheader"
             color="text.disabled"
-            fontSize="0.85rem"
+            fontSize="0.875rem"
             marginY="5px"
           >
             Results
@@ -132,20 +132,14 @@ const GenerateResult = ({
                     output[currentIndex] === undefined
                   }
                 >
-                  <Iconify icon="basil:copy-outline" color="text.disabled" />
+                  <Iconify icon="solar:copy-linear" color="text.disabled" />
                 </IconButton>
               </Tooltip>
               <Button
+                size="small"
                 disabled={!isApplyButtonEnabled}
                 variant="contained"
                 color="primary"
-                sx={{
-                  height: "30px",
-                  padding: 2,
-                  paddingX: "24px",
-                  paddingY: "18px",
-                  borderRadius: "10px",
-                }}
                 onClick={() => {
                   onApply(outputs[currentIndex]);
                   // onClose()
@@ -154,7 +148,7 @@ const GenerateResult = ({
                 Apply
               </Button>
               <IconButton onClick={onClose}>
-                <Iconify icon="material-symbols:close" />
+                <Iconify icon="solar:close-linear" />
               </IconButton>
             </Box>
           ) : null}
@@ -170,7 +164,7 @@ const GenerateResult = ({
             overflow: "auto",
             maxHeight: "95%",
             position: "relative",
-            fontSize: "0.8rem",
+            fontSize: "0.8125rem",
           }}
         >
           {loading ? (

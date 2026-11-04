@@ -34,7 +34,7 @@ const MessageList = ({ control, allColumns }) => {
         <Button
           size="small"
           color="primary"
-          startIcon={<Iconify icon="material-symbols:add" />}
+          startIcon={<Iconify icon="solar:add-linear" />}
           onClick={() => {
             append({ id: getRandomId(), role: "user", content: "" });
           }}
