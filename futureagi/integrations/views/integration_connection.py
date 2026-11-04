@@ -368,12 +368,17 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
         try:
             instance = self.get_object()
             if instance.platform == IntegrationPlatform.SLACK:
-                return _error_response("Reconnect Slack through OAuth to change this connection.")
+                return _error_response(
+                    "Reconnect Slack through OAuth to change this connection."
+                )
             data = request.validated_data
+            update_fields = ["updated_at"]
+            recover_auth_error = False
 
             # Update display_name if provided
             if "display_name" in data:
                 instance.display_name = data["display_name"]
+                update_fields.append("display_name")
 
             # If keys are being updated, re-validate
             if "public_key" in data or "secret_key" in data:
@@ -404,20 +409,22 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     )
 
                 instance.encrypted_credentials = CredentialManager.encrypt(new_creds)
+                update_fields.append("encrypted_credentials")
+                recover_auth_error = True
 
-                # Clear error state if keys were updated successfully
-                if instance.status == ConnectionStatus.ERROR:
-                    instance.status = ConnectionStatus.ACTIVE
-                    instance.status_message = ""
+            for field in ("host_url", "ca_certificate", "sync_interval_seconds"):
+                if field in data:
+                    setattr(instance, field, data[field])
+                    update_fields.append(field)
 
-            if "host_url" in data:
-                instance.host_url = data["host_url"]
-            if "ca_certificate" in data:
-                instance.ca_certificate = data["ca_certificate"]
-            if "sync_interval_seconds" in data:
-                instance.sync_interval_seconds = data["sync_interval_seconds"]
-
-            instance.save()
+            # Validation may take seconds while an exporter checkpoints. Settings
+            # never own sync_cursor, counters, deletion state or the worker token.
+            instance.save(using="default", update_fields=update_fields)
+            if recover_auth_error:
+                IntegrationConnection.no_workspace_objects.using("default").filter(
+                    pk=instance.pk, deleted=False, status=ConnectionStatus.ERROR
+                ).update(status=ConnectionStatus.ACTIVE, status_message="")
+            instance.refresh_from_db(using="default")
 
             result = IntegrationConnectionDetailSerializer(instance).data
             return _success_response(result)

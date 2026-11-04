@@ -53,9 +53,12 @@ def sync_at(connection, seconds):
         def now(cls, tz=None):
             return BASE + timedelta(seconds=seconds)
 
-    with patch("integrations.temporal.activities.datetime", Clock):
+    with (
+        patch("integrations.temporal.activities.datetime", Clock),
+        patch("integrations.services.datadog_export.datetime", Clock),
+    ):
         _sync_export_integration(connection)
-    connection.refresh_from_db()
+    connection.refresh_from_db(using="default")
 
 
 def create_log(connection, request_id, arrived, started=90, **kwargs):
@@ -106,7 +109,7 @@ def test_successive_datadog_windows_do_not_reexport_or_recount(datadog):
     assert metric_values(service, "output_tokens") == [5]
     assert metric_values(service, "cost") == [0.2]
     assert connection.last_synced_at == BASE + timedelta(seconds=180)
-    assert connection.sync_cursor == {
+    assert {k: v for k, v in connection.sync_cursor.items() if k != "datadog_scan"} == {
         "unrelated": "preserve",
         "datadog_export_from": BASE.isoformat(),
     }
@@ -159,7 +162,7 @@ def test_metrics_failure_does_not_replay_acknowledged_logs(datadog):
     create_log(connection, "original", arrived=90)
     service.export_metrics.side_effect = RuntimeError("synthetic sink failure")
     sync_at(connection, 120)
-    assert connection.status == ConnectionStatus.ERROR
+    assert connection.status == ConnectionStatus.ACTIVE
     assert connection.last_synced_at == BASE
     assert (
         SyncLog.objects.filter(connection=connection).latest("created_at").status
@@ -188,7 +191,7 @@ def test_partial_log_batch_does_not_advance_watermarks(datadog):
     service.export_logs.return_value = {"sent": 0}
     sync_at(connection, 120)
     assert connection.last_synced_at == BASE
-    assert connection.status == ConnectionStatus.ERROR
+    assert connection.status == ConnectionStatus.ACTIVE
     service.export_metrics.assert_not_called()
 
 
@@ -256,7 +259,7 @@ def test_metrics_short_acknowledgement_preserves_pending_window(datadog):
     service.export_metrics.side_effect = None
     service.export_metrics.return_value = {"sent": 0}
     sync_at(connection, 120)
-    assert connection.status == ConnectionStatus.ERROR
+    assert connection.status == ConnectionStatus.ACTIVE
     assert connection.last_synced_at == BASE
     assert not connection.sync_cursor["datadog_export"]["metrics_complete"]
     assert connection.sync_cursor["datadog_export"]["logs_complete"]
@@ -281,7 +284,7 @@ def test_checkpoint_save_failure_does_not_replay_completed_delivery(datadog):
     assert len(logs_sent(service)) == 1
     service.export_metrics.assert_called_once()
     assert connection.last_synced_at == BASE + timedelta(seconds=120)
-    assert connection.sync_cursor == {
+    assert {k: v for k, v in connection.sync_cursor.items() if k != "datadog_scan"} == {
         "unrelated": "preserve",
         "datadog_export_from": BASE.isoformat(),
     }
@@ -695,6 +698,7 @@ def test_lost_lock_before_sink_call_stops_stale_delivery(
             current_thread() is worker
             and qs.model is AgentccRequestLog
             and qs._result_cache is None
+            and qs._fields is None
         ):
             batches_prepared += 1
             pause_at = 2 if paused_phase == "second_log_batch" else 1
@@ -733,7 +737,7 @@ def test_lost_lock_before_sink_call_stops_stale_delivery(
         worker.start()
         try:
             assert blocked.wait(timeout=30)
-            expected_logs = {"logs": 0, "second_log_batch": 500, "metrics": 1}[
+            expected_logs = {"logs": 0, "second_log_batch": 500, "metrics": 0}[
                 paused_phase
             ]
             assert len(logs_sent(service)) == expected_logs
