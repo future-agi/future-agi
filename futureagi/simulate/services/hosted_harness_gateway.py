@@ -152,6 +152,9 @@ _SCENARIO_DIRECTORY_COUNT_COMMAND = (
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
 _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
+# The raw contract a version was read into, handed to a build so it starts at the
+# world stage instead of reading the agent again.
+_SEED_CONTRACT_PATH = "/work/seed/contract.json"
 _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
@@ -929,89 +932,101 @@ def github_checkout(
     return environment
 
 
+_SOURCE_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_SOURCE_REF = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+
+def acquire_source_archive(
+    organization_id: Any, source: Mapping[str, Any], *, label: str
+) -> tuple[bytes, str]:
+    """The ``source/``-rooted tar.gz of a job's or a version's source, and the commit
+    it stands at (empty for an upload). A GitHub commit already stored is read from
+    its archive; any other is cloned once and stored."""
+    kind = source["kind"]
+    if kind in {"remote", "provider"}:
+        return _empty_source_archive(), ""
+    if kind == "archive":
+        return (
+            load_source_archive(organization_id, source.get("archive_artifact_id")),
+            "",
+        )
+    if kind != "github":
+        raise HostedHarnessError(
+            "archive_source_not_configured",
+            "archive source acquisition requires a configured archive registry",
+            status_code=422,
+        )
+    repository = str(source.get("repository") or "")
+    ref = str(source.get("ref") or "HEAD")
+    if not _SOURCE_REPOSITORY.fullmatch(repository):
+        raise HostedHarnessError("github_repository_invalid", "invalid GitHub repository")
+    if ".." in ref or not _SOURCE_REF.fullmatch(ref):
+        raise HostedHarnessError("github_ref_invalid", "invalid GitHub ref")
+    pinned_commit = str(source.get("commit_sha") or "").lower()
+    if pinned_commit:
+        stored = stored_commit_archive(
+            organization_id=organization_id,
+            repository=repository,
+            commit_sha=pinned_commit,
+        )
+        if stored is not None:
+            return stored, pinned_commit
+    credential = nullcontext("")
+    if source.get("visibility") == "private":
+        installation_id = str(source.get("installation_id") or "")
+        credential = GitHubAppTokenProvider.from_settings().credential(installation_id)
+    with (
+        credential as token,
+        tempfile.TemporaryDirectory(prefix=f"harness-source-{label}-") as temp,
+    ):
+        checkout = Path(temp) / "source"
+        github_checkout(
+            repository, str(source.get("commit_sha") or ref), checkout, token
+        )
+        completed = subprocess.run(
+            ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        commit_sha = completed.stdout.strip().lower()
+        expected = source.get("commit_sha")
+        if expected and commit_sha != str(expected).lower():
+            raise HostedHarnessError(
+                "github_commit_mismatch",
+                "resolved checkout does not match commit_sha",
+                status_code=409,
+            )
+        shutil.rmtree(checkout / ".git", ignore_errors=True)
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w:gz") as tar:
+            tar.add(checkout, arcname="source", recursive=True)
+        max_bytes = getattr(settings, "ALK_HOSTED_SOURCE_MAX_BYTES", 256 * 1024 * 1024)
+        if archive.tell() > max_bytes:
+            raise HostedHarnessError(
+                "source_archive_too_large",
+                "compressed source exceeds the hosted source limit",
+                status_code=413,
+            )
+        body = archive.getvalue()
+        store_commit_archive(
+            organization_id=organization_id,
+            repository=repository,
+            commit_sha=commit_sha,
+            body=body,
+        )
+        return body, commit_sha
+
+
 class HostedSourceAcquirer:
-    _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-    _REF = re.compile(r"^[A-Za-z0-9._/-]+$")
+    _REPOSITORY = _SOURCE_REPOSITORY
+    _REF = _SOURCE_REF
 
     def acquire(self, job: HostedHarnessJob) -> tuple[bytes, str]:
-        source = job.payload["source"]
-        if source["kind"] in {"remote", "provider"}:
-            return _empty_source_archive(), ""
-        if source["kind"] == "archive":
-            return _load_source_archive(job), ""
-        if source["kind"] != "github":
-            raise HostedHarnessError(
-                "archive_source_not_configured",
-                "archive source acquisition requires a configured archive registry",
-                status_code=422,
-            )
-        repository = str(source.get("repository") or "")
-        ref = str(source.get("ref") or "HEAD")
-        if not self._REPOSITORY.fullmatch(repository):
-            raise HostedHarnessError(
-                "github_repository_invalid", "invalid GitHub repository"
-            )
-        if ".." in ref or not self._REF.fullmatch(ref):
-            raise HostedHarnessError("github_ref_invalid", "invalid GitHub ref")
-        pinned_commit = str(source.get("commit_sha") or "").lower()
-        if pinned_commit:
-            stored = stored_commit_archive(
-                organization_id=job.organization_id,
-                repository=repository,
-                commit_sha=pinned_commit,
-            )
-            if stored is not None:
-                return stored, pinned_commit
-        credential = nullcontext("")
-        if source.get("visibility") == "private":
-            installation_id = str(source.get("installation_id") or "")
-            credential = GitHubAppTokenProvider.from_settings().credential(
-                installation_id
-            )
-        with (
-            credential as token,
-            tempfile.TemporaryDirectory(prefix=f"harness-source-{job.id}-") as temp,
-        ):
-            checkout = Path(temp) / "source"
-            github_checkout(
-                repository, str(source.get("commit_sha") or ref), checkout, token
-            )
-            completed = subprocess.run(
-                ["git", "-C", str(checkout), "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=True,
-            )
-            commit_sha = completed.stdout.strip().lower()
-            expected = source.get("commit_sha")
-            if expected and commit_sha != str(expected).lower():
-                raise HostedHarnessError(
-                    "github_commit_mismatch",
-                    "resolved checkout does not match commit_sha",
-                    status_code=409,
-                )
-            shutil.rmtree(checkout / ".git", ignore_errors=True)
-            archive = io.BytesIO()
-            with tarfile.open(fileobj=archive, mode="w:gz") as tar:
-                tar.add(checkout, arcname="source", recursive=True)
-            max_bytes = getattr(
-                settings, "ALK_HOSTED_SOURCE_MAX_BYTES", 256 * 1024 * 1024
-            )
-            if archive.tell() > max_bytes:
-                raise HostedHarnessError(
-                    "source_archive_too_large",
-                    "compressed source exceeds the hosted source limit",
-                    status_code=413,
-                )
-            body = archive.getvalue()
-            store_commit_archive(
-                organization_id=job.organization_id,
-                repository=repository,
-                commit_sha=commit_sha,
-                body=body,
-            )
-            return body, commit_sha
+        return acquire_source_archive(
+            job.organization_id, job.payload["source"], label=str(job.id)
+        )
 
 
 def _check_secret_reference(alias: str, reference: Mapping[str, Any]) -> None:
@@ -2454,6 +2469,12 @@ class HostedHarnessGateway:
         if source["kind"] == "github":
             source["commit_sha"] = commit_sha
         payload["source"] = source
+        # A fresh build from a version already read starts from that reading.
+        seed_contract = (
+            _seed_contract_for(job) if authoring_archive is None else None
+        )
+        if seed_contract is not None:
+            payload["metadata"] = {**(payload.get("metadata") or {}), "seeded_contract": True}
         if payload != job.payload:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
@@ -2690,6 +2711,8 @@ class HostedHarnessGateway:
                 sandbox.fs.upload_file(adjustment_body, _ADJUSTMENTS_PATH)
             if authoring_archive is not None:
                 sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
+            if seed_contract is not None:
+                sandbox.fs.upload_file(seed_contract, _SEED_CONTRACT_PATH)
             overlay = _alk_source_overlay()
             if overlay is not None:
                 sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -2713,7 +2736,8 @@ class HostedHarnessGateway:
                 f"{_CHAT_POLICY_PATH} "
                 f"{_SIMULATOR_SECRETS_PATH} "
                 + (authoring_secrets_path if authoring_target_secrets else "")
-                + (f" {bundle_cache.CERTIFY_JOB_PATH}" if certify else ""),
+                + (f" {bundle_cache.CERTIFY_JOB_PATH}" if certify else "")
+                + (f" {_SEED_CONTRACT_PATH}" if seed_contract is not None else ""),
                 timeout=120,
             )
             if prepared.exit_code:
@@ -2799,6 +2823,11 @@ class HostedHarnessGateway:
                             else f"--adjustments {_ADJUSTMENTS_PATH} "
                         )
                         + provider_profile_args
+                        + (
+                            f"--seed-contract {_SEED_CONTRACT_PATH} "
+                            if seed_contract is not None
+                            else ""
+                        )
                         + "; fi && "
                         + ((extend_command + " && ") if extend_command else "")
                         + bundle_command
@@ -3340,6 +3369,14 @@ class HostedHarnessGateway:
                 _CHAT_CAPABILITIES_PATH,
             )
             sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
+            # A rebuild onto a version already read starts from that reading.
+            seed_contract = (
+                _seed_contract_for(job, agent_version.id)
+                if agent_version is not None
+                else None
+            )
+            if seed_contract is not None:
+                sandbox.fs.upload_file(seed_contract, _SEED_CONTRACT_PATH)
             overlay = _alk_source_overlay()
             if overlay is not None:
                 sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -4799,6 +4836,32 @@ def _safe_source_member(raw_path: str) -> str:
             status_code=400,
         )
     return candidate
+
+
+def _seed_contract_for(
+    job: HostedHarnessJob, version_id: Any = None
+) -> bytes | None:
+    """The raw contract of the version the build is tied to (or of ``version_id``),
+    when the sandbox's agent-learning-kit can start from one; None otherwise."""
+    if not getattr(settings, "HARNESS_SEED_CONTRACT_ENABLED", False):
+        return None
+    from simulate.services.agent_contracts import stored_version_contract
+    from simulate.services.hosted_harness import frozen_build_pin
+
+    if version_id is None:
+        pinned = frozen_build_pin(job)
+        version_id = pinned.id if pinned is not None else job.agent_version_id
+    if version_id is None:
+        return None
+    contract = stored_version_contract(version_id)
+    if not contract:
+        return None
+    logger.info(
+        "hosted_build_seeded",
+        job_id=str(job.id),
+        agent_version_id=str(version_id),
+    )
+    return json.dumps(contract, separators=(",", ":")).encode("utf-8")
 
 
 def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
@@ -6308,14 +6371,20 @@ def store_source_archive(organization, files, paths, name: str) -> dict[str, Any
 
 
 def _load_source_archive(job: HostedHarnessJob) -> bytes:
-    source_id = str(job.payload["source"].get("archive_artifact_id") or "")
+    return load_source_archive(
+        job.organization_id, job.payload["source"].get("archive_artifact_id")
+    )
+
+
+def load_source_archive(organization_id: Any, archive_artifact_id: Any) -> bytes:
+    source_id = str(archive_artifact_id or "")
     if not source_id:
         raise HostedHarnessError(
             "archive_artifact_missing",
             "archive source requires archive_artifact_id",
             status_code=422,
         )
-    key = _source_object_key(job.organization_id, source_id)
+    key = _source_object_key(organization_id, source_id)
     response = None
     try:
         response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
