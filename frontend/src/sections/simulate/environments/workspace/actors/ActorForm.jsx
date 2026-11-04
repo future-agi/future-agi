@@ -249,276 +249,312 @@ export default function ActorForm({
       width={{ xs: "100%", sm: 520 }}
     >
       {actor && (
-        <Stack spacing={2} sx={{ p: 2.5 }}>
-          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-            {existing
-              ? F.editTitle(actor.name)
-              : callerSide
-                ? F.createCallerTitle
-                : F.createTitle}
-          </Typography>
-          {error && <Alert severity="error">{error}</Alert>}
-          {text(
-            "name",
-            F.name,
-            actor.name || "",
-            bounded("name", actor.name || "", F.nameHelp),
+        <Stack sx={{ height: "100%", minHeight: 0 }}>
+          <Box
+            sx={{
+              px: 2.5,
+              py: 2,
+              // Clears the drawer's own close button.
+              pr: 6,
+              flexShrink: 0,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography noWrap sx={{ typography: "s1", fontWeight: 600 }}>
+              {existing
+                ? F.editTitle(actor.name)
+                : callerSide
+                  ? F.createCallerTitle
+                  : F.createTitle}
+            </Typography>
+          </Box>
+          {/* Above the scrolling fields, so a refused save shows wherever the form is scrolled to. */}
+          {error && (
+            <Alert severity="error" sx={{ mx: 2.5, mt: 1.5, flexShrink: 0 }}>
+              {error}
+            </Alert>
           )}
-          {text("id", F.id, madeId, {
-            helperText: existing
-              ? F.idFixed
-              : takenBy
-                ? F.idTaken(takenBy.name)
-                : idInvalid
-                  ? F.idInvalid
-                  : F.idHelp,
-            error: Boolean(takenBy) || idInvalid,
-            disabled: existing,
-            placeholder: madeId,
-            InputLabelProps: { shrink: true },
-          })}
-          {text(
-            "role",
-            needsRole ? F.roleRequired : F.role,
-            actor.role || "",
-            bounded("role", actor.role || "", F.roleHelp),
-          )}
-          {callerSide ? (
-            <>
-              <TextField
-                select
-                size="small"
-                label={F.channel}
-                value={channel}
-                onChange={set("channel")}
-                helperText={context.channels[channel]}
-              >
-                {Object.keys(context.channels).map((id) => (
-                  <MenuItem key={id} value={id}>
-                    {CHANNEL_LABELS[id] || id}
-                  </MenuItem>
-                ))}
-              </TextField>
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                {F.voice}
-              </Typography>
-              <Stack direction="row" spacing={1}>
-                {[
-                  ["gender", F.gender, Object.entries(F.genders)],
-                  ["age_group", F.ageGroup, Object.entries(F.ageGroups)],
-                  [
-                    "accent",
-                    F.accent,
-                    F.accents.map((one) => [one, one || F.anyAccent]),
-                  ],
-                ].map(([name, label, options]) => {
-                  const current = value(name, actor.persona?.[name] || "");
-                  const shown = options.some(([id]) => id === current)
-                    ? options
-                    : [...options, [current, current]];
-                  return (
-                    <TextField
-                      key={name}
-                      select
-                      fullWidth
-                      size="small"
-                      label={label}
-                      value={current}
-                      onChange={set(name)}
-                    >
-                      {shown.map(([id, text]) => (
-                        <MenuItem key={id || "any"} value={id}>
-                          {text}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  );
-                })}
-              </Stack>
-              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                {F.voiceHelp}
-              </Typography>
-              {loud(channel) && context.loudness.automatic && (
-                <Loudness
-                  value={value("loudness_ratio", actor.loudness_ratio ?? null)}
-                  automatic={context.loudness.automatic}
-                  onChange={(next) => put("loudness_ratio", next)}
-                />
-              )}
-            </>
-          ) : (
-            <>
-              <TextField
-                select
-                size="small"
-                label={F.kind}
-                value={value("kind", actor.kind || "person")}
-                onChange={set("kind")}
-              >
-                {Object.entries(F.kinds).map(([id, label]) => (
-                  <MenuItem key={id} value={id}>
-                    {label}
-                  </MenuItem>
-                ))}
-              </TextField>
-              {many(
-                "facts",
-                F.facts,
-                facts.map((one) => one.text),
-                F.factsHelp,
-              )}
-              <Stack direction="row" spacing={1}>
+          <Stack
+            spacing={2}
+            sx={{ p: 2.5, flex: 1, minHeight: 0, overflowY: "auto" }}
+          >
+            {text(
+              "name",
+              F.name,
+              actor.name || "",
+              bounded("name", actor.name || "", F.nameHelp),
+            )}
+            {text("id", F.id, madeId, {
+              helperText: existing
+                ? F.idFixed
+                : takenBy
+                  ? F.idTaken(takenBy.name)
+                  : idInvalid
+                    ? F.idInvalid
+                    : F.idHelp,
+              error: Boolean(takenBy) || idInvalid,
+              disabled: existing,
+              placeholder: madeId,
+              InputLabelProps: { shrink: true },
+            })}
+            {text(
+              "role",
+              needsRole ? F.roleRequired : F.role,
+              actor.role || "",
+              bounded("role", actor.role || "", F.roleHelp),
+            )}
+            {callerSide ? (
+              <>
                 <TextField
                   select
                   size="small"
-                  label={F.answers}
-                  sx={{ flex: 1 }}
-                  value={timingKind}
-                  onChange={set("timing")}
+                  label={F.channel}
+                  value={channel}
+                  onChange={set("channel")}
+                  helperText={context.channels[channel]}
                 >
-                  <MenuItem value="immediate">{F.immediately}</MenuItem>
-                  <MenuItem value="delayed">{F.afterDelay}</MenuItem>
+                  {Object.keys(context.channels).map((id) => (
+                    <MenuItem key={id} value={id}>
+                      {CHANNEL_LABELS[id] || id}
+                    </MenuItem>
+                  ))}
                 </TextField>
-                {timingKind === "delayed" &&
-                  text("seconds", F.seconds, timing.seconds ?? 0, {
-                    type: "number",
-                    sx: { width: 140 },
-                    inputProps: { min: 0 },
-                  })}
-              </Stack>
-              <Autocomplete
-                multiple
-                size="small"
-                options={actionIds}
-                value={permitted}
-                disabled={actions.length === 0 && permitted.length === 0}
-                onChange={(_, next) => put("permitted", next)}
-                getOptionLabel={(id) => id}
-                renderOption={(props, id) => (
-                  <li {...props} key={id}>
-                    <Box>
-                      <Typography sx={{ typography: "s2" }}>{id}</Typography>
-                      <Typography
-                        sx={{ typography: "s3", color: "text.secondary" }}
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  {F.voice}
+                </Typography>
+                <Stack direction="row" spacing={1}>
+                  {[
+                    ["gender", F.gender, Object.entries(F.genders)],
+                    ["age_group", F.ageGroup, Object.entries(F.ageGroups)],
+                    [
+                      "accent",
+                      F.accent,
+                      F.accents.map((one) => [one, one || F.anyAccent]),
+                    ],
+                  ].map(([name, label, options]) => {
+                    const current = value(name, actor.persona?.[name] || "");
+                    const shown = options.some(([id]) => id === current)
+                      ? options
+                      : [...options, [current, current]];
+                    return (
+                      <TextField
+                        key={name}
+                        select
+                        fullWidth
+                        size="small"
+                        label={label}
+                        value={current}
+                        onChange={set(name)}
                       >
-                        {describe(id)}
-                      </Typography>
-                    </Box>
-                  </li>
-                )}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={F.permitted}
-                    error={unknownActions.length > 0}
-                    helperText={
-                      unknownActions.length
-                        ? F.permittedUnknown(unknownActions)
-                        : actions.length
-                          ? F.permittedHelp
-                          : F.noWorldActions
-                    }
-                  />
-                )}
-              />
-              <TextField
-                select
-                size="small"
-                label={F.trigger}
-                value={value("tool", activation.trigger?.tool || "")}
-                onChange={set("tool")}
-                helperText={F.triggerHelp}
-              >
-                <MenuItem value="">{C.atStart}</MenuItem>
-                {[
-                  ...new Set([
-                    ...actionIds,
-                    ...(activation.trigger?.tool
-                      ? [activation.trigger.tool]
-                      : []),
-                  ]),
-                ].map((id) => (
-                  <MenuItem key={id} value={id}>
-                    {C.whenCalled(id)}
-                  </MenuItem>
-                ))}
-              </TextField>
-              {text("timeout", F.timeout, activation.timeout_seconds ?? 0, {
-                type: "number",
-                helperText: F.timeoutHelp,
-                inputProps: { min: 0 },
-              })}
-              <TextField
-                select
-                size="small"
-                label={F.fallback}
-                value={value("fallback", activation.fallback || "silent")}
-                onChange={set("fallback")}
-              >
-                {Object.entries(F.fallbacks).map(([id, label]) => (
-                  <MenuItem key={id} value={id}>
-                    {label}
-                  </MenuItem>
-                ))}
-                {others.map((one) => (
-                  <MenuItem key={one.id} value={one.id}>
-                    {F.answeredBy(one.name)}
-                  </MenuItem>
-                ))}
-              </TextField>
-              {/* Kept on the record and editable, but a run plays an actor from its scenario's actions and does not read these yet. */}
-              <Button
-                size="small"
-                sx={{ alignSelf: "flex-start" }}
-                onClick={() => setMore((shown) => !shown)}
-              >
-                {more ? F.lessDetails : F.moreDetails}
-              </Button>
-              <Collapse in={more}>
-                <Stack spacing={2}>
-                  <Typography
-                    sx={{ typography: "s3", color: "text.secondary" }}
-                  >
-                    {F.moreDetailsHelp}
-                  </Typography>
-                  {others.length > 0 && (
-                    <TextField
-                      select
-                      size="small"
-                      label={F.parent}
-                      value={value("parent", actor.parent || "")}
-                      onChange={set("parent")}
-                      helperText={F.parentHelp}
-                    >
-                      <MenuItem value="">{F.nobody}</MenuItem>
-                      {others.map((one) => (
-                        <MenuItem key={one.id} value={one.id}>
-                          {one.name}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  )}
-                  {text("goal", F.goal, actor.goal || "", {
-                    multiline: true,
-                    minRows: 2,
-                    helperText: F.goalHelp,
-                  })}
-                  {many("may_agree", F.mayAgree, constraints.may_agree)}
-                  {many("private", F.private, constraints.private)}
-                  {many(
-                    "escalate_when",
-                    F.escalateWhen,
-                    constraints.escalate_when,
-                  )}
-                  {many("stop_when", F.stopWhen, constraints.stop_when)}
-                  {text("style", F.style, actor.behaviour?.style || "", {
-                    helperText: F.styleHelp,
+                        {shown.map(([id, text]) => (
+                          <MenuItem key={id || "any"} value={id}>
+                            {text}
+                          </MenuItem>
+                        ))}
+                      </TextField>
+                    );
                   })}
                 </Stack>
-              </Collapse>
-            </>
-          )}
-          <Stack direction="row" spacing={1} justifyContent="flex-end">
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  {F.voiceHelp}
+                </Typography>
+                {loud(channel) && context.loudness.automatic && (
+                  <Loudness
+                    value={value(
+                      "loudness_ratio",
+                      actor.loudness_ratio ?? null,
+                    )}
+                    automatic={context.loudness.automatic}
+                    onChange={(next) => put("loudness_ratio", next)}
+                  />
+                )}
+              </>
+            ) : (
+              <>
+                <TextField
+                  select
+                  size="small"
+                  label={F.kind}
+                  value={value("kind", actor.kind || "person")}
+                  onChange={set("kind")}
+                >
+                  {Object.entries(F.kinds).map(([id, label]) => (
+                    <MenuItem key={id} value={id}>
+                      {label}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                {many(
+                  "facts",
+                  F.facts,
+                  facts.map((one) => one.text),
+                  F.factsHelp,
+                )}
+                <Stack direction="row" spacing={1}>
+                  <TextField
+                    select
+                    size="small"
+                    label={F.answers}
+                    sx={{ flex: 1 }}
+                    value={timingKind}
+                    onChange={set("timing")}
+                  >
+                    <MenuItem value="immediate">{F.immediately}</MenuItem>
+                    <MenuItem value="delayed">{F.afterDelay}</MenuItem>
+                  </TextField>
+                  {timingKind === "delayed" &&
+                    text("seconds", F.seconds, timing.seconds ?? 0, {
+                      type: "number",
+                      sx: { width: 140 },
+                      inputProps: { min: 0 },
+                    })}
+                </Stack>
+                <Autocomplete
+                  multiple
+                  size="small"
+                  options={actionIds}
+                  value={permitted}
+                  disabled={actions.length === 0 && permitted.length === 0}
+                  onChange={(_, next) => put("permitted", next)}
+                  getOptionLabel={(id) => id}
+                  renderOption={(props, id) => (
+                    <li {...props} key={id}>
+                      <Box>
+                        <Typography sx={{ typography: "s2" }}>{id}</Typography>
+                        <Typography
+                          sx={{ typography: "s3", color: "text.secondary" }}
+                        >
+                          {describe(id)}
+                        </Typography>
+                      </Box>
+                    </li>
+                  )}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label={F.permitted}
+                      error={unknownActions.length > 0}
+                      helperText={
+                        unknownActions.length
+                          ? F.permittedUnknown(unknownActions)
+                          : actions.length
+                            ? F.permittedHelp
+                            : F.noWorldActions
+                      }
+                    />
+                  )}
+                />
+                <TextField
+                  select
+                  size="small"
+                  label={F.trigger}
+                  value={value("tool", activation.trigger?.tool || "")}
+                  onChange={set("tool")}
+                  helperText={F.triggerHelp}
+                >
+                  <MenuItem value="">{C.atStart}</MenuItem>
+                  {[
+                    ...new Set([
+                      ...actionIds,
+                      ...(activation.trigger?.tool
+                        ? [activation.trigger.tool]
+                        : []),
+                    ]),
+                  ].map((id) => (
+                    <MenuItem key={id} value={id}>
+                      {C.whenCalled(id)}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                {text("timeout", F.timeout, activation.timeout_seconds ?? 0, {
+                  type: "number",
+                  helperText: F.timeoutHelp,
+                  inputProps: { min: 0 },
+                })}
+                <TextField
+                  select
+                  size="small"
+                  label={F.fallback}
+                  value={value("fallback", activation.fallback || "silent")}
+                  onChange={set("fallback")}
+                >
+                  {Object.entries(F.fallbacks).map(([id, label]) => (
+                    <MenuItem key={id} value={id}>
+                      {label}
+                    </MenuItem>
+                  ))}
+                  {others.map((one) => (
+                    <MenuItem key={one.id} value={one.id}>
+                      {F.answeredBy(one.name)}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                {/* Kept on the record and editable, but a run plays an actor from its scenario's actions and does not read these yet. */}
+                <Button
+                  size="small"
+                  sx={{ alignSelf: "flex-start" }}
+                  onClick={() => setMore((shown) => !shown)}
+                >
+                  {more ? F.lessDetails : F.moreDetails}
+                </Button>
+                <Collapse in={more}>
+                  <Stack spacing={2}>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
+                      {F.moreDetailsHelp}
+                    </Typography>
+                    {others.length > 0 && (
+                      <TextField
+                        select
+                        size="small"
+                        label={F.parent}
+                        value={value("parent", actor.parent || "")}
+                        onChange={set("parent")}
+                        helperText={F.parentHelp}
+                      >
+                        <MenuItem value="">{F.nobody}</MenuItem>
+                        {others.map((one) => (
+                          <MenuItem key={one.id} value={one.id}>
+                            {one.name}
+                          </MenuItem>
+                        ))}
+                      </TextField>
+                    )}
+                    {text("goal", F.goal, actor.goal || "", {
+                      multiline: true,
+                      minRows: 2,
+                      helperText: F.goalHelp,
+                    })}
+                    {many("may_agree", F.mayAgree, constraints.may_agree)}
+                    {many("private", F.private, constraints.private)}
+                    {many(
+                      "escalate_when",
+                      F.escalateWhen,
+                      constraints.escalate_when,
+                    )}
+                    {many("stop_when", F.stopWhen, constraints.stop_when)}
+                    {text("style", F.style, actor.behaviour?.style || "", {
+                      helperText: F.styleHelp,
+                    })}
+                  </Stack>
+                </Collapse>
+              </>
+            )}
+          </Stack>
+          <Stack
+            direction="row"
+            spacing={1}
+            justifyContent="flex-end"
+            sx={{
+              px: 2.5,
+              py: 2,
+              flexShrink: 0,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
             <Button onClick={close}>{F.cancel}</Button>
             <Button
               variant="contained"
