@@ -511,13 +511,11 @@ describe("RunDetail resume", () => {
 
   it("offers Resume on an interrupted run and says how far it got", async () => {
     resumeMutate.mockReset();
-    interrupted({ resumable: true, finished: 18, unfinished: 12, history: [] });
+    interrupted({ resumable: true, finished: 7, unfinished: 5, history: [] });
     const user = userEvent.setup();
     renderDetail();
 
-    expect(
-      screen.getByText(/18 of 30 trials finished · 12 not finished/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/12 tasks · 5 not finished/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Resume" }));
     expect(resumeMutate).toHaveBeenCalledTimes(1);
   });

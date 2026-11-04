@@ -172,13 +172,6 @@ export default function RunDetail({
   const resumeState = identity?.resume;
   const resume = useResumeRun(executionId);
   const lastResume = resumeState?.history?.at(-1);
-  const resumeLabel = [
-    resumeState?.resumable &&
-      ` · ${resumeState.finished} of ${resumeState.finished + resumeState.unfinished} trials finished · ${resumeState.unfinished} not finished`,
-    lastResume && ` · resumed ${fToNow(lastResume.at)}`,
-  ]
-    .filter(Boolean)
-    .join("");
   // A re-run starts from the versions this run used.
   const rerunOptions = {
     initialPicks: {
@@ -279,8 +272,12 @@ export default function RunDetail({
           </Stack>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
             {env.name} · {stats.total} tasks
+            {/* Before "started", so a narrow header cuts the date, not this. */}
+            {resumeState?.resumable
+              ? ` · ${resumeState.unfinished} not finished`
+              : ""}
             {startedLabel ? ` · started ${startedLabel}` : ""}
-            {resumeLabel}
+            {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
           </Typography>
         </Box>
 
