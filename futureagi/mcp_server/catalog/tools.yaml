@@ -660,6 +660,7 @@ tools:
     description: Poll a SQL job owned by the caller. Defaults to 100 rows within a bounded byte page; pass result.next_offset as offset until has_more is false. Wide rows are marked previewed; use the authenticated REST download for full cells. Results expire after 24 hours; current project membership is required on every page.
     operation: {method: GET, path: "/tracer/sql-query/{id}/"}
     access: read
+    pagination: {limit: {maximum: 100}}
     response: {unwrap: null}
   - name: cancel_sql
     group: observability

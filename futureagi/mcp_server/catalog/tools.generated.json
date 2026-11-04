@@ -11113,7 +11113,7 @@
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 1000,
+            "maximum": 100,
             "description": "Optional bounded result page; omitted REST requests retain the full snapshot. MCP defaults to 100. Wide rows are explicitly previewed; download for full cells."
           }
         },

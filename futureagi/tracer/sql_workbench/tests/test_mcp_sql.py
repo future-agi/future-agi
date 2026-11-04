@@ -169,6 +169,13 @@ def test_sql_result_pages_fit_mcp_bound_without_gaps(tenants):
     job = create_job(actor, project, state="succeeded", result=payload)
     tool = GeneratedToolRegistry.from_manifest().get("get_sql_result")
     executor = DjangoAPIExecutor()
+    with pytest.raises(APIExecutionError) as oversized:
+        executor.execute_sync(
+            tool,
+            {"id": str(job.id), "project_id": str(project.id), "limit": 101},
+            context_for(tenants[0]),
+        )
+    assert oversized.value.status_code == 400
     received, offset = [], 0
     while True:
         page = executor.execute_sync(
