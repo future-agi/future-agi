@@ -1658,14 +1658,21 @@ describe("useCallWorkers", () => {
     const has = async (record) => {
       axios.get.mockReset();
       axios.get.mockResolvedValue({ data: record });
-      const { result } = renderHook(() => useHasWorkers(JSON.stringify(record)), {
-        wrapper: Wrapper,
-      });
+      const { result } = renderHook(
+        () => useHasWorkers(JSON.stringify(record)),
+        {
+          wrapper: Wrapper,
+        },
+      );
       await new Promise((resolve) => setTimeout(resolve, 50));
       return result.current;
     };
-    expect(await has({ workers: [], events: [{ type: "tool_call" }] })).toBe(false);
-    expect(await has({ workers: [], events: [{ type: "delegated" }] })).toBe(true);
+    expect(await has({ workers: [], events: [{ type: "tool_call" }] })).toBe(
+      false,
+    );
+    expect(await has({ workers: [], events: [{ type: "delegated" }] })).toBe(
+      true,
+    );
     expect(await has({ workers: [{ id: "w" }], events: [] })).toBe(true);
   });
 

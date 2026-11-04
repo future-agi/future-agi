@@ -818,7 +818,10 @@ describe("CallDrawer — the call's traces", () => {
       data: { id: "voice-1", transcript: [] },
       isPending: false,
     });
-    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
 
     const { unmount } = render(
       <CallDrawer

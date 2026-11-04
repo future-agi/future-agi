@@ -5,7 +5,11 @@ import { Box, Stack, Typography, Tab, TextField, InputAdornment } from "@mui/mat
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 
-const ROLE_LABEL = { agent: "Assistant", customer: "Customer", tool: "Tool call" };
+const ROLE_LABEL = {
+  agent: "Assistant",
+  customer: "Customer",
+  tool: "Tool call",
+};
 
 // Voice turns carry a real `at` (seconds into the recording); chat turns don't,
 // so a made-up mm:ss there would misrepresent the transcript. Fall back to the
@@ -88,9 +92,17 @@ export default function ChatTranscriptPane({ turns }) {
               borderLeft: "2px solid",
               // Each speaker keeps its own mark, so a tool call never reads as the customer.
               borderColor:
-                s.role === "agent" ? "text.secondary" : s.role === "tool" ? "warning.main" : "text.disabled",
+                s.role === "agent"
+                  ? "text.secondary"
+                  : s.role === "tool"
+                    ? "warning.main"
+                    : "text.disabled",
               bgcolor:
-                s.role === "agent" ? "action.hover" : s.role === "tool" ? "transparent" : "background.neutral",
+                s.role === "agent"
+                  ? "action.hover"
+                  : s.role === "tool"
+                    ? "transparent"
+                    : "background.neutral",
               px: 1.75,
               py: 1.25,
             }}

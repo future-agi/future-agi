@@ -109,7 +109,8 @@ export default function ChatCallDrawer({
   const [chosenArtifact, setArtifact] = useState("transcript");
   const hasWorkers = useHasWorkers(task.id);
   // The next call may have no Participants tab; the chosen one falls back to the transcript.
-  const artifact = chosenArtifact === "workers" && !hasWorkers ? "transcript" : chosenArtifact;
+  const artifact =
+    chosenArtifact === "workers" && !hasWorkers ? "transcript" : chosenArtifact;
   const { callDetail, isLoading } = useCallDetail(task.id);
   const callTraces = useCallTraces(executionId, task.id);
   const showTraces = artifact === "traces";
@@ -196,7 +197,9 @@ export default function ChatCallDrawer({
           >
             <Tab value="transcript" label="Transcript" />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} />
-            {hasWorkers ? <Tab value="workers" label={CALL_WORKERS_COPY.tab} /> : null}
+            {hasWorkers ? (
+              <Tab value="workers" label={CALL_WORKERS_COPY.tab} />
+            ) : null}
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>

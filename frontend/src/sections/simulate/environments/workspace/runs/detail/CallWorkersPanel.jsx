@@ -408,7 +408,7 @@ function HandOff({ block, workers, nameOf, start }) {
                 size="small"
                 variant="outlined"
                 label={C.inParallel}
-                sx={{ height: 18, flexShrink: 0 }}
+                sx={{ flexShrink: 0 }}
               />
             ) : null}
           </Line>
