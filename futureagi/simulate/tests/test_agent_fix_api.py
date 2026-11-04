@@ -74,7 +74,10 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
 from simulate.views.run_results_v3 import _execution_payload
 from tfc.ee_gating import EEFeature, FeatureUnavailable
 
-pytestmark = pytest.mark.django_db
+pytestmark = [
+    pytest.mark.django_db,
+    pytest.mark.usefixtures("moves_without_validation"),
+]
 
 BASE = "/simulate/api/agent-fix-runs"
 ENGINE = "/simulate/api/agent-fix-engine"

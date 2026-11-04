@@ -20,6 +20,7 @@ from .harness_environment_credentials import (
     HarnessEnvironmentCredentials,
 )
 from .eval_config import SimulateEvalConfig
+from .capability_evidence import HarnessCapabilityEvidence
 from .harness_versioning import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
@@ -81,6 +82,7 @@ __all__ = [
     "HarnessCredentialFile",
     "HarnessEnvironmentCredentials",
     "HarnessAgentVersionRuntime",
+    "HarnessCapabilityEvidence",
     "HarnessAssembledBundle",
     "HarnessEnvironmentVersion",
     "HarnessNudge",

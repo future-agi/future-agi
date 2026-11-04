@@ -17,9 +17,14 @@ from simulate.serializers.harness_environment import (
     HarnessActorWriteSerializer,
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentVersionCreateSerializer,
+    HarnessCapabilityQuerySerializer,
+    HarnessCapabilityRecheckResponseSerializer,
+    HarnessCapabilityRecheckSerializer,
+    HarnessCapabilityReportSerializer,
     HarnessCompareQuerySerializer,
     HarnessCompareSerializer,
     HarnessDefaultMoveSerializer,
+    HarnessDefaultMoveValidatingSerializer,
     HarnessDraftReviewSerializer,
     HarnessDraftSaveResponseSerializer,
     HarnessDraftSaveSerializer,
@@ -205,7 +210,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessDefaultMoveSerializer,
-        responses={200: HarnessVersionsSerializer},
+        responses={
+            200: HarnessVersionsSerializer,
+            202: HarnessDefaultMoveValidatingSerializer,
+        },
         reject_unknown_fields=True,
     )
     @action(
@@ -217,9 +225,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     )
     def move_default(self, request, pk=None, piece=None, version_id=None):
         """Make an agent, environment or suite version the default; returns every
-        version."""
+        version. An agent move that waits for its pairing to validate is a 202."""
         from simulate.services.harness_versioning.versions import (
             MOVABLE_PIECES,
+            move_agent_default,
             move_default,
         )
 
@@ -230,14 +239,28 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         identifier = _uuid_or_none(version_id)
         if piece not in MOVABLE_PIECES or identifier is None:
             raise version_reads.version_not_found()
-        moved = move_default(
-            job,
-            piece,
-            identifier,
-            expected_default_id=request.validated_data["expected_default_id"],
-            user=request.user,
+        expected_default_id = request.validated_data["expected_default_id"]
+        if piece != "agent":
+            moved = move_default(
+                job,
+                piece,
+                identifier,
+                expected_default_id=expected_default_id,
+                user=request.user,
+            )
+            return Response(version_reads.list_versions(moved))
+        moved, validation = move_agent_default(
+            job, identifier, expected_default_id=expected_default_id, user=request.user
         )
-        return Response(version_reads.list_versions(moved))
+        if validation is None or validation.ready:
+            return Response(version_reads.list_versions(moved))
+        return Response(
+            {
+                "versions": version_reads.list_versions(moved),
+                "validation": validation.as_view(),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     def _agent_version(self, job, version_id):
         """One agent version of this environment's agent, or a 404."""
@@ -654,6 +677,69 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             raise nudge_not_found()
         nudge = stop_rebuild(job, identifier, user=request.user)
         return Response(nudge_item(_nudges(job).get(id=nudge.id)))
+
+    @validated_request(
+        query_serializer=HarnessCapabilityQuerySerializer,
+        responses={200: HarnessCapabilityReportSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["get"], url_path="capabilities")
+    def capabilities(self, request, pk=None):
+        """What this environment was shown to support with an agent version (its own when none is named), one status
+        per capability, computed now from its build's evidence; Stale once the environment version moved on or the
+        agent is another version. No writes."""
+        from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
+        from simulate.services.capability_evidence import environment_capability_report
+        from simulate.services.harness_versioning.read import version_not_found
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        query = request.validated_query_data
+        picked = {}
+        for name, model in (
+            ("environment_version", HarnessEnvironmentVersion),
+            ("suite_version", HarnessSuiteVersion),
+        ):
+            if query.get(f"{name}_id"):
+                picked[name] = model.no_workspace_objects.filter(
+                    job=job, id=query[f"{name}_id"]
+                ).first()
+                if picked[name] is None:
+                    raise version_not_found()
+        return Response(
+            environment_capability_report(
+                job,
+                query.get("agent_version_id"),
+                picked.get("environment_version"),
+                suite_version=picked.get("suite_version") or job.suite_version,
+                keys=list(query.get("keys") or []) or None,
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessCapabilityRecheckSerializer,
+        responses={200: HarnessCapabilityRecheckResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="capabilities/recheck")
+    def recheck_capabilities(self, request, pk=None):
+        """Check the agent again (its preflight, when it failed or never finished) so the report reads it anew; the
+        world is checked again only by a new build for now. Starts no run."""
+        from simulate.services.capability_evidence import recheck_capabilities
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        data = request.validated_data
+        return Response(
+            recheck_capabilities(
+                job,
+                data["scope"],
+                data.get("check"),
+                request.query_params.get("agent_version_id"),
+            )
+        )
 
     @validated_request(
         query_serializer=HarnessRunPlanQuerySerializer,

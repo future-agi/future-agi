@@ -18649,6 +18649,138 @@ export interface HarnessActorViewApi {
   never_sees: string[];
 }
 
+export type HarnessCapabilityRowApiStatus =
+  (typeof HarnessCapabilityRowApiStatus)[keyof typeof HarnessCapabilityRowApiStatus];
+
+export const HarnessCapabilityRowApiStatus = {
+  supported: "supported",
+  partial: "partial",
+  blocked: "blocked",
+  unavailable: "unavailable",
+  untested: "untested",
+  stale: "stale",
+} as const;
+
+export type HarnessCapabilityFixRecheckApiScope =
+  (typeof HarnessCapabilityFixRecheckApiScope)[keyof typeof HarnessCapabilityFixRecheckApiScope];
+
+export const HarnessCapabilityFixRecheckApiScope = {
+  agent: "agent",
+  world: "world",
+} as const;
+
+export interface HarnessCapabilityFixRecheckApi {
+  scope: HarnessCapabilityFixRecheckApiScope;
+  /** @minLength 1 */
+  check: string;
+  /** False for the world: a rebuild reads it again until a check-only job exists. */
+  available: boolean;
+}
+
+export interface HarnessCapabilityFixApi {
+  /** @minLength 1 */
+  type: string;
+  text: string;
+  /** The tools, fields or checks it names. */
+  target: string[];
+  /**
+   * The screen that repairs it: agent.tools, agent.source...
+   * @minLength 1
+   */
+  repair: string;
+  /** @minLength 1 */
+  flips_when: string;
+  recheck: HarnessCapabilityFixRecheckApi;
+  available: boolean;
+}
+
+export type HarnessCapabilityRowApiChecksItem = { [key: string]: string };
+
+export interface HarnessCapabilityRowApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  status: HarnessCapabilityRowApiStatus;
+  /** @minLength 1 */
+  finding: string;
+  checks: HarnessCapabilityRowApiChecksItem[];
+  /** @minLength 1 */
+  blocked_by: string;
+  /** @minLength 1 */
+  stale_because: string;
+  /** @minLength 1 */
+  reason_code: string;
+  /** @minLength 1 */
+  reason: string;
+  fix: HarnessCapabilityFixApi;
+  /** @minLength 1 */
+  fix_type: string;
+  needed_by: number;
+  affected: number;
+  affected_scenarios: string[];
+}
+
+export type HarnessCapabilitySelectionApiDroppedItem = {
+  [key: string]: string;
+};
+
+export interface HarnessCapabilitySelectionApi {
+  requested: number;
+  eligible: number;
+  blocked: number;
+  untested: number;
+  requirements_recorded: boolean;
+  /** Scenarios no longer in the suite; counted in none of the others. */
+  dropped: HarnessCapabilitySelectionApiDroppedItem[];
+}
+
+export interface HarnessCapabilityReportApi {
+  /** The build's evidence could not be read; all is Untested. */
+  evidence_unreadable: boolean;
+  /** @minLength 1 */
+  environment_version_id: string;
+  /** @minLength 1 */
+  agent_version_id: string;
+  /** @minLength 1 */
+  catalog_version: string;
+  /** @minLength 1 */
+  checked_at: string;
+  capabilities: HarnessCapabilityRowApi[];
+  selection: HarnessCapabilitySelectionApi;
+  /** @minLength 1 */
+  rules_version: string;
+  /** @minLength 1 */
+  computed_at: string;
+}
+
+export type HarnessCapabilityRecheckApiScope =
+  (typeof HarnessCapabilityRecheckApiScope)[keyof typeof HarnessCapabilityRecheckApiScope];
+
+export const HarnessCapabilityRecheckApiScope = {
+  agent: "agent",
+  world: "world",
+  all: "all",
+} as const;
+
+export interface HarnessCapabilityRecheckApi {
+  scope: HarnessCapabilityRecheckApiScope;
+  /** @minLength 1 */
+  check?: string;
+}
+
+export interface HarnessCapabilityRecheckResponseApi {
+  /** @minLength 1 */
+  scope: string;
+  /** @minLength 1 */
+  agent_version_id: string;
+  /**
+   * started, or not_needed when the last check passed
+   * @minLength 1
+   */
+  state: string;
+}
+
 export type HarnessComparePairApiBand =
   (typeof HarnessComparePairApiBand)[keyof typeof HarnessComparePairApiBand];
 
@@ -19699,6 +19831,46 @@ export interface HarnessSuiteMemberApi {
 export interface HarnessDefaultMoveApi {
   /** The default the caller saw; a newer default refuses the move. */
   expected_default_id: string | null;
+}
+
+/**
+ * ready: certified together; failed: a check failed; retry: the last validation ended before its check did.
+ */
+export type HarnessPairValidationApiState =
+  (typeof HarnessPairValidationApiState)[keyof typeof HarnessPairValidationApiState];
+
+export const HarnessPairValidationApiState = {
+  not_run: "not_run",
+  validating: "validating",
+  ready: "ready",
+  failed: "failed",
+  retry: "retry",
+  unavailable: "unavailable",
+} as const;
+
+export type HarnessPairValidationApiPurpose =
+  (typeof HarnessPairValidationApiPurpose)[keyof typeof HarnessPairValidationApiPurpose];
+
+export const HarnessPairValidationApiPurpose = {
+  save: "save",
+  agent_move: "agent_move",
+  recheck: "recheck",
+} as const;
+
+export type HarnessPairValidationApiError = { [key: string]: string };
+
+export interface HarnessPairValidationApi {
+  /** ready: certified together; failed: a check failed; retry: the last validation ended before its check did. */
+  state: HarnessPairValidationApiState;
+  job_id: string;
+  purpose: HarnessPairValidationApiPurpose;
+  finished_at: string;
+  error: HarnessPairValidationApiError;
+}
+
+export interface HarnessDefaultMoveValidatingApi {
+  versions: HarnessVersionsApi;
+  validation: HarnessPairValidationApi;
 }
 
 export type HarnessVersionDiffApiDiff = { [key: string]: unknown };
@@ -38601,6 +38773,13 @@ export type SimulateApiHarnessEnvironmentsDeleteActorParams = {
    * @minimum 0
    */
   expected_revision?: number;
+};
+
+export type SimulateApiHarnessEnvironmentsCapabilitiesParams = {
+  agent_version_id?: string;
+  environment_version_id?: string;
+  suite_version_id?: string;
+  keys?: string[];
 };
 
 export type SimulateApiHarnessEnvironmentsCompareParams = {

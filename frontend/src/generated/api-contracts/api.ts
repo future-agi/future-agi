@@ -603,6 +603,9 @@ import type {
   HarnessAgentCredentialsResponseApi,
   HarnessAgentVersionCreateApi,
   HarnessArtifactUploadResponseApi,
+  HarnessCapabilityRecheckApi,
+  HarnessCapabilityRecheckResponseApi,
+  HarnessCapabilityReportApi,
   HarnessCompareApi,
   HarnessConversationAdjustmentApi,
   HarnessConversationAdjustmentResponseApi,
@@ -622,6 +625,7 @@ import type {
   HarnessConversationTranscriptAppendResponseApi,
   HarnessConversationWorkspaceResponseApi,
   HarnessDefaultMoveApi,
+  HarnessDefaultMoveValidatingApi,
   HarnessDraftReviewApi,
   HarnessDraftSaveApi,
   HarnessDraftSaveResponseApi,
@@ -1220,6 +1224,7 @@ import type {
   SimulateApiHarnessConversationsCommandsParams,
   SimulateApiHarnessConversationsSessionStoreParams,
   SimulateApiHarnessEnvironmentsActorViewParams,
+  SimulateApiHarnessEnvironmentsCapabilitiesParams,
   SimulateApiHarnessEnvironmentsCompareParams,
   SimulateApiHarnessEnvironmentsDeleteActorParams,
   SimulateApiHarnessEnvironmentsListParams,
@@ -60123,6 +60128,123 @@ export const simulateApiHarnessEnvironmentsDeleteActor = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsCapabilitiesResponse200 = {
+  data: HarnessCapabilityReportApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilitiesResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsCapabilitiesResponseError =
+  simulateApiHarnessEnvironmentsCapabilitiesResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesResponse =
+  | simulateApiHarnessEnvironmentsCapabilitiesResponseSuccess
+  | simulateApiHarnessEnvironmentsCapabilitiesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCapabilitiesUrl = (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsCapabilitiesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/capabilities/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/capabilities/`;
+};
+
+/**
+ * What this environment was shown to support with an agent version (its own when none is named), one status
+per capability, computed now from its build's evidence; Stale once the environment version moved on or the
+agent is another version. No writes.
+ */
+export const simulateApiHarnessEnvironmentsCapabilities = async (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsCapabilitiesParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsCapabilitiesResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsCapabilitiesResponse>(
+    getSimulateApiHarnessEnvironmentsCapabilitiesUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse200 =
+  {
+    data: HarnessCapabilityRecheckResponseApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseSuccess =
+  simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseError =
+  simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse =
+
+    | simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseSuccess
+    | simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesUrl =
+  (id: string) => {
+    return `/simulate/api/harness-environments/${id}/capabilities/recheck/`;
+  };
+
+/**
+ * Check the agent again (its preflight, when it failed or never finished) so the report reads it anew; the
+world is checked again only by a new build for now. Starts no run.
+ */
+export const simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilities =
+  async (
+    id: string,
+    harnessCapabilityRecheckApi: HarnessCapabilityRecheckApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesResponse>(
+      getSimulateApiHarnessEnvironmentsCapabilitiesRecheckCapabilitiesUrl(id),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(harnessCapabilityRecheckApi),
+      },
+    );
+  };
+
 export type simulateApiHarnessEnvironmentsCompareResponse200 = {
   data: HarnessCompareApi;
   status: 200;
@@ -61378,15 +61500,22 @@ export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 = {
   status: 200;
 };
 
-export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse202 = {
+  data: HarnessDefaultMoveValidatingApi;
+  status: 202;
 };
 
-export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess =
-  simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200 & {
-    headers: Headers;
-  };
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 202>;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseSuccess = (
+  | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse200
+  | simulateApiHarnessEnvironmentsVersionsMoveDefaultResponse202
+) & {
+  headers: Headers;
+};
 export type simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseError =
   simulateApiHarnessEnvironmentsVersionsMoveDefaultResponseDefault & {
     headers: Headers;
@@ -61406,7 +61535,7 @@ export const getSimulateApiHarnessEnvironmentsVersionsMoveDefaultUrl = (
 
 /**
  * Make an agent, environment or suite version the default; returns every
-version.
+version. An agent move that waits for its pairing to validate is a 202.
  */
 export const simulateApiHarnessEnvironmentsVersionsMoveDefault = async (
   id: string,
