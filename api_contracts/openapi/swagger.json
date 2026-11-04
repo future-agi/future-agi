@@ -52299,7 +52299,7 @@
         "/simulate/api/harness-environments/{id}/versions/agent/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_versions_create_agent_version",
-                "description": "A new agent version from an upload, a prompt edit or a settings edit; it is\nchecked next, then made this environment's default.",
+                "description": "A new agent version from an upload, a prompt edit or a settings edit; it is\nchecked next, then made this environment's default unless make_default is\nfalse.",
                 "parameters": [
                     {
                         "name": "data",
@@ -132866,6 +132866,12 @@
                 },
                 "agent_payload": {
                     "$ref": "#/definitions/HarnessAgentPayloadChange"
+                },
+                "make_default": {
+                    "title": "Make default",
+                    "description": "False only checks the new version: once it passes, a run can pick it and a move makes it the default.",
+                    "type": "boolean",
+                    "default": true
                 }
             }
         },

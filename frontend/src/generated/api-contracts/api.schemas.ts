@@ -19277,6 +19277,8 @@ export interface HarnessAgentVersionCreateApi {
    */
   prompt?: string;
   agent_payload?: HarnessAgentPayloadChangeApi;
+  /** False only checks the new version: once it passes, a run can pick it and a move makes it the default. */
+  make_default?: boolean;
 }
 
 export interface HarnessAgentCredentialsResponseApi {

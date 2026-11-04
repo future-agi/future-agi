@@ -39378,7 +39378,8 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
 
 /**
  * A new agent version from an upload, a prompt edit or a settings edit; it is
-checked next, then made this environment's default.
+checked next, then made this environment's default unless make_default is
+false.
  */
 export const SimulateApiHarnessEnvironmentsVersionsCreateAgentVersionParams =
   zod.object({
@@ -39390,6 +39391,9 @@ export const simulateApiHarnessEnvironmentsVersionsCreateAgentVersionBodyPromptM
 export const simulateApiHarnessEnvironmentsVersionsCreateAgentVersionBodyAgentPayloadConfigPhoneNumberMax = 512;
 
 export const simulateApiHarnessEnvironmentsVersionsCreateAgentVersionBodyAgentPayloadConfigAgentNameMax = 512;
+
+export const simulateApiHarnessEnvironmentsVersionsCreateAgentVersionBodyMakeDefaultDefault =
+  true;
 
 export const SimulateApiHarnessEnvironmentsVersionsCreateAgentVersionBody =
   zod.object({
@@ -39426,6 +39430,14 @@ export const SimulateApiHarnessEnvironmentsVersionsCreateAgentVersionBody =
         }),
       })
       .optional(),
+    make_default: zod
+      .boolean()
+      .default(
+        simulateApiHarnessEnvironmentsVersionsCreateAgentVersionBodyMakeDefaultDefault,
+      )
+      .describe(
+        "False only checks the new version: once it passes, a run can pick it and a move makes it the default.",
+      ),
   });
 
 /**

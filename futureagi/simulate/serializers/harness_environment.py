@@ -629,9 +629,20 @@ class HarnessAgentVersionCreateSerializer(serializers.Serializer):
         allow_blank=False,
     )
     agent_payload = HarnessAgentPayloadChangeSerializer(required=False)
+    make_default = serializers.BooleanField(
+        default=True,
+        help_text=(
+            "False only checks the new version: once it passes, a run can pick it"
+            " and a move makes it the default."
+        ),
+    )
 
     def validate(self, attrs):
-        given = [name for name in self.fields if name in attrs]
+        given = [
+            name
+            for name in ("archive_artifact_id", "prompt", "agent_payload")
+            if name in attrs
+        ]
         if not given:
             raise serializers.ValidationError(
                 "Give archive_artifact_id, prompt or agent_payload."

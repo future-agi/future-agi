@@ -66078,6 +66078,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         agent_payload: {
           $ref: "#/definitions/HarnessAgentPayloadChange",
         },
+        make_default: {
+          title: "Make default",
+          description:
+            "False only checks the new version: once it passes, a run can pick it and a move makes it the default.",
+          type: "boolean",
+          default: true,
+        },
       },
     },
     HarnessArtifactUploadResponse: {

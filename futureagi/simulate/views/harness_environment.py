@@ -180,9 +180,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     @action(
         detail=True,
         methods=["get"],
-        url_path=(
-            r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"
-        ),
+        url_path=(r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"),
     )
     def version_diff(self, request, pk=None, piece=None, version_id=None):
         """What one version changed, against its parent or the ``against`` version."""
@@ -304,7 +302,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"], url_path="versions/agent")
     def create_agent_version(self, request, pk=None):
         """A new agent version from an upload, a prompt edit or a settings edit; it is
-        checked next, then made this environment's default."""
+        checked next, then made this environment's default unless make_default is
+        false."""
         from simulate.services.harness_agent_changes import change_agent_source
 
         version_reads.require_versioning()
