@@ -194,7 +194,7 @@ def _proposal_overlay(writer, attempt, table, prefix):
     return payload_select(
         table,
         [
-            FrozenRows(tuple(plan["rows"]))
+            FrozenRows.from_plan(plan)
             for plan in writer.plans(attempt, kind=TABLE_KIND[table.name])
         ],
         prefix=prefix,
@@ -549,7 +549,7 @@ def retirement_plan(writer, draft, head, definitions, cutoff):
     writer.freeze(attempt, BUCKET_TOTALS, buckets, bp)
     live, lp = payload_select(FIELD_VALUES, live_payloads, prefix="retire_live")
     retired_payloads = [
-        FrozenRows(tuple(p["rows"]))
+        FrozenRows.from_plan(p)
         for p in writer.plans(attempt, kind="bucket_retired_parts")
     ]
     new_retired, nrp = payload_select(
@@ -1204,7 +1204,7 @@ def expire_project(writer, definitions, *, retention_days, now=None, as_of=None)
             new_retired, nrp = payload_select(
                 RETIRED_PARTS,
                 [
-                    FrozenRows(tuple(p["rows"]))
+                    FrozenRows.from_plan(p)
                     for p in writer.plans(attempt, kind="bucket_retired_parts")
                 ],
                 prefix="expiry_anonymous",

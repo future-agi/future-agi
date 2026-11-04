@@ -207,6 +207,40 @@ class KeyRelation:
         return f"({', '.join(names)}) IN ({self.sql})"
 
 
+@dataclass(frozen=True)
+class KeyRange:
+    """Inclusive upper / exclusive lower bounds in native immutable key order."""
+
+    columns: tuple[str, ...]
+    lower: tuple | None
+    upper: tuple
+    prefix: str = "checkpoint_range"
+
+    def predicate(self, table):
+        names = _columns(_table(table), self.columns)
+        validate_prefix(self.prefix)
+        _member(table, names, self.upper)
+        from tracer.services.derived_metrics.changes import keyset_after
+
+        upper, _ = keyset_after(names, self.upper, self.prefix + "_upper")
+        clauses = [f"NOT ({upper})"]
+        if self.lower is not None:
+            _member(table, names, self.lower)
+            lower, _ = keyset_after(names, self.lower, self.prefix + "_lower")
+            clauses.append(f"({lower})")
+        return " AND ".join(clauses)
+
+    @property
+    def params(self):
+        from tracer.services.derived_metrics.changes import keyset_after
+
+        _, upper = keyset_after(self.columns, self.upper, self.prefix + "_upper")
+        if self.lower is None:
+            return upper
+        _, lower = keyset_after(self.columns, self.lower, self.prefix + "_lower")
+        return merge_bindings(upper, lower)
+
+
 def windowed_rows_select(
     table,
     manifest,
@@ -578,7 +612,7 @@ def committed_branches(
         scope += f" AND ({predicate})"
     params.update(bound)
     if key_relation is not None:
-        if not isinstance(key_relation, KeyRelation):
+        if not isinstance(key_relation, KeyRelation | KeyRange):
             raise ValueError("metric membership requires a compiler-owned relation")
         scope += f" AND ({key_relation.predicate(table)})"
     branches = []
@@ -715,3 +749,51 @@ def committed_key_pages(
         ):
             yield membership[keys]
         cursor = dict(zip(keys, nominated[-1], strict=True))
+
+
+def committed_key_ranges(store, table, manifest, *, org_id, project_id, target_rows):
+    """Nominate bounded ranges without round-tripping a large IN list.
+
+    Only the last native-order key crosses the wire. Raw ordered prefixes are
+    limited before deduplication so a broad DISTINCT never holds every key. The
+    subsequent payload collapse includes *all* allowed revisions in the range;
+    post-collapse filtering may empty a range without stopping this iterator.
+    """
+    from tracer.services.derived_metrics.publication import MAX_COMPACTION_ROWS
+
+    if type(target_rows) is not int or not 1 <= target_rows <= MAX_COMPACTION_ROWS:
+        raise ValueError("invalid metric checkpoint range size")
+    table = _table(table)
+    keys = tuple(c for c in table.logical_key if c not in {"org_id", "project_id"})
+    names = ", ".join(keys)
+    cursor = None
+    while True:
+        branches, params = committed_branches(
+            table,
+            manifest,
+            org_id=org_id,
+            project_id=project_id,
+            key_after=dict(zip(keys, cursor, strict=True))
+            if cursor is not None
+            else None,
+            param_prefix="checkpoint",
+            columns=keys,
+        )
+        if not branches:
+            return
+        prefixes = " UNION ALL ".join(
+            f"SELECT * FROM (SELECT {names} FROM ({branch}) ORDER BY {names} LIMIT %(checkpoint_limit)s)"
+            for branch in branches
+        )
+        rows = store.execute(
+            f"SELECT tuple({names}) FROM (SELECT DISTINCT {names} FROM ({prefixes}) "
+            f"ORDER BY {names} LIMIT %(checkpoint_limit)s) ORDER BY tuple({names}) DESC LIMIT 1",
+            {**params, "checkpoint_limit": target_rows},
+        )
+        if not rows:
+            return
+        upper = tuple(rows[0][0])
+        if upper == cursor:
+            raise ValueError("metric checkpoint range did not advance")
+        yield KeyRange(keys, cursor, upper)
+        cursor = upper

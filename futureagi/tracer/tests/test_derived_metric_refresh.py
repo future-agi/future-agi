@@ -120,6 +120,35 @@ def test_freeze_all_preimages_before_first_write_and_atomic_cursors(writer):
 
 
 @pytest.mark.django_db
+def test_large_frozen_page_cannot_bypass_normal_attempt_batch_cap(writer):
+    from tracer.models.derived_metric import MetricLedgerConflict
+    from tracer.services.derived_metrics.publication import MAX_COMPACTION_ROWS
+
+    attempt = writer.begin()
+    payload = FrozenRows(("00",) * 501, row_limit=MAX_COMPACTION_ROWS)
+    writer.append(
+        attempt,
+        "cleanup_intent",
+        [
+            {
+                "kind": "frozen_batch",
+                "table": "field_values",
+                "batch_no": 0,
+                "rows": list(payload.rows),
+                "row_limit": MAX_COMPACTION_ROWS,
+                "sha256": payload.digest,
+                "first": 1,
+                "last": 501,
+            }
+        ],
+    )
+    writer.seal(attempt)
+    with pytest.raises(MetricLedgerConflict, match="requires compaction"):
+        writer.stage_and_publish(attempt)
+    assert not writer.store.writes
+
+
+@pytest.mark.django_db
 def test_crash_resumes_frozen_payload_not_new_sources(writer):
     attempt = writer.begin(ledger={"dirty_before": [{"bucket": "month-before"}]})
     writer.freeze(attempt, FIELD_VALUES, "SELECT old_source")
@@ -404,6 +433,39 @@ def test_expiry_fences_later_allocated_namespaces_and_keeps_idle_cleanup_schedul
     assert MetricErasureRequest.claim(obligation.id, ttl=timedelta(minutes=1)) is None
     with pytest.raises(MetricStateConflict):
         writer.stage_and_publish(later)
+
+
+@pytest.mark.django_db
+def test_published_checkpoint_schedules_gc_when_layout_maintenance_fails(
+    writer, monkeypatch
+):
+    from django.db import transaction
+
+    from tracer.services.derived_metrics.publication import MetricVisibilityError
+
+    initial = writer.begin()
+    writer.freeze(initial, FIELD_VALUES, "SELECT original")
+    writer.seal(initial)
+    writer.stage_and_publish(initial)
+
+    # Isolate post-publication maintenance from this test's source reader.
+    monkeypatch.setattr(writer, "freeze_current", lambda *_args, **_kwargs: None)
+    callbacks = []
+    monkeypatch.setattr(transaction, "on_commit", callbacks.append)
+
+    def reject_shared_partition(_project):
+        raise MetricVisibilityError("checkpoint partition consolidation cap exceeded")
+
+    monkeypatch.setattr(
+        writer.store, "consolidate_checkpoint", reject_shared_partition, raising=False
+    )
+    with pytest.raises(MetricVisibilityError, match="consolidation cap exceeded"):
+        writer.compact()
+    published = MetricProjectRefresh.for_project(writer.lease.project_id).head_manifest
+    assert published.published_by.purpose == "compaction"
+    assert len(callbacks) == 1
+    assert callbacks[0].__self__ is writer
+    assert callbacks[0].__func__ is writer.collect_garbage.__func__
 
 
 @pytest.mark.django_db

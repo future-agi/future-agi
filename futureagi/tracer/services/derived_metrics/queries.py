@@ -299,9 +299,10 @@ def snapshot_select(
     if eval_inputs:
         params["configs"] = tuple(str(item["config_id"]) for item in eval_inputs)
         canonical_eval_session = resolved_id_expr("e.trace_session_id", "em")
-        # Prefilter keys for the evaluation scan. They only bound which evaluation
-        # rows are read; the final join to selection units is exact. A superset is
-        # therefore safe, so these keys skip the unit/remap joins of ``members``.
+        # Mutable targets only NOMINATE immutable evaluation ids. Collapse every
+        # eligible revision of each id, including retargets and tombstones outside
+        # these members, before joining the winning target to selection units.
+        # Filtering targets inside eval_versions would resurrect stale scores.
         ctes.append(f"""member_keys AS (
             SELECT {span_identity} AS span_id, s.trace_session_id AS raw_session_id
             FROM span_versions s WHERE s.is_deleted = 0 AND ({filter_sql})
@@ -317,13 +318,19 @@ def snapshot_select(
         )""")
         ctes.extend(
             [
-                f"""eval_versions AS (
-            SELECT {eval_columns} FROM {eval_table}
+                f"""eval_candidate_ids AS (
+            SELECT DISTINCT id FROM {eval_table}
             PREWHERE custom_eval_config_id IN %(configs)s
             WHERE created_at <= %(as_of)s AND updated_at <= %(as_of)s
               AND (%(source_run_id)s = '' OR eval_task_id = %(source_run_id)s)
               AND ((toJSONString(tuple(toString(trace_id), observation_span_id)) IN (SELECT span_id FROM member_keys))
                    OR trace_session_id IN (SELECT alias_id FROM session_aliases))
+        )""",
+                f"""eval_versions AS (
+            SELECT {eval_columns} FROM {eval_table}
+            PREWHERE custom_eval_config_id IN %(configs)s AND id IN (SELECT id FROM eval_candidate_ids)
+            WHERE created_at <= %(as_of)s AND updated_at <= %(as_of)s
+              AND (%(source_run_id)s = '' OR eval_task_id = %(source_run_id)s)
             ORDER BY {version} DESC LIMIT 1 BY id
         )""",
                 f"""eval_current AS (

@@ -992,3 +992,85 @@ def test_window_nomination_has_only_one_collapse_after_all_memberships():
     assert sql.count("SELECT DISTINCT level, unit_id") == 1
     assert sql.count("SELECT * FROM frozen_fields") == 1
     assert "window_kin_2" not in params  # candidates never materialize as a literal
+
+
+def test_checkpoint_ranges_reject_mutable_bounds_and_reach_all_branches():
+    from tracer.services.derived_metrics.bounded_reads import KeyRange
+
+    head = manifest()
+    org = uuid4()
+    relation = KeyRange(("unit_id",), ("a",), ("z",))
+    sql, params = committed_rows_select(
+        FIELD_VALUES,
+        head,
+        org_id=org,
+        project_id=head.project_id,
+        key_relation=relation,
+    )
+    assert sql.count("NOT (unit_id > %(checkpoint_range_upper_0)s)") == 2
+    assert sql.count("unit_id > %(checkpoint_range_lower_0)s") == 2
+    assert params["checkpoint_range_upper_0"] == "z"
+    for key in ("status", "unit_start", "is_deleted"):
+        with pytest.raises(ValueError, match="immutable"):
+            committed_rows_select(
+                FIELD_VALUES,
+                head,
+                org_id=org,
+                project_id=head.project_id,
+                key_relation=KeyRange((key,), None, ("z",)),
+            )
+
+
+def test_checkpoint_payload_cap_is_explicit_and_legacy_plans_still_replay():
+    from tracer.services.derived_metrics.publication import (
+        MAX_BATCH_BYTES,
+        MAX_BATCH_ROWS,
+        MAX_COMPACTION_ROWS,
+        FrozenRows,
+    )
+
+    rows = ("00",) * (MAX_BATCH_ROWS + 1)
+    with pytest.raises(ValueError, match="row cap"):
+        FrozenRows(rows)
+    checkpoint = FrozenRows(rows, row_limit=MAX_COMPACTION_ROWS)
+    assert (
+        FrozenRows.from_plan({"rows": rows, "row_limit": MAX_COMPACTION_ROWS}).digest
+        == checkpoint.digest
+    )
+    assert FrozenRows.from_plan({"rows": ["00"]}).rows == ("00",)
+    with pytest.raises(ValueError, match="byte cap"):
+        FrozenRows(("00" * (MAX_BATCH_BYTES + 1),), row_limit=MAX_COMPACTION_ROWS)
+    with pytest.raises(ValueError, match="row cap"):
+        FrozenRows((), row_limit=MAX_COMPACTION_ROWS + 1)
+
+
+def test_checkpoint_consolidation_is_partition_scoped_and_capped():
+    from tracer.services.derived_metrics.publication import (
+        ClickHousePublicationStore,
+        MetricVisibilityError,
+    )
+
+    store = ClickHousePublicationStore(object())
+    statements = []
+    layouts = iter([("12", 6, 1024), ("12", 1, 1024)])
+    store.checkpoint_layout = lambda _project: next(layouts)
+    store.execute = lambda sql, params: statements.append((sql, params))
+    store.consolidate_checkpoint(uuid4())
+    assert statements == [
+        (
+            "OPTIMIZE TABLE metric_field_values_checkpoint PARTITION ID %(partition)s FINAL",
+            {"partition": "12"},
+        )
+    ]
+    for parts, size in [(513, 1024), (2, 2 * 1024**3 + 1)]:
+        store.checkpoint_layout = lambda _project, parts=parts, size=size: (
+            "12",
+            parts,
+            size,
+        )
+        with pytest.raises(MetricVisibilityError, match="cap exceeded"):
+            store.consolidate_checkpoint(uuid4())
+    assert len(statements) == 1
+    store.checkpoint_layout = lambda _project: ("12", 2, 1024)
+    with pytest.raises(MetricVisibilityError, match="overlapping"):
+        store.consolidate_checkpoint(uuid4())

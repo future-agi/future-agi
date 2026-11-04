@@ -303,6 +303,11 @@ def _source_plan(
     ctes.append("unit_source_keys AS (" + " UNION DISTINCT ".join(nominees) + ")")
     # Read every physical revision of nominated IMMUTABLE (trace,id) identities,
     # then snapshot_select collapses them and filters canonical membership.
+    # The correlated pair is mandatory: span ids can repeat across traces.
+    # A redundant scalar trace IN looked promising for the Bloom skip index, but
+    # the 500-owner source read measured MORE rows with it (1,294,346 versus
+    # 770,054 on 262,144 source spans). Keep only the exact immutable pair.
+    # Never push mutable session/hour/service membership here.
     predicate = "(trace_id, id) IN (SELECT trace_key, span_key FROM unit_source_keys)"
     return tuple(ctes), predicate, params
 
@@ -471,13 +476,8 @@ def span_values_select(definition, scope, *, start, end, as_of):
             ORDER BY _version DESC LIMIT 1 BY project_id, trace_id, id
         ) WHERE start_time >= %(start)s AND start_time < %(end)s
     )"""
-    # The shared compiler also derives evaluation candidates from span_versions
-    # BEFORE collapsing evaluation IDs. Evaluation targets are mutable, so a
-    # window-limited span universe can hide a newer retargeted revision (including
-    # a tombstone) and resurrect its old score. Preserve the legacy universe for
-    # eval-backed recipes until that compiler nominates immutable evaluation IDs
-    # and loads their complete histories independently of span membership.
-    has_evaluations = any(item["source"] == "eval" for item in recipe.source.inputs)
+    # The compiler nominates evaluation ids separately and collapses their
+    # complete eligible histories, so a window cannot hide a retargeted winner.
     source, params = snapshot_select(
         recipe.source,
         scope,
@@ -486,10 +486,8 @@ def span_values_select(definition, scope, *, start, end, as_of):
         as_of,
         list(getattr(definition, "filters", ())),
         "",
-        unit_predicate=None
-        if has_evaluations
-        else "(trace_id, id) IN (SELECT trace_id, id FROM span_window_keys)",
-        source_ctes=() if has_evaluations else (window_keys,),
+        unit_predicate="(trace_id, id) IN (SELECT trace_id, id FROM span_window_keys)",
+        source_ctes=(window_keys,),
         include_evidence=True,
     )
     params["unit_settle_minutes"] = 0

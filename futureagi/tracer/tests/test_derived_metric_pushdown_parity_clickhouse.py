@@ -1976,3 +1976,503 @@ def test_span_window_preserves_retargeted_evaluation_winner(
             ) == [expected]
     finally:
         store.client.execute("SYSTEM START MERGES tracer_eval_logger_v2")
+
+
+def _numbered_fields(count, *, text_bytes=0, uuid_units=False):
+    from tracer.tests.test_derived_metric_publication_clickhouse import field_query
+
+    sql, params = field_query(metric=uuid4())
+    unit = (
+        "toString(reinterpretAsUUID(MD5(toString(number))))"
+        if uuid_units
+        else "concat('unit-', leftPad(toString(number), 9, '0'))"
+    )
+    sql = sql.replace("%(test_unit)s", unit)
+    if text_bytes:
+        sql = sql.replace("%(test_group)s", "repeat('x', %(text_bytes)s)")
+        params["text_bytes"] = text_bytes
+    return sql + " FROM numbers(%(fixture_count)s)", {**params, "fixture_count": count}
+
+
+def _field_payload_bytes(writer, manifest):
+    sql, params = committed_rows_select(
+        FIELD_VALUES,
+        manifest,
+        org_id=writer.org_id,
+        project_id=writer.lease.project_id,
+    )
+    stamp = {"_version", "generation", "attempt_id", "fencing_epoch", "row_sequence"}
+    columns = ", ".join(c for c in FIELD_VALUES.columns if c not in stamp)
+    return writer.store.execute(
+        f"SELECT hex(formatRow('RowBinary', {columns})) FROM ({sql}) ORDER BY unit_id",
+        params,
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_large_checkpoint_crash_replay_byte_parity_and_partition_overlap(
+    live_writer, monkeypatch
+):
+    from tracer.models.derived_metric import MetricProjectRefresh, MetricRefreshAttempt
+    from tracer.services.derived_metrics.publication import MAX_BATCH_ROWS
+    from tracer.services.derived_metrics.storage import FIELD_CHECKPOINT
+
+    writer = live_writer
+    sql, params = _numbered_fields(1201)
+    initial = writer.begin()
+    writer.freeze(initial, FIELD_VALUES, sql, params)
+    writer.seal(initial)
+    head = writer.stage_and_publish(initial)
+    expected = _field_payload_bytes(writer, head)
+    original_insert = writer.store.insert
+
+    def lost_ack(table, payload):
+        original_insert(table, payload)
+        if table == FIELD_CHECKPOINT:
+            raise RuntimeError("lost checkpoint response")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(writer.store, "insert", lost_ack)
+        with pytest.raises(RuntimeError, match="lost checkpoint"):
+            writer.compact()
+    attempt = MetricRefreshAttempt.objects.get(
+        project_id=writer.lease.project_id, state="staging"
+    )
+    plans = list(writer.plans(attempt, kind="field_values"))
+    assert len(plans) == 1 and len(plans[0]["rows"]) == 1201 > MAX_BATCH_ROWS
+    assert (
+        MetricProjectRefresh.objects.get(
+            project_id=writer.lease.project_id
+        ).head_manifest_id
+        == head.id
+    )
+    # Force the retry to coexist physically with the ambiguous first INSERT.
+    writer.store.client.execute(f"SYSTEM STOP MERGES {FIELD_CHECKPOINT.name}")
+    try:
+        from tracer.services.derived_metrics.publication import FrozenRows
+
+        original_insert(FIELD_CHECKPOINT, FrozenRows.from_plan(plans[0]))
+        assert writer.store.checkpoint_layout(writer.lease.project_id)[1] >= 2
+        original_consolidate = writer.store.consolidate_checkpoint
+        overlaps = []
+
+        def consolidate(project):
+            overlaps.append(writer.store.checkpoint_layout(project)[1])
+            original_consolidate(project)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(writer.store, "consolidate_checkpoint", consolidate)
+            # OPTIMIZE can execute an explicit merge while background merges are stopped.
+            writer.store.client.execute(f"SYSTEM START MERGES {FIELD_CHECKPOINT.name}")
+            compacted = writer.stage_and_publish(attempt)
+        assert _field_payload_bytes(writer, compacted) == expected
+        assert writer.store.checkpoint_layout(writer.lease.project_id)[1] == 1
+        assert overlaps and overlaps[0] >= 1
+        # Compare with the previous 500-row compactor, not just a logical-value oracle.
+        legacy = writer.begin(purpose="compaction")
+        writer.freeze_current(legacy, FIELD_VALUES, compacted)
+        writer.seal(legacy)
+        assert all(len(p["rows"]) <= MAX_BATCH_ROWS for p in writer.plans(legacy))
+        legacy_head = writer.stage_and_publish(legacy)
+        assert _field_payload_bytes(writer, legacy_head) == expected
+    finally:
+        writer.store.client.execute(f"SYSTEM START MERGES {FIELD_CHECKPOINT.name}")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_checkpoint_empty_ranges_advance_and_byte_splits_keep_every_key(
+    live_writer, monkeypatch
+):
+    from tracer.services.derived_metrics import refresh
+    from tracer.services.derived_metrics.publication import (
+        MAX_COMPACTION_BYTES,
+        MAX_COMPACTION_ROWS,
+    )
+
+    writer = live_writer
+    initial = writer.begin()
+    sql, params = _numbered_fields(6)
+    writer.freeze(initial, FIELD_VALUES, sql, params)
+    writer.seal(initial)
+    head = writer.stage_and_publish(initial)
+    nominate = refresh.committed_key_ranges
+    visited = []
+
+    def small_ranges(*args, **kwargs):
+        kwargs["target_rows"] = 2
+        for relation in nominate(*args, **kwargs):
+            visited.append(relation)
+            yield relation
+
+    with monkeypatch.context() as patch:
+        patch.setattr(refresh, "committed_key_ranges", small_ranges)
+        checkpoint = writer.begin(purpose="compaction")
+        writer.freeze_current(
+            checkpoint,
+            FIELD_VALUES,
+            head,
+            large_pages=True,
+            where="unit_id >= 'unit-000000004'",
+        )
+        writer.seal(checkpoint)
+    result = writer.stage_and_publish(checkpoint)
+    assert len(visited) == 3
+    assert len(_field_payload_bytes(writer, result)) == 2
+    # Force the byte bound, not the row bound, to end several transport pages.
+    large = writer.begin(purpose="compaction")
+    sql, params = _numbered_fields(1201, text_bytes=20_000)
+    writer.freeze(large, FIELD_VALUES, sql, params, row_limit=MAX_COMPACTION_ROWS)
+    plans = list(writer.plans(large))
+    assert len(plans) >= 2
+    assert sum(len(p["rows"]) for p in plans) == 1201
+    assert all(
+        sum(len(r) // 2 for r in p["rows"]) <= MAX_COMPACTION_BYTES for p in plans
+    )
+    writer.seal(large)
+    original_insert = writer.store.insert
+    inserted = []
+
+    def lose_middle_range_response(table, payload):
+        original_insert(table, payload)
+        inserted.append(payload.digest)
+        if len(inserted) == 2:
+            raise RuntimeError("lost response inside byte-split range")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(writer.store, "insert", lose_middle_range_response)
+        with pytest.raises(RuntimeError, match="inside byte-split range"):
+            writer.stage_and_publish(large)
+    assert inserted == [p["sha256"] for p in plans[:2]]
+    with monkeypatch.context() as patch:
+        # Replay must never reread the source, even after an ambiguous INSERT.
+        patch.setattr(
+            writer.store,
+            "freeze_select",
+            lambda *a, **k: pytest.fail("recomputed frozen range"),
+        )
+        replayed = writer.stage_and_publish(large)
+    assert len(_field_payload_bytes(writer, replayed)) == 1201
+
+
+@pytest.mark.parametrize("seed", [17, 41, 93])
+def test_bounded_eval_histories_random_retargets_match_full_history_oracle(
+    publication_store, monkeypatch, seed
+):
+    from tracer.services.derived_metrics import unit_reads
+    from tracer.services.derived_metrics.queries import Scope
+    from tracer.tests.test_derived_metric_clickhouse import seed_eval
+
+    store = publication_store
+    rng = random.Random(seed)
+    org, project, session, config = (uuid4() for _ in range(4))
+    scope = Scope(org, uuid4(), project)
+    traces = [UUID(int=rng.getrandbits(128)) for _ in range(12)]
+    definition = SimpleNamespace(
+        level="span",
+        kind="average",
+        selection_unit="span",
+        formula="mean(y)",
+        inputs=[
+            {
+                "alias": "y",
+                "source": "eval",
+                "config_id": str(config),
+                "config_hash": "a" * 64,
+                "reducer": "latest",
+            }
+        ],
+        field_spec={},
+        weighting="none",
+        cohort_key="",
+        filters=[],
+    )
+    store.client.execute("SYSTEM STOP MERGES tracer_eval_logger_v2")
+    try:
+        for index, trace in enumerate(traces):
+            at = AT + timedelta(minutes=15 * (index % 3))
+            store.client.execute(
+                "INSERT INTO spans (id, project_id, org_id, trace_id, trace_session_id, "
+                "start_time, end_time, created_at, updated_at) VALUES",
+                [
+                    (
+                        f"span-{index}",
+                        project,
+                        org,
+                        str(trace),
+                        session,
+                        at,
+                        at + timedelta(seconds=1),
+                        AT,
+                        AT,
+                    )
+                ],
+            )
+        winners = {}
+        for index in range(30):
+            evaluation = UUID(int=rng.getrandbits(128))
+            created = AT + timedelta(seconds=index)
+            for revision in range(1, rng.randrange(2, 6)):
+                target = rng.randrange(len(traces))
+                deleted = rng.random() < 0.2
+                value = float(index * 10 + revision)
+                seed_eval(
+                    store.client,
+                    config,
+                    session,
+                    created,
+                    value,
+                    1,
+                    span_id=f"span-{target}",
+                    trace_id=traces[target],
+                    row_id=evaluation,
+                    version=revision,
+                    deleted=int(deleted),
+                )
+            if not deleted:
+                # Distinct created_at orders the latest evaluation per target.
+                winners[target] = value
+        original = unit_reads.snapshot_select
+
+        def broad(*args, **kwargs):
+            kwargs.pop("unit_predicate", None)
+            kwargs.pop("source_ctes", None)
+            return original(*args, **kwargs)
+
+        for bucket in range(3):
+            arguments = {
+                "start": AT + timedelta(minutes=15 * bucket),
+                "end": AT + timedelta(minutes=15 * (bucket + 1)),
+                "as_of": AT + timedelta(days=1),
+            }
+            sql, params = unit_reads.span_values_select(definition, scope, **arguments)
+            assert "eval_candidate_ids AS" in sql and "span_window_keys AS" in sql
+            actual = store.execute(f"SELECT unit_id, value_number FROM ({sql})", params)
+            assert dict(actual) == {
+                json.dumps(
+                    [str(traces[i]), f"span-{i}"], separators=(",", ":")
+                ): winners.get(i)
+                for i in range(12)
+                if i % 3 == bucket
+            }
+            with monkeypatch.context() as patch:
+                patch.setattr(unit_reads, "snapshot_select", broad)
+                legacy, bound = unit_reads.span_values_select(
+                    definition, scope, **arguments
+                )
+            assert _result(store.execute(sql, params)) == _result(
+                store.execute(legacy, bound)
+            )
+    finally:
+        store.client.execute("SYSTEM START MERGES tracer_eval_logger_v2")
+
+
+def test_conversation_source_trace_index_pushdown_receipt(publication_store):
+    """Measure the current 500-owner source compiler, not a bucket-only proxy."""
+    from tracer.services.derived_metrics.queries import Scope
+    from tracer.services.derived_metrics.unit_reads import unit_values_select
+
+    store = publication_store
+    # Mirror the production sorting/primary key and immutable trace skip index.
+    # Its mutable leading components cannot safely constrain winner collapse.
+    ddl = store.client.execute("SHOW CREATE TABLE spans")[0][0]
+    store.client.execute("DROP TABLE spans SYNC")
+    # The fixture has exactly one closing column-list delimiter before ENGINE.
+    position = ddl.index(")\nENGINE")
+    ddl = (
+        ddl[:position]
+        + ", observation_type LowCardinality(String) DEFAULT 'GENERATION', INDEX idx_trace_id trace_id TYPE bloom_filter(0.001) GRANULARITY 1\n"
+        + ddl[position:]
+    )
+    ddl = ddl.replace(
+        "ORDER BY (project_id, start_time, trace_id, id)",
+        "PRIMARY KEY (project_id, observation_type, service_name, toStartOfHour(start_time)) ORDER BY (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id)",
+    )
+    store.client.execute(ddl)
+    org, project = uuid4(), uuid4()
+    scope = Scope(org, uuid4(), project)
+    store.client.execute(
+        "INSERT INTO spans (org_id, project_id, id, trace_id, trace_session_id, start_time, end_time, created_at, updated_at, attrs_number) "
+        "SELECT %(org)s, %(project)s, toString(number), leftPad(toString(number), 12, '0'), reinterpretAsUUID(MD5(toString(number))), "
+        "%(at)s, %(at)s, %(at)s, %(at)s, map('resolved', toFloat64(number %% 7)) FROM numbers(262144)",
+        {"org": org, "project": project, "at": AT},
+        settings=WRITE_SETTINGS,
+    )
+    ids = [
+        str(r[0])
+        for r in store.execute(
+            "SELECT trace_session_id FROM spans ORDER BY trace_id LIMIT 500"
+        )
+    ]
+    definition = SimpleNamespace(
+        level="conversation",
+        kind="average",
+        selection_unit="session",
+        formula="mean(y)",
+        inputs=[
+            {
+                "alias": "y",
+                "source": "span",
+                "field": "attribute_number",
+                "attribute_key": "resolved",
+                "reducer": "sum",
+                "value_type": "number",
+            }
+        ],
+        field_spec={},
+        weighting="none",
+        cohort_key="",
+        filters=[],
+    )
+    sql, params = unit_values_select(
+        definition,
+        scope,
+        ids,
+        start=AT,
+        end=AT + timedelta(days=1),
+        as_of=AT + timedelta(days=1),
+    )
+    scalar = "trace_id IN (SELECT trace_key FROM unit_source_keys) AND "
+    assert scalar not in sql
+    old, before = _read_receipt(
+        store, sql.replace("(trace_id, id) IN", scalar + "(trace_id, id) IN"), params
+    )
+    actual, after = _read_receipt(store, sql, params)
+    assert _result(actual) == _result(old)
+    assert len(actual) == 500
+    assert after["read_rows"] <= before["read_rows"]
+    assert after["memory_bytes"] <= WRITE_SETTINGS["max_memory_usage"]
+    explain = store.execute(f"EXPLAIN indexes=1 {sql}", params)
+    print(
+        json.dumps(
+            {
+                "measurement": "500_owner_source",
+                "fixture_rows": 262144,
+                "before": before,
+                "after": after,
+                "explain": [r[0] for r in explain],
+            }
+        )
+    )
+
+
+@pytest.mark.benchmark
+@pytest.mark.django_db(transaction=True)
+def test_checkpoint_throughput_receipt(live_writer):
+    """Opt-in real compaction through seal, publication, consolidation and GC."""
+    import os
+    from hashlib import sha256
+    from time import monotonic
+
+    from tracer.services.derived_metrics.publication import MAX_COMPACTION_ROWS
+    from tracer.services.derived_metrics.storage import FIELD_CHECKPOINT
+
+    count = int(os.environ.get("PERF1_COMPACTION_FIXTURE_ROWS", "1000000"))
+    assert 50_000 <= count <= 10_000_000
+    writer = live_writer
+    initial = writer.begin(purpose="compaction")
+    sql, params = _numbered_fields(count, uuid_units=True)
+    writer.freeze(
+        initial,
+        FIELD_VALUES,
+        sql,
+        params,
+        row_limit=MAX_COMPACTION_ROWS,
+        collect_payloads=False,
+    )
+    writer.seal(initial)
+    writer.stage_and_publish(initial)
+    stamp = {"_version", "generation", "attempt_id", "fencing_epoch", "row_sequence"}
+    columns = ", ".join(c for c in FIELD_VALUES.columns if c not in stamp)
+
+    def digest(attempt):
+        result = sha256()
+        rows = 0
+        for row in writer.store.client.execute_iter(
+            f"SELECT formatRow('RowBinary', {columns}) FROM {FIELD_CHECKPOINT.name} "
+            "WHERE project_id = %(project)s AND attempt_id = %(attempt)s "
+            "ORDER BY org_id, project_id, field_id, field_version, level, unit_id",
+            {"project": writer.lease.project_id, "attempt": attempt.id},
+            settings={**WRITE_SETTINGS, "strings_as_bytes": True},
+        ):
+            result.update(row[0])
+            rows += 1
+        return rows, result.hexdigest()
+
+    expected = digest(initial)
+    assert expected[0] == count
+    prefix = "perf1r5_compact_" + uuid4().hex
+    original = writer.store.execute
+    calls = []
+
+    def execute(sql, params=None, **kwargs):
+        qid = prefix + "_" + str(len(calls))
+        calls.append(qid)
+        return writer.store.client.execute(
+            sql, params or {}, settings=WRITE_SETTINGS, query_id=qid, **kwargs
+        )
+
+    writer.store.execute = execute
+    started = monotonic()
+    try:
+        manifest = writer.compact()
+    finally:
+        elapsed = monotonic() - started
+        writer.store.execute = original
+    assert digest(manifest.published_by) == expected
+    writer.store.client.execute("SYSTEM FLUSH LOGS")
+    receipt = writer.store.execute(
+        "SELECT count(), sum(read_rows), max(memory_usage), sum(query_duration_ms) FROM system.query_log "
+        "WHERE startsWith(query_id, %(prefix)s) AND type = 'QueryFinish'",
+        {"prefix": prefix},
+    )[0]
+    assert receipt[0] == len(calls)
+    assert receipt[2] <= WRITE_SETTINGS["max_memory_usage"]
+    assert writer.store.checkpoint_layout(writer.lease.project_id)[1] == 1
+    from tracer.services.derived_metrics.queries import Scope
+    from tracer.services.derived_metrics.unit_reads import committed_unit_values_select
+
+    ids = [
+        row[0]
+        for row in writer.store.execute(
+            f"SELECT unit_id FROM {FIELD_CHECKPOINT.name} "
+            "WHERE project_id = %(project)s AND attempt_id = %(attempt)s "
+            "ORDER BY unit_id LIMIT 50",
+            {
+                "project": str(writer.lease.project_id),
+                "attempt": str(manifest.published_by_id),
+            },
+        )
+    ]
+    assert len(ids) == 50
+    hydration, bindings = committed_unit_values_select(
+        Scope(writer.org_id, writer.workspace_id, writer.lease.project_id),
+        UUID(params["test_metric"]),
+        1,
+        ids,
+        manifest,
+    )
+    warm = []
+    for _ in range(10):
+        started = monotonic()
+        assert len(writer.store.execute(hydration, bindings)) == 50
+        warm.append(monotonic() - started)
+    m7_warm_p95 = sorted(warm)[-1]
+    print(
+        json.dumps(
+            {
+                "measurement": "real_compaction",
+                "m7_50_cell_warm_p95_seconds": m7_warm_p95,
+                "fixture_rows": count,
+                "seconds": elapsed,
+                "rows_per_second": count / elapsed,
+                "estimated_10m_seconds_linear_not_measurement": elapsed
+                * 10_000_000
+                / count,
+                "statements": receipt[0],
+                "read_rows": receipt[1],
+                "max_statement_memory_bytes": receipt[2],
+                "query_ms": receipt[3],
+                "payload_sha256": expected[1],
+            }
+        )
+    )

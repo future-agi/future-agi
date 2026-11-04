@@ -26,7 +26,14 @@ from tracer.services.derived_metrics.storage import (
 )
 
 MAX_BATCH_ROWS = 500
+# Checkpoint transport is independent of discovery/admission's 500-row pages.
+# Both paths retain the same byte and statement-memory ceilings.
+MAX_COMPACTION_ROWS = 50_000
 MAX_BATCH_BYTES = 16 * 1024 * 1024
+# format(RowBinary, unhex(bound_literal)) constant-folds and copies the hex
+# multiple times before INSERT. A 16 MiB frozen page measured 624.69 MiB
+# statement memory under the 512 MiB cap; checkpoint transport stays smaller.
+MAX_COMPACTION_BYTES = 4 * 1024 * 1024
 WRITE_SETTINGS = {
     "async_insert": 0,
     "max_threads": 2,
@@ -49,16 +56,28 @@ class FrozenRows:
 
     rows: tuple[str, ...]
     last_key: tuple | None = None
+    row_limit: int = MAX_BATCH_ROWS
 
     def __post_init__(self):
-        if len(self.rows) > MAX_BATCH_ROWS:
+        if self.row_limit not in (MAX_BATCH_ROWS, MAX_COMPACTION_ROWS):
+            raise ValueError("invalid metric batch row cap")
+        if len(self.rows) > self.row_limit:
             raise ValueError("metric batch row cap exceeded")
         try:
             size = sum(len(bytes.fromhex(row)) for row in self.rows)
         except (ValueError, TypeError):
             raise ValueError("invalid frozen metric payload") from None
-        if size > MAX_BATCH_BYTES:
+        byte_cap = (
+            MAX_COMPACTION_BYTES
+            if self.row_limit == MAX_COMPACTION_ROWS
+            else MAX_BATCH_BYTES
+        )
+        if size > byte_cap:
             raise ValueError("metric batch byte cap exceeded")
+
+    @classmethod
+    def from_plan(cls, plan):
+        return cls(tuple(plan["rows"]), row_limit=plan.get("row_limit", MAX_BATCH_ROWS))
 
     @property
     def digest(self):
@@ -148,7 +167,9 @@ class ClickHousePublicationStore:
         row = self.execute("SELECT toString(serverUUID()), currentDatabase()")[0]
         return list(row)
 
-    def freeze_select(self, table, sql, params, *, key_columns=()):
+    def freeze_select(
+        self, table, sql, params, *, key_columns=(), row_limit=MAX_BATCH_ROWS
+    ):
         """Serialize a bounded, deterministically ordered SELECT on this shard.
 
         formatRowNoNewline MUST NOT be used: it removes the final byte of a
@@ -162,15 +183,39 @@ class ClickHousePublicationStore:
         )
         if set(key_columns) - set(table.logical_key):
             raise ValueError("invalid metric batch paging keys")
+        if row_limit not in (MAX_BATCH_ROWS, MAX_COMPACTION_ROWS):
+            raise ValueError("invalid metric batch row cap")
         keys = (", " + ", ".join(key_columns)) if key_columns else ""
+        encoded = (
+            f"SELECT hex(formatRow('RowBinary', {columns})) AS encoded{keys}, "
+            f"{table.version_column} AS encoded_version FROM ({sql}) "
+            f"ORDER BY {table.version_column} LIMIT %(pub_limit)s"
+        )
+        if row_limit == MAX_COMPACTION_ROWS:
+            # Truncate by bytes on the server, BEFORE transporting the payload.
+            # Keep an oversized first record so FrozenRows fails closed instead
+            # of mistaking an indivisible oversize key for an empty range.
+            encoded = (
+                "SELECT * FROM (SELECT *, "
+                "sum(length(encoded) / 2) OVER (ORDER BY encoded_version "
+                "ROWS UNBOUNDED PRECEDING) AS encoded_bytes, "
+                "row_number() OVER (ORDER BY encoded_version) AS encoded_row "
+                f"FROM ({encoded})) WHERE encoded_bytes <= %(pub_bytes)s OR encoded_row = 1"
+            )
         rows = self.execute(
-            f"SELECT hex(formatRow('RowBinary', {columns})){keys} FROM ({sql}) "
-            f"ORDER BY {table.version_column} LIMIT %(pub_limit)s",
-            {**params, "pub_limit": MAX_BATCH_ROWS},
+            f"SELECT encoded{keys} FROM ({encoded}) ORDER BY encoded_version",
+            {
+                **params,
+                "pub_limit": row_limit,
+                "pub_bytes": MAX_COMPACTION_BYTES
+                if row_limit == MAX_COMPACTION_ROWS
+                else MAX_BATCH_BYTES,
+            },
         )
         return FrozenRows(
             tuple(row[0] for row in rows),
             tuple(rows[-1][1:]) if rows and key_columns else None,
+            row_limit=row_limit,
         )
 
     def insert(self, table, payload):
@@ -201,10 +246,57 @@ class ClickHousePublicationStore:
                 "hi": hi,
             },
         )
-        actual = FrozenRows(tuple(row[0] for row in rows))
+        actual = FrozenRows(
+            tuple(row[0] for row in rows),
+            row_limit=MAX_COMPACTION_ROWS
+            if attempt.purpose == "compaction"
+            else MAX_BATCH_ROWS,
+        )
         if (len(actual.rows), actual.digest) != (batch.row_count, batch.payload_sha256):
             raise MetricVisibilityError("frozen batch not visible on selected shard")
         return {"count": len(actual.rows), "sha256": actual.digest}
+
+    def checkpoint_layout(self, project_id):
+        """Conservative overlap bound: one active part cannot overlap another.
+
+        Hash partitions can contain other projects and pinned checkpoints. Count
+        ALL their parts/bytes before scheduling a merge, not just this attempt.
+        """
+        partition = self.execute(
+            "SELECT toString(cityHash64(toUUID(%(project)s)) %% 32)",
+            {"project": str(project_id)},
+        )[0][0]
+        parts, size = self.execute(
+            "SELECT count(), sum(bytes_on_disk) FROM system.parts "
+            "WHERE database = currentDatabase() AND table = %(table)s "
+            "AND partition_id = %(partition)s AND active",
+            {"table": FIELD_CHECKPOINT.name, "partition": partition},
+        )[0]
+        return partition, parts, size
+
+    def consolidate_checkpoint(self, project_id):
+        """One bounded partition merge, never whole-table FINAL or schema tuning.
+
+        The publication remains committed if maintenance times out. Replaying
+        stage_and_publish retries this idempotent layout step before reporting
+        compaction success. A large shared partition fails closed for scheduling
+        rather than issuing an unbounded merge.
+        """
+        partition, parts, size = self.checkpoint_layout(project_id)
+        if parts <= 1:
+            return
+        if parts > 512 or size > 2 * 1024 * 1024 * 1024:
+            raise MetricVisibilityError(
+                "checkpoint partition consolidation cap exceeded"
+            )
+        self.execute(
+            f"OPTIMIZE TABLE {FIELD_CHECKPOINT.name} PARTITION ID %(partition)s FINAL",
+            {"partition": partition},
+        )
+        if self.checkpoint_layout(project_id)[1] > 1:
+            raise MetricVisibilityError(
+                "checkpoint partition still has overlapping parts"
+            )
 
     def assert_visible(self, manifest):
         receipts = manifest.visibility_receipts

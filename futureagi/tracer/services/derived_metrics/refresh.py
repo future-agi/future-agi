@@ -33,6 +33,7 @@ from tracer.services.derived_metrics.bounded_reads import (
     KeyRelation,
     capture_source_output,
     committed_key_pages,
+    committed_key_ranges,
     iter_key_membership_batches,
     merge_bindings,
     windowed_rows_select,
@@ -48,6 +49,7 @@ from tracer.services.derived_metrics.deletion_protocol import (
 )
 from tracer.services.derived_metrics.publication import (
     MAX_BATCH_ROWS,
+    MAX_COMPACTION_ROWS,
     FrozenRows,
     committed_rows_select,
     physical_table,
@@ -206,13 +208,18 @@ class RefreshWriter:
         source_page=None,
         collect_payloads=True,
         transient=False,
+        row_limit=MAX_BATCH_ROWS,
     ):
         """Freeze SELECT output while PREPARED, with bounded sequence allocation.
 
-        SQL/identifiers are compiler-owned, never client SQL. Each page is at
-        most 500 rows; no UPDATE ever copies a payload. All output pages are
+        SQL/identifiers are compiler-owned, never client SQL. Discovery pages are
+        at most 500 rows; checkpoint pages are also byte bounded. All output pages are
         durable before seal() permits staging. Empty tables need no INSERT.
         """
+        if row_limit != MAX_BATCH_ROWS and (
+            row_limit != MAX_COMPACTION_ROWS or attempt.purpose != "compaction"
+        ):
+            raise ValueError("large metric pages require a checkpoint attempt")
         if transient and table != RETIRED_PARTS:
             raise ValueError("only anonymous bucket parts may be transient")
         physical = physical_table(table, checkpoint=attempt.purpose == "compaction")
@@ -222,7 +229,7 @@ class RefreshWriter:
         while True:
             self.lease.keepalive()
             first, _ = MetricProjectRefresh.allocate_row_sequences(
-                self.lease.project_id, count=MAX_BATCH_ROWS, **self.lease.fence()
+                self.lease.project_id, count=row_limit, **self.lease.fence()
             )
             metadata = {
                 "org_id": "toUUID(%(stamp_org)s)",
@@ -267,10 +274,10 @@ class RefreshWriter:
                 "stamp_attempt": str(attempt.id),
                 "stamp_epoch": attempt.fencing_epoch,
                 "stamp_first": first,
-                "stamp_limit": MAX_BATCH_ROWS,
+                "stamp_limit": row_limit,
             }
             payload = self.store.freeze_select(
-                physical, stamped, bound, key_columns=keys
+                physical, stamped, bound, key_columns=keys, row_limit=row_limit
             )
             if not payload.rows:
                 break
@@ -280,6 +287,7 @@ class RefreshWriter:
                 "table": kind,
                 "batch_no": batch_no,
                 "rows": list(payload.rows),
+                "row_limit": row_limit,
                 "sha256": payload.digest,
                 "first": first,
                 "last": last,
@@ -296,14 +304,16 @@ class RefreshWriter:
             if collect_payloads:
                 result.append(payload)
             batch_no += 1
-            if len(payload.rows) < MAX_BATCH_ROWS:
+            if row_limit == MAX_BATCH_ROWS and len(payload.rows) < row_limit:
                 break
             if payload.last_key is None:
                 raise MetricLedgerConflict("full frozen page lacks a keyset cursor")
             after = dict(zip(keys, payload.last_key, strict=True))
         return result
 
-    def freeze_current(self, attempt, table, manifest, *, where="1", params=None):
+    def freeze_current(
+        self, attempt, table, manifest, *, where="1", params=None, large_pages=False
+    ):
         """Nominate finite full keys, then collapse every revision of those keys.
 
         The nominated cursor is independent of the surviving output. A page
@@ -311,20 +321,27 @@ class RefreshWriter:
         advances to the next nominated key rather than ending the checkpoint.
         """
         keys = tuple(c for c in table.logical_key if c not in {"org_id", "project_id"})
-        for nominated in committed_key_pages(
+        nominate = committed_key_ranges if large_pages else committed_key_pages
+        row_limit = MAX_COMPACTION_ROWS if large_pages else MAX_BATCH_ROWS
+        for nominated in nominate(
             self.store,
             table,
             manifest,
             org_id=self.org_id,
             project_id=self.lease.project_id,
-            target_rows=MAX_BATCH_ROWS,
+            target_rows=row_limit,
         ):
+            restriction = (
+                {"key_relation": nominated}
+                if large_pages
+                else {"key_in": {keys: nominated}}
+            )
             sql, bound = committed_rows_select(
                 table,
                 manifest,
                 org_id=self.org_id,
                 project_id=self.lease.project_id,
-                key_in={keys: nominated},
+                **restriction,
             )
             self.freeze(
                 attempt,
@@ -332,6 +349,7 @@ class RefreshWriter:
                 f"SELECT * FROM ({sql}) WHERE {where}",
                 merge_bindings(bound, params or {}),
                 collect_payloads=False,
+                row_limit=row_limit,
                 extra={"workspace_id": "workspace_id"}
                 if "workspace_id" in table.columns
                 else None,
@@ -377,7 +395,14 @@ class RefreshWriter:
     def stage_and_publish(self, attempt):
         """Do not publish a frozen plan that violates the CURRENT policy."""
         try:
-            return self._stage_and_publish(attempt)
+            manifest = self._stage_and_publish(attempt)
+            if (
+                attempt.purpose == "compaction"
+                and "manifest" in attempt.source_ceilings
+            ):
+                self.lease.keepalive()
+                self.store.consolidate_checkpoint(attempt.project_id)
+            return manifest
         except MetricRetentionChanged:
             from tracer.services.derived_metrics.deletion_protocol import _intent
 
@@ -416,7 +441,12 @@ class RefreshWriter:
         receipts = []
         for plan in self.plans(attempt):
             self.lease.keepalive()
-            payload = FrozenRows(tuple(plan["rows"]))
+            if (
+                plan.get("row_limit", MAX_BATCH_ROWS) != MAX_BATCH_ROWS
+                and attempt.purpose != "compaction"
+            ):
+                raise MetricLedgerConflict("large frozen page requires compaction")
+            payload = FrozenRows.from_plan(plan)
             if payload.digest != plan["sha256"]:
                 raise MetricLedgerConflict("frozen replay hash mismatch")
             table = physical_table(
@@ -578,7 +608,7 @@ class RefreshWriter:
             fields, params = payload_select(
                 FIELD_VALUES,
                 [
-                    FrozenRows(tuple(p["rows"]))
+                    FrozenRows.from_plan(p)
                     for p in self.plans(attempt, kind="field_values")
                 ],
                 prefix="policy_fields",
@@ -593,7 +623,7 @@ class RefreshWriter:
                 facts, bound = payload_select(
                     table,
                     [
-                        FrozenRows(tuple(p["rows"]))
+                        FrozenRows.from_plan(p)
                         for p in self.plans(attempt, kind=TABLE_KIND[table.name])
                     ],
                     prefix="policy_" + table.name,
@@ -612,7 +642,7 @@ class RefreshWriter:
                 dependencies, bound = payload_select(
                     SOURCE_DEPENDENCIES,
                     [
-                        FrozenRows(tuple(p["rows"]))
+                        FrozenRows.from_plan(p)
                         for p in self.plans(attempt, kind="source_dependencies")
                     ],
                     prefix="policy_dependencies",
@@ -744,6 +774,7 @@ class RefreshWriter:
                     attempt,
                     table,
                     head,
+                    large_pages=True,
                     where=f"({prefix}_id, {prefix}_version) NOT IN %(obsolete_versions)s"
                     if obsolete and versioned
                     else "1",
@@ -752,10 +783,15 @@ class RefreshWriter:
                     else None,
                 )
             self.seal(attempt, publication={"retire_versions": obsolete})
-        manifest = self.stage_and_publish(attempt)
-        # Never delete CH history from a transaction that might roll PG back.
-        transaction.on_commit(self.collect_garbage)
-        return manifest
+        try:
+            return self.stage_and_publish(attempt)
+        finally:
+            # Consolidation runs after manifest publication and may reject a
+            # shared partition. A committed checkpoint still needs its durable
+            # history collection scheduled even when layout maintenance fails.
+            # Never delete CH history from a transaction that might roll PG back.
+            if MetricReadManifest.objects.filter(published_by=attempt).exists():
+                transaction.on_commit(self.collect_garbage)
 
     def collect_garbage(self):
         """Collect PG reachability first; its durable outbox survives CH failures.
@@ -1379,7 +1415,7 @@ class RefreshWriter:
             # it joins production refreshes. Copying full message inputs here can
             # exceed the batch cap even when the scalar metric payload is small.
             field_payloads = [
-                FrozenRows(tuple(p["rows"]))
+                FrozenRows.from_plan(p)
                 for p in self.plans(attempt, kind="field_values")
             ]
             overlay, overlay_params = payload_select(
