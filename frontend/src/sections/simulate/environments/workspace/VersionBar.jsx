@@ -18,7 +18,7 @@ import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
 // shows, after the agent under test when one is connected. Until runs are pinned
 // to versions, the agent shown is the environment's default agent version, not
 // a claim about which one a run used.
-export default function VersionBar({ env, envState }) {
+export default function VersionBar({ env, envState, action = null }) {
   const subject = env?.testSubject;
   const enabled = Boolean(env?.versioning?.enabled);
   const { data, error } = useEnvironmentVersions(env?.id, {
@@ -90,7 +90,10 @@ export default function VersionBar({ env, envState }) {
                 {versionBar.envPrefix}{" "}
                 <Box
                   component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
+                  sx={{
+                    color: "text.primary",
+                    fontWeight: "fontWeightSemiBold",
+                  }}
                 >
                   {envLabel}
                 </Box>
@@ -118,7 +121,10 @@ export default function VersionBar({ env, envState }) {
                 {versionBar.agentPrefix}{" "}
                 <Box
                   component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
+                  sx={{
+                    color: "text.primary",
+                    fontWeight: "fontWeightSemiBold",
+                  }}
                 >
                   {agentLabel}
                 </Box>
@@ -136,7 +142,10 @@ export default function VersionBar({ env, envState }) {
                 {versionBar.suitePrefix}{" "}
                 <Box
                   component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
+                  sx={{
+                    color: "text.primary",
+                    fontWeight: "fontWeightSemiBold",
+                  }}
                 >
                   {named(suiteV)}
                 </Box>
@@ -219,6 +228,7 @@ export default function VersionBar({ env, envState }) {
           {versionBar.scenariosShared(scenarioCount)}
         </Typography>
       </Tooltip>
+      {action}
     </Stack>
   );
 }
@@ -236,4 +246,6 @@ VersionBar.propTypes = {
   envState: PropTypes.shape({
     scenarios: PropTypes.arrayOf(PropTypes.any),
   }),
+  // What sits at the bar's right: the unsaved edits.
+  action: PropTypes.node,
 };

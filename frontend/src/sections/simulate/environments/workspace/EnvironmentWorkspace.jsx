@@ -40,6 +40,7 @@ import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
 import VersionBar from "./VersionBar";
 import DraftBar from "./drafts/DraftBar";
+import ReviewChangesDrawer from "./drafts/ReviewChangesDrawer";
 import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import RunDialog from "./run/RunDialog";
@@ -136,6 +137,7 @@ export default function EnvironmentWorkspace() {
   const pendingSubmission = useRef(null);
   // { ids, trials, initialPicks, seed } of the run awaiting version picks.
   const [runDialog, setRunDialog] = useState(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const runMutation = useMutation({
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
@@ -603,16 +605,19 @@ export default function EnvironmentWorkspace() {
 
       <SystemBanners env={env} />
       {!detailLoading && !detailFailed && (
-        <VersionBar env={env} envState={envState} />
+        <VersionBar
+          env={env}
+          envState={envState}
+          action={
+            <DraftBar
+              env={env}
+              busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
+              rebuilding={chat.rebuildHold}
+              onReview={() => setReviewOpen(true)}
+            />
+          }
+        />
       )}
-      <DraftBar
-        env={env}
-        busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
-        rebuilding={chat.rebuildHold}
-        onViewChanges={(piece, id) =>
-          setTab("versions", { version: `${piece}:${id}` })
-        }
-      />
 
       {/* A template-seeded env is read-only until forked — the banner states the
           lock and offers the fork. */}
@@ -693,6 +698,16 @@ export default function EnvironmentWorkspace() {
         </ChatSplitPane>
       </Box>
       {runDialogEl}
+      {reviewOpen && (
+        <ReviewChangesDrawer
+          open
+          env={env}
+          canEdit={!locked}
+          onClose={() => setReviewOpen(false)}
+          onSaved={() => setReviewOpen(false)}
+          onOpenTab={setTab}
+        />
+      )}
     </Box>
   );
 }
