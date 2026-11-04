@@ -1,4 +1,5 @@
 import React from "react";
+import ObservedUsageValue from "./ObservedUsageValue";
 import PropTypes from "prop-types";
 import { Box, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -72,6 +73,14 @@ BreakdownTooltip.propTypes = {
 
 const CostCell = ({ value, data }) => {
   const totalCost = value ?? data?.cost;
+  if (data?._captureCoverage?.coverage_unknown) {
+    return (
+      <ObservedUsageValue
+        coverage={data._captureCoverage}
+        value={Number.isFinite(totalCost) ? fmt(totalCost) : "Unknown"}
+      />
+    );
+  }
   const promptTokens = data?.prompt_tokens ?? 0;
   const completionTokens = data?.completion_tokens ?? 0;
   const total = promptTokens + completionTokens || 1;

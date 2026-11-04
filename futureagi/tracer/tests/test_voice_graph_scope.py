@@ -128,6 +128,7 @@ CREATE TABLE spans (
     prompt_tokens Int32 DEFAULT 0,
     completion_tokens Int32 DEFAULT 0,
     latency_ms Int32 DEFAULT 10,
+    attrs_string Map(LowCardinality(String), String) DEFAULT map(),
     is_deleted UInt8 DEFAULT 0,
     _version UInt64 DEFAULT 1
 ) ENGINE = ReplacingMergeTree(_version, is_deleted)
