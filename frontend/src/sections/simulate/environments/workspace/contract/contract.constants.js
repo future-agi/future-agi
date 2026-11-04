@@ -169,6 +169,7 @@ export const CONTRACT_COPY = {
       name: "Name",
       nameHelp: "What others call them, such as Priya Raman",
       role: "Role (optional)",
+      roleRequired: "Role",
       roleHelp:
         "Who they are, in a few words, such as a manager or a family member",
       atLimit: (max) => `At most ${max} characters`,

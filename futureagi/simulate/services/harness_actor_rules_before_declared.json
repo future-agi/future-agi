@@ -115,6 +115,20 @@
     "audio_handoff": "someone who takes the phone from the person for a few turns to say something of their own, then hands it back; the person's request stays the person's, so they never carry it on, confirm it or finish it",
     "ivr": "a phone menu on the person's own line that answers a call the agent places, before the person, and puts the call through to them"
   },
+  "channel_modalities": {
+    "audio_mix": [
+      "voice"
+    ],
+    "audio_handoff": [
+      "voice"
+    ],
+    "ivr": [
+      "voice"
+    ]
+  },
+  "equal_when_set": {
+    "persona.name": "name"
+  },
   "formats": {
     "actors.json": "futureagi.actors.v1"
   },
@@ -339,11 +353,6 @@
           "title": "Surface",
           "type": "string"
         },
-        "play": {
-          "default": "scheduled",
-          "title": "Play",
-          "type": "string"
-        },
         "permitted_actions": {
           "items": {
             "type": "string"
@@ -399,19 +408,6 @@
           "additionalProperties": true,
           "title": "Provenance",
           "type": "object"
-        },
-        "card": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Card"
         }
       },
       "required": [
@@ -426,25 +422,111 @@
       "properties": {
         "id": {
           "title": "Id",
-          "type": "string"
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,64}$",
+          "minLength": 1
         },
         "name": {
           "maxLength": 80,
           "title": "Name",
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "role": {
           "default": "",
           "maxLength": 160,
           "title": "Role",
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "channel": {
           "title": "Channel",
-          "type": "string"
+          "type": "string",
+          "enum": [
+            "audio_handoff",
+            "audio_mix",
+            "ivr"
+          ]
         },
         "persona": {
-          "additionalProperties": true,
+          "description": "The simulated caller, in the same shape used by existing voice scenarios.\n\nA persona controls how the caller pursues a scenario's task. The task itself remains on\n``Scenario.instruction`` so the harness can vary either one without conflating them.",
+          "properties": {
+            "name": {
+              "default": "",
+              "title": "Name",
+              "type": "string"
+            },
+            "gender": {
+              "default": "",
+              "title": "Gender",
+              "type": "string"
+            },
+            "age_group": {
+              "default": "",
+              "title": "Age Group",
+              "type": "string"
+            },
+            "occupation": {
+              "default": "",
+              "title": "Occupation",
+              "type": "string"
+            },
+            "location": {
+              "default": "",
+              "title": "Location",
+              "type": "string"
+            },
+            "personality": {
+              "default": "",
+              "title": "Personality",
+              "type": "string"
+            },
+            "communication_style": {
+              "default": "",
+              "title": "Communication Style",
+              "type": "string"
+            },
+            "initial_message": {
+              "default": "",
+              "title": "Initial Message",
+              "type": "string"
+            },
+            "languages": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Languages",
+              "type": "array"
+            },
+            "accent": {
+              "default": "",
+              "title": "Accent",
+              "type": "string"
+            },
+            "multilingual": {
+              "default": false,
+              "title": "Multilingual",
+              "type": "boolean"
+            },
+            "metadata": {
+              "additionalProperties": true,
+              "title": "Metadata",
+              "type": "object"
+            },
+            "scripted_caller": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Scripted Caller"
+            }
+          },
           "title": "Persona",
           "type": "object"
         },
@@ -466,6 +548,7 @@
       "required": [
         "id",
         "name",
+        "role",
         "channel"
       ],
       "title": "SubActor",

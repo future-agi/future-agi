@@ -59,6 +59,8 @@ class ActorRules(TypedDict, total=False):
     loudness: dict[str, Any]
     distinct_from_caller: list[str]
     channels: dict[str, str]
+    channel_modalities: dict[str, list[str]]
+    equal_when_set: dict[str, str]
     formats: dict[str, str]
     brief_inputs: list[list[str]]
     situation_before: str
@@ -261,12 +263,20 @@ def _sharing_the_caller(
     return problems
 
 
+def _modality(files: dict[str, bytes]) -> str | None:
+    """The agent's modality as authoring reported it; unknown before then, so no channel is refused for it."""
+    contract = _read_json(files, "contract.json")
+    modality = contract.get("modality") if isinstance(contract, dict) else None
+    return str(modality).strip().lower() or None if modality else None
+
+
 def _new_choices(
     before: ActorRecord | None,
     after: ActorRecord,
     files: dict[str, bytes],
     rules: ActorRules,
     suite_files: dict[str, bytes] | None = None,
+    modality: str | None = None,
 ) -> list[str]:
     """Only what this edit adds must exist here, so an actor written elsewhere can still be edited."""
     before = before or {}
@@ -274,14 +284,21 @@ def _new_choices(
     problems = []
     if _is_sub_actor(after):
         channels = rules.get("channels") or {}
-        if (
-            after.get("channel") != before.get("channel")
-            and channels
-            and after.get("channel") not in channels
-        ):
-            problems.append(
-                f"{actor_id}'s channel {after.get('channel')!r} is not one of: {', '.join(channels)}."
-            )
+        channel = after.get("channel")
+        listed = (
+            rules["records"][SUB_ACTORS_FILE].get("properties", {}).get("channel", {})
+        )
+        reaches = (rules.get("channel_modalities") or {}).get(channel)
+        if channel != before.get("channel"):
+            # A schema that lists the channels already names an unknown one.
+            if channels and channel not in channels and "enum" not in listed:
+                problems.append(
+                    f"{actor_id}'s channel {channel!r} is not one of: {', '.join(channels)}."
+                )
+            if modality and reaches is not None and modality not in reaches:
+                problems.append(
+                    f"{actor_id} cannot reach a {modality} agent through {channel}; choose another channel."
+                )
         return problems + _sharing_the_caller(before, after, suite_files or {}, rules)
     known = [one["action"] for one in world_actions(files, rules)]
     old = set(before.get("permitted_actions") or [])
@@ -321,6 +338,8 @@ def _reason(error: jsonschema.ValidationError) -> str:
         return f"{broken.instance!r} is not valid; use {described}"
     if broken.validator == "maxLength":
         return f"use at most {broken.validator_value} characters"
+    if broken.validator == "enum":
+        return f"{broken.instance!r} is not one of: {', '.join(map(str, broken.validator_value))}"
     if broken.validator == "minLength":
         return "it cannot be empty"
     return broken.message
@@ -377,6 +396,16 @@ def _record_problems(
             else f"{actor_id}:"
         )
         problems.append(f"{subject} {_reason(error)}.")
+    for path, field in (rules.get("equal_when_set") or {}).items():
+        named = _value_at(actor, path)
+        if (
+            isinstance(named, str)
+            and named.strip()
+            and named.strip() != actor.get(field)
+        ):
+            problems.append(
+                f"{actor_id}'s {path} is {named.strip()!r} but its {field} is {actor.get(field)!r}; make them the same."
+            )
     if new_id and actor_id in rules.get("reserved_ids", []):
         problems.append(f"{actor_id!r} is reserved; give the actor another id.")
     return problems
@@ -590,6 +619,7 @@ def write_actor_edit(
             environment_files,
             rules,
             suite_files,
+            _modality(environment_files),
         )
     if problems:
         raise HostedHarnessError("actor_invalid", " ".join(problems), status_code=400)

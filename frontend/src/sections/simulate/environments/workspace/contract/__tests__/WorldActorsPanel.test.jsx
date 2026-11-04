@@ -310,6 +310,26 @@ describe("WorldActorsPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("needs a role on the caller's side when the record schema requires one", () => {
+    actorsData = cast([], {
+      record_schemas: {
+        "actors.json": { properties: { id: { pattern: "^[a-z_]{1,64}$" } } },
+        "sub_actors.json": { required: ["id", "name", "role", "channel"] },
+      },
+    });
+    render(<WorldActorsPanel envId="env-1" callerSide />);
+    fireEvent.click(screen.getByText("Add someone on the caller's side"));
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Jordan" },
+    });
+    const save = screen.getByRole("button", { name: "Save to draft" });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Role"), {
+      target: { value: "the caller's colleague" },
+    });
+    expect(save).not.toBeDisabled();
+  });
+
   it("adds someone on the caller's side with a channel and its loudness", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" callerSide />);

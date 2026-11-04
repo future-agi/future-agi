@@ -124,6 +124,11 @@ export default function ActorForm({
   const rule = idRule(context.records);
   const idInvalid = !existing && Boolean(rule) && !rule.test(typedId);
   const nameMissing = !value("name", actor?.name || "").trim();
+  // The record schema this actor is checked against, as its environment's rules declare it.
+  const schema =
+    context.records[callerSide ? "sub_actors.json" : "actors.json"] || {};
+  const needsRole = (schema.required || []).includes("role");
+  const roleMissing = needsRole && !value("role", actor?.role || "").trim();
   // The channels with a loudness, as the rules give them.
   const loud = (one) => (context.loudness.channels || []).includes(one);
   const save = () => {
@@ -204,9 +209,7 @@ export default function ActorForm({
   };
 
   // A field's length limit is the one its record's schema declares, when it declares one.
-  const limit = (name) =>
-    context.records[callerSide ? "sub_actors.json" : "actors.json"]
-      ?.properties?.[name]?.maxLength;
+  const limit = (name) => schema.properties?.[name]?.maxLength;
   const bounded = (name, initial, helperText) => {
     const max = limit(name);
     return {
@@ -276,7 +279,7 @@ export default function ActorForm({
           })}
           {text(
             "role",
-            F.role,
+            needsRole ? F.roleRequired : F.role,
             actor.role || "",
             bounded("role", actor.role || "", F.roleHelp),
           )}
@@ -519,7 +522,13 @@ export default function ActorForm({
             <Button onClick={close}>{F.cancel}</Button>
             <Button
               variant="contained"
-              disabled={busy || Boolean(takenBy) || idInvalid || nameMissing}
+              disabled={
+                busy ||
+                Boolean(takenBy) ||
+                idInvalid ||
+                nameMissing ||
+                roleMissing
+              }
               onClick={save}
             >
               {F.save}

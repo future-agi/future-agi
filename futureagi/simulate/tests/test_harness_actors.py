@@ -293,7 +293,12 @@ def test_an_actor_a_scenario_includes_is_not_removed(
     _add(
         auth_client,
         environment,
-        {"id": "colleague", "name": "Jordan", "channel": "audio_mix"},
+        {
+            "id": "colleague",
+            "name": "Jordan",
+            "role": "colleague",
+            "channel": "audio_mix",
+        },
     )
     _add(auth_client, environment, {"id": "coworker", "name": "Sam"})
 
@@ -654,6 +659,7 @@ def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is
     sub_actor = {
         "id": "colleague",
         "name": "Jordan",
+        "role": "colleague",
         "side": "caller",
         "channel": "audio_mix",
     }
@@ -684,7 +690,7 @@ def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is
         "actor_invalid",
     )
     assert (
-        "colleague's channel 'smoke_signal' is not one of: audio_mix, audio_handoff, ivr."
+        "colleague's channel: 'smoke_signal' is not one of: audio_handoff, audio_mix, ivr."
         in bad_channel.json()["message"]
     )
 
@@ -1039,7 +1045,12 @@ def test_a_replace_never_moves_an_actor_between_the_call_and_the_world(
     user, workspace, storage, auth_client
 ):
     environment = _built(user, workspace, "actors-no-move")
-    colleague = {"id": "colleague", "name": "Jordan", "channel": "audio_mix"}
+    colleague = {
+        "id": "colleague",
+        "name": "Jordan",
+        "role": "colleague",
+        "channel": "audio_mix",
+    }
     _add(auth_client, environment, colleague)
     _add(auth_client, environment, {"id": "coworker", "name": "Sam"})
     url = f"{BASE}/{environment.id}/actors/"
@@ -1163,3 +1174,138 @@ def test_an_edit_stamps_only_the_fields_it_changed(
     ]
     assert stored["provenance"]["origin"] == "editor"
     assert stored["provenance"]["fields"] == {"name": "chat", "goal": "editor"}
+
+
+def test_a_world_actor_s_actions_come_from_the_transcript_and_never_join_the_agent_s_calls(
+    organization, workspace
+):
+    from datetime import UTC, datetime
+
+    from simulate.models import CallExecution
+    from simulate.services.hosted_harness_ingestion import WORLD_ACTIONS_KEY
+    from simulate.services.run_results_v3 import function_calls
+    from simulate.tests.test_harness_sub_actors import _ingest
+
+    at = datetime(2026, 9, 29, 9, 0, tzinfo=UTC).timestamp()
+    approve = {
+        "name": "crm.approve_discount",
+        "arguments": {"deal": 7},
+        "ok": False,
+        "error": "not permitted",
+        "refused": True,
+        "at": at + 3,
+        "action_id": "a-1",
+        "actor_id": "manager",
+        "actor_name": "Priya",
+        "outcome": "refused",
+    }
+    metadata = {WORLD_ACTIONS_KEY: [{"stale": True}]}
+    call = _ingest(
+        organization,
+        workspace,
+        "actors-world-actions-transcript",
+        CallExecution.SimulationCallType.VOICE,
+        {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "Hello",
+                    "started_speaking_at": at + 1,
+                    "stopped_speaking_at": at + 2,
+                }
+            ],
+            "world_actors": {"actions": [approve, "not a row"]},
+        },
+        metadata,
+    )
+    call.call_metadata = metadata
+    call.provider_call_data = {
+        "livekit": {
+            "tool_calls": [
+                {"name": "lookup", "action_id": "a-0", "outcome": "committed"}
+            ]
+        }
+    }
+
+    [stored] = metadata[WORLD_ACTIONS_KEY]
+    calls = function_calls(call)
+
+    assert stored["start_time_ms"] == 3000 and stored["actor_id"] == "manager"
+    assert [
+        one["name"] for one in call.provider_call_data["livekit"]["tool_calls"]
+    ] == ["lookup"]
+    assert [(one["name"], one.get("actor_id")) for one in calls] == [
+        ("lookup", None),
+        ("crm.approve_discount", "manager"),
+    ]
+
+
+def test_a_call_stored_with_actor_rows_in_its_tool_calls_still_lists_them():
+    from simulate.services.run_results_v3 import function_calls
+
+    row = {
+        "name": "crm.approve_discount",
+        "actor_id": "manager",
+        "actor_name": "Priya",
+        "refused": True,
+    }
+    call = type(
+        "Call",
+        (),
+        {
+            "provider_call_data": {"livekit": {"tool_calls": [row]}},
+            "call_metadata": None,
+        },
+    )()
+
+    assert function_calls(call) == [row]
+
+
+def test_a_sub_actor_follows_the_sealed_persona_role_and_channel_rules(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-sealed-persona")
+    chat = record_tests._environment(user, workspace, "actors-sealed-chat")
+    record_authoring(
+        chat,
+        _authoring(contract={**CRM_CONTRACT, "modality": "chat"}),
+        origin="authoring",
+    )
+    colleague = {
+        "id": "colleague",
+        "name": "Jordan",
+        "role": "the caller's colleague",
+        "channel": "audio_mix",
+    }
+
+    bad_persona = _add(
+        auth_client, environment, {**colleague, "persona": {"age_group": 30}}
+    )
+    other_name = _add(
+        auth_client, environment, {**colleague, "persona": {"name": "Sam"}}
+    )
+    no_role = _add(auth_client, environment, {**colleague, "role": ""})
+    on_chat = _add(auth_client, chat, colleague)
+
+    assert (bad_persona.status_code, bad_persona.json()["error"]) == (
+        400,
+        "actor_invalid",
+    )
+    assert "colleague's persona.age_group:" in bad_persona.json()["message"]
+    assert (
+        "colleague's persona.name is 'Sam' but its name is 'Jordan'; make them the same."
+        in other_name.json()["message"]
+    )
+    assert "colleague's role: it cannot be empty." in no_role.json()["message"]
+    assert (
+        "colleague cannot reach a chat agent through audio_mix; choose another channel."
+        in on_chat.json()["message"]
+    )
+    assert (
+        _add(
+            auth_client,
+            environment,
+            {**colleague, "persona": {"name": "Jordan", "age_group": "adult"}},
+        ).status_code
+        == 200
+    )
