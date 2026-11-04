@@ -274,11 +274,12 @@ def _fix(pairing: Pairing, row: RowView) -> Fix | None:
         }
     if row["status"] == "untested":
         gate = row["blocked_by"]
+        labels = {one.id: one.label for one in CATALOGUE}
         return {
             "type": "gate",
             "target": gate,
-            "action": f"Fix {gate} first",
-            "would": f"{row['id']} is checked once {gate} is Supported",
+            "action": f"Fix {labels.get(gate, gate)} first",
+            "would": f"{row['label']} is checked once {labels.get(gate, gate)} is Supported",
             "recheck": pair,
         }
     target = row["targets"][0]["name"] if row["targets"] else None

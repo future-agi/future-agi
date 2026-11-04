@@ -27,7 +27,7 @@ from simulate.services.harness_readiness.report import (
     readiness_report,
     recheck,
     resolve_pairing,
-    run_snapshot,
+    store_run_snapshot,
 )
 
 __all__ = [
@@ -46,6 +46,6 @@ __all__ = [
     "readiness_report",
     "recheck",
     "resolve_pairing",
-    "run_snapshot",
+    "store_run_snapshot",
     "structural_findings",
 ]

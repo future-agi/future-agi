@@ -8,14 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import tarfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 import structlog
 from django.core.cache import cache
-from minio.error import S3Error
 
 from simulate.models import (
     HarnessAgentVersionRuntime,
@@ -37,6 +35,10 @@ logger = structlog.get_logger(__name__)
 TOOL_CERTIFICATION = "generic-harness/tool-certification.json"
 ACTION_CERTIFICATION = "generic-harness/action-certification.json"
 _MAX_CERTIFICATION_BYTES = 8 * 1024 * 1024
+# An archive's files never change, so they are kept long; an unreadable one is tried
+# again soon.
+_FILES_TTL_SECONDS = 7 * 24 * 3600
+_UNREADABLE_TTL_SECONDS = 300
 _SANDBOX_SOURCES = frozenset(
     {
         HarnessAgentVersionRuntime.SourceKind.GITHUB,
@@ -76,7 +78,8 @@ def certified(bundle: HarnessAssembledBundle | None) -> bool:
 
 def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
     """The per-tool and per-action certification an archive holds, read once per
-    object: archives are content-addressed, so a key never changes what it holds."""
+    object: archives are content-addressed, so a key never changes what it holds. An
+    archive that cannot be read reads as holding neither, for a few minutes."""
     cache_key = (
         "harness-readiness-certification:"
         + hashlib.sha256(object_key.encode()).hexdigest()
@@ -90,18 +93,20 @@ def _certification_files(object_key: str) -> dict[str, list[Mapping[str, Any]]]:
             {TOOL_CERTIFICATION, ACTION_CERTIFICATION},
             _MAX_CERTIFICATION_BYTES,
         )
-    except (S3Error, tarfile.TarError) as exc:
+    except Exception as exc:  # noqa: BLE001 - storage, network or a truncated archive
         logger.warning(
             "harness_readiness_certification_unreadable",
             object_key=object_key,
             error=type(exc).__name__,
         )
-        return {"tools": [], "actions": []}
+        unreadable: dict[str, list[Mapping[str, Any]]] = {"tools": [], "actions": []}
+        cache.set(cache_key, unreadable, timeout=_UNREADABLE_TTL_SECONDS)
+        return unreadable
     files = {
         "tools": _items(_json(found.get(TOOL_CERTIFICATION)), "tools"),
         "actions": _items(_json(found.get(ACTION_CERTIFICATION)), "actions"),
     }
-    cache.set(cache_key, files, timeout=None)
+    cache.set(cache_key, files, timeout=_FILES_TTL_SECONDS)
     return files
 
 

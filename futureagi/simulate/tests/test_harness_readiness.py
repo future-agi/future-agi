@@ -1,10 +1,12 @@
 import json
 import uuid
+from unittest.mock import patch
 
 import pytest
 from django.core.cache import cache
 
 from simulate.models import (
+    AgentVersion,
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
@@ -12,6 +14,7 @@ from simulate.models import (
 )
 from simulate.serializers.harness_environment import HarnessCapabilityReportSerializer
 from simulate.services import harness_readiness
+from simulate.services.harness_readiness import report as report_module
 from simulate.services.harness_versioning import archives, assembly
 from simulate.tests.test_harness_agent_versions import _a1, _create
 from simulate.tests.test_harness_agent_versions import _environment as _agent_env
@@ -162,6 +165,14 @@ def _rows(report):
     return {row["id"]: row for row in report["rows"]}
 
 
+def _committed_run(environment, capture):
+    """A run of the defaults, with what follows its commit done."""
+    with capture(execute=True):
+        run = _run(environment)
+    run.refresh_from_db()
+    return run
+
+
 def _bundle(environment, agent=None):
     return harness_readiness.pair_bundle(_pairing(environment, agent))
 
@@ -199,11 +210,16 @@ class TestRows:
 
     def test_refused_probe_counts_as_passed(self, user, workspace, storage):
         environment = _environment(user, workspace, storage, "rd-refused")
+        # Refusals alone, and no probe count: only the refusal can make it pass.
         _certify(
             environment,
             storage,
+            checks={
+                name: value
+                for name, value in PASSED.items()
+                if name != "action_behavior"
+            },
             actions=[
-                {"action": "lookup_order", "status": "passed", "reason": ""},
                 {"action": "issue_refund", "status": "refused", "reason": "policy"},
             ],
         )
@@ -495,11 +511,13 @@ class TestPairs:
             "preflight_pending",
         )
 
-    def test_run_keeps_its_snapshot(self, user, workspace, storage):
+    def test_run_keeps_its_snapshot(
+        self, user, workspace, storage, django_capture_on_commit_callbacks
+    ):
         environment = _environment(user, workspace, storage, "rd-snapshot")
         _certify(environment, storage)
 
-        run = _run(environment)
+        run = _committed_run(environment, django_capture_on_commit_callbacks)
 
         snapshot = run.capability_snapshot
         assert snapshot["answer"]["kind"] == "ready"
@@ -510,6 +528,53 @@ class TestPairs:
         assert _report(environment)["answer"]["kind"] == "blocked"
         run.refresh_from_db()
         assert run.capability_snapshot == snapshot
+
+    def test_snapshot_is_read_after_the_run_commits_from_its_own_bundle(
+        self, user, workspace, storage, django_capture_on_commit_callbacks
+    ):
+        environment = _environment(user, workspace, storage, "rd-snapshot-after")
+        _certify(environment, storage)
+
+        with patch.object(
+            report_module, "read_evidence", wraps=report_module.read_evidence
+        ) as read:
+            with django_capture_on_commit_callbacks(execute=False) as callbacks:
+                run = _run(environment)
+            assert not read.called
+            for callback in callbacks:
+                callback()
+
+        run.refresh_from_db()
+        assert read.call_args.args[1].id == run.assembled_bundle_id
+        assert run.capability_snapshot["answer"]["kind"] == "ready"
+
+    def test_snapshot_reads_the_bundle_the_run_is_bound_to(
+        self, user, workspace, storage, django_capture_on_commit_callbacks
+    ):
+        environment = _environment(user, workspace, storage, "rd-snapshot-bundle")
+        _certify(environment, storage)
+
+        with patch.object(harness_readiness, "store_run_snapshot") as stored:
+            run = _committed_run(environment, django_capture_on_commit_callbacks)
+
+        assert stored.call_args.args[0] == run.id
+        assert stored.call_args.kwargs["bundle"].id == run.assembled_bundle_id
+
+    def test_an_unreadable_snapshot_never_fails_the_run(
+        self, user, workspace, storage, django_capture_on_commit_callbacks
+    ):
+        environment = _environment(user, workspace, storage, "rd-snapshot-error")
+        _certify(environment, storage)
+
+        with patch.object(
+            report_module,
+            "read_evidence",
+            side_effect=ConnectionError("storage unreachable"),
+        ):
+            run = _committed_run(environment, django_capture_on_commit_callbacks)
+
+        assert run.test_execution_id is not None
+        assert run.capability_snapshot is None
 
 
 def _get(auth_client, environment_id, **params):
@@ -718,11 +783,11 @@ class TestApi:
         assert HostedHarnessJob.no_workspace_objects.count() == jobs
 
     def test_run_header_shows_the_snapshot_it_was_created_with(
-        self, user, workspace, storage, auth_client
+        self, user, workspace, storage, auth_client, django_capture_on_commit_callbacks
     ):
         environment = _environment(user, workspace, storage, "rd-api-header")
         _certify(environment, storage)
-        run = _run(environment)
+        run = _committed_run(environment, django_capture_on_commit_callbacks)
         _built(environment, contract=PRODUCTION_ONLY)
 
         header = auth_client.get(
@@ -796,3 +861,117 @@ class TestDoneWhen:
             "blocked",
             "agent_version",
         )
+
+
+class TestReviewFollowUps:
+    def test_a_gate_fix_names_the_gate_by_its_label(self, user, workspace, storage):
+        environment = _environment(user, workspace, storage, "rd-gate-label")
+        _certify(environment, storage, checks={**PASSED, "processes": "failed"})
+        labels = {one.id: one.label for one in harness_readiness.CATALOGUE}
+
+        fix = _rows(_report(environment))["message"]["fix"]
+
+        assert fix["target"] == "start"
+        assert fix["action"] == f"Fix {labels['start']} first"
+        assert "start" not in fix["action"].replace(labels["start"], "")
+
+    @pytest.mark.parametrize(
+        ("code", "state", "answer"),
+        [
+            ("authoring_runtime_validation_failed", "failed", "blocked"),
+            ("sandbox_disappeared", "retry", "ready"),
+        ],
+    )
+    def test_only_a_check_that_ran_reads_a_failed_pairing(
+        self, user, workspace, storage, code, state, answer
+    ):
+        environment = _environment(user, workspace, storage, f"rd-run-failed-{state}")
+        HarnessAssembledBundle._base_manager.filter(id=_row(environment).id).update(
+            state="failed", object_key=None, error={"code": code}
+        )
+        _built(environment)
+
+        report = _report(environment)
+
+        assert report["validation"]["state"] == state
+        assert report["validation"]["error"] == {"code": code}
+        assert report["answer"]["kind"] == answer
+
+    def test_an_unreadable_archive_is_read_again_only_after_a_while(
+        self, user, workspace, storage
+    ):
+        from simulate.services.harness_readiness import evidence
+
+        environment = _environment(user, workspace, storage, "rd-archive-down")
+        _certify(environment, storage)
+
+        with patch.object(
+            evidence.archives, "get_archive", side_effect=EOFError("truncated")
+        ) as fetched:
+            first = _report(environment)
+            second = _report(environment)
+
+        assert fetched.call_count == 1
+        assert first["pairing"]["evidence"] == "pair_certificate"
+        assert _rows(second)["tool_routing"]["targets"] == []
+
+    def test_recheck_needs_build_usage_unless_already_certified(
+        self, user, workspace, storage, auth_client
+    ):
+        from ee.usage.exceptions import UsageLimitExceeded
+        from ee.usage.schemas.events import CheckResult
+
+        environment, a2 = _with_a2(user, workspace, storage, "rd-api-usage")
+        jobs = HostedHarnessJob.no_workspace_objects.count()
+        refusal = UsageLimitExceeded(
+            CheckResult(
+                allowed=False, reason="out of credits", error_code="BUDGET_PAUSED"
+            )
+        )
+
+        with patch(
+            "simulate.services.harness_usage._require_harness_action",
+            side_effect=refusal,
+        ) as usage:
+            refused = _recheck(auth_client, environment.id, agent_version_id=str(a2.id))
+            ready = _recheck(auth_client, environment.id)
+
+        assert refused.status_code == 402, refused.content
+        assert usage.call_args.args == (
+            str(environment.organization_id),
+            "harness_authoring",
+        )
+        assert ready.status_code == 202, ready.content
+        assert ready.json()["validation"]["state"] == "ready"
+        assert HostedHarnessJob.no_workspace_objects.count() == jobs
+
+    def test_another_workspace_cannot_read_or_recheck_the_environment(
+        self, user, workspace, storage, auth_client
+    ):
+        from accounts.models import Workspace
+
+        environment = _environment(user, workspace, storage, "rd-api-tenant")
+        elsewhere = Workspace.objects.create(
+            name="Other workspace",
+            organization=user.organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        other_agent = AgentVersion.no_workspace_objects.create(
+            agent_definition=_a1(environment).agent_definition,
+            organization=environment.organization,
+            workspace=elsewhere,
+            description="elsewhere",
+            commit_message="elsewhere",
+            status="active",
+        )
+
+        picked = _get(auth_client, environment.id, agent_version_id=other_agent.id)
+        auth_client.set_workspace(elsewhere)
+        read = _get(auth_client, environment.id)
+        rechecked = _recheck(auth_client, environment.id)
+
+        assert picked.status_code == 422, picked.content
+        assert picked.json()["error"] == "version_not_pickable"
+        assert (read.status_code, rechecked.status_code) == (404, 404)

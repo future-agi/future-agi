@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+import structlog
 from django.utils import timezone
 
 from simulate.models import (
@@ -54,6 +55,8 @@ from simulate.services.hosted_harness import (
     _pin_ids,
     agent_version_pickable,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 class ReadinessReport(TypedDict):
@@ -149,7 +152,8 @@ def _validation(
     pairing: Pairing, bundle: HarnessAssembledBundle | None
 ) -> validation.ValidationView:
     """Where the pairing's validation stands; a ready or failed bundle reads so even
-    where validation cannot run now."""
+    where validation cannot run now. Only a check that ran fails a pairing: a bundle
+    an ordinary run failed for any other reason reads ``retry``."""
     job = (
         HostedHarnessJob.no_workspace_objects.filter(
             assembled_bundle_id=bundle.id, payload__metadata__certify_only=True
@@ -160,10 +164,13 @@ def _validation(
         else None
     )
     error = (bundle.error or {}) if bundle is not None else {}
+    failed = bundle is not None and bundle.state == HarnessAssembledBundle.State.FAILED
     if certified(bundle):
         state = "ready"
-    elif bundle is not None and bundle.state == HarnessAssembledBundle.State.FAILED:
+    elif failed and error.get("code") in validation.CHECK_FAILURES:
         state = "failed"
+    elif failed:
+        state = "retry"
     elif bundle is not None and validation.live_validation(bundle.id) is not None:
         state = "validating"
     elif pairing.agent_version is None or not validation.can_validate(
@@ -180,7 +187,9 @@ def _validation(
         if "failed_actions" in error:
             shown["failed_actions"] = error["failed_actions"]
     elif state == "retry":
-        shown = {"code": (error.get("last_attempt") or {}).get("code")}
+        shown = {
+            "code": (error.get("last_attempt") or {}).get("code", error.get("code"))
+        }
     metadata = ((job.payload or {}).get("metadata") or {}) if job else {}
     return {
         "state": state,
@@ -198,8 +207,16 @@ def recheck(pairing: Pairing) -> validation.ValidationView:
 
     A failed pairing is reset to pending first. ``unavailable`` when validation cannot
     run here, or the agent cannot start until its preflight passes.
+
+    Raises:
+        UsageLimitExceeded: the organization cannot spend on a build sandbox, which a
+            validation runs in; a pairing already certified starts none.
     """
+    from simulate.services.harness_usage import require_harness_authoring
+
     agent = pairing.agent_version
+    if not certified(pair_bundle(pairing)):
+        require_harness_authoring(str(pairing.environment.organization_id))
     started = (
         validation.start_validation(
             pairing.environment,
@@ -222,9 +239,15 @@ def recheck(pairing: Pairing) -> validation.ValidationView:
     return started.as_view()
 
 
-def readiness_report(pairing: Pairing) -> ReadinessReport:
-    """The pairing's readiness, computed now from its evidence. No writes."""
-    bundle = pair_bundle(pairing)
+def readiness_report(
+    pairing: Pairing, *, bundle: HarnessAssembledBundle | None = None
+) -> ReadinessReport:
+    """The pairing's readiness, computed now from its evidence. No writes.
+
+    ``bundle`` is the pairing's bundle when the caller holds it already (a run's own);
+    otherwise it is looked up as a run of the pairing would.
+    """
+    bundle = bundle or pair_bundle(pairing)
     evidence = read_evidence(pairing, bundle)
     found = rows(pairing, evidence, bundle)
     view = _validation(pairing, bundle)
@@ -267,21 +290,35 @@ def readiness_report(pairing: Pairing) -> ReadinessReport:
     }
 
 
-def run_snapshot(
+def store_run_snapshot(
+    run_id: Any,
     environment: HostedHarnessJob,
     *,
     agent_version: AgentVersion | None,
     environment_version: HarnessEnvironmentVersion,
     suite_version: HarnessSuiteVersion,
     runtime: HarnessAgentVersionRuntime | None,
-) -> ReadinessReport:
-    """The readiness a new run keeps, for the versions it is pinned to."""
-    return readiness_report(
-        Pairing(
-            environment=environment,
-            agent_version=agent_version,
-            environment_version=environment_version,
-            suite_version=suite_version,
-            runtime=runtime,
+    bundle: HarnessAssembledBundle | None,
+) -> None:
+    """Keep on a new run the readiness of the versions and bundle it is pinned to.
+
+    Best effort, and called once the run is committed, outside any lock: reading the
+    evidence may download an archive, and a run whose snapshot cannot be read keeps
+    none rather than failing.
+    """
+    try:
+        snapshot = readiness_report(
+            Pairing(
+                environment=environment,
+                agent_version=agent_version,
+                environment_version=environment_version,
+                suite_version=suite_version,
+                runtime=runtime,
+            ),
+            bundle=bundle,
         )
-    )
+        HostedHarnessJob.no_workspace_objects.filter(id=run_id).update(
+            capability_snapshot=snapshot
+        )
+    except Exception:
+        logger.exception("harness_run_snapshot_failed", run_id=str(run_id))
