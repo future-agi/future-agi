@@ -481,6 +481,9 @@ const AgentsIndexRedirect = lazyWithRetry(
 const ConnectedAgentsTab = lazyWithRetry(
   () => import("src/sections/agent-playground/ConnectedAgentsTab"),
 );
+const ConnectAgentPage = lazyWithRetry(
+  () => import("src/sections/agent-playground/connect/ConnectAgentPage"),
+);
 const PlaygroundAgentsTab = lazyWithRetry(
   () => import("src/sections/agent-playground/PlaygroundAgentsTab"),
 );
@@ -1339,6 +1342,7 @@ export const dashboardRoutes = (
             { path: "playground", element: <PlaygroundAgentsTab /> },
           ],
         },
+        { path: "connect", element: <ConnectAgentPage /> },
         {
           path: "connected/:agentId",
           element: <AgentDetailLayout />,

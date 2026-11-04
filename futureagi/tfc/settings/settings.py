@@ -1001,6 +1001,9 @@ ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
 GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
 GITHUB_APP_WEBHOOK_SECRET = os.getenv("GITHUB_APP_WEBHOOK_SECRET", "")
+GITHUB_APP_SLUG = os.getenv("GITHUB_APP_SLUG", "")
+GITHUB_APP_CLIENT_ID = os.getenv("GITHUB_APP_CLIENT_ID", "")
+GITHUB_APP_CLIENT_SECRET = os.getenv("GITHUB_APP_CLIENT_SECRET", "")
 ALK_HOSTED_SOURCE_MAX_BYTES = int(
     os.getenv("ALK_HOSTED_SOURCE_MAX_BYTES", str(256 * 1024 * 1024))
 )
@@ -1175,6 +1178,24 @@ HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
 HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
     "HARNESS_VERSIONING_NUDGES_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+# Accepting source.subfolder on a build; only once the sandbox's agent-learning-kit
+# reads it, else the harness would silently build from the repository root.
+HARNESS_SOURCE_SUBFOLDER_ENABLED = os.getenv(
+    "HARNESS_SOURCE_SUBFOLDER_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Reading every new code version of an Agents-page agent in the sandbox before its
+# check; only once the sandbox's agent-learning-kit has the read-only mode. Off, a
+# version keeps today's check and its document arrives with its first build.
+HARNESS_AGENT_READING_ENABLED = os.getenv(
+    "HARNESS_AGENT_READING_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Starting a build from a version's stored reading instead of reading the agent
+# again; only once the sandbox's agent-learning-kit takes --seed-contract.
+HARNESS_SEED_CONTRACT_ENABLED = os.getenv(
+    "HARNESS_SEED_CONTRACT_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# How long one reading of an agent, or one scan for the agents in a source, may run.
+ALK_HOSTED_READING_TIMEOUT = int(os.getenv("ALK_HOSTED_READING_TIMEOUT", "900"))
 # Most scenarios × trials one simulation Run may submit.
 HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.

@@ -1,6 +1,10 @@
 import { useMemo } from "react";
 import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
-import { toVersion, useAgentVersion } from "src/api/agents/agentDetail";
+import {
+  pollWhileChecking,
+  toVersion,
+  useAgentVersion,
+} from "src/api/agents/agentDetail";
 
 /**
  * The agent's versions a page at a time, newest first. A selected version
@@ -11,7 +15,10 @@ import { toVersion, useAgentVersion } from "src/api/agents/agentDetail";
  * and the timeline always agree and rows never jump.
  */
 export default function usePinnedVersions(agentId, versionId) {
-  const list = useAgentDefinitionVersions({ selectedAgentId: agentId });
+  const list = useAgentDefinitionVersions({
+    selectedAgentId: agentId,
+    refetchInterval: pollWhileChecking,
+  });
   const selected = useAgentVersion(agentId, versionId);
   const loaded = useMemo(
     () =>

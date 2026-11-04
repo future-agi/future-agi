@@ -867,6 +867,27 @@ def _no_facts(source: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _compatibility(environment: HostedHarnessJob, new: AgentVersion) -> dict[str, Any]:
+    """How the offered version fits the world this environment was built from; a
+    reason, never a failure, when a document can't be read."""
+    from simulate.services.agent_compatibility import (
+        UNMEASURED,
+        environment_compatibility,
+    )
+
+    try:
+        return environment_compatibility(environment, new)
+    except Exception as exc:  # noqa: BLE001 - a reason on the card, never a retry
+        logger.warning(
+            "harness_nudge_compatibility_failed environment=%s version=%s error=%s",
+            environment.id,
+            new.id,
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return {"status": UNMEASURED, "reason": "compatibility_error", "base": None}
+
+
 def diff_facts(
     environment: HostedHarnessJob, base: AgentVersion | None, new: AgentVersion
 ) -> dict[str, Any]:
@@ -885,6 +906,7 @@ def diff_facts(
     }
     if base_runtime is None:
         return facts
+    facts["compatibility"] = _compatibility(environment, new)
     if (
         base_runtime.prompt_hash
         and new_runtime.prompt_hash
@@ -1029,6 +1051,31 @@ def _names(names: list[str]) -> str:
     return f"{shown} and {more} more" if more > 0 else shown
 
 
+def definition_changes(facts: Mapping[str, Any]) -> list[str]:
+    """What the two stored agent documents say changed: tools by name, the model,
+    the prompt. Empty when the documents weren't compared."""
+    fit = facts.get("compatibility") or {}
+    parts = []
+    if fit.get("tools_added"):
+        parts.append(f"tools added {_names(list(fit['tools_added']))}")
+    if fit.get("tools_removed"):
+        parts.append(f"tools removed {_names(list(fit['tools_removed']))}")
+    if fit.get("tools_changed"):
+        parts.append(
+            "tools changed "
+            + _names([str(one.get("name")) for one in fit["tools_changed"]])
+        )
+    if fit.get("services_added"):
+        parts.append(f"outside services {_names(list(fit['services_added']))}")
+    if fit.get("rules_added"):
+        parts.append(f"{len(fit['rules_added'])} new rule(s)")
+    if fit.get("model_changed"):
+        parts.append("model")
+    if fit.get("prompt_changed") and not facts.get("prompt_changed"):
+        parts.append("prompt")
+    return parts
+
+
 def _changes(facts: Mapping[str, Any]) -> str:
     variables = facts.get("variables") or {}
     names = sorted({name for values in variables.values() for name in values or []})
@@ -1041,6 +1088,7 @@ def _changes(facts: Mapping[str, Any]) -> str:
             if facts.get("settings_changed")
             else ""
         ),
+        *definition_changes(facts),
     ]
     text = "; ".join(part for part in parts if part)
     return text or "source"

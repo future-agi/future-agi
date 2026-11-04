@@ -1,6 +1,10 @@
 import { useReducer } from "react";
 import { Box, Stack } from "@mui/material";
 import { parseGitHubInput } from "src/pages/dashboard/harness/requestMapper";
+import {
+  isValidSubfolder,
+  normalizeSubfolder,
+} from "src/api/simulate-environments/preflightPayload";
 import Field from "../components/Field";
 import Label from "../components/Label";
 import ChipCard from "../components/ChipCard";
@@ -30,7 +34,7 @@ const initial = {
   provider: DEFAULT_REPO_PROVIDER,
   repo: "",
   branch: DEFAULT_BRANCH,
-  entry: "",
+  subfolder: "",
   visibility: DEFAULT_REPO_VISIBILITY,
   installationId: "",
   envText: "",
@@ -54,7 +58,7 @@ export default function PanelSourceRepo() {
     dispatch({ field, value });
     build.resetPreflight();
   };
-  const { provider, repo, branch, entry, visibility, installationId, envText, egress, secretFiles, scenarioCount, observabilityEnabled } = form;
+  const { provider, repo, branch, subfolder, visibility, installationId, envText, egress, secretFiles, scenarioCount, observabilityEnabled } = form;
   const isPrivate = visibility === REPO_VISIBILITY.PRIVATE;
   // The repo must parse to owner/repo (or a GitHub URL) before we can preflight.
   // Only flag a non-empty, unparseable value so the field isn't red before typing.
@@ -62,14 +66,17 @@ export default function PanelSourceRepo() {
   const repoError = repo.trim() && !parsedRepo
     ? "Enter a repository as owner/repo or a GitHub URL."
     : "";
-  const canGo = !!parsedRepo;
+  const subfolderError = isValidSubfolder(subfolder)
+    ? ""
+    : "Enter a folder path inside the repository, like agents/support.";
+  const canGo = !!parsedRepo && !subfolderError;
 
   const buildSource = () => ({
     kind: "repo",
     provider,
     value: repo.trim(),
     ref: branch.trim() || DEFAULT_BRANCH,
-    entry: entry.trim(),
+    subfolder: normalizeSubfolder(subfolder),
     visibility,
     installationId: isPrivate ? (installationId.trim() || null) : null,
     envText: envText.trim() || null,
@@ -103,11 +110,13 @@ export default function PanelSourceRepo() {
           fullWidth
         />
         <Field
-          label="Entry path (optional)"
-          placeholder="src/agent/index.ts"
-          value={entry} onChange={set("entry")}
+          label="Agent folder (optional)"
+          placeholder="agents/support"
+          value={subfolder} onChange={set("subfolder")}
           mono
           fullWidth
+          error={subfolderError}
+          helper="Leave empty to build from the repository root."
         />
       </Stack>
       {/* TODO: hide Private once creation knows versioning is on: it then refuses

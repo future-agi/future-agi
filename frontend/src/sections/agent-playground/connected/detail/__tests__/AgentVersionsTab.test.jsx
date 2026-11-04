@@ -21,15 +21,32 @@ import { HOSTED_AGENT_DETAIL } from "src/api/agents/_fixtures/agentDetail";
 import AgentVersionsTab from "../AgentVersionsTab";
 
 vi.mock("src/utils/axios", () => ({
-  default: { get: vi.fn() },
+  default: { get: vi.fn(), post: vi.fn() },
   endpoints: {
     agentDefinitions: {
       detail: (id) => `/simulate/agent-definitions/${id}/`,
       versions: (id) => `/simulate/agent-definitions/${id}/versions/`,
       versionDetail: (id, v) =>
         `/simulate/agent-definitions/${id}/versions/${v}/`,
+      activateVersion: (id, v) =>
+        `/simulate/agent-definitions/${id}/versions/${v}/activate/`,
+      productionVersion: (id, v) =>
+        `/simulate/agent-definitions/${id}/versions/${v}/production/`,
+      retryVersion: (id, v) =>
+        `/simulate/agent-definitions/${id}/versions/${v}/retry/`,
+      discardVersion: (id, v) =>
+        `/simulate/agent-definitions/${id}/versions/${v}/discard/`,
     },
   },
+}));
+
+const auth = { role: "Owner" };
+vi.mock("src/auth/hooks", () => ({ useAuthContext: () => auth }));
+
+const enqueueSnackbar = vi.fn();
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useSnackbar: () => ({ enqueueSnackbar }),
 }));
 
 let currentLocation;
@@ -55,6 +72,7 @@ const renderTab = (search = "") =>
             path="/dashboard/agents/connected/:agentId/versions"
             element={<AgentVersionsTab />}
           />
+          <Route path="*" element={null} />
         </Routes>
         <LocationProbe />
       </MemoryRouter>
@@ -114,6 +132,9 @@ afterAll(() => {
 
 beforeEach(() => {
   axios.get.mockReset();
+  axios.post.mockReset();
+  enqueueSnackbar.mockReset();
+  auth.role = "Owner";
   fakeListSize({ scrollHeight: 800, clientHeight: 300 });
   servePages([[V2, V1]]);
 });
@@ -203,11 +224,15 @@ describe("AgentVersionsTab", () => {
     expect(await screen.findAllByTestId("version-entry")).toHaveLength(2);
   });
 
-  it("selects a version from the timeline", async () => {
+  it("selects a version from its label in the timeline", async () => {
     renderTab();
     const [, oldest] = await screen.findAllByTestId("version-entry");
-    fireEvent.click(oldest);
+    fireEvent.click(within(oldest).getByTestId("version-label"));
     await waitFor(() => expect(currentLocation.search).toBe("?v=v1-id"));
+    expect(within(oldest).getByTestId("version-label")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("shows skeleton rows while the first page loads", async () => {
@@ -297,13 +322,22 @@ describe("AgentVersionsTab", () => {
     ).toEqual(["v2", "v1"]);
   });
 
-  it("marks the active and latest version", async () => {
+  it("marks the latest version and the one in production with neutral tags", async () => {
     renderTab();
     const [newest, oldest] = await screen.findAllByTestId("version-entry");
     expect(within(newest).getByText("Latest")).toBeInTheDocument();
-    expect(within(newest).getByText("Active")).toBeInTheDocument();
+    expect(within(newest).getByText("In production")).toBeInTheDocument();
     expect(within(oldest).queryByText("Latest")).toBeNull();
-    expect(within(oldest).queryByText("Active")).toBeNull();
+    expect(within(oldest).queryByText("In production")).toBeNull();
+    expect(screen.queryByText("Draft")).toBeNull();
+  });
+
+  it("marks a draft version", async () => {
+    servePages([[{ ...V2, status: "draft", is_active: false }, V1]]);
+    renderTab();
+    const [newest] = await screen.findAllByTestId("version-entry");
+    expect(within(newest).getByText("Draft")).toBeInTheDocument();
+    expect(within(newest).queryByText("In production")).toBeNull();
   });
 
   it("shows each version's commit message and date", async () => {
@@ -313,14 +347,136 @@ describe("AgentVersionsTab", () => {
     expect(within(newest).getByText(/15-10-2026/)).toBeInTheDocument();
   });
 
-  it("has no version actions, only selection", async () => {
+  it("opens an older version on the Definition tab through ?v=", async () => {
     renderTab();
-    await screen.findByText("2 versions");
+    const [, oldest] = await screen.findAllByTestId("version-entry");
+    fireEvent.click(
+      within(oldest).getByRole("button", { name: "View definition" }),
+    );
+    expect(currentLocation.pathname).toBe(
+      `/dashboard/agents/connected/${HOSTED_AGENT_DETAIL.id}/definition`,
+    );
+    expect(currentLocation.search).toBe("?v=v1-id");
+  });
+
+  it("opens the version in production on the Definition tab with a clean URL", async () => {
+    renderTab("?v=v1-id");
+    const [newest] = await screen.findAllByTestId("version-entry");
+    fireEvent.click(
+      within(newest).getByRole("button", { name: "View definition" }),
+    );
+    expect(currentLocation.pathname).toBe(
+      `/dashboard/agents/connected/${HOSTED_AGENT_DETAIL.id}/definition`,
+    );
+    expect(currentLocation.search).toBe("");
+  });
+
+  it("offers Set as production only off the version in production", async () => {
+    renderTab();
+    const [newest, oldest] = await screen.findAllByTestId("version-entry");
     expect(
-      screen.queryByRole("button", {
-        name: /make active|mark as reference|view files|switch/i,
-      }),
+      within(newest).queryByRole("button", { name: "Set as production" }),
     ).toBeNull();
+    expect(
+      within(oldest).getByRole("button", { name: "Set as production" }),
+    ).toBeInTheDocument();
+  });
+
+  it("sets a version as production after confirming, and says environments stay pinned", async () => {
+    axios.post.mockResolvedValue({ data: {} });
+    renderTab();
+    const [, oldest] = await screen.findAllByTestId("version-entry");
+    fireEvent.click(
+      within(oldest).getByRole("button", { name: "Set as production" }),
+    );
+    expect(axios.post).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText("Set v1 as production?"),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Set as production" }),
+    );
+    await waitFor(() =>
+      expect(axios.post).toHaveBeenCalledWith(
+        `/simulate/agent-definitions/${HOSTED_AGENT_DETAIL.id}/versions/v1-id/production/`,
+      ),
+    );
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "v1 is now in production. Pinned environments keep the version each is pinned to.",
+        { variant: "success" },
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(currentLocation.search).toBe("");
+  });
+
+  it("shows the server's reason when a version can't be set as production", async () => {
+    axios.post.mockRejectedValue({
+      response: { data: { detail: "Version is discarded." } },
+    });
+    renderTab();
+    const [, oldest] = await screen.findAllByTestId("version-entry");
+    fireEvent.click(
+      within(oldest).getByRole("button", { name: "Set as production" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Set as production" }),
+    );
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith("Version is discarded.", {
+        variant: "error",
+      }),
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("won't offer Set as production on an agent an environment manages", async () => {
+    const versions = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url, config) =>
+      url.endsWith(`/agent-definitions/${HOSTED_AGENT_DETAIL.id}/`)
+        ? Promise.resolve({
+            data: {
+              ...HOSTED_AGENT_DETAIL,
+              managed_by: { id: "env-1", name: "Refund flow" },
+            },
+          })
+        : versions(url, config),
+    );
+    renderTab();
+    const [, oldest] = await screen.findAllByTestId("version-entry");
+    await waitFor(() =>
+      expect(
+        within(oldest).getByRole("button", { name: "View definition" }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      within(oldest).queryByRole("button", { name: "Set as production" }),
+    ).toBeNull();
+  });
+
+  it("won't offer Set as production to a viewer", async () => {
+    auth.role = "workspace_viewer";
+    renderTab();
+    const [, oldest] = await screen.findAllByTestId("version-entry");
+    expect(
+      within(oldest).queryByRole("button", { name: "Set as production" }),
+    ).toBeNull();
+    expect(
+      within(oldest).getByRole("button", { name: "View definition" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps Enter on a version's action with the action, not the row", async () => {
+    renderTab();
+    const [, oldest] = await screen.findAllByTestId("version-entry");
+    const action = within(oldest).getByRole("button", {
+      name: "Set as production",
+    });
+    fireEvent.keyDown(action, { key: "Enter" });
+    expect(currentLocation.search).toBe("");
   });
 
   it("shows Compare as a plain Coming soon card", async () => {
@@ -331,5 +487,66 @@ describe("AgentVersionsTab", () => {
     ).toBeInTheDocument();
     expect(within(region).getByLabelText("Coming soon")).toBeInTheDocument();
     expect(within(region).queryByText(/prompts\/system\.md/)).toBeNull();
+  });
+
+  describe("a version whose check failed", () => {
+    const failed = { ...V1, preflight_status: "failed" };
+    const base = `/simulate/agent-definitions/${HOSTED_AGENT_DETAIL.id}/versions/${V1.id}`;
+
+    beforeEach(() => {
+      servePages([[V2, failed]]);
+    });
+
+    it("checks it again on Retry and says so", async () => {
+      axios.post.mockResolvedValue({ data: {} });
+      renderTab();
+      const [, oldest] = await screen.findAllByTestId("version-entry");
+      fireEvent.click(within(oldest).getByRole("button", { name: "Retry" }));
+      await waitFor(() =>
+        expect(axios.post).toHaveBeenCalledWith(`${base}/retry/`),
+      );
+      await waitFor(() =>
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "v1 is being checked again",
+          { variant: "info" },
+        ),
+      );
+    });
+
+    it("discards it only after confirming", async () => {
+      axios.post.mockResolvedValue({ data: {} });
+      renderTab();
+      const [, oldest] = await screen.findAllByTestId("version-entry");
+      fireEvent.click(within(oldest).getByRole("button", { name: "Discard" }));
+      expect(axios.post).not.toHaveBeenCalled();
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
+      await waitFor(() =>
+        expect(axios.post).toHaveBeenCalledWith(`${base}/discard/`),
+      );
+      await waitFor(() =>
+        expect(enqueueSnackbar).toHaveBeenCalledWith("v1 discarded", {
+          variant: "success",
+        }),
+      );
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    });
+
+    it("keeps the dialog open and says why a discard was refused", async () => {
+      axios.post.mockRejectedValue({
+        response: { data: { detail: "v1 is in production" } },
+      });
+      renderTab();
+      const [, oldest] = await screen.findAllByTestId("version-entry");
+      fireEvent.click(within(oldest).getByRole("button", { name: "Discard" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
+      await waitFor(() =>
+        expect(enqueueSnackbar).toHaveBeenCalledWith("v1 is in production", {
+          variant: "error",
+        }),
+      );
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
   });
 });

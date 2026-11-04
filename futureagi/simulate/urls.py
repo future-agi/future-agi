@@ -96,6 +96,17 @@ from .views import (
     SimulatorAgentDetailView,
     SimulatorAgentListView,
 )
+from .views.agent_code import (
+    AgentCodeChangesView,
+    AgentCodeFileView,
+    AgentCodeTreeView,
+)
+from .views.agent_connect import (
+    AgentConnectView,
+    AgentFoundCheckView,
+    AgentScanDetailView,
+    AgentScanView,
+)
 from .views.agent_setup import StoredAgentView
 from .views.agent_version import (
     ActivateAgentVersionView,
@@ -104,8 +115,15 @@ from .views.agent_version import (
     AgentVersionEvalSummaryView,
     AgentVersionListView,
     CreateAgentVersionView,
-    DeleteAgentVersionView,
     RestoreAgentVersionView,
+)
+from .views.agent_versions import (
+    AgentBuildPreflightView,
+    AgentVersionChangeView,
+    AgentVersionCompatibilityView,
+    AgentVersionDiscardView,
+    AgentVersionProductionView,
+    AgentVersionRetryView,
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
@@ -325,9 +343,61 @@ urlpatterns = [
         name="agent-versions-activate",
     ),
     path(
-        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/delete/",
-        DeleteAgentVersionView.as_view(),
-        name="agent-versions-delete",
+        "agent-definitions/<uuid:agent_id>/versions/change/",
+        AgentVersionChangeView.as_view(),
+        name="agent-versions-change",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/production/",
+        AgentVersionProductionView.as_view(),
+        name="agent-versions-production",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/retry/",
+        AgentVersionRetryView.as_view(),
+        name="agent-versions-retry",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/discard/",
+        AgentVersionDiscardView.as_view(),
+        name="agent-versions-discard",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/compatibility/",
+        AgentVersionCompatibilityView.as_view(),
+        name="agent-versions-compatibility",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/build-preflight/",
+        AgentBuildPreflightView.as_view(),
+        name="agent-build-preflight",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/found-check/",
+        AgentFoundCheckView.as_view(),
+        name="agent-found-check",
+    ),
+    path("agents/scan/", AgentScanView.as_view(), name="agents-scan"),
+    path(
+        "agents/scan/<uuid:scan_id>/",
+        AgentScanDetailView.as_view(),
+        name="agents-scan-detail",
+    ),
+    path("agents/connect/", AgentConnectView.as_view(), name="agents-connect"),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/code/tree/",
+        AgentCodeTreeView.as_view(),
+        name="agent-code-tree",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/code/file/",
+        AgentCodeFileView.as_view(),
+        name="agent-code-file",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/code/changes/",
+        AgentCodeChangesView.as_view(),
+        name="agent-code-changes",
     ),
     path(
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/restore/",

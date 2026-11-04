@@ -51,6 +51,24 @@ describe("jobToBuildProgress", () => {
     });
   });
 
+  it("puts a folder that can't be read on the first step, with no retry", () => {
+    const out = jobToBuildProgress(
+      jobAt("failed", {
+        failure: {
+          stage: "acquiring_source",
+          code: "subfolder_not_found",
+          message: "The folder 'agents/support' is not in this repository",
+          domain: "agent",
+        },
+      }),
+    );
+    expect(out.failure.stepId).toBe("understand");
+    expect(out.failure.detail).toBe(
+      "The folder 'agents/support' is not in this repository",
+    );
+    expect(out.failure.retryable).toBe(false);
+  });
+
   it("maps a failure stage to its milestone's first pipeline step", () => {
     const out = jobToBuildProgress(
       jobAt("failed", {

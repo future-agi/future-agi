@@ -296,6 +296,8 @@ class HarnessAgentVersionRuntime(BaseModel):
         CREDENTIALS = "credentials", "Credentials"
         PROVIDER_SYNC = "provider_sync", "Provider sync"
         BACKFILL = "backfill", "Backfill"
+        CONNECT = "connect", "Connect"
+        SYNC = "sync", "Sync"
         FIX = "fix", "Fix my agent"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

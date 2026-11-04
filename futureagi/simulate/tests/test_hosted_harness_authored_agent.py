@@ -178,6 +178,29 @@ def test_a_provision_posted_with_an_agent_stores_it_through_the_url(organization
 
 
 @pytest.mark.django_db
+def test_the_write_back_lands_on_the_frozen_pin_not_the_moved_default(definition):
+    frozen = definition.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    moved_to = definition.create_version(
+        description="p2", commit_message="v2", status="active"
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        payload={
+            "source": {"kind": "github"},
+            "metadata": {"build_agent_version_id": str(frozen.id)},
+        },
+        agent_version=moved_to,
+    )
+
+    hosted_harness._store_authored_agent(job, definition, _sent())
+
+    assert stored_agent(frozen.id)["kind"] == "source"
+    assert stored_agent(moved_to.id) is None
+
+
+@pytest.mark.django_db
 def test_a_pinned_job_stores_the_agent_on_its_pinned_version(definition):
     pinned = definition.create_version(
         description="p", commit_message="v1", status="active"

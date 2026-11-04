@@ -1,4 +1,6 @@
 from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
 
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import ProviderCredentials
@@ -253,3 +255,37 @@ def resolve_stored_api_key(
             return None
 
     return key
+
+
+def delete_agents(organization, agent_ids) -> tuple[int, int]:
+    """Soft-delete the organization's agents and their versions. Refuses, deleting
+    nothing, while an environment still tests one of them; the agents are locked so
+    an environment can't bind to one in between."""
+    from simulate.services.agent_overview import environment_counts
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    with transaction.atomic():
+        agents = list(
+            AgentDefinition.objects.select_for_update(of=("self",))
+            .filter(id__in=agent_ids, organization=organization, deleted=False)
+            .order_by("id")
+        )
+        counts = environment_counts([agent.id for agent in agents])
+        for agent in agents:
+            total = counts.get(agent.id, 0)
+            if total:
+                raise HostedHarnessError(
+                    "agent_in_use",
+                    f"{agent.agent_name} is tested by {total} environment"
+                    f"{'s' if total != 1 else ''}. Delete those environments first.",
+                    status_code=409,
+                )
+        ids = [agent.id for agent in agents]
+        now = timezone.now()
+        agents_deleted = AgentDefinition.objects.filter(id__in=ids).update(
+            deleted=True, deleted_at=now, updated_at=now
+        )
+        versions_deleted = AgentVersion.objects.filter(
+            agent_definition_id__in=ids
+        ).update(deleted=True, deleted_at=now, updated_at=now)
+    return agents_deleted, versions_deleted

@@ -809,6 +809,65 @@ def _unchanged() -> HostedHarnessError:
     )
 
 
+@dataclass(frozen=True)
+class AgentEdit:
+    config: dict[str, Any] | None
+    prompt: str | None
+
+    @property
+    def changed(self) -> bool:
+        return self.config is not None or self.prompt is not None
+
+    @property
+    def trigger(self) -> str:
+        return Trigger.PROMPT if self.prompt is not None else Trigger.AGENT_PAYLOAD
+
+
+def edit_agent_config(
+    kind: str,
+    agent_payload: Mapping[str, Any],
+    *,
+    description: str,
+    prompt: str | None = None,
+    settings: Mapping[str, Any] | None = None,
+    settings_field: str = "agent_payload.config",
+) -> AgentEdit:
+    """A prompt and settings edit applied to a version's agent payload: the config
+    when it moved, and the prompt when it moved. A phone or LiveKit agent's prompt
+    is in its config, where the build reads it; a provider agent's is its
+    description. Only the settings its connector takes are allowed."""
+    config = dict(agent_payload.get("config") or {})
+    before = copy.deepcopy(config)
+    prompt_changed = False
+    if prompt is not None:
+        if kind not in _PROMPT_KINDS:
+            # A code agent's prompt belongs to its source.
+            raise _unsupported("prompt")
+        in_config = kind in (SourceKind.PHONE, SourceKind.LIVEKIT) or (
+            "target_system_prompt" in config
+        )
+        now = (
+            str(config.get("target_system_prompt") or "") if in_config else description
+        )
+        prompt_changed = prompt != now
+        if in_config:
+            config["target_system_prompt"] = prompt
+    connector = (
+        str(kind)
+        if kind != SourceKind.PROVIDER
+        else str(agent_payload.get("connector"))
+    )
+    allowed = _SETTINGS.get(connector, ())
+    for name, value in (settings or {}).items():
+        if kind not in _PROMPT_KINDS or name not in allowed:
+            raise _unsupported(f"{settings_field}.{name}")
+        config[name] = value
+    return AgentEdit(
+        config=config if config != before else None,
+        prompt=prompt if prompt_changed else None,
+    )
+
+
 def change_agent_source(
     environment: HostedHarnessJob,
     *,
@@ -896,46 +955,27 @@ def change_agent_source(
             trigger=Trigger.UPLOAD,
         )
 
-    config = dict(current.get("config") or {})
-    before = copy.deepcopy(config)
-    prompt_changed = False
-    if prompt is not None:
-        if kind not in _PROMPT_KINDS:
-            # A code agent's prompt belongs to its source.
-            raise _unsupported("prompt")
-        in_config = kind in (SourceKind.PHONE, SourceKind.LIVEKIT) or (
-            "target_system_prompt" in config
-        )
-        now = (
-            str(config.get("target_system_prompt") or "")
-            if in_config
-            else (parent.description or "")
-        )
-        prompt_changed = prompt != now
-        if in_config:
-            config["target_system_prompt"] = prompt
-    connector = (
-        str(kind) if kind != SourceKind.PROVIDER else str(current.get("connector"))
+    edit = edit_agent_config(
+        kind,
+        current,
+        description=parent.description or "",
+        prompt=prompt,
+        settings=(agent_payload or {}).get("config"),
     )
-    allowed = _SETTINGS.get(connector, ())
-    for name, value in ((agent_payload or {}).get("config") or {}).items():
-        if kind not in _PROMPT_KINDS or name not in allowed:
-            raise _unsupported(f"agent_payload.config.{name}")
-        config[name] = value
-    if not prompt_changed and config == before:
+    if not edit.changed:
         raise _unchanged()
     changes: dict[str, Any] = {}
-    if config != before:
+    if edit.config is not None:
         # The environment's own source, so how it is reached stays as it was.
-        changes["agent_payload"] = {**current, "config": config}
+        changes["agent_payload"] = {**current, "config": edit.config}
         changes["source"] = env_source
-    if prompt_changed:
-        changes["prompt"] = prompt
+    if edit.prompt is not None:
+        changes["prompt"] = edit.prompt
     return _made(
         parent,
         environment,
         user,
-        trigger=Trigger.PROMPT if prompt_changed else Trigger.AGENT_PAYLOAD,
+        trigger=edit.trigger,
         **changes,
     )
 

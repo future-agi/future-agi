@@ -11,6 +11,10 @@ class AgentVersionSetup(BaseModel):
         STORED = "stored", "Stored"
         FAILED = "failed", "Failed"
 
+    class Origin(models.TextChoices):
+        BUILD = "build", "Build"
+        READING = "reading", "Reading"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     agent_version = models.OneToOneField(
         "simulate.AgentVersion", on_delete=models.CASCADE, related_name="setup"
@@ -41,6 +45,10 @@ class AgentVersionSetup(BaseModel):
     gaps = ArrayField(models.CharField(max_length=32), default=list, blank=True)
     instrumentation = models.CharField(max_length=16, default="none")
     raw_setup = models.JSONField(default=dict, blank=True)
+    contract_object_key = models.CharField(max_length=255, default="", blank=True)
+    origin = models.CharField(
+        max_length=8, choices=Origin.choices, default=Origin.BUILD
+    )
 
     class Meta:
         db_table = "simulate_agent_version_setup"

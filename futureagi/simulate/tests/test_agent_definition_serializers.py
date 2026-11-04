@@ -605,6 +605,7 @@ class TestAgentVersionResponseSerializer:
             "is_active",
             "is_latest",
             "agent_kind",
+            "source",
             "api_key",
             "created_at",
             "updated_at",

@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1125,
+  endpointCount: 1142,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -284,11 +284,16 @@ export const API_SURFACE_CONTRACT = Object.freeze({
     integrations: {
       "/integrations/connections/": ["get", "post"],
       "/integrations/connections/validate/": ["post"],
+      "/integrations/connections/{connection_id}/repositories/": ["get"],
+      "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/":
+        ["get"],
       "/integrations/connections/{connection_id}/slack/channels/": ["get"],
       "/integrations/connections/{id}/": ["delete", "get", "patch", "put"],
       "/integrations/connections/{id}/pause/": ["post"],
       "/integrations/connections/{id}/resume/": ["post"],
       "/integrations/connections/{id}/sync_now/": ["post"],
+      "/integrations/github/install/": ["post"],
+      "/integrations/github/install/complete/": ["post"],
       "/integrations/slack/install/": ["post"],
       "/integrations/sync-logs/": ["get"],
       "/integrations/sync-logs/{id}/": ["get"],
@@ -789,10 +794,13 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/agent-definitions/": ["delete", "get"],
       "/simulate/agent-definitions/create/": ["post"],
       "/simulate/agent-definitions/{agent_id}/": ["get"],
+      "/simulate/agent-definitions/{agent_id}/build-preflight/": ["get"],
       "/simulate/agent-definitions/{agent_id}/delete/": ["delete"],
       "/simulate/agent-definitions/{agent_id}/edit/": ["put"],
+      "/simulate/agent-definitions/{agent_id}/found-check/": ["post"],
       "/simulate/agent-definitions/{agent_id}/runs/": ["get"],
       "/simulate/agent-definitions/{agent_id}/versions/": ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/change/": ["post"],
       "/simulate/agent-definitions/{agent_id}/versions/create/": ["post"],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/": ["get"],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/activate/":
@@ -802,14 +810,30 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/call-executions/":
         ["get"],
-      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/delete/": [
-        "delete",
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/":
+        ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/":
+        ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/":
+        ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/compatibility/":
+        ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/": [
+        "post",
       ],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/eval-summary/":
         ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/production/":
+        ["post"],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/restore/": [
         "post",
       ],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/": [
+        "post",
+      ],
+      "/simulate/agents/connect/": ["post"],
+      "/simulate/agents/scan/": ["post"],
+      "/simulate/agents/scan/{scan_id}/": ["get"],
       "/simulate/api/agent-definition-operations/": ["get", "post"],
       "/simulate/api/agent-definition-operations/fetch_assistant_from_provider/":
         ["post"],
@@ -871,6 +895,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/call-executions/": ["get"],
       "/simulate/api/harness-environments/": ["get"],
       "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
+      "/simulate/api/harness-environments/{id}/agent-policy/": ["post"],
       "/simulate/api/harness-environments/{id}/compare/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
@@ -1674,11 +1699,16 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/health/": ["get"],
   "/integrations/connections/": ["get", "post"],
   "/integrations/connections/validate/": ["post"],
+  "/integrations/connections/{connection_id}/repositories/": ["get"],
+  "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/":
+    ["get"],
   "/integrations/connections/{connection_id}/slack/channels/": ["get"],
   "/integrations/connections/{id}/": ["delete", "get", "patch", "put"],
   "/integrations/connections/{id}/pause/": ["post"],
   "/integrations/connections/{id}/resume/": ["post"],
   "/integrations/connections/{id}/sync_now/": ["post"],
+  "/integrations/github/install/": ["post"],
+  "/integrations/github/install/complete/": ["post"],
   "/integrations/slack/install/": ["post"],
   "/integrations/sync-logs/": ["get"],
   "/integrations/sync-logs/{id}/": ["get"],
@@ -2146,10 +2176,13 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/agent-definitions/": ["delete", "get"],
   "/simulate/agent-definitions/create/": ["post"],
   "/simulate/agent-definitions/{agent_id}/": ["get"],
+  "/simulate/agent-definitions/{agent_id}/build-preflight/": ["get"],
   "/simulate/agent-definitions/{agent_id}/delete/": ["delete"],
   "/simulate/agent-definitions/{agent_id}/edit/": ["put"],
+  "/simulate/agent-definitions/{agent_id}/found-check/": ["post"],
   "/simulate/agent-definitions/{agent_id}/runs/": ["get"],
   "/simulate/agent-definitions/{agent_id}/versions/": ["get"],
+  "/simulate/agent-definitions/{agent_id}/versions/change/": ["post"],
   "/simulate/agent-definitions/{agent_id}/versions/create/": ["post"],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/": ["get"],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/activate/": [
@@ -2160,14 +2193,33 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/call-executions/":
     ["get"],
-  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/delete/": [
-    "delete",
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/":
+    ["get"],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/": [
+    "get",
+  ],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/": [
+    "get",
+  ],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/compatibility/":
+    ["get"],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/": [
+    "post",
   ],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/eval-summary/":
     ["get"],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/production/": [
+    "post",
+  ],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/restore/": [
     "post",
   ],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/": [
+    "post",
+  ],
+  "/simulate/agents/connect/": ["post"],
+  "/simulate/agents/scan/": ["post"],
+  "/simulate/agents/scan/{scan_id}/": ["get"],
   "/simulate/api/agent-definition-operations/": ["get", "post"],
   "/simulate/api/agent-definition-operations/fetch_assistant_from_provider/": [
     "post",
@@ -2232,6 +2284,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/call-executions/": ["get"],
   "/simulate/api/harness-environments/": ["get"],
   "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
+  "/simulate/api/harness-environments/{id}/agent-policy/": ["post"],
   "/simulate/api/harness-environments/{id}/compare/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],

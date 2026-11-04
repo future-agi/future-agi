@@ -1407,8 +1407,14 @@ class TestCreationCheck:
         api.force_authenticate(user=user)
         body, key = _body(values=VALUES), uuid.uuid4().hex
         body["source"].update(visibility="private", installation_id="1")
-        with patch.object(
-            changes, "validate_public_github_source", validate_public_github_source
+        with (
+            patch.object(
+                changes, "validate_public_github_source", validate_public_github_source
+            ),
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=True,
+            ),
         ):
             settings.HARNESS_VERSIONING_ENABLED = False
             first = _job(_post(api, workspace, body, key=key))

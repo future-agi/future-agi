@@ -1609,7 +1609,61 @@ export const endpoints = {
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/agent/",
         { agent_id: id, version_id: version },
       ),
+    changeVersion: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/versions/change/", {
+        agent_id: id,
+      }),
+    productionVersion: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/production/",
+        { agent_id: id, version_id: version },
+      ),
+    retryVersion: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/",
+        { agent_id: id, version_id: version },
+      ),
+    discardVersion: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/",
+        { agent_id: id, version_id: version },
+      ),
+    buildPreflight: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/build-preflight/", {
+        agent_id: id,
+      }),
+    foundCheck: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/found-check/", {
+        agent_id: id,
+      }),
+    scan: apiPath("/simulate/agents/scan/"),
+    scanDetail: (id) =>
+      apiPath("/simulate/agents/scan/{scan_id}/", { scan_id: id }),
+    connect: apiPath("/simulate/agents/connect/"),
+    codeTree: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/",
+        { agent_id: id, version_id: version },
+      ),
+    codeFile: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/",
+        { agent_id: id, version_id: version },
+      ),
+    codeChanges: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/",
+        { agent_id: id, version_id: version },
+      ),
+    environmentAgentPolicy: (environmentId) =>
+      apiPath("/simulate/api/harness-environments/{id}/agent-policy/", {
+        id: environmentId,
+      }),
     delete: apiPath("/simulate/agent-definitions/"),
+    deleteOne: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/delete/", {
+        agent_id: id,
+      }),
     getTestAnalytics: (agent, version) =>
       apiPath(
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/eval-summary/",
@@ -2177,6 +2231,10 @@ export const endpoints = {
           connection_id: id,
         }),
     },
+    github: {
+      install: apiPath("/integrations/github/install/"),
+      installComplete: apiPath("/integrations/github/install/complete/"),
+    },
     connections: {
       list: apiPath("/integrations/connections/"),
       create: apiPath("/integrations/connections/"),
@@ -2189,6 +2247,15 @@ export const endpoints = {
         apiPath("/integrations/connections/{id}/pause/", { id: id }),
       resume: (id) =>
         apiPath("/integrations/connections/{id}/resume/", { id: id }),
+      repositories: (id) =>
+        apiPath("/integrations/connections/{connection_id}/repositories/", {
+          connection_id: id,
+        }),
+      branches: (id, repositoryId) =>
+        apiPath(
+          "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/",
+          { connection_id: id, repository_id: repositoryId },
+        ),
     },
     validate: apiPath("/integrations/connections/validate/"),
     syncLogs: apiPath("/integrations/sync-logs/"),
