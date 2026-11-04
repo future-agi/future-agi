@@ -11,7 +11,13 @@ export const ACTORS_COPY = {
   },
 
   worldActors: {
-    title: (n) => (n == null ? "Actors" : `Actors (${n})`),
+    title: "Actors",
+    groupTitle: (title, n) => `${title} (${n})`,
+    intro:
+      "Every simulated person in this world: what each knows, when they join and what they're allowed to do. A persona is how one of them behaves. Edits wait in the draft until you save.",
+    notSet: "Not set",
+    removeTitle: (name) => `Remove ${name}?`,
+    removeBody: "They leave the draft. Saved versions keep them.",
     loading: "Loading the actors…",
     loadFailed:
       "The actors could not be loaded. Refresh the page to try again.",

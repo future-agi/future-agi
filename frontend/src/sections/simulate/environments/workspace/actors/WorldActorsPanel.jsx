@@ -1,6 +1,17 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Alert, Box, Button, Collapse, Stack, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  Collapse,
+  IconButton,
+  Stack,
+  Typography,
+} from "@mui/material";
+import { ConfirmDialog } from "src/components/custom-dialog";
+import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import {
   useActors,
   useActorView,
@@ -22,6 +33,7 @@ const TWO_LINES = {
   WebkitBoxOrient: "vertical",
   overflow: "hidden",
 };
+const OUTLINED = { color: "text.primary", borderColor: "divider", flexShrink: 0 };
 
 /**
  * The environment's cast, read from and edited in its draft: people on the caller's side who
@@ -51,13 +63,14 @@ export default function WorldActorsPanel({
   };
 
   const [inUse, setInUse] = useState(null);
+  const [removing, setRemoving] = useState(null);
   const remove = (actor) => {
     if (actor.scenarios) {
       setInUse(C.inUse(actor.name || actor.id, actor.scenarios));
       return;
     }
     setInUse(null);
-    edit.mutate({ op: "delete", actorId: actor.id, revision });
+    setRemoving(actor);
   };
   const actionIds = context.actions.map((one) => one.action);
   // A new person on the caller's side starts on the first channel the rules list.
@@ -80,22 +93,29 @@ export default function WorldActorsPanel({
   const failed = isError && !data;
   if (isLoading || failed)
     return (
-      <SectionCard title={C.title()} subtitle={C.subtitle}>
-        <Box sx={{ px: 2.5, py: 1.5 }}>
-          {failed ? (
-            <Alert severity="error">{C.loadFailed}</Alert>
-          ) : (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {C.loading}
-            </Typography>
-          )}
-        </Box>
-      </SectionCard>
+      <Box sx={{ p: 2 }}>
+        <SectionCard title={C.title} subtitle={C.subtitle}>
+          <Box sx={{ px: 1.5, py: 1.5 }}>
+            {failed ? (
+              <Alert severity="error">{C.loadFailed}</Alert>
+            ) : (
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                {C.loading}
+              </Typography>
+            )}
+          </Box>
+        </SectionCard>
+      </Box>
     );
 
   return (
-    <SectionCard title={C.title(cast.length)} subtitle={C.subtitle}>
-      <Stack spacing={1.5} sx={{ px: 2.5, py: 1.5 }}>
+    <Box sx={{ p: 2 }}>
+      <Typography
+        sx={{ typography: "s2", color: "text.secondary", maxWidth: 780, mb: 2 }}
+      >
+        {C.intro}
+      </Typography>
+      <Stack spacing={1} sx={{ mb: 2, "&:empty": { display: "none" } }}>
         {data?.source === "draft" && <Alert severity="info">{C.unsaved}</Alert>}
         {inUse && (
           <Alert severity="warning" onClose={() => setInUse(null)}>
@@ -105,29 +125,29 @@ export default function WorldActorsPanel({
         {edit.error && !editing && (
           <Alert severity="error">{edit.error.message}</Alert>
         )}
-        {(callerSide || caller.length > 0) && (
-          <Group
-            title={C.callerSide}
-            about={C.callerSideAbout}
-            empty={C.callerSideEmpty}
-            locked={locked || !firstChannel}
-            addLabel={C.addCallerSide}
-            onAdd={() => setEditing({ channel: firstChannel })}
-          >
-            {rows(caller)}
-          </Group>
-        )}
-        <Group
-          title={C.worldSide}
-          about={C.worldSideAbout}
-          empty={C.empty}
-          locked={locked}
-          addLabel={C.add}
-          onAdd={() => setEditing({})}
-        >
-          {rows(world)}
-        </Group>
       </Stack>
+      {(callerSide || caller.length > 0) && (
+        <Group
+          title={C.callerSide}
+          about={C.callerSideAbout}
+          empty={C.callerSideEmpty}
+          locked={locked || !firstChannel}
+          addLabel={C.addCallerSide}
+          onAdd={() => setEditing({ channel: firstChannel })}
+        >
+          {rows(caller)}
+        </Group>
+      )}
+      <Group
+        title={C.worldSide}
+        about={C.worldSideAbout}
+        empty={C.empty}
+        locked={locked}
+        addLabel={C.add}
+        onAdd={() => setEditing({})}
+      >
+        {rows(world)}
+      </Group>
       <ActorForm
         key={
           editing
@@ -154,7 +174,26 @@ export default function WorldActorsPanel({
           )
         }
       />
-    </SectionCard>
+      <ConfirmDialog
+        open={Boolean(removing)}
+        onClose={() => setRemoving(null)}
+        title={removing ? C.removeTitle(removing.name || removing.id) : ""}
+        content={C.removeBody}
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            onClick={() => {
+              edit.mutate({ op: "delete", actorId: removing.id, revision });
+              setRemoving(null);
+            }}
+          >
+            {C.remove}
+          </Button>
+        }
+      />
+    </Box>
   );
 }
 
@@ -168,29 +207,40 @@ WorldActorsPanel.propTypes = {
 function Group({ title, about, empty, locked, addLabel, onAdd, children }) {
   const count = Array.isArray(children) ? children.length : 0;
   return (
-    <Stack spacing={1}>
-      <Box>
-        <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-          {title}
-        </Typography>
-        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-          {about}
-        </Typography>
-      </Box>
-      {count === 0 && (
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          {empty}
-        </Typography>
-      )}
-      {children}
-      {!locked && (
-        <Box>
-          <Button size="small" variant="outlined" onClick={onAdd}>
+    <SectionCard
+      title={C.groupTitle(title, count)}
+      subtitle={about}
+      sx={{ mb: 2 }}
+      action={
+        !locked && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={onAdd}
+            startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
+            sx={OUTLINED}
+          >
             {addLabel}
           </Button>
-        </Box>
+        )
+      }
+    >
+      {count === 0 ? (
+        <Typography
+          sx={{ typography: "s2", color: "text.secondary", px: 1.5, py: 1.5 }}
+        >
+          {empty}
+        </Typography>
+      ) : (
+        <Stack
+          divider={
+            <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+          }
+        >
+          {children}
+        </Stack>
       )}
-    </Stack>
+    </SectionCard>
   );
 }
 
@@ -255,15 +305,27 @@ function ActorRow({
     wordBreak: "break-word",
   };
   return (
-    <Box
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 1,
-        p: 1.5,
-      }}
-    >
-      <Stack direction="row" spacing={1} alignItems="flex-start">
+    <Box>
+      <Stack
+        direction="row"
+        spacing={1.5}
+        alignItems="center"
+        sx={{ px: 1.5, py: 1 }}
+      >
+        <Box
+          sx={{
+            width: 28,
+            height: 28,
+            borderRadius: "6px",
+            flexShrink: 0,
+            display: "grid",
+            placeItems: "center",
+            color: "text.tertiary",
+            bgcolor: "background.neutral",
+          }}
+        >
+          <Iconify icon="solar:users-group-two-rounded-linear" width={16} />
+        </Box>
         <Box
           flex={1}
           minWidth={0}
@@ -298,37 +360,66 @@ function ActorRow({
             {summary(actor, actionIds, loudChannels)}
           </Typography>
         </Box>
-        <Button size="small" onClick={() => setOpen((o) => !o)}>
-          {open ? C.hideView : C.showView}
-        </Button>
-        {!locked && (
-          <>
-            <Button size="small" onClick={onEdit}>
-              {C.edit}
-            </Button>
-            <Button
-              size="small"
-              color="error"
-              onClick={() => {
-                // Closed first, so the removed actor's view is not read again.
-                setOpen(false);
-                onRemove();
-              }}
-            >
-              {C.remove}
-            </Button>
-          </>
-        )}
+        <Stack
+          direction="row"
+          spacing={0.5}
+          alignItems="center"
+          sx={{ flexShrink: 0 }}
+        >
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => setOpen((o) => !o)}
+            sx={OUTLINED}
+          >
+            {open ? C.hideView : C.showView}
+          </Button>
+          {!locked && (
+            <>
+              <CustomTooltip show size="small" arrow title={C.edit}>
+                <IconButton size="small" aria-label={C.edit} onClick={onEdit}>
+                  <Iconify
+                    icon="solar:pen-new-square-linear"
+                    width={16}
+                    sx={{ color: "text.tertiary" }}
+                  />
+                </IconButton>
+              </CustomTooltip>
+              <CustomTooltip show size="small" arrow title={C.remove}>
+                <IconButton
+                  size="small"
+                  aria-label={C.remove}
+                  onClick={() => {
+                    // Closed first, so the removed actor's view is not read again.
+                    setOpen(false);
+                    onRemove();
+                  }}
+                >
+                  <Iconify
+                    icon="solar:trash-bin-trash-linear"
+                    width={16}
+                    sx={{ color: "text.tertiary" }}
+                  />
+                </IconButton>
+              </CustomTooltip>
+            </>
+          )}
+        </Stack>
       </Stack>
       <Collapse in={open} unmountOnExit>
         {view && (
-          <Stack spacing={0.75} sx={{ mt: 1.25 }}>
+          <Stack spacing={0.75} sx={{ pl: 6.5, pr: 1.5, pb: 1.5 }}>
             <Typography sx={{ typography: "s2", fontWeight: 600 }}>
               {C.sees}
             </Typography>
             {view.sees.map((one) => (
               <Typography key={one.input} sx={quiet}>
-                {`${C.inputs[one.input] || one.input}: ${readable(one.value)}`}
+                {`${C.inputs[one.input] || one.input}: `}
+                {readable(one.value) || (
+                  <Box component="span" sx={{ color: "text.disabled" }}>
+                    {C.notSet}
+                  </Box>
+                )}
               </Typography>
             ))}
             <Typography sx={{ typography: "s2", fontWeight: 600 }}>
