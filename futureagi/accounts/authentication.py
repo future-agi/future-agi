@@ -34,6 +34,7 @@ from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.saml_credential import SamlCredentialInvalid, validate_saml_credential
 from accounts.services.workspace_membership import create_workspace_membership
+from simulate.authentication import refuse_coding_agent_request
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import is_oss
 from tfc.utils.api_errors import (
@@ -133,6 +134,12 @@ def _is_workspace_write_exempt_view(request):
     )
 
 
+def is_coding_agent_key(request) -> bool:
+    """Whether ``request`` authenticated with a coding agent's key."""
+    org_api_key = getattr(request, "org_api_key", None)
+    return org_api_key is not None and org_api_key.type == "coding_agent"
+
+
 class APIKeyAuthentication(BaseAuthentication):
     def authenticate_header(self, request):
         return "ApiKey"
@@ -211,6 +218,11 @@ class APIKeyAuthentication(BaseAuthentication):
             # so it can never act as the organisation's system user.
             if org_api_key.type == "ingest":
                 raise AuthenticationFailed("ingest keys cannot call the API")
+            # A coding agent's key runs on the developer's machine beside the
+            # agent being fixed; it may make only its loop's calls, on its own
+            # environment.
+            if org_api_key.type == "coding_agent":
+                refuse_coding_agent_request(request, org_api_key)
 
             # Validate that the API key has a valid organization
             if not org_api_key.organization:
@@ -701,6 +713,8 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
         # to the collector, even if a user was attached to it.
         if org_api_key.type == "ingest":
             raise AuthenticationFailed("ingest keys cannot call the API")
+        if org_api_key.type == "coding_agent":
+            refuse_coding_agent_request(request, org_api_key)
 
         # Resolve user (same logic as parent class)
         if org_api_key.type == "system":

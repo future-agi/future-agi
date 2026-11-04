@@ -33,6 +33,7 @@ from analytics.utils import (
     track_mixpanel_event,
 )
 from model_hub.models.api_key import mask_key
+from simulate.authentication import bindable_environment
 from tfc.constants.roles import RolePermissions
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
@@ -290,12 +291,25 @@ class SecretKeyAPIViewSet(ViewSet):
             ).exists():
                 return self._gm.bad_request(get_error_message("KEY_NAME_EXISTS"))
 
+            key_type = request.validated_data["type"]
+            environment_id = request.validated_data.get("simulation_environment_id")
+            workspace = None
+            if key_type == "coding_agent":
+                environment = bindable_environment(request, environment_id)
+                if environment is None:
+                    return self._gm.not_found("Environment not found")
+                # The key's workspace outranks any header, so its calls always
+                # see the environment's workspace.
+                workspace = environment.workspace
+
             org_key = OrgApiKey.objects.create(
                 name=key_name,
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
-                type="user",
+                type=key_type,
                 user=request.user,
+                workspace=workspace,
+                simulation_environment_id=environment_id,
             )
             try:
                 from tfc.deployment_telemetry.events import record_event

@@ -471,12 +471,22 @@ export interface AccountsStringResultResponseApi {
   result: string;
 }
 
+export type CreateSecretKeyApiType =
+  (typeof CreateSecretKeyApiType)[keyof typeof CreateSecretKeyApiType];
+
+export const CreateSecretKeyApiType = {
+  user: "user",
+  coding_agent: "coding_agent",
+} as const;
+
 export interface CreateSecretKeyApi {
   /**
    * @minLength 1
    * @maxLength 100
    */
   key_name: string;
+  type?: CreateSecretKeyApiType;
+  simulation_environment_id?: string;
 }
 
 export interface SecretKeyCreateResultApi {

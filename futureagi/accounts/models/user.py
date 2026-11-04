@@ -316,6 +316,7 @@ class OrgApiKey(BaseModel):
             ("user", "User"),
             ("mcp", "MCP"),
             ("ingest", "Ingest"),
+            ("coding_agent", "Coding agent"),
         ],
     )
     enabled = models.BooleanField(default=True)
@@ -335,9 +336,18 @@ class OrgApiKey(BaseModel):
     )
     # A plain column: ``accounts`` cannot depend on ``simulate``, which depends on it.
     simulation_agent_id = models.UUIDField(null=True, blank=True)
+    # The one simulation environment a ``coding_agent`` key may act on; plain for
+    # the same reason.
+    simulation_environment_id = models.UUIDField(null=True, blank=True)
 
     class Meta:
         constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(type="coding_agent")
+                | models.Q(simulation_environment_id__isnull=False),
+                name="coding_agent_api_key_names_an_environment",
+                violation_error_message="A coding agent key must name its environment.",
+            ),
             models.UniqueConstraint(
                 fields=["organization", "type"],
                 condition=models.Q(type="system", deleted=False),
