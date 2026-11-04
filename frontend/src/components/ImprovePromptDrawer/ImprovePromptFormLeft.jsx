@@ -69,7 +69,6 @@ export default function ImprovePromptFormLeft({
           <IconButton
             onClick={handleClose}
             sx={{
-              padding: theme.spacing(0.5),
               margin: 0,
             }}
           >
@@ -141,25 +140,8 @@ export default function ImprovePromptFormLeft({
           marginBottom: theme.spacing(2),
         }}
       >
-        <Button
-          variant="outlined"
-          fullWidth
-          onClick={handleClose}
-          sx={{
-            borderRadius: theme.spacing(1),
-            minHeight: theme.spacing(38 / 8),
-            "&:hover": {
-              borderColor: "transparent !important",
-            },
-          }}
-        >
-          <Typography
-            typography="s1"
-            color={"text.disabled"}
-            fontWeight={"fontWeightMedium"}
-          >
-            Cancel
-          </Typography>
+        <Button variant="outlined" fullWidth onClick={handleClose}>
+          Cancel
         </Button>
         <LoadingButton
           type="button"
@@ -169,15 +151,8 @@ export default function ImprovePromptFormLeft({
           disabled={isImprovingPrompt || !isValid}
           variant="contained"
           color="primary"
-          sx={{
-            borderRadius: theme.spacing(1),
-            minHeight: theme.spacing(38 / 8),
-            color: "primary.contrastText",
-          }}
         >
-          <Typography fontWeight={"fontWeightSemiBold"} typography="s1">
-            Improve
-          </Typography>
+          Improve
         </LoadingButton>
       </Stack>
     </Box>

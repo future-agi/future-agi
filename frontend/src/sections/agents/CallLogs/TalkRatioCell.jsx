@@ -60,7 +60,7 @@ const TalkRatioCell = (params) => {
         </Box>
         <Typography
           variant="body2"
-          sx={{ fontSize: 11, color: "text.secondary", whiteSpace: "nowrap" }}
+          sx={{ fontSize: 12, color: "text.secondary", whiteSpace: "nowrap" }}
         >
           {userPct}:{botPct}
         </Typography>

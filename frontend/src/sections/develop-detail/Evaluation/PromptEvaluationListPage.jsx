@@ -34,7 +34,7 @@ const PromptEvaluationListPage = ({
             backgroundColor: "background.paper",
           }}
         >
-          <Typography fontWeight={700} color="text.secondary">
+          <Typography fontWeight={600} color="text.secondary">
             Added Evaluations
           </Typography>
         </Box>

@@ -154911,6 +154911,44 @@
                 }
             }
         },
+        "CostCoverage": {
+            "required": [
+                "status",
+                "known_subtotal",
+                "known_fact_count",
+                "unknown_fact_count"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "complete",
+                        "partial",
+                        "unknown"
+                    ]
+                },
+                "known_subtotal": {
+                    "title": "Known subtotal",
+                    "description": "Sum in USD of known observed contributions, never an average.",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "known_fact_count": {
+                    "title": "Known fact count",
+                    "description": "Observed additive monetary facts with known cost, including zero.",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "unknown_fact_count": {
+                    "title": "Unknown fact count",
+                    "description": "Observed additive monetary facts with unknown cost, not missing requests.",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
         "ObserveGraphDataPoint": {
             "description": "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
             "required": [
@@ -154933,6 +154971,9 @@
                     "title": "Primary traffic",
                     "type": "number",
                     "x-nullable": true
+                },
+                "cost_coverage": {
+                    "$ref": "#/definitions/CostCoverage"
                 }
             }
         },
@@ -155987,6 +156028,50 @@
                 }
             }
         },
+        "CostCoverageBucket": {
+            "required": [
+                "status",
+                "known_subtotal",
+                "known_fact_count",
+                "unknown_fact_count",
+                "timestamp"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "complete",
+                        "partial",
+                        "unknown"
+                    ]
+                },
+                "known_subtotal": {
+                    "title": "Known subtotal",
+                    "description": "Sum in USD of known observed contributions, never an average.",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "known_fact_count": {
+                    "title": "Known fact count",
+                    "description": "Observed additive monetary facts with known cost, including zero.",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "unknown_fact_count": {
+                    "title": "Unknown fact count",
+                    "description": "Observed additive monetary facts with unknown cost, not missing requests.",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "timestamp": {
+                    "title": "Timestamp",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "ProjectGraphDataResult": {
             "required": [
                 "system_metrics",
@@ -155999,6 +156084,12 @@
                     "type": "object",
                     "x-json-value": true,
                     "description": "Any valid JSON value."
+                },
+                "cost_coverage": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/CostCoverageBucket"
+                    }
                 },
                 "system_metric_statistics": {
                     "title": "System metric statistics",
@@ -156131,6 +156222,12 @@
             ],
             "type": "object",
             "properties": {
+                "cost_coverage": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/CostCoverageBucket"
+                    }
+                },
                 "session": {
                     "type": "array",
                     "items": {
@@ -158182,6 +158279,39 @@
                 }
             }
         },
+        "CaptureCoverage": {
+            "required": [
+                "scope",
+                "source_summary_present",
+                "request_count",
+                "coverage_unknown"
+            ],
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "title": "Scope",
+                    "type": "string",
+                    "enum": [
+                        "observed_requests"
+                    ]
+                },
+                "source_summary_present": {
+                    "title": "Source summary present",
+                    "type": "boolean"
+                },
+                "request_count": {
+                    "title": "Request count",
+                    "description": "Observed request spans only; never inferred from source summary totals.",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "coverage_unknown": {
+                    "title": "Coverage unknown",
+                    "description": "Whether capture completeness is unproved. Matching summary totals or a successful exact query do not prove capture completeness.",
+                    "type": "boolean"
+                }
+            }
+        },
         "TraceDetailResult": {
             "required": [
                 "trace",
@@ -158204,6 +158334,12 @@
                 "summary": {
                     "title": "Summary",
                     "type": "object"
+                },
+                "cost_coverage": {
+                    "$ref": "#/definitions/CostCoverage"
+                },
+                "capture_coverage": {
+                    "$ref": "#/definitions/CaptureCoverage"
                 },
                 "graph": {
                     "title": "Graph",
@@ -159231,6 +159367,12 @@
                     "type": "number",
                     "x-nullable": true
                 },
+                "cost_coverage": {
+                    "$ref": "#/definitions/CostCoverage"
+                },
+                "capture_coverage": {
+                    "$ref": "#/definitions/CaptureCoverage"
+                },
                 "total_tokens": {
                     "title": "Total tokens",
                     "type": "integer",
@@ -159407,6 +159549,17 @@
             ],
             "type": "object",
             "properties": {
+                "trace_capture_coverage": {
+                    "title": "Trace capture coverage",
+                    "description": "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "$ref": "#/definitions/CaptureCoverage"
+                        }
+                    }
+                },
                 "metadata": {
                     "$ref": "#/definitions/TraceSessionListMetadata"
                 },
@@ -159532,6 +159685,12 @@
                     "title": "Session metadata",
                     "type": "object",
                     "additionalProperties": true
+                },
+                "cost_coverage": {
+                    "$ref": "#/definitions/CostCoverage"
+                },
+                "capture_coverage": {
+                    "$ref": "#/definitions/CaptureCoverage"
                 },
                 "response": {
                     "type": "array",
@@ -159719,6 +159878,9 @@
                     "type": "number",
                     "minimum": 0
                 },
+                "cost_coverage": {
+                    "$ref": "#/definitions/CostCoverage"
+                },
                 "error_count": {
                     "title": "Error count",
                     "type": "integer",
@@ -159788,6 +159950,9 @@
                     "title": "Total cost",
                     "type": "number",
                     "minimum": 0
+                },
+                "cost_coverage": {
+                    "$ref": "#/definitions/CostCoverage"
                 },
                 "error_count": {
                     "title": "Error count",
@@ -160419,6 +160584,17 @@
             ],
             "type": "object",
             "properties": {
+                "trace_capture_coverage": {
+                    "title": "Trace capture coverage",
+                    "description": "Capture coverage for returned rows only, keyed by project ID then trace ID. Omitted entries retain legacy presentation; never implies complete capture.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "$ref": "#/definitions/CaptureCoverage"
+                        }
+                    }
+                },
                 "metadata": {
                     "$ref": "#/definitions/TraceObserveListMetadata"
                 },
@@ -162234,6 +162410,9 @@
                 "total_cost": {
                     "title": "Total cost",
                     "type": "number"
+                },
+                "cost_coverage": {
+                    "$ref": "#/definitions/CostCoverage"
                 },
                 "total_tokens": {
                     "title": "Total tokens",

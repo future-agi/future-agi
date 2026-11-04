@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildSummaryRow, buildEvalSeries, countCoveredScenarios, deriveEvals, EVAL_COLORS } from "../summaryData";
+import { buildSummaryRow, buildEvalSeries, countCoveredScenarios, deriveEvals } from "../summaryData";
 
 // A run row as produced by `mapExecutions` (newest-first ordinal already
 // stamped), extended with the run-level duration the summary table shows.
@@ -66,14 +66,14 @@ describe("buildEvalSeries", () => {
     { label: "Run 2", scores: { task_success: 49 } }, // policy missing → gap
   ];
   const evals = [
-    { id: "task_success", name: "Task success", color: "#16A34A" },
-    { id: "policy", name: "Policy adherence", color: "#7857FC" },
+    { id: "task_success", name: "Task success", colorIndex: 0 },
+    { id: "policy", name: "Policy adherence", colorIndex: 1 },
   ];
 
-  it("builds one series per applied eval, carrying name and colour", () => {
+  it("builds one series per applied eval, carrying name and colour index", () => {
     const series = buildEvalSeries(rowsChrono, evals);
     expect(series).toHaveLength(2);
-    expect(series[0]).toMatchObject({ id: "task_success", name: "Task success", color: "#16A34A" });
+    expect(series[0]).toMatchObject({ id: "task_success", name: "Task success", colorIndex: 0 });
   });
 
   it("reads each run's score for the eval and leaves a null gap when absent", () => {
@@ -104,10 +104,10 @@ describe("deriveEvals", () => {
     expect(second.name).toBe("Policy adherence");
   });
 
-  it("assigns a distinct palette colour per eval, in order", () => {
+  it("assigns a distinct data-palette index per eval, in order", () => {
     const evals = deriveEvals(rows);
-    expect(evals[0].color).toBe(EVAL_COLORS[0]);
-    expect(evals[1].color).toBe(EVAL_COLORS[1]);
+    expect(evals[0].colorIndex).toBe(0);
+    expect(evals[1].colorIndex).toBe(1);
   });
 
   it("is empty when no run carries any score", () => {

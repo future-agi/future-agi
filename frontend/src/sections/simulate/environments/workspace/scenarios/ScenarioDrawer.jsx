@@ -17,9 +17,9 @@ import { SCENARIO_SHAPE } from "./scenarios.shapes";
 // Graded on, Tools it needs and Status sheet have no field behind them, so
 // they are left out.
 
-const VAL_SX = { typography: "s2", color: "text.secondary", lineHeight: 1.6, maxWidth: 760 };
+const VAL_SX = { typography: "s1", color: "text.secondary", maxWidth: 760 };
 const SECTION_HEAD = {
-  typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.5, mb: 1,
+  typography: "m3", fontWeight: "fontWeightMedium", color: "text.primary", mb: 1,
 };
 
 export default function ScenarioDrawer({ row, env, onClose, onEdit, locked = false }) {
@@ -29,19 +29,19 @@ export default function ScenarioDrawer({ row, env, onClose, onEdit, locked = fal
         <Stack sx={{ height: "100%" }}>
           <Stack
             direction="row" alignItems="center" spacing={1.5}
-            sx={{ px: 2.5, py: 2, pr: 6, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+            sx={{ px: 3, py: 2, pr: 6, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
           >
             <Box flex={1} minWidth={0}>
-              <Typography noWrap sx={{ typography: "s1", fontWeight: 600 }}>
+              <Typography noWrap sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}>
                 {row.name || row.title}
               </Typography>
             </Box>
             {!locked && onEdit && (
               <Button
-                size="small" variant="outlined"
+                size="small" variant="outlined" color="inherit"
                 onClick={() => onEdit(row)}
                 startIcon={<Iconify icon="solar:pen-new-square-linear" width={14} />}
-                sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+                sx={{ flexShrink: 0 }}
               >
                 Edit
               </Button>
@@ -80,7 +80,7 @@ function ScenarioSheet({ row, env }) {
     persona && (
       <Row key="persona" label="Persona">
         <Typography className="sd-val">
-          <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>{persona.name}</Box>
+          <Box component="span" sx={{ color: "text.primary", fontWeight: "fontWeightMedium" }}>{persona.name}</Box>
           {personaSubline(persona) ? ` · ${personaSubline(persona)}` : ""}
         </Typography>
       </Row>
@@ -97,7 +97,7 @@ function ScenarioSheet({ row, env }) {
             <Stack key={g.id} direction="row" spacing={1} alignItems="flex-start">
               <Typography
                 sx={{
-                  typography: "s2", color: "text.disabled", lineHeight: 1.6, width: 14, flexShrink: 0,
+                  typography: "s1", color: "text.disabled", width: 14, flexShrink: 0,
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
@@ -140,12 +140,12 @@ function ScenarioSheet({ row, env }) {
 
   if (rows.length === 0) return null;
   return (
-    <Stack spacing={2.5} sx={{ px: 2.5, py: 2.25, "& .sd-val": VAL_SX }}>
+    <Stack spacing={3} sx={{ px: 3, py: 3, "& .sd-val": VAL_SX }}>
       <Box>
         <Typography sx={SECTION_HEAD}>Scenario</Typography>
         <Box
           sx={{
-            border: "1px solid", borderColor: "divider", borderRadius: 1,
+            border: "1px solid", borderColor: "divider", borderRadius: "8px",
             "& > .sr + .sr": { borderTop: "1px solid", borderColor: "divider" },
           }}
         >
@@ -164,10 +164,10 @@ function Row({ label, children }) {
       className="sr"
       sx={{
         display: "grid", gridTemplateColumns: { xs: "1fr", sm: "124px minmax(0, 1fr)" },
-        columnGap: 2, rowGap: 0.25, px: 1.75, py: 1.125,
+        columnGap: 2, rowGap: 0.25, px: 1.5, py: 1,
       }}
     >
-      <Typography sx={{ typography: "s2", color: "text.subtitle", lineHeight: 1.6 }}>{label}</Typography>
+      <Typography sx={{ typography: "s1", color: "text.subtitle" }}>{label}</Typography>
       <Box minWidth={0}>{children}</Box>
     </Box>
   );

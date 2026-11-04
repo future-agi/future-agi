@@ -555,7 +555,7 @@ test('DASH-E2E-010: a saved trace annotation widget retains numeric scores', {
 
       await test.step('2 create and name a Table widget with 7D and Day', async () => {
         await page.goto('/dashboard/dashboards', { waitUntil: 'domcontentloaded' });
-        let since = Date.now(); await page.getByRole('button', { name: 'Create Dashboard', exact: true }).click();
+        let since = Date.now(); await page.getByRole('button', { name: /^create dashboard$/i }).click();
         const created = await readNative<{ result: { id: string } }>(DASHBOARDS, undefined, since);
         dashboardId = created.body!.result.id; expect(dashboardId).toMatch(/^[0-9a-f-]{36}$/); await attach('dashboard-id', { dashboardId, dashboardName, widgetName });
         await page.getByRole('heading', { name: 'Untitled', exact: true }).click(); await page.getByPlaceholder('Untitled Dashboard').fill(dashboardName);
@@ -566,7 +566,7 @@ test('DASH-E2E-010: a saved trace annotation widget retains numeric scores', {
         for (const method of new Set(receipts.filter(r => r.path === path && r.startedAt >= since && ['PATCH', 'PUT'].includes(r.method)).map(r => r.method))) {
           const named = await readNative<unknown>(path, undefined, since, method); expect(named.input).toMatchObject({ name: dashboardName });
         }
-        await page.getByRole('button', { name: 'Add Widget', exact: true }).first().click();
+        await page.getByRole('button', { name: /^add widget$/i }).first().click();
         await page.getByText('Untitled widget', { exact: true }).click(); await page.getByPlaceholder('Untitled widget').fill(widgetName);
         await page.getByPlaceholder('Untitled widget').press('Enter');
         await page.getByRole('combobox').filter({ hasText: 'Line' }).click(); await page.getByRole('option', { name: 'Table', exact: true }).click();

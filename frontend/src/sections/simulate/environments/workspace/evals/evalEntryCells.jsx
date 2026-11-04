@@ -5,22 +5,13 @@ import { EVAL_ENTRY_SHAPE, inputRowsOf, sourceLabel } from "./evalEntry";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
-const chipSx = {
-  height: 20,
-  fontSize: 10,
-  fontWeight: 600,
-  bgcolor: "background.neutral",
-  color: "text.secondary",
-  "& .MuiChip-label": { px: 0.75 },
-};
-
 // Library/Custom, read straight off the entry. An entry without a known
 // source draws no chip.
 export function EvalEntryChips({ entry }) {
   const source = sourceLabel(entry);
   return (
     <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
-      {source && <Chip size="small" label={source} sx={chipSx} />}
+      {source && <Chip size="small" label={source} />}
     </Stack>
   );
 }
@@ -30,13 +21,13 @@ EvalEntryChips.propTypes = { entry: EVAL_ENTRY_SHAPE };
 // the API sent them. The right-hand side is `label` and nothing else: the
 // raw source name (voice_recording, scenario_columns.situation.value) is
 // never shown.
-export function EvalInputs({ entry, heading = "INPUTS" }) {
+export function EvalInputs({ entry, heading = "Inputs" }) {
   const rows = inputRowsOf(entry);
   if (rows.length === 0) return null;
   return (
     <Box>
       {heading && (
-        <Typography sx={{ fontSize: 10, color: "text.disabled", letterSpacing: 0.3, mb: 0.75 }}>
+        <Typography sx={{ typography: "s3", color: "text.disabled", mb: 0.75 }}>
           {heading}
         </Typography>
       )}
@@ -46,7 +37,7 @@ export function EvalInputs({ entry, heading = "INPUTS" }) {
             <Chip
               size="small"
               label={`{{${row.key}}}`}
-              sx={{ ...chipSx, height: 22, fontFamily: MONO, fontWeight: 400 }}
+              sx={{ fontFamily: MONO }}
             />
             <Iconify
               icon="solar:arrow-right-linear"

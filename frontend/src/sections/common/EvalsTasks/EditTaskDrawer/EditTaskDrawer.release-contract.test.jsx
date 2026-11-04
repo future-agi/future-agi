@@ -52,7 +52,7 @@ vi.mock("src/sections/develop-detail/AccordianElements", () => {
   return { Accordion: Container, AccordionSummary: Container, AccordionDetails: Container };
 });
 vi.mock("src/components/ComplexFilter/FilterErrorBoundary", () => ({ default: ({ children }) => children }));
-vi.mock("../NewTaskDrawer/NewTaskFilterBox", async () => {
+vi.mock("src/sections/tasks/components/TaskFilterBar", async () => {
   const { useWatch } = await import("react-hook-form");
   const FixtureFilterBox = ({ setValue, control }) => {
     const rows = useWatch({ control, name: "filters" });
