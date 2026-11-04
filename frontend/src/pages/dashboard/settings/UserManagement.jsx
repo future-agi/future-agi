@@ -20,12 +20,10 @@ import InvitationsTable from "./InvitationsTable";
 import { enqueueSnackbar } from "notistack";
 import ConfirmDeleteUsers from "./ConfirmDeleteUsers"; // Import the confirmation modal
 import ConfirmDeleteInvitations from "src/pages/dashboard/settings/ConfirmDeleteInvitations"; // Import the confirmation modal
-import { useTheme } from "@mui/material/styles";
 import { useDebounce } from "src/hooks/use-debounce";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 
 const UserManagement = () => {
-  const theme = useTheme();
   const [refreshDataInvites, setRefreshDataInvites] = useState(false);
   const [refreshDataUsers, setRefreshDataUsers] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -215,40 +213,9 @@ const UserManagement = () => {
         <title>User Management</title>
       </Helmet>
 
-      <Tabs
-        value={tabValue}
-        onChange={handleTabChange}
-        sx={{
-          minHeight: 0,
-          "& .MuiTab-root": {
-            margin: "0 !important",
-            fontWeight: "600",
-            typography: "s1",
-            color: "primary.main",
-            "&:not(.Mui-selected)": {
-              color: "text.disabled",
-              fontWeight: "500",
-            },
-          },
-        }}
-        TabIndicatorProps={{
-          style: { backgroundColor: theme.palette.primary.main },
-        }} // Change the indicator color
-      >
-        <Tab
-          sx={{
-            margin: theme.spacing(0),
-            px: theme.spacing(1.875),
-          }}
-          label="User Management"
-        />
-        <Tab
-          sx={{
-            margin: theme.spacing(0),
-            px: theme.spacing(1.875),
-          }}
-          label="Invitation Approval"
-        />
+      <Tabs value={tabValue} onChange={handleTabChange}>
+        <Tab label="User Management" />
+        <Tab label="Invitation Approval" />
       </Tabs>
 
       <Box sx={{ paddingX: "2px" }}>
@@ -276,7 +243,8 @@ const UserManagement = () => {
                 startAdornment: (
                   <InputAdornment position="start">
                     <Iconify
-                      icon="eva:search-fill"
+                      icon="solar:magnifier-linear"
+                      width={16}
                       sx={{ color: "text.disabled" }}
                     />
                   </InputAdornment>
@@ -317,7 +285,6 @@ const UserManagement = () => {
                 sx={{
                   marginLeft: 2,
                   typography: "s1",
-                  fontWeight: "fontWeightMedium",
                   px: (theme) => theme.spacing(3),
                 }} // Add margin to the left of the button
                 onClick={() => {
@@ -374,7 +341,8 @@ const UserManagement = () => {
                   startAdornment: (
                     <InputAdornment position="start">
                       <Iconify
-                        icon="eva:search-fill"
+                        icon="solar:magnifier-linear"
+                        width={16}
                         sx={{ color: "text.disabled" }}
                       />
                     </InputAdornment>

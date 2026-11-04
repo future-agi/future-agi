@@ -9,7 +9,7 @@ const SingleFileDetail = ({ file, fileSize, deleteFile, isLoading }) => {
     <Box
       sx={{
         border: "1px solid",
-        borderColor: file.status !== "error" ? "divider" : "red.500",
+        borderColor: file.status !== "error" ? "divider" : "status.danger.fg",
         borderRadius: "8px",
         padding: "12px",
         display: "flex",
@@ -33,7 +33,6 @@ const SingleFileDetail = ({ file, fileSize, deleteFile, isLoading }) => {
             sx={{
               padding: 0,
               minWidth: 22,
-              minHeight: 22,
               maxWidth: 22,
               maxHeight: 22,
             }}
@@ -65,7 +64,7 @@ const SingleFileDetail = ({ file, fileSize, deleteFile, isLoading }) => {
                 <Typography
                   variant="s2"
                   fontWeight={"fontWeightMedium"}
-                  color="red.400"
+                  color="status.danger.fg"
                   sx={{ cursor: "pointer", textDecoration: "underline" }}
                 >
                   Try again
@@ -96,8 +95,8 @@ const SingleFileDetail = ({ file, fileSize, deleteFile, isLoading }) => {
               }}
             >
               <Iconify
-                icon="quill:warning"
-                color="red.400"
+                icon="solar:danger-triangle-linear"
+                color="status.danger.fg"
                 sx={{
                   maxWidth: 16,
                   maxHeight: 16,
@@ -134,7 +133,7 @@ const SingleFileDetail = ({ file, fileSize, deleteFile, isLoading }) => {
               />
             ) : (
               <Iconify
-                icon="mingcute:close-line"
+                icon="solar:close-linear"
                 color="text.primary"
                 width={16}
                 height={16}

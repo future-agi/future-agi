@@ -131,7 +131,7 @@ const PersonaCreateEditForm = ({
             <Link
               href={PERSONAS_DOCS_URL}
               underline="always"
-              color="blue.500"
+              color="status.info.fg"
               target="_blank"
               rel="noopener noreferrer"
               fontWeight="fontWeightMedium"

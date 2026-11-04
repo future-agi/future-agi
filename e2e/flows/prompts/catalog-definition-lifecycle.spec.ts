@@ -179,9 +179,8 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
       expect(response.status()).toBe(200);
       ids.promptId = (await response.json()).result.root_template;
       await expect(page).toHaveURL(new RegExp(`/dashboard/workbench/create/${ids.promptId}`), { timeout: UI_READY });
-      // PromptActions.jsx:518: unnamed edit IconButton is the first button in
-      // the All Prompts breadcrumb container for a newly created/unlabelled prompt.
-      await page.getByRole('link', { name: 'All Prompts', exact: true }).locator('..').getByRole('button').first().click();
+      // PromptActions.jsx: the pencil next to the prompt name in the breadcrumb.
+      await page.getByRole('button', { name: 'Rename prompt', exact: true }).click();
       await page.locator('input:focus').fill(promptName);
       const named = page.waitForResponse(r => new URL(r.url()).pathname === `${PROMPTS}${ids.promptId}/save-name/`,
         { timeout: UI_READY });
