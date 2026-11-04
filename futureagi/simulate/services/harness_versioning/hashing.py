@@ -296,21 +296,25 @@ def sub_goal_digests(sub_goals: Iterable[Mapping[str, Any]]) -> dict[str, str]:
     }
 
 
-def actor_digests(environment: Mapping[str, bytes]) -> dict[str, str]:
+def actor_digests(environment: Mapping[str, bytes]) -> dict[str, str] | None:
     """A digest of each actor's record in the environment's `actors.json` and of each sub-actor's in its
     `sub_actors.json`, keyed by its id; who last set it is left out, so only a change to the actor itself reads as a
-    change."""
+    change. None when either file is not valid JSON: the cast is unknown."""
     digests = {}
     for name, key in (("actors.json", "actors"), ("sub_actors.json", "sub_actors")):
         raw = environment.get(name)
         try:
             body = json.loads(raw) if raw else {}
         except ValueError:
-            continue
+            return None
         for actor in (body.get(key) if isinstance(body, dict) else None) or []:
             if isinstance(actor, dict) and actor.get("id"):
                 digests[str(actor["id"])] = canonical_digest(
-                    {field: value for field, value in actor.items() if field != "provenance"}
+                    {
+                        field: value
+                        for field, value in actor.items()
+                        if field != "provenance"
+                    }
                 )
     return digests
 

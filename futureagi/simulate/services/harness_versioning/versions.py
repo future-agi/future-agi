@@ -490,8 +490,8 @@ def with_actor_digests(
             files = archives.read_archive(
                 archives.get_archive(version.archive_object_key)
             )
-        except S3Error:
-            # Its files are gone: its cast is unknown, as before.
+        except (S3Error, HostedHarnessError):
+            # Its files are gone or unreadable: its cast is unknown, as before.
             return documents
         documents["actor_digests"] = hashing.actor_digests(files)
     return documents

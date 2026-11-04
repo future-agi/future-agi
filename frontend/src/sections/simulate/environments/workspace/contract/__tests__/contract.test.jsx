@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "src/utils/test-utils";
 import RlContractPanel from "../RlContractPanel";
 
 // A voice environment with two tools, two hard rules and a seeded table —
@@ -112,9 +112,12 @@ describe("RlContractPanel", () => {
     expect(screen.queryByText(/lookup_account\./)).toBeNull();
   });
 
-  it("no longer mounts the dummy Actors section (commented out, to be picked up later)", () => {
-    renderPanel();
-    expect(screen.queryByText("Colleague with a different plan")).toBeNull();
+  it("has no actors section, because actors have their own tab", () => {
+    renderPanel({
+      env: { ...voiceEnv, id: "env-1", versioning: { enabled: true }, subActors: [{ id: "friend" }] },
+    });
+    expect(screen.queryByText("In the world")).toBeNull();
+    expect(screen.queryByText(/^Sub-actors/)).toBeNull();
   });
 
   describe("template lock (read-only until forked)", () => {
@@ -131,33 +134,5 @@ describe("RlContractPanel", () => {
       expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
       expect(patch).not.toHaveBeenCalled();
     });
-  });
-});
-
-describe("RlContractPanel sub-actors", () => {
-  it("lists the environment's sub-actors with how they take part and how many scenarios include them", () => {
-    renderPanel({
-      env: {
-        ...voiceEnv,
-        subActors: [
-          {
-            id: "friend",
-            name: "Rowan",
-            role: "a friend with the caller",
-            channel: "audio_mix",
-            persona: { gender: "female", age_group: "25-32" },
-            scenarios_count: 2,
-          },
-        ],
-      },
-    });
-    expect(screen.getByText("Sub-actors (1)")).toBeInTheDocument();
-    expect(screen.getByText(/a friend with the caller/)).toBeInTheDocument();
-    expect(screen.getByText("Heard nearby · Female · 25-32 · In 2 scenarios")).toBeInTheDocument();
-  });
-
-  it("shows no sub-actors section for an environment without any", () => {
-    renderPanel();
-    expect(screen.queryByText(/^Sub-actors/)).toBeNull();
   });
 });

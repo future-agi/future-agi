@@ -9,6 +9,7 @@ from simulate.services.harness_versioning.versions import record_authoring
 from simulate.tests import test_harness_versioning_record as record_tests
 from simulate.tests.test_harness_amend_archive import NAMES
 from simulate.tests.test_harness_versioning_api import _versioned
+from simulate.tests.test_harness_versioning_backfill import _legacy
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
@@ -200,6 +201,12 @@ def test_an_actor_is_replaced_and_removed_in_the_draft_and_its_id_never_changes(
     replaced = auth_client.put(
         url, {"actor": {**MANAGER, "goal": "Approve fast"}}, format="json"
     )
+    # A replace without an id keeps the one in the address; a create without one is refused.
+    unnamed = {key: value for key, value in MANAGER.items() if key != "id"}
+    kept = auth_client.put(url, {"actor": unnamed}, format="json")
+    anonymous = auth_client.post(
+        f"{BASE}/{environment.id}/actors/", {"actor": unnamed}, format="json"
+    )
     removed = auth_client.delete(url)
     missing = auth_client.delete(url)
 
@@ -207,6 +214,11 @@ def test_an_actor_is_replaced_and_removed_in_the_draft_and_its_id_never_changes(
     assert (
         replaced.status_code == 200
         and replaced.json()["actors"][0]["goal"] == "Approve fast"
+    )
+    assert kept.status_code == 200
+    assert (anonymous.status_code, anonymous.json()["error"]) == (
+        400,
+        "actor_id_missing",
     )
     assert removed.status_code == 200 and removed.json()["actors"] == []
     assert (missing.status_code, missing.json()["error"]) == (404, "actor_not_found")
@@ -240,23 +252,6 @@ def test_a_view_hides_another_actor_s_private_material(
     )
 
 
-def test_an_actor_in_a_scenario_cannot_be_removed():
-    from simulate.services.harness_actors import _scenarios_using
-
-    suite = {
-        "scenarios.json": json.dumps(
-            [
-                {
-                    "scenario_key": "discount-approved",
-                    "actors": [{"id": "manager", "instruction": "Approve it"}],
-                }
-            ]
-        ).encode()
-    }
-    assert _scenarios_using(suite, "manager") == ["discount-approved"]
-    assert _scenarios_using(suite, "coworker") == []
-
-
 def test_the_actor_routes_need_versioning(
     user, workspace, storage, auth_client, settings
 ):
@@ -271,26 +266,85 @@ def test_the_actor_routes_need_versioning(
     )
 
 
+@pytest.mark.parametrize("authored", [True, False])
+def test_an_environment_built_before_versioning_reads_its_actors(
+    user, workspace, storage, auth_client, authored
+):
+    environment = _legacy(
+        user,
+        workspace,
+        f"actors-legacy-{authored}",
+        storage,
+        body=_authoring(contract=CRM_CONTRACT),
+    )
+    if not authored:
+        environment.payload["metadata"].pop("authoring_object_key")
+        environment.save(update_fields=["payload"])
+
+    response = auth_client.get(f"{BASE}/{environment.id}/actors/")
+
+    assert response.status_code == 200
+    # Read from its authored files when it has them, so the world's actions show; nothing when it has none.
+    assert bool(response.json()["actions"]) is authored
+
+
 def test_an_actor_a_scenario_includes_is_not_removed(
     user, workspace, storage, auth_client
 ):
-    from unittest.mock import patch
+    from simulate.tests.test_harness_versioning_record import _scenario
 
-    environment = _built(user, workspace, "actors-in-use")
+    documents = [
+        _scenario(NAMES[0], actors=[{"id": "manager", "instruction": "Approve it"}]),
+        _scenario(NAMES[1], sub_actors=[{"id": "colleague"}]),
+    ]
+    environment = record_tests._environment(user, workspace, "actors-in-use")
+    record_authoring(
+        environment,
+        _authoring(
+            contract=CRM_CONTRACT,
+            **{
+                "scenarios.json": json.dumps(documents),
+                **{
+                    f"scenarios/{one['name']}/scenario.json": json.dumps(one)
+                    for one in documents
+                },
+            },
+        ),
+        origin="authoring",
+    )
     _add(auth_client, environment, MANAGER)
+    _add(
+        auth_client,
+        environment,
+        {
+            "id": "colleague",
+            "name": "Jordan",
+            "role": "colleague",
+            "channel": "audio_mix",
+        },
+    )
+    _add(auth_client, environment, {"id": "coworker", "name": "Sam"})
 
-    with patch(
-        "simulate.services.harness_actors._scenarios_using",
-        return_value=["discount-approved"],
-    ):
-        refused = auth_client.delete(f"{BASE}/{environment.id}/actors/manager/")
-
-    assert (refused.status_code, refused.json()["error"]) == (409, "actor_in_use")
-    assert "discount-approved" in refused.json()["message"]
-    assert [
-        one["id"]
+    counts = {
+        one["id"]: one["scenarios"]
         for one in auth_client.get(f"{BASE}/{environment.id}/actors/").json()["actors"]
-    ] == ["manager"]
+    }
+    manager = auth_client.delete(f"{BASE}/{environment.id}/actors/manager/")
+    colleague = auth_client.delete(f"{BASE}/{environment.id}/actors/colleague/")
+    coworker = auth_client.delete(f"{BASE}/{environment.id}/actors/coworker/")
+
+    assert counts == {"manager": 1, "colleague": 1, "coworker": 0}
+    assert (manager.status_code, manager.json()["error"]) == (409, "actor_in_use")
+    assert (
+        "Priya Raman is in 1 scenario (book-ride-airport)" in manager.json()["message"]
+    )
+    assert (colleague.status_code, colleague.json()["error"]) == (409, "actor_in_use")
+    assert "cancel-active-ride" in colleague.json()["message"]
+    assert coworker.status_code == 200, coworker.content
+    assert sorted(one["id"] for one in coworker.json()["actors"]) == [
+        "colleague",
+        "manager",
+    ]
 
 
 def test_in_a_scenario_others_see_the_caller_s_situation_and_the_caller_does_not_get_it_twice(
@@ -463,28 +517,6 @@ def test_a_sub_actor_is_in_the_cast_and_edited_where_the_call_reads_it(
     assert [one["id"] for one in removed.json()["actors"]] == ["manager"]
 
 
-def test_a_sub_actor_a_scenario_includes_counts_as_in_use():
-    from simulate.services import harness_actors
-
-    suite = {
-        "scenarios/one/scenario.json": json.dumps(
-            {
-                "scenario_key": "one",
-                "instruction": "I need my plan renewed. Your details: account 7",
-                "sub_actors": [
-                    {"id": "colleague", "instruction": "Ask for a bigger discount"}
-                ],
-            }
-        ).encode()
-    }
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(
-            "simulate.services.harness_versioning.versions.suite_documents",
-            lambda files: [json.loads(raw) for raw in files.values()],
-        )
-        assert harness_actors._scenarios_using(suite, "colleague") == ["one"]
-
-
 def test_the_checks_and_the_view_follow_the_rules_the_environment_was_sealed_with(
     user, workspace, storage, auth_client
 ):
@@ -632,6 +664,7 @@ def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is
     sub_actor = {
         "id": "colleague",
         "name": "Jordan",
+        "role": "colleague",
         "side": "caller",
         "channel": "audio_mix",
     }
@@ -662,7 +695,7 @@ def test_values_written_elsewhere_do_not_block_an_edit_and_the_scenario_count_is
         "actor_invalid",
     )
     assert (
-        "colleague's channel 'smoke_signal' is not one of: audio_mix, audio_handoff, ivr."
+        "colleague's channel: 'smoke_signal' is not one of: audio_handoff, audio_mix, ivr."
         in bad_channel.json()["message"]
     )
 
@@ -727,7 +760,7 @@ def test_a_sub_actor_never_takes_the_name_of_a_caller_it_is_with():
     colleague = {"id": "colleague", "name": "Jordan Taylor", "channel": "audio_mix"}
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
-            "simulate.services.harness_versioning.versions.suite_documents",
+            "simulate.services.harness_actors.suite_documents",
             lambda files: [json.loads(raw) for raw in files.values()],
         )
         # The caller of a scenario that does not include the sub-actor may share its name.
@@ -737,3 +770,547 @@ def test_a_sub_actor_never_takes_the_name_of_a_caller_it_is_with():
     assert problems == [
         "colleague's name is the caller's in one (Mei Lin); choose another."
     ]
+
+
+def test_world_actions_keep_only_routes_an_actor_can_send_to_when_the_rules_say_how():
+    from simulate.services.harness_actors import world_actions
+
+    contract = {
+        "tool_entrypoints": [
+            {"tool": "approve", "endpoint": "crm/approve"},
+            {"tool": "read", "endpoint": "crm/read", "method": "get"},
+            {"tool": "cancel", "endpoint": "orders/{order_id}/cancel"},
+        ]
+    }
+    files = {"contract.json": json.dumps(contract).encode()}
+    naming = {
+        "from": "tool_entrypoints",
+        "route": "endpoint",
+        "tool": "tool",
+        "separator": ".",
+    }
+    sealed = {**naming, "method": "method", "methods": ["POST"], "placeholder": "{"}
+
+    def names(rules):
+        return [one["action"] for one in world_actions(files, {"world_actions": rules})]
+
+    assert names(sealed) == ["crm.approve"]
+    # Rules sealed before methods and placeholders were named keep every route.
+    assert names(naming) == ["crm.approve", "crm.read", "orders.{order_id}.cancel"]
+
+
+def test_every_actor_has_an_id_its_routes_can_reach_and_a_name(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-id-rule")
+    slash = _add(
+        auth_client, environment, {"id": "a/b", "name": "", "channel": "audio_mix"}
+    )
+    long = _add(
+        auth_client,
+        environment,
+        {"id": "a" * 100, "name": "Jordan", "channel": "audio_mix"},
+    )
+    unnamed = _add(auth_client, environment, {"id": "sam", "name": ""})
+
+    assert (slash.status_code, slash.json()["error"]) == (400, "actor_invalid")
+    assert (
+        "The id 'a/b' is not valid; use 1 to 64 lowercase letters, digits or underscores."
+        in slash.json()["message"]
+    )
+    assert "a/b's name: it cannot be empty." in slash.json()["message"]
+    assert (long.status_code, long.json()["error"]) == (400, "actor_invalid")
+    assert "The id 'aaaa" in long.json()["message"]
+    assert (unnamed.status_code, unnamed.json()["error"]) == (400, "actor_invalid")
+    assert "sam's name: it cannot be empty." in unnamed.json()["message"]
+    assert auth_client.get(f"{BASE}/{environment.id}/actors/").json()["actors"] == []
+
+
+def test_an_actor_s_fields_are_bounded_on_the_server(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-bounded")
+    long_name = _add(auth_client, environment, {**MANAGER, "name": "N" * 81})
+    long_role = _add(
+        auth_client,
+        environment,
+        {
+            "id": "colleague",
+            "name": "Jordan",
+            "role": "R" * 161,
+            "channel": "audio_mix",
+        },
+    )
+    huge = _add(auth_client, environment, {**MANAGER, "goal": "G" * 70_000})
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+
+    assert "manager's name: use at most 80 characters." in long_name.json()["message"]
+    assert (
+        "colleague's role: use at most 160 characters." in long_role.json()["message"]
+    )
+    assert huge.status_code == 400
+    assert "Keep an actor under 65536 characters." in huge.content.decode()
+    # The editor reads its limits from the schemas the cast is sent with.
+    for file in ("actors.json", "sub_actors.json"):
+        properties = listed["record_schemas"][file]["properties"]
+        assert (properties["name"]["maxLength"], properties["role"]["maxLength"]) == (
+            80,
+            160,
+        )
+    assert listed["actors"] == []
+
+
+def test_a_bad_actor_written_elsewhere_never_blocks_an_edit_to_another(
+    user, workspace, storage, auth_client
+):
+    environment = record_tests._environment(user, workspace, "actors-bad-elsewhere")
+    record_authoring(
+        environment,
+        _authoring(
+            contract=CRM_CONTRACT,
+            **{"actors.json": json.dumps({"actors": [{"id": "Old Id", "name": ""}]})},
+        ),
+        origin="authoring",
+    )
+
+    added = _add(auth_client, environment, MANAGER)
+    edited_bad = auth_client.put(
+        f"{BASE}/{environment.id}/actors/Old Id/",
+        {"actor": {"name": ""}},
+        format="json",
+    )
+
+    assert added.status_code == 200, added.content
+    assert [one["id"] for one in added.json()["actors"]] == ["Old Id", "manager"]
+    # Its id is kept as it is; only the empty name it was sent with is refused.
+    assert (edited_bad.status_code, edited_bad.json()["error"]) == (
+        400,
+        "actor_invalid",
+    )
+    assert edited_bad.json()["message"] == "Old Id's name: it cannot be empty."
+    renamed = auth_client.put(
+        f"{BASE}/{environment.id}/actors/Old Id/",
+        {"actor": {"name": "Pat"}},
+        format="json",
+    )
+    assert renamed.status_code == 200, renamed.content
+
+
+@pytest.mark.parametrize(
+    "actors_json",
+    [
+        "{not json",
+        json.dumps({"actors": ["manager"]}),
+        json.dumps({"actors": "manager"}),
+    ],
+)
+def test_an_unreadable_actors_file_is_a_plain_conflict(
+    actors_json, user, workspace, storage, auth_client
+):
+    environment = record_tests._environment(user, workspace, "actors-unreadable")
+    record_authoring(
+        environment,
+        _authoring(contract=CRM_CONTRACT, **{"actors.json": actors_json}),
+        origin="authoring",
+    )
+
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/")
+    added = _add(auth_client, environment, MANAGER)
+
+    for response in (listed, added):
+        assert (response.status_code, response.json()["error"]) == (
+            409,
+            "actors_unreadable",
+        )
+        assert response.json()["message"] == (
+            "This environment's actors.json cannot be read; ask the builder chat to fix it"
+        )
+
+
+def test_an_environment_in_another_workspace_has_no_actors_here(
+    user, workspace, storage, auth_client
+):
+    from accounts.models.workspace import Workspace
+
+    other = Workspace.objects.create(
+        name="Other workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    environment = _built(user, other, "actors-other-workspace")
+    url = f"{BASE}/{environment.id}/actors/"
+
+    responses = [
+        auth_client.get(url),
+        _add(auth_client, environment, MANAGER),
+        auth_client.get(f"{url}manager/"),
+        auth_client.put(f"{url}manager/", {"actor": MANAGER}, format="json"),
+        auth_client.delete(f"{url}manager/"),
+    ]
+
+    assert [one.status_code for one in responses] == [404] * 5
+    assert fresh_draft_of(environment) is None
+
+
+def fresh_draft_of(environment):
+    from simulate.services.harness_versioning.drafts import fresh_draft
+
+    return fresh_draft(environment, "environment")
+
+
+def test_unknown_actors_and_scenarios_and_a_stale_removal_are_refused(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-unknown")
+    _add(auth_client, environment, MANAGER)
+    url = f"{BASE}/{environment.id}/actors/"
+
+    unknown = auth_client.get(f"{url}nobody/")
+    no_scenario = auth_client.get(
+        f"{url}manager/", {"scenario_key": "no-such-scenario"}
+    )
+    stale = auth_client.delete(f"{url}manager/?expected_revision=0")
+
+    assert (unknown.status_code, unknown.json()["error"]) == (404, "actor_not_found")
+    assert (no_scenario.status_code, no_scenario.json()["error"]) == (
+        404,
+        "scenario_not_found",
+    )
+    assert (stale.status_code, stale.json()["error"]) == (409, "draft_changed")
+    assert [one["id"] for one in auth_client.get(url).json()["actors"]] == ["manager"]
+
+
+def test_a_cycle_of_parents_and_a_removal_that_leaves_a_parent_dangling_are_refused(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-cycle")
+    url = f"{BASE}/{environment.id}/actors/"
+    _add(auth_client, environment, {"id": "boss", "name": "Ana"})
+    _add(auth_client, environment, {"id": "lead", "name": "Bo", "parent": "boss"})
+
+    cycle = auth_client.put(
+        f"{url}boss/", {"actor": {"name": "Ana", "parent": "lead"}}, format="json"
+    )
+    dangling = auth_client.delete(f"{url}boss/")
+
+    assert (cycle.status_code, cycle.json()["error"]) == (400, "actor_invalid")
+    assert "boss is in a cycle of parent links; break it." in cycle.json()["message"]
+    assert (dangling.status_code, dangling.json()["error"]) == (400, "actor_invalid")
+    assert "lead's parent is boss; change it first." in dangling.json()["message"]
+
+
+@pytest.mark.parametrize("failure", ["gone", "unreadable", "invalid_actors_json"])
+def test_an_unknown_cast_on_either_side_shows_no_actor_diff_rather_than_all_added_or_removed(
+    failure, user, workspace, storage
+):
+    from unittest.mock import patch
+
+    from minio.error import S3Error
+
+    from simulate.services.harness_versioning import hashing, versions
+
+    environment = _built(user, workspace, f"actors-unknown-{failure}")
+    base = environment.environment_version
+    known = {"manager": "digest-1", "colleague": "digest-2"}
+    # As a version saved before actor digests were recorded.
+    base.documents = {
+        k: v for k, v in (base.documents or {}).items() if k != "actor_digests"
+    }
+    raised = {
+        "gone": {
+            "side_effect": S3Error("NoSuchKey", "gone", "key", "request", "host", None)
+        },
+        "unreadable": {"return_value": b"not an archive"},
+    }.get(failure)
+    if failure == "invalid_actors_json":
+        base.documents["actor_digests"] = hashing.actor_digests(
+            {"actors.json": b"{not json"}
+        )
+
+    with patch.object(
+        versions.archives,
+        "get_archive",
+        **(raised or {"wraps": versions.archives.get_archive}),
+    ):
+        diff, summary = versions.environment_change(base, {}, {"actor_digests": known})
+    # And the other way: a cast that cannot be read now never reads as every actor removed.
+    later, later_summary = versions.environment_change(
+        type(base)(documents={"actor_digests": known}),
+        {},
+        {"actor_digests": hashing.actor_digests({"actors.json": b"{not json"})},
+    )
+
+    assert diff["actors"] is None and "actor" not in summary
+    assert later["actors"] is None and "actor" not in later_summary
+
+
+def test_a_replace_never_moves_an_actor_between_the_call_and_the_world(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-no-move")
+    colleague = {
+        "id": "colleague",
+        "name": "Jordan",
+        "role": "colleague",
+        "channel": "audio_mix",
+    }
+    _add(auth_client, environment, colleague)
+    _add(auth_client, environment, {"id": "coworker", "name": "Sam"})
+    url = f"{BASE}/{environment.id}/actors/"
+
+    into_world = auth_client.put(
+        f"{url}colleague/",
+        {"actor": {"name": "Jordan", "side": "caller"}},
+        format="json",
+    )
+    onto_call = auth_client.put(
+        f"{url}coworker/",
+        {"actor": {"name": "Sam", "channel": "audio_mix"}},
+        format="json",
+    )
+
+    assert (into_world.status_code, into_world.json()["error"]) == (
+        400,
+        "actor_invalid",
+    )
+    assert into_world.json()["message"] == (
+        "colleague speaks on the call; remove it and add it again to change that"
+    )
+    assert (onto_call.status_code, onto_call.json()["error"]) == (400, "actor_invalid")
+    assert "coworker acts in the world" in onto_call.json()["message"]
+    cast = {one["id"]: one for one in auth_client.get(url).json()["actors"]}
+    assert "channel" in cast["colleague"] and "channel" not in cast["coworker"]
+
+
+def test_an_edit_landing_while_another_reads_the_draft_is_never_overwritten(
+    user, workspace, storage
+):
+    from unittest.mock import patch
+
+    from simulate.services import harness_actors
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    environment = _built(user, workspace, "actors-race")
+    harness_actors.write_actor_edit(
+        environment,
+        op="create",
+        actor_id="manager",
+        body=MANAGER,
+        user=user,
+        expected_revision=None,
+    )
+    real = harness_actors.drafts.edit_sides
+    raced = []
+
+    def edit_lands_meanwhile(env):
+        sides = real(env)
+        if not raced:
+            raced.append(True)
+            harness_actors.write_actor_edit(
+                env,
+                op="create",
+                actor_id="coworker",
+                body={"name": "Sam"},
+                user=user,
+                expected_revision=None,
+            )
+        return sides
+
+    with patch.object(
+        harness_actors.drafts, "edit_sides", side_effect=edit_lands_meanwhile
+    ):
+        with pytest.raises(HostedHarnessError) as refused:
+            harness_actors.write_actor_edit(
+                environment,
+                op="replace",
+                actor_id="manager",
+                body={**MANAGER, "goal": "Approve fast"},
+                user=user,
+                expected_revision=None,
+            )
+
+    assert refused.value.code == "draft_changed"
+    assert [one["id"] for one in harness_actors.read_actors(environment)["actors"]] == [
+        "manager",
+        "coworker",
+    ]
+
+
+def test_an_edit_stamps_only_the_fields_it_changed(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_versioning.drafts import edit_sides
+
+    chat = {"origin": "chat", "fields": {"name": "chat", "goal": "chat"}}
+    environment = record_tests._environment(user, workspace, "actors-stamped")
+    record_authoring(
+        environment,
+        _authoring(
+            contract=CRM_CONTRACT,
+            **{
+                "actors.json": json.dumps(
+                    {
+                        "actors": [
+                            {
+                                "id": "manager",
+                                "name": "Priya",
+                                "goal": "Old",
+                                "provenance": chat,
+                            }
+                        ]
+                    }
+                )
+            },
+        ),
+        origin="authoring",
+    )
+
+    edited = auth_client.put(
+        f"{BASE}/{environment.id}/actors/manager/",
+        {"actor": {"name": "Priya", "goal": "New", "provenance": {"origin": "client"}}},
+        format="json",
+    )
+
+    assert edited.status_code == 200, edited.content
+    [stored] = json.loads(edit_sides(environment)["environment"]["actors.json"])[
+        "actors"
+    ]
+    assert stored["provenance"]["origin"] == "editor"
+    assert stored["provenance"]["fields"] == {"name": "chat", "goal": "editor"}
+
+
+def test_a_world_actor_s_actions_come_from_the_transcript_and_never_join_the_agent_s_calls(
+    organization, workspace
+):
+    from datetime import UTC, datetime
+
+    from simulate.models import CallExecution
+    from simulate.services.hosted_harness_ingestion import WORLD_ACTIONS_KEY
+    from simulate.services.run_results_v3 import function_calls
+    from simulate.tests.test_harness_sub_actors import _ingest
+
+    at = datetime(2026, 9, 29, 9, 0, tzinfo=UTC).timestamp()
+    approve = {
+        "name": "crm.approve_discount",
+        "arguments": {"deal": 7},
+        "ok": False,
+        "error": "not permitted",
+        "refused": True,
+        "at": at + 3,
+        "action_id": "a-1",
+        "actor_id": "manager",
+        "actor_name": "Priya",
+        "outcome": "refused",
+    }
+    metadata = {WORLD_ACTIONS_KEY: [{"stale": True}]}
+    call = _ingest(
+        organization,
+        workspace,
+        "actors-world-actions-transcript",
+        CallExecution.SimulationCallType.VOICE,
+        {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "Hello",
+                    "started_speaking_at": at + 1,
+                    "stopped_speaking_at": at + 2,
+                }
+            ],
+            "world_actors": {"actions": [approve, "not a row"]},
+        },
+        metadata,
+    )
+    call.call_metadata = metadata
+    call.provider_call_data = {
+        "livekit": {
+            "tool_calls": [
+                {"name": "lookup", "action_id": "a-0", "outcome": "committed"}
+            ]
+        }
+    }
+
+    [stored] = metadata[WORLD_ACTIONS_KEY]
+    calls = function_calls(call)
+
+    assert stored["start_time_ms"] == 3000 and stored["actor_id"] == "manager"
+    assert [
+        one["name"] for one in call.provider_call_data["livekit"]["tool_calls"]
+    ] == ["lookup"]
+    assert [(one["name"], one.get("actor_id")) for one in calls] == [
+        ("lookup", None),
+        ("crm.approve_discount", "manager"),
+    ]
+
+
+def test_a_call_stored_with_actor_rows_in_its_tool_calls_still_lists_them():
+    from simulate.services.run_results_v3 import function_calls
+
+    row = {
+        "name": "crm.approve_discount",
+        "actor_id": "manager",
+        "actor_name": "Priya",
+        "refused": True,
+    }
+    call = type(
+        "Call",
+        (),
+        {
+            "provider_call_data": {"livekit": {"tool_calls": [row]}},
+            "call_metadata": None,
+        },
+    )()
+
+    assert function_calls(call) == [row]
+
+
+def test_a_sub_actor_follows_the_sealed_persona_role_and_channel_rules(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actors-sealed-persona")
+    chat = record_tests._environment(user, workspace, "actors-sealed-chat")
+    record_authoring(
+        chat,
+        _authoring(contract={**CRM_CONTRACT, "modality": "chat"}),
+        origin="authoring",
+    )
+    colleague = {
+        "id": "colleague",
+        "name": "Jordan",
+        "role": "the caller's colleague",
+        "channel": "audio_mix",
+    }
+
+    bad_persona = _add(
+        auth_client, environment, {**colleague, "persona": {"age_group": 30}}
+    )
+    other_name = _add(
+        auth_client, environment, {**colleague, "persona": {"name": "Sam"}}
+    )
+    no_role = _add(auth_client, environment, {**colleague, "role": ""})
+    on_chat = _add(auth_client, chat, colleague)
+
+    assert (bad_persona.status_code, bad_persona.json()["error"]) == (
+        400,
+        "actor_invalid",
+    )
+    assert "colleague's persona.age_group:" in bad_persona.json()["message"]
+    assert (
+        "colleague's persona.name is 'Sam' but its name is 'Jordan'; make them the same."
+        in other_name.json()["message"]
+    )
+    assert "colleague's role: it cannot be empty." in no_role.json()["message"]
+    assert (
+        "colleague cannot reach a chat agent through audio_mix; choose another channel."
+        in on_chat.json()["message"]
+    )
+    assert (
+        _add(
+            auth_client,
+            environment,
+            {**colleague, "persona": {"name": "Jordan", "age_group": "adult"}},
+        ).status_code
+        == 200
+    )

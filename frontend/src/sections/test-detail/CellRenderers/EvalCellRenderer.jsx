@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Chip, Skeleton } from "@mui/material";
+import { Box, Skeleton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import _ from "lodash";
@@ -84,17 +84,9 @@ const EvalCellRenderer = ({ value: evalData }) => {
         return _.capitalize(result.label);
       case "choices":
         return (
-          <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
-            {result.items.map((item, idx) => (
-              <Chip
-                key={`${item}-${idx}`}
-                color="primary"
-                variant="outlined"
-                size="small"
-                label={_.capitalize(String(item))}
-              />
-            ))}
-          </Box>
+          <Typography variant="body2" color="text.primary">
+            {result.items.map((item) => _.capitalize(String(item))).join(" · ")}
+          </Typography>
         );
       case "empty":
       default:

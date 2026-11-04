@@ -638,6 +638,76 @@ describe("callTranscript", () => {
     ).toBe(true);
     expect(callTranscript({ function_calls: null })).toEqual([]);
   });
+
+  it("shows a world actor's action as theirs, not as the agent's tool call", () => {
+    const detail = mapCallDetail({
+      function_calls: [
+        {
+          id: "agent",
+          name: "update_deal",
+          actor_id: "agent",
+          start_time_ms: 1000,
+        },
+        {
+          id: "manager",
+          name: "approve",
+          actor_id: "manager",
+          actor_name: "Pat Lee",
+          refused: true,
+          start_time_ms: 2000,
+        },
+      ],
+    });
+    expect(detail.turns.map((turn) => [turn.role, turn.speakerName])).toEqual([
+      ["tool", ""],
+      ["world_actor", "Pat Lee"],
+    ]);
+    expect(detail.turns[1].text).toMatch(/^Refused · approve/);
+    expect(detail.turns[1].toolCalls).toBeNull();
+  });
+
+  it("heads a world actor's action by how the world took it, with its error", () => {
+    const { turns } = mapCallDetail({
+      function_calls: [
+        {
+          name: "approve",
+          actor_id: "manager",
+          outcome: "faulted",
+          refused: false,
+          error: "crm returned 503",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          outcome: "refused",
+          refused: true,
+          error: "not permitted",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          outcome: "committed",
+          actor_role: "store manager",
+          result: {},
+        },
+        { name: "approve", actor_id: "manager" },
+      ],
+    });
+    expect(turns.map((turn) => turn.text.split("\n")[0])).toEqual([
+      "Failed · approve",
+      "Refused · approve",
+      "Committed · approve",
+      "approve",
+    ]);
+    expect(turns.map((turn) => turn.actorRole)).toEqual([
+      "",
+      "",
+      "store manager",
+      "",
+    ]);
+    expect(turns[0].text).toContain("× error: crm returned 503");
+    expect(turns[1].text).toContain("× error: not permitted");
+  });
 });
 
 const makeWrapper = () => {
@@ -1593,6 +1663,35 @@ describe("sub-actor turns in a call", () => {
     expect(voice.turns.map((t) => [t.role, t.speakerName])).toEqual([
       ["sub_actor", "Rowan"],
       ["customer", ""],
+    ]);
+  });
+
+  it("gives each sub-actor's turn their role and how they were heard, and an older call neither", () => {
+    const transcript = [
+      { speaker_role: "sub_actor", speaker_name: "Rowan", content: "Two" },
+      { speaker_role: "sub_actor", speaker_name: "Sam", content: "Me too" },
+      { speaker_role: "user", content: "One" },
+    ];
+    const voice = mapCallDetail({
+      id: "v",
+      transcript,
+      sub_actors: [
+        { id: "friend", name: "Rowan", role: "roommate", channel: "audio_mix" },
+        { id: "kid", name: "Sam", role: "son", channel: "audio_handoff" },
+      ],
+    });
+    expect(
+      voice.turns.map((t) => [t.speakerName, t.actorRole, t.channel]),
+    ).toEqual([
+      ["Rowan", "roommate", "audio_mix"],
+      ["Sam", "son", "audio_handoff"],
+      ["", "", ""],
+    ]);
+    const older = mapCallDetail({ id: "v", transcript });
+    expect(older.turns.map((t) => [t.actorRole, t.channel])).toEqual([
+      ["", ""],
+      ["", ""],
+      ["", ""],
     ]);
   });
 });

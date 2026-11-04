@@ -48,15 +48,7 @@ import {
 } from "./traceTable.constants";
 
 const PAGE_SIZE = 50;
-const bannerButtonSx = {
-  typography: "s3",
-  fontWeight: 600,
-  minWidth: 0,
-  // Room around the label so the hover box doesn't sit tight on the text.
-  px: 1,
-  py: 0.25,
-  color: "primary.main",
-};
+const bannerButtonSx = { minWidth: 0 };
 // Room left under the table box for the pager row and the page's bottom gutter.
 const BELOW_TABLE_PX = 88;
 const PAGER_ROW_PX = 57;
@@ -404,8 +396,14 @@ export default function RunTraceTable({
               label: "Sub-actor",
               type: "enum",
               choices: subActorFacet.map((item) => item.value),
+              // Each choice says how many of the run's calls it entered.
               choiceLabels: Object.fromEntries(
-                subActorFacet.map((item) => [item.value, item.label]),
+                subActorFacet.map((item) => [
+                  item.value,
+                  item.count != null
+                    ? `${item.label} (${item.count})`
+                    : item.label,
+                ]),
               ),
             },
           ]
@@ -568,7 +566,7 @@ export default function RunTraceTable({
             <Iconify
               icon="mage:filter"
               width={15}
-              sx={{ color: filterCount ? "primary.main" : "text.subtitle" }}
+              sx={{ color: filterCount ? "text.primary" : "text.subtitle" }}
             />
           }
           endIcon={
@@ -596,7 +594,7 @@ export default function RunTraceTable({
               >
                 ·
               </Box>
-              <Box component="span" sx={{ color: "primary.main" }}>
+              <Box component="span" sx={{ color: "text.primary" }}>
                 {filterCount - affectedCalls}
               </Box>
             </>
@@ -616,7 +614,6 @@ export default function RunTraceTable({
             setHandoffExpanded(false);
             setPage(1);
           }}
-          sx={{ typography: "s2", fontWeight: 600 }}
         />
       )}
     </Stack>
@@ -772,7 +769,7 @@ export default function RunTraceTable({
                         }
                       >
                         <Iconify
-                          icon="mdi:dots-vertical"
+                          icon="solar:menu-dots-vertical-linear"
                           width={16}
                           sx={{ color: "text.subtitle" }}
                         />

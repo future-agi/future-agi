@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from rest_framework import serializers
 
 from model_hub.serializers.contracts import JsonObjectRequestField
@@ -291,6 +293,21 @@ class HarnessEnvironmentAmendmentSerializer(serializers.Serializer):
     note = serializers.CharField()
 
 
+class HarnessEnvironmentSubActorPersonaSerializer(serializers.Serializer):
+    """The caller persona fields a sub-actor's voice is chosen from."""
+
+    name = serializers.CharField(required=False, allow_blank=True)
+    gender = serializers.CharField(required=False, allow_blank=True)
+    age_group = serializers.CharField(required=False, allow_blank=True)
+    occupation = serializers.CharField(required=False, allow_blank=True)
+    location = serializers.CharField(required=False, allow_blank=True)
+    personality = serializers.CharField(required=False, allow_blank=True)
+    communication_style = serializers.CharField(required=False, allow_blank=True)
+    initial_message = serializers.CharField(required=False, allow_blank=True)
+    languages = serializers.ListField(child=serializers.CharField(), required=False)
+    accent = serializers.CharField(required=False, allow_blank=True)
+
+
 class HarnessEnvironmentSubActorSerializer(serializers.Serializer):
     """Someone on the person's side who is not the person, on the environment's list."""
 
@@ -298,9 +315,20 @@ class HarnessEnvironmentSubActorSerializer(serializers.Serializer):
     name = serializers.CharField()
     role = serializers.CharField(allow_blank=True)
     channel = serializers.CharField()
-    persona = serializers.DictField()
+    persona = HarnessEnvironmentSubActorPersonaSerializer()
     loudness_ratio = serializers.FloatField(required=False)
     scenarios_count = serializers.IntegerField()
+
+
+class HarnessEnvironmentSubActorTriggerSerializer(serializers.Serializer):
+    """When a sub-actor enters a call; only the keys its kind uses are present."""
+
+    kind = serializers.CharField(required=False)
+    turn = serializers.IntegerField(required=False)
+    tool = serializers.CharField(required=False, allow_blank=True)
+    on_call = serializers.IntegerField(required=False)
+    words = serializers.ListField(child=serializers.CharField(), required=False)
+    p = serializers.FloatField(required=False)
 
 
 class HarnessEnvironmentScenarioSubActorSerializer(serializers.Serializer):
@@ -308,7 +336,7 @@ class HarnessEnvironmentScenarioSubActorSerializer(serializers.Serializer):
 
     id = serializers.CharField()
     instruction = serializers.CharField(allow_blank=True)
-    trigger = serializers.DictField()
+    trigger = HarnessEnvironmentSubActorTriggerSerializer()
 
 
 class HarnessEnvironmentCatalogueSubGoalSerializer(serializers.Serializer):
@@ -1099,10 +1127,20 @@ class HarnessNudgeAnswerSerializer(serializers.Serializer):
     answer = serializers.ChoiceField(choices=("yes", "no"))
 
 
+# Bounds every field of one actor record together; each field's own limit comes from the sealed rules.
+ACTOR_RECORD_MAX_CHARS = 65_536
+
+
 class HarnessActorRecordField(JsonObjectRequestField):
-    """One actor record, in the shape its environment's actor rules declare (`record_schemas` on the cast); checked
-    against those rules on write, so a field a newer release adds passes through unchanged.
-    """
+    """One actor record, checked on write against its environment's sealed rules (`record_schemas`)."""
+
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        if len(json.dumps(value, ensure_ascii=False)) > ACTOR_RECORD_MAX_CHARS:
+            raise serializers.ValidationError(
+                f"Keep an actor under {ACTOR_RECORD_MAX_CHARS} characters."
+            )
+        return value
 
 
 class HarnessActorWriteSerializer(serializers.Serializer):

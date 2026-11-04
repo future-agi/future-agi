@@ -103,7 +103,7 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Icon icon="mdi:bell-outline" width={24} />
+        <Icon icon="solar:bell-linear" width={24} />
         <Typography variant="h6">Alerting</Typography>
       </Stack>
 
@@ -133,7 +133,7 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
               alignItems="center"
               sx={{ mb: 2 }}
             >
-              <Typography variant="subtitle1" fontWeight="bold">
+              <Typography variant="subtitle1" fontWeight="600">
                 Notification Channels
               </Typography>
             </Stack>
@@ -192,14 +192,11 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
                     />
                   )}
                   <IconButton
+                    sx={{ color: "status.danger.fg" }}
                     size="small"
                     onClick={() => handleRemoveChannel(idx)}
                   >
-                    <Icon
-                      icon="mdi:delete-outline"
-                      width={18}
-                      color="#d32f2f"
-                    />
+                    <Icon icon="solar:trash-bin-trash-linear" width={18} />
                   </IconButton>
                 </Stack>
               </Paper>
@@ -239,14 +236,14 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
               alignItems="center"
               sx={{ mb: 2 }}
             >
-              <Typography variant="subtitle1" fontWeight="bold">
+              <Typography variant="subtitle1" fontWeight="600">
                 Alert Rules
               </Typography>
               <Button
                 size="small"
                 variant="outlined"
                 onClick={handleAddRule}
-                startIcon={<Icon icon="mdi:plus" width={16} />}
+                startIcon={<Icon icon="solar:add-linear" width={16} />}
               >
                 Add Rule
               </Button>
@@ -344,14 +341,11 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
                       helperText="e.g. 15m"
                     />
                     <IconButton
+                      sx={{ color: "status.danger.fg" }}
                       size="small"
                       onClick={() => handleRemoveRule(idx)}
                     >
-                      <Icon
-                        icon="mdi:delete-outline"
-                        width={18}
-                        color="#d32f2f"
-                      />
+                      <Icon icon="solar:trash-bin-trash-linear" width={18} />
                     </IconButton>
                   </Stack>
 

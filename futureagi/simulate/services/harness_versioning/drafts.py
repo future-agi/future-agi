@@ -329,23 +329,27 @@ def _side(files: Mapping[str, bytes], piece: str) -> dict[str, bytes]:
 
 
 def _piece_files(environment: HostedHarnessJob, piece: str, version: Any):
-    """A version's files; a backfilled version whose archive is gone reads the default
-    pair's side instead."""
+    """A version's files; an environment with no version yet, or a backfilled version whose
+    archive is gone, reads the default pair's side instead."""
+    fallback = str(
+        ((environment.payload or {}).get("metadata") or {}).get("authoring_object_key")
+        or ""
+    )
+    if version is None:
+        return (
+            _side(archives.read_archive(archives.get_archive(fallback)), piece)
+            if fallback
+            else {}
+        )
     try:
         return _side(
             archives.read_archive(archives.get_archive(version.archive_object_key)),
             piece,
         )
     except (S3Error, HostedHarnessError):
-        key = str(
-            ((environment.payload or {}).get("metadata") or {}).get(
-                "authoring_object_key"
-            )
-            or ""
-        )
-        if not key:
+        if not fallback:
             raise
-        return _side(archives.read_archive(archives.get_archive(key)), piece)
+        return _side(archives.read_archive(archives.get_archive(fallback)), piece)
 
 
 def _sealed_files(key: str) -> dict[str, bytes] | None:

@@ -32,14 +32,14 @@ const (
 	priceRows    = 16 << 10 // the pending batch's share of slices and sidecars
 
 	// handler part, per element (measured worst case in brackets)
-	priceResourceSpans = 160 // [107]
-	priceScopeSpans    = 192 // [123]
-	priceSpan          = 320 // [235]
-	priceEvent         = 128 // [84]
-	priceLink          = 128 // [91]
-	priceKeyValue      = 112 // [84, a string value]
-	priceArrayValue    = 48  // [34]
-	priceContainer     = 48  // [18]
+	priceResourceSpans = 160  // [107]
+	priceScopeSpans    = 192  // [123]
+	priceSpan          = 2048 // pdata [235] + bounded normalization attributes before final-shape leasing
+	priceEvent         = 128  // [84]
+	priceLink          = 1024 // native pdata [91] + bounded materialized link map before final-shape leasing
+	priceKeyValue      = 112  // [84, a string value]
+	priceArrayValue    = 48   // [34]
+	priceContainer     = 48   // [18]
 
 	// rows part, per element
 	priceRow         = 5376 // [4227] the row map and its four attribute maps, ids, times, sidecars

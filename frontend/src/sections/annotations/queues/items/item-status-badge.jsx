@@ -1,24 +1,23 @@
 import PropTypes from "prop-types";
-import { Chip } from "@mui/material";
+import RunStatusBadge from "src/components/status-badge/StatusBadge";
 
 const STATUS_CONFIG = {
-  pending: { label: "Pending Annotation", color: "default" },
-  in_progress: { label: "In Progress", color: "info" },
-  in_review: { label: "In Review", color: "primary" },
-  needs_changes: { label: "Needs Changes", color: "error" },
-  resubmitted: { label: "Resubmitted", color: "info" },
-  completed: { label: "Completed", color: "success" },
-  skipped: { label: "Skipped", color: "default" },
+  pending: { label: "Pending Annotation", role: "neutral" },
+  in_progress: { label: "In Progress", role: "info" },
+  in_review: { label: "In Review", role: "warning" },
+  needs_changes: { label: "Needs changes", role: "warning" },
+  resubmitted: { label: "Resubmitted", role: "info" },
+  completed: { label: "Completed", role: "success" },
+  skipped: { label: "Skipped", role: "neutral" },
 };
 
 export default function ItemStatusBadge({ status, label }) {
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
   return (
-    <Chip
+    <RunStatusBadge
+      status={status}
       label={label || config.label}
-      color={config.color}
-      size="small"
-      variant="soft"
+      role={config.role}
     />
   );
 }

@@ -15,6 +15,8 @@ export const WORKSPACE_TABS = [
     label: "Contract",
     icon: "solar:document-text-linear",
   },
+  // Shown only when the environment has a cast to edit or list.
+  { id: "actors", label: "Actors", icon: "solar:users-group-rounded-linear" },
   {
     id: "scenarios",
     label: "Scenarios",
@@ -239,6 +241,8 @@ export const VERSIONS_COPY = {
     modality: "Modality",
     subGoals: "Sub-goals",
     actors: "Actors",
+    actorsUnknown:
+      "Actors of one of these versions aren't known, so actor changes aren't shown.",
     files: "World files",
     filesUnknown:
       "World files of the earlier version aren't known, so file changes aren't shown.",

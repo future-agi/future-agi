@@ -923,7 +923,8 @@ def run_calls_queryset(
             ),
             When(failed_eval, then=Value("failed")),
             When(
-                call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE),
+                Q(call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE))
+                & ~passed_eval,
                 then=Value("no_score"),
             ),
             When(errored_eval, then=Value("inconclusive")),
@@ -1018,23 +1019,30 @@ def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
     return sub_goal_query
 
 
+def _sub_actor_spoke(sub_actor: str | None = None) -> Q:
+    """Calls where a sub-actor (or this one) entered: at least one of its lines reached the agent."""
+    who = " && @.sub_actor == $who" if sub_actor else ""
+    path = Value(f"$.harness_sub_actors.summary[*] ? (@.delivered > 0{who})")
+    return Q(
+        Func(
+            F("call_metadata"),
+            Func(path, template="%(expressions)s::jsonpath", output_field=TextField()),
+            # The id travels as a jsonpath variable, never as path text.
+            Value({"who": sub_actor}, output_field=JSONField()),
+            function="jsonb_path_exists",
+            output_field=BooleanField(),
+        )
+    )
+
+
 def _sub_actor_q(values: list[str]) -> Q:
     """Calls each sub-actor entered; ``none`` is a call no sub-actor entered."""
-    entered = Q(
-        call_metadata__harness_sub_actors__summary__contains=[{"triggered": True}]
-    )
     query = Q(pk__in=[])
     for value in values:
         if value == NO_SUB_ACTOR:
-            query |= (
-                Q(call_metadata__harness_sub_actors__summary__isnull=True) | ~entered
-            )
+            query |= Q(call_metadata__isnull=True) | ~_sub_actor_spoke()
         else:
-            query |= Q(
-                call_metadata__harness_sub_actors__summary__contains=[
-                    {"sub_actor": value, "triggered": True}
-                ]
-            )
+            query |= _sub_actor_spoke(value)
     return query
 
 
@@ -1262,7 +1270,9 @@ def _sub_actor_facet(calls: QuerySet) -> list[dict[str, Any]]:
         entered = [
             one
             for one in (summary if isinstance(summary, list) else [])
-            if isinstance(one, dict) and one.get("triggered") and one.get("sub_actor")
+            if isinstance(one, dict)
+            and (one.get("delivered") or 0) > 0
+            and one.get("sub_actor")
         ]
         for one in entered:
             key = str(one["sub_actor"])

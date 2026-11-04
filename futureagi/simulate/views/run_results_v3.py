@@ -140,6 +140,10 @@ class RunCallFiltersSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Filter '{field}' must be a list of strings."
                 )
+            # Refuses null and surrogate characters, which the database cannot hold.
+            serializers.ListField(
+                child=serializers.CharField(allow_blank=True)
+            ).run_validation(selected)
         invalid_statuses = {
             *value.get("status", []),
             *value.get("status_not", []),
@@ -201,6 +205,7 @@ class OutcomeCountsSerializer(serializers.Serializer):
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
     inconclusive = serializers.IntegerField()
+    no_score = serializers.IntegerField()
 
 
 class RunSummarySerializer(serializers.Serializer):
@@ -549,9 +554,45 @@ class FunctionCallSerializer(serializers.Serializer):
     output = serializers.JSONField(required=False)
     duration_ms = serializers.FloatField(required=False)
     start_time_ms = serializers.IntegerField(required=False)
+    ok = serializers.BooleanField(required=False)
+    error = serializers.CharField(required=False, allow_blank=True)
+    refused = serializers.BooleanField(required=False)
+    # Epoch seconds the world logged it.
+    at = serializers.FloatField(required=False)
+    # The world's action log: its id, and how the world took it (committed, refused, faulted or duplicate).
+    action_id = serializers.CharField(required=False, allow_null=True)
+    outcome = serializers.CharField(required=False, allow_null=True)
+    # Set on a world actor's action; the agent's own calls carry none.
+    actor_id = serializers.CharField(required=False)
+    actor_name = serializers.CharField(required=False)
+    actor_role = serializers.CharField(required=False, allow_blank=True)
+    refusal_code = serializers.CharField(required=False, allow_null=True)
+    parent_event_id = serializers.CharField(required=False, allow_null=True)
+    on_behalf_of = serializers.CharField(required=False, allow_null=True)
 
     class Meta:
         ref_name = "SimulateRunV3FunctionCall"
+
+
+class CallSubActorSerializer(serializers.Serializer):
+    """Someone on the person's side in the call; a call stored by an older build may lack any field."""
+
+    id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="The sub-actor's id in the environment.",
+    )
+    name = serializers.CharField(
+        required=False, allow_blank=True, help_text="The name the transcript shows."
+    )
+    role = serializers.CharField(
+        required=False, allow_blank=True, help_text="Who they are to the caller."
+    )
+    channel = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="The channel id they joined the call on.",
+    )
 
 
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
@@ -567,6 +608,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
+    sub_actors = CallSubActorSerializer(many=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
@@ -586,6 +628,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
+            "sub_actors",
             "scoring_status",
             "csat_status",
             "csat_reason",
@@ -801,6 +844,21 @@ class RunCallsV3View(APIView):
         return Response(response)
 
 
+def _call_sub_actors(metadata: object) -> list[dict[str, str]]:
+    """Who each of the call's sub-actors is and how they were heard."""
+    record = metadata.get("harness_sub_actors") if isinstance(metadata, dict) else None
+    resolved = record.get("resolved") if isinstance(record, dict) else None
+    return [
+        {
+            key: one[key]
+            for key in ("id", "name", "role", "channel")
+            if isinstance(one.get(key), str)
+        }
+        for one in resolved or []
+        if isinstance(one, dict)
+    ]
+
+
 def build_call_execution_detail(
     call: CallExecution, request=None, workspace=None
 ) -> dict[str, Any]:
@@ -846,6 +904,7 @@ def build_call_execution_detail(
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": function_calls(call),
+            "sub_actors": _call_sub_actors(call.call_metadata),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],

@@ -1,15 +1,10 @@
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
-// Actors section (ActorsPanel) is commented out below — it was a dummy cast from
-// the fixture ACTOR_LIBRARY, not backed by §6. To be picked up later.
-// import ActorsPanel from "./ActorsPanel";
 import CapabilityGraph from "../overview/CapabilityGraph";
-import SubActorsPanel from "./SubActorsPanel";
-import WorldActorsPanel from "./WorldActorsPanel";
 import WorldInternalsSection from "./WorldInternalsSection";
+import { Label } from "./ContractPart";
 import { CONTRACT_COPY } from "./contract.constants";
 
 // Map the real §6 `end_conditions` onto the episode-card shape. Returns null when
@@ -34,7 +29,10 @@ function realEpisode(env) {
     },
   ].filter(Boolean);
   return {
-    terminate: (ec.ended_reasons || []).map((reason) => ({ when: reason, note: "" })),
+    terminate: (ec.ended_reasons || []).map((reason) => ({
+      when: reason,
+      note: "",
+    })),
     truncate,
     clock: {
       mode: ec.clock || "-",
@@ -56,7 +54,14 @@ function realEpisode(env) {
  * Twin-backed envs are out of scope in this integration, so the world is always
  * the capability graph (the designer's TwinSandboxSection branch is omitted).
  */
-export default function RlContractPanel({ env, envState, patch, locked = false, graphData, backed = false }) {
+export default function RlContractPanel({
+  env,
+  envState,
+  patch,
+  locked = false,
+  graphData,
+  backed = false,
+}) {
   // The real §6 `end_conditions`, mapped into the terminate/truncate/clock shape
   // the card renders: `ended_reasons` are the ways a run terminates,
   // `max_turns`/`max_duration_seconds` are the truncation ceilings, `clock` is
@@ -66,7 +71,6 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
 
   return (
     <Box sx={{ p: 2 }}>
-
       {/* ── the world ─────────────────────────────────────────────────── */}
       {hasWorld && (
         <Box sx={{ mb: 2 }}>
@@ -75,7 +79,12 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
       )}
 
       {/* ── internals: DB schema + tool code + check code ─────────────── */}
-      <WorldInternalsSection env={env} envState={envState} patch={patch} locked={locked} />
+      <WorldInternalsSection
+        env={env}
+        envState={envState}
+        patch={patch}
+        locked={locked}
+      />
 
       {/* ── run end conditions ────────────────────────────────────────── */}
       <SectionCard
@@ -84,8 +93,8 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
         sx={{ mb: 2 }}
       >
         {!episode ? (
-          <Box sx={{ px: 2.5, py: 2.25 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          <Box sx={{ p: 1.5 }}>
+            <Typography sx={{ typography: "s1", fontWeight: 500 }}>
               {CONTRACT_COPY.endConditions.notAuthored}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -95,101 +104,111 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
             </Typography>
           </Box>
         ) : (
-        <>
-        <Box
-          sx={{
-            display: "grid", gap: "1px",
-            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
-            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.09 : 0.07),
-          }}
-        >
-          <Box sx={{ p: 2.5, bgcolor: "background.paper" }}>
-            <Label>Terminate</Label>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}>
-              The episode has a value. Goal verifiers settle.
-            </Typography>
-            <Stack spacing={1}>
-              {episode.terminate.map((e) => (
-                <Box key={e.when}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>{e.when}</Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{e.note}</Typography>
-                </Box>
-              ))}
+          <>
+            <Box
+              sx={{
+                display: "grid",
+                gap: "1px",
+                gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+                bgcolor: "divider",
+              }}
+            >
+              <Box sx={{ p: 1.5, bgcolor: "background.paper" }}>
+                <Label>Terminate</Label>
+                <Typography
+                  sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}
+                >
+                  The episode has a value. Goal verifiers settle.
+                </Typography>
+                <Stack spacing={1}>
+                  {episode.terminate.map((e) => (
+                    <Box key={e.when}>
+                      <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+                        {e.when}
+                      </Typography>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.subtitle" }}
+                      >
+                        {e.note}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Stack>
+              </Box>
+              <Box sx={{ p: 1.5, bgcolor: "background.paper" }}>
+                <Label>Truncate</Label>
+                <Typography
+                  sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}
+                >
+                  Not a failure, and not terminal. Bootstrap from the last
+                  state.
+                </Typography>
+                <Stack spacing={1}>
+                  {episode.truncate.map((e) => (
+                    <Box key={e.when}>
+                      <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+                        {e.when}
+                      </Typography>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.subtitle" }}
+                      >
+                        {e.note}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Stack>
+              </Box>
+            </Box>
+            <Stack
+              direction="row"
+              spacing={1.5}
+              alignItems="flex-start"
+              sx={{
+                px: 1.5,
+                py: 1.25,
+                borderTop: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Iconify
+                icon="solar:clock-circle-linear"
+                width={16}
+                sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }}
+              />
+              <Box>
+                <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+                  Clock · {episode.clock.mode}
+                </Typography>
+                <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+                  {episode.clock.note}
+                </Typography>
+              </Box>
             </Stack>
-          </Box>
-          <Box sx={{ p: 2.5, bgcolor: "background.paper" }}>
-            <Label>Truncate</Label>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}>
-              Not a failure, and not terminal. Bootstrap from the last state.
-            </Typography>
-            <Stack spacing={1}>
-              {episode.truncate.map((e) => (
-                <Box key={e.when}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>{e.when}</Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{e.note}</Typography>
-                </Box>
-              ))}
-            </Stack>
-          </Box>
-        </Box>
-        <Stack
-          direction="row"
-          spacing={1.75}
-          alignItems="flex-start"
-          sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
-        >
-          <Iconify icon="solar:clock-circle-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }} />
-          <Box>
-            <Typography sx={{ typography: "s2", fontWeight: 700 }}>Clock · {episode.clock.mode}</Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>{episode.clock.note}</Typography>
-          </Box>
-        </Stack>
-        </>
+          </>
         )}
       </SectionCard>
-
-      {/* With versioning the cast is edited below, sub-actors included; without it they are listed read-only. */}
-      {env.versioning?.enabled && env.id ? (
-        <Box sx={{ mb: 2 }}>
-          <WorldActorsPanel
-            envId={env.id}
-            locked={locked}
-            callerSide={env.surface === "voice" || env.subActors?.length > 0}
-          />
-        </Box>
-      ) : (
-        env.subActors?.length > 0 && (
-          <Box sx={{ mb: 2 }}>
-            <SubActorsPanel subActors={env.subActors} />
-          </Box>
-        )
-      )}
-
-      {/*
-        Actors section removed — it was a dummy cast from the fixture
-        ACTOR_LIBRARY (not backed by §6), and actors were also dropped from the
-        capability graph (now Personas only). To be picked up later if a real
-        actors field lands.
-        <ActorsPanel env={env} envState={envState} patch={patch} onGo={onGo} locked={locked} />
-      */}
     </Box>
   );
 }
 
 const ENV_SHAPE = PropTypes.shape({
-  id: PropTypes.string,
-  versioning: PropTypes.shape({ enabled: PropTypes.bool }),
-  surface: PropTypes.string,
-  tools: PropTypes.arrayOf(PropTypes.shape({ name: PropTypes.string, desc: PropTypes.string })),
+  tools: PropTypes.arrayOf(
+    PropTypes.shape({ name: PropTypes.string, desc: PropTypes.string }),
+  ),
   rules: PropTypes.arrayOf(PropTypes.string),
-  seed: PropTypes.shape({ tables: PropTypes.arrayOf(PropTypes.shape({ name: PropTypes.string })) }),
-  subActors: PropTypes.array,
+  seed: PropTypes.shape({
+    tables: PropTypes.arrayOf(PropTypes.shape({ name: PropTypes.string })),
+  }),
 });
 
 const ENV_STATE_SHAPE = PropTypes.shape({
   agent: PropTypes.shape({ name: PropTypes.string }),
-  evals: PropTypes.arrayOf(PropTypes.oneOfType([PropTypes.string, PropTypes.shape({ id: PropTypes.string })])),
-  actors: PropTypes.arrayOf(PropTypes.string),
+  evals: PropTypes.arrayOf(
+    PropTypes.oneOfType([
+      PropTypes.string,
+      PropTypes.shape({ id: PropTypes.string }),
+    ]),
+  ),
   toolResolutions: PropTypes.objectOf(PropTypes.string),
 });
 
@@ -204,12 +223,3 @@ RlContractPanel.propTypes = {
   // A built (harness) environment; a template or fork is never built.
   backed: PropTypes.bool,
 };
-
-function Label({ children }) {
-  return (
-    <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4, mb: 1 }}>
-      {children}
-    </Typography>
-  );
-}
-Label.propTypes = { children: PropTypes.node };

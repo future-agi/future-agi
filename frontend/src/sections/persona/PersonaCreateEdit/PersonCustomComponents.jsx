@@ -11,7 +11,6 @@ const CustomPersonaAccordion = styled(MuiAccordion)(({ theme }) => ({
   border: `1px solid ${theme.palette.divider}`,
   borderRadius: theme.spacing(1),
   marginBottom: theme.spacing(1),
-  boxShadow: "4px 4px 12px 0px #0000000A",
   overflow: "hidden",
   "&:not(:last-child)": {
     borderBottom: 0,

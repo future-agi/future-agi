@@ -389,25 +389,46 @@ function relativeTime(row, end = false) {
   return milliseconds == null ? null : milliseconds / 1000;
 }
 
+// How the world took a world actor's action, from its sealed outcome; an older row may carry none.
+const ACTOR_OUTCOMES = {
+  committed: "Committed",
+  refused: "Refused",
+  faulted: "Failed",
+};
+const actorOutcome = (call) =>
+  ACTOR_OUTCOMES[call.outcome] || (call.refused ? "Refused" : "");
+
+/**
+ * Each recorded call as a transcript row; a world actor's action reads as theirs.
+ * @param {import("src/generated/api-contracts/api.schemas").SimulateRunV3FunctionCallApi[]} calls
+ */
 export function functionCallTranscriptRows(calls = []) {
   return (Array.isArray(calls) ? calls : []).map((call, index) => {
     const duration = call.duration_ms ?? call.durationMs;
-    const heading = `Function call · ${call.name || call.function?.name || "tool"}${duration != null ? ` · ${duration}ms` : ""}`;
+    const name = call.name || call.function?.name || "tool";
+    // A world actor's action is theirs, not one of the agent's tool calls.
+    const actor = Boolean(call.actor_id) && call.actor_id !== "agent";
+    const heading = actor
+      ? [actorOutcome(call), name].filter(Boolean).join(" · ")
+      : `Function call · ${name}${duration != null ? ` · ${duration}ms` : ""}`;
     const args = call.arguments ?? call.function?.arguments;
     const result = call.result ?? call.output;
     return {
       id: call.id || `function-call-${index}`,
-      speaker_role: "tool",
+      speaker_role: actor ? "world_actor" : "tool",
+      speaker_name: actor ? call.actor_name || call.actor_id : undefined,
+      actor_role: actor ? call.actor_role : undefined,
       content: [
         heading,
         args != null ? `→ args: ${displayJson(args)}` : null,
         result != null ? `← result: ${displayJson(result)}` : null,
+        actor && call.error ? `× error: ${call.error}` : null,
       ]
         .filter(Boolean)
         .join("\n"),
       start_time_seconds: relativeTime(call),
       end_time_seconds: relativeTime(call, true),
-      tool_calls: [call],
+      tool_calls: actor ? null : [call],
     };
   });
 }
@@ -415,9 +436,20 @@ export function functionCallTranscriptRows(calls = []) {
 /** One stable timeline shared by the chat and voice drawers. */
 export function callTranscript(raw) {
   const transcript = Array.isArray(raw?.transcript) ? raw.transcript : [];
+  // A sub-actor's turn carries only their name; their role and how they were heard come from the call.
+  const subActors = new Map(
+    (Array.isArray(raw?.sub_actors) ? raw.sub_actors : []).map((one) => [
+      one.name,
+      one,
+    ]),
+  );
   return [
     ...transcript.map((turn) => ({
       ...turn,
+      ...(turn.speaker_role === "sub_actor" && {
+        actor_role: subActors.get(turn.speaker_name)?.role,
+        channel: subActors.get(turn.speaker_name)?.channel,
+      }),
       start_time_seconds: relativeTime(turn),
       end_time_seconds: relativeTime(turn, true),
     })),
@@ -560,6 +592,8 @@ export function mapCallDetail(raw) {
   const turns = callTranscript(raw).map((t) => ({
     role: normalizeRole(t.speaker_role ?? t.role),
     speakerName: t.speaker_name || "",
+    actorRole: t.actor_role || "",
+    channel: t.channel || "",
     text: messageText(t.content),
     at: t.start_time_seconds ?? null,
     toolCalls: t.tool_calls ?? null,
@@ -596,6 +630,7 @@ export function mapCallDetail(raw) {
     phone: raw.phone_number ?? null,
     provider: raw.provider ?? null,
     durationS: raw.duration ?? raw.duration_seconds ?? null,
+    persona: raw.persona ?? null,
     turns,
     stats: {
       turnCount: raw.turn_count ?? null,

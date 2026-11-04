@@ -26,6 +26,7 @@ from django.utils import timezone
 
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.test_execution import CallExecution
+from simulate.types import ScenarioSubActor
 
 # Filter panel properties; a dotted `value` reads into that JSON column.
 FIELDS: tuple[dict[str, Any], ...] = (
@@ -513,21 +514,21 @@ NO_SUB_ACTOR = "none"
 SIMULATED_USER_ONLY = "Simulated user only"
 
 
-def sub_actor_entries(raw: Any) -> list[dict[str, Any]] | None:
+def sub_actor_entries(raw: object) -> list[ScenarioSubActor] | None:
     """A scenario's sub-actors as `{id, instruction, trigger}`, the fields a run reads."""
-    entries = [
+    entries: list[ScenarioSubActor] = [
         {
             "id": str(one["id"]),
             "instruction": str(one.get("instruction") or ""),
-            "trigger": one.get("trigger") or {},
+            "trigger": one["trigger"] if isinstance(one.get("trigger"), dict) else {},
         }
-        for one in raw or []
+        for one in (raw if isinstance(raw, list) else [])
         if isinstance(one, dict) and one.get("id")
     ]
     return entries or None
 
 
-def sub_actor_choice_labels(listing: Any) -> dict[str, str]:
+def sub_actor_choice_labels(listing: object) -> dict[str, str]:
     """How the filter names each sub-actor, and scenarios with none of them."""
     labels = {NO_SUB_ACTOR: SIMULATED_USER_ONLY}
     for one in (listing.get("sub_actors") if isinstance(listing, dict) else None) or []:

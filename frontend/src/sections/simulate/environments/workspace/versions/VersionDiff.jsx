@@ -41,12 +41,12 @@ function ChangeGroup({ title, change, children }) {
     return null;
   return (
     <Stack spacing={0.5} data-testid={`diff-group-${title}`}>
-      <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
+      <Typography sx={{ typography: "s2", fontWeight: 500 }}>
         {title}
       </Typography>
-      <NameLine label={COPY.added} names={added} tone="success.main" />
-      <NameLine label={COPY.removed} names={removed} tone="error.main" />
-      <NameLine label={COPY.changed} names={changed} tone="warning.main" />
+      <NameLine label={COPY.added} names={added} tone="status.success.fg" />
+      <NameLine label={COPY.removed} names={removed} tone="status.danger.fg" />
+      <NameLine label={COPY.changed} names={changed} tone="status.warning.fg" />
       {children}
     </Stack>
   );
@@ -70,7 +70,7 @@ function EnvironmentDiff({ diff }) {
       )}
       {contract.modality && (
         <Stack spacing={0.5}>
-          <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
+          <Typography sx={{ typography: "s2", fontWeight: 500 }}>
             {COPY.modality}
           </Typography>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
@@ -80,7 +80,13 @@ function EnvironmentDiff({ diff }) {
         </Stack>
       )}
       <ChangeGroup title={COPY.subGoals} change={diff?.sub_goals} />
-      <ChangeGroup title={COPY.actors} change={diff?.actors} />
+      {diff?.actors === null ? (
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {COPY.actorsUnknown}
+        </Typography>
+      ) : (
+        <ChangeGroup title={COPY.actors} change={diff?.actors} />
+      )}
       {diff?.files === null ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {COPY.filesUnknown}
@@ -107,7 +113,7 @@ function SuiteDiff({ diff }) {
           spacing={0.5}
           data-testid={`diff-group-${COPY.scenariosRemoved}`}
         >
-          <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
+          <Typography sx={{ typography: "s2", fontWeight: 500 }}>
             {COPY.scenariosRemoved}
           </Typography>
           {removed.map((one) => (
@@ -131,7 +137,7 @@ function SuiteDiff({ diff }) {
           spacing={0.5}
           data-testid={`diff-group-${COPY.scenariosChanged}`}
         >
-          <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
+          <Typography sx={{ typography: "s2", fontWeight: 500 }}>
             {COPY.scenariosChanged}
           </Typography>
           {changed.map(([key, fields]) => (

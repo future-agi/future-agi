@@ -134,10 +134,7 @@ const FormMultiSelectField = (
                           sx={{
                             fontSize: "12px",
                             fontWeight: theme.typography.fontWeightRegular,
-                            color:
-                              theme.palette.mode === "light"
-                                ? theme.palette.text.primary
-                                : theme.palette.common.white,
+                            color: "text.secondary",
                           }}
                         >
                           {selectedOption.label}
@@ -156,12 +153,12 @@ const FormMultiSelectField = (
                   }}
                   onScroll={handleScroll}
                 >
-                  <SearchFieldBox sx={{}}>
+                  <SearchFieldBox>
                     <IconButton
                       size="small"
                       sx={{ color: theme.palette.divider }}
                     >
-                      <Iconify icon="eva:search-fill" />
+                      <Iconify icon="solar:magnifier-linear" />
                     </IconButton>
                     <Input
                       placeholder="Search"
@@ -201,9 +198,6 @@ const FormMultiSelectField = (
                             width: 24,
                             height: 24,
                             mr: "8px",
-                            backgroundColor: img
-                              ? "background.neutral"
-                              : undefined,
                           }}
                         />
                         {label}
@@ -232,7 +226,7 @@ const style = {
     objectFit: "cover",
     fontSize: "12px",
     backgroundColor: "background.neutral",
-    color: "pink.500",
+    color: "text.secondary",
   },
 };
 

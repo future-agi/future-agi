@@ -1,3 +1,4 @@
+import SelectionBar from "src/components/selection-bar";
 import { Box, Button, IconButton, Stack } from "@mui/material";
 import PropTypes from "prop-types";
 import { useQueryClient } from "@tanstack/react-query";
@@ -57,9 +58,9 @@ export default function Actions({
     }
   };
 
-  const message = selectedAll
-    ? `${totalRows - excludingIds?.length} Selected`
-    : `${selectedFiles.length} Selected`;
+  const count = selectedAll
+    ? totalRows - excludingIds?.length
+    : selectedFiles.length;
 
   return (
     <Stack
@@ -78,87 +79,22 @@ export default function Actions({
       />
 
       {selectedAll || selectedFiles?.length > 0 ? (
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-around",
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "4px",
-            padding: "4px 16px",
-            marginRight: "5px",
-            backgroundColor: "background.paper",
-            height: "38px",
-          }}
-        >
-          <Box
-            sx={{
-              color: "primary.main",
-              marginRight: "12px",
-              typography: "s1",
-              fontWeight: "fontWeightRegular",
-              borderRight: "1px solid",
-              borderColor: "divider",
-              paddingRight: "16px",
-            }}
-          >
-            {message}
-          </Box>
-          <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Button
-              variant="text"
-              sx={{
-                mr: 1,
-                typography: "s1",
-                color: "text.primary",
-                fontWeight: "fontWeightRegular",
-                height: "38px",
-              }}
-              onClick={() => {
+        <SelectionBar
+          count={count}
+          onCancel={() => handleActionClick("Cancel")}
+          sx={{ mr: "5px" }}
+          actions={[
+            {
+              label: "Delete",
+              icon: "solar:trash-bin-trash-linear",
+              onClick: () => {
                 if (RolePermission.KNOWLEDGE_BASE[PERMISSIONS.DELETE][role]) {
                   handleActionClick("Delete");
                 }
-              }}
-              startIcon={
-                <Box
-                  component="img"
-                  sx={{
-                    height: "20px",
-                    width: "20px",
-                    color: "text.primary",
-                  }}
-                  src="/assets/icons/ic_delete.svg"
-                />
-              }
-            >
-              Delete
-            </Button>
-
-            <Box
-              sx={{
-                width: "1px",
-                height: "24px",
-                backgroundColor: "action.hover",
-              }}
-            />
-
-            <Button
-              variant="text"
-              sx={{
-                ml: 1,
-                mr: -1,
-                typography: "s1",
-                color: "text.primary",
-                fontWeight: "fontWeightRegular",
-                height: "38px",
-              }}
-              onClick={() => handleActionClick("Cancel")}
-            >
-              Cancel
-            </Button>
-          </Box>
-        </Box>
+              },
+            },
+          ]}
+        />
       ) : (
         <Stack direction={"row"} alignItems={"center"} gap={"16px"}>
           {/* <CustomTooltip show={true} title={"Edit Name"} arrow> */}
@@ -171,7 +107,6 @@ export default function Actions({
             sx={{
               padding: 0,
               margin: 0,
-              height: "16px",
               width: "16px",
             }}
           >
@@ -186,7 +121,6 @@ export default function Actions({
               }
             }}
             sx={{
-              px: "24px",
               typography: "s1",
             }}
             variant="contained"
@@ -197,10 +131,9 @@ export default function Actions({
           <Button
             type="button"
             sx={{
-              px: "24px",
               typography: "s1",
             }}
-            startIcon={<Iconify icon="ic:round-plus" />}
+            startIcon={<Iconify icon="solar:add-linear" />}
             variant="outlined"
             color="primary"
             onClick={() => {
