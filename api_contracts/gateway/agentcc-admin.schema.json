@@ -11,7 +11,10 @@
       "properties": {
         "api_key": { "type": "string" },
         "base_url": { "type": "string" },
-        "api_format": { "type": "string" },
+        "api_format": {
+          "type": "string",
+          "description": "The upstream's wire protocol: openai, anthropic, gemini, bedrock, cohere or azure for model calls, or systemone for a structured-decision provider (TypeSafe, Perplexity Decider, a custom System One endpoint), with typesafe accepted as its alias. Empty lets the gateway infer it from the provider ID, which maps typesafe to systemone. A free string, so a format the gateway adds needs no contract change."
+        },
         "api_path_prefix": { "type": "string" },
         "models": { "type": "array", "items": { "type": "string" } },
         "timeout": { "type": "integer" },

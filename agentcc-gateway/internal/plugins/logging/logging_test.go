@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -944,6 +946,149 @@ func TestProcessResponse_SkipsInternalKey(t *testing.T) {
 		if rec.Message == "request.trace" {
 			t.Error("should not emit request.trace for internal key")
 		}
+	}
+}
+
+// decisionRC is a finished System One call whose state and instructions are
+// marked so a test can tell whether they reached the log.
+func decisionRC(t *testing.T) *models.RequestContext {
+	t.Helper()
+	rc := newRC()
+	rc.EndpointType = "decision"
+	rc.Model = "typesafe/jev-latest"
+	rc.ResolvedModel = "jev-1.13.0"
+	rc.Provider = "typesafe"
+	req, apiErr := models.ParseDecisionRequest([]byte(`{"model":"typesafe/jev-latest","state":{"ticket":"private-state"},"questions":{"resolved":{"type":"noul","instructions":"private-instructions"}}}`))
+	if apiErr != nil {
+		t.Fatal(apiErr)
+	}
+	req.SetUpstreamModel("jev-latest")
+	rc.DecisionRequest = req
+	resp, _ := models.ParseDecisionResponse([]byte(`{"model":"jev-1.13.0","answers":{"resolved":{"type":"noul","noul":0.8}},"usage":{"input_tokens":21,"output_tokens":0}}`))
+	rc.DecisionResponse = resp
+	rc.Response = &models.ChatCompletionResponse{Model: "jev-1.13.0", Usage: &models.Usage{PromptTokens: 21, TotalTokens: 21}}
+	rc.Metadata["endpoint_type"] = "decision"
+	rc.Metadata["decision_format"] = "systemone"
+	rc.Metadata["decision_question_count"] = "1"
+	return rc
+}
+
+func hasContent(rec TraceRecord) bool {
+	all := string(rec.RequestBodyJSON) + string(rec.ResponseBodyJSON) + rec.ErrorMessage
+	return strings.Contains(all, "private-state") || strings.Contains(all, "private-instructions")
+}
+
+// Without include_bodies a decision still logs its summary: question IDs and
+// types, the state's size, the answers and usage.
+func TestBuildRecord_DecisionSummaryByDefault(t *testing.T) {
+	rec := buildRecord(decisionRC(t), enabledCfg())
+	if rec.StatusCode != 200 || rec.PromptTokens != 21 || rec.Provider != "typesafe" {
+		t.Fatalf("status = %d tokens = %d provider = %q", rec.StatusCode, rec.PromptTokens, rec.Provider)
+	}
+	if rec.Metadata["endpoint_type"] != "decision" || rec.Metadata["decision_format"] != "systemone" || rec.Metadata["decision_question_count"] != "1" {
+		t.Errorf("metadata = %v", rec.Metadata)
+	}
+	if hasContent(rec) {
+		t.Fatalf("summary carries content: %s %s", rec.RequestBodyJSON, rec.ResponseBodyJSON)
+	}
+	if !strings.Contains(string(rec.RequestBodyJSON), `"question_ids":["resolved"]`) || !strings.Contains(string(rec.ResponseBodyJSON), `"noul":0.8`) {
+		t.Errorf("summary = %s %s", rec.RequestBodyJSON, rec.ResponseBodyJSON)
+	}
+}
+
+// Full bodies need include_bodies, and any privacy setting keeps them out.
+func TestBuildRecord_DecisionFullBodies(t *testing.T) {
+	cfg := enabledCfg()
+	cfg.IncludeBodies = true
+	rec := buildRecord(decisionRC(t), cfg)
+	if !strings.Contains(string(rec.RequestBodyJSON), "private-state") || !strings.Contains(string(rec.ResponseBodyJSON), `"answers"`) {
+		t.Fatalf("include_bodies did not log the bodies: %s", rec.RequestBodyJSON)
+	}
+	for _, meta := range []map[string]string{
+		{"org_privacy_enabled": "true"},
+		{"org_privacy_mode": "full"},
+		{"privacy_mode": "patterns"},
+	} {
+		rc := decisionRC(t)
+		for k, v := range meta {
+			rc.Metadata[k] = v
+		}
+		if rec := buildRecord(rc, cfg); hasContent(rec) {
+			t.Errorf("privacy %v still logged content", meta)
+		}
+	}
+}
+
+// A vendor's error text never reaches the log; the code and status do.
+func TestBuildRecord_DecisionErrorTextNotLogged(t *testing.T) {
+	rc := decisionRC(t)
+	rc.Response, rc.DecisionResponse = nil, nil
+	rc.Errors = []error{&models.APIError{Status: 422, Code: "upstream_rejected", Message: "vendor says private-state is bad"}}
+	rec := buildRecord(rc, enabledCfg())
+	if rec.StatusCode != 422 || rec.ErrorCode != "upstream_rejected" || strings.Contains(rec.ErrorMessage, "private") {
+		t.Fatalf("status = %d code = %q message = %q", rec.StatusCode, rec.ErrorCode, rec.ErrorMessage)
+	}
+}
+
+// A wrapped decision error is still recorded as its status, not the vendor's text.
+func TestBuildRecord_WrappedDecisionErrorTextNotLogged(t *testing.T) {
+	rc := decisionRC(t)
+	rc.Response, rc.DecisionResponse = nil, nil
+	apiErr := &models.APIError{Status: 422, Code: "upstream_rejected", Message: "vendor says private-state is bad"}
+	rc.Errors = []error{fmt.Errorf("decision call: %w", apiErr)}
+	rec := buildRecord(rc, enabledCfg())
+	if rec.StatusCode != 422 || rec.ErrorCode != "upstream_rejected" || strings.Contains(rec.ErrorMessage, "private") {
+		t.Fatalf("status = %d code = %q message = %q", rec.StatusCode, rec.ErrorCode, rec.ErrorMessage)
+	}
+}
+
+func TestBuildRecord_ProviderKeyHeaderMasked(t *testing.T) {
+	cfg := enabledCfg()
+	cfg.IncludeBodies = true
+	rc := decisionRC(t)
+	rc.RequestHeaders = http.Header{"X-Agentcc-Provider-Key": {"caller-own-key"}}
+	rec := buildRecord(rc, cfg)
+	raw, _ := json.Marshal(rec)
+	if strings.Contains(string(raw), "caller-own-key") {
+		t.Fatal("the provider key header reached the log record")
+	}
+}
+
+// Where a redactor would apply, a decision logs its summary: the redactor
+// walks chat messages and cannot clean a decision's state.
+func TestPlugin_DecisionUnderRedactionLogsSummary(t *testing.T) {
+	cfg := enabledCfg()
+	cfg.IncludeBodies = true
+	p := New(cfg, nil)
+	defer p.Close()
+	f := NewLogFlusher("http://127.0.0.1:1/never", "", time.Hour, 10)
+	p.SetFlusher(f)
+	p.SetRedactor(privacy.New(privacy.ModeFull, nil))
+
+	p.ProcessResponse(context.Background(), decisionRC(t))
+	records := f.take()
+	if len(records) != 1 {
+		t.Fatalf("records = %d", len(records))
+	}
+	if hasContent(records[0]) {
+		t.Fatalf("redaction on, yet content logged: %s", records[0].RequestBodyJSON)
+	}
+	if !strings.Contains(string(records[0].RequestBodyJSON), "question_ids") {
+		t.Errorf("summary missing: %s", records[0].RequestBodyJSON)
+	}
+}
+
+// An internal caller's decision is not logged: it is billed by the backend.
+func TestPlugin_InternalDecisionNotLogged(t *testing.T) {
+	p := New(enabledCfg(), nil)
+	defer p.Close()
+	f := NewLogFlusher("http://127.0.0.1:1/never", "", time.Hour, 10)
+	p.SetFlusher(f)
+	rc := decisionRC(t)
+	rc.Metadata["key_type"] = "internal"
+	p.ProcessResponse(context.Background(), rc)
+	if records := f.take(); len(records) != 0 {
+		t.Fatalf("internal decision logged %d records", len(records))
 	}
 }
 

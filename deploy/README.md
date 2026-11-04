@@ -268,6 +268,27 @@ short authoring run before moving full suites. The simulated caller's model is c
 separately by `SIMULATOR_LLM_PROVIDER` and `SIMULATOR_LLM_MODEL`; `SIMULATOR_LLM_THINKING`
 optionally lowers its deliberation (for example `minimal`) where the model supports it.
 
+## Jev evals, Instant eval and Insights
+
+Jev evals work on every edition, on each organization's own TypeSafe key. Instant
+eval and Insights need an Enterprise licence that lists `instant_eval` and
+`insights`; Future AGI Cloud plans include them.
+
+The gateway calls TypeSafe for every Jev eval, so `agentcc-gateway` needs egress to
+`api.typesafe.ai`. Behind an outbound proxy, set `HTTPS_PROXY` (and `NO_PROXY` for
+the internal hosts) on the gateway service through a compose override; the Helm
+chart's `global.proxy` already sets them. Every decision call honours them:
+System One and OpenAI-format decision models, from `config.yaml` providers,
+organization-owned providers and calls made with the caller's own key, and so
+does the speech relay. An organization's own `base_url` is still checked for
+internal and metadata addresses before the call goes to the proxy; that check
+resolves DNS before every HTTP/1.1 request, so a transient DNS failure refuses
+the request even on a live pooled connection, and the proxy's own egress policy
+should restrict destinations too. Chat providers still connect directly: allow
+that egress. As a fallback, `JEV_TRANSPORT=direct` on the backend
+and workers calls TypeSafe from there instead. Instant eval limits, Jev concurrency and the Insights models are in
+the [Configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference#jev-evals-instant-eval-and-insights).
+
 ## 1. Generate secrets
 
 ```bash
@@ -309,15 +330,15 @@ topology stops the consumer without committing the Kafka record.
 
 Each image is independently versioned. Include the collector release in `.env.production`:
 
-| Variable                    | Image                                                                |
-| --------------------------- | -------------------------------------------------------------------- |
-| `FUTURE_AGI_VERSION`        | `futureagi/future-agi` (backend + worker)                            |
-| `FRONTEND_VERSION`          | `futureagi/frontend`                                                 |
-| `FI_COLLECTOR_VERSION`      | `futureagi/fi-collector` (collector, consumer and packaged backfill) |
-| `AGENTCC_GATEWAY_VERSION`   | `futureagi/agentcc-gateway`                                          |
+| Variable                    | Image                                                                    |
+| --------------------------- | ------------------------------------------------------------------------ |
+| `FUTURE_AGI_VERSION`        | `futureagi/future-agi` (backend + worker)                                |
+| `FRONTEND_VERSION`          | `futureagi/frontend`                                                     |
+| `FI_COLLECTOR_VERSION`      | `futureagi/fi-collector` (collector, consumer and packaged backfill)     |
+| `AGENTCC_GATEWAY_VERSION`   | `futureagi/agentcc-gateway`                                              |
 | `SERVING_VERSION`           | `futureagi/serving` (CPU; `<version>-gpu` is the CUDA build, amd64 only) |
-| `CODE_EXECUTOR_VERSION`     | `futureagi/code-executor`                                            |
-| `SIMULATION_RUNNER_VERSION` | `futureagi/future-agi-simulation-runner` (separate SDK worker image) |
+| `CODE_EXECUTOR_VERSION`     | `futureagi/code-executor`                                                |
+| `SIMULATION_RUNNER_VERSION` | `futureagi/future-agi-simulation-runner` (separate SDK worker image)     |
 
 Use reviewed release tags and record their verified registry digests, source SHAs
 and CPU architecture manifests; a version-looking tag alone is not immutable proof.
@@ -343,6 +364,12 @@ variables, which are also reported as the version in telemetry and licence activ
 No example tag or digest here is a qualified release. Backend, all applicable
 workers and frontend must match the reviewed source; unchanged dependencies need
 not be rebuilt. Keep these receipts for both fresh and retained-volume rehearsals.
+
+From this release, upgrade the gateway first: `AGENTCC_GATEWAY_VERSION` must be
+at this release (or later) before `FUTURE_AGI_VERSION` is. The backend calls Jev
+evaluators through the gateway's `/v1/systemone`; an older gateway answers 404,
+which every Jev eval reports as a final `JEV_PROVIDER_ERROR`. A newer gateway
+with an older backend is fine.
 
 The existing `FI_OBSERVED_CATALOG_MAX_KEYS_PER_SPAN` (default 128) and
 `FI_OBSERVED_CATALOG_MAX_ARRAY_MEMBERS_PER_SPAN` (default 256) apply equally to
@@ -465,7 +492,8 @@ For internal MinIO, configure `mc mirror` to an off-host bucket, or replace the 
 ```bash
 # bump the relevant version variable(s) in deploy/.env.production
 # (FUTURE_AGI_VERSION / FRONTEND_VERSION / FI_COLLECTOR_VERSION / AGENTCC_GATEWAY_VERSION /
-#  SERVING_VERSION / CODE_EXECUTOR_VERSION / SIMULATION_RUNNER_VERSION)
+#  SERVING_VERSION / CODE_EXECUTOR_VERSION / SIMULATION_RUNNER_VERSION);
+# AGENTCC_GATEWAY_VERSION first, then FUTURE_AGI_VERSION (see "2. Pin a release")
 docker compose --env-file deploy/.env.production \
   -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml pull
 docker compose --env-file deploy/.env.production \

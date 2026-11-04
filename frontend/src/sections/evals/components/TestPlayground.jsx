@@ -996,7 +996,7 @@ const TestPlayground = React.forwardRef(
           endpoints.develop.eval.evalPlayground,
           {
             template_id: tid,
-            model,
+            ...(evalType !== "code" && model ? { model } : {}),
             error_localizer: errorLocalizerEnabled,
             config: {
               mapping,
@@ -1043,6 +1043,8 @@ const TestPlayground = React.forwardRef(
       }
     }, [
       variables,
+      evalType,
+      model,
       onTestResult,
       errorLocalizerEnabled,
       startErrorLocalizerPoll,
@@ -1385,7 +1387,7 @@ const TestPlayground = React.forwardRef(
                 <DatasetTestMode
                   ref={datasetTestRef}
                   templateId={templateId}
-                  model={model}
+                  model={evalType === "code" ? "" : model}
                   variables={variables}
                   codeParams={codeParams}
                   onTestResult={onTestResult}
@@ -1402,7 +1404,7 @@ const TestPlayground = React.forwardRef(
                 <TracingTestMode
                   ref={tracingTestRef}
                   templateId={templateId}
-                  model={model}
+                  model={evalType === "code" ? "" : model}
                   variables={variables}
                   codeParams={codeParams}
                   onTestResult={onTestResult}
@@ -1420,7 +1422,7 @@ const TestPlayground = React.forwardRef(
                 <SimulationTestMode
                   ref={simulationTestRef}
                   templateId={templateId}
-                  model={model}
+                  model={evalType === "code" ? "" : model}
                   variables={variables}
                   codeParams={codeParams}
                   onTestResult={onTestResult}
