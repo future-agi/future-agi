@@ -169,29 +169,273 @@ export function resolveBackendContainer(
   return runtimes[0][0];
 }
 
+/**
+ * Runs one seed script inside the backend container with `env` and returns the
+ * JSON object it prints on its last line. `SEED_SUFFIX` is always set, unique
+ * per call.
+ */
+function runSeedScript<T>(script: string, env: Record<string, string>): T {
+  const container = resolveBackendContainer();
+  const suffix = `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
+  const dir = mkdtempSync(join(tmpdir(), 'e2e-seed-'));
+  const scriptPath = join(dir, `seed-${suffix}.py`);
+  writeFileSync(scriptPath, script);
+  try {
+    execFileSync('docker', ['cp', scriptPath, `${container}:/tmp/seed-${suffix}.py`]);
+    const vars = Object.entries({ ...env, SEED_SUFFIX: suffix }).flatMap(([name, value]) => ['-e', `${name}=${value}`]);
+    const stdout = execFileSync('docker', ['exec', ...vars,
+      container, 'sh', '-c',
+      `cd /app/backend && PYTHONPATH=/app/backend python /tmp/seed-${suffix}.py`,
+    ], { encoding: 'utf-8' });
+    const lastLine = stdout.trim().split('\n').pop() ?? '';
+    return JSON.parse(lastLine) as T;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 export function seedCallExecutions(opts: {
   organizationId: string;
   workspaceId: string;
   count?: number;
 }): CallExecutionSeed {
-  const container = resolveBackendContainer();
-  const suffix = `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
-  const dir = mkdtempSync(join(tmpdir(), 'e2e-pag5-'));
-  const scriptPath = join(dir, `seed-${suffix}.py`);
-  writeFileSync(scriptPath, SEED_SCRIPT);
-  try {
-    execFileSync('docker', ['cp', scriptPath, `${container}:/tmp/seed-${suffix}.py`]);
-    const stdout = execFileSync('docker', ['exec',
-      '-e', `SEED_ORG_ID=${opts.organizationId}`,
-      '-e', `SEED_WORKSPACE_ID=${opts.workspaceId}`,
-      '-e', `SEED_SUFFIX=${suffix}`,
-      '-e', `SEED_CALL_COUNT=${opts.count ?? 12}`,
-      container, 'sh', '-c',
-      `cd /app/backend && PYTHONPATH=/app/backend python /tmp/seed-${suffix}.py`,
-    ], { encoding: 'utf-8' });
-    const lastLine = stdout.trim().split('\n').pop() ?? '';
-    return JSON.parse(lastLine) as CallExecutionSeed;
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  return runSeedScript<CallExecutionSeed>(SEED_SCRIPT, {
+    SEED_ORG_ID: opts.organizationId,
+    SEED_WORKSPACE_ID: opts.workspaceId,
+    SEED_CALL_COUNT: String(opts.count ?? 12),
+  });
+}
+
+/**
+ * A versioned hosted environment whose draft holds one chat-cited rule, for the
+ * review, Validate and Save routes (TH-8928).
+ *
+ * No hosted build runs in this harness (no sandbox provider), so the
+ * environment is built the way the backend's own versioning tests build one
+ * (`simulate/tests/test_harness_versioning_backfill.py` `_legacy`, then
+ * `backfill_environment`): a completed hosted job with one scenario, its
+ * authoring archive in object storage, and an agent definition whose version
+ * the backfill pins with a side row, so the pairing can be validated. The rule
+ * is written into the environment draft through `record_draft` with the id of
+ * a person's chat message, exactly as a builder-chat turn writes it.
+ *
+ * Requires the E2E settings' `HARNESS_VERSIONING_ENABLED` and
+ * `HARNESS_BUNDLE_CERTIFY_ENABLED` (e2e/stack/backend/settings_e2e.py).
+ */
+export interface ReviewEnvironmentSeed {
+  environmentId: string;
+  messageId: string;
+  rule: string;
+  amendment: string;
+}
+
+const REVIEW_ENVIRONMENT_SCRIPT = `
+import json
+import os
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
+import django
+django.setup()
+
+from django.contrib.auth import get_user_model
+
+from accounts.models import Organization
+from accounts.models.workspace import Workspace
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    HostedHarnessConversation,
+    HostedHarnessConversationMessage,
+    HostedHarnessJob,
+    RunTest,
+)
+from simulate.services.harness_versioning import archives, drafts
+from simulate.services.harness_versioning.backfill import backfill_environment
+from simulate.services.hosted_harness import create_hosted_job, provision_scenarios, register_attempt
+from simulate.services.hosted_harness_conversation import enqueue_message
+from simulate.services.hosted_harness_gateway import authoring_content_digest
+
+NAME = "book_ride_airport"
+TOOLS = ("request_approval", "approve_discount", "reject_discount")
+CONTRACT = {
+    "agent": "sales",
+    "tools": [{"name": name, "description": name.replace("_", " ") + " on a deal"} for name in TOOLS],
+    "tool_entrypoints": [{"tool": name, "service": "tools-api", "endpoint": "crm/" + name} for name in TOOLS],
+}
+SECRET = {"manager": "platform-vault", "purpose": "target_provider", "version": "1"}
+
+
+def payload():
+    return {
+        "schema_version": "futureagi.harness-job.v1",
+        "source": {"kind": "github", "repository": "acme/agent", "ref": "main", "visibility": "public"},
+        "agent": {
+            "connector": "auto",
+            "config": {},
+            "secret_refs": {
+                name: {"key": "harness-" + name.lower(), **SECRET}
+                for name in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
+            },
+        },
+        "scenario_count": 1,
+        "seed": 42,
+        "runtime": {
+            "isolation": "dedicated_vm", "cpu_units": 4, "memory_mb": 8192, "parallelism": 1,
+            "concurrency_weight": 1, "max_duration_seconds": 600, "network_policy": "live",
+        },
+        "security": {
+            "untrusted_source": True, "read_only_source": True, "allow_privileged": False,
+            "allow_host_runtime_control": False, "allowed_egress_domains": ["api.example.com"],
+        },
+        "retry": {
+            "max_infrastructure_attempts": 2, "initial_backoff_seconds": 1, "max_backoff_seconds": 15,
+            "retryable_domains": ["infrastructure"],
+        },
+        "artifacts": {"level": "full", "retention_days": 30, "allow_bundle_download": False, "max_artifact_bytes": 1024},
+        "metadata": {},
+    }
+
+
+def authoring(contract):
+    document = {"name": NAME, "scenario_key": NAME.replace("_", "-"), "instruction": "call about " + NAME, "tests": "t"}
+    files = {
+        "contract.json": json.dumps(contract),
+        "sub_goals.json": json.dumps({"sub_goals": [{"name": "refunded", "what": "a refund was issued"}]}),
+        "schema.sql": "create table orders(id int);",
+        "scenarios.json": json.dumps([document]),
+        "scenarios/" + NAME + "/scenario.json": json.dumps(document),
+        "scenarios/" + NAME + "/ready.py": "def ready(world):\n    return True\n",
+        "environment-bundle/manifest.json": json.dumps({"files": []}),
+        "runtime-validation.json": json.dumps({"status": "passed"}),
+    }
+    return archives.pack_archive({path: text.encode() for path, text in files.items()})
+
+
+def main():
+    organization = Organization.objects.get(id=os.environ["SEED_ORG_ID"])
+    workspace = Workspace.objects.get(id=os.environ["SEED_WORKSPACE_ID"])
+    user = get_user_model().objects.get(email=os.environ["SEED_USER_EMAIL"])
+    suffix = os.environ["SEED_SUFFIX"]
+
+    environment, _ = create_hosted_job(
+        organization, payload(), idempotency_key="e2e-review-" + suffix, workspace=workspace
+    )
+    attempt = register_attempt(environment.id, endpoint_base_url="https://harness.example.test").attempt
+    provision_scenarios(attempt, {
+        "operation": "provision", "name": "Suite", "modality": "voice",
+        "personas": [{"scenario_key": NAME.replace("_", "-"), "name": NAME, "role": "customer",
+                      "situation": "s", "outcome": "o", "persona": {"name": NAME}}],
+    })
+    body = authoring(CONTRACT)
+    key = "harness/environments/e2e-review-" + suffix + ".tar.gz"
+    archives.put_archive(key, body)
+    environment.refresh_from_db()
+    environment.payload = {**environment.payload, "metadata": {
+        **(environment.payload.get("metadata") or {}),
+        "authoring_object_key": key,
+        "authoring_revision": authoring_content_digest(body),
+    }}
+    environment.state = HostedHarnessJob.State.COMPLETED
+    environment.current_stage = "completed"
+    environment.save(update_fields=["payload", "state", "current_stage", "updated_at"])
+    definition = AgentDefinition.objects.create(
+        agent_name="e2e-review-agent-" + suffix, agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        contact_number="+12345678901", inbound=True, description="e2e review seed", provider="vapi",
+        organization=organization, workspace=workspace, languages=["en"],
+    )
+    AgentVersion.no_workspace_objects.create(
+        agent_definition=definition, organization=organization, workspace=workspace,
+        description="prompt v1", commit_message="prompt v1", status="active",
+    )
+    RunTest.objects.filter(id=environment.run_test_id).update(agent_definition=definition, agent_version=None)
+    backfill_environment(environment.id)
+    environment.refresh_from_db()
+
+    # A builder-chat turn answering the person's message adds the rule and logs it, as the harness does.
+    conversation, message, _ = enqueue_message(
+        environment, content="Discounts above 25% are never approved", client_request_id="e2e-review-" + suffix
+    )
+    HostedHarnessConversationMessage.no_workspace_objects.filter(id=message.id).update(state="completed")
+    HostedHarnessConversation.no_workspace_objects.filter(id=conversation.id).update(state="cold")
+    rule = "Never approve a discount above 25% (" + suffix + ")"
+    amendment = "rule added \u2014 " + rule + ": the policy caps discounts"
+    sides = drafts.edit_sides(environment)
+    tree = {**sides["suite"], **sides["environment"]}
+    tree["contract.json"] = json.dumps({**CONTRACT, "hard_constraints": [rule], "amendments": [amendment]}).encode()
+    drafts.record_draft(
+        environment, archives.pack_archive(tree), origin="chat", user=user, pieces={"environment"},
+        message_id=str(message.id),
+    )
+    print(json.dumps({
+        "environmentId": str(environment.id),
+        "messageId": str(message.id),
+        "rule": rule,
+        "amendment": amendment,
+    }))
+
+
+main()
+`;
+
+export function seedReviewEnvironment(opts: {
+  organizationId: string;
+  workspaceId: string;
+  userEmail: string;
+}): ReviewEnvironmentSeed {
+  return runSeedScript<ReviewEnvironmentSeed>(REVIEW_ENVIRONMENT_SCRIPT, {
+    SEED_ORG_ID: opts.organizationId,
+    SEED_WORKSPACE_ID: opts.workspaceId,
+    SEED_USER_EMAIL: opts.userEmail,
+  });
+}
+
+/**
+ * The validation job's success for the environment's live candidate set: a
+ * ready bundle row for its pairing with a certified sealed archive, as the
+ * pair validation job leaves it when its certify passes. This harness has no
+ * sandbox to run that job, so the flow stands in for it here.
+ */
+const CERTIFY_CANDIDATES_SCRIPT = `
+import json
+import os
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
+import django
+django.setup()
+
+from simulate.models import HarnessAssembledBundle, HostedHarnessJob
+from simulate.services.harness_versioning import archives
+from simulate.services.harness_versioning.assembly import CERTIFICATE, SEALED_MANIFEST
+from simulate.services.harness_versioning.candidate_sets import live_set
+
+
+def main():
+    environment = HostedHarnessJob.no_workspace_objects.get(id=os.environ["SEED_ENVIRONMENT_ID"])
+    entry = live_set(environment)
+    key = "bundles/e2e-" + os.environ["SEED_SUFFIX"] + ".tar.gz"
+    archives.put_archive(key, archives.pack_archive({
+        SEALED_MANIFEST: json.dumps({"files": []}).encode(),
+        CERTIFICATE: json.dumps({"status": "passed"}).encode(),
+    }))
+    bundle, _ = HarnessAssembledBundle._base_manager.update_or_create(
+        job_id=environment.id,
+        assembly_key=entry["assembly_key"],
+        defaults={
+            "organization_id": environment.organization_id,
+            "agent_version_id": entry["agent_version_id"],
+            "environment_version_id": entry["environment_version_id"],
+            "suite_version_id": entry["suite_version_id"],
+            "state": HarnessAssembledBundle.State.READY,
+            "object_key": key,
+            "error": None,
+        },
+    )
+    print(json.dumps({"bundleId": str(bundle.id)}))
+
+
+main()
+`;
+
+export function certifyCandidates(opts: { environmentId: string }): { bundleId: string } {
+  return runSeedScript<{ bundleId: string }>(CERTIFY_CANDIDATES_SCRIPT, {
+    SEED_ENVIRONMENT_ID: opts.environmentId,
+  });
 }

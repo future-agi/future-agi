@@ -12,3 +12,8 @@ ROOT_URLCONF = "tfc.urls_e2e"
 FEATURE_REGISTRY["error_feed"] = replace(
     FEATURE_REGISTRY["error_feed"], oss_baseline=True
 )
+
+# Environment versioning and pair validation, for the review, Validate and Save flow (SIM-E2E-003). No
+# hosted build runs in this harness, so turning them on changes nothing for an environment without versions.
+HARNESS_VERSIONING_ENABLED = True
+HARNESS_BUNDLE_CERTIFY_ENABLED = True
