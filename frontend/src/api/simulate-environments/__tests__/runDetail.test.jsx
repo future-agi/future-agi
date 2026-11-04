@@ -665,6 +665,40 @@ describe("callTranscript", () => {
     expect(detail.turns[1].text).toMatch(/^Refused · approve/);
     expect(detail.turns[1].toolCalls).toBeNull();
   });
+
+  it("heads a world actor's action by how the world took it, with its error", () => {
+    const { turns } = mapCallDetail({
+      function_calls: [
+        {
+          name: "approve",
+          actor_id: "manager",
+          outcome: "faulted",
+          refused: false,
+          error: "crm returned 503",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          outcome: "refused",
+          refused: true,
+          error: "not permitted",
+        },
+        {
+          name: "approve",
+          actor_id: "manager",
+          outcome: "committed",
+          result: {},
+        },
+      ],
+    });
+    expect(turns.map((turn) => turn.text.split("\n")[0])).toEqual([
+      "Failed · approve",
+      "Refused · approve",
+      "Action · approve",
+    ]);
+    expect(turns[0].text).toContain("× error: crm returned 503");
+    expect(turns[1].text).toContain("× error: not permitted");
+  });
 });
 
 const makeWrapper = () => {

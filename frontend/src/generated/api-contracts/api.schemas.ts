@@ -24272,6 +24272,9 @@ export interface SimulateRunV3FunctionCallApi {
   /** @minLength 1 */
   actor_name?: string;
   refused?: boolean;
+  /** @minLength 1 */
+  outcome?: string;
+  error?: string;
 }
 
 export interface CallExecutionV3DetailResponseApi {

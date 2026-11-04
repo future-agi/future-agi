@@ -389,6 +389,11 @@ function relativeTime(row, end = false) {
   return milliseconds == null ? null : milliseconds / 1000;
 }
 
+// How the world took a world actor's action, from its sealed outcome.
+const ACTOR_OUTCOMES = { refused: "Refused", faulted: "Failed" };
+const actorOutcome = (call) =>
+  ACTOR_OUTCOMES[call.outcome] || (call.refused ? "Refused" : "Action");
+
 /**
  * Each recorded call as a transcript row; a world actor's action reads as theirs.
  * @param {import("src/generated/api-contracts/api.schemas").SimulateRunV3FunctionCallApi[]} calls
@@ -400,7 +405,7 @@ export function functionCallTranscriptRows(calls = []) {
     // A world actor's action is theirs, not one of the agent's tool calls.
     const actor = Boolean(call.actor_id) && call.actor_id !== "agent";
     const heading = actor
-      ? `${call.refused ? "Refused" : "Action"} · ${name}`
+      ? `${actorOutcome(call)} · ${name}`
       : `Function call · ${name}${duration != null ? ` · ${duration}ms` : ""}`;
     const args = call.arguments ?? call.function?.arguments;
     const result = call.result ?? call.output;
@@ -412,6 +417,7 @@ export function functionCallTranscriptRows(calls = []) {
         heading,
         args != null ? `→ args: ${displayJson(args)}` : null,
         result != null ? `← result: ${displayJson(result)}` : null,
+        actor && call.error ? `× error: ${call.error}` : null,
       ]
         .filter(Boolean)
         .join("\n"),

@@ -558,6 +558,9 @@ class FunctionCallSerializer(serializers.Serializer):
     actor_id = serializers.CharField(required=False)
     actor_name = serializers.CharField(required=False)
     refused = serializers.BooleanField(required=False)
+    # How the world took it: committed, refused or faulted; `error` holds the refusal or fault.
+    outcome = serializers.CharField(required=False)
+    error = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         ref_name = "SimulateRunV3FunctionCall"

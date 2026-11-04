@@ -90399,6 +90399,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Refused",
           type: "boolean",
         },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          minLength: 1,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
       },
     },
     SubGoalResult: {

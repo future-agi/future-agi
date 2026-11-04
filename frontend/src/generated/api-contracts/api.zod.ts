@@ -51472,6 +51472,8 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       actor_id: zod.string().min(1).optional(),
       actor_name: zod.string().min(1).optional(),
       refused: zod.boolean().optional(),
+      outcome: zod.string().min(1).optional(),
+      error: zod.string().optional(),
     }),
   ),
   scoring_status: zod.enum([
