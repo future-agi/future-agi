@@ -114,7 +114,8 @@ export default function AgentCompatibilityTab({
   /* Reset is proved by the environment's release checks; the rest is fixed
      on the agent. */
   const repair = (row) => {
-    if (row?.repair === "release")
+    /* Reset is proved, and a changed tool rebuilt, on the environment. */
+    if (row?.repair === "release" || row?.repair === "rebuild")
       navigate(paths.dashboard.simulate.environmentStep(env.id, "overview"));
     else onRepair(row);
   };

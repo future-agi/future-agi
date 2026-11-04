@@ -73,7 +73,12 @@ export default function RunFitDialog({
 
   const fixAndRun = () => {
     if (latestFits) patch({ activeEnvVersion: latest.label });
-    else rebuild(agent);
+    /* No rebuild while edits wait for review — the run waits too. */ else if (
+      !rebuild(agent)
+    ) {
+      onClose();
+      return;
+    }
     onClose();
     onRun();
   };
@@ -301,7 +306,9 @@ export default function RunFitDialog({
             ? "This is a template preview, so its world can't be rebuilt or switched here — fork it to fix the environment."
             : latestFits
               ? `Environment ${latestShown} already answers ${n === 1 ? "this tool" : "these tools"} — switch to it for a clean run.`
-              : `Rebuilding makes environment ${nextLabel}: the world learns ${n === 1 ? "the tool" : "the tools"}, and new scenarios are added to test ${n === 1 ? "it" : "them"}. Older environment versions stay as they are.`}
+              : absent.length
+                ? `Rebuilding makes environment ${nextLabel}: the world learns ${absent.length === 1 ? "the new tool" : "the new tools"}, and scenarios to test ${absent.length === 1 ? "it" : "them"} are proposed in Needs input${fit.changed.length ? `; ${fit.changed.map((t) => t.name).join(", ")} is answered with ${fit.changed.length === 1 ? "its" : "their"} new arguments` : ""}. Older environment versions stay as they are.`
+                : `Rebuilding makes environment ${nextLabel}: the world answers ${fit.changed.map((t) => t.name).join(", ")} with ${fit.changed.length === 1 ? "its" : "their"} new arguments, and the blocked scenarios run again. Older environment versions and their runs stay as they are.`}
         </Typography>
       </Box>
 

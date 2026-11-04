@@ -2,8 +2,8 @@ import PropTypes from "prop-types";
 import { Alert, AlertTitle, Button, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { currentAgentVersion } from "../_mock/versions";
-import { latestEnvVersion, toolFit } from "../_mock/toolFit";
-import { ToolList } from "./toolFitParts";
+import { latestEnvVersion, scenariosCalling, toolFit } from "../_mock/toolFit";
+import { ChangedToolsNote, ToolList } from "./toolFitParts";
 import { useRebuildForAgent } from "./useRebuildForAgent";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { versionCardOf } from "../_mock/versionCard";
@@ -52,6 +52,18 @@ export default function ToolFitBanner({
     return null;
 
   const n = fit.missing.length;
+  /* A tool it already called, now with other arguments, isn't new: say what
+     changed and block the scenarios that call it (connect.md CN-3). */
+  const added = fit.missing.filter((t) => !t.changed);
+  const changed = fit.changed || [];
+  const blocked = scenariosCalling(
+    env,
+    envState,
+    changed.map((t) => t.name),
+  );
+  const title = !added.length
+    ? `Agent ${agentV.label} calls ${changed.length === 1 ? "a tool" : `${changed.length} tools`} with arguments environment ${envLabelOf(env, envState, fit.envVersion)} doesn't answer`
+    : `Agent ${agentV.label} calls ${n === 1 ? "a tool" : `${n} tools`} environment ${envLabelOf(env, envState, fit.envVersion)} can't answer`;
 
   return (
     <Alert
@@ -89,28 +101,38 @@ export default function ToolFitBanner({
         )
       }
     >
-      <AlertTitle>
-        {`Agent ${agentV.label} calls ${n === 1 ? "a tool" : `${n} tools`} environment ${envLabelOf(env, envState, fit.envVersion)} can't answer`}
-      </AlertTitle>
+      <AlertTitle>{title}</AlertTitle>
       <Typography
         component="div"
         sx={{ typography: "s2", color: "text.secondary" }}
       >
-        {latestFits ? (
+        <ChangedToolsNote
+          changed={changed}
+          blocked={blocked}
+          agent={agentV.label}
+          sx={{ mb: added.length ? 0.5 : 0 }}
+        />
+        {!added.length ? (
+          latestFits && (
+            <>
+              {`Environment ${envLabelOf(env, envState, latest.label)} already answers the new arguments — switch to it for a clean run of ${agentV.label}.`}
+            </>
+          )
+        ) : latestFits ? (
           <>
-            <ToolList tools={fit.missing} /> {n === 1 ? "is" : "are"} new in{" "}
-            {agentV.label}. Environment{" "}
+            <ToolList tools={added} /> {added.length === 1 ? "is" : "are"} new
+            in {agentV.label}. Environment{" "}
             {envLabelOf(env, envState, latest.label)} already answers{" "}
             {n === 1 ? "it" : "them"} — switch to it for a clean run of{" "}
             {agentV.label}.
           </>
         ) : (
           <>
-            <ToolList tools={fit.missing} /> {n === 1 ? "is" : "are"} new in{" "}
-            {agentV.label}. Rebuild so the world learns{" "}
-            {n === 1 ? "it" : "them"} — until then, scenarios where{" "}
-            {agentV.label} calls {n === 1 ? "it" : "them"} here get no answer
-            and come back not measured.
+            <ToolList tools={added} /> {added.length === 1 ? "is" : "are"} new
+            in {agentV.label}. Rebuild so the world learns{" "}
+            {added.length === 1 ? "it" : "them"} — until then, scenarios where{" "}
+            {agentV.label} calls {added.length === 1 ? "it" : "them"} here get
+            no answer and come back not measured.
           </>
         )}
       </Typography>

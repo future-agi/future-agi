@@ -181,7 +181,12 @@ export const rebuildForAgent = (env, envState, agentLabel) => {
     ...nextEnvVersion(env, envState, {
       from: latest?.label,
       changed: ["contract", "seed"],
-      note: `World learned ${names.join(", ")} for agent ${agentLabel}`,
+      note: [
+        missing.some((t) => !t.changed) &&
+          `World learned ${missing.filter((t) => !t.changed).map((t) => t.name).join(", ")}`,
+        reshaped.size &&
+          `World answers ${[...reshaped.keys()].join(", ")} with ${reshaped.size === 1 ? "its" : "their"} new arguments`,
+      ].filter(Boolean).join("; ").concat(` for agent ${agentLabel}`),
     }),
     tools,
     builtFor: agentLabel,

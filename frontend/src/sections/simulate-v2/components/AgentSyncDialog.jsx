@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { paths } from "src/routes/paths";
 import {
   Box,
   Button,
@@ -25,7 +26,7 @@ import {
 } from "../_mock/agentUpload";
 import { getEnvironment } from "../_mock/environments";
 import { worldTouchOf } from "../_mock/specChange";
-import { worldToolsFor } from "../_mock/toolFit";
+import { scenariosCalling, worldToolsFor } from "../_mock/toolFit";
 import {
   raiseNudgesIn,
   dispatchNudges,
@@ -191,10 +192,41 @@ export default function AgentSyncDialog({
           : [],
     });
     dispatchNudges(dispatch, results);
+    /* A tool the version now calls with other arguments blocks the
+       scenarios that call it where the world still answers the old ones —
+       until that environment is rebuilt (connect.md CN-3). */
+    const blocking = envs
+      .map((e) => {
+        const es = state.byEnv?.[e.id];
+        if (!es) return null;
+        const world = new Map(worldToolsFor(e, es).map((t) => [t.name, t]));
+        const sig = (t) =>
+          Array.isArray(t?.params) ? t.params.join(",") : null;
+        const changedTools = (version.tools || []).filter((t) => {
+          const w = world.get(t.name);
+          return w && sig(t) && sig(t) !== sig(w);
+        });
+        if (!changedTools.length) return null;
+        const hit = scenariosCalling(
+          e,
+          es,
+          changedTools.map((t) => t.name),
+        );
+        return hit.length
+          ? {
+              id: e.id,
+              name: e.name,
+              tools: changedTools.map((t) => t.name),
+              count: hit.length,
+            }
+          : null;
+      })
+      .filter(Boolean);
     setSaved({
       version,
       switched: switchHere,
       results,
+      blocking,
       announcement: nudgeAnnouncement(results),
     });
     setPhase("saved");
@@ -516,75 +548,78 @@ export default function AgentSyncDialog({
 
         {phase === "saved" && (
           <Stack spacing={1}>
-            <Box
-              sx={{
-                borderRadius: "8px",
-                border: "1px solid",
-                borderColor: "divider",
-                overflow: "hidden",
-              }}
-            >
-              <Stack
-                direction="row"
-                alignItems="center"
-                spacing={1}
-                sx={{ px: 1.75, py: 1.125, bgcolor: "background.neutral" }}
+            {/* "Nothing needs your input" would contradict a blocked scenario below. */}
+            {(saved.announcement.count > 0 || !saved.blocking?.length) && (
+              <Box
+                sx={{
+                  borderRadius: "8px",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  overflow: "hidden",
+                }}
               >
-                <Iconify
-                  icon="solar:bell-linear"
-                  width={16}
-                  sx={{ color: "text.secondary", flexShrink: 0 }}
-                />
-                <Typography
-                  sx={{
-                    typography: "s2",
-                    fontWeight: 600,
-                    flex: 1,
-                    minWidth: 0,
-                  }}
-                >
-                  {saved.announcement.text}
-                </Typography>
-              </Stack>
-              {saved.announcement.envs.map((e) => (
                 <Stack
-                  key={e.id}
                   direction="row"
                   alignItems="center"
                   spacing={1}
-                  sx={{
-                    px: 1.75,
-                    py: 0.75,
-                    borderTop: "1px solid",
-                    borderColor: "divider",
-                  }}
+                  sx={{ px: 1.75, py: 1.125, bgcolor: "background.neutral" }}
                 >
-                  <Typography
-                    noWrap
-                    sx={{ typography: "s3", flex: 1, minWidth: 0 }}
-                  >
-                    {e.name}
-                  </Typography>
+                  <Iconify
+                    icon="solar:bell-linear"
+                    width={16}
+                    sx={{ color: "text.secondary", flexShrink: 0 }}
+                  />
                   <Typography
                     sx={{
-                      typography: "s3",
-                      color: "text.subtitle",
-                      flexShrink: 0,
+                      typography: "s2",
+                      fontWeight: 600,
+                      flex: 1,
+                      minWidth: 0,
                     }}
-                  >{`Agent ${saved.version.label} changed`}</Typography>
-                  <Button
-                    size="small"
-                    onClick={() => review(e.id)}
-                    endIcon={
-                      <Iconify icon="solar:arrow-right-linear" width={14} />
-                    }
-                    sx={{ color: "text.primary", minWidth: 0, flexShrink: 0 }}
                   >
-                    Review
-                  </Button>
+                    {saved.announcement.text}
+                  </Typography>
                 </Stack>
-              ))}
-            </Box>
+                {saved.announcement.envs.map((e) => (
+                  <Stack
+                    key={e.id}
+                    direction="row"
+                    alignItems="center"
+                    spacing={1}
+                    sx={{
+                      px: 1.75,
+                      py: 0.75,
+                      borderTop: "1px solid",
+                      borderColor: "divider",
+                    }}
+                  >
+                    <Typography
+                      noWrap
+                      sx={{ typography: "s3", flex: 1, minWidth: 0 }}
+                    >
+                      {e.name}
+                    </Typography>
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color: "text.subtitle",
+                        flexShrink: 0,
+                      }}
+                    >{`Agent ${saved.version.label} changed`}</Typography>
+                    <Button
+                      size="small"
+                      onClick={() => review(e.id)}
+                      endIcon={
+                        <Iconify icon="solar:arrow-right-linear" width={14} />
+                      }
+                      sx={{ color: "text.primary", minWidth: 0, flexShrink: 0 }}
+                    >
+                      Review
+                    </Button>
+                  </Stack>
+                ))}
+              </Box>
+            )}
             {fixLines.map((f) => (
               <Stack
                 key={f.ruleId}
@@ -602,9 +637,39 @@ export default function AgentSyncDialog({
                 </Typography>
               </Stack>
             ))}
+            {(saved.blocking || []).map((b) => (
+              <Stack key={b.id} direction="row" spacing={1} alignItems="center">
+                <Iconify
+                  icon="solar:danger-triangle-linear"
+                  width={14}
+                  sx={{ color: "status.warning.fg", flexShrink: 0 }}
+                />
+                <Typography
+                  sx={{ typography: "s3", color: "text.secondary", flex: 1 }}
+                >
+                  {`${b.name}: ${b.count} scenario${b.count === 1 ? "" : "s"} that call ${b.tools.join(", ")} ${b.count === 1 ? "is" : "are"} blocked on agent ${saved.version.label} until it's rebuilt for the new arguments.`}
+                </Typography>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    onClose();
+                    navigate(
+                      paths.dashboard.simulate.environmentStep(
+                        b.id,
+                        "overview",
+                      ),
+                    );
+                  }}
+                  sx={{ color: "text.primary", minWidth: 0, flexShrink: 0 }}
+                >
+                  Open
+                </Button>
+              </Stack>
+            ))}
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              None of this blocks a run. An environment changes only when
-              someone rebuilds it there.
+              {saved.blocking?.length
+                ? "Everything else runs as before. An environment changes only when someone rebuilds it there — that makes its next version, and earlier runs keep their results."
+                : "None of this blocks a run. An environment changes only when someone rebuilds it there."}
             </Typography>
           </Stack>
         )}

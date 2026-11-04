@@ -21,7 +21,13 @@ import { takesSnapshot } from "./candidateSource";
 import { proofKindOf } from "./rsiModel";
 import { membersOf } from "./improvementPolicy";
 import { isConnectOnly } from "./envModel";
-import { agentToolsFor, knownToolsFor, requiredToolsOf } from "./toolFit";
+import {
+  agentToolsFor,
+  knownToolsFor,
+  requiredToolsOf,
+  scenariosCalling,
+  toolFit,
+} from "./toolFit";
 import { currentAgentVersion, currentEnvVersion } from "./versions";
 import { hashSeed } from "./runStream";
 import { familyOf } from "./testedVersions";
@@ -103,6 +109,13 @@ const fixOf = (r, { prod, release, missingNames }) => {
     return {
       type: "Tool routing",
       would: `${prod[0] || "Each tool"} is pointed at the test world, and a re-check sees its call land there.`,
+      recheck: "world",
+    };
+  if (r.repair === "rebuild")
+    return {
+      type: "Tool binding",
+      would:
+        "The environment is rebuilt for the new arguments — a new environment version; earlier runs keep their results.",
       recheck: "world",
     };
   if (r.repair === "agent")
@@ -464,6 +477,31 @@ export const compatibilityOf = ({
       "partial",
       `${agentTools} tools are known from the world; the endpoint doesn't list its own — calls are matched by name and arguments.`,
     );
+
+  /* A tool this agent version calls with arguments the world doesn't answer
+     (a new version changed its signature): the cases that call it are
+     blocked until the environment is rebuilt for it (connect.md CN-3). */
+  const reshaped = toolFit(env, envState, { agent: version?.label }).changed;
+  if (reshaped.length) {
+    const ids = new Set(requested.map((s) => s.id));
+    const hit = scenariosCalling(
+      env,
+      envState,
+      reshaped.map((t) => t.name),
+    ).filter((s) => ids.has(s.id));
+    const at = rows.findIndex((r) => r.id === "toolSchema");
+    if (at >= 0) rows.splice(at, 1);
+    add(
+      "toolSchema",
+      "blocked",
+      `${reshaped.map((t) => `${t.name} now takes ${(t.params || []).join(", ")}${t.was?.length ? ` (was ${t.was.join(", ")})` : ""}`).join("; ")} — the world still answers the old arguments. Cases that call ${reshaped.length === 1 ? "it" : "them"} can't run on agent ${version?.label || "this version"} until the environment is rebuilt for ${reshaped.length === 1 ? "it" : "them"}.`,
+      {
+        affected: hit.map((s) => s.id),
+        repair: "rebuild",
+        blocks: true,
+      },
+    );
+  }
 
   /* Tools the cases need that this agent version doesn't have. */
   const agentHas = new Set(

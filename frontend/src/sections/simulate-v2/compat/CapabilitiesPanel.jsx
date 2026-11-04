@@ -99,6 +99,8 @@ function CapabilityRow({ row, requested, titles, testing, primary, onRepair }) {
       return { label: "Add the tools", onClick: () => onRepair(row) };
     if (row.repair === "release" && onRepair)
       return { label: "Run release checks", onClick: () => onRepair(row) };
+    if (row.repair === "rebuild" && onRepair)
+      return { label: "Rebuild environment", onClick: () => onRepair(row) };
     if (row.repair === "testcall" && onRepair)
       return { label: "Make a test call", onClick: () => onRepair(row) };
     return null;

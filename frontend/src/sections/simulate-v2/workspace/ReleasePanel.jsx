@@ -21,6 +21,7 @@ import {
   rlKeyPatch,
   runChecksPatch,
 } from "../_mock/release";
+import { envLabelOf } from "../_mock/envVersionKinds";
 
 /*
   An environment release (catalogue.md, rl.md): five release checks gate
@@ -33,6 +34,8 @@ import {
 export default function ReleasePanel({ env, envState, patch, onCopy }) {
   const st = checksStateOf(env, envState);
   const locked = envState?.lockedRelease || null;
+  /* Versions as the header names them, not the world's internal labels. */
+  const shown = (label) => envLabelOf(env, envState, label);
   const [running, setRunning] = useState(false);
   const [confirmLock, setConfirmLock] = useState(false);
   const [split, setSplit] = useState("train");
@@ -62,7 +65,7 @@ export default function ReleasePanel({ env, envState, patch, onCopy }) {
 
   return (
     <SectionCard
-      title={`Release ${locked?.version || st.version}`}
+      title={`Release ${shown(locked?.version || st.version)}`}
       subtitle={
         locked
           ? "Frozen so scores stay comparable. Copy it to edit."
@@ -155,7 +158,7 @@ export default function ReleasePanel({ env, envState, patch, onCopy }) {
           {locked
             ? `Locked ${new Date(locked.at).toLocaleDateString(undefined, { day: "numeric", month: "short" })} · train ${locked.splits.train.length} · test ${locked.splits.test.length} scenarios · scorer ${locked.rewardVersion}. A copy is editable and isn't comparable with these scores.`
             : st.stale
-              ? `Checks last ran on ${st.checkedVersion}. This is ${st.version}, so they run again.`
+              ? `Checks last ran on ${shown(st.checkedVersion)}. This is ${shown(st.version)}, so they run again.`
               : st.ready
                 ? "All five passed on this version. Lock it to freeze tasks, splits and the scorer."
                 : "Run the checks on this version. Nothing is shown as Ready until all five pass."}
@@ -234,7 +237,7 @@ export default function ReleasePanel({ env, envState, patch, onCopy }) {
           open
           onClose={() => setConfirmLock(false)}
           PaperProps={{ sx: { maxWidth: 480 } }}
-          title={`Lock release ${st.version}?`}
+          title={`Lock release ${shown(st.version)}?`}
           content={
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
               Its tasks, train and test splits and scorer freeze, so every score
