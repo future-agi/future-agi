@@ -280,7 +280,6 @@ def provider_sync(
                 agent_version_id=str(parent.id),
                 code=exc.code,
             )
-        _remember_digest(runtime, digest)
         return parent
     changed = (
         known != digest
@@ -288,8 +287,6 @@ def provider_sync(
         else (current or {}).get("setup_hash") != document["setup_hash"]
     )
     if not changed:
-        if known is None:
-            _remember_digest(runtime, digest)
         return parent
     prompt = "\n\n".join(
         str(unit.get("instructions") or "")
@@ -327,12 +324,6 @@ def provider_sync(
         tools=len(document["tools"]),
     )
     return version
-
-
-def _remember_digest(runtime: HarnessAgentVersionRuntime, digest: str) -> None:
-    HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
-        source={**(runtime.source or {}), "profile_digest": digest}
-    )
 
 
 def upload_version(
