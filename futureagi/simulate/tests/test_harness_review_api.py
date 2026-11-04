@@ -127,6 +127,41 @@ def test_an_added_actor_is_one_change_decided_once_and_undecided_again_when_it_c
     assert [one["draft_revision"] for one in manager["sources"]] == [3, 1]
 
 
+def test_an_added_sub_actor_is_an_actor_change_and_its_rejection_is_flagged(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "review-sub-actor", storage)
+    colleague = {
+        "id": "colleague",
+        "name": "Jordan Taylor",
+        "role": "the caller's colleague",
+        "side": "caller",
+        "channel": "audio_mix",
+    }
+    added = _add(auth_client, environment, colleague, revision=0)
+    assert added.status_code == 200, added.content
+
+    review = _review(auth_client, environment)
+    assert [(one["id"], one["action"]) for one in review["changes"]] == [
+        ("actor:colleague", "added")
+    ]
+    [change] = review["changes"]
+    assert change["patch"][0]["value"]["name"] == "Jordan Taylor"
+
+    decided = _decide(
+        auth_client,
+        environment,
+        [{"id": "actor:colleague", "decision": "rejected"}],
+        {"environment": review["drafts"]["environment"]["revision"]},
+    )
+    assert decided.status_code == 200, decided.content
+    listed = auth_client.get(f"{BASE}/{environment.id}/actors/").json()
+    listed = listed.get("result", listed)
+    assert {one["id"]: one["review_decision"] for one in listed["actors"]} == {
+        "colleague": "rejected"
+    }
+
+
 def test_a_decision_on_a_draft_that_moved_or_on_an_unknown_change_is_refused(
     user, workspace, storage, auth_client
 ):
