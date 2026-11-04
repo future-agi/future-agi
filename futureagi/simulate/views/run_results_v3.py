@@ -13,7 +13,7 @@ from typing import Any
 
 import structlog
 from django.db.models import QuerySet
-from django.http import StreamingHttpResponse
+from django.http import Http404, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
@@ -940,6 +940,8 @@ def _call_for_request(request, call_execution_id, calls=None) -> CallExecution:
     organization = getattr(request, "organization", None) or getattr(
         request.user, "organization", None
     )
+    if organization is None:
+        raise Http404
     return get_object_or_404(
         calls
         if calls is not None

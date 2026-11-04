@@ -16,7 +16,7 @@ import {
   isHandOff,
   useCallWorkers,
 } from "src/api/simulate-environments/runDetail";
-import { Markdown } from "src/sections/simulate/environments/buildEnvironment/console/ConsoleTurn";
+import Markdown from "src/sections/simulate/environments/buildEnvironment/console/Markdown";
 import { CALL_WORKERS_COPY as C } from "./callTraces.constants";
 import { arrange, asShown, isLong, seconds } from "./utils/callWorkersUtils";
 

@@ -343,6 +343,53 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
 
 
 @pytest.mark.django_db
+def test_declared_workers_come_from_the_version_the_run_was_pinned_to(
+    user, workspace, storage, settings
+):
+    import uuid
+
+    from simulate.models import HarnessEnvironmentVersion, HostedHarnessJob
+    from simulate.services.harness_workers import declared_workers
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    environment = _environment(user, workspace, "workers-pinned", storage)
+    pinned = environment.environment_version
+    contract = (pinned.documents or {}).get("contract", {})
+    HarnessEnvironmentVersion._base_manager.filter(id=pinned.id).update(
+        documents={
+            **(pinned.documents or {}),
+            "contract": {**contract, "workers": DECLARED},
+        }
+    )
+    run = _create(environment, key="p")
+    job = HostedHarnessJob.no_workspace_objects.get(
+        test_execution_id=run.test_execution_id
+    )
+    assert job.environment_version_id == pinned.id
+
+    # The environment moves on to a version declaring other workers after the run started.
+    moved = HarnessEnvironmentVersion._base_manager.get(id=pinned.id)
+    moved.pk, moved.id = None, uuid.uuid4()
+    moved.version_number = (pinned.version_number or 0) + 100
+    moved.hash = "sha256:moved"
+    moved.documents = {
+        **(pinned.documents or {}),
+        "contract": {**contract, "workers": [{"id": "later"}]},
+    }
+    moved.save()
+    HostedHarnessJob.no_workspace_objects.filter(id=job.environment_id).update(
+        environment_version=moved
+    )
+    job = HostedHarnessJob.no_workspace_objects.get(id=job.id)
+
+    assert [one["id"] for one in declared_workers(job)] == [
+        one["id"] for one in DECLARED
+    ]
+
+
+@pytest.mark.django_db
 def test_a_declared_worker_not_seen_yet_gets_one_more_read_later():
     from unittest.mock import patch
 
@@ -1254,6 +1301,23 @@ def test_a_recorded_timeline_places_the_call_s_messages_on_the_tool_calls_clock(
         "text": "Refund issued",
         "at": "2024-11-01T09:50:11.200000",
     }
+
+
+@pytest.mark.django_db
+def test_a_requester_with_no_organization_is_refused_before_any_call_is_read(
+    django_assert_num_queries,
+):
+    from types import SimpleNamespace
+
+    from django.http import Http404
+
+    from simulate.views.run_results_v3 import _call_for_request
+
+    request = SimpleNamespace(
+        organization=None, user=SimpleNamespace(organization=None)
+    )
+    with django_assert_num_queries(0), pytest.raises(Http404):
+        _call_for_request(request, "00000000-0000-0000-0000-000000000000")
 
 
 @pytest.mark.django_db

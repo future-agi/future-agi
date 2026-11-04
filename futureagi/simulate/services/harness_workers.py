@@ -633,9 +633,10 @@ def _span_dict(span: Any) -> WorkerSpan:
 
 
 def declared_workers(job: HostedHarnessJob) -> list[DeclaredWorker]:
-    """The workers the environment's contract declares."""
-    environment = job.environment or job
-    version = environment.environment_version
+    """The workers the contract of the version the run was pinned to declares."""
+    version = job.environment_version or (
+        job.environment.environment_version if job.environment else None
+    )
     contract = (
         (version.documents or {}).get("contract") if version is not None else None
     ) or {}
