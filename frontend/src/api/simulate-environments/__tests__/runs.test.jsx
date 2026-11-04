@@ -76,6 +76,35 @@ beforeEach(() => {
 });
 
 describe("executionToRun", () => {
+  it("counts calls with a pass or fail in the pass-rate base, errored ones included", () => {
+    const base = {
+      id: "ex-rate",
+      status: "Completed",
+      outcome_passed: 6,
+      outcome_failed: 2,
+      outcome_skipped: 2,
+    };
+    expect(executionToRun({ ...base, total_chats: 10, outcome_no_score: 0 }).scored).toBe(10);
+    expect(executionToRun({ ...base, total_chats: 12, outcome_no_score: 2 }).scored).toBe(10);
+    // A run stopped before its calls finished has nothing to rate them on yet.
+    const stopped = { id: "ex-stopped", status: "Cancelled", total_chats: 4, outcome_passed: 0 };
+    expect(executionToRun({ ...stopped, outcome_failed: 0, outcome_no_score: 0 }).scored).toBe(0);
+  });
+
+  it("reads No score for a finished run whose graded calls all had no pass or fail", () => {
+    const run = executionToRun({
+      id: "ex-unscored",
+      status: "Completed",
+      total_chats: 3,
+      outcome_passed: 0,
+      outcome_failed: 0,
+      outcome_skipped: 0,
+      outcome_no_score: 3,
+    });
+    expect(run.status).toBe("no_score");
+    expect(run.pending).toBe(0);
+  });
+
   it("maps a completed, fully-passing execution to `passed`", () => {
     const run = executionToRun({
       id: "ex-1",

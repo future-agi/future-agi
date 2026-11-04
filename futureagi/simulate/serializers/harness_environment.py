@@ -104,6 +104,7 @@ class HarnessRunSummarySerializer(serializers.Serializer):
     outcome_passed = serializers.IntegerField(allow_null=True)
     outcome_failed = serializers.IntegerField(allow_null=True)
     outcome_skipped = serializers.IntegerField(allow_null=True)
+    outcome_no_score = serializers.IntegerField(allow_null=True)
     started_at = serializers.DateTimeField(allow_null=True)
     completed_at = serializers.DateTimeField(allow_null=True)
 
@@ -289,6 +290,52 @@ class HarnessEnvironmentAmendmentSerializer(serializers.Serializer):
     note = serializers.CharField()
 
 
+class HarnessEnvironmentSubActorPersonaSerializer(serializers.Serializer):
+    """The caller persona fields a sub-actor's voice is chosen from."""
+
+    name = serializers.CharField(required=False, allow_blank=True)
+    gender = serializers.CharField(required=False, allow_blank=True)
+    age_group = serializers.CharField(required=False, allow_blank=True)
+    occupation = serializers.CharField(required=False, allow_blank=True)
+    location = serializers.CharField(required=False, allow_blank=True)
+    personality = serializers.CharField(required=False, allow_blank=True)
+    communication_style = serializers.CharField(required=False, allow_blank=True)
+    initial_message = serializers.CharField(required=False, allow_blank=True)
+    languages = serializers.ListField(child=serializers.CharField(), required=False)
+    accent = serializers.CharField(required=False, allow_blank=True)
+
+
+class HarnessEnvironmentSubActorSerializer(serializers.Serializer):
+    """Someone on the person's side who is not the person, on the environment's list."""
+
+    id = serializers.CharField()
+    name = serializers.CharField()
+    role = serializers.CharField(allow_blank=True)
+    channel = serializers.CharField()
+    persona = HarnessEnvironmentSubActorPersonaSerializer()
+    loudness_ratio = serializers.FloatField(required=False)
+    scenarios_count = serializers.IntegerField()
+
+
+class HarnessEnvironmentSubActorTriggerSerializer(serializers.Serializer):
+    """When a sub-actor enters a call; only the keys its kind uses are present."""
+
+    kind = serializers.CharField(required=False)
+    turn = serializers.IntegerField(required=False)
+    tool = serializers.CharField(required=False, allow_blank=True)
+    on_call = serializers.IntegerField(required=False)
+    words = serializers.ListField(child=serializers.CharField(), required=False)
+    p = serializers.FloatField(required=False)
+
+
+class HarnessEnvironmentScenarioSubActorSerializer(serializers.Serializer):
+    """A sub-actor a scenario includes: what they do in it and when they enter."""
+
+    id = serializers.CharField()
+    instruction = serializers.CharField(allow_blank=True)
+    trigger = HarnessEnvironmentSubActorTriggerSerializer()
+
+
 class HarnessEnvironmentCatalogueSubGoalSerializer(serializers.Serializer):
     """One catalogue entry, carrying the code that settles it where there is any.
 
@@ -361,6 +408,7 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
     )
     amendments = HarnessEnvironmentAmendmentSerializer(many=True)
     sub_goals = HarnessEnvironmentCatalogueSubGoalSerializer(many=True)
+    sub_actors = HarnessEnvironmentSubActorSerializer(many=True)
     end_conditions = HarnessEnvironmentEndConditionsSerializer()
     notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     chosen_evals = serializers.ListField(
@@ -424,6 +472,7 @@ class HarnessEnvironmentScenarioSerializer(serializers.Serializer):
     fixture = serializers.DictField(allow_null=True)
     steps = serializers.IntegerField(allow_null=True)
     sub_goals = HarnessEnvironmentSubGoalSerializer(many=True)
+    sub_actors = HarnessEnvironmentScenarioSubActorSerializer(many=True)
     persona = serializers.DictField(allow_null=True)
     situation = serializers.CharField(allow_null=True)
     outcome = serializers.CharField(allow_null=True)

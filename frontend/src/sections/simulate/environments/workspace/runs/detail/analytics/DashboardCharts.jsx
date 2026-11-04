@@ -8,6 +8,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
+import { STATUS_META } from "../../runs.constants";
 import {
   Bar,
   BarChart,
@@ -45,6 +46,7 @@ const OUTCOME_ROLES = {
   failed: "danger",
   error: "warning",
   inconclusive: "neutral",
+  no_score: "neutral",
   true: "success",
   false: "danger",
   positive: "success",
@@ -170,6 +172,7 @@ const pieLabel = (label) =>
     failed: "Failed",
     error: "Error",
     inconclusive: "Inconclusive",
+    no_score: STATUS_META.no_score.label,
     positive: "Positive",
     neutral: "Neutral",
     negative: "Negative",

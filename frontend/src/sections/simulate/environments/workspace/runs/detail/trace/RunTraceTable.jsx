@@ -136,6 +136,8 @@ export default function RunTraceTable({
     if (filters.goal_not?.length) next.goal_not = filters.goal_not;
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
     if (filters.subGoal_not?.length) next.sub_goal_not = filters.subGoal_not;
+    if (filters.subActor?.length) next.sub_actor = filters.subActor;
+    if (filters.subActor_not?.length) next.sub_actor_not = filters.subActor_not;
     if (filters.status?.length) next.status = filters.status;
     if (filters.status_not?.length) next.status_not = filters.status_not;
     if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
@@ -383,6 +385,31 @@ export default function RunTraceTable({
     () => (facets.sub_goal ?? []).map((item) => item.value),
     [facets.sub_goal],
   );
+  // Only a run where some call had a sub-actor enter offers this filter.
+  const subActorFacet = facets.sub_actor;
+  const subActorField = useMemo(
+    () =>
+      subActorFacet?.length
+        ? [
+            {
+              value: "subActor",
+              label: "Sub-actor",
+              type: "enum",
+              choices: subActorFacet.map((item) => item.value),
+              // Each choice says how many of the run's calls it entered.
+              choiceLabels: Object.fromEntries(
+                subActorFacet.map((item) => [
+                  item.value,
+                  item.count != null
+                    ? `${item.label} (${item.count})`
+                    : item.label,
+                ]),
+              ),
+            },
+          ]
+        : [],
+    [subActorFacet],
+  );
   const filterFields = useMemo(
     () => [
       {
@@ -397,6 +424,7 @@ export default function RunTraceTable({
         type: "enum",
         choices: subGoalOptions,
       },
+      ...subActorField,
       {
         value: "status",
         label: "Status",
@@ -405,7 +433,7 @@ export default function RunTraceTable({
         choiceLabels: OUTCOME_LABELS,
       },
     ],
-    [goalOptions, subGoalOptions],
+    [goalOptions, subGoalOptions, subActorField],
   );
   // Calls handed over from a diagnosis issue; shown as their own chip rather than
   // a Filter-panel field, since the panel cannot express an id list.

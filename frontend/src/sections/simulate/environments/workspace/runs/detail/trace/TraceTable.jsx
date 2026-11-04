@@ -46,6 +46,7 @@ import {
   UnscoredEval,
 } from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
+import { STATUS_META } from "../../runs.constants";
 
 // The theme hides every border on a table's last row, which here is the head
 // row and the final call row. The column dividers are cell left borders, so put
@@ -112,6 +113,20 @@ const clampSx = {
   WebkitBoxOrient: "vertical",
   overflow: "hidden",
   wordBreak: "break-word",
+};
+
+// A call with no pass or fail says what it has instead: "2 not applicable, 1 inconclusive".
+const unscoredSummary = (t) => {
+  if (t.status !== "no_score") return "";
+  const count = (result) =>
+    (t.subGoalResults || []).filter((goal) => goal.result === result).length;
+  return [
+    [count("not_applicable"), STATUS_META.not_applicable.label.toLowerCase()],
+    [count("inconclusive"), STATUS_META.inconclusive.label.toLowerCase()],
+  ]
+    .filter(([n]) => n)
+    .map(([n, label]) => `${n} ${label}`)
+    .join(", ");
 };
 
 // A persona is worth showing when any field is filled, not only the name: the
@@ -327,17 +342,28 @@ export default function TraceTable({
                     </Typography>
                   </>
                 )}
+                {(t.outcomeReason || unscoredSummary(t)) && (
+                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                    {t.outcomeReason || unscoredSummary(t)}
+                  </Typography>
+                )}
               </Stack>
               {t.subGoalResults?.length > 0 && (
                 <Stack spacing={0.5} sx={{ mt: 1 }}>
                   {t.subGoalResults.map((goal, goalIndex) => {
-                    const verdict = runOutcome(
-                      goal.passed === true
-                        ? "passed"
-                        : goal.passed === false
-                          ? "failed"
-                          : "inconclusive",
-                    );
+                    const verdict =
+                      goal.result === "not_applicable"
+                        ? {
+                            label: STATUS_META.not_applicable.label,
+                            color: "text.disabled",
+                          }
+                        : runOutcome(
+                            goal.passed === true
+                              ? "passed"
+                              : goal.passed === false
+                                ? "failed"
+                                : "inconclusive",
+                          );
                     return (
                       <Stack
                         key={`${goal.name}-${goalIndex}`}
@@ -352,6 +378,7 @@ export default function TraceTable({
                         </Typography>
                         {goal.passed == null ? (
                           <Typography
+                            title={goal.reason || undefined}
                             sx={{ typography: "s3", color: verdict.color }}
                           >
                             {verdict.label}

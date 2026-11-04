@@ -82,3 +82,31 @@ describe("ScenarioDrawer", () => {
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
   });
 });
+
+describe("ScenarioDrawer sub-actors", () => {
+  it("says who else is in the scenario, when they enter and what they do", () => {
+    const env = { subActors: [{ id: "friend", name: "Rowan", role: "a friend with the caller" }] };
+    open(
+      {
+        ...API_ROW,
+        sub_actors: [
+          {
+            id: "friend",
+            instruction: "You want a second item.",
+            trigger: { kind: "mid_journey", turn: 2 },
+          },
+        ],
+      },
+      { env },
+    );
+    expect(screen.getByText("Sub-actors")).toBeInTheDocument();
+    expect(screen.getByText("Rowan")).toBeInTheDocument();
+    expect(screen.getByText(/a friend with the caller · After the agent's turn 2/)).toBeInTheDocument();
+    expect(screen.getByText("You want a second item.")).toBeInTheDocument();
+  });
+
+  it("has no sub-actors row for a scenario that includes none", () => {
+    open();
+    expect(screen.queryByText("Sub-actors")).not.toBeInTheDocument();
+  });
+});

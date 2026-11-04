@@ -78,6 +78,7 @@ class CallTranscriptSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "speaker_role",
+            "speaker_name",
             "content",
             "start_time_ms",
             "start_time_seconds",

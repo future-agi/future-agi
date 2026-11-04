@@ -427,6 +427,40 @@ describe("RunTraceTable", () => {
     );
   });
 
+  it("forwards sub-actor filters to the server", () => {
+    renderTable({
+      initialFilters: { subActor: ["friend"], subActor_not: ["none"] },
+    });
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({
+        filters: { sub_actor: ["friend"], sub_actor_not: ["none"] },
+      }),
+    );
+  });
+
+  it("says how many calls each sub-actor entered in the filter", async () => {
+    const user = userEvent.setup();
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      facets: {
+        ...FACETS,
+        sub_actor: [
+          { value: "none", count: 3, label: "Simulated user only" },
+          { value: "friend", count: 2, label: "Rowan" },
+        ],
+      },
+    }));
+    renderTable();
+    await user.click(screen.getByRole("button", { name: /^Filter/ }));
+    await user.click(screen.getAllByRole("combobox")[0]);
+    await user.click(await screen.findByRole("option", { name: "Sub-actor" }));
+    await user.click(screen.getByText(/Select values/));
+    expect(await screen.findByText("Rowan (2)")).toBeInTheDocument();
+    expect(screen.getByText("Simulated user only (3)")).toBeInTheDocument();
+  });
+
   it("follows the drawer: switches page, expands the call's group, highlights its row", () => {
     const onQueryChange = vi.fn();
     const { rerender } = renderTable({ onQueryChange });

@@ -70,6 +70,7 @@ MEMBER_FIELDS = (
     "keywords",
     "background_noise",
     "max_turns",
+    "sub_actors",
 )
 
 

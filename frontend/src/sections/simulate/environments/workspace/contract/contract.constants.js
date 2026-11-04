@@ -1,3 +1,5 @@
+import { SUB_ACTOR_CHANNEL_LABELS } from "src/components/VoiceDetailDrawerV2/constants";
+
 // The one monospace stack the contract uses for observation fields, action
 // verbs and verifier names. Kept as a constant so the string is not repeated
 // across the part components.
@@ -79,6 +81,14 @@ export const CONTRACT_COPY = {
   gapsSubtitle: "What compiling could not settle on its own",
   gapsFixGrading: "Fix in Evaluations",
   gapsReviewHere: "Review below",
+
+  subActors: {
+    title: (n) => `Sub-actors (${n})`,
+    subtitle:
+      "People on the person's side who are not the person. Change them in the builder chat.",
+    channels: SUB_ACTOR_CHANNEL_LABELS,
+    scenarios: (n) => `In ${n} scenario${n === 1 ? "" : "s"}`,
+  },
 
   actors: {
     heading: "Actors",

@@ -67,6 +67,7 @@ const toScenarioRow = (row) => ({
     label: sg?.what || sg?.name,
     kind: sg?.kind,
   })),
+  subActors: Array.isArray(row?.sub_actors) ? row.sub_actors : [],
 });
 
 // evaluations.selected[] → the applied-eval rows useAppliedEvals/EvalRow read.
@@ -133,6 +134,8 @@ export function harnessDetailToEnvironment(detail) {
     // them over the fixture derivations (fixture fallback stays for nulls).
     amendments: contract?.amendments || null,
     subGoals: contract?.sub_goals || null,
+    // Who might be around the agent's users, each with how many scenarios include them.
+    subActors: contract?.sub_actors || null,
     endConditions: contract?.end_conditions || null,
     useCases: contract?.real_use_cases || null,
     personas: world?.personas || null,

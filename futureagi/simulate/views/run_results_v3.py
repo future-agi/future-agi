@@ -121,6 +121,8 @@ class RunCallFiltersSerializer(serializers.Serializer):
             "goal_not",
             "sub_goal",
             "sub_goal_not",
+            "sub_actor",
+            "sub_actor_not",
             "status",
             "status_not",
             "goal_outcome",
@@ -138,6 +140,10 @@ class RunCallFiltersSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Filter '{field}' must be a list of strings."
                 )
+            # Refuses null and surrogate characters, which the database cannot hold.
+            serializers.ListField(
+                child=serializers.CharField(allow_blank=True)
+            ).run_validation(selected)
         invalid_statuses = {
             *value.get("status", []),
             *value.get("status_not", []),
@@ -199,6 +205,7 @@ class OutcomeCountsSerializer(serializers.Serializer):
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
     inconclusive = serializers.IntegerField()
+    no_score = serializers.IntegerField()
 
 
 class RunSummarySerializer(serializers.Serializer):
@@ -285,6 +292,10 @@ class CostBreakdownSerializer(serializers.Serializer):
 class SubGoalResultSerializer(serializers.Serializer):
     name = serializers.CharField()
     passed = serializers.BooleanField(allow_null=True)
+    result = serializers.ChoiceField(
+        choices=["not_applicable", "inconclusive"], required=False
+    )
+    reason = serializers.CharField(required=False, allow_blank=True)
 
 
 class RunCallSerializer(serializers.Serializer):
@@ -302,6 +313,7 @@ class RunCallSerializer(serializers.Serializer):
     source_scenario_key = serializers.CharField(allow_null=True)
     trial_index = serializers.IntegerField(allow_null=True)
     outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
+    outcome_reason = serializers.CharField(required=False, allow_null=True)
     execution_status = serializers.CharField()
     modality = serializers.CharField()
     provider = serializers.CharField(allow_null=True)
@@ -332,9 +344,14 @@ class FacetValueSerializer(serializers.Serializer):
     count = serializers.IntegerField()
 
 
+class LabelledFacetValueSerializer(FacetValueSerializer):
+    label = serializers.CharField()
+
+
 class RunFacetsSerializer(serializers.Serializer):
     goal = FacetValueSerializer(many=True)
     sub_goal = FacetValueSerializer(many=True)
+    sub_actor = LabelledFacetValueSerializer(many=True, required=False)
     status = FacetValueSerializer(many=True)
 
 
@@ -542,6 +559,27 @@ class FunctionCallSerializer(serializers.Serializer):
         ref_name = "SimulateRunV3FunctionCall"
 
 
+class CallSubActorSerializer(serializers.Serializer):
+    """Someone on the person's side in the call; a call stored by an older build may lack any field."""
+
+    id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="The sub-actor's id in the environment.",
+    )
+    name = serializers.CharField(
+        required=False, allow_blank=True, help_text="The name the transcript shows."
+    )
+    role = serializers.CharField(
+        required=False, allow_blank=True, help_text="Who they are to the caller."
+    )
+    channel = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="The channel id they joined the call on.",
+    )
+
+
 class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     goal = serializers.CharField()
     scenario_details = serializers.CharField(allow_null=True)
@@ -555,6 +593,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
+    sub_actors = CallSubActorSerializer(many=True)
     scoring_status = serializers.ChoiceField(choices=SCORING_STATUSES)
     csat_status = serializers.ChoiceField(choices=CSAT_STATUSES)
     csat_reason = serializers.CharField(allow_null=True)
@@ -574,6 +613,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "cost_breakdown_cents",
             "evaluations",
             "function_calls",
+            "sub_actors",
             "scoring_status",
             "csat_status",
             "csat_reason",
@@ -751,7 +791,7 @@ class RunCallsV3View(APIView):
             version = execution.completed_at or execution.updated_at
             # A deleted call moves the run's total and nothing else in this key.
             facets_cache_key = (
-                f"simulate:v3:facets:outcomes-v2:{execution.id}:{version.timestamp()}"
+                f"simulate:v3:facets:outcomes-v3:{execution.id}:{version.timestamp()}"
                 f":{calls_page['execution_summary']['total']}"
             )
         response = {
@@ -787,6 +827,21 @@ class RunCallsV3View(APIView):
             "evaluation_columns": columns,
         }
         return Response(response)
+
+
+def _call_sub_actors(metadata: object) -> list[dict[str, str]]:
+    """Who each of the call's sub-actors is and how they were heard."""
+    record = metadata.get("harness_sub_actors") if isinstance(metadata, dict) else None
+    resolved = record.get("resolved") if isinstance(record, dict) else None
+    return [
+        {
+            key: one[key]
+            for key in ("id", "name", "role", "channel")
+            if isinstance(one.get(key), str)
+        }
+        for one in resolved or []
+        if isinstance(one, dict)
+    ]
 
 
 def build_call_execution_detail(
@@ -834,6 +889,7 @@ def build_call_execution_detail(
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
             "function_calls": function_calls(call),
+            "sub_actors": _call_sub_actors(call.call_metadata),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],
             "csat_reason": normalized["csat_reason"],

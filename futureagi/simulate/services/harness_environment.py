@@ -18,7 +18,18 @@ import uuid
 from collections.abc import Iterable
 from typing import Any
 
-from django.db.models import Count, OuterRef, Prefetch, Q, QuerySet, Subquery
+from django.db.models import (
+    CharField,
+    Count,
+    F,
+    OuterRef,
+    Prefetch,
+    Q,
+    QuerySet,
+    Subquery,
+)
+from django.db.models.fields.json import KeyTextTransform
+from django.db.models.functions import Coalesce
 
 from simulate.models import (
     AgentVersion,
@@ -28,6 +39,11 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
+from simulate.services.harness_scenarios import (
+    sub_actor_choice_labels,
+    sub_actor_entries,
+)
+from simulate.types import ContractSubActor
 from simulate.utils.ended_reason import canonical_ended_reasons
 
 # The four states the list's status pill knows. The pipeline reports far finer
@@ -209,6 +225,10 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
             "outcome_skipped": (
                 outcomes.get("skipped", 0) if outcomes is not None else None
             ),
+            # Calls that ran with no pass or fail; a pass rate leaves them out.
+            "outcome_no_score": (
+                outcomes.get("no_score", 0) if outcomes is not None else None
+            ),
             "started_at": _isoformat(execution.started_at),
             "completed_at": _isoformat(execution.completed_at),
         }
@@ -220,7 +240,8 @@ def receipt_outcome_counts(job_ids: Iterable[uuid.UUID]) -> dict[Any, dict[str, 
 
     A receipt belongs to a call through its execution, or, for a scenario-level
     receipt, through the scenario registration. Receipts of soft-deleted calls
-    stay in the table and must not be counted.
+    stay in the table and must not be counted. A call's own outcome wins over its receipt's
+    status, so a call with no pass or fail counts as no score, never as passed.
     """
     job_ids = list(job_ids)
     counts: dict[Any, dict[str, int]] = {}
@@ -232,10 +253,19 @@ def receipt_outcome_counts(job_ids: Iterable[uuid.UUID]) -> dict[Any, dict[str, 
     for row in (
         HostedHarnessReceipt.no_workspace_objects.filter(job_id__in=job_ids)
         .exclude(receipt_of_deleted_call)
-        .values("job_id", "status")
+        .annotate(
+            outcome=Coalesce(
+                KeyTextTransform(
+                    "harness_outcome_status", "execution__call_execution__call_metadata"
+                ),
+                F("status"),
+                output_field=CharField(),
+            )
+        )
+        .values("job_id", "outcome")
         .annotate(count=Count("id"))
     ):
-        counts.setdefault(row["job_id"], {})[row["status"]] = row["count"]
+        counts.setdefault(row["job_id"], {})[row["outcome"]] = row["count"]
     return counts
 
 
@@ -628,6 +658,7 @@ def _scenarios(
                     for name in doc.get("sub_goals") or []
                     if isinstance(name, str)
                 ],
+                "sub_actors": sub_actor_entries(doc.get("sub_actors")) or [],
                 "persona": _persona_of(cells),
                 "situation": cells.get("situation") or None,
                 "outcome": cells.get("outcome") or None,
@@ -796,6 +827,9 @@ def _contract_section(
     section = {field: contract.get(field) for field in _CONTRACT_FIELDS}
     section["amendments"] = _amendments(contract.get("amendments"))
     section["sub_goals"] = _catalogue_entries(catalogue)
+    section["sub_actors"] = _sub_actor_list(
+        _stage_output(job, "sub_actors"), scenario_docs
+    )
     section["end_conditions"] = _end_conditions(job, contract, scenario_docs)
     section["provenance"] = _provenance(job, environment)
     return section
@@ -824,6 +858,26 @@ def _catalogue_entries(catalogue: Any) -> list[dict[str, Any]]:
             }
         )
     return goals
+
+
+def sub_actor_labels(job: HostedHarnessJob) -> dict[str, str]:
+    """How the scenario filter names each of the environment's sub-actors."""
+    return sub_actor_choice_labels(_stage_output(job, "sub_actors"))
+
+
+def _sub_actor_list(listing: object, scenario_docs: object) -> list[ContractSubActor]:
+    """The environment's sub-actors, each with how many scenarios include it."""
+    included: dict[str, int] = {}
+    for doc in scenario_docs if isinstance(scenario_docs, list) else []:
+        for one in doc.get("sub_actors") or [] if isinstance(doc, dict) else []:
+            if isinstance(one, dict) and one.get("id"):
+                included[str(one["id"])] = included.get(str(one["id"]), 0) + 1
+    entries = listing.get("sub_actors") if isinstance(listing, dict) else None
+    return [
+        {**entry, "scenarios_count": included.get(str(entry["id"]), 0)}
+        for entry in entries or []
+        if isinstance(entry, dict) and entry.get("id")
+    ]
 
 
 def _end_conditions(
