@@ -367,11 +367,16 @@ type kvContext uint8
 const (
 	kvResource kvContext = iota
 	kvSpan
-	kvOther // scope, event, link: decoded, never stored
+	kvEvent // event attributes stored in a JSON string
+	kvOther // scope and native link attrs (links also materialized before final scan)
 )
 
 func (s *otlpShape) addKV(ctx kvContext, kv kvInfo, rs *rsAccum, sp *spanAccum) {
 	switch ctx {
+	case kvEvent:
+		extra := 2*kv.htmlJSON() + 4
+		sp.json += extra
+		s.hotCopyBytes += extra
 	case kvResource:
 		if k := kv.stampKey; k != 0 && !rs.stampSeen[k] {
 			rs.stampSeen[k], rs.stampValues[k] = true, kv.val
@@ -631,9 +636,11 @@ func (s *otlpShape) protoEvent(b []byte, sp *spanAccum) error {
 			s.protoString(val)
 			nameLen += int64(len(val))
 		case 3:
-			if _, err := s.protoKeyValue(val, 0); err != nil {
+			kv, err := s.protoKeyValue(val, 0)
+			if err != nil {
 				return err
 			}
+			s.addKV(kvEvent, kv, nil, sp)
 		}
 	}
 	sp.json += spanEventJSON(nameLen)

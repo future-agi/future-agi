@@ -105,7 +105,7 @@ export default function TrialsTable({ fix }) {
                   px: 0.75,
                   borderRadius: 0.75,
                   typography: "s3",
-                  fontWeight: 700,
+                  fontWeight: 600,
                   color: runColor(c.attempt),
                   bgcolor: (t) =>
                     alpha(

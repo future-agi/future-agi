@@ -423,6 +423,7 @@ const SessionGrid = React.forwardRef(
               );
               const backendFilters = toBackendFilters(filters);
               const queryKey = JSON.stringify({
+                responseVersion: "capture-coverage-v1",
                 projectId: projectId || null,
                 filters: backendFilters,
                 dateInterval: dateInterval || null,
