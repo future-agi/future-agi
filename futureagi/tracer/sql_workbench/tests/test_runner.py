@@ -492,6 +492,28 @@ def test_server_execution_timeout_has_safe_typed_error():
     assert client.closed and client.sent == 1
 
 
+@pytest.mark.parametrize("kind", ["socket", "driver"])
+def test_native_socket_timeout_has_safe_typed_error(kind):
+    from clickhouse_driver.errors import SocketTimeoutError
+
+    class TimedOut(Client):
+        def execute_iter(self, query, **kwargs):
+            if kind == "driver":
+                raise SocketTimeoutError("transport details")
+            raise TimeoutError("transport details")
+
+    client = TimedOut([])
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        with pytest.raises(runner.QueryTimedOut, match="30-second"):
+            runner.run(
+                "SELECT n FROM bounded", uuid4(), lambda: False, table_filters=FILTERS
+            )
+    assert client.closed
+
+
 def test_output_rows_do_not_poll_the_control_database():
     from unittest.mock import Mock
 

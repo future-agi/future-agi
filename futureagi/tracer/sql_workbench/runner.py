@@ -184,6 +184,7 @@ def run(compiled_sql, query_id, cancelled, *, table_filters):
     to every read of each physical source, independently of the AST rewrite.
     """
     from clickhouse_driver import Client
+    from clickhouse_driver.errors import SocketTimeoutError
 
     if (
         not isinstance(table_filters, str)
@@ -304,7 +305,9 @@ def run(compiled_sql, query_id, cancelled, *, table_filters):
     except Exception as exc:
         if aborted.is_set():
             raise abort_reason[0] from exc
-        if getattr(exc, "code", None) == 159:
+        if getattr(exc, "code", None) == 159 or isinstance(
+            exc, SocketTimeoutError | TimeoutError
+        ):
             raise QueryTimedOut() from exc
         if getattr(exc, "code", None) in {60, 81, 497}:
             raise QueryUnavailable(
