@@ -4,6 +4,7 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -322,14 +323,23 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     def create_agent_version(self, request, pk=None):
         """A new agent version from an upload, a prompt edit or a settings edit; it is
         checked next, then made this environment's default unless make_default is
-        false."""
+        false. A coding agent key's version is never made the default."""
         from simulate.services.harness_agent_changes import change_agent_source
 
         version_reads.require_versioning()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        version = change_agent_source(job, **request.validated_data, user=request.user)
+        change = dict(request.validated_data)
+        if coding_agent_key(request) is not None:
+            # Shipping a version stays with people; a coding agent pushes candidates.
+            if change.get("make_default"):
+                raise PermissionDenied(
+                    "A coding agent key cannot make a version the default",
+                    code="coding_agent_cannot_ship",
+                )
+            change["make_default"] = False
+        version = change_agent_source(job, **change, user=request.user)
         job.refresh_from_db(fields=["agent_version"])
         return Response(
             {"agent_version": version_reads.agent_version_item(job, version)},

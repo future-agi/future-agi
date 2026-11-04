@@ -282,6 +282,82 @@ class TestCandidate:
         assert _outcomes(candidate) == {str(environment.id): "rerun_only"}
 
 
+class TestCodingAgentPush:
+    """A coding agent's push is always a candidate: shipping stays with people."""
+
+    def _push(self, api_client, key, environment, body):
+        return api_client.post(
+            f"{BASE}/{environment.id}/versions/agent/",
+            body,
+            format="json",
+            HTTP_X_API_KEY=key.api_key,
+            HTTP_X_SECRET_KEY=key.secret_key,
+        )
+
+    def _coder(self, user, workspace, environment):
+        from accounts.models import OrgApiKey
+
+        return OrgApiKey.no_workspace_objects.create(
+            name="coding agent",
+            organization=user.organization,
+            workspace=workspace,
+            type="coding_agent",
+            user=user,
+            simulation_environment_id=environment.id,
+        )
+
+    def test_without_make_default_it_stays_a_candidate(
+        self,
+        api_client,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        django_capture_on_commit_callbacks,
+    ):
+        environment = _environment(user, workspace, "src-coder", storage, edit=_archive)
+        a1 = _a1(environment)
+        coder = self._coder(user, workspace, environment)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            item, version = _made(
+                self._push(
+                    api_client,
+                    coder,
+                    environment,
+                    {"archive_artifact_id": str(_uploaded(storage, user))},
+                )
+            )
+
+        assert item["is_default"] is False
+        assert _preflight(version).status == "passed"
+        assert _defaults(environment) == [a1.id]
+        assert _outcomes(version) == {str(environment.id): "rerun_only"}
+
+    def test_make_default_true_is_refused(
+        self, api_client, user, workspace, storage, scheduled
+    ):
+        environment = _environment(user, workspace, "src-ship", storage, edit=_archive)
+        a1 = _a1(environment)
+        coder = self._coder(user, workspace, environment)
+        before = AgentVersion._base_manager.count()
+
+        response = self._push(
+            api_client,
+            coder,
+            environment,
+            {
+                "archive_artifact_id": str(_uploaded(storage, user)),
+                "make_default": True,
+            },
+        )
+
+        assert response.status_code == 403, response.content
+        assert response.json()["code"] == "coding_agent_cannot_ship"
+        assert AgentVersion._base_manager.count() == before
+        assert _defaults(environment) == [a1.id]
+
+
 class TestPrompt:
     def test_a_phone_prompt_reaches_the_run(
         self, auth_client, user, workspace, storage, scheduled

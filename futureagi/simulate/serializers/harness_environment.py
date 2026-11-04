@@ -630,10 +630,11 @@ class HarnessAgentVersionCreateSerializer(serializers.Serializer):
     )
     agent_payload = HarnessAgentPayloadChangeSerializer(required=False)
     make_default = serializers.BooleanField(
-        default=True,
+        required=False,
         help_text=(
             "False only checks the new version: once it passes, a run can pick it"
-            " and a move makes it the default."
+            " and a move makes it the default. Omitted, it is true, except for a"
+            " coding agent key, whose push is never the default."
         ),
     )
 
