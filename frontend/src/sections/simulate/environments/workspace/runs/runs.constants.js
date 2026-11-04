@@ -52,6 +52,8 @@ export const STATUS_META = {
   inconclusive: { role: "neutral", label: "Inconclusive" },
   // Neither a pass nor a fail: every sub-goal not applicable, inconclusive or a mix.
   no_score: { role: "neutral", label: "No score" },
+  // A sub-goal that did not apply to the call: neither a pass nor a fail.
+  not_applicable: { role: "neutral", label: "Not applicable" },
   queued: { role: "neutral", label: "Queued" },
   booting: { role: "info", label: "Provisioning" },
   running: { role: "info", label: "Running" },

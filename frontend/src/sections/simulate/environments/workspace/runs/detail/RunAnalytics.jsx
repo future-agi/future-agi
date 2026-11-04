@@ -17,6 +17,7 @@ import {
 } from "@mui/material";
 import { useRunAnalytics } from "src/api/simulate-environments/runAnalytics";
 import { ROW_HEIGHT } from "src/theme/sizes";
+import { STATUS_META } from "../runs.constants";
 import EmptyState from "../../../components/EmptyState";
 import {
   Bars,
@@ -138,7 +139,7 @@ const OUTCOMES = [
   { key: "failed", label: "Failed", role: "danger" },
   { key: "error", label: "Error", role: "warning" },
   { key: "inconclusive", label: "Inconclusive", role: "neutral" },
-  { key: "no_score", label: "No score", role: "neutral" },
+  { key: "no_score", label: STATUS_META.no_score.label, role: "neutral" },
 ];
 const DISTRIBUTIONS = {
   latency_ms: ["Agent response time", "ms"],
@@ -329,7 +330,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       // Calls ran with no pass or fail: nothing to score, which is not missing data.
       value:
         passRate?.value == null && summary.outcomes?.no_score
-          ? "No score"
+          ? STATUS_META.no_score.label
           : format(passRate?.value, "percent"),
       reported: passRate?.value != null || !!summary.outcomes?.no_score,
       // No range here: pass^1's range brackets the scenario average, which this
