@@ -1503,7 +1503,7 @@ class TestRetiredKeys:
         self, user, workspace, storage
     ):
         environment = self._dropped(user, workspace, storage, "d-retired-save")
-        with patch.object(drafts, "_refuse"):
+        with patch.object(drafts, "refuse_scenario_keys"):
             _publish(environment, storage, NAMES[:2], sequence=10)
 
         with pytest.raises(HostedHarnessError) as refused:
@@ -2323,7 +2323,7 @@ class TestStepFourteenInterface:
         )
 
         with (
-            patch.object(drafts, "_default_pair", return_value=pair) as ladder,
+            patch.object(drafts, "pair_archive", return_value=pair) as ladder,
             transaction.atomic(),
         ):
             locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(

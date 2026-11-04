@@ -16,8 +16,8 @@ from simulate.models import (
 )
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.assembly import CERTIFICATE, SEALED_MANIFEST
-from simulate.services.harness_versioning.candidates import live_set
-from simulate.services.harness_versioning.review import _rule_key
+from simulate.services.harness_versioning.candidate_sets import live_set
+from simulate.services.harness_versioning.review_items import rule_key
 from simulate.tests.test_harness_actors import (
     CRM_CONTRACT,
     MANAGER,
@@ -39,8 +39,8 @@ pytestmark = pytest.mark.django_db
 
 BASE = "/simulate/api/harness-environments"
 RULE = "Never approve a discount above 25%"
-AMENDMENT = f"rule added — {RULE}: the policy caps discounts"
-RULE_ID = f"rule:{_rule_key(RULE)}"
+AMENDMENT = f"rule added \u2014 {RULE}: the policy caps discounts"
+RULE_ID = f"rule:{rule_key(RULE)}"
 
 
 @pytest.fixture(autouse=True)
@@ -55,9 +55,15 @@ def _result(response):
 
 
 def _drafts(auth_client, environment):
+    from simulate.serializers.harness_environment import HarnessDraftsSerializer
+
     response = auth_client.get(f"{BASE}/{environment.id}/drafts/")
     assert response.status_code == 200, response.content
-    return _result(response)
+    body = _result(response)
+    # The read keeps to the shape its serializer and the generated contract declare.
+    declared = HarnessDraftsSerializer(data=body)
+    assert declared.is_valid(), declared.errors
+    return body
 
 
 def _revisions(auth_client, environment):
@@ -260,7 +266,7 @@ def test_review_survives_restore_draft(user, workspace, storage, auth_client):
     )
     draft = drafts.open_draft(environment, "environment")
     kept = dict(draft.documents)
-    drafts._discard(draft)
+    drafts.discard_version(draft)
 
     locked = HostedHarnessJob.no_workspace_objects.get(id=environment.id)
     restored = drafts.restore_draft(
@@ -422,7 +428,7 @@ def test_candidates_are_not_pickable_movable_or_twins(
     ) == ("candidate", "ready", None, False)
     # A later draft with the same content is not saved onto the candidate.
     draft = drafts.open_draft(environment, "environment")
-    assert drafts._twin(HarnessEnvironmentVersion, environment, draft) is None
+    assert drafts.active_twin(HarnessEnvironmentVersion, environment, draft) is None
 
 
 def test_twin_skips_the_candidate(user, workspace, storage, auth_client):
@@ -693,7 +699,7 @@ def test_save_promotes_in_one_transaction(user, workspace, storage, auth_client)
     defaults = (environment.environment_version_id, environment.suite_version_id)
 
     with patch(
-        "simulate.services.harness_versioning.candidates.set_defaults",
+        "simulate.services.harness_versioning.candidate_promotion.set_defaults",
         side_effect=RuntimeError("boom"),
     ):
         with pytest.raises(RuntimeError):
@@ -844,7 +850,7 @@ def test_unavailable_validation_saves_as_today(
         "candidates": None,
     }
     settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
-    from simulate.services.harness_versioning import candidates as module
+    from simulate.services.harness_versioning import drafts as module
 
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(module, "validation_available", lambda environment: False)
@@ -857,7 +863,7 @@ def test_unavailable_validation_saves_as_today(
 
 
 def test_old_candidates_are_discarded(user, workspace, storage, auth_client):
-    from simulate.services.harness_versioning.candidates import (
+    from simulate.services.harness_versioning.candidate_promotion import (
         discard_expired_candidates,
     )
 
@@ -991,7 +997,7 @@ def test_a_change_touching_one_scenario_drops_only_its_proof_and_one_touching_al
     user, workspace, storage
 ):
     from simulate.models import HarnessSuiteValidation
-    from simulate.services.harness_versioning.review import carry_untouched_proofs
+    from simulate.services.harness_versioning.review_saved import carry_untouched_proofs
 
     environment = _with_world(user, workspace, "cand-proofs", storage)
     parent, suite = environment.environment_version, environment.suite_version
@@ -1116,3 +1122,263 @@ def test_a_job_ended_before_any_check_reads_retry_not_failed(
 
     validation = _drafts(auth_client, environment)["validation"]
     assert (validation["state"], validation["error"]) == ("retry", None)
+
+
+# --- review fixes: the live set follows the last Validate -------------------------------------------------------
+
+
+def test_validating_again_after_deciding_lets_the_save_through(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-revalidate", storage)
+    _two_actors(auth_client, environment)
+    assert _validate(auth_client, environment).status_code == 202
+    # Accepting everything composes the same content: the same candidates come back.
+    digest = _decided(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "accepted"},
+    )
+    second = _validate(auth_client, environment, digest)
+    assert second.status_code == 202, second.content
+    environment.refresh_from_db()
+    assert live_set(environment)["review_digest"] == digest
+    _certify(environment)
+
+    saved = _save(
+        auth_client, environment, _result(second)["candidates"], digest=digest
+    )
+    assert saved.status_code == 200, saved.content
+
+
+def test_an_undone_write_validated_again_lets_the_save_through(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-undone", storage)
+    assert _add(auth_client, environment, MANAGER, revision=0).status_code == 200
+    first = _result(_validate(auth_client, environment))
+    revision = _revisions(auth_client, environment)["environment"]
+    assert _add(auth_client, environment, AUDITOR, revision=revision).status_code == 200
+    revision = _revisions(auth_client, environment)["environment"]
+    removed = auth_client.delete(
+        f"{BASE}/{environment.id}/actors/auditor/?expected_revision={revision}"
+    )
+    assert removed.status_code == 200, removed.content
+    # Same content at a later revision: the same candidates, now recorded at the new revision.
+    second = _validate(auth_client, environment)
+    assert _result(second)["candidates"] == first["candidates"]
+    _certify(environment)
+
+    saved = _save(auth_client, environment, first["candidates"])
+    assert saved.status_code == 200, saved.content
+
+
+def test_a_reused_candidate_carries_the_latest_decisions(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-reused-docs", storage)
+    _two_actors(auth_client, environment)
+    first = _result(_validate(auth_client, environment))
+    digest = _decided(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "accepted"},
+    )
+    _validate(auth_client, environment, digest)
+
+    candidate = HarnessEnvironmentVersion.no_workspace_objects.get(
+        id=first["candidates"]["environment_version_id"]
+    )
+    assert set(candidate.documents["review"]["decisions"]) == {
+        "actor:manager",
+        "actor:auditor",
+    }
+
+
+# --- review fixes: a save with nothing decided ------------------------------------------------------------------
+
+
+def test_a_save_with_nothing_decided_keeps_its_summary(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-undecided-summary", storage)
+    _two_actors(auth_client, environment)
+    validated = _result(_validate(auth_client, environment))
+    _certify(environment)
+
+    saved = _save(auth_client, environment, validated["candidates"])
+    assert saved.status_code == 200, saved.content
+    version = HarnessEnvironmentVersion.no_workspace_objects.get(
+        id=validated["candidates"]["environment_version_id"]
+    )
+    assert version.summary == "Add actor auditor; Add actor manager"
+
+
+def test_an_undecided_rule_saved_carries_no_proofs_and_warns_the_next_run(
+    user, workspace, storage, auth_client
+):
+    from simulate.models import HarnessSuiteValidation
+    from simulate.services.harness_versioning.run_warnings import _needs_revalidation
+
+    environment = _with_world(user, workspace, "cand-undecided-rule", storage)
+    parent, suite = environment.environment_version, environment.suite_version
+    HarnessSuiteValidation.no_workspace_objects.filter(suite_version=suite).delete()
+    HarnessSuiteValidation.no_workspace_objects.create(
+        suite_version=suite,
+        environment_version=parent,
+        status="passed",
+        proofs={"a": {"holds": True}},
+        proved_at=timezone.now(),
+    )
+    _chat_rule(environment, storage, user)
+    validated = _result(_validate(auth_client, environment))
+    _certify(environment)
+
+    saved = _save(auth_client, environment, validated["candidates"])
+    assert saved.status_code == 200, saved.content
+    environment.refresh_from_db()
+    # A rule may touch every scenario: nothing is carried, and every scenario is proved again.
+    assert not HarnessSuiteValidation.no_workspace_objects.filter(
+        environment_version=environment.environment_version, suite_version=suite
+    ).exists()
+    members = sorted(
+        HarnessSuiteMember.no_workspace_objects.filter(suite_version=suite).values_list(
+            "scenario_key", flat=True
+        )
+    )
+    assert (
+        _needs_revalidation(environment.environment_version, environment.suite_version)
+        == members
+    )
+
+
+# --- review fixes: what a Save refuses --------------------------------------------------------------------------
+
+
+def test_a_discarded_candidate_is_never_promoted(user, workspace, storage, auth_client):
+    environment = _with_world(user, workspace, "cand-discarded", storage)
+    _two_actors(auth_client, environment)
+    candidates, digest = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "rejected"},
+    )
+    default = environment.environment_version_id
+    HarnessEnvironmentVersion.no_workspace_objects.filter(
+        id=candidates["environment_version_id"]
+    ).update(status="discarded", discard_reason="expired")
+
+    refused = _save(auth_client, environment, candidates, digest=digest)
+    assert refused.status_code == 409 and refused.json()["error"] == "not_validated"
+    environment.refresh_from_db()
+    assert environment.environment_version_id == default
+
+
+def test_the_sweep_keeps_an_old_candidate_a_recent_validate_holds(
+    user, workspace, storage, auth_client
+):
+    from simulate.services.harness_versioning.candidate_promotion import (
+        discard_expired_candidates,
+    )
+
+    environment = _with_world(user, workspace, "cand-sweep-live", storage)
+    _two_actors(auth_client, environment)
+    candidates, digest = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "rejected"},
+    )
+    # The row was built eight days ago; the Validate that holds it ran just now.
+    HarnessEnvironmentVersion.no_workspace_objects.filter(
+        id=candidates["environment_version_id"]
+    ).update(created_at=timezone.now() - timedelta(days=8))
+
+    assert discard_expired_candidates() == 0
+    saved = _save(auth_client, environment, candidates, digest=digest)
+    assert saved.status_code == 200, saved.content
+
+
+def test_a_write_between_validate_and_save_is_refused(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-write-between", storage)
+    _two_actors(auth_client, environment)
+    candidates, digest = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "rejected"},
+    )
+    clerk = {**AUDITOR, "id": "clerk", "name": "Lee Park"}
+    added = _add(
+        auth_client,
+        environment,
+        clerk,
+        revision=_revisions(auth_client, environment)["environment"],
+    )
+    assert added.status_code == 200, added.content
+
+    refused = _save(auth_client, environment, candidates, digest=digest)
+    assert refused.status_code == 409 and refused.json()["error"] == "draft_changed"
+
+
+def test_a_decision_changed_after_validate_is_refused(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-decision-between", storage)
+    _two_actors(auth_client, environment)
+    candidates, digest = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "rejected"},
+    )
+    _decided(auth_client, environment, {"actor:auditor": "accepted"})
+
+    refused = _save(auth_client, environment, candidates)
+    assert refused.status_code == 409 and refused.json()["error"] == "review_stale"
+
+
+def test_deciding_needs_the_revision_of_every_open_draft(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-decide-revisions", storage)
+    _two_actors(auth_client, environment)
+
+    refused = _decide(
+        auth_client, environment, [{"remaining": True, "decision": "accepted"}], {}
+    )
+    assert refused.status_code == 409 and refused.json()["error"] == "draft_changed"
+
+
+def test_a_side_row_lost_during_validate_reads_unavailable(
+    user, workspace, storage, auth_client, monkeypatch
+):
+    from simulate.services.harness_versioning import validation
+
+    environment = _with_world(user, workspace, "cand-lost-side-row", storage)
+    _two_actors(auth_client, environment)
+    monkeypatch.setattr(validation, "start_validation", lambda *args, **kwargs: None)
+
+    validated = _validate(auth_client, environment)
+    assert validated.status_code == 200, validated.content
+    assert _result(validated) == {
+        "validation": {"state": "unavailable"},
+        "candidates": None,
+    }
+    assert not HarnessEnvironmentVersion.no_workspace_objects.filter(
+        job=environment, status="candidate"
+    ).exists()
+
+
+def test_the_daily_sweep_is_scheduled():
+    from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
+
+    [sweep] = [
+        one
+        for one in SIMULATE_SCHEDULES
+        if one.schedule_id == "discard-expired-harness-candidates"
+    ]
+    assert (sweep.activity_name, sweep.interval_seconds, sweep.queue) == (
+        "discard_expired_harness_candidates",
+        86400,
+        "default",
+    )

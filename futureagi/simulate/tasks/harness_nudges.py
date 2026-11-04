@@ -118,7 +118,7 @@ def tick_harness_nudges() -> dict[str, int]:
 @temporal_activity(time_limit=300, max_retries=0, queue="default")
 def discard_expired_harness_candidates() -> int:
     """Discard candidate versions nobody saved within a week."""
-    from simulate.services.harness_versioning.candidates import (
+    from simulate.services.harness_versioning.candidate_promotion import (
         discard_expired_candidates,
     )
 

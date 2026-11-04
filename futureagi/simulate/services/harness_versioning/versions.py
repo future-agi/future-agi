@@ -279,7 +279,7 @@ def _sealed(
     return {**previous, **split.sealed}
 
 
-def _next_number(model: Any, job: HostedHarnessJob) -> int:
+def next_number(model: Any, job: HostedHarnessJob) -> int:
     # The base manager: no workspace or soft-delete filter may hide a used number.
     highest = model._base_manager.filter(job=job).aggregate(top=Max("version_number"))
     return int(highest["top"] or 0) + 1
@@ -313,7 +313,7 @@ def _land(
         organization_id=job.organization_id,
         workspace_id=job.workspace_id,
         status=VersionStatus.ACTIVE,
-        version_number=_next_number(model, job),
+        version_number=next_number(model, job),
         hash=hash,
         hash_kind=hash_kind,
         **values,
@@ -442,7 +442,7 @@ def taken_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list[s
     )
 
 
-def _member_rows(
+def member_rows(
     job: HostedHarnessJob, documents: list[dict[str, Any]]
 ) -> list[tuple[HostedHarnessScenario, dict[str, Any]]]:
     from simulate.services.harness_scenarios import pair_scenarios
@@ -464,7 +464,7 @@ def _member_content(document: Mapping[str, Any]) -> dict[str, Any]:
     return {field: document[field] for field in MEMBER_FIELDS if field in document}
 
 
-def _add_members(
+def add_members(
     suite_version: HarnessSuiteVersion,
     paired: list[tuple[HostedHarnessScenario, dict[str, Any]]],
 ) -> None:
@@ -773,9 +773,9 @@ def record_authoring(
             note_revision(environment_version, revision)
         if not suite_created:
             note_revision(suite_version, revision)
-        paired = _member_rows(locked, documents)
+        paired = member_rows(locked, documents)
         if suite_created:
-            _add_members(suite_version, paired)
+            add_members(suite_version, paired)
         if origin in PROVED_ORIGINS and proved_since is not None:
             _validation(
                 suite_version,
@@ -1052,7 +1052,7 @@ def _cached_sealed(
     return (files, bundle.object_key) if files is not None else (None, "")
 
 
-def _default_pair(
+def pair_archive(
     job: HostedHarnessJob,
     metadata: Mapping[str, Any],
     environment_version: HarnessEnvironmentVersion,
@@ -1224,7 +1224,7 @@ def move_agent(
                 agent_version_id=outgoing,
                 replace=False,
             )
-        pair = _default_pair(
+        pair = pair_archive(
             locked, metadata, environment_version, suite_version, "agent"
         )
         metadata["authoring_object_key"] = pair.key
@@ -1429,7 +1429,7 @@ def set_defaults(
         schedule_reconcile(locked.id)
 
 
-def _lock_environment(environment: HostedHarnessJob) -> HostedHarnessJob:
+def lock_environment(environment: HostedHarnessJob) -> HostedHarnessJob:
     locked = (
         HostedHarnessJob.no_workspace_objects.select_for_update()
         .filter(id=environment.id)
@@ -1480,7 +1480,7 @@ def move_agent_default(
     it passes. Refusals are ``move_default``'s.
     """
     with transaction.atomic():
-        locked = _lock_environment(environment)
+        locked = lock_environment(environment)
         require_not_busy(locked, "agent")
         return _move_agent_default(locked, version_id, expected_default_id, user)
 
@@ -1508,7 +1508,7 @@ def move_default(
         )[0]
     model = HarnessEnvironmentVersion if piece == "environment" else HarnessSuiteVersion
     with transaction.atomic():
-        locked = _lock_environment(environment)
+        locked = lock_environment(environment)
         require_not_busy(locked, piece)
         require_no_rebuild(locked, piece=piece)
         version = model.no_workspace_objects.filter(
@@ -1537,9 +1537,7 @@ def move_default(
             raise _not_pickable(piece)
         payload = dict(locked.payload or {})
         metadata = dict(payload.get("metadata") or {})
-        pair = _default_pair(
-            locked, metadata, environment_version, suite_version, piece
-        )
+        pair = pair_archive(locked, metadata, environment_version, suite_version, piece)
         set_defaults(
             locked,
             payload,

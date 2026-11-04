@@ -541,7 +541,7 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
         .defer(*_PIECE_DEFERRED)
     )
     from simulate.services.harness_agent_versions import _default_lineage
-    from simulate.services.harness_versioning.candidates import candidate_states
+    from simulate.services.harness_versioning.candidate_sets import candidate_states
 
     states = candidate_states(job)
     agents = _agent_versions(job)

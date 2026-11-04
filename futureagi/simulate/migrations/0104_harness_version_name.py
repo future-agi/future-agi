@@ -13,11 +13,11 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='harnessenvironmentversion',
             name='name',
-            field=models.CharField(blank=True, default='', max_length=80),
+            field=models.CharField(blank=True, db_default='', default='', max_length=80),
         ),
         migrations.AddField(
             model_name='harnesssuiteversion',
             name='name',
-            field=models.CharField(blank=True, default='', max_length=80),
+            field=models.CharField(blank=True, db_default='', default='', max_length=80),
         ),
     ]

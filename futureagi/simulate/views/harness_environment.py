@@ -553,7 +553,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     def save_drafts(self, request, pk=None):
         """Make every named draft, or the validated candidates, live together; returns the new defaults and every
         version."""
-        from simulate.services.harness_versioning.candidates import promote_candidates
+        from simulate.services.harness_versioning.candidate_promotion import (
+            promote_candidates,
+        )
         from simulate.services.harness_versioning.drafts import SaveRequest, save_drafts
 
         version_reads.require_versioning()

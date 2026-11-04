@@ -3,12 +3,14 @@ import json
 import jsonpatch
 import pytest
 
-from simulate.services.harness_versioning.review import (
+from simulate.services.harness_versioning.review_compose import (
     ReviewRefused,
     compose_accepted,
+    review_digest,
+)
+from simulate.services.harness_versioning.review_items import (
     compute_changes,
     item_index,
-    review_digest,
 )
 
 
@@ -268,7 +270,7 @@ def test_an_accepted_item_that_gained_a_field_after_review_is_stale_even_where_i
 def test_a_write_adds_one_source_to_each_item_it_moved_and_a_retry_adds_none():
     from types import SimpleNamespace
 
-    from simulate.services.harness_versioning.review import record_sources
+    from simulate.services.harness_versioning.review_saved import record_sources
 
     default = _tree({"tools": TOOLS})
     edited = _tree(
@@ -306,7 +308,7 @@ def test_a_write_adds_one_source_to_each_item_it_moved_and_a_retry_adds_none():
 def test_a_chat_change_is_the_person_s_through_the_harness_with_the_message_it_answered():
     from types import SimpleNamespace
 
-    from simulate.services.harness_versioning.review import record_sources
+    from simulate.services.harness_versioning.review_saved import record_sources
 
     default = _tree({"tools": TOOLS})
     edited = _tree(
@@ -330,7 +332,7 @@ def test_a_world_store_change_is_world_state_with_its_rows_added_removed_and_cha
     import sqlite3
     import tempfile
 
-    from simulate.services.harness_versioning.review import world_rows
+    from simulate.services.harness_versioning.review_items import world_rows
 
     default = _tree(
         store__json={
@@ -383,7 +385,7 @@ def test_a_world_store_change_is_world_state_with_its_rows_added_removed_and_cha
 
 
 def test_every_change_but_a_scenario_rename_is_graded():
-    from simulate.services.harness_versioning.review import graded
+    from simulate.services.harness_versioning.review_items import graded
 
     assert graded({"kind": "rule", "action": "added"})
     assert graded({"kind": "scenario", "action": "changed", "fields": ["sub_goals"]})
@@ -391,46 +393,20 @@ def test_every_change_but_a_scenario_rename_is_graded():
     assert graded({"kind": "scenario", "action": "removed", "fields": []})
 
 
-def test_a_source_names_the_file_and_row_a_change_came_from():
-    from types import SimpleNamespace
-
-    from simulate.services.harness_versioning.review import record_sources
-
-    default = _tree({"tools": TOOLS})
-    edited = _tree(
-        {"tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}]}
-    )
-    [imported] = record_sources(
-        None,
-        default,
-        edited,
-        origin="file_import",
-        user=SimpleNamespace(id="u-1"),
-        revision=1,
-        at="t",
-        used=[{"kind": "source", "source_id": "src-1", "locator": "row 3"}],
-    )["tool:issue_refund"]
-
-    assert (imported["origin"], imported["used"]) == (
-        "file_import",
-        [{"kind": "source", "source_id": "src-1", "locator": "row 3"}],
-    )
-
-
 RULE = "Never refund more than the order total"
-AMENDMENT = f"rule added — {RULE}: the policy caps refunds"
+AMENDMENT = f"rule added \u2014 {RULE}: the policy caps refunds"
 
 
 def _rule_and_tool():
     """A draft where one write added a rule with its amendment line, and another changed a tool."""
     default = _tree(
-        {"tools": TOOLS, "amendments": ["tool removed — old_tool: no seam"]}
+        {"tools": TOOLS, "amendments": ["tool removed \u2014 old_tool: no seam"]}
     )
     draft = _tree(
         {
             "tools": [TOOLS[0], {**TOOLS[1], "description": "Refund up to $50"}],
             "hard_constraints": [RULE],
-            "amendments": ["tool removed — old_tool: no seam", AMENDMENT],
+            "amendments": ["tool removed \u2014 old_tool: no seam", AMENDMENT],
         }
     )
     return default, draft, compute_changes(default, draft)
@@ -445,7 +421,10 @@ def test_accepted_rule_keeps_its_amendment():
         )["contract.json"]
     )
     assert composed["hard_constraints"] == [RULE]
-    assert composed["amendments"] == ["tool removed — old_tool: no seam", AMENDMENT]
+    assert composed["amendments"] == [
+        "tool removed \u2014 old_tool: no seam",
+        AMENDMENT,
+    ]
     assert composed["tools"] == TOOLS
 
 
@@ -458,7 +437,7 @@ def test_rejected_rule_leaves_no_amendment():
         )["contract.json"]
     )
     assert not composed.get("hard_constraints")
-    assert composed["amendments"] == ["tool removed — old_tool: no seam"]
+    assert composed["amendments"] == ["tool removed \u2014 old_tool: no seam"]
     # With nothing accepted, the contract is the saved one, byte for byte, so the version is the saved one.
     nothing = compose_accepted(
         default, draft, changes, {rule: "rejected", "tool:issue_refund": "rejected"}

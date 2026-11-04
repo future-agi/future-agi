@@ -184,12 +184,12 @@ def start_validation(
     commit.
     """
     from simulate.services.harness_versioning.backfill import effective_runtime
-    from simulate.services.harness_versioning.versions import _lock_environment
+    from simulate.services.harness_versioning.versions import lock_environment
 
     if not can_validate(environment, agent_version.id):
         return None
     with transaction.atomic():
-        locked = _lock_environment(environment)
+        locked = lock_environment(environment)
         runtime = effective_runtime(
             locked,
             HarnessAgentVersionRuntime.no_workspace_objects.filter(
@@ -455,13 +455,13 @@ def complete_move(
     """
     from simulate.services.harness_agent_versions import _busy, hand_move
     from simulate.services.harness_versioning.versions import (
-        _lock_environment,
+        lock_environment,
         move_agent,
     )
     from simulate.services.hosted_harness import agent_version_pickable
 
     with transaction.atomic():
-        locked = _lock_environment(environment)
+        locked = lock_environment(environment)
         version = AgentVersion.no_workspace_objects.filter(
             id=move["agent_version_id"]
         ).first()
