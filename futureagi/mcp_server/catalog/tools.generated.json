@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "124398e3aab5ce75c5d2d57cbbe9209ed10d06a9823466d0f33f689766e85368",
+  "source_contract_sha256": "d31bb40f8d91800e85ebbeb6d414560cd8993df1c843ed17b09351d8f092c762",
   "tool_count": 107,
   "tools": [
     {
@@ -2523,6 +2523,33 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "jev_mapping": {
+            "anyOf": [
+              {
+                "title": "Jev mapping",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "multi_choice": {
+            "title": "Multi choice",
+            "type": "boolean",
+            "default": false
+          },
+          "input_data_types": {
+            "anyOf": [
+              {
+                "title": "Input data types",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "title": "Name",
             "type": "string",
@@ -2751,6 +2778,9 @@
           "path": [],
           "query": [],
           "body": [
+            "jev_mapping",
+            "multi_choice",
+            "input_data_types",
             "name",
             "is_draft",
             "eval_type",
@@ -2792,6 +2822,28 @@
         "properties": {
           "template_id": {
             "type": "string"
+          },
+          "jev_mapping": {
+            "anyOf": [
+              {
+                "title": "Jev mapping",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "input_data_types": {
+            "anyOf": [
+              {
+                "title": "Input data types",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "name": {
             "anyOf": [
@@ -3106,6 +3158,8 @@
           ],
           "query": [],
           "body": [
+            "jev_mapping",
+            "input_data_types",
             "name",
             "eval_type",
             "instructions",

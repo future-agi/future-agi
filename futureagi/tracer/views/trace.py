@@ -1179,7 +1179,8 @@ def _trace_session_queryset_for_request(request):
 
 def _soft_delete_trace_tree(traces):
     now = timezone.now()
-    trace_ids = [trace.id for trace in traces if trace]
+    traces = [trace for trace in traces if trace]
+    trace_ids = [trace.id for trace in traces]
     if not trace_ids:
         return []
 
@@ -1201,6 +1202,15 @@ def _soft_delete_trace_tree(traces):
     Trace.no_workspace_objects.filter(id__in=trace_ids).update(
         deleted=True, deleted_at=now
     )
+    from tracer.services.analysis_retention import retire_analysis_sources
+
+    for project_id in sorted({trace.project_id for trace in traces}):
+        selected = [trace for trace in traces if trace.project_id == project_id]
+        retire_analysis_sources(
+            project_id=project_id,
+            trace_ids=[trace.id for trace in selected],
+            session_ids=[trace.session_id for trace in selected if trace.session_id],
+        )
     return [str(trace_id) for trace_id in trace_ids]
 
 
