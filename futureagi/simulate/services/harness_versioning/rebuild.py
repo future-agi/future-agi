@@ -704,6 +704,10 @@ def _no_change_move(locked: HostedHarnessJob, nudge: HarnessNudge) -> dict[str, 
     """Nothing to change: the default agent moves to the trigger (unless moved by hand
     meanwhile) and the default environment version is recorded as fitting it."""
     from simulate.services.harness_agent_versions import hand_move
+    from simulate.services.harness_versioning.validation import (
+        agent_move,
+        start_validation,
+    )
     from simulate.services.harness_versioning.versions import move_agent
 
     trigger = _trigger(nudge)
@@ -712,6 +716,20 @@ def _no_change_move(locked: HostedHarnessJob, nudge: HarnessNudge) -> dict[str, 
     reason = None
     if locked.agent_version_id != trigger.id:
         reason = _agent_move_refusal(locked, nudge, trigger)
+        if reason is None:
+            validation = start_validation(
+                locked,
+                trigger,
+                locked.environment_version,
+                locked.suite_version,
+                purpose="agent_move",
+                move=agent_move(
+                    "no_change", locked, trigger, user=nudge.answered_by, nudge=nudge
+                ),
+            )
+            if validation is not None and not validation.ready:
+                # Moved, and E stamped, by the validation once the pairing passes.
+                reason = "validating"
         if reason is None:
             try:
                 with transaction.atomic():
@@ -1426,7 +1444,9 @@ def _report(
         secret_texts,
         [
             len(text) >= cap + CREDENTIAL_VALUE_MAX_CHARS
-            for text, (_part, _at, _text, cap) in zip(secret_texts, secret_parts)
+            for text, (_part, _at, _text, cap) in zip(
+                secret_texts, secret_parts, strict=False
+            )
         ],
     )
     report: dict[str, Any] = {
@@ -1710,14 +1730,23 @@ def _land(
 ) -> dict[str, Any] | None:
     """Make the turn's draft the default; ``None`` when the pair can't be run."""
     from simulate.services.harness_versioning import drafts
+    from simulate.services.harness_versioning.validation import (
+        agent_move,
+        can_validate,
+        start_validation,
+    )
+    from simulate.services.harness_versioning.versions import move_agent
 
     trigger = _trigger(nudge) if nudge.target == Target.ENVIRONMENT else None
     reason = None
     if trigger is not None and locked.agent_version_id != trigger.id:
         reason = _agent_move_refusal(locked, nudge, trigger)
     agent = trigger if trigger is not None and reason is None else None
+    # The new pairing is validated before the agent moves; the draft lands for the
+    # current agent.
+    validate = agent is not None and can_validate(locked, agent.id)
     activated = None
-    for moving in (agent, None) if agent is not None else (None,):
+    for moving in (agent, None) if agent is not None and not validate else (None,):
         try:
             with transaction.atomic():
                 activated = drafts.activate_drafts(
@@ -1739,6 +1768,25 @@ def _land(
         break
     if activated is None:
         return None
+    if validate:
+        validation = start_validation(
+            locked,
+            agent,
+            locked.environment_version,
+            locked.suite_version,
+            purpose="agent_move",
+            move=agent_move("land", locked, agent, user=nudge.answered_by, nudge=nudge),
+        )
+        if validation is None or validation.ready:
+            try:
+                with transaction.atomic():
+                    move_agent(locked, agent)
+            except HostedHarnessError:
+                locked.refresh_from_db()
+                reason = "not_prepared"
+        else:
+            # Moved by the validation once the pairing passes.
+            reason = "validating"
     version, created = activated[nudge.target]
     snapshot = (nudge.draft_snapshot or {}).get("piece") or {}
     summary: dict[str, Any] = {

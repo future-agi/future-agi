@@ -75,7 +75,10 @@ from simulate.utils.test_execution_utils import eval_source
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 from tfc.settings import settings as default_settings
 
-pytestmark = pytest.mark.django_db
+pytestmark = [
+    pytest.mark.django_db,
+    pytest.mark.usefixtures("moves_without_validation"),
+]
 
 KEYS = [_key(name) for name in NAMES[:2]]
 BASE_AGENT = {"agent.py": b"PROMPT = ''\n"}

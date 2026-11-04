@@ -19,6 +19,7 @@ from simulate.serializers.harness_environment import (
     HarnessCompareQuerySerializer,
     HarnessCompareSerializer,
     HarnessDefaultMoveSerializer,
+    HarnessDefaultMoveValidatingSerializer,
     HarnessDraftSaveResponseSerializer,
     HarnessDraftSaveSerializer,
     HarnessDraftsSerializer,
@@ -184,9 +185,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     @action(
         detail=True,
         methods=["get"],
-        url_path=(
-            r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"
-        ),
+        url_path=(r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"),
     )
     def version_diff(self, request, pk=None, piece=None, version_id=None):
         """What one version changed, against its parent or the ``against`` version."""
@@ -202,7 +201,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessDefaultMoveSerializer,
-        responses={200: HarnessVersionsSerializer},
+        responses={
+            200: HarnessVersionsSerializer,
+            202: HarnessDefaultMoveValidatingSerializer,
+        },
         reject_unknown_fields=True,
     )
     @action(
@@ -214,9 +216,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     )
     def move_default(self, request, pk=None, piece=None, version_id=None):
         """Make an agent, environment or suite version the default; returns every
-        version."""
+        version. An agent move that waits for its pairing to validate is a 202."""
         from simulate.services.harness_versioning.versions import (
             MOVABLE_PIECES,
+            move_agent_default,
             move_default,
         )
 
@@ -227,14 +230,28 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         identifier = _uuid_or_none(version_id)
         if piece not in MOVABLE_PIECES or identifier is None:
             raise version_reads.version_not_found()
-        moved = move_default(
-            job,
-            piece,
-            identifier,
-            expected_default_id=request.validated_data["expected_default_id"],
-            user=request.user,
+        expected_default_id = request.validated_data["expected_default_id"]
+        if piece != "agent":
+            moved = move_default(
+                job,
+                piece,
+                identifier,
+                expected_default_id=expected_default_id,
+                user=request.user,
+            )
+            return Response(version_reads.list_versions(moved))
+        moved, validation = move_agent_default(
+            job, identifier, expected_default_id=expected_default_id, user=request.user
         )
-        return Response(version_reads.list_versions(moved))
+        if validation is None or validation.ready:
+            return Response(version_reads.list_versions(moved))
+        return Response(
+            {
+                "versions": version_reads.list_versions(moved),
+                "validation": validation.as_view(),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     def _agent_version(self, job, version_id):
         """One agent version of this environment's agent, or a 404."""
@@ -491,9 +508,8 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         """What this environment was shown to support with an agent version (its own when none is named), one status
         per capability, computed now from its build's evidence; Stale once the environment version moved on or the
         agent is another version. No writes."""
-        from simulate.services.capability_evidence import environment_capability_report
-
         from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
+        from simulate.services.capability_evidence import environment_capability_report
         from simulate.services.harness_versioning.read import version_not_found
 
         job = self._job(request, pk)
@@ -501,9 +517,14 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return self._not_found()
         query = request.validated_query_data
         picked = {}
-        for name, model in (("environment_version", HarnessEnvironmentVersion), ("suite_version", HarnessSuiteVersion)):
+        for name, model in (
+            ("environment_version", HarnessEnvironmentVersion),
+            ("suite_version", HarnessSuiteVersion),
+        ):
             if query.get(f"{name}_id"):
-                picked[name] = model.no_workspace_objects.filter(job=job, id=query[f"{name}_id"]).first()
+                picked[name] = model.no_workspace_objects.filter(
+                    job=job, id=query[f"{name}_id"]
+                ).first()
                 if picked[name] is None:
                     raise version_not_found()
         return Response(
@@ -531,7 +552,14 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         if job is None:
             return self._not_found()
         data = request.validated_data
-        return Response(recheck_capabilities(job, data["scope"], data.get("check"), request.query_params.get("agent_version_id")))
+        return Response(
+            recheck_capabilities(
+                job,
+                data["scope"],
+                data.get("check"),
+                request.query_params.get("agent_version_id"),
+            )
+        )
 
     @validated_request(
         query_serializer=HarnessRunPlanQuerySerializer,
