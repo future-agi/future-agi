@@ -40,4 +40,23 @@ describe("TraceDetailDrawerV2 span filter adapter", () => {
       }),
     );
   });
+
+  it("opens without a project, as the shared filter panel does, with no prop warning", () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(
+      <TraceDetailSpanFilterPanel
+        anchorEl={document.body}
+        open
+        onClose={vi.fn()}
+        currentFilters={[]}
+        onApply={vi.fn()}
+      />,
+    );
+
+    expect(
+      warn.mock.calls.filter((args) => args.join(" ").includes("projectId")),
+    ).toEqual([]);
+    warn.mockRestore();
+  });
 });

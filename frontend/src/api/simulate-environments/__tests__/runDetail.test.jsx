@@ -1534,9 +1534,7 @@ describe("useCallTraces", () => {
       wrapper: makeWrapper(),
     });
 
-    await waitFor(() =>
-      expect(result.current.projectId).toBe("hidden-project"),
-    );
+    await waitFor(() => expect(result.current.projectId).toBe("hidden-project"));
     expect(axios.get).toHaveBeenCalledWith(
       endpoints.runResultsV3.traces("exec-1"),
       { params: { call_execution_id: "call-1" } },
@@ -1676,16 +1674,11 @@ describe("useCallWorkers", () => {
     expect(await has({ workers: [{ id: "w" }], events: [] })).toBe(true);
   });
 
-  it("checks again for a record still arriving after the call, then stops", async () => {
+  it("checks again for a record still arriving after a recent call, and never for an older one", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      const {
-        useCallWorkers,
-        WORKERS_ARRIVAL_POLL_MS,
-        WORKERS_ARRIVAL_POLLS,
-        WORKERS_LATE_POLL_MS,
-        WORKERS_LATE_POLLS,
-      } = await import("../runDetail");
+      const { useCallWorkers, WORKERS_POLL_MS, WORKERS_ARRIVAL_WINDOW_MS } =
+        await import("../runDetail");
       const notYet = { status: 204, data: "" };
       const record = { workers: [], events: [] };
       axios.get.mockReset();
@@ -1699,31 +1692,50 @@ describe("useCallWorkers", () => {
         <QueryClientProvider client={client}>{children}</QueryClientProvider>
       );
       Wrapper.propTypes = { children: PropTypes.node };
-      const { result } = renderHook(() => useCallWorkers("call-2"), {
-        wrapper: Wrapper,
-      });
+      const justEnded = { completedAt: new Date().toISOString() };
+      const { result } = renderHook(
+        () => useCallWorkers("call-2", justEnded),
+        { wrapper: Wrapper },
+      );
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(result.current.data).toBe(null);
-      await vi.advanceTimersByTimeAsync(WORKERS_ARRIVAL_POLL_MS);
+      await vi.advanceTimersByTimeAsync(WORKERS_POLL_MS);
       await waitFor(() => expect(result.current.data).toEqual(record));
+      expect(axios.get).toHaveBeenCalledWith(
+        "/simulate/v3/call-executions/call-2/workers/",
+        undefined,
+      );
 
+      // A recent call is checked until the window closes, then left alone.
       axios.get.mockReset();
       axios.get.mockResolvedValue(notYet);
-      const never = renderHook(() => useCallWorkers("call-3"), {
+      const recently = { completedAt: new Date().toISOString() };
+      const recent = renderHook(() => useCallWorkers("call-3", recently), {
         wrapper: Wrapper,
       });
-      await waitFor(() => expect(never.result.current.isSuccess).toBe(true));
-      await vi.advanceTimersByTimeAsync(
-        WORKERS_ARRIVAL_POLL_MS * WORKERS_ARRIVAL_POLLS,
-      );
-      expect(axios.get).toHaveBeenCalledTimes(WORKERS_ARRIVAL_POLLS + 1);
-      // Then once a minute for a while longer, and no more.
-      await vi.advanceTimersByTimeAsync(
-        WORKERS_LATE_POLL_MS * (WORKERS_LATE_POLLS + 3),
-      );
+      await waitFor(() => expect(recent.result.current.isSuccess).toBe(true));
+      await vi.advanceTimersByTimeAsync(WORKERS_ARRIVAL_WINDOW_MS * 2);
       expect(axios.get).toHaveBeenCalledTimes(
-        WORKERS_ARRIVAL_POLLS + WORKERS_LATE_POLLS + 1,
+        WORKERS_ARRIVAL_WINDOW_MS / WORKERS_POLL_MS + 1,
       );
+
+      // A call that ended before the window, or with no end time, is read once.
+      for (const [id, completedAt] of [
+        [
+          "call-4",
+          new Date(Date.now() - WORKERS_ARRIVAL_WINDOW_MS).toISOString(),
+        ],
+        ["call-5", null],
+      ]) {
+        axios.get.mockReset();
+        axios.get.mockResolvedValue(notYet);
+        const old = renderHook(() => useCallWorkers(id, { completedAt }), {
+          wrapper: Wrapper,
+        });
+        await waitFor(() => expect(old.result.current.isSuccess).toBe(true));
+        await vi.advanceTimersByTimeAsync(WORKERS_POLL_MS * 4);
+        expect(axios.get).toHaveBeenCalledTimes(1);
+      }
     } finally {
       vi.useRealTimers();
     }

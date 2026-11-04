@@ -10,13 +10,15 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeSanitize from "rehype-sanitize";
 import Iconify from "src/components/iconify";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
-import { useCallWorkers } from "src/api/simulate-environments/runDetail";
+import {
+  isHandOff,
+  useCallWorkers,
+} from "src/api/simulate-environments/runDetail";
+import { Markdown } from "src/sections/simulate/environments/buildEnvironment/console/ConsoleTurn";
 import { CALL_WORKERS_COPY as C } from "./callTraces.constants";
+import { arrange, asShown, isLong, seconds } from "./utils/callWorkersUtils";
 
 // One colour per level of hand-off, so a deep or wide team stays readable; names tell workers apart.
 const DEPTH_COLORS = ["info", "success", "warning", "secondary", "error"];
@@ -27,11 +29,6 @@ const OPEN_DEPTH = 2;
 // Worker chips shown one by one; a larger team is summarised.
 const MAX_CHIPS = 8;
 const MONO = "ui-monospace, Menlo, monospace";
-
-const seconds = (iso) => {
-  const value = iso ? Date.parse(iso.endsWith("Z") ? iso : `${iso}Z`) : NaN;
-  return Number.isNaN(value) ? null : value / 1000;
-};
 
 // "+5.9 s" from the call's start, with the exact clock time on hover.
 function Stamp({ at, start }) {
@@ -198,24 +195,6 @@ ToolRow.propTypes = {
   start: PropTypes.string,
 };
 
-// About six lines of text; a longer answer opens on request.
-const CLAMP_LINES = 6;
-const CLAMP_CHARS = 480;
-const long = (text) =>
-  text.split("\n").length > CLAMP_LINES || text.length > CLAMP_CHARS;
-
-// An answer a worker returns as data (a JSON object, or a printed dict or list) keeps its shape as code.
-const asShown = (text) => {
-  if (!/^\s*[[{]/.test(text)) return text;
-  let body = text.trim();
-  try {
-    body = JSON.stringify(JSON.parse(body), null, 2);
-  } catch {
-    // A printed Python dict or a cut-off object stays as it came.
-  }
-  return `\`\`\`\n${body}\n\`\`\``;
-};
-
 function Answer({ text }) {
   const [whole, setWhole] = useState(false);
   if (!text)
@@ -225,45 +204,26 @@ function Answer({ text }) {
       </Typography>
     );
   const shown = asShown(text);
-  const clamped = long(shown) && !whole;
+  const clamped = isLong(shown) && !whole;
   return (
     <Box>
       <Box
         data-testid="answer"
         data-clamped={clamped}
         sx={{
-          typography: "s2",
-          color: "text.secondary",
           wordBreak: "break-word",
-          "& p, & ul, & ol": { my: 0.25 },
-          "& ul, & ol": { pl: 2.5 },
           // Headings inside an answer read as bold lines, not page titles.
           "& h1, & h2, & h3, & h4, & h5, & h6": {
             typography: "s2",
             fontWeight: 600,
             my: 0.25,
           },
-          "& pre": {
-            m: 0,
-            p: 1,
-            borderRadius: 0.5,
-            bgcolor: "background.neutral",
-            typography: "s3",
-            fontFamily: "monospace",
-            whiteSpace: "pre-wrap",
-          },
           ...(clamped && { maxHeight: "8.4em", overflow: "hidden" }),
         }}
       >
-        {/* A worker's answer is often markdown; show it as the app's other agent text is shown. */}
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeSanitize]}
-        >
-          {shown}
-        </ReactMarkdown>
+        <Markdown text={shown} dim />
       </Box>
-      {long(shown) ? (
+      {isLong(shown) ? (
         <Typography
           component="button"
           onClick={() => setWhole((one) => !one)}
@@ -471,110 +431,6 @@ HandOff.propTypes = {
   start: PropTypes.string,
 };
 
-const instant = (event) => seconds(event?.at);
-
-// Events in order, as a tree under the coordinator: each hand-off sits under the agent that made it (`by`), gathering
-// its worker's calls, the hand-offs it made and its return. Anything that cannot be placed stays at the top level.
-const arrange = (events) => {
-  const root = { items: [], depth: 0 };
-  const open = {}; // worker -> hand-offs not returned yet, latest last
-  const latest = {}; // worker -> its latest hand-off
-  const blocks = [];
-  const holder = (worker, at) => {
-    if (!worker) return root;
-    const waiting = open[worker] || [];
-    const containing = [...waiting]
-      .reverse()
-      .find((one) => at === null || one.from === null || one.from <= at);
-    return containing || latest[worker] || root;
-  };
-  for (const event of events) {
-    const at = instant(event);
-    if (event.type === "delegated" || event.type === "transferred") {
-      const parent = holder(event.by, at);
-      const block = {
-        kind: "handoff",
-        key: event.seq,
-        worker_id: event.worker_id,
-        delegated: event,
-        transfer: event.type === "transferred",
-        items: [],
-        depth: parent.depth + 1,
-        from: at,
-        to: at,
-      };
-      parent.items.push(block);
-      blocks.push(block);
-      (open[event.worker_id] ||= []).push(block);
-      latest[event.worker_id] = block;
-    } else if (event.type === "returned") {
-      const waiting = open[event.worker_id] || [];
-      const block = waiting.pop();
-      if (block) {
-        block.returned = event;
-        if (at !== null) block.to = Math.max(block.to ?? at, at);
-      } else {
-        const orphan = {
-          kind: "handoff",
-          key: event.seq,
-          worker_id: event.worker_id,
-          items: [],
-          returned: event,
-          depth: 1,
-          from: at,
-          to: at,
-        };
-        root.items.push(orphan);
-        blocks.push(orphan);
-      }
-    } else {
-      const waiting = event.worker_id ? open[event.worker_id] || [] : [];
-      const block = waiting[waiting.length - 1];
-      if (block) {
-        block.items.push({ kind: "call", key: event.seq, event });
-        if (at !== null) block.to = Math.max(block.to ?? at, at);
-      } else root.items.push({ kind: "call", key: event.seq, event });
-    }
-  }
-  // A hand-off ends when it returned; a block still open ends with its last step, and its children's.
-  const close = (node) => {
-    for (const item of node.items)
-      if (item.kind === "handoff") {
-        close(item);
-        if (item.to !== null && node.to !== undefined)
-          node.to = node.to === null ? item.to : Math.max(node.to, item.to);
-      }
-  };
-  close(root);
-  // Siblings from the same agent whose spans overlap ran in parallel.
-  let parallel = 0;
-  const mark = (node) => {
-    const siblings = node.items.filter((item) => item.kind === "handoff");
-    siblings.forEach((one, index) => {
-      siblings.slice(index + 1).forEach((other) => {
-        if (
-          one.from !== null &&
-          other.from !== null &&
-          other.from < (one.to ?? one.from) &&
-          one.from < (other.to ?? other.from)
-        ) {
-          if (!one.parallel) parallel += 1;
-          if (!other.parallel) parallel += 1;
-          one.parallel = true;
-          other.parallel = true;
-        }
-      });
-      mark(one);
-    });
-  };
-  mark(root);
-  const depth = blocks.reduce((most, one) => Math.max(most, one.depth), 0);
-  const depthOf = {};
-  for (const one of blocks)
-    if (!(one.worker_id in depthOf)) depthOf[one.worker_id] = one.depth;
-  return { items: root.items, depth, parallel, depthOf };
-};
-
 function WorkerChips({ workers, depthOf }) {
   const [shown, setShown] = useState(false);
   const chips = workers.map((one) => (
@@ -645,13 +501,7 @@ WorkerChips.propTypes = {
   depthOf: PropTypes.object.isRequired,
 };
 
-/**
- * One call of a multi-agent app as a hand-off timeline: the caller's request, each hand-off to a
- * worker with the worker's tool calls (input and output) and what it returned, then the
- * coordinator's reply. Read from the spans the app exported and the sandbox's record of each
- * tool call; anything not seen reads Unknown, and a declared worker that never ran shows as
- * not observed.
- */
+/** One call of a multi-agent app as a hand-off tree under the coordinator, framed by the request and the reply. */
 export default function CallWorkersPanel({ callExecutionId }) {
   const { data, isLoading, isError } = useCallWorkers(callExecutionId);
   if (isLoading) return <CircularProgress size={20} sx={{ m: 2 }} />;
@@ -678,9 +528,7 @@ export default function CallWorkersPanel({ callExecutionId }) {
         ? workers[event.worker_id]?.name || event.worker_id
         : C.coordinator;
   const start = data.started_at;
-  const hasHandOffs = data.events.some(
-    (one) => one.type === "delegated" || one.type === "transferred",
-  );
+  const hasHandOffs = data.events.some(isHandOff);
   const tree = arrange(data.events);
 
   return (

@@ -24362,13 +24362,19 @@ export const CallWorkerEventApiType = {
   returned: "returned",
 } as const;
 
+export type CallWorkerEventApiStatus =
+  (typeof CallWorkerEventApiStatus)[keyof typeof CallWorkerEventApiStatus];
+
+export const CallWorkerEventApiStatus = {
+  ok: "ok",
+  error: "error",
+} as const;
+
 export type CallWorkerEventApiAttribution =
   (typeof CallWorkerEventApiAttribution)[keyof typeof CallWorkerEventApiAttribution];
 
 export const CallWorkerEventApiAttribution = {
   reported: "reported",
-  bound: "bound",
-  conflict: "conflict",
   unattributed: "unattributed",
 } as const;
 
@@ -24391,8 +24397,7 @@ export interface CallWorkerEventApi {
   result?: string;
   /** @minLength 1 */
   tool?: string;
-  /** @minLength 1 */
-  status?: string;
+  status?: CallWorkerEventApiStatus;
   input?: CallWorkerEventApiInput;
   output?: CallWorkerEventApiOutput;
   payload_omitted?: boolean;

@@ -98,7 +98,7 @@ export default function VoiceCallDrawer({
   );
 
   const callTraces = useCallTraces(executionId, task.id);
-  const hasWorkers = useHasWorkers(task.id);
+  const hasWorkers = useHasWorkers(task.id, task.completedAt);
   const leftPanelTabs = useMemo(
     () => [
       {
@@ -187,7 +187,8 @@ export default function VoiceCallDrawer({
   );
 }
 VoiceCallDrawer.propTypes = {
-  task: PropTypes.shape({ id: PropTypes.string }).isRequired,
+  task: PropTypes.shape({ id: PropTypes.string, completedAt: PropTypes.string })
+    .isRequired,
   executionId: PropTypes.string,
   onClose: PropTypes.func,
   onPrev: PropTypes.func,

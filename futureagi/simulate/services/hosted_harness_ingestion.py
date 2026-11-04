@@ -1131,14 +1131,16 @@ def _apply_receipt_to_call(
             )
 
 
-def _dispatch_worker_read(call_id: Any) -> None:
+def _dispatch_worker_read(call_id: UUID) -> None:
     """Read the call's worker timeline once its spans have had time to arrive."""
     from datetime import timedelta
 
     from simulate.services.harness_workers import FIRST_READ
     from simulate.tasks.alk_sim import record_call_workers
 
-    record_call_workers.apply_async(args=(str(call_id),), start_delay=timedelta(seconds=FIRST_READ))
+    record_call_workers.apply_async(
+        args=(str(call_id),), start_delay=timedelta(seconds=FIRST_READ)
+    )
 
 
 def _ensure_run_agent_is_voice(job: HostedHarnessJob) -> None:

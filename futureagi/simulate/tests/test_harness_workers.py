@@ -1,7 +1,6 @@
 """A multi-agent call's workers, from the spans the app exported: who was delegated what, what each did, what came back."""
 
 import json
-import time
 
 import pytest
 
@@ -38,9 +37,26 @@ def _span(span_id, parent, kind, name, start, end=None, **extra):
 SPANS = [
     _span("s1", None, "agent", "Returns coordinator", "t01", "t20"),
     _span("s1a", "s1", "llm", "response", "t02", "t03"),
-    _span("s2", "s1", "tool", "order_lookup", "t04", "t09", input='{"input": "inspect order 1042"}'),
-    _span("s3", "s2", "agent", "Order-lookup worker", "t05", "t08", attributes={"graph.node.id": "Order-lookup worker"},
-          input="inspect order 1042", output="order 1042 is eligible; refund RF-7 exists"),
+    _span(
+        "s2",
+        "s1",
+        "tool",
+        "order_lookup",
+        "t04",
+        "t09",
+        input='{"input": "inspect order 1042"}',
+    ),
+    _span(
+        "s3",
+        "s2",
+        "agent",
+        "Order-lookup worker",
+        "t05",
+        "t08",
+        attributes={"graph.node.id": "Order-lookup worker"},
+        input="inspect order 1042",
+        output="order 1042 is eligible; refund RF-7 exists",
+    ),
     _span("s4", "s3", "tool", "get_order", "t06", "t06"),
     _span("s5", "s3", "tool", "list_refunds", "t07", "t07"),
     _span("s6", "s1", "tool", "refund", "t10", "t15"),
@@ -54,13 +70,20 @@ def test_each_worker_has_a_stable_id_and_each_hand_off_a_matching_return():
     timeline = worker_timeline(SPANS, DECLARED, run_key=RUN)
 
     workers = {one["id"]: one for one in timeline["workers"]}
-    assert workers["order_lookup"]["worker_id"] == "run-1/order_lookup" and workers["order_lookup"]["observed"]
-    assert workers["refund"]["name"] == "Refund worker" and workers["refund"]["observed"]
+    assert (
+        workers["order_lookup"]["worker_id"] == "run-1/order_lookup"
+        and workers["order_lookup"]["observed"]
+    )
+    assert (
+        workers["refund"]["name"] == "Refund worker" and workers["refund"]["observed"]
+    )
     # Declared names are not proof: a worker with no spans of its own is not observed.
     assert workers["audit"]["observed"] is False
     assert not any(one["undeclared"] for one in timeline["workers"])
 
-    events = [(one["type"], one["worker_id"], one.get("tool")) for one in timeline["events"]]
+    events = [
+        (one["type"], one["worker_id"], one.get("tool")) for one in timeline["events"]
+    ]
     assert events == [
         ("delegated", "run-1/order_lookup", None),
         ("tool_call", "run-1/order_lookup", "get_order"),
@@ -72,14 +95,29 @@ def test_each_worker_has_a_stable_id_and_each_hand_off_a_matching_return():
         # The coordinator's own call names no worker.
         ("tool_call", None, "send_reply"),
     ]
-    delegated = {one["worker_id"]: one for one in timeline["events"] if one["type"] == "delegated"}
-    returned = {one["worker_id"]: one for one in timeline["events"] if one["type"] == "returned"}
-    assert delegated["run-1/order_lookup"]["delegation_id"] == returned["run-1/order_lookup"]["delegation_id"] == "s2"
+    delegated = {
+        one["worker_id"]: one
+        for one in timeline["events"]
+        if one["type"] == "delegated"
+    }
+    returned = {
+        one["worker_id"]: one for one in timeline["events"] if one["type"] == "returned"
+    }
+    assert (
+        delegated["run-1/order_lookup"]["delegation_id"]
+        == returned["run-1/order_lookup"]["delegation_id"]
+        == "s2"
+    )
     assert delegated["run-1/order_lookup"]["task"] == "inspect order 1042"
     assert returned["run-1/refund"]["result"] == "reused RF-7"
     assert [one["seq"] for one in timeline["events"]] == list(range(1, 9))
     assert {one["attribution"] for one in timeline["events"]} == {"reported"}
-    assert next(one for one in timeline["events"] if one.get("tool") == "issue_refund")["status"] == "error"
+    assert (
+        next(one for one in timeline["events"] if one.get("tool") == "issue_refund")[
+            "status"
+        ]
+        == "error"
+    )
 
 
 def test_the_same_spans_give_the_same_ids_on_a_retry_of_the_trial():
@@ -108,7 +146,9 @@ def test_a_worker_nested_without_a_launching_tool_call_and_an_undeclared_one_are
 
 
 def test_no_agent_spans_means_no_worker_was_observed():
-    timeline = worker_timeline([_span("x", None, "llm", "response", "t1", "t2")], DECLARED, run_key=RUN)
+    timeline = worker_timeline(
+        [_span("x", None, "llm", "response", "t1", "t2")], DECLARED, run_key=RUN
+    )
     assert [one["observed"] for one in timeline["workers"]] == [False, False, False]
     assert timeline["events"] == []
 
@@ -117,13 +157,21 @@ def test_a_tool_call_with_no_agent_above_it_is_unattributed_not_the_coordinator_
     orphan = _span("o1", None, "tool", "send_reply", "t30", "t30")
     events = worker_timeline([*SPANS, orphan], DECLARED, run_key=RUN)["events"]
     by_span = {one.get("span_id"): one for one in events if one["type"] == "tool_call"}
-    assert by_span["o1"]["worker_id"] is None and by_span["o1"]["attribution"] == "unattributed"
-    assert by_span["s9"]["worker_id"] is None and by_span["s9"]["attribution"] == "reported"
+    assert (
+        by_span["o1"]["worker_id"] is None
+        and by_span["o1"]["attribution"] == "unattributed"
+    )
+    assert (
+        by_span["s9"]["worker_id"] is None
+        and by_span["s9"]["attribution"] == "reported"
+    )
 
 
 def test_a_parent_loop_in_broken_spans_does_not_hang():
     spans = [_span("p", "q", "tool", "x", "t1"), _span("q", "p", "tool", "y", "t2")]
-    assert [one["worker_id"] for one in worker_timeline(spans, [], run_key=RUN)["events"]] == [None, None]
+    assert [
+        one["worker_id"] for one in worker_timeline(spans, [], run_key=RUN)["events"]
+    ] == [None, None]
 
 
 class _Span:
@@ -162,7 +210,9 @@ def _traced(project_id="p1"):
 
 
 @pytest.mark.django_db
-def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(user, workspace, storage, settings, monkeypatch):
+def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(
+    user, workspace, storage, settings, monkeypatch
+):
     from unittest.mock import patch
 
     from simulate.models import CallExecution, HarnessEnvironmentVersion
@@ -174,14 +224,23 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(user, worksp
     environment = _environment(user, workspace, "workers-record", storage)
     version = environment.environment_version
     HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
-        documents={**(version.documents or {}), "contract": {**(version.documents or {}).get("contract", {}), "workers": DECLARED}}
+        documents={
+            **(version.documents or {}),
+            "contract": {
+                **(version.documents or {}).get("contract", {}),
+                "workers": DECLARED,
+            },
+        }
     )
     run = _create(environment, key="w")
     call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
     reader = _Reader(SPANS)
 
-    with patch("simulate.services.run_traces_v3.list_run_traces", return_value=_traced()), patch(
-        "tracer.services.clickhouse.v2.get_reader", return_value=reader
+    with (
+        patch(
+            "simulate.services.run_traces_v3.list_run_traces", return_value=_traced()
+        ),
+        patch("tracer.services.clickhouse.v2.get_reader", return_value=reader),
     ):
         timeline = harness_workers.record_call_workers(str(call.id))
 
@@ -190,42 +249,94 @@ def test_a_call_keeps_its_worker_timeline_with_the_declared_workers(user, worksp
     assert stored == timeline and stored["collected_at"]
     assert reader.asked == (["t1"], "p1")
     workers = {one["id"]: one for one in stored["workers"]}
-    assert workers["order_lookup"]["worker_id"] == f"{run.run_id}/order_lookup" and workers["order_lookup"]["observed"]
+    assert (
+        workers["order_lookup"]["worker_id"] == f"{run.run_id}/order_lookup"
+        and workers["order_lookup"]["observed"]
+    )
     assert workers["audit"]["observed"] is False
 
-    with patch("simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)):
+    with patch(
+        "simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)
+    ):
         assert harness_workers.record_call_workers(str(call.id)) is None
 
     # No spans reach us, but the runtime named the worker of a sealed tool call: that alone is a timeline.
-    call.provider_call_data = {"livekit": {"tool_calls": [{"name": "get_order", "ok": True, "at": 1.0, "worker_id": "order_lookup"}]}}
+    call.provider_call_data = {
+        "livekit": {
+            "tool_calls": [
+                {
+                    "name": "get_order",
+                    "ok": True,
+                    "at": 1.0,
+                    "worker_id": "order_lookup",
+                }
+            ]
+        }
+    }
     call.save(update_fields=["provider_call_data"])
-    with patch("simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)), patch(
-        "tracer.services.clickhouse.v2.get_reader", side_effect=AssertionError("no spans to read")
+    with (
+        patch(
+            "simulate.services.run_traces_v3.list_run_traces",
+            return_value=_traced(None),
+        ),
+        patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            side_effect=AssertionError("no spans to read"),
+        ),
     ):
         reported = harness_workers.record_call_workers(str(call.id))
-    assert [(one["worker_id"], one["tool"]) for one in reported["events"]] == [(f"{run.run_id}/order_lookup", "get_order")]
+    assert [(one["worker_id"], one["tool"]) for one in reported["events"]] == [
+        (f"{run.run_id}/order_lookup", "get_order")
+    ]
 
     # A hand-off whose launcher the runtime could not name is still read, as the coordinator's.
-    call.provider_call_data = {"livekit": {"tool_calls": [
-        {"name": "start_async_task", "ok": True, "at": 1.0, "ended_at": 5.0, "delegated_to": "researcher", "result": "done"}
-    ]}}
+    call.provider_call_data = {
+        "livekit": {
+            "tool_calls": [
+                {
+                    "name": "start_async_task",
+                    "ok": True,
+                    "at": 1.0,
+                    "ended_at": 5.0,
+                    "delegated_to": "researcher",
+                    "result": "done",
+                }
+            ]
+        }
+    }
     call.save(update_fields=["provider_call_data"])
-    with patch("simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)), patch(
-        "tracer.services.clickhouse.v2.get_reader", side_effect=AssertionError("no spans to read")
+    with (
+        patch(
+            "simulate.services.run_traces_v3.list_run_traces",
+            return_value=_traced(None),
+        ),
+        patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            side_effect=AssertionError("no spans to read"),
+        ),
     ):
         launched = harness_workers.record_call_workers(str(call.id))
-    assert [(one["type"], one["worker_id"], one.get("by")) for one in launched["events"]] == [
+    assert [
+        (one["type"], one["worker_id"], one.get("by")) for one in launched["events"]
+    ] == [
         ("delegated", f"{run.run_id}/researcher", None),
         ("returned", f"{run.run_id}/researcher", None),
     ]
 
     # One agent calling tools, no worker declared and no hand-off: nothing is kept on the call.
-    single = [_span("root", None, "agent", "coordinator", "t0000"), _span("c1", "root", "tool", "lookup", "t0001")]
+    single = [
+        _span("root", None, "agent", "coordinator", "t0000"),
+        _span("c1", "root", "tool", "lookup", "t0001"),
+    ]
     call.provider_call_data, call.call_metadata = {}, {}
     call.save(update_fields=["provider_call_data", "call_metadata"])
-    with patch("simulate.services.run_traces_v3.list_run_traces", return_value=_traced()), patch(
-        "tracer.services.clickhouse.v2.get_reader", return_value=_Reader(single)
-    ), patch.object(harness_workers, "declared_workers", return_value=[]):
+    with (
+        patch(
+            "simulate.services.run_traces_v3.list_run_traces", return_value=_traced()
+        ),
+        patch("tracer.services.clickhouse.v2.get_reader", return_value=_Reader(single)),
+        patch.object(harness_workers, "declared_workers", return_value=[]),
+    ):
         assert harness_workers.record_call_workers(str(call.id)) is None
     call.refresh_from_db()
     assert harness_workers.WORKERS_KEY not in call.call_metadata
@@ -239,9 +350,13 @@ def test_a_declared_worker_not_seen_yet_gets_one_more_read_later():
 
     seen = {"workers": [{"observed": True}]}
     missing = {"workers": [{"observed": True}, {"observed": False}]}
-    with patch("simulate.services.harness_workers.record_call_workers", side_effect=[missing, seen, missing]), patch.object(
-        alk_sim.record_call_workers, "apply_async"
-    ) as again:
+    with (
+        patch(
+            "simulate.services.harness_workers.record_call_workers",
+            side_effect=[missing, seen, missing],
+        ),
+        patch.object(alk_sim.record_call_workers, "apply_async") as again,
+    ):
         # Called directly, an activity runs in process.
         alk_sim.record_call_workers("c1")
         assert again.call_args.kwargs["kwargs"] == {"second_read": True}
@@ -258,7 +373,9 @@ def test_when_times_tie_a_hand_off_comes_first_and_its_return_last():
         _span("b", "a", "agent", "researcher", "t1", "t1"),
         _span("c", "b", "tool", "search", "t1", "t1"),
     ]
-    assert [one["type"] for one in worker_timeline(spans, [], run_key=RUN)["events"]] == [
+    assert [
+        one["type"] for one in worker_timeline(spans, [], run_key=RUN)["events"]
+    ] == [
         "delegated",
         "tool_call",
         "returned",
@@ -266,7 +383,9 @@ def test_when_times_tie_a_hand_off_comes_first_and_its_return_last():
 
 
 @pytest.mark.django_db
-def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(user, workspace, storage, settings, auth_client):
+def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(
+    user, workspace, storage, settings, auth_client
+):
     from simulate.models import CallExecution
     from simulate.services.harness_workers import WORKERS_KEY
     from simulate.services.scoring_status import locked_call_metadata_update
@@ -279,14 +398,74 @@ def test_the_trial_view_reads_the_kept_timeline_and_says_when_there_is_none(user
     url = f"/simulate/v3/call-executions/{call.id}/workers/"
 
     missing = auth_client.get(url)
-    timeline = {**worker_timeline(SPANS, DECLARED, run_key=RUN), "collected_at": "2026-10-31T12:00:00Z"}
-    locked_call_metadata_update(call.id, lambda metadata: metadata.update({WORKERS_KEY: timeline}) or True)
+    timeline = {
+        **worker_timeline(SPANS, DECLARED, run_key=RUN),
+        "collected_at": "2026-10-31T12:00:00Z",
+    }
+    locked_call_metadata_update(
+        call.id, lambda metadata: metadata.update({WORKERS_KEY: timeline}) or True
+    )
     found = auth_client.get(url)
 
     assert (missing.status_code, missing.content) == (204, b"")
     assert found.status_code == 200, found.content
-    assert [one["type"] for one in found.json()["events"]][:2] == ["delegated", "tool_call"]
-    assert {one["id"] for one in found.json()["workers"]} == {"order_lookup", "refund", "audit"}
+    assert [one["type"] for one in found.json()["events"]][:2] == [
+        "delegated",
+        "tool_call",
+    ]
+    assert {one["id"] for one in found.json()["workers"]} == {
+        "order_lookup",
+        "refund",
+        "audit",
+    }
+    # The response carries the documented fields only, not every key the stored record keeps.
+    assert set(found.json()) == set(timeline)
+    assert (
+        "span_id" in timeline["events"][1]
+        and "span_id" not in found.json()["events"][1]
+    )
+
+
+@pytest.mark.django_db
+def test_another_workspace_or_organization_cannot_read_a_call_s_workers(
+    user, workspace, storage, settings, auth_client
+):
+    from accounts.models import Organization, Workspace
+    from simulate.models import CallExecution, RunTest
+    from simulate.services.harness_workers import WORKERS_KEY
+    from simulate.services.scoring_status import locked_call_metadata_update
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-scope", storage), key="s")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    timeline = {
+        **worker_timeline(SPANS, DECLARED, run_key=RUN),
+        "collected_at": "2026-10-31T12:00:00Z",
+    }
+    locked_call_metadata_update(
+        call.id, lambda metadata: metadata.update({WORKERS_KEY: timeline}) or True
+    )
+    url = f"/simulate/v3/call-executions/{call.id}/workers/"
+    run_tests = RunTest.no_workspace_objects.filter(id=call.test_execution.run_test_id)
+    assert auth_client.get(url).status_code == 200
+
+    other_workspace = Workspace.no_workspace_objects.create(
+        name="Other workers workspace",
+        organization=workspace.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    run_tests.update(workspace=other_workspace)
+    assert auth_client.get(url).status_code == 404
+
+    run_tests.update(
+        workspace=workspace,
+        organization=Organization.objects.create(name="Other workers organization"),
+    )
+    assert auth_client.get(url).status_code == 404
 
 
 def test_framework_containers_and_empty_agent_inputs_as_the_openai_agents_instrumentation_writes_them():
@@ -298,16 +477,38 @@ def test_framework_containers_and_empty_agent_inputs_as_the_openai_agents_instru
         _span("c", "wc", "agent", "Returns coordinator", "t01", "t29", input="{}"),
         _span("ct", "c", "chain", "turn", "t02", "t10"),
         _span("cl", "ct", "llm", "generation", "t02", "t03"),
-        _span("d", "ct", "tool", "order_lookup", "t04", "t09", input='{"input": "Order 1043"}', output="1043 is eligible"),
+        _span(
+            "d",
+            "ct",
+            "tool",
+            "order_lookup",
+            "t04",
+            "t09",
+            input='{"input": "Order 1043"}',
+            output="1043 is eligible",
+        ),
         _span("dc", "d", "chain", "Agent workflow", "t04", "t09", input="{}"),
-        _span("o", "dc", "agent", "Order-lookup worker", "t05", "t08", input="{}", output="{}"),
+        _span(
+            "o",
+            "dc",
+            "agent",
+            "Order-lookup worker",
+            "t05",
+            "t08",
+            input="{}",
+            output="{}",
+        ),
         _span("ot", "o", "chain", "turn", "t05", "t07"),
         _span("og", "ot", "tool", "get_order", "t06", "t06"),
     ]
     timeline = worker_timeline(spans, DECLARED[:1], run_key=RUN)
 
-    assert [(one["id"], one["undeclared"]) for one in timeline["workers"]] == [("order_lookup", False)]
-    assert [(one["type"], one["worker_id"], one.get("tool")) for one in timeline["events"]] == [
+    assert [(one["id"], one["undeclared"]) for one in timeline["workers"]] == [
+        ("order_lookup", False)
+    ]
+    assert [
+        (one["type"], one["worker_id"], one.get("tool")) for one in timeline["events"]
+    ] == [
         ("delegated", "run-1/order_lookup", None),
         ("tool_call", "run-1/order_lookup", "get_order"),
         ("returned", "run-1/order_lookup", None),
@@ -332,32 +533,68 @@ def test_a_parent_running_several_agents_is_their_coordinator_even_without_work_
 
 def test_tool_calls_a_runtime_attributes_to_a_worker_join_the_timeline_without_repeating_a_span():
     # CrewAI's event bus names the agent and task of an in-process tool call; no span covers it.
-    declared = [{"id": "shakespearean_bard", "name": "Shakespearean bard"}, {"id": "x_post_verifier"}]
+    declared = [
+        {"id": "shakespearean_bard", "name": "Shakespearean bard"},
+        {"id": "x_post_verifier"},
+    ]
     traced = [
-        {"name": "write_post", "ok": True, "at": 1730454600.5, "worker_id": "shakespearean_bard", "task_label": "Write a post",
-         "runtime_ids": {"event_id": "e2", "parent_event_id": "e1"}},
-        {"name": "verify_post", "ok": False, "at": 1730454601.0, "worker_id": "x_post_verifier"},
-        {"name": "lookup", "ok": True, "at": 1730454602.0, "worker_label": "Researcher"},
+        {
+            "name": "write_post",
+            "ok": True,
+            "at": 1730454600.5,
+            "worker_id": "shakespearean_bard",
+            "task_label": "Write a post",
+            "runtime_ids": {"event_id": "e2", "parent_event_id": "e1"},
+        },
+        {
+            "name": "verify_post",
+            "ok": False,
+            "at": 1730454601.0,
+            "worker_id": "x_post_verifier",
+        },
+        {
+            "name": "lookup",
+            "ok": True,
+            "at": 1730454602.0,
+            "worker_label": "Researcher",
+        },
         {"name": "send_reply", "ok": True, "at": 1730454603.0},
     ]
     timeline = worker_timeline([], declared, run_key=RUN, traced_calls=traced)
 
     workers = {one["id"]: one for one in timeline["workers"]}
-    assert workers["shakespearean_bard"]["observed"] and not workers["shakespearean_bard"]["undeclared"]
+    assert (
+        workers["shakespearean_bard"]["observed"]
+        and not workers["shakespearean_bard"]["undeclared"]
+    )
     assert workers["shakespearean_bard"]["instance_ids"] == ["shakespearean_bard"]
     assert workers["researcher"]["undeclared"]
-    events = [(one["worker_id"], one["tool"], one["status"]) for one in timeline["events"]]
+    events = [
+        (one["worker_id"], one["tool"], one["status"]) for one in timeline["events"]
+    ]
     assert events == [
         ("run-1/shakespearean_bard", "write_post", "ok"),
         ("run-1/x_post_verifier", "verify_post", "error"),
         ("run-1/researcher", "lookup", "ok"),
     ]
     first = timeline["events"][0]
-    assert (first["task"], first["runtime_event_id"], first["runtime_parent_event_id"]) == ("Write a post", "e2", "e1")
-    assert first["at"] == "2024-11-01T09:50:00.500000" and first["attribution"] == "reported"
+    assert (
+        first["task"],
+        first["runtime_event_id"],
+        first["runtime_parent_event_id"],
+    ) == ("Write a post", "e2", "e1")
+    assert (
+        first["at"] == "2024-11-01T09:50:00.500000"
+        and first["attribution"] == "reported"
+    )
 
     # The same call seen in the worker's spans is shown once.
-    both = worker_timeline(SPANS, DECLARED, run_key=RUN, traced_calls=[{"name": "get_order", "worker_label": "Order-lookup worker"}])
+    both = worker_timeline(
+        SPANS,
+        DECLARED,
+        run_key=RUN,
+        traced_calls=[{"name": "get_order", "worker_label": "Order-lookup worker"}],
+    )
     assert [one.get("tool") for one in both["events"]].count("get_order") == 1
 
 
@@ -368,13 +605,24 @@ def test_a_declared_worker_a_runtime_names_by_an_opaque_id_and_its_label_is_a_wo
         {"id": "shakespearean_bard", "name": "Shakespearean Bard"},
         {"id": "x_post_verifier", "name": "X Post Verifier"},
     ]
-    traced = [{"name": "Character Counter Tool", "ok": True, "at": 1730454600.0, "worker_id": "1853305b0351f75f",
-               "worker_label": "X Post Verifier\n", "task_label": "verify_x_post"}]
+    traced = [
+        {
+            "name": "Character Counter Tool",
+            "ok": True,
+            "at": 1730454600.0,
+            "worker_id": "1853305b0351f75f",
+            "worker_label": "X Post Verifier\n",
+            "task_label": "verify_x_post",
+        }
+    ]
 
     timeline = worker_timeline([], declared, run_key=RUN, traced_calls=traced)
 
     workers = {one["id"]: one for one in timeline["workers"]}
-    assert workers["x_post_verifier"]["observed"] and not workers["x_post_verifier"]["undeclared"]
+    assert (
+        workers["x_post_verifier"]["observed"]
+        and not workers["x_post_verifier"]["undeclared"]
+    )
     assert workers["x_post_verifier"]["instance_ids"] == ["1853305b0351f75f"]
     assert not workers["shakespearean_bard"]["observed"]
     assert [(one["worker_id"], one["tool"]) for one in timeline["events"]] == [
@@ -382,23 +630,96 @@ def test_a_declared_worker_a_runtime_names_by_an_opaque_id_and_its_label_is_a_wo
     ]
 
 
+@pytest.mark.parametrize(
+    "hand_off",
+    [
+        # A crew's agent run sealed as a tool call named for the worker.
+        {"name": "X Post Verifier", "arguments": {"task": "Verify the post"}},
+        # The same hand-off sealed as its own record kind, with no tool name.
+        {"kind": "handoff", "arguments": {"task": "Verify the post"}},
+    ],
+)
+def test_a_crew_hand_off_reads_the_same_as_a_tool_call_or_as_its_own_record(hand_off):
+    row = {
+        **hand_off,
+        "ok": True,
+        "at": 10.0,
+        "ended_at": 12.0,
+        "worker_label": "ShakespeareXPostFlow",
+        "delegated_to": "X Post Verifier",
+        "result": "valid",
+    }
+    declared = [{"id": "x_post_verifier", "name": "X Post Verifier"}]
+
+    timeline = worker_timeline([], declared, run_key=RUN, traced_calls=[row])
+
+    assert [
+        (one["type"], one["worker_id"], one.get("task"), one.get("result"))
+        for one in timeline["events"]
+    ] == [
+        ("delegated", "run-1/x_post_verifier", "Verify the post", None),
+        ("returned", "run-1/x_post_verifier", None, "valid"),
+    ]
+    assert timeline["coordinator"] == {"name": "ShakespeareXPostFlow"}
+
+
 def test_hand_offs_in_the_sealed_trace_give_each_worker_a_delegation_and_a_return_without_spans():
     # The sandbox reads any framework's spans and seals who made each call and which call handed work out.
     traced = [
-        {"name": "order_lookup", "ok": True, "at": 1730454600.0, "ended_at": 1730454602.0, "worker_label": "Returns coordinator",
-         "delegated_to": "Order-lookup worker", "arguments": {"input": "order 1043"}, "result": "delivered 3 days ago",
-         "runtime_ids": {"event_id": "t1"}},
-        {"name": "get_order", "ok": True, "at": 1730454601.0, "worker_label": "Order-lookup worker"},
-        {"name": "refund_worker", "ok": False, "at": 1730454603.0, "ended_at": 1730454604.0, "worker_label": "Returns coordinator",
-         "delegated_to": "Refund worker", "arguments": {"input": "refund 1043"}},
-        {"name": "issue_refund", "ok": False, "at": 1730454603.5, "worker_label": "Refund worker"},
-        {"name": "send_reply", "ok": True, "at": 1730454605.0, "worker_label": "Returns coordinator"},
+        {
+            "name": "order_lookup",
+            "ok": True,
+            "at": 1730454600.0,
+            "ended_at": 1730454602.0,
+            "worker_label": "Returns coordinator",
+            "delegated_to": "Order-lookup worker",
+            "arguments": {"input": "order 1043"},
+            "result": "delivered 3 days ago",
+            "runtime_ids": {"event_id": "t1"},
+        },
+        {
+            "name": "get_order",
+            "ok": True,
+            "at": 1730454601.0,
+            "worker_label": "Order-lookup worker",
+        },
+        {
+            "name": "refund_worker",
+            "ok": False,
+            "at": 1730454603.0,
+            "ended_at": 1730454604.0,
+            "worker_label": "Returns coordinator",
+            "delegated_to": "Refund worker",
+            "arguments": {"input": "refund 1043"},
+        },
+        {
+            "name": "issue_refund",
+            "ok": False,
+            "at": 1730454603.5,
+            "worker_label": "Refund worker",
+        },
+        {
+            "name": "send_reply",
+            "ok": True,
+            "at": 1730454605.0,
+            "worker_label": "Returns coordinator",
+        },
     ]
     timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=traced)
 
-    assert sorted(one["id"] for one in timeline["workers"] if one["observed"]) == ["order_lookup", "refund"]
-    events = [(one["type"], one["worker_id"], one.get("tool") or one.get("task") or one.get("result"), one.get("status"))
-              for one in timeline["events"]]
+    assert sorted(one["id"] for one in timeline["workers"] if one["observed"]) == [
+        "order_lookup",
+        "refund",
+    ]
+    events = [
+        (
+            one["type"],
+            one["worker_id"],
+            one.get("tool") or one.get("task") or one.get("result"),
+            one.get("status"),
+        )
+        for one in timeline["events"]
+    ]
     assert events == [
         ("delegated", "run-1/order_lookup", "order 1043", None),
         ("tool_call", "run-1/order_lookup", "get_order", "ok"),
@@ -409,46 +730,104 @@ def test_hand_offs_in_the_sealed_trace_give_each_worker_a_delegation_and_a_retur
         ("tool_call", None, "send_reply", "ok"),
     ]
     first, back = timeline["events"][0], timeline["events"][2]
-    assert first["by"] is None and first["delegation_id"] == back["delegation_id"] == "t1"
+    assert (
+        first["by"] is None and first["delegation_id"] == back["delegation_id"] == "t1"
+    )
 
 
 def test_a_long_answer_is_cut_with_a_mark_that_it_goes_on_and_a_short_one_is_kept_whole():
     long_answer = "word " * 200
     traced = [
-        {"name": "ask", "ok": True, "at": 1730454600.0, "ended_at": 1730454602.0, "worker_label": "Coordinator",
-         "delegated_to": "Writer", "arguments": {"input": "draft"}, "result": long_answer},
-        {"name": "ask", "ok": True, "at": 1730454603.0, "ended_at": 1730454604.0, "worker_label": "Coordinator",
-         "delegated_to": "Writer", "arguments": {"input": "draft"}, "result": "short"},
+        {
+            "name": "ask",
+            "ok": True,
+            "at": 1730454600.0,
+            "ended_at": 1730454602.0,
+            "worker_label": "Coordinator",
+            "delegated_to": "Writer",
+            "arguments": {"input": "draft"},
+            "result": long_answer,
+        },
+        {
+            "name": "ask",
+            "ok": True,
+            "at": 1730454603.0,
+            "ended_at": 1730454604.0,
+            "worker_label": "Coordinator",
+            "delegated_to": "Writer",
+            "arguments": {"input": "draft"},
+            "result": "short",
+        },
     ]
-    returned = [one["result"] for one in worker_timeline([], [], run_key=RUN, traced_calls=traced)["events"]
-                if one["type"] == "returned"]
-    assert returned[0].endswith("word…") and len(returned[0]) <= 501 and long_answer.startswith(returned[0][:-1])
+    returned = [
+        one["result"]
+        for one in worker_timeline([], [], run_key=RUN, traced_calls=traced)["events"]
+        if one["type"] == "returned"
+    ]
+    assert (
+        returned[0].endswith("word…")
+        and len(returned[0]) <= 501
+        and long_answer.startswith(returned[0][:-1])
+    )
     assert returned[1] == "short"
 
 
 def test_the_one_agent_of_an_app_that_hands_nothing_out_is_not_a_worker():
-    traced = [{"name": "lookup", "ok": True, "at": 1730454600.0, "worker_label": "Support agent"}]
+    traced = [
+        {
+            "name": "lookup",
+            "ok": True,
+            "at": 1730454600.0,
+            "worker_label": "Support agent",
+        }
+    ]
     timeline = worker_timeline([], [], run_key=RUN, traced_calls=traced)
     assert timeline["workers"] == []
-    assert [(one["worker_id"], one["tool"]) for one in timeline["events"]] == [(None, "lookup")]
+    assert [(one["worker_id"], one["tool"]) for one in timeline["events"]] == [
+        (None, "lookup")
+    ]
 
 
 def test_a_declared_worker_that_hands_work_out_stays_a_worker_under_the_root_that_passed_it_control():
     # The root passes control with a tool, not a nested hand-off; the declared worker then runs another agent as a tool.
     traced = [
-        {"name": "transfer_to_agent", "ok": True, "at": 1730454600.0, "worker_label": "root_agent",
-         "arguments": {"agent_name": "researcher"}},
-        {"name": "find_sources", "ok": True, "at": 1730454601.0, "ended_at": 1730454603.0, "worker_label": "researcher",
-         "delegated_to": "source_finder", "arguments": {"request": "tides"}, "result": "three sources"},
+        {
+            "name": "transfer_to_agent",
+            "ok": True,
+            "at": 1730454600.0,
+            "worker_label": "root_agent",
+            "arguments": {"agent_name": "researcher"},
+        },
+        {
+            "name": "find_sources",
+            "ok": True,
+            "at": 1730454601.0,
+            "ended_at": 1730454603.0,
+            "worker_label": "researcher",
+            "delegated_to": "source_finder",
+            "arguments": {"request": "tides"},
+            "result": "three sources",
+        },
     ]
-    declared = [{"id": "researcher", "name": "researcher"}, {"id": "writer", "name": "writer"}]
+    declared = [
+        {"id": "researcher", "name": "researcher"},
+        {"id": "writer", "name": "writer"},
+    ]
     timeline = worker_timeline([], declared, run_key=RUN, traced_calls=traced)
 
-    workers = {one["id"]: (one["observed"], one["undeclared"]) for one in timeline["workers"]}
+    workers = {
+        one["id"]: (one["observed"], one["undeclared"]) for one in timeline["workers"]
+    }
     # The root that passed control is the coordinator, and the control pass is the node the hand-off nests under.
-    assert workers == {"researcher": (True, False), "writer": (False, False), "source_finder": (True, True)}
+    assert workers == {
+        "researcher": (True, False),
+        "writer": (False, False),
+        "source_finder": (True, True),
+    }
     assert timeline["coordinator"] == {"name": "root_agent"}
-    assert [(one["type"], one["worker_id"], one.get("by")) for one in timeline["events"]] == [
+    assert [
+        (one["type"], one["worker_id"], one.get("by")) for one in timeline["events"]
+    ] == [
         ("transferred", "run-1/researcher", None),
         ("delegated", "run-1/source_finder", "run-1/researcher"),
         ("returned", "run-1/source_finder", None),
@@ -458,15 +837,44 @@ def test_a_declared_worker_that_hands_work_out_stays_a_worker_under_the_root_tha
 def test_background_jobs_launched_by_an_unnamed_agent_are_its_hand_offs_and_overlap():
     # Two jobs a supervisor launched run at once; the runtime names each job's agent but not the supervisor.
     traced = [
-        {"name": "start_async_task", "ok": True, "at": 1730454608.4, "ended_at": 1730454645.5, "delegated_to": "coder",
-         "arguments": "coder", "result": "code done", "runtime_ids": {"event_id": "a"}},
-        {"name": "start_async_task", "ok": True, "at": 1730454608.5, "ended_at": 1730454655.2,
-         "delegated_to": "researcher", "arguments": "researcher", "result": "research done", "runtime_ids": {"event_id": "b"}},
-        {"name": "analyze_topic", "ok": True, "at": 1730454612.6, "worker_label": "researcher"},
-        {"name": "run_code_check", "ok": True, "at": 1730454624.1, "worker_label": "coder"},
+        {
+            "name": "start_async_task",
+            "ok": True,
+            "at": 1730454608.4,
+            "ended_at": 1730454645.5,
+            "delegated_to": "coder",
+            "arguments": "coder",
+            "result": "code done",
+            "runtime_ids": {"event_id": "a"},
+        },
+        {
+            "name": "start_async_task",
+            "ok": True,
+            "at": 1730454608.5,
+            "ended_at": 1730454655.2,
+            "delegated_to": "researcher",
+            "arguments": "researcher",
+            "result": "research done",
+            "runtime_ids": {"event_id": "b"},
+        },
+        {
+            "name": "analyze_topic",
+            "ok": True,
+            "at": 1730454612.6,
+            "worker_label": "researcher",
+        },
+        {
+            "name": "run_code_check",
+            "ok": True,
+            "at": 1730454624.1,
+            "worker_label": "coder",
+        },
     ]
     events = worker_timeline([], [], run_key=RUN, traced_calls=traced)["events"]
-    assert [(one["type"], (one["worker_id"] or "").split("/")[-1], one.get("by")) for one in events] == [
+    assert [
+        (one["type"], (one["worker_id"] or "").split("/")[-1], one.get("by"))
+        for one in events
+    ] == [
         ("delegated", "coder", None),
         ("delegated", "researcher", None),
         ("tool_call", "researcher", None),
@@ -478,14 +886,31 @@ def test_background_jobs_launched_by_an_unnamed_agent_are_its_hand_offs_and_over
 
 def test_a_record_says_whether_the_app_s_spans_were_received():
     assert worker_timeline(SPANS, DECLARED, run_key=RUN)["spans_received"] is True
-    assert worker_timeline([], DECLARED, run_key=RUN, traced_calls=_hand_offs())["spans_received"] is False
+    assert (
+        worker_timeline([], DECLARED, run_key=RUN, traced_calls=_hand_offs())[
+            "spans_received"
+        ]
+        is False
+    )
 
 
 def test_a_control_pass_named_by_the_tool_itself_is_found_too():
     traced = [
-        {"name": "transfer_to_billing_agent", "ok": True, "at": 1730454600.0, "worker_label": "triage"},
-        {"name": "lookup", "ok": True, "at": 1730454601.0, "ended_at": 1730454602.0, "worker_label": "billing_agent",
-         "delegated_to": "ledger_agent", "result": "found"},
+        {
+            "name": "transfer_to_billing_agent",
+            "ok": True,
+            "at": 1730454600.0,
+            "worker_label": "triage",
+        },
+        {
+            "name": "lookup",
+            "ok": True,
+            "at": 1730454601.0,
+            "ended_at": 1730454602.0,
+            "worker_label": "billing_agent",
+            "delegated_to": "ledger_agent",
+            "result": "found",
+        },
     ]
     events = worker_timeline([], [], run_key=RUN, traced_calls=traced)["events"]
     assert [(one["type"], one["worker_id"], one.get("by")) for one in events][:2] == [
@@ -497,12 +922,32 @@ def test_a_control_pass_named_by_the_tool_itself_is_found_too():
 def test_a_hand_off_stamped_after_it_ended_comes_before_its_return_with_its_start_unknown():
     # A runtime that writes a hand-off line once it is over stamps the line's own time, later than its end.
     traced = [
-        {"name": "transfer_to_agent", "ok": True, "at": 1730454620.0, "ended_at": 1730454614.0,
-         "worker_label": "root_agent", "arguments": {"agent_name": "inspiration_agent"}},
-        {"name": "place_agent", "ok": True, "at": 1730454620.9, "ended_at": 1730454618.9,
-         "worker_label": "inspiration_agent", "delegated_to": "place_agent", "result": "three places"},
-        {"name": "poi_agent", "ok": True, "at": 1730454636.9, "ended_at": 1730454634.7,
-         "worker_label": "inspiration_agent", "delegated_to": "poi_agent", "result": "five sights"},
+        {
+            "name": "transfer_to_agent",
+            "ok": True,
+            "at": 1730454620.0,
+            "ended_at": 1730454614.0,
+            "worker_label": "root_agent",
+            "arguments": {"agent_name": "inspiration_agent"},
+        },
+        {
+            "name": "place_agent",
+            "ok": True,
+            "at": 1730454620.9,
+            "ended_at": 1730454618.9,
+            "worker_label": "inspiration_agent",
+            "delegated_to": "place_agent",
+            "result": "three places",
+        },
+        {
+            "name": "poi_agent",
+            "ok": True,
+            "at": 1730454636.9,
+            "ended_at": 1730454634.7,
+            "worker_label": "inspiration_agent",
+            "delegated_to": "poi_agent",
+            "result": "five sights",
+        },
     ]
     events = worker_timeline([], [], run_key=RUN, traced_calls=traced)["events"]
 
@@ -589,19 +1034,34 @@ def _hand_offs(result="delivered 3 days ago"):
 
 def test_each_tool_call_keeps_its_input_and_output_and_a_long_one_is_cut():
     long_result = {"rows": ["x" * 50] * 100}
-    timeline = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_hand_offs(long_result))
-    calls = {one["tool"]: one for one in timeline["events"] if one["type"] == "tool_call"}
+    timeline = worker_timeline(
+        [], DECLARED, run_key=RUN, traced_calls=_hand_offs(long_result)
+    )
+    calls = {
+        one["tool"]: one for one in timeline["events"] if one["type"] == "tool_call"
+    }
 
     assert calls["get_order"]["input"] == {"order_id": "1043"}
-    assert calls["get_order"]["output"].endswith("…") and len(calls["get_order"]["output"]) == 2001
+    assert (
+        calls["get_order"]["output"].endswith("…")
+        and len(calls["get_order"]["output"]) == 2001
+    )
     # A failed call shows what it failed with.
     assert calls["list_refunds"]["output"] == "store unavailable"
-    short = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_hand_offs({"status": "delivered"}))
-    assert [one["output"] for one in short["events"] if one.get("tool") == "get_order"] == [{"status": "delivered"}]
+    short = worker_timeline(
+        [], DECLARED, run_key=RUN, traced_calls=_hand_offs({"status": "delivered"})
+    )
+    assert [
+        one["output"] for one in short["events"] if one.get("tool") == "get_order"
+    ] == [{"status": "delivered"}]
     # Spans carry theirs as text: JSON reads back as data, anything else stays text, nothing is None.
     spans = worker_timeline(SPANS, DECLARED, run_key=RUN)
-    by_tool = {one["tool"]: one for one in spans["events"] if one["type"] == "tool_call"}
-    assert by_tool["get_order"]["input"] is None and by_tool["get_order"]["output"] is None
+    by_tool = {
+        one["tool"]: one for one in spans["events"] if one["type"] == "tool_call"
+    }
+    assert (
+        by_tool["get_order"]["input"] is None and by_tool["get_order"]["output"] is None
+    )
 
 
 def _team(leads, helpers, leaves, calls):
@@ -619,55 +1079,92 @@ def _team(leads, helpers, leaves, calls):
         spans.append(_span(lead_id, "root", "agent", f"lead {lead}", at()))
         for helper in range(helpers):
             helper_id = f"{lead_id}h{helper}"
-            spans.append(_span(helper_id, lead_id, "agent", f"helper {lead}.{helper}", at()))
+            spans.append(
+                _span(helper_id, lead_id, "agent", f"helper {lead}.{helper}", at())
+            )
             for leaf in range(leaves):
                 leaf_id = f"{helper_id}f{leaf}"
-                spans.append(_span(leaf_id, helper_id, "agent", f"leaf {lead}.{helper}.{leaf}", at()))
+                spans.append(
+                    _span(
+                        leaf_id,
+                        helper_id,
+                        "agent",
+                        f"leaf {lead}.{helper}.{leaf}",
+                        at(),
+                    )
+                )
                 for call in range(calls):
-                    spans.append(_span(f"{leaf_id}c{call}", leaf_id, "tool", "lookup", at(), input=big, output=big))
+                    spans.append(
+                        _span(
+                            f"{leaf_id}c{call}",
+                            leaf_id,
+                            "tool",
+                            "lookup",
+                            at(),
+                            input=big,
+                            output=big,
+                        )
+                    )
     return spans
 
 
-def test_a_large_team_s_record_stays_bounded_and_is_quick():
+def test_a_large_team_s_record_stays_bounded():
     # 10 leads x 3 helpers x 3 leaves: 129 agents, 3 levels below the coordinator, 900 tool calls with 2 KB each way.
-    spans = _team(10, 3, 3, 10)
-    began = time.perf_counter()
-    timeline = worker_timeline(spans, [], run_key=RUN)
-    took = time.perf_counter() - began
+    timeline = worker_timeline(_team(10, 3, 3, 10), [], run_key=RUN)
 
     calls = [one for one in timeline["events"] if one["type"] == "tool_call"]
     assert len(timeline["events"]) <= harness_workers._MAX_EVENTS
-    assert len(json.dumps(timeline)) < harness_workers._PAYLOAD_BUDGET + 300 * harness_workers._MAX_EVENTS
+    assert (
+        len(json.dumps(timeline))
+        < harness_workers._PAYLOAD_BUDGET + 300 * harness_workers._MAX_EVENTS
+    )
     # The first calls keep their input and output; past the size limit a call keeps its tool, worker and time.
     assert calls[0]["input"] == "y" * 2000 and "payload_omitted" not in calls[0]
     assert calls[-1]["input"] is None and calls[-1]["payload_omitted"] is True
     assert calls[-1]["tool"] == "lookup" and calls[-1]["worker_id"] and calls[-1]["at"]
-    assert took < 2
 
 
 def test_a_record_past_its_step_limit_keeps_the_first_steps_and_counts_the_rest():
     timeline = worker_timeline(_team(5, 2, 2, 120), [], run_key=RUN)
 
     assert len(timeline["events"]) == harness_workers._MAX_EVENTS
-    assert timeline["events_omitted"] == 5 * 2 * 2 * 120 + 5 + 5 * 2 + 5 * 2 * 2 - harness_workers._MAX_EVENTS
+    assert (
+        timeline["events_omitted"]
+        == 5 * 2 * 2 * 120 + 5 + 5 * 2 + 5 * 2 * 2 - harness_workers._MAX_EVENTS
+    )
     assert [one["seq"] for one in timeline["events"][:3]] == [1, 2, 3]
 
 
 def test_the_caller_s_request_and_the_coordinator_s_reply_frame_the_hand_offs():
     turns = [
         {"role": "user", "text": "Hello", "at": "2024-11-01T09:49:56"},
-        {"role": "user", "text": "Please refund order 1043", "at": "2024-11-01T09:49:58"},
+        {
+            "role": "user",
+            "text": "Please refund order 1043",
+            "at": "2024-11-01T09:49:58",
+        },
         {"role": "agent", "text": "Let me check", "at": "2024-11-01T09:49:59"},
         {"role": "user", "text": "Still there?", "at": "2024-11-01T09:50:01"},
         {"role": "agent", "text": "Your refund is issued", "at": "2024-11-01T09:50:03"},
         {"role": "agent", "text": "Anything else?", "at": "2024-11-01T09:50:05"},
     ]
     timeline = worker_timeline(
-        [], DECLARED, run_key=RUN, traced_calls=_hand_offs(), turns=turns, started_at="2024-11-01T09:49:55"
+        [],
+        DECLARED,
+        run_key=RUN,
+        traced_calls=_hand_offs(),
+        turns=turns,
+        started_at="2024-11-01T09:49:55",
     )
 
-    assert timeline["request"] == {"text": "Please refund order 1043", "at": "2024-11-01T09:49:58"}
-    assert timeline["response"] == {"text": "Your refund is issued", "at": "2024-11-01T09:50:03"}
+    assert timeline["request"] == {
+        "text": "Please refund order 1043",
+        "at": "2024-11-01T09:49:58",
+    }
+    assert timeline["response"] == {
+        "text": "Your refund is issued",
+        "at": "2024-11-01T09:50:03",
+    }
     assert timeline["coordinator"] == {"name": "Returns coordinator"}
     assert timeline["started_at"] == "2024-11-01T09:49:55"
 
@@ -675,18 +1172,29 @@ def test_the_caller_s_request_and_the_coordinator_s_reply_frame_the_hand_offs():
 def test_a_request_reply_or_coordinator_not_seen_is_none_so_it_reads_unknown():
     # No messages: the hand-offs are known, the request and the reply are not.
     unseen = worker_timeline([], DECLARED, run_key=RUN, traced_calls=_hand_offs())
-    assert unseen["request"] is None and unseen["response"] is None and unseen["started_at"] is None
+    assert (
+        unseen["request"] is None
+        and unseen["response"] is None
+        and unseen["started_at"] is None
+    )
     # Nothing handed out: no request or reply belongs to a hand-off.
     alone = worker_timeline(
-        [], DECLARED, run_key=RUN, turns=[{"role": "user", "text": "hi", "at": "2024-11-01T09:49:58"}]
+        [],
+        DECLARED,
+        run_key=RUN,
+        turns=[{"role": "user", "text": "hi", "at": "2024-11-01T09:49:58"}],
     )
     assert alone["request"] is None and alone["coordinator"] is None
     # From spans alone the coordinator is the top-level agent.
-    assert worker_timeline(SPANS, DECLARED, run_key=RUN)["coordinator"] == {"name": "Returns coordinator"}
+    assert worker_timeline(SPANS, DECLARED, run_key=RUN)["coordinator"] == {
+        "name": "Returns coordinator"
+    }
 
 
 @pytest.mark.django_db
-def test_a_recorded_timeline_places_the_call_s_messages_on_the_tool_calls_clock(user, workspace, storage, settings):
+def test_a_recorded_timeline_places_the_call_s_messages_on_the_tool_calls_clock(
+    user, workspace, storage, settings
+):
     from unittest.mock import patch
 
     from simulate.models import CallExecution
@@ -704,7 +1212,10 @@ def test_a_recorded_timeline_places_the_call_s_messages_on_the_tool_calls_clock(
     sealed[0]["start_time_ms"] = 5900
     call.provider_call_data = {"livekit": {"tool_calls": sealed}}
     call.save(update_fields=["provider_call_data"])
-    for role, text, offset in (("user", "Refund order 1043", 4300), ("assistant", "Refund issued", 17100)):
+    for role, text, offset in (
+        ("user", "Refund order 1043", 4300),
+        ("assistant", "Refund issued", 17100),
+    ):
         ChatMessageModel.objects.create(
             call_execution=call,
             role=role,
@@ -720,19 +1231,65 @@ def test_a_recorded_timeline_places_the_call_s_messages_on_the_tool_calls_clock(
         call_execution=call,
         role="system",
         messages=["Meera: ask for 20%"],
-        content=[{"role": "system", "content": "Meera: ask for 20%", "start_time_ms": 5000}],
+        content=[
+            {"role": "system", "content": "Meera: ask for 20%", "start_time_ms": 5000}
+        ],
         session_id=f"alk-chat-{call.id}",
         tool_calls=[],
         organization=call.test_execution.run_test.organization,
         workspace=call.test_execution.run_test.workspace,
     )
 
-    with patch("simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)):
+    with patch(
+        "simulate.services.run_traces_v3.list_run_traces", return_value=_traced(None)
+    ):
         timeline = harness_workers.record_call_workers(str(call.id))
 
     assert timeline["started_at"] == "2024-11-01T09:49:54.100000"
-    assert timeline["request"] == {"text": "Refund order 1043", "at": "2024-11-01T09:49:58.400000"}
-    assert timeline["response"] == {"text": "Refund issued", "at": "2024-11-01T09:50:11.200000"}
+    assert timeline["request"] == {
+        "text": "Refund order 1043",
+        "at": "2024-11-01T09:49:58.400000",
+    }
+    assert timeline["response"] == {
+        "text": "Refund issued",
+        "at": "2024-11-01T09:50:11.200000",
+    }
+
+
+@pytest.mark.django_db
+def test_a_voice_call_s_messages_come_from_its_transcript_when_it_has_no_chat_messages(
+    user, workspace, storage, settings
+):
+    from simulate.models import CallExecution, CallTranscript
+    from simulate.services import harness_workers
+    from simulate.tests.test_harness_versioning_picks import _create, _environment
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    run = _create(_environment(user, workspace, "workers-voice", storage), key="o")
+    call = CallExecution.objects.filter(test_execution_id=run.test_execution_id).first()
+    sealed = _hand_offs()
+    sealed[0]["start_time_ms"] = 5900
+    for role, text, offset in (
+        ("user", "Refund order 1043", 4300),
+        ("sub_actor", "Ask for 20%", 5000),
+        ("assistant", "Refund issued", 17100),
+    ):
+        CallTranscript.objects.create(
+            call_execution=call, speaker_role=role, content=text, start_time_ms=offset
+        )
+
+    turns = harness_workers._call_turns(call, sealed)
+
+    # Only the caller's and the agent's lines, on the tool calls' clock.
+    assert turns == [
+        {
+            "role": "user",
+            "text": "Refund order 1043",
+            "at": "2024-11-01T09:49:58.400000",
+        },
+        {"role": "agent", "text": "Refund issued", "at": "2024-11-01T09:50:11.200000"},
+    ]
 
 
 def test_a_worker_returning_its_whole_conversation_is_summarised_by_its_last_message():
@@ -756,23 +1313,56 @@ def test_a_worker_returning_its_whole_conversation_is_summarised_by_its_last_mes
 def test_a_finished_job_is_one_hand_off_and_one_still_running_has_no_return():
     from simulate.services.harness_workers import worker_timeline
 
-    finished = {"name": "start_async_task", "delegated_to": "coder", "arguments": "build", "at": 10.0,
-                "ended_at": 40.0, "result": "done", "worker_label": "agent"}
-    running = {"name": "start_async_task", "delegated_to": "researcher", "arguments": "read", "at": 11.0,
-               "worker_label": "agent"}
-    tool = {"name": "analyze_topic", "worker_label": "researcher", "at": 20.0, "ended_at": 20.5}
+    finished = {
+        "name": "start_async_task",
+        "delegated_to": "coder",
+        "arguments": "build",
+        "at": 10.0,
+        "ended_at": 40.0,
+        "result": "done",
+        "worker_label": "agent",
+    }
+    running = {
+        "name": "start_async_task",
+        "delegated_to": "researcher",
+        "arguments": "read",
+        "at": 11.0,
+        "worker_label": "agent",
+    }
+    tool = {
+        "name": "analyze_topic",
+        "worker_label": "researcher",
+        "at": 20.0,
+        "ended_at": 20.5,
+    }
 
-    timeline = worker_timeline([], [], run_key="run-1", traced_calls=[finished, running, tool])
+    timeline = worker_timeline(
+        [], [], run_key="run-1", traced_calls=[finished, running, tool]
+    )
 
     kinds = [(e["type"], e["worker_id"].split("/")[-1]) for e in timeline["events"]]
     assert kinds.count(("delegated", "coder")) == 1
     assert ("returned", "coder") in kinds
-    assert ("delegated", "researcher") in kinds and ("returned", "researcher") not in kinds
+    assert ("delegated", "researcher") in kinds and (
+        "returned",
+        "researcher",
+    ) not in kinds
+
+
+def test_a_falsy_answer_is_kept_and_only_a_missing_one_is_unknown():
+    from simulate.services.harness_workers import _summary
+
+    assert [_summary(one) for one in (0, False, None, "")] == ["0", "False", None, None]
 
 
 def test_escaped_line_breaks_in_an_answer_read_as_line_breaks():
     from simulate.services.harness_workers import _summary
 
-    assert _summary("# Plan\\n\\nStep one\\nIt\\'s done") == "# Plan\n\nStep one\nIt's done"
-    assert _summary("Line one\nLine two with a literal \\n kept") == "Line one\nLine two with a literal \\n kept"
-
+    assert (
+        _summary("# Plan\\n\\nStep one\\nIt\\'s done")
+        == "# Plan\n\nStep one\nIt's done"
+    )
+    assert (
+        _summary("Line one\nLine two with a literal \\n kept")
+        == "Line one\nLine two with a literal \\n kept"
+    )

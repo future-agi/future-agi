@@ -1016,9 +1016,11 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
         "failure": None,
     }
     receipt["digest"] = canonical_digest(receipt)
-    with patch("simulate.tasks.alk_sim.record_call_workers.apply_async") as read_workers, patch(
-        "simulate.services.alk_simulate_ingestion._dispatch_csat_once"
-    ), django_capture_on_commit_callbacks(execute=True):
+    with (
+        patch("simulate.tasks.alk_sim.record_call_workers.apply_async") as read_workers,
+        patch("simulate.services.alk_simulate_ingestion._dispatch_csat_once"),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
         result = client.post(
             f"{BASE}/{capability.attempt.id}/results/",
             receipt,

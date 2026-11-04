@@ -59825,7 +59825,8 @@
                 },
                 "tags": [
                     "simulate"
-                ]
+                ],
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -142495,7 +142496,10 @@
                 "status": {
                     "title": "Status",
                     "type": "string",
-                    "minLength": 1
+                    "enum": [
+                        "ok",
+                        "error"
+                    ]
                 },
                 "input": {
                     "title": "Input",
@@ -142522,8 +142526,6 @@
                     "type": "string",
                     "enum": [
                         "reported",
-                        "bound",
-                        "conflict",
                         "unattributed"
                     ]
                 }

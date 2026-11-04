@@ -30,6 +30,7 @@ from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_evals import runnable_eval_config_ids
+from simulate.services.harness_workers import WORKERS_KEY
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
     OUTCOME_LABELS,
@@ -559,7 +560,7 @@ class CallWorkerSerializer(serializers.Serializer):
     worker_id = serializers.CharField()
     id = serializers.CharField()
     name = serializers.CharField()
-    # Declared names are not proof: true only when the worker's own spans arrived.
+    # Declared names are not proof: true only when the worker's own spans or tool calls arrived.
     observed = serializers.BooleanField()
     undeclared = serializers.BooleanField()
     instance_ids = serializers.ListField(child=serializers.CharField())
@@ -567,21 +568,23 @@ class CallWorkerSerializer(serializers.Serializer):
 
 class CallWorkerEventSerializer(serializers.Serializer):
     seq = serializers.IntegerField()
-    type = serializers.ChoiceField(choices=("delegated", "transferred", "tool_call", "returned"))
+    type = serializers.ChoiceField(
+        choices=("delegated", "transferred", "tool_call", "returned")
+    )
     worker_id = serializers.CharField(allow_null=True)
     by = serializers.CharField(allow_null=True, required=False)
     delegation_id = serializers.CharField(required=False)
     task = serializers.CharField(allow_null=True, required=False)
     result = serializers.CharField(allow_null=True, required=False)
     tool = serializers.CharField(required=False)
-    status = serializers.CharField(required=False)
+    status = serializers.ChoiceField(choices=("ok", "error"), required=False)
     # A tool call's arguments and result as recorded, cut with an ellipsis past 2,000 characters.
     input = serializers.JSONField(allow_null=True, required=False)
     output = serializers.JSONField(allow_null=True, required=False)
     # True when the record's size limit was reached before this step, so its input and output were not kept.
     payload_omitted = serializers.BooleanField(required=False)
     at = serializers.CharField(allow_null=True)
-    attribution = serializers.ChoiceField(choices=("reported", "bound", "conflict", "unattributed"))
+    attribution = serializers.ChoiceField(choices=("reported", "unattributed"))
 
 
 class CallWorkerCoordinatorSerializer(serializers.Serializer):
@@ -930,9 +933,13 @@ class CallExecutionV3DetailView(APIView):
 
 def _call_for_request(request, call_execution_id, calls=None) -> CallExecution:
     """One call the requester's organization and workspace may read, or 404."""
-    organization = getattr(request, "organization", None) or getattr(request.user, "organization", None)
+    organization = getattr(request, "organization", None) or getattr(
+        request.user, "organization", None
+    )
     return get_object_or_404(
-        calls if calls is not None else CallExecution.objects.select_related("test_execution__run_test"),
+        calls
+        if calls is not None
+        else CallExecution.objects.select_related("test_execution__run_test"),
         run_test_workspace_filter(request, "test_execution__run_test"),
         id=call_execution_id,
         test_execution__run_test__organization=organization,
@@ -945,7 +952,7 @@ class CallExecutionV3WorkersView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={
             200: CallWorkersResponseSerializer,
             204: "No hand-off to other agents was seen in this call, or its record is still arriving",
@@ -953,14 +960,11 @@ class CallExecutionV3WorkersView(APIView):
         operation_id="simulate_v3_call_execution_workers",
     )
     def get(self, request, call_execution_id, *args, **kwargs):
-        from simulate.services.harness_workers import WORKERS_KEY
-
         call = _call_for_request(request, call_execution_id)
         timeline = (call.call_metadata or {}).get(WORKERS_KEY)
         if not timeline:
-            # No hand-off to other agents was seen in this call, or its record is still arriving.
             return Response(status=status.HTTP_204_NO_CONTENT)
-        return Response(timeline)
+        return Response(CallWorkersResponseSerializer(timeline).data)
 
 
 class RunAnalyticsV3View(APIView):

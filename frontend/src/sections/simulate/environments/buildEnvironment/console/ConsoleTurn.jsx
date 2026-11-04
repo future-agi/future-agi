@@ -378,7 +378,7 @@ ToolStep.propTypes = { step: STEP_SHAPE };
 
 /* ── markdown prose ──────────────────────────────────────────────────────── */
 
-function Markdown({ text, dim }) {
+export function Markdown({ text, dim }) {
   return (
     <Box
       sx={{

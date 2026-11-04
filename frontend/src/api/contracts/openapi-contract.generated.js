@@ -32874,7 +32874,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       get: {
         operationId: "simulate_v3_call_execution_workers",
         runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {},
         responses: {
@@ -90451,7 +90451,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          minLength: 1,
+          enum: ["ok", "error"],
         },
         input: {
           title: "Input",
@@ -90476,7 +90476,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         attribution: {
           title: "Attribution",
           type: "string",
-          enum: ["reported", "bound", "conflict", "unattributed"],
+          enum: ["reported", "unattributed"],
         },
       },
     },

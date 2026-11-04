@@ -106,8 +106,8 @@ export default function ChatCallDrawer({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [hasNext, hasPrev, onNext, onPrev, shareOpen, traceOpen]);
   const [side, setSide] = useState("analytics");
-  const [chosenArtifact, setArtifact] = useState("transcript");
-  const hasWorkers = useHasWorkers(task.id);
+  const [chosenArtifact, setChosenArtifact] = useState("transcript");
+  const hasWorkers = useHasWorkers(task.id, task.completedAt);
   // The next call may have no Participants tab; the chosen one falls back to the transcript.
   const artifact =
     chosenArtifact === "workers" && !hasWorkers ? "transcript" : chosenArtifact;
@@ -192,7 +192,7 @@ export default function ChatCallDrawer({
         <Stack sx={{ flex: 1.15, minWidth: 0, borderRight: { md: "1px solid" }, borderColor: { md: "divider" } }}>
           <CustomTabs
             value={artifact}
-            onChange={(_, value) => setArtifact(value)}
+            onChange={(_, value) => setChosenArtifact(value)}
             sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider" }}
           >
             <Tab value="transcript" label="Transcript" />
@@ -351,6 +351,7 @@ ChatCallDrawer.propTypes = {
     tokens: PropTypes.number,
     durationMs: PropTypes.number,
     provider: PropTypes.string,
+    completedAt: PropTypes.string,
     evalResults: PropTypes.array,
   }).isRequired,
   executionId: PropTypes.string,
