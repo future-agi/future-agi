@@ -17,10 +17,13 @@ from simulate.serializers.harness_environment import (
     HarnessActorWriteSerializer,
     HarnessAgentCredentialsResponseSerializer,
     HarnessAgentVersionCreateSerializer,
-    HarnessCapabilityQuerySerializer,
+    HarnessCapabilityCasePageSerializer,
+    HarnessCapabilityCasesQuerySerializer,
     HarnessCapabilityRecheckResponseSerializer,
     HarnessCapabilityRecheckSerializer,
-    HarnessCapabilityReportSerializer,
+    HarnessCapabilitySelectionQuerySerializer,
+    HarnessCapabilitySelectionReportSerializer,
+    HarnessCapabilitySelectionSerializer,
     HarnessCompareQuerySerializer,
     HarnessCompareSerializer,
     HarnessDefaultMoveSerializer,
@@ -110,6 +113,13 @@ def _bound_by_name(run_test, name):
         if name == str(getattr(config.eval_template, "name", "") or ""):
             return config
     return None
+
+
+def _selection_report(job, picks, *, keys, trials):
+    from simulate.services.harness_readiness import resolve_pairing, selection_report
+
+    pairing = resolve_pairing(job, **picks)
+    return selection_report(pairing, keys=keys, trials=trials)
 
 
 def _uuid_or_none(value):
@@ -679,24 +689,61 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         return Response(nudge_item(_nudges(job).get(id=nudge.id)))
 
     @validated_request(
-        query_serializer=HarnessCapabilityQuerySerializer,
-        responses={200: HarnessCapabilityReportSerializer},
+        query_serializer=HarnessCapabilitySelectionQuerySerializer,
+        responses={200: HarnessCapabilitySelectionReportSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["get"], url_path="capabilities")
     def capabilities(self, request, pk=None):
-        """The run readiness of an agent, environment and suite pairing, computed now;
-        an absent id is the environment's default. No writes."""
-        from simulate.services.harness_readiness import (
-            readiness_report,
-            resolve_pairing,
-        )
+        """The run readiness of an agent, environment and suite pairing, computed now,
+        and the selected cases it holds back; an absent id is the environment's default
+        and absent keys select the whole suite. No writes."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        query = dict(request.validated_query_data)
+        keys = query.pop("keys", None)
+        trials = query.pop("trials")
+        return Response(_selection_report(job, query, keys=keys, trials=trials))
+
+    @validated_request(
+        request_serializer=HarnessCapabilitySelectionSerializer,
+        responses={200: HarnessCapabilitySelectionReportSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_select_capabilities",
+    )
+    @capabilities.mapping.post
+    def select_capabilities(self, request, pk=None):
+        """The same report for a selection too large for a query string. No writes."""
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = dict(request.validated_data)
+        keys = body.pop("scenario_ids")
+        trials = body.pop("trials")
+        return Response(_selection_report(job, body, keys=keys, trials=trials))
+
+    @validated_request(
+        query_serializer=HarnessCapabilityCasesQuerySerializer,
+        responses={200: HarnessCapabilityCasePageSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["get"], url_path="capabilities/cases")
+    def capability_cases(self, request, pk=None):
+        """One page, by scenario number, of the selected cases in a bucket or held
+        back by a row. No writes."""
+        from simulate.services.harness_readiness import case_page, resolve_pairing
 
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        pairing = resolve_pairing(job, **request.validated_query_data)
-        return Response(readiness_report(pairing))
+        query = dict(request.validated_query_data)
+        options = {
+            name: query.pop(name, None) for name in ("keys", "bucket", "row", "cursor")
+        }
+        trials = query.pop("trials")
+        pairing = resolve_pairing(job, **query)
+        return Response(case_page(pairing, trials=trials, **options))
 
     @validated_request(
         request_serializer=HarnessCapabilityRecheckSerializer,
