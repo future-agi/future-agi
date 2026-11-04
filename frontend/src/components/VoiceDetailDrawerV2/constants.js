@@ -22,3 +22,10 @@ export const LEFT_PANEL_TAB_SHAPE = PropTypes.shape({
   icon: PropTypes.string,
   content: PropTypes.node,
 });
+
+// How a sub-actor joins a call, as the transcript and the contract tab both name it.
+export const SUB_ACTOR_CHANNEL_LABELS = {
+  audio_mix: "Heard nearby",
+  audio_handoff: "Takes the phone",
+  ivr: "Phone menu",
+};

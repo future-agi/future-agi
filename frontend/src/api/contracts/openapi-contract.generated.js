@@ -90110,19 +90110,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         id: {
           title: "Id",
+          description: "The sub-actor's id in the environment.",
           type: "string",
-          minLength: 1,
         },
         name: {
           title: "Name",
+          description: "The name the transcript shows.",
           type: "string",
         },
         role: {
           title: "Role",
+          description: "Who they are to the caller.",
           type: "string",
         },
         channel: {
           title: "Channel",
+          description: "The channel id they joined the call on.",
           type: "string",
         },
       },

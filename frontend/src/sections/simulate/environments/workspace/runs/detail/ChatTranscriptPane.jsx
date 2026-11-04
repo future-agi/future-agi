@@ -112,16 +112,18 @@ export default function ChatTranscriptPane({ turns, customerName }) {
             sx={{
               borderLeft: "2px solid",
               // Each speaker keeps its own mark, so a tool call never reads as the customer.
-              borderColor:
+              borderColor: (t) =>
                 s.role === "agent"
-                  ? "text.secondary"
+                  ? t.palette.text.secondary
                   : s.role === "tool"
-                    ? "warning.main"
-                    : "text.disabled",
+                    ? t.palette.warning.main
+                    : s.role === "sub_actor"
+                      ? t.palette.data?.[2] || t.palette.text.disabled
+                      : t.palette.text.disabled,
               bgcolor:
                 s.role === "agent"
                   ? "action.hover"
-                  : s.role === "tool"
+                  : s.role === "tool" || s.role === "sub_actor"
                     ? "transparent"
                     : "background.neutral",
               px: 1.75,

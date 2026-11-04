@@ -51319,10 +51319,16 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
   ),
   sub_actors: zod.array(
     zod.object({
-      id: zod.string().min(1).optional(),
-      name: zod.string().optional(),
-      role: zod.string().optional(),
-      channel: zod.string().optional(),
+      id: zod
+        .string()
+        .optional()
+        .describe("The sub-actor's id in the environment."),
+      name: zod.string().optional().describe("The name the transcript shows."),
+      role: zod.string().optional().describe("Who they are to the caller."),
+      channel: zod
+        .string()
+        .optional()
+        .describe("The channel id they joined the call on."),
     }),
   ),
   scoring_status: zod.enum([

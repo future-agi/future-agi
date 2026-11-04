@@ -69,4 +69,20 @@ describe("ChatTranscriptPane", () => {
       getComputedStyle(customer).borderLeftColor,
     );
   });
+
+  it("marks a sub-actor's row apart from the customer's", () => {
+    render(
+      <ChatTranscriptPane
+        turns={[
+          { role: "customer", text: "One ride please" },
+          { role: "sub_actor", speakerName: "Rowan", text: "Make it two" },
+        ]}
+      />,
+    );
+    const customer = screen.getByText("One ride please").parentElement;
+    const other = screen.getByText("Make it two").parentElement;
+    expect(getComputedStyle(other).borderLeftColor).not.toBe(
+      getComputedStyle(customer).borderLeftColor,
+    );
+  });
 });
