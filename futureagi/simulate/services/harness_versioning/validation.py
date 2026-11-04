@@ -688,6 +688,16 @@ def _user(user_id: str | None) -> Any:
     return get_user_model().objects.filter(id=user_id).first()
 
 
+def failed_check(bundle: HarnessAssembledBundle | None) -> bool:
+    """Whether a validation failed the pairing: runs of it are refused until it is
+    checked again."""
+    return (
+        bundle is not None
+        and bundle.state == HarnessAssembledBundle.State.FAILED
+        and (bundle.error or {}).get("source") == FAILURE_SOURCE
+    )
+
+
 def require_pair_runnable(
     environment: HostedHarnessJob, resolved: ResolvedPins
 ) -> None:
@@ -711,10 +721,7 @@ def require_pair_runnable(
             "These versions are being checked together; run them when the check ends",
             status_code=409,
         )
-    if (
-        bundle.state == HarnessAssembledBundle.State.FAILED
-        and (bundle.error or {}).get("source") == FAILURE_SOURCE
-    ):
+    if failed_check(bundle):
         raise HostedHarnessError(
             "pair_failed",
             "These versions failed their check together; fix them and check again",

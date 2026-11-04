@@ -152,8 +152,8 @@ def _validation(
     pairing: Pairing, bundle: HarnessAssembledBundle | None
 ) -> validation.ValidationView:
     """Where the pairing's validation stands; a ready or failed bundle reads so even
-    where validation cannot run now. Only a check that ran fails a pairing: a bundle
-    an ordinary run failed for any other reason reads ``retry``."""
+    where validation cannot run now. Only a validation's failed check fails a pairing,
+    as the run gate reads it: a bundle an ordinary run failed reads ``retry``."""
     job = (
         HostedHarnessJob.no_workspace_objects.filter(
             assembled_bundle_id=bundle.id, payload__metadata__certify_only=True
@@ -167,7 +167,7 @@ def _validation(
     failed = bundle is not None and bundle.state == HarnessAssembledBundle.State.FAILED
     if certified(bundle):
         state = "ready"
-    elif failed and error.get("code") in validation.CHECK_FAILURES:
+    elif validation.failed_check(bundle):
         state = "failed"
     elif failed:
         state = "retry"
