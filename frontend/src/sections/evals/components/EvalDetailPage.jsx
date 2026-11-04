@@ -63,6 +63,8 @@ import EvalUsageTab from "./EvalUsageTab";
 import VersionBadge from "./VersionBadge";
 import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
+import CustomTagInput from "./CustomTagInput";
+import { withPendingTag } from "./tagUtils";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { useAuthContext } from "src/auth/hooks";
@@ -178,6 +180,7 @@ const EvalDetailPage = () => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [tags, setTags] = useState([]);
+  const [customTagInput, setCustomTagInput] = useState("");
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [templateFormat, setTemplateFormat] = useState(
@@ -393,7 +396,7 @@ const EvalDetailPage = () => {
               config.error_localizer_enabled ??
               false,
           );
-          setTags(evalData.tags || evalData.eval_tags || []);
+          setTags(evalData.tags);
           if (config.messages && config.messages.length > 0) {
             setMessages(config.messages);
           } else if (evalData.eval_type === "llm" && promptText) {
@@ -415,6 +418,8 @@ const EvalDetailPage = () => {
       // Load version config into the form
       isPopulatingRef.current = true;
       setViewingVersion(versionToLoad);
+      setTags(evalData.tags);
+      setCustomTagInput("");
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -650,7 +655,7 @@ const EvalDetailPage = () => {
             config.error_localizer_enabled ??
             false,
         );
-        setTags(evalData.tags || evalData.eval_tags || []);
+        setTags(evalData.tags);
         if (config.messages && config.messages.length > 0) {
           setMessages(config.messages);
         } else if (evalData.eval_type === "llm" && promptText) {
@@ -807,6 +812,7 @@ const EvalDetailPage = () => {
           ? { type: "custom", custom: "" }
           : { type: summaryType };
       const tools = build_tools_payload(connectorIds);
+      const tagsToSave = withPendingTag(tags, customTagInput);
       // Update the template first
       const payload = {
         instructions:
@@ -820,7 +826,7 @@ const EvalDetailPage = () => {
           Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
         multi_choice: multiChoice,
         description: description || null,
-        tags,
+        tags: tagsToSave,
         check_internet: checkInternet,
         mode: evalType === "agent" ? agentMode : undefined,
         tools: evalType === "agent" ? tools : undefined,
@@ -835,6 +841,8 @@ const EvalDetailPage = () => {
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
       };
       await updateEval.mutateAsync(payload);
+      setTags(tagsToSave);
+      setCustomTagInput("");
 
       // Build a config snapshot for the version so it captures the full state
       const configSnapshot = {
@@ -910,6 +918,7 @@ const EvalDetailPage = () => {
     multiChoice,
     description,
     tags,
+    customTagInput,
     checkInternet,
     agentMode,
     summaryType,
@@ -1813,6 +1822,23 @@ const EvalDetailPage = () => {
                         );
                       })()}
                     </Box>
+                    {!isSystemEval && (
+                      <CustomTagInput
+                        value={customTagInput}
+                        onChange={(next) => {
+                          setCustomTagInput(next);
+                          // Save is gated on isDirty, so typing has to count or
+                          // an uncommitted tag could never be saved.
+                          markDirty();
+                        }}
+                        onAdd={(newTag) => {
+                          setTags((prev) =>
+                            prev.includes(newTag) ? prev : [...prev, newTag],
+                          );
+                          markDirty();
+                        }}
+                      />
+                    )}
                   </Box>
                 )}
               </Box>
