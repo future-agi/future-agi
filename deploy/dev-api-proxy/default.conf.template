@@ -19,6 +19,11 @@ upstream dev_agentcc_gateway {
     server agentcc-gateway:8080 resolve;
 }
 
+map $http_upgrade $agentcc_connection {
+    default upgrade;
+    ""      "";
+}
+
 server {
     listen 8000;
     server_name _;
@@ -54,7 +59,8 @@ server {
         proxy_request_buffering off;
 
         proxy_http_version 1.1;
-        proxy_set_header Connection "";
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $agentcc_connection;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
