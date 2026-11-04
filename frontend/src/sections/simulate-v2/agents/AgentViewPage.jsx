@@ -671,12 +671,13 @@ export default function AgentViewPage() {
       <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1.5 }}>
         {fromEnv ? (
           <Button
+            variant="outlined"
             size="small"
             onClick={goBack}
             startIcon={
               <Iconify icon="solar:alt-arrow-left-linear" width={16} />
             }
-            sx={{ color: "text.secondary", flexShrink: 0, maxWidth: 220 }}
+            sx={{ flexShrink: 0, maxWidth: 220 }}
           >
             <Box
               component="span"

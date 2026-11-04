@@ -73,12 +73,12 @@ export default function PrivateUpdateBanner({ update, onTake, onSkip }) {
           action={
             <Stack direction="row" spacing={1}>
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => {
                   setOpen(false);
                   onSkip();
                 }}
-                sx={{ color: "text.secondary" }}
               >
                 {`Skip ${update.to}`}
               </Button>

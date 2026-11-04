@@ -729,13 +729,14 @@ function SubGoalDetail({
             </Label>
             {onGo && (
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => {
                   onClose();
                   onGo("scenarios");
                 }}
                 endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
-                sx={{ color: "text.secondary", minWidth: 0, mt: -0.5 }}
+                sx={{ minWidth: 0, mt: -0.5 }}
               >
                 Scenarios
               </Button>

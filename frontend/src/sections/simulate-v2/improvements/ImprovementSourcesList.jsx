@@ -570,13 +570,15 @@ export default function ImprovementSourcesList({ agent, run }) {
           </Typography>
           <Box flex={1} />
           <Button
+            variant="outlined"
             size="small"
             onClick={() => setSelectedIds([])}
-            sx={{ color: "text.secondary", minWidth: 0 }}
+            sx={{ minWidth: 0 }}
           >
             Clear
           </Button>
           <Button
+            variant="outlined"
             size="small"
             onClick={() => setConfirmDelete(true)}
             startIcon={

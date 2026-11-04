@@ -794,10 +794,10 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                     action={
                       edited ? (
                         <Button
+                          variant="outlined"
                           size="small"
                           onClick={() => setDiagEdits({})}
                           sx={{
-                            color: "text.secondary",
                             minWidth: 0,
                             flexShrink: 0,
                           }}

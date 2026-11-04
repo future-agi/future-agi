@@ -160,9 +160,10 @@ export default function EditEvalDrawer({
                         </Typography>
                         {!locked && (
                           <Button
+                            variant="outlined"
                             size="small"
                             onClick={() => toggle(variable)}
-                            sx={{ color: "text.secondary", minWidth: 0 }}
+                            sx={{ minWidth: 0 }}
                           >
                             {gone ? "Undo" : "Remove"}
                           </Button>

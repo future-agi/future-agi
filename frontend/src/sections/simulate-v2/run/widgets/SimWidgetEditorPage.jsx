@@ -680,13 +680,13 @@ export default function SimWidgetEditorPage() {
             </TruncatedTooltipText>
           ) : (
             <Button
+              variant="outlined"
               size="small"
               startIcon={<Iconify icon="solar:add-linear" width={14} />}
               onClick={() => setDescOpen(true)}
               sx={{
                 flexShrink: 0,
-                color: "text.disabled",
-                "&:hover": { color: "text.secondary" },
+                "&:hover": {},
               }}
             >
               Add description

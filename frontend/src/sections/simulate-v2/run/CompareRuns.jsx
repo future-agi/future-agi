@@ -643,12 +643,13 @@ export default function CompareRuns() {
               icon-only affordance was easy to miss, and this screen is a
               detour off the Runs list. */}
           <Button
+            variant="outlined"
             size="small"
             onClick={back}
             startIcon={
               <Iconify icon="solar:alt-arrow-left-linear" width={16} />
             }
-            sx={{ color: "text.secondary", flexShrink: 0, minWidth: 0 }}
+            sx={{ flexShrink: 0, minWidth: 0 }}
           >
             {from?.label ? `Back to ${from.label}` : "Back to runs"}
           </Button>
@@ -788,11 +789,11 @@ export default function CompareRuns() {
           ))}
           {(others.length > 0 || crossOthers.length > 0) && (
             <Button
+              variant="outlined"
               size="small"
               onClick={(e) => openAddMenu(e.currentTarget)}
               startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
               sx={{
-                color: "text.secondary",
                 border: "1px dashed",
                 borderColor: "divider",
               }}

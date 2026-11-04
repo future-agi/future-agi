@@ -88,9 +88,9 @@ export default function ScenarioOutcomes({ result, winner }) {
         )}
         <Box flex={1} />
         <Button
+          variant="outlined"
           size="small"
           onClick={() => setGrid((g) => !g)}
-          sx={{ color: "text.secondary" }}
         >
           {grid ? "Hide every run" : "Every run"}
         </Button>

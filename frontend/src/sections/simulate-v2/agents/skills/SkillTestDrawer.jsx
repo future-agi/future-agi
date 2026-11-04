@@ -522,6 +522,7 @@ export default function SkillTestDrawer({
               {summary.regressions.length > 0 ||
               summary.verdict === "no_gain" ? (
                 <Button
+                  variant="outlined"
                   size="small"
                   color="inherit"
                   onClick={() => onDecide("improve", { test })}
@@ -530,6 +531,7 @@ export default function SkillTestDrawer({
                 </Button>
               ) : null}
               <Button
+                variant="outlined"
                 size="small"
                 color="inherit"
                 onClick={() => onDecide("remove", { test })}

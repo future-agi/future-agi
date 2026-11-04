@@ -335,6 +335,7 @@ export default function ProductionReplayImport({
           )}
           {!queue.running && !finished && (
             <Button
+              variant="outlined"
               size="small"
               onClick={() => setQueue((q) => ({ ...q, running: true }))}
               sx={{ color: "text.primary" }}
@@ -535,9 +536,10 @@ export default function ProductionReplayImport({
             Back
           </Button>
           <Button
+            variant="outlined"
             size="small"
             onClick={saveDraft}
-            sx={{ color: "text.secondary", mr: "auto" }}
+            sx={{ mr: "auto" }}
           >
             Save as draft import
           </Button>
@@ -593,6 +595,7 @@ export default function ProductionReplayImport({
               .map((id) => [id, EVIDENCE_KINDS[id]])
               .map(([id, k]) => (
                 <Button
+                  variant="outlined"
                   key={id}
                   size="small"
                   onClick={() => {
@@ -683,6 +686,7 @@ export default function ProductionReplayImport({
             : `${traces.length} ${noun}${traces.length === 1 ? "" : "s"}${src === "observe" ? " in this range" : ""}`}
         </Typography>
         <Button
+          variant="outlined"
           size="small"
           disabled={traces.every((c) => picked[c.id])}
           onClick={() =>
@@ -691,7 +695,7 @@ export default function ProductionReplayImport({
           sx={{
             color: "primary.main",
             minWidth: 0,
-            "&.Mui-disabled": { color: "text.disabled" },
+            "&.Mui-disabled": {},
           }}
         >
           {`Select all ${traces.length} matching`}

@@ -190,6 +190,7 @@ export default function CompareVerdict({
           </Typography>
           {onShowMustPass && (
             <Button
+              variant="outlined"
               size="small"
               onClick={onShowMustPass}
               sx={{ color: "text.primary", flexShrink: 0 }}

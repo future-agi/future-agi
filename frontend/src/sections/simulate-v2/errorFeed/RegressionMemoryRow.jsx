@@ -62,9 +62,10 @@ export default function RegressionMemoryRow({ issue }) {
           {`${plural(memory.kept.length, "scenario", "scenarios")} from this issue ${memory.kept.length === 1 ? "is" : "are"} must-pass in ${envName} — a change that fails ${memory.kept.length === 1 ? "it" : "one"} again is rejected.`}
         </Typography>
         <Button
+          variant="outlined"
           size="small"
           onClick={openScenarios}
-          sx={{ color: "text.secondary", flexShrink: 0 }}
+          sx={{ flexShrink: 0 }}
         >
           View scenarios
         </Button>

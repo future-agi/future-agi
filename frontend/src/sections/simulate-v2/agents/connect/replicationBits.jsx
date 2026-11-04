@@ -491,9 +491,10 @@ export function EndpointConsent({
                 </HintLine>
               </Typography>
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => onChange({ ...value, webhookAt: null })}
-                sx={{ color: "text.secondary", minWidth: 0 }}
+                sx={{ minWidth: 0 }}
               >
                 Remove
               </Button>

@@ -591,6 +591,7 @@ function LiveRun() {
       autoHideDuration: 9000,
       action: (key) => (
         <Button
+          variant="outlined"
           size="small"
           color="inherit"
           onClick={() => {

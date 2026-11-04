@@ -93,6 +93,7 @@ export default function UseInEnvironmentDialog({
         variant: "success",
         action: () => (
           <Button
+            variant="outlined"
             size="small"
             onClick={() =>
               navigate(

@@ -121,6 +121,7 @@ export default function PrVerifyCheck({ pr, now }) {
             </Typography>
             {runs.length > 1 && (
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => setOpen((o) => !o)}
                 endIcon={
@@ -139,13 +140,19 @@ export default function PrVerifyCheck({ pr, now }) {
               </Button>
             )}
             {pr.status === "open" && settled && status === "failed" && (
-              <Button size="small" onClick={() => rerunCheck(pr)} sx={LINK}>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => rerunCheck(pr)}
+                sx={LINK}
+              >
                 Re-run
               </Button>
             )}
             {/* No GitHub on the other end — this stands in for someone pushing to the branch. */}
             {demo && pr.status === "open" && settled && (
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => simulatePush(pr)}
                 sx={{ ...LINK, color: "text.subtitle" }}

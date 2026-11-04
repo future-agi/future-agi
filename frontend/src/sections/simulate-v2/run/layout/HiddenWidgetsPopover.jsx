@@ -191,10 +191,10 @@ export default function HiddenWidgetsPopover({ anchorEl, onClose, layout }) {
           </Stack>
         ) : (
           <Button
+            variant="outlined"
             size="small"
             onClick={() => setConfirmReset(true)}
             startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
-            sx={{ color: "text.secondary" }}
           >
             Reset layout
           </Button>

@@ -268,9 +268,10 @@ export default function DescribeFlowStep({
                   {hasResult && (
                     <>
                       <Button
+                        variant="outlined"
                         size="small"
                         onClick={handleReject}
-                        sx={{ color: "text.secondary", minWidth: 0 }}
+                        sx={{ minWidth: 0 }}
                       >
                         Reject
                       </Button>

@@ -223,6 +223,7 @@ export default function SettingsPanel({
               >
                 <span>
                   <Button
+                    variant="outlined"
                     size="small"
                     disabled={!pending.length}
                     onClick={() =>
@@ -234,7 +235,6 @@ export default function SettingsPanel({
                     startIcon={
                       <Iconify icon="solar:add-circle-linear" width={16} />
                     }
-                    sx={{ color: "text.secondary" }}
                   >
                     New version
                   </Button>
@@ -337,12 +337,13 @@ export default function SettingsPanel({
                     caller. RollbackDialog says what moves first. */}
                   {!v.current && !locked && (
                     <Button
+                      variant="outlined"
                       size="small"
                       onClick={() => setRestoring(v.label)}
                       startIcon={
                         <Iconify icon="solar:history-linear" width={14} />
                       }
-                      sx={{ color: "text.secondary", flexShrink: 0 }}
+                      sx={{ flexShrink: 0 }}
                     >
                       Roll back
                     </Button>
@@ -1312,15 +1313,16 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
               Save & re-resolve
             </Button>
             <Button
+              variant="outlined"
               size="small"
               disabled={!dirty}
               onClick={() => setSeedPrompt(backing.seedPrompt || "")}
-              sx={{ color: "text.secondary" }}
             >
               Discard
             </Button>
             <Box flex={1} />
             <Button
+              variant="outlined"
               size="small"
               onClick={() => setShowJson((v) => !v)}
               startIcon={
@@ -1333,7 +1335,6 @@ function TwinConfigSection({ backing, envState, patch, locked = false }) {
                   width={12}
                 />
               }
-              sx={{ color: "text.secondary" }}
             >
               {showJson ? "Hide resolved JSON" : "View resolved JSON"}
             </Button>

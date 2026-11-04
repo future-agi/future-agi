@@ -1774,6 +1774,7 @@ function PanelRunningAgent() {
       {agentType === "chat" && (
         <Box>
           <Button
+            variant="outlined"
             size="small"
             onClick={() => setShowPrompt((o) => !o)}
             startIcon={
@@ -1786,7 +1787,6 @@ function PanelRunningAgent() {
                 width={12}
               />
             }
-            sx={{ color: "text.secondary" }}
           >
             {showPrompt
               ? "Hide system prompt override"

@@ -891,6 +891,7 @@ export default function RunPlanDialog({
               </Typography>
             </Stack>
             <Button
+              variant="outlined"
               size="small"
               onClick={() => setShowLimits((v) => !v)}
               aria-expanded={showLimits}
@@ -904,7 +905,7 @@ export default function RunPlanDialog({
                   width={14}
                 />
               }
-              sx={{ px: 0.5, ml: -0.5, mt: 0.25, color: "text.secondary" }}
+              sx={{ px: 0.5, ml: -0.5, mt: 0.25 }}
             >
               {showLimits ? "Hide limits" : "Change limits"}
             </Button>
@@ -1053,6 +1054,7 @@ export default function RunPlanDialog({
                   </Typography>
                 )}
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={() => setShowBreakdown((v) => !v)}
                   aria-expanded={showBreakdown}
@@ -1066,7 +1068,7 @@ export default function RunPlanDialog({
                       width={14}
                     />
                   }
-                  sx={{ px: 0.5, ml: -0.5, mt: 0.25, color: "text.secondary" }}
+                  sx={{ px: 0.5, ml: -0.5, mt: 0.25 }}
                 >
                   {showBreakdown ? "Hide breakdown" : "Show breakdown"}
                 </Button>

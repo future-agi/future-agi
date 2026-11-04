@@ -787,9 +787,10 @@ function TokenRow({ agent, conn, onRotate }) {
         }
       >
         <Button
+          variant="outlined"
           size="small"
           onClick={onRotate}
-          sx={{ color: "text.secondary", minWidth: 0 }}
+          sx={{ minWidth: 0 }}
         >
           {conn.token ? "Rotate" : "Switch to a scoped token"}
         </Button>

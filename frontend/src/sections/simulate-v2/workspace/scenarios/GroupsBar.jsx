@@ -89,17 +89,23 @@ export default function GroupsBar({
         </ButtonBase>
       ))}
       {!readOnly && (
-        <ButtonBase
+        <Button
+          size="small"
+          variant="outlined"
           onClick={(e) => setNewAnchor(e.currentTarget)}
+          startIcon={<Iconify icon="mingcute:add-line" width={14} />}
           sx={{
-            ...pill(false),
-            borderStyle: "dashed",
-            color: "text.secondary",
+            height: 24,
+            px: 1,
+            typography: "s3",
+            color: "text.primary",
+            borderColor: "divider",
+            flexShrink: 0,
+            "& .MuiButton-startIcon": { mr: 0.5 },
           }}
         >
-          <Iconify icon="solar:add-circle-linear" width={12} />
           New suite
-        </ButtonBase>
+        </Button>
       )}
       <Box flex={1} />
       {current && (
@@ -162,7 +168,7 @@ export default function GroupsBar({
               setNewAnchor(null);
             }}
           >
-            Create group
+            Create suite
           </Button>
         </Stack>
       </Popover>

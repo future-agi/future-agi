@@ -88,6 +88,7 @@ export default function RunInsightsTab({
             Insights
           </Typography>
           <Button
+            variant="outlined"
             size="small"
             startIcon={<Iconify icon="solar:add-linear" width={14} />}
             onClick={() => setBuilding({ template: "failures" })}

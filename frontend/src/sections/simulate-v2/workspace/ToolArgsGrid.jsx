@@ -132,9 +132,10 @@ function ArgCells({ arg, changedIn, onEdit }) {
       </Stack>
       {onEdit ? (
         <Button
+          variant="outlined"
           size="small"
           onClick={onEdit}
-          sx={{ minWidth: 0, color: "text.secondary" }}
+          sx={{ minWidth: 0 }}
         >
           Edit
         </Button>

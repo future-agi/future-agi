@@ -855,10 +855,10 @@ function Scoreboard({ insights, onFilter }) {
       {view === "goals" && insights.goals.length > GOALS_SHOWN && (
         <Box sx={{ px: 2.5, py: 1 }}>
           <Button
+            variant="outlined"
             size="small"
             aria-expanded={all}
             onClick={() => setAll((v) => !v)}
-            sx={{ color: "text.secondary" }}
           >
             {all
               ? "Show the worst 8"

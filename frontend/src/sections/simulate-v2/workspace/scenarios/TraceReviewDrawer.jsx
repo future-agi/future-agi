@@ -695,6 +695,7 @@ export default function TraceReviewDrawer({
                     }}
                   />
                   <Button
+                    variant="outlined"
                     size="small"
                     disabled={!rejecting.trim()}
                     onClick={() => {
@@ -702,7 +703,6 @@ export default function TraceReviewDrawer({
                       setRejecting("");
                       setOpenId(null);
                     }}
-                    sx={{ color: "text.secondary" }}
                   >
                     Reject draft
                   </Button>

@@ -112,11 +112,7 @@ export function GoldenSetManager({ tasks, env }) {
             </Button>
           )}
           {ids.length > 0 && (
-            <Button
-              size="small"
-              onClick={clear}
-              sx={{ color: "text.tertiary" }}
-            >
+            <Button variant="outlined" size="small" onClick={clear}>
               Clear all
             </Button>
           )}

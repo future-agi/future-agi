@@ -264,6 +264,7 @@ export default function TemplateBuildPanel({
           <Box flex={1} />
           {/* The other way: write scenarios for this agent — a fork that doesn't compare. */}
           <Button
+            variant="outlined"
             size="small"
             color="inherit"
             disabled={!agent || !!blocked}
@@ -271,7 +272,7 @@ export default function TemplateBuildPanel({
               setAdapt(true);
               setDialogOpen(true);
             }}
-            sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
+            sx={{ whiteSpace: "nowrap" }}
           >
             Adapt scenarios to my agent
           </Button>

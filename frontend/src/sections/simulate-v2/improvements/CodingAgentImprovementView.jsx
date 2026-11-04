@@ -70,10 +70,11 @@ export default function CodingAgentImprovementView({
     >
       <Box sx={{ mb: 2, flexShrink: 0 }}>
         <Button
+          variant="outlined"
           size="small"
           onClick={onBack}
           startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
-          sx={{ color: "text.secondary", ml: -0.75, mb: 0.75, minWidth: 0 }}
+          sx={{ ml: -0.75, mb: 0.75, minWidth: 0 }}
         >
           {`Back to ${backLabel}`}
         </Button>

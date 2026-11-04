@@ -727,9 +727,10 @@ export default function FixStartDialog({
                 title={`Runs the issue's ${drafts.length} ${drafts.length === 1 ? "scenario" : "scenarios"} now, ${runRepeats} times each — no fix is tried. They join ${main?.name || "the environment"} only if you add them from the run.`}
               >
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={reproduceOnly}
-                  sx={{ color: "text.secondary", ml: -1 }}
+                  sx={{ ml: -1 }}
                 >
                   {`Run scenarios only${runPrice != null ? ` · ≈ ${Math.round(runPrice).toLocaleString()} credits` : ""}`}
                 </Button>

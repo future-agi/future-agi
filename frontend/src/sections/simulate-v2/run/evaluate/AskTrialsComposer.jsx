@@ -199,6 +199,7 @@ export default function AskTrialsComposer({
         {questions.length < MAX_QUESTIONS && (
           <Stack direction="row" alignItems="center" spacing={1}>
             <Button
+              variant="outlined"
               size="small"
               startIcon={<Iconify icon="solar:add-linear" width={14} />}
               onClick={() => setQuestions((qs) => [...qs, blank()])}

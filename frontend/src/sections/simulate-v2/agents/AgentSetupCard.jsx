@@ -569,6 +569,7 @@ export default function AgentSetupCard({
         {/* A pending project is settled from here — hiding it would leave nothing to listen with. */}
         {!foundNeeded && !pending && (
           <Button
+            variant="outlined"
             size="small"
             onClick={() =>
               onSaveValues(
@@ -576,7 +577,7 @@ export default function AgentSetupCard({
                 "Hidden — everything here is still on the agent's tabs.",
               )
             }
-            sx={{ color: "text.secondary", minWidth: 0 }}
+            sx={{ minWidth: 0 }}
           >
             Hide
           </Button>
@@ -876,9 +877,10 @@ export default function AgentSetupCard({
             : "Constraints: safe defaults — prompts and tool descriptions only, model locked, no cost increase."}
         </Typography>
         <Button
+          variant="outlined"
           size="small"
           onClick={() => onTab("constraints")}
-          sx={{ color: "text.secondary", minWidth: 0, flexShrink: 0 }}
+          sx={{ minWidth: 0, flexShrink: 0 }}
         >
           Review
         </Button>
@@ -945,11 +947,7 @@ function PathCell({ eyebrow, title, body, unlocks, done, action, secondary }) {
             </Button>
           </Tooltip>
           {secondary && (
-            <Button
-              size="small"
-              onClick={secondary.onClick}
-              sx={{ color: "text.secondary" }}
-            >
+            <Button variant="outlined" size="small" onClick={secondary.onClick}>
               {secondary.label}
             </Button>
           )}

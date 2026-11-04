@@ -486,7 +486,12 @@ export default function AgentVersionCard({
               envState={envState}
               version={card.newest}
             />
-            <Button size="small" onClick={() => setKeepHere(true)} sx={quiet}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setKeepHere(true)}
+              sx={quiet}
+            >
               Keep updating this one
             </Button>
           </Stack>

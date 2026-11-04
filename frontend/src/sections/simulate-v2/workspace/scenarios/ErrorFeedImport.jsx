@@ -263,9 +263,9 @@ export default function ErrorFeedImport({
           )}
           {allIssues.length > 0 && (
             <Button
+              variant="outlined"
               size="small"
               onClick={() => setScope("all")}
-              sx={{ color: "text.secondary" }}
             >
               {`Browse every project (${allIssues.length})`}
             </Button>
@@ -422,6 +422,7 @@ export default function ErrorFeedImport({
           )}
         </Typography>
         <Button
+          variant="outlined"
           size="small"
           onClick={selectAll}
           disabled={
@@ -433,16 +434,17 @@ export default function ErrorFeedImport({
           sx={{
             color: "primary.main",
             minWidth: 0,
-            "&.Mui-disabled": { color: "text.disabled" },
+            "&.Mui-disabled": {},
           }}
         >
           Select all
         </Button>
         {chosen.length > 0 && (
           <Button
+            variant="outlined"
             size="small"
             onClick={clear}
-            sx={{ color: "text.secondary", minWidth: 0, ml: 0.5 }}
+            sx={{ minWidth: 0, ml: 0.5 }}
           >
             Clear
           </Button>
@@ -866,6 +868,7 @@ function IssueTableRow({ issue, pickedMap, isAdded, onToggle, onToggleCase }) {
               {/* The way back to the issue itself — the traces, trends and analysis. */}
               <Box>
                 <Button
+                  variant="outlined"
                   size="small"
                   component={RouterLink}
                   to={paths.dashboard.errorFeed.detail(c.id)}
@@ -874,7 +877,7 @@ function IssueTableRow({ issue, pickedMap, isAdded, onToggle, onToggleCase }) {
                   endIcon={
                     <Iconify icon="solar:arrow-right-up-linear" width={14} />
                   }
-                  sx={{ color: "text.secondary", ml: -0.75 }}
+                  sx={{ ml: -0.75 }}
                 >
                   {`Open ${c.id} in the Error Feed`}
                 </Button>

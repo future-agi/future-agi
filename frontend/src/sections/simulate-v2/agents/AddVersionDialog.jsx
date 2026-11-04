@@ -281,6 +281,7 @@ export default function AddVersionDialog({
         autoHideDuration: 8000,
         action: () => (
           <Button
+            variant="outlined"
             size="small"
             onClick={() => openNudgesIn(navigate, said.envs[0].id)}
             sx={{ color: "inherit" }}

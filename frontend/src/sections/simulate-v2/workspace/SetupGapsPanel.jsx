@@ -223,11 +223,11 @@ export function BlockingGapsInline({
      carries the way to every input. */
   const allInputs = (
     <Button
+      variant="outlined"
       size="small"
       onClick={() => openGapsInbox()}
       endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
       sx={{
-        color: "text.secondary",
         flexShrink: 0,
         whiteSpace: "nowrap",
         minWidth: 0,
@@ -800,6 +800,7 @@ function GapCard({
                 )}
                 {gap.ask && (
                   <Button
+                    variant="outlined"
                     size="small"
                     onClick={() => follow(gap.ask)}
                     endIcon={

@@ -567,9 +567,9 @@ export default function ImprovementRunsView({
                 </DialogContent>
                 <DialogActions sx={{ px: 3, pb: 2.5 }}>
                   <Button
+                    variant="outlined"
                     size="small"
                     onClick={() => setStopAsk(false)}
-                    sx={{ color: "text.secondary" }}
                   >
                     Keep running
                   </Button>
@@ -999,9 +999,10 @@ export default function ImprovementRunsView({
             </Typography>
             {selected.length > 0 && (
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => setSelected([])}
-                sx={{ color: "text.secondary", minWidth: 0 }}
+                sx={{ minWidth: 0 }}
               >
                 Clear
               </Button>
@@ -1027,6 +1028,7 @@ export default function ImprovementRunsView({
               </Button>
             ) : selected.length === 0 && baselineRow && patch ? (
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => setBaseline(null)}
                 startIcon={<Iconify icon="solar:close-linear" width={14} />}
@@ -1813,6 +1815,7 @@ function Verdict({ outcome, result, targetNow }) {
                 .join(" · ")}
             </Typography>
             <Button
+              variant="outlined"
               size="small"
               onClick={() => setAllChecks((o) => !o)}
               endIcon={
@@ -1825,7 +1828,7 @@ function Verdict({ outcome, result, targetNow }) {
                   width={12}
                 />
               }
-              sx={{ color: "text.secondary", flexShrink: 0, minWidth: 0 }}
+              sx={{ flexShrink: 0, minWidth: 0 }}
             >
               {allChecks ? "Hide" : "Show all"}
             </Button>

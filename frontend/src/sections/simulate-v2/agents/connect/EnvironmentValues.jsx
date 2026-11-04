@@ -200,6 +200,7 @@ export default function EnvironmentValues({
           )}
         </Typography>
         <Button
+          variant="outlined"
           size="small"
           onClick={() => setPasting((o) => !o)}
           startIcon={<Iconify icon="solar:clipboard-text-linear" width={12} />}
@@ -208,6 +209,7 @@ export default function EnvironmentValues({
           Paste .env
         </Button>
         <Button
+          variant="outlined"
           size="small"
           onClick={() => envFileRef.current?.click()}
           startIcon={<Iconify icon="solar:upload-linear" width={12} />}
@@ -472,6 +474,7 @@ export default function EnvironmentValues({
             "Credential file: Google service-account JSON only, up to 5 MiB."}
         </Typography>
         <Button
+          variant="outlined"
           size="small"
           onClick={() => fileRef.current?.click()}
           startIcon={<Iconify icon="solar:upload-linear" width={12} />}

@@ -4132,6 +4132,7 @@ function SystemBanners({ env, envState, patch }) {
             {envLabelOf(env, envState, active.label)}, not on the latest world.
           </Typography>
           <Button
+            variant="outlined"
             size="small"
             onClick={() => patch({ activeEnvVersion: newest.label })}
             sx={{ color: "text.primary", flexShrink: 0 }}

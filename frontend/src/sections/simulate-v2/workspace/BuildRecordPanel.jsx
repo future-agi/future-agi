@@ -314,6 +314,7 @@ export default function BuildRecordPanel({ env, envState, patch }) {
               </Typography>
               {r.held && (
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={() => (decided(r.id) ? undo(r.id) : undefined)}
                   disabled={!decided(r.id)}

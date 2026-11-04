@@ -353,6 +353,7 @@ export default function WidgetEditor({
                   </Typography>
                   <Box sx={{ flex: 1 }} />
                   <Button
+                    variant="outlined"
                     size="small"
                     onClick={addFilter}
                     startIcon={
@@ -572,7 +573,12 @@ function FilterRow({ value, ctx, onChange, onRemove }) {
           justifyContent: "flex-end",
         }}
       >
-        <Button size="small" color="error" onClick={onRemove}>
+        <Button
+          variant="outlined"
+          size="small"
+          color="error"
+          onClick={onRemove}
+        >
           Remove filter
         </Button>
       </Box>

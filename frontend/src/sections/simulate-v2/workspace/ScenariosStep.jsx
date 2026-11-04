@@ -911,6 +911,7 @@ export default function ScenariosStep({
         variant: "success",
         action: (key) => (
           <Button
+            variant="outlined"
             size="small"
             onClick={() => {
               closeSnackbar(key);
@@ -1048,6 +1049,7 @@ export default function ScenariosStep({
       autoHideDuration: 6000,
       action: (id) => (
         <Button
+          variant="outlined"
           size="small"
           sx={{ color: "common.white" }}
           onClick={() => {
@@ -1143,6 +1145,7 @@ export default function ScenariosStep({
       autoHideDuration: 6000,
       action: (id) => (
         <Button
+          variant="outlined"
           size="small"
           sx={{ color: "common.white" }}
           onClick={() => {
@@ -2286,13 +2289,14 @@ export default function ScenariosStep({
                 {`${shown.length} of ${selected.length} scenarios${hiddenCount > 0 ? ` · ${hiddenCount} group${hiddenCount === 1 ? "" : "s"} hidden` : ""}`}
               </Typography>
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => {
                   setQuery("");
                   setHiddenGroupIds([]);
                   setFilters({});
                 }}
-                sx={{ color: "text.secondary", minWidth: 0 }}
+                sx={{ minWidth: 0 }}
               >
                 {hiddenCount > 0 && !q && !filterCount ? "Show all" : "Clear"}
               </Button>
@@ -3216,11 +3220,7 @@ function ScenarioFilterMenu({
           >
             {totalSelected} selected
           </Typography>
-          <Button
-            size="small"
-            onClick={onClearAll}
-            sx={{ color: "text.secondary" }}
-          >
+          <Button variant="outlined" size="small" onClick={onClearAll}>
             Clear all
           </Button>
         </Stack>
@@ -3469,6 +3469,7 @@ function UseCaseFilterPopover({
         sx={{ px: 2, py: 1, borderTop: "1px solid", borderColor: "divider" }}
       >
         <Button
+          variant="outlined"
           size="small"
           onClick={() => onChange([])}
           disabled={selected.length === 0}

@@ -259,12 +259,12 @@ export function TagsGroupsManager({
               sx={{ typography: "s3", color: "text.tertiary" }}
             >{`${g.ids.length} scenario${g.ids.length === 1 ? "" : "s"}`}</Typography>
             <Button
+              variant="outlined"
               size="small"
               onClick={() => {
                 onShowGroup?.(g.name);
                 onClose();
               }}
-              sx={{ color: "text.secondary" }}
             >
               Show
             </Button>

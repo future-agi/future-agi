@@ -270,6 +270,7 @@ export function FactRow({
             </Stack>
           ) : (
             <Button
+              variant="outlined"
               size="small"
               onClick={onConfirm}
               sx={{ color: "text.primary", minWidth: 0 }}

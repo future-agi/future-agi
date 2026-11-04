@@ -27,26 +27,29 @@ export default function TestConditionRow({
 
   if (!editing)
     return (
-      <Stack direction="row" alignItems="center" spacing={1}>
-        <Typography className="sd-val" sx={{ flex: 1, minWidth: 0 }}>
-          {current
-            ? `${conditionLabelOf(current)} — injected on every run of this scenario`
-            : "Tools behave normally"}
-        </Typography>
-        {!locked && onChange && (
-          <Button
-            size="small"
-            disabled={!support.ok || !tools.length}
-            title={
-              support.reason ||
-              (!tools.length ? "This scenario uses no tools" : "")
-            }
-            onClick={() => setEditing(true)}
-            sx={{ color: "text.secondary", minWidth: 0 }}
-          >
-            {current ? "Change" : "Add a condition"}
-          </Button>
-        )}
+      <Stack spacing={0.5}>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Typography className="sd-val" sx={{ flex: 1, minWidth: 0 }}>
+            {current
+              ? `${conditionLabelOf(current)} — injected on every run of this scenario`
+              : "Tools behave normally"}
+          </Typography>
+          {!locked && onChange && (
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={!support.ok || !tools.length}
+              title={
+                support.reason ||
+                (!tools.length ? "This scenario uses no tools" : "")
+              }
+              onClick={() => setEditing(true)}
+              sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+            >
+              {current ? "Change" : "Add a condition"}
+            </Button>
+          )}
+        </Stack>
         {!support.ok && (
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
             {support.reason}
@@ -97,13 +100,13 @@ export default function TestConditionRow({
       </Button>
       {current && (
         <Button
+          variant="outlined"
           size="small"
           onClick={() => {
             const { testCondition, ...rest } = row; // eslint-disable-line no-unused-vars
             onChange(rest);
             setEditing(false);
           }}
-          sx={{ color: "text.secondary" }}
         >
           Remove
         </Button>

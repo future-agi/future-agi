@@ -66,10 +66,11 @@ function Decision({ decision, rejectable, restorable, onDecide }) {
           Accepted
         </Typography>
         <Button
+          variant="outlined"
           size="small"
           color="inherit"
           onClick={() => onDecide(null)}
-          sx={{ minWidth: 0, color: "text.tertiary" }}
+          sx={{ minWidth: 0 }}
         >
           Change
         </Button>
@@ -89,11 +90,12 @@ function Decision({ decision, rejectable, restorable, onDecide }) {
         <Tooltip arrow title={restorable.ok ? "" : restorable.why}>
           <span>
             <Button
+              variant="outlined"
               size="small"
               color="inherit"
               disabled={!restorable.ok}
               onClick={() => onDecide(null)}
-              sx={{ minWidth: 0, color: "text.tertiary" }}
+              sx={{ minWidth: 0 }}
             >
               Restore
             </Button>
@@ -361,10 +363,11 @@ export default function ReviewChangesDrawer({
               {dismissed.length > 0 && (
                 <Box>
                   <Button
+                    variant="outlined"
                     size="small"
                     color="inherit"
                     onClick={() => setShowDismissed((v) => !v)}
-                    sx={{ minWidth: 0, color: "text.tertiary", px: 0 }}
+                    sx={{ minWidth: 0, px: 0 }}
                   >
                     {`${dismissed.length} dismissed · ${showDismissed ? "Hide" : "Show"}`}
                   </Button>
@@ -390,10 +393,11 @@ export default function ReviewChangesDrawer({
                           </Typography>
                           {canEdit && (
                             <Button
+                              variant="outlined"
                               size="small"
                               color="inherit"
                               onClick={() => setDismissed(f.id, false)}
-                              sx={{ minWidth: 0, color: "text.secondary" }}
+                              sx={{ minWidth: 0 }}
                             >
                               Bring back
                             </Button>
@@ -501,12 +505,12 @@ export default function ReviewChangesDrawer({
                               </Typography>
                             </Box>
                             <Button
+                              variant="outlined"
                               size="small"
                               color="inherit"
                               onClick={() => goSource(link, g.tab, c)}
                               sx={{
                                 minWidth: 0,
-                                color: "text.secondary",
                                 flexShrink: 0,
                               }}
                             >
@@ -632,10 +636,11 @@ export default function ReviewChangesDrawer({
                       {`These change what's graded, so ${names.length} scenario${names.length === 1 ? "" : "s"} get rechecked when you save`}
                     </Typography>
                     <Button
+                      variant="outlined"
                       size="small"
                       color="inherit"
                       onClick={() => setShowNames((v) => !v)}
-                      sx={{ minWidth: 0, color: "text.secondary" }}
+                      sx={{ minWidth: 0 }}
                     >
                       {showNames ? "Hide" : "Show which"}
                     </Button>
@@ -711,10 +716,11 @@ export default function ReviewChangesDrawer({
               </Typography>
               {counts.undecided > 0 && (
                 <Button
+                  variant="outlined"
                   size="small"
                   color="inherit"
                   onClick={() => patch(acceptRestPatch(envState))}
-                  sx={{ minWidth: 0, color: "text.secondary", py: 0 }}
+                  sx={{ minWidth: 0, py: 0 }}
                 >
                   {counts.undecided === counts.total
                     ? "Accept all"
@@ -733,6 +739,7 @@ export default function ReviewChangesDrawer({
               >
                 <span>
                   <Button
+                    variant="outlined"
                     size="small"
                     color="inherit"
                     disabled={!canDiscard}

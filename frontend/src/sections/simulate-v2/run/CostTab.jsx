@@ -788,9 +788,10 @@ export default function CostTab({ run, env, envState, tasks, onOpenTask }) {
         </Table>
         {rows.length > PAGE && (
           <Button
+            variant="outlined"
             size="small"
             onClick={() => setShowAll((v) => !v)}
-            sx={{ mt: 0.75, color: "text.secondary" }}
+            sx={{ mt: 0.75 }}
           >
             {showAll ? "Show fewer" : `Show all ${rows.length}`}
           </Button>

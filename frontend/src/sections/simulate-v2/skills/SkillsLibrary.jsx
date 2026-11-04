@@ -368,17 +368,18 @@ function SkillDetail({
                       sx={{ ...cell, textAlign: "right", whiteSpace: "nowrap" }}
                     >
                       <Button
+                        variant="outlined"
                         size="small"
                         disabled={!tester || !!testing}
                         onClick={() =>
                           setSetup({ v: ver.v, agentKey: tester, envId: "" })
                         }
-                        sx={{ color: "text.secondary" }}
                       >
                         Test
                       </Button>
                       {!tags.includes("production") && (
                         <Button
+                          variant="outlined"
                           size="small"
                           onClick={() => {
                             setReason("");
@@ -441,9 +442,9 @@ function SkillDetail({
                 {refLabel(skill, u.ref)}
               </Typography>
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => onSave(detach(settings, u.agentKey, skill.id))}
-                sx={{ color: "text.secondary" }}
               >
                 Detach
               </Button>

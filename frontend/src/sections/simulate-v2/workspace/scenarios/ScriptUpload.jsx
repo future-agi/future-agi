@@ -173,6 +173,7 @@ export default function ScriptUpload({ env, onAdd, selected }) {
                     </Typography>
                   </Box>
                   <Button
+                    variant="outlined"
                     size="small"
                     onClick={() =>
                       setChecked(

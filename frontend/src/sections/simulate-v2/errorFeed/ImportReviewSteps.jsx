@@ -147,11 +147,12 @@ export default function ImportReviewSteps({
             </Typography>
             {s.done && i < 3 && next !== i && (
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() =>
                   set(s.id === "expected" ? "expectedOk" : s.id, false)
                 }
-                sx={{ color: "text.tertiary", minWidth: 0 }}
+                sx={{ minWidth: 0 }}
               >
                 Change
               </Button>

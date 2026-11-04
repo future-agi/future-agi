@@ -61,9 +61,10 @@ export default function NextStepBanner({
       {/* A way out that isn't the fix itself, e.g. Run sealed instead. */}
       {secondaryLabel && onSecondary && (
         <Button
+          variant="outlined"
           size="small"
           onClick={onSecondary}
-          sx={{ flexShrink: 0, color: "text.secondary", whiteSpace: "nowrap" }}
+          sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
         >
           {secondaryLabel}
         </Button>

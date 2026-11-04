@@ -654,9 +654,10 @@ function ListeningPanel({ project, onStop }) {
           }}
         >{`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`}</Typography>
         <Button
+          variant="outlined"
           size="small"
           onClick={onStop}
-          sx={{ color: "text.secondary", minWidth: 0 }}
+          sx={{ minWidth: 0 }}
         >
           Stop
         </Button>

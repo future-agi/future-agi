@@ -1377,9 +1377,9 @@ export default function BuildFromAgent() {
           sx={{ mt: 2.5 }}
         >
           <Button
+            variant="outlined"
             size="small"
             onClick={() => setCancelAsk(false)}
-            sx={{ color: "text.secondary" }}
           >
             Keep building
           </Button>

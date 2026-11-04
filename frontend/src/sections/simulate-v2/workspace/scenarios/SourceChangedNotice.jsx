@@ -105,6 +105,7 @@ export default function SourceChangedNotice({ row, env, locked }) {
             {`Move to v${pending.v} · saves environment ${next}`}
           </Button>
           <Button
+            variant="outlined"
             size="small"
             color="inherit"
             onClick={() =>

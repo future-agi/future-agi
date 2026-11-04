@@ -546,6 +546,7 @@ export default function ConnectedAgentsView({ onConnect }) {
             </Typography>
           </Box>
           <Button
+            variant="outlined"
             size="small"
             onClick={() =>
               navigate(

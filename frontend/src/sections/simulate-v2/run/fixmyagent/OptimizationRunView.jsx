@@ -652,13 +652,13 @@ export default function OptimizationRunView({
         {backLabel ? (
           /* Where back goes, said — an issue's fix returns to the issue. */
           <Button
+            variant="outlined"
             size="small"
             onClick={onBack}
             startIcon={
               <Iconify icon="solar:alt-arrow-left-linear" width={16} />
             }
             sx={{
-              color: "text.secondary",
               flexShrink: 0,
               ...(/^ISS-/.test(backLabel) && {
                 fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
@@ -867,11 +867,7 @@ export default function OptimizationRunView({
             {outcome.headline}
           </Typography>
           <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-            <Button
-              size="small"
-              onClick={continueAnyway}
-              sx={{ color: "text.secondary" }}
-            >
+            <Button variant="outlined" size="small" onClick={continueAnyway}>
               Try again
             </Button>
           </Stack>
@@ -2882,6 +2878,7 @@ function TrialList({
                   title={`Run ${t.n} is its own simulation — open it`}
                 >
                   <Button
+                    variant="outlined"
                     size="small"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -2890,7 +2887,7 @@ function TrialList({
                     endIcon={
                       <Iconify icon="solar:arrow-right-up-linear" width={12} />
                     }
-                    sx={{ color: "text.secondary", minWidth: 0, flexShrink: 0 }}
+                    sx={{ minWidth: 0, flexShrink: 0 }}
                   >
                     View run
                   </Button>
@@ -3039,6 +3036,7 @@ function SearchDetails({ record, result, model }) {
   return (
     <Box sx={{ px: 2.5, pb: 2.5 }}>
       <Button
+        variant="outlined"
         size="small"
         onClick={() => setOpen((o) => !o)}
         endIcon={
@@ -3049,7 +3047,6 @@ function SearchDetails({ record, result, model }) {
             width={14}
           />
         }
-        sx={{ color: "text.secondary" }}
       >
         Search details
       </Button>

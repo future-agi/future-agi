@@ -644,13 +644,13 @@ function ChangeCard({ turnId, card, actions }) {
             />
             {card.undo && (
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => actions.undo(turnId, card)}
                 startIcon={
                   <Iconify icon="solar:undo-left-round-linear" width={14} />
                 }
                 sx={{
-                  color: "text.secondary",
                   minWidth: 0,
                   ml: "auto !important",
                 }}
@@ -744,9 +744,9 @@ function LiveConfirmCard({ turnId, card, actions }) {
               Set to Live
             </Button>
             <Button
+              variant="outlined"
               size="small"
               onClick={() => actions.declineLive(turnId)}
-              sx={{ color: "text.secondary" }}
             >
               Keep {plan.from}
             </Button>

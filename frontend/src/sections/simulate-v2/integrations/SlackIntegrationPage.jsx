@@ -254,9 +254,9 @@ export default function SlackIntegrationPage() {
           action={
             <>
               <Button
+                variant="outlined"
                 size="small"
                 onClick={cancelSlackRequest}
-                sx={{ color: "text.secondary" }}
               >
                 Withdraw
               </Button>

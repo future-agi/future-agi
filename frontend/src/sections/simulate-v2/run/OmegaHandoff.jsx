@@ -997,9 +997,9 @@ export default function OmegaHandoff({
                 Use as environment default
               </Button>
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => uploadInput.current?.click()}
-                sx={{ color: "text.secondary" }}
               >
                 Or upload patched code
               </Button>
@@ -1636,9 +1636,10 @@ function CanaryPanel({
           {`Make it active or roll back in ${where} — that's your call. Tell us which, so results and regressions are read against what's live.`}
         </Typography>
         <Button
+          variant="outlined"
           size="small"
           onClick={onRollBack}
-          sx={{ color: "text.secondary", flexShrink: 0 }}
+          sx={{ flexShrink: 0 }}
         >
           I rolled it back
         </Button>

@@ -113,13 +113,13 @@ export default function ToolTryPanel({ tool, env, envState }) {
             Send
           </Button>
           <Button
+            variant="outlined"
             size="small"
             disabled={!log.length}
             onClick={() => {
               setLog([]);
               setWrites(0);
             }}
-            sx={{ color: "text.secondary" }}
           >
             Reset preview
           </Button>

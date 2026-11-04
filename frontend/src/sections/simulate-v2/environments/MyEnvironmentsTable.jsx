@@ -820,6 +820,7 @@ export default function MyEnvironmentsTable({
           </TextField>
           {filtering && (
             <Button
+              variant="outlined"
               size="small"
               onClick={() => {
                 setQuery("");
@@ -829,7 +830,6 @@ export default function MyEnvironmentsTable({
                 setOriginFilter("all");
                 setPage(0);
               }}
-              sx={{ color: "text.secondary" }}
             >
               {`Clear · ${shown.length} of ${rows.length}`}
             </Button>

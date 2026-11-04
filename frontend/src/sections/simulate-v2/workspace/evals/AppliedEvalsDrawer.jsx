@@ -152,10 +152,10 @@ export default function AppliedEvalsDrawer({
             {selected.size > 0 ? (
               <>
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={clearSelection}
                   sx={{
-                    color: "text.secondary",
                     minWidth: 0,
                     "&:hover": {
                       color: "text.primary",
@@ -166,6 +166,7 @@ export default function AppliedEvalsDrawer({
                   Clear
                 </Button>
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={() => setConfirmBulk(true)}
                   startIcon={

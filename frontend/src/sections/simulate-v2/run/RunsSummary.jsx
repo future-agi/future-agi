@@ -646,6 +646,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
           )}
           {selected.length === 0 && baseline ? (
             <Button
+              variant="outlined"
               size="small"
               onClick={() => patch({ baselineRunId: null })}
               startIcon={<Iconify icon="solar:close-linear" width={14} />}

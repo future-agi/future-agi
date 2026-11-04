@@ -494,9 +494,10 @@ function RuleQuestion({ nudge, env, envState, patch, onNavigate }) {
                 </Typography>
                 {patch && (
                   <Button
+                    variant="outlined"
                     size="small"
                     onClick={() => setEditing((e) => !e)}
-                    sx={{ color: "text.secondary", minWidth: 0 }}
+                    sx={{ minWidth: 0 }}
                   >
                     {editing ? "Done" : "Edit"}
                   </Button>
@@ -892,9 +893,10 @@ function RuleOutcome({ nudge, env, envState, patch, onNavigate }) {
       {patch && (
         <Box>
           <Button
+            variant="outlined"
             size="small"
             onClick={() => patch(reopenPatch(envState, nudge))}
-            sx={{ color: "text.secondary", minWidth: 0 }}
+            sx={{ minWidth: 0 }}
           >
             {nudge.status === "dismissed" ? "Reopen" : "Change answer"}
           </Button>
@@ -1319,9 +1321,10 @@ function ChangeProposal({ nudge, env, envState, patch, onNavigate }) {
           {patch && nudge.status === "dismissed" && nudge.kind !== "remove" && (
             <Box>
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => patch(reopenPatch(envState, nudge))}
-                sx={{ color: "text.secondary", minWidth: 0 }}
+                sx={{ minWidth: 0 }}
               >
                 Reopen
               </Button>

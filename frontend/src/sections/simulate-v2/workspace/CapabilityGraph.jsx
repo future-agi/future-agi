@@ -328,6 +328,7 @@ export default function CapabilityGraph({ env, envState, onGo, onClose }) {
           what you added.
         </Typography>
         <Button
+          variant="outlined"
           size="small"
           onClick={() => onGo?.("contract")}
           sx={{ color: "primary.main", flexShrink: 0 }}

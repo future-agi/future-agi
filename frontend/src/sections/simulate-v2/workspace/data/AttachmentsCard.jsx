@@ -119,11 +119,12 @@ export default function AttachmentsCard({ files, onDone }) {
               )}
               {(it.status === "failed" || it.status === "cancelled") && (
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={() =>
                     set(it.key, { status: "uploading", progress: 0 })
                   }
-                  sx={{ minWidth: 0, color: "text.secondary" }}
+                  sx={{ minWidth: 0 }}
                 >
                   {it.status === "failed" ? "Retry" : "Attach again"}
                 </Button>

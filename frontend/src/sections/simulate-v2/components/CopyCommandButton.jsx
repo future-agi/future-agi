@@ -33,6 +33,7 @@ export default function CopyCommandButton({
       }
     >
       <Button
+        variant="outlined"
         size="small"
         onClick={copy}
         startIcon={
@@ -42,7 +43,6 @@ export default function CopyCommandButton({
           />
         }
         sx={{
-          color: "text.secondary",
           whiteSpace: "nowrap",
           flexShrink: 0,
           ...sx,

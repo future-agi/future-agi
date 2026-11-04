@@ -654,9 +654,9 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
                       {`From ${tool.via.label}${tool.mcpName ? `, where it's ${tool.mcpName}` : ""}. Scenarios that call it can't run as proved once it's gone.`}
                     </Typography>
                     <Button
+                      variant="outlined"
                       size="small"
                       onClick={() => onRemove(tool)}
-                      sx={{ color: "text.secondary" }}
                     >
                       Remove from the world
                     </Button>
@@ -973,9 +973,9 @@ function ToolSourcesCard({
                   {`Take its ${src.tools.length} tool${src.tools.length === 1 ? "" : "s"} out of the world? Scenarios that call them can't run as proved.`}
                 </Typography>
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={() => setConfirming(null)}
-                  sx={{ color: "text.secondary" }}
                 >
                   Keep
                 </Button>

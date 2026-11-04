@@ -332,6 +332,7 @@ export default function CopyBriefButton({
                   {/* Its attempts have a home: say where, one click away. */}
                   {landing?.href && (
                     <Button
+                      variant="outlined"
                       size="small"
                       onClick={() => {
                         setDone(null);

@@ -579,9 +579,10 @@ export function SafeTargetPrompt({
           )}
           {onDowngrade && (
             <Button
+              variant="outlined"
               size="small"
               onClick={() => onDowngrade(setting.defaultTier)}
-              sx={{ flexShrink: 0, color: "text.secondary" }}
+              sx={{ flexShrink: 0 }}
             >
               Use {fallback.word} instead
             </Button>
@@ -632,9 +633,10 @@ export function LiveAdvisory({ setting, onSwitch }) {
       </Typography>
       {onSwitch && (
         <Button
+          variant="outlined"
           size="small"
           onClick={() => onSwitch(advice.to)}
-          sx={{ flexShrink: 0, color: "text.secondary" }}
+          sx={{ flexShrink: 0 }}
         >
           Switch to {tierOf(advice.to).word}
         </Button>

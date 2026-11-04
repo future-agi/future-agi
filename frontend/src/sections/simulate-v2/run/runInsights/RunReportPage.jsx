@@ -543,6 +543,7 @@ export default function RunReportPage({
               sub="Click a category to see its trials"
               right={
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={() =>
                     setOpen((s) =>
@@ -551,7 +552,6 @@ export default function RunReportPage({
                         : new Set(report.categories.map((c) => c.key)),
                     )
                   }
-                  sx={{ color: "text.secondary" }}
                 >
                   {open.size ? "Collapse all" : "Expand all"}
                 </Button>

@@ -295,13 +295,13 @@ export default function StudioConsole({
               placement="top-start"
             >
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => chip(c)}
                 sx={{
                   maxWidth: "100%",
                   justifyContent: "flex-start",
                   textAlign: "left",
-                  color: "text.secondary",
                   border: "1px solid",
                   borderColor: "divider",
                   "&:hover": {
@@ -640,6 +640,7 @@ function ModePicker({ disabled }) {
     <>
       <Tooltip arrow title="Builder mode — Auto or Manual">
         <Button
+          variant="outlined"
           size="small"
           disabled={disabled}
           onClick={(e) => setAnchor(e.currentTarget)}

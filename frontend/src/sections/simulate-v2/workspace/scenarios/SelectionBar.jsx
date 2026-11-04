@@ -107,9 +107,10 @@ export default function SelectionBar({
         </Tooltip>
         {matching && matching.count > count && (
           <Button
+            variant="outlined"
             size="small"
             onClick={matching.onSelectAll}
-            sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
+            sx={{ whiteSpace: "nowrap" }}
           >
             {`Select all ${matching.count} matching`}
           </Button>

@@ -361,9 +361,9 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
             {`From the Skills library · ${attachedHere.length}`}
           </Typography>
           <Button
+            variant="outlined"
             size="small"
             onClick={() => navigate(paths.dashboard.simulate.skills)}
-            sx={{ color: "text.secondary" }}
           >
             Open Skills
           </Button>
@@ -396,11 +396,11 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
                 {refLabel(a.skill, a.ref)}
               </Typography>
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() =>
                   saveLib(detach(state.workspaceSettings, agent.key, a.skillId))
                 }
-                sx={{ color: "text.secondary" }}
               >
                 Detach
               </Button>
@@ -443,6 +443,7 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
             </Typography>
           </Box>
           <Button
+            variant="outlined"
             size="small"
             color="inherit"
             onClick={() => save({ ...set, draft: {} })}

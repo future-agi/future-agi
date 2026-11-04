@@ -691,10 +691,10 @@ export default function DiagnosisPane({
             finished run was otherwise unreachable. */}
         {!!previous.length && (
           <Button
+            variant="outlined"
             size="small"
             onClick={(e) => setPreviousAnchor(e.currentTarget)}
             sx={{
-              color: "text.secondary",
               "&:hover": { bgcolor: "transparent", color: "text.primary" },
             }}
           >
@@ -732,13 +732,13 @@ export default function DiagnosisPane({
         </Menu>
         {phase === "done" && !nothingToFix && (
           <Button
+            variant="outlined"
             size="small"
             onClick={exportReport}
             startIcon={
               <Iconify icon="solar:upload-minimalistic-linear" width={14} />
             }
             sx={{
-              color: "text.secondary",
               "&:hover": { bgcolor: "transparent", color: "text.primary" },
             }}
           >
@@ -1462,12 +1462,12 @@ export default function DiagnosisPane({
                                 </Typography>
                                 {p.edited && (
                                   <Button
+                                    variant="outlined"
                                     size="small"
                                     onClick={() => {
                                       onEditChange(p.id, null);
                                       setEditing(null);
                                     }}
-                                    sx={{ color: "text.secondary" }}
                                   >
                                     Undo edit
                                   </Button>
@@ -1681,11 +1681,11 @@ export default function DiagnosisPane({
               */}
                 <Box sx={{ textAlign: "center", pt: 0.25 }}>
                   <Button
+                    variant="outlined"
                     size="small"
                     disabled={running || !included.length}
                     onClick={() => setHandoff((v) => !v)}
                     sx={{
-                      color: "text.tertiary",
                       "&:hover": {
                         bgcolor: "transparent",
                         color: "text.primary",

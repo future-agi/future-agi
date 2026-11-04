@@ -176,7 +176,7 @@ export default function FixButton({ issue, onOpenSheet, rootCause = null }) {
   return (
     <Stack direction="row" alignItems="center" spacing={0.75}>
       {again && (
-        <Button size="small" onClick={openFix}>
+        <Button variant="outlined" size="small" onClick={openFix}>
           Last fix
         </Button>
       )}

@@ -232,10 +232,10 @@ export default function RlContractPanel({
             onGo &&
             !inBuild && (
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => onGo("world")}
                 sx={{
-                  color: "text.secondary",
                   flexShrink: 0,
                   whiteSpace: "nowrap",
                 }}
@@ -655,17 +655,19 @@ function RowActions({ onEdit, onRemove }) {
       sx={{ opacity: 0.6, transition: "opacity 120ms", alignSelf: "center" }}
     >
       <Button
+        variant="outlined"
         size="small"
         onClick={onEdit}
-        sx={{ minWidth: 0, color: "text.secondary" }}
+        sx={{ minWidth: 0 }}
       >
         Edit
       </Button>
       {onRemove && (
         <Button
+          variant="outlined"
           size="small"
           onClick={onRemove}
-          sx={{ minWidth: 0, color: "text.secondary" }}
+          sx={{ minWidth: 0 }}
         >
           Remove
         </Button>
@@ -678,10 +680,11 @@ RowActions.propTypes = { onEdit: PropTypes.func, onRemove: PropTypes.func };
 function AddButton({ label, onClick }) {
   return (
     <Button
+      variant="outlined"
       size="small"
       onClick={onClick}
       startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-      sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
+      sx={{ whiteSpace: "nowrap" }}
     >
       {label}
     </Button>

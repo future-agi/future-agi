@@ -329,10 +329,11 @@ export default function ImprovementStages({
             </Box>
             {row.link && (
               <Button
+                variant="outlined"
                 size="small"
                 onClick={row.link.onClick}
                 endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
-                sx={{ color: "text.secondary", flexShrink: 0, minWidth: 0 }}
+                sx={{ flexShrink: 0, minWidth: 0 }}
               >
                 {row.link.label}
               </Button>

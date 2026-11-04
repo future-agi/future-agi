@@ -280,9 +280,10 @@ export default function FrameworkAgentFlow({
                       .join(" · ")}
                     action={
                       <Button
+                        variant="outlined"
                         size="small"
                         onClick={() => waitAgain(mode)}
-                        sx={{ color: "text.secondary", minWidth: 0 }}
+                        sx={{ minWidth: 0 }}
                       >
                         Not it? Try again
                       </Button>

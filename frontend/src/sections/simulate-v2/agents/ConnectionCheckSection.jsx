@@ -403,9 +403,10 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
         </Box>
         <Stack direction="row" spacing={1} justifyContent="flex-end">
           <Button
+            variant="outlined"
             size="small"
             onClick={() => setVersionsOpen(true)}
-            sx={{ color: "text.secondary", mr: "auto" }}
+            sx={{ mr: "auto" }}
           >
             Tested versions
           </Button>
@@ -562,9 +563,9 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
                       {r.repair.id === "tools" &&
                         test?.productionTools?.[0] && (
                           <Button
+                            variant="outlined"
                             size="small"
                             onClick={() => observeOnly(test.productionTools[0])}
-                            sx={{ color: "text.secondary" }}
                           >
                             Observe it only
                           </Button>

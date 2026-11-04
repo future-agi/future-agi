@@ -440,9 +440,10 @@ export default function AddScenariosDrawer({
                       </Typography>
                       {h.blocked > 0 && retryBlocked && (
                         <Button
+                          variant="outlined"
                           size="small"
                           onClick={retryBlocked}
-                          sx={{ color: "text.secondary", minWidth: 0 }}
+                          sx={{ minWidth: 0 }}
                         >
                           Retry blocked
                         </Button>

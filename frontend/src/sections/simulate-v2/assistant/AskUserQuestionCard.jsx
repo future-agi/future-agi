@@ -171,6 +171,7 @@ export default function AskUserQuestionCard({ question, onSubmit, onSkip }) {
             Skip
           </Button>
           <Button
+            variant="outlined"
             size="small"
             onClick={submit}
             disabled={!canSubmit}

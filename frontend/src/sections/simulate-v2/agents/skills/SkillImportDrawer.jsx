@@ -203,6 +203,7 @@ export default function SkillImportDrawer({
                     </Typography>
                     {REPO_EXAMPLES.map((p) => (
                       <Button
+                        variant="outlined"
                         key={p}
                         size="small"
                         onClick={() => {
@@ -214,7 +215,6 @@ export default function SkillImportDrawer({
                           fontFamily: MONO,
                           fontSize: 12,
                           fontWeight: 400,
-                          color: "text.secondary",
                           minWidth: 0,
                           px: 0.75,
                         }}
@@ -368,6 +368,7 @@ export default function SkillImportDrawer({
                     </Button>
                   )}
                   <Button
+                    variant="outlined"
                     size="small"
                     color="inherit"
                     onClick={() => read(repairs)}

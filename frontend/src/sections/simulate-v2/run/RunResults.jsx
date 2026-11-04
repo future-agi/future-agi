@@ -1152,6 +1152,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       >
         {fromIssue ? (
           <Button
+            variant="outlined"
             size="small"
             onClick={() =>
               navigate(paths.dashboard.errorFeed.detail(fromIssue))
@@ -1160,7 +1161,6 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               <Iconify icon="solar:alt-arrow-left-linear" width={16} />
             }
             sx={{
-              color: "text.secondary",
               fontFamily: "ui-monospace, Menlo, monospace",
               flexShrink: 0,
               minWidth: 0,
@@ -2342,9 +2342,9 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   selected.size ? (
                     <Stack direction="row" spacing={1}>
                       <Button
+                        variant="outlined"
                         size="small"
                         onClick={() => setSelected(new Set())}
-                        sx={{ color: "text.secondary" }}
                       >
                         Clear
                       </Button>
@@ -2694,6 +2694,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               autoHideDuration: 10000,
               action: (key) => (
                 <Button
+                  variant="outlined"
                   size="small"
                   color="inherit"
                   onClick={() => {

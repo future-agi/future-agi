@@ -1128,6 +1128,7 @@ function AskUserQuestionCard({
             </Tooltip>
           ) : (
             <Button
+              variant="outlined"
               size="small"
               onClick={onNext}
               disabled={!canSubmit}
@@ -1136,7 +1137,6 @@ function AskUserQuestionCard({
                 bgcolor: "action.focus",
                 "&:hover": { bgcolor: "action.focus" },
                 "&.Mui-disabled": {
-                  color: "text.disabled",
                   bgcolor: "action.selected",
                 },
               }}

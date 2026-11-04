@@ -249,6 +249,7 @@ export default function VersionHistoryMenu({
                         }
                       >
                         <Button
+                          variant="outlined"
                           size="small"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -257,7 +258,7 @@ export default function VersionHistoryMenu({
                             else setRollbackTo(v.label);
                             onClose();
                           }}
-                          sx={{ color: "text.secondary", minWidth: 0 }}
+                          sx={{ minWidth: 0 }}
                         >
                           {useLatest ? "Use latest" : "Roll back"}
                         </Button>
@@ -265,26 +266,28 @@ export default function VersionHistoryMenu({
                     )}
                     {onCopy && (
                       <Button
+                        variant="outlined"
                         size="small"
                         onClick={(e) => {
                           e.stopPropagation();
                           onCopy(v.label);
                           onClose();
                         }}
-                        sx={{ color: "text.secondary", minWidth: 0 }}
+                        sx={{ minWidth: 0 }}
                       >
                         Make a copy
                       </Button>
                     )}
                     {offer && !isViewed && (
                       <Button
+                        variant="outlined"
                         size="small"
                         onClick={(e) => {
                           e.stopPropagation();
                           setViewAs(v.parts.env);
                           onClose();
                         }}
-                        sx={{ color: "text.secondary", minWidth: 0 }}
+                        sx={{ minWidth: 0 }}
                       >
                         View
                       </Button>

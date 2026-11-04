@@ -350,6 +350,7 @@ export default function SourceDrawer({
                       >{`Row ${r.row}: ${r.reason}`}</Typography>
                     ))}
                     <Button
+                      variant="outlined"
                       size="small"
                       startIcon={
                         <Iconify
@@ -363,7 +364,7 @@ export default function SourceDrawer({
                           { variant: "success" },
                         )
                       }
-                      sx={{ mt: 0.5, color: "text.secondary" }}
+                      sx={{ mt: 0.5 }}
                     >
                       Download error report
                     </Button>
@@ -440,6 +441,7 @@ export default function SourceDrawer({
                         Supply the records
                       </Button>
                       <Button
+                        variant="outlined"
                         size="small"
                         onClick={() =>
                           edit(
@@ -452,7 +454,6 @@ export default function SourceDrawer({
                             `${source.name}: rows without ${j.to.split(".")[0]} left out`,
                           )
                         }
-                        sx={{ color: "text.secondary" }}
                       >
                         Leave those rows out
                       </Button>
@@ -582,9 +583,10 @@ export default function SourceDrawer({
               </KV>
               {!readOnly && source.inEnv && (
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={() => setArchiving(true)}
-                  sx={{ mt: 1.5, color: "text.secondary" }}
+                  sx={{ mt: 1.5 }}
                 >
                   Archive this source
                 </Button>
@@ -592,6 +594,7 @@ export default function SourceDrawer({
               {/* Not saved into the world yet: nothing depends on it, so it just goes. */}
               {!readOnly && !source.inEnv && (
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={() => {
                     patch({
@@ -601,7 +604,7 @@ export default function SourceDrawer({
                     });
                     onClose();
                   }}
-                  sx={{ mt: 1.5, color: "text.secondary" }}
+                  sx={{ mt: 1.5 }}
                 >
                   Remove — it isn&apos;t in the world yet
                 </Button>

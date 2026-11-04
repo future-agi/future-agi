@@ -78,13 +78,13 @@ export function SavedViews({
   return (
     <>
       <Button
+        variant="outlined"
         size="small"
         ref={buttonRef}
         onClick={(e) => setAnchor(e.currentTarget)}
         startIcon={<Iconify icon="solar:bookmark-linear" width={16} />}
         endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
         sx={{
-          color: "text.secondary",
           border: "1px solid",
           borderColor: "divider",
           maxWidth: 240,
@@ -402,18 +402,12 @@ export default function CompareActions({
       {/* Group by — hoisted out of the Display panel so the grouping
           axis is one click, matching the single-run traces table. */}
       <Button
+        variant="outlined"
         size="small"
         onClick={(e) => setGroupAnchor(e.currentTarget)}
         startIcon={<Iconify icon="solar:widget-linear" width={16} />}
-        endIcon={
-          <Iconify
-            icon="solar:alt-arrow-down-linear"
-            width={12}
-            sx={{ color: "text.tertiary" }}
-          />
-        }
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
         sx={{
-          color: "text.secondary",
           border: "1px solid",
           borderColor: "divider",
         }}
@@ -450,6 +444,7 @@ export default function CompareActions({
       </Menu>
 
       <Button
+        variant="outlined"
         size="small"
         onClick={(e) => setFilterAnchor(e.currentTarget)}
         startIcon={<Iconify icon="solar:filter-linear" width={16} />}
@@ -463,13 +458,13 @@ export default function CompareActions({
       </Button>
 
       <Button
+        variant="outlined"
         size="small"
         onClick={(e) => setDisplayAnchor(e.currentTarget)}
         startIcon={
           <Iconify icon="solar:settings-minimalistic-linear" width={16} />
         }
         sx={{
-          color: "text.secondary",
           border: "1px solid",
           borderColor: "divider",
         }}
@@ -478,12 +473,12 @@ export default function CompareActions({
       </Button>
 
       <Button
+        variant="outlined"
         size="small"
         onClick={(e) => setActionsAnchor(e.currentTarget)}
         startIcon={<Iconify icon="solar:bolt-linear" width={16} />}
         endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
         sx={{
-          color: "text.secondary",
           border: "1px solid",
           borderColor: "divider",
         }}

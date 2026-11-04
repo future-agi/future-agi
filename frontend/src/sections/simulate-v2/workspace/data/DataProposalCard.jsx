@@ -443,9 +443,9 @@ export default function DataProposalCard({
             : `Saves environment ${next} with this data snapshot.`}
         </Typography>
         <Button
+          variant="outlined"
           size="small"
           onClick={() => setRejected(true)}
-          sx={{ color: "text.secondary" }}
         >
           Reject
         </Button>

@@ -190,6 +190,7 @@ export default function VersionBar({
         {(pending.length > 0 || rejectedOnly || failedCount > 0) && !viewAs && (
           <Stack direction="row" alignItems="center" spacing={0.75}>
             <Button
+              variant="outlined"
               size="small"
               onClick={() => setEditsAnchor(true)}
               endIcon={
@@ -197,7 +198,6 @@ export default function VersionBar({
               }
               sx={{
                 minWidth: 0,
-                color: "text.secondary",
                 typography: "s3",
                 fontWeight: 400,
                 fontVariantNumeric: "tabular-nums",

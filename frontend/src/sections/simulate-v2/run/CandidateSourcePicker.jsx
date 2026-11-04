@@ -74,6 +74,7 @@ export default function CandidateSourcePicker({
           : offer || `Testing agent ${agentVersion || "—"}`}
       </Typography>
       <Button
+        variant="outlined"
         size="small"
         onClick={(e) => setAnchor(e.currentTarget)}
         endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}

@@ -607,6 +607,7 @@ export default function AgentSyncDialog({
                       }}
                     >{`Agent ${saved.version.label} changed`}</Typography>
                     <Button
+                      variant="outlined"
                       size="small"
                       onClick={() => review(e.id)}
                       endIcon={
@@ -650,6 +651,7 @@ export default function AgentSyncDialog({
                   {`${b.name}: ${b.count} scenario${b.count === 1 ? "" : "s"} that call ${b.tools.join(", ")} ${b.count === 1 ? "is" : "are"} blocked on agent ${saved.version.label} until it's rebuilt for the new arguments.`}
                 </Typography>
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={() => {
                     onClose();

@@ -1683,7 +1683,11 @@ function TwinBackedSections({ env, envState, onGo }) {
             title="End-state graders"
             subtitle="Sandbox evals inspect what actually landed after each run — not just whether a tool was called"
             action={
-              <Button size="small" onClick={() => onGo?.("evals")}>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => onGo?.("evals")}
+              >
                 Configure
               </Button>
             }

@@ -139,9 +139,10 @@ export default function AgentConstraintsTab({
           </Typography>
           {custom && !embedded && (
             <Button
+              variant="outlined"
               size="small"
               onClick={reset}
-              sx={{ color: "text.secondary", flexShrink: 0 }}
+              sx={{ flexShrink: 0 }}
             >
               Reset to safe defaults
             </Button>
@@ -988,6 +989,7 @@ function AutomaticCard({ agent, schedule, onChange, onBuildEnv }) {
         <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
           <Row title="Last automatic run" body={lastLine}>
             <Button
+              variant="outlined"
               size="small"
               onClick={() =>
                 navigate(
@@ -998,7 +1000,7 @@ function AutomaticCard({ agent, schedule, onChange, onBuildEnv }) {
                   ),
                 )
               }
-              sx={{ color: "text.secondary", flexShrink: 0 }}
+              sx={{ flexShrink: 0 }}
             >
               Open
             </Button>

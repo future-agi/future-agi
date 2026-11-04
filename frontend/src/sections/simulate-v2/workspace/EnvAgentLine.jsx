@@ -385,6 +385,7 @@ export default function EnvAgentLine({
           </Button>
         )}
         <Button
+          variant="outlined"
           size="small"
           onClick={viewAgent}
           endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
@@ -435,6 +436,7 @@ export default function EnvAgentLine({
             }`}
           </Typography>
           <Button
+            variant="outlined"
             size="small"
             onClick={viewCompat}
             endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}

@@ -140,9 +140,10 @@ export function YourAgentsSection({ sectionRef }) {
             </Box>
             {ofType.length > FIRST_SHOWN && (
               <Button
+                variant="outlined"
                 size="small"
                 onClick={() => setShowAll((v) => !v)}
-                sx={{ color: "text.secondary", flexShrink: 0 }}
+                sx={{ flexShrink: 0 }}
               >
                 {showAll ? "Show fewer" : `Show all ${ofType.length}`}
               </Button>
@@ -391,10 +392,11 @@ export default function WorldAgentPicker({
               : "The environment belongs to this agent in Agents.")}
         </Typography>
         <Button
+          variant="outlined"
           size="small"
           onClick={() => setConnecting(true)}
           startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
-          sx={{ color: "text.secondary", flexShrink: 0 }}
+          sx={{ flexShrink: 0 }}
         >
           Connect a new agent
         </Button>

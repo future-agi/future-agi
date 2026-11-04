@@ -128,10 +128,11 @@ export default function ConnectPreflight({
           )}
         </Box>
         <Button
+          variant="outlined"
           size="small"
           onClick={run}
           startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
-          sx={{ color: "text.secondary", flexShrink: 0 }}
+          sx={{ flexShrink: 0 }}
         >
           Re-run
         </Button>

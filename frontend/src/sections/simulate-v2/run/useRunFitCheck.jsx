@@ -8,7 +8,8 @@ import RunFitDialog from "./RunFitDialog";
  * Wrap any "start a run" action with the tool-fit check.
  *
  *   const { check, dialog } = useRunFitCheck(env, envState, patch);
- *   <Button onClick={() => check(() => startRun())}>Run</Button>
+ *   <Button
+ variant="outlined" onClick={() => check(() => startRun())}>Run</Button>
  *   {dialog}
  *
  * If the agent version fits the pinned environment version the run starts at

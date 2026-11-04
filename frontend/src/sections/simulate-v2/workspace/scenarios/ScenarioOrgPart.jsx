@@ -331,11 +331,12 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                   >{`${g.ref}${g.version ? ` · v${g.version}` : ""}${g.pinned ? " · pinned" : ""}`}</Typography>
                   {!ro && (
                     <Button
+                      variant="outlined"
                       size="small"
                       onClick={() =>
                         patch(ungroundPatch(envState, live.id, g.id))
                       }
-                      sx={{ minWidth: 0, color: "text.tertiary" }}
+                      sx={{ minWidth: 0 }}
                     >
                       Remove
                     </Button>
@@ -365,13 +366,13 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                     {!ro && (
                       <>
                         <Button
+                          variant="outlined"
                           size="small"
                           onClick={() =>
                             patch(
                               keepPinnedGroundPatch(envState, live.id, g.id),
                             )
                           }
-                          sx={{ color: "text.secondary" }}
                         >
                           Keep pinned
                         </Button>
@@ -402,6 +403,7 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
               }}
             >
               <Button
+                variant="outlined"
                 size="small"
                 startIcon={
                   <Iconify icon="solar:link-minimalistic-linear" width={14} />
@@ -415,7 +417,6 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                     excerpt: "",
                   })
                 }
-                sx={{ color: "text.secondary" }}
               >
                 Cite evidence
               </Button>
@@ -813,13 +814,13 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                             </Button>
                           ))}
                           <Button
+                            variant="outlined"
                             size="small"
                             onClick={() =>
                               revalidate(
                                 syntheticRecordFix(live, c.fix.missing),
                               )
                             }
-                            sx={{ color: "text.secondary" }}
                           >
                             {`Approve a synthetic ${c.fix.missing}`}
                           </Button>
@@ -839,13 +840,13 @@ export default function ScenarioOrgPart({ env, row, locked = false }) {
                             {`Use the environment's rule — ${c.fix.to} days`}
                           </Button>
                           <Button
+                            variant="outlined"
                             size="small"
                             onClick={() =>
                               navigate(
                                 `/dashboard/simulate/environments/${env.id}/contract`,
                               )
                             }
-                            sx={{ color: "text.secondary" }}
                           >
                             {`Or change ${c.fix.ruleId} on the Contract tab`}
                           </Button>

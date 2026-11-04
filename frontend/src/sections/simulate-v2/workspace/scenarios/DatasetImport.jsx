@@ -326,6 +326,7 @@ export default function DatasetImport({ env, onAdd, selected }) {
                 {count > 100 && " — large suites make every run slower"}
               </Typography>
               <Button
+                variant="outlined"
                 size="small"
                 onClick={selectAll}
                 disabled={allPicked || pickable.length === 0}
@@ -333,7 +334,7 @@ export default function DatasetImport({ env, onAdd, selected }) {
                   color: "primary.main",
                   minWidth: 0,
                   whiteSpace: "nowrap",
-                  "&.Mui-disabled": { color: "text.disabled" },
+                  "&.Mui-disabled": {},
                 }}
               >
                 {pickable.length === 0
@@ -344,9 +345,10 @@ export default function DatasetImport({ env, onAdd, selected }) {
               </Button>
               {count > 0 && (
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={clear}
-                  sx={{ color: "text.secondary", minWidth: 0 }}
+                  sx={{ minWidth: 0 }}
                 >
                   Clear
                 </Button>
@@ -432,6 +434,7 @@ export default function DatasetImport({ env, onAdd, selected }) {
                   {matching.length.toLocaleString()}
                 </Typography>
                 <Button
+                  variant="outlined"
                   size="small"
                   onClick={() => setLimit((l) => l + PAGE)}
                   sx={{ color: "text.primary", minWidth: 0 }}

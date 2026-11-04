@@ -309,22 +309,24 @@ export default function FailingCasesImport({ env, envState, onAdd, selected }) {
           )}
         </Typography>
         <Button
+          variant="outlined"
           size="small"
           onClick={selectAll}
           disabled={open.length === 0 || open.every((k) => picked[k.key])}
           sx={{
             color: "primary.main",
             minWidth: 0,
-            "&.Mui-disabled": { color: "text.disabled" },
+            "&.Mui-disabled": {},
           }}
         >
           Select all
         </Button>
         {chosen.length > 0 && (
           <Button
+            variant="outlined"
             size="small"
             onClick={clear}
-            sx={{ color: "text.secondary", minWidth: 0, ml: 0.5 }}
+            sx={{ minWidth: 0, ml: 0.5 }}
           >
             Clear
           </Button>
@@ -746,6 +748,7 @@ function CaseTableRow({ kase, env, added, picked, onToggle, variations = [] }) {
               </Box>
               <Box>
                 <Button
+                  variant="outlined"
                   size="small"
                   component={RouterLink}
                   to={paths.dashboard.simulate.simulationRun(env.id, k.runId)}
@@ -754,7 +757,7 @@ function CaseTableRow({ kase, env, added, picked, onToggle, variations = [] }) {
                   endIcon={
                     <Iconify icon="solar:arrow-right-up-linear" width={14} />
                   }
-                  sx={{ color: "text.secondary", ml: -0.75 }}
+                  sx={{ ml: -0.75 }}
                 >
                   {`Open run ${k.runOrdinal}`}
                 </Button>

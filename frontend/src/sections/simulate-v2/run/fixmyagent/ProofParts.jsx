@@ -344,6 +344,7 @@ export function FrozenInputs({
   return (
     <Box sx={{ px: 2.5, pb: 1 }}>
       <Button
+        variant="outlined"
         size="small"
         onClick={() => setOpen((o) => !o)}
         endIcon={
@@ -354,7 +355,6 @@ export function FrozenInputs({
             width={14}
           />
         }
-        sx={{ color: "text.secondary" }}
       >
         {snap ? "Issue snapshot and frozen inputs" : "Frozen inputs"}
       </Button>
@@ -522,9 +522,10 @@ export function ReceiptButton({
                 </Typography>
               </Tooltip>
               <Button
+                variant="outlined"
                 size="small"
                 onClick={verify}
-                sx={{ color: "text.secondary", minWidth: 0 }}
+                sx={{ minWidth: 0 }}
               >
                 Verify
               </Button>

@@ -183,6 +183,7 @@ export default function ReviewChangesFirstDrawer({
                       </Box>
                       {editableTextOf(c) != null && on && (
                         <Button
+                          variant="outlined"
                           size="small"
                           color="inherit"
                           onClick={() =>

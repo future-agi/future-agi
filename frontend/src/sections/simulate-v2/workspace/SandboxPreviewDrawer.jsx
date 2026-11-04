@@ -393,6 +393,7 @@ export default function SandboxPreviewDrawer({
                     </Button>
                     {p.pending && p.pending.tool === toolName && (
                       <Button
+                        variant="outlined"
                         size="small"
                         color="inherit"
                         onClick={() =>

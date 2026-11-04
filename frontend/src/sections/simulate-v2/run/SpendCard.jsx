@@ -100,11 +100,7 @@ export default function SpendCard({
       </Box>
       {!spend.reached && !lowering && (
         <Stack direction="row" gap={1} flexShrink={0}>
-          <Button
-            size="small"
-            onClick={onContinue}
-            sx={{ color: "text.secondary" }}
-          >
+          <Button variant="outlined" size="small" onClick={onContinue}>
             Continue
           </Button>
           <Button

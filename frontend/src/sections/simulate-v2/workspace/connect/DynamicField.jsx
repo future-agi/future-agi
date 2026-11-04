@@ -325,10 +325,11 @@ function KeyValueField({ value, onChange, label, help }) {
         ))}
       </Stack>
       <Button
+        variant="outlined"
         size="small"
         startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
         onClick={() => onChange([...pairs, { k: "", v: "" }])}
-        sx={{ mt: 0.75, color: "text.secondary" }}
+        sx={{ mt: 0.75 }}
       >
         Add row
       </Button>
