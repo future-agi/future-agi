@@ -3,9 +3,6 @@ import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
 import CapabilityGraph from "../overview/CapabilityGraph";
-import { VOICE_ONLY_SURFACES } from "../scenarios/scenarioEditor.constants";
-import SubActorsPanel from "./SubActorsPanel";
-import WorldActorsPanel from "./WorldActorsPanel";
 import WorldInternalsSection from "./WorldInternalsSection";
 import { Label } from "./ContractPart";
 import { CONTRACT_COPY } from "./contract.constants";
@@ -145,24 +142,6 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
         </>
         )}
       </SectionCard>
-
-      {/* With versioning the cast is edited below, sub-actors included; without it they are listed read-only. */}
-      {env.versioning?.enabled && env.id ? (
-        <Box sx={{ mb: 2 }}>
-          <WorldActorsPanel
-            envId={env.id}
-            locked={locked}
-            callerSide={
-              VOICE_ONLY_SURFACES.includes(env.surface) ||
-              env.subActors?.length > 0
-            }
-          />
-        </Box>
-      ) : (
-        env.subActors?.length > 0 && (
-          <SubActorsPanel subActors={env.subActors} />
-        )
-      )}
     </Box>
   );
 }

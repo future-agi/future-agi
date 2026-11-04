@@ -15,6 +15,8 @@ export const WORKSPACE_TABS = [
     label: "Contract",
     icon: "solar:document-text-linear",
   },
+  // Shown only when the environment has a cast to edit or list.
+  { id: "actors", label: "Actors", icon: "solar:users-group-rounded-linear" },
   {
     id: "scenarios",
     label: "Scenarios",

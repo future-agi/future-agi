@@ -15,11 +15,11 @@ import {
   Typography,
 } from "@mui/material";
 import SideDrawer from "../../components/SideDrawer";
-import { CONTRACT_COPY } from "./contract.constants";
+import { ACTORS_COPY } from "./actors.constants";
 import { idFrom, idRule, lines, speaks } from "./actorUtils";
 
-const C = CONTRACT_COPY.worldActors;
-const CHANNEL_LABELS = CONTRACT_COPY.subActors.channels;
+const C = ACTORS_COPY.worldActors;
+const CHANNEL_LABELS = ACTORS_COPY.subActors.channels;
 
 // How loud a voice beside the caller is: automatic (each call picks within the release's range) or a fixed share.
 function Loudness({ value, automatic, onChange }) {

@@ -68,3 +68,7 @@ export const idRule = (records) => {
 
 // A sub-actor speaks on a call channel; a world actor has none.
 export const speaks = (actor) => Boolean(actor?.channel);
+
+// The tab shows what it can edit (versioning keeps a draft) or list (sub-actors read-only).
+export const showActorsTab = (env) =>
+  Boolean(env?.versioning?.enabled && env?.id) || env?.subActors?.length > 0;

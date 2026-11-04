@@ -11,10 +11,10 @@ import { genderLabel } from "../scenarios/personaLabels";
 import { ClampCell, TruncTooltip } from "../scenarios/ScenarioTableCells";
 import ActorForm from "./ActorForm";
 import { hidden, readable, speaks } from "./actorUtils";
-import { CONTRACT_COPY } from "./contract.constants";
+import { ACTORS_COPY } from "./actors.constants";
 
-const C = CONTRACT_COPY.worldActors;
-const CHANNEL_LABELS = CONTRACT_COPY.subActors.channels;
+const C = ACTORS_COPY.worldActors;
+const CHANNEL_LABELS = ACTORS_COPY.subActors.channels;
 const TWO_LINES = {
   wordBreak: "break-word",
   display: "-webkit-box",
@@ -215,7 +215,7 @@ function summary(actor, actionIds, loudChannels) {
       genderLabel(actor.persona?.gender),
       actor.persona?.age_group,
       actor.persona?.accent,
-      CONTRACT_COPY.subActors.scenarios(actor.scenarios ?? 0),
+      ACTORS_COPY.subActors.scenarios(actor.scenarios ?? 0),
     ]
       .filter(Boolean)
       .join(" · ");
