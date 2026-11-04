@@ -11,6 +11,7 @@ import Iconify from "../iconify";
 export default function ClosableDialog({
   onClose,
   PaperProps,
+  closeLabel = "Close",
   children,
   ...other
 }) {
@@ -29,7 +30,7 @@ export default function ClosableDialog({
       {onClose && (
         <IconButton
           size="small"
-          aria-label="Close"
+          aria-label={closeLabel}
           onClick={(e) => onClose(e, "closeButton")}
           sx={{
             position: "absolute",
@@ -49,5 +50,6 @@ export default function ClosableDialog({
 ClosableDialog.propTypes = {
   onClose: PropTypes.func,
   PaperProps: PropTypes.object,
+  closeLabel: PropTypes.string,
   children: PropTypes.node,
 };
