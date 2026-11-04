@@ -193,6 +193,39 @@ describe("ReviewChangesDrawer", () => {
     expect(enqueueSnackbar).toHaveBeenCalled();
   });
 
+  it("flags a name over the limit and holds Save", async () => {
+    const user = userEvent.setup();
+    state.review = review([change()]);
+    renderDrawer();
+    const field = screen.getByLabelText(/Name this version/);
+    await user.click(field);
+    await user.paste("x".repeat(80));
+    expect(field).toBeValid();
+    expect(screen.getByRole("button", { name: /^Save/ })).toBeEnabled();
+    await user.keyboard("x");
+    expect(field).toBeInvalid();
+    expect(screen.getByRole("button", { name: /^Save/ })).toBeDisabled();
+  });
+
+  it("offers a read-only viewer no way to act on a failed change", () => {
+    state.review = review(
+      [],
+      [
+        {
+          id: "failed:a",
+          detail: "Missing table",
+          reason: "Why",
+          source_id: "a.csv",
+          scenarios: [],
+        },
+      ],
+    );
+    renderDrawer({ canEdit: false });
+    expect(screen.getByText("Missing table")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Fix/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+  });
+
   it("dismisses a change that couldn't apply", async () => {
     const user = userEvent.setup();
     state.review = review(

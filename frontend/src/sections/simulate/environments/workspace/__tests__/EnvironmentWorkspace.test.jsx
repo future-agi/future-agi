@@ -909,7 +909,7 @@ describe("EnvironmentWorkspace unsaved changes", () => {
       );
     });
   const saveButton = () =>
-    screen.findByRole("button", { name: /^Save release/ });
+    screen.findByRole("button", { name: /^Save version/ });
 
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
@@ -932,7 +932,12 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     await userEvent.click(
-      await screen.findByRole("button", { name: /unsaved edit/ }),
+      // The bar waits on the job, the drafts and then the review.
+      await screen.findByRole(
+        "button",
+        { name: /unsaved edit/ },
+        { timeout: 5000 },
+      ),
     );
     expect(
       await screen.findByRole("dialog", { name: "Review changes" }),

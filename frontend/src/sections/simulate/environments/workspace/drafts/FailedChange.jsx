@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { REVIEW_COPY as COPY } from "../workspace.constants";
 
 // A long file name gives way before the reason does.
@@ -35,37 +35,38 @@ export default function FailedChange({ failed, canEdit, onFix, onDismiss }) {
           {COPY.failedMeta(failed)}
         </Typography>
       </Box>
-      <CustomTooltip
-        show={Boolean(failed.source_id)}
-        size="small"
-        arrow
-        title={fixText}
-      >
-        <Button
-          size="small"
-          variant="outlined"
-          color="inherit"
-          onClick={onFix}
-          sx={{ flexShrink: 0, maxWidth: FIX_MAX_WIDTH, whiteSpace: "nowrap" }}
-        >
-          <Box
-            component="span"
-            sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
-          >
-            {fixText}
-          </Box>
-        </Button>
-      </CustomTooltip>
       {canEdit && (
-        <Button
-          size="small"
-          color="inherit"
-          data-review-focus
-          onClick={onDismiss}
-          sx={{ flexShrink: 0, color: "text.secondary" }}
-        >
-          {COPY.dismiss}
-        </Button>
+        <>
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            onClick={onFix}
+            sx={{
+              flexShrink: 0,
+              maxWidth: FIX_MAX_WIDTH,
+              whiteSpace: "nowrap",
+            }}
+          >
+            <OverflowTooltip title={fixText}>
+              <Box
+                component="span"
+                sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
+              >
+                {fixText}
+              </Box>
+            </OverflowTooltip>
+          </Button>
+          <Button
+            size="small"
+            color="inherit"
+            data-review-focus
+            onClick={onDismiss}
+            sx={{ flexShrink: 0, color: "text.secondary" }}
+          >
+            {COPY.dismiss}
+          </Button>
+        </>
       )}
     </Stack>
   );

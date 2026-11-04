@@ -514,6 +514,7 @@ export const REVIEW_COPY = {
   comparability: ({ rechecked, exact }) =>
     `${scenarioWord(rechecked)} pair with past runs as Rechecked if their gates pass, outdated if not; ${exact} compare exactly. Agent, scenario set and evals don't move.`,
   nameLabel: "Name this version (optional)",
+  nameTooLong: (max) => `Use ${max} characters or fewer.`,
   namePlaceholder: "For example: Refund window from the 2026 policy",
   discardAll: "Discard all",
   discardTitle: (n) => `Discard ${n} edit${n === 1 ? "" : "s"}?`,
@@ -528,7 +529,7 @@ export const REVIEW_COPY = {
   discard: "Discard",
   saveLine: ({ kind, piece, next, rechecked }) =>
     `${SAVE_KIND[kind]} → ${SAVE_TARGET[piece]}${next ? ` ${next}` : ""} · ${scenarioWord(rechecked)} rechecked`,
-  save: (next) => (next ? `Save release ${next}` : "Save release"),
+  save: (next) => (next ? `Save version ${next}` : "Save version"),
   unsavedEdits: (n) => `${n} unsaved edit${n === 1 ? "" : "s"}`,
   unsavedEditsUncounted: "Unsaved edits",
   couldntApply: (n) => `${n} change${n === 1 ? "" : "s"} couldn't apply`,

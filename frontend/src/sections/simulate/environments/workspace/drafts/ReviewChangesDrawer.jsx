@@ -6,6 +6,7 @@ import ContentSkeleton from "src/components/content-skeleton";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import {
   useDecideChanges,
   useDismissFailedChange,
@@ -92,6 +93,7 @@ export default function ReviewChangesDrawer({
   const changes = review?.changes || [];
   const failed = review?.failed || [];
   const kept = keptChanges(changes);
+  const nameTooLong = name.trim().length > NAME_LIMIT;
   const names = recheckedKeys(changes);
   const line = saveLine(changes, versions);
   const savedLabel = versions?.defaults?.[line.piece]?.label || "";
@@ -284,7 +286,11 @@ export default function ReviewChangesDrawer({
               placeholder={COPY.namePlaceholder}
               value={name}
               onChange={(event) => setName(event.target.value)}
-              inputProps={{ maxLength: NAME_LIMIT }}
+              error={nameTooLong}
+              helperText={
+                nameTooLong ? COPY.nameTooLong(NAME_LIMIT) : undefined
+              }
+              inputProps={{ maxLength: NAME_LIMIT + 1 }}
             />
             <Stack direction="row" alignItems="center" spacing={1.5}>
               <Button
@@ -294,21 +300,24 @@ export default function ReviewChangesDrawer({
               >
                 {COPY.discardAll}
               </Button>
-              <Typography
-                noWrap
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  flex: 1,
-                  minWidth: 0,
-                }}
-              >
-                {COPY.saveLine(line)}
-              </Typography>
+              <OverflowTooltip title={COPY.saveLine(line)}>
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {COPY.saveLine(line)}
+                </Typography>
+              </OverflowTooltip>
               <Button
                 size="small"
                 variant="contained"
                 color="primary"
+                disabled={nameTooLong}
                 onClick={save}
               >
                 {COPY.save(line.next)}

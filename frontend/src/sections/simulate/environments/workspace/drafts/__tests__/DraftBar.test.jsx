@@ -82,7 +82,7 @@ const KEPT = {
   decision: null,
   revalidate: ["s1", "s2"],
 };
-const saveButton = () => screen.getByRole("button", { name: /^Save release/ });
+const saveButton = () => screen.getByRole("button", { name: /^Save version/ });
 
 beforeEach(() => {
   state.drafts = both();
@@ -126,7 +126,7 @@ describe("DraftBar", () => {
       }),
     );
     expect(onReview).toHaveBeenCalled();
-    expect(saveButton()).toHaveTextContent("Save release v3");
+    expect(saveButton()).toHaveTextContent("Save version v3");
   });
 
   it("offers no Save when only failed changes are left", () => {
@@ -138,7 +138,7 @@ describe("DraftBar", () => {
     expect(
       screen.getByRole("button", { name: /1 change couldn't apply/ }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Save release/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Save version/ })).toBeNull();
   });
 
   it("saves every open piece with the parent and revision it shows", async () => {
