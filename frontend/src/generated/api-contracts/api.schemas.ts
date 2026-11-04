@@ -18609,7 +18609,7 @@ export interface HarnessCapabilityPairingApi {
 }
 
 /**
- * ready: certified together; failed: a check failed; retry: the last validation, or a run, ended before its check did.
+ * ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.
  */
 export type HarnessPairValidationApiState =
   (typeof HarnessPairValidationApiState)[keyof typeof HarnessPairValidationApiState];
@@ -18634,7 +18634,7 @@ export const HarnessPairValidationApiPurpose = {
 export type HarnessPairValidationApiError = { [key: string]: string };
 
 export interface HarnessPairValidationApi {
-  /** ready: certified together; failed: a check failed; retry: the last validation, or a run, ended before its check did. */
+  /** ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing. */
   state: HarnessPairValidationApiState;
   job_id: string;
   purpose: HarnessPairValidationApiPurpose;

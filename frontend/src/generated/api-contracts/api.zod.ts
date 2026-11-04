@@ -37301,7 +37301,7 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
         "unavailable",
       ])
       .describe(
-        "ready: certified together; failed: a check failed; retry: the last validation, or a run, ended before its check did.",
+        "ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.",
       ),
     job_id: zod.string().uuid(),
     purpose: zod.enum(["agent_move", "recheck"]),
@@ -52365,7 +52365,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
               "unavailable",
             ])
             .describe(
-              "ready: certified together; failed: a check failed; retry: the last validation, or a run, ended before its check did.",
+              "ready: certified together; failed: a validation's check failed, so runs are refused; retry: the last validation ended before its check did, or a run failed the pairing.",
             ),
           job_id: zod.string().uuid(),
           purpose: zod.enum(["agent_move", "recheck"]),
