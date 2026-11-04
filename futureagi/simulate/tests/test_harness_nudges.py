@@ -15,6 +15,7 @@ from simulate.models import (
 )
 from simulate.services.harness_versioning import nudges
 from simulate.tasks import harness_nudges as nudge_tasks
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_agent_versions import (
     _a1,
     _create,
@@ -30,10 +31,7 @@ from simulate.tests.test_harness_versioning_backfill import (
     storage as storage,  # noqa: F401 - fixture
 )
 
-pytestmark = [
-    pytest.mark.django_db,
-    pytest.mark.usefixtures("moves_without_validation"),
-]
+pytestmark = pytest.mark.django_db
 
 BASE = "/simulate/api/harness-environments"
 NEW_VALUE = "val-openai-new"
@@ -95,6 +93,7 @@ def _activated(user, workspace, storage, key, django_capture_on_commit_callbacks
     a2 = _create(a1, environment, secret_values={"OPENAI_API_KEY": NEW_VALUE})
     with django_capture_on_commit_callbacks(execute=True):
         assert _preflight(a2).status == "passed"
+        settle_validations(environment)
     environment.refresh_from_db()
     assert environment.agent_version_id == a2.id
     return environment, a1, a2
@@ -322,6 +321,7 @@ class TestRaise:
         a1 = _a1(environment)
         a2 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "val-a2-value"})
         assert _preflight(a2).status == "passed"
+        settle_validations()
         a3 = _create(a2, environment, secret_values={"OPENAI_API_KEY": "val-a3-value"})
         move_default(environment, "agent", a1.id, expected_default_id=a2.id)
 
@@ -1090,6 +1090,7 @@ class TestRaise:
             django_capture_on_commit_callbacks(execute=True),
         ):
             assert _preflight(a2).status == "passed"
+            settle_validations()
             move_default(environment, "agent", a1.id, expected_default_id=a2.id)
 
         assert "harness_nudge_schedule_failed" in caplog.text
