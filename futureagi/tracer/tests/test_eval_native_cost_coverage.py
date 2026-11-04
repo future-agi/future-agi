@@ -425,6 +425,7 @@ def eval_cost_client():
             # The existing reduced DDL lacks fields projected by list_by_session.
             # Add actual column types, not a patched SELECT/row decoder.
             columns = {
+                "created_at": "DateTime64(6, 'UTC') DEFAULT now64(6, 'UTC')",
                 "operation_name": "String",
                 "status_message": "String",
                 "org_id": "Nullable(UUID)",

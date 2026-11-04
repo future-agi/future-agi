@@ -116,7 +116,8 @@ def preview(monkeypatch):
     get_reader = Mock(return_value=reader)
     monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", get_reader)
     monkeypatch.setattr("tfc.ee_gates.turing_oss_gate_for_template", lambda *_: None)
-    template = SimpleNamespace(config={})
+    # Binding validation also reads the persisted template-model fallback.
+    template = SimpleNamespace(config={}, model=None)
     get_template = Mock(return_value=template)
     monkeypatch.setattr(playground, "_get_accessible_eval_template", get_template)
     run_eval = Mock(
