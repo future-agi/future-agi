@@ -441,6 +441,53 @@ def test_a_filter_value_the_database_cannot_hold_is_refused():
 
 
 @pytest.mark.django_db
+def test_a_built_bundle_s_sub_actor_list_is_stored_once_and_an_empty_one_is_not(
+    organization, workspace
+):
+    from simulate.models import HostedHarnessStageOutput
+    from simulate.services.hosted_harness_gateway import _persist_bundle_stage_outputs
+
+    one = {"sub_actors": _LIST["sub_actors"][:1]}
+
+    def persisted(key, listing):
+        job, _ = create_hosted_job(
+            organization, _payload(), idempotency_key=key, workspace=workspace
+        )
+        files = {"sub_actors.json": listing}
+        with (
+            patch(
+                "simulate.services.hosted_harness_gateway._load_bundle_file",
+                side_effect=lambda manifest, path, job: files.get(path),
+            ),
+            patch(
+                "simulate.services.hosted_harness_gateway._load_bundle_scenarios",
+                return_value=[],
+            ),
+        ):
+            _persist_bundle_stage_outputs(job, {})
+            _persist_bundle_stage_outputs(job, {})
+        return list(
+            HostedHarnessStageOutput.no_workspace_objects.filter(
+                job=job, kind="sub_actors"
+            ).values_list("title", "summary", "data")
+        )
+
+    assert persisted("bundle-one", one) == [("Sub-actors", "1 sub-actor", one)]
+    assert persisted("bundle-empty", {"sub_actors": []}) == []
+    assert persisted("bundle-none", None) == []
+
+
+def test_a_pinned_version_s_sub_actor_list_replaces_the_run_s_own():
+    from simulate.services.hosted_harness import pinned_stage_outputs
+
+    listed = {"kind": "sub_actors", "data": _LIST}
+    version = SimpleNamespace(documents={"stage_outputs": [listed]})
+    assert pinned_stage_outputs(version, SimpleNamespace(documents={})) == {
+        "sub_actors": listed
+    }
+
+
+@pytest.mark.django_db
 def test_the_scenario_filter_names_the_environment_s_own_sub_actors(
     organization, workspace
 ):
