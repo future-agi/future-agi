@@ -7,10 +7,11 @@ from uuid import UUID
 from django.db.models import BooleanField, QuerySet
 from django.db.models.expressions import RawSQL
 
+from accounts.models.workspace import Workspace
 from agentcc.models import AgentccRequestLog
 from integrations.models import DatadogExportReceipt, IntegrationConnection
 
-# At most two indexed pages per poll, independent of the retained history size.
+# Two logical pages per poll, each merging at most two indexed workspace ranges.
 SCAN_PAGE_SIZE = 5000
 
 
@@ -43,6 +44,21 @@ def _after(source: QuerySet, position: Position | None) -> QuerySet:
     )
 
 
+def _page(
+    source: QuerySet, after: Position | None, workspace_ids: list[UUID | None]
+) -> list[tuple[UUID, datetime]]:
+    rows = []
+    for workspace_id in workspace_ids:
+        rows.extend(
+            _after(source.filter(workspace_id=workspace_id), after).values_list(
+                "id", "created_at"
+            )[:SCAN_PAGE_SIZE]
+        )
+    # A single OR over workspace=id/NULL would sort an unbounded tenant history.
+    # Merge the two bounded index ranges instead, then advance one shared key.
+    return sorted(rows, key=lambda row: (row[1], row[0]))[:SCAN_PAGE_SIZE]
+
+
 def snapshot_request_ids(
     connection: IntegrationConnection, floor: datetime, sync_to: datetime
 ) -> tuple[list[UUID], ScanProgress]:
@@ -57,20 +73,29 @@ def snapshot_request_ids(
         AgentccRequestLog.no_workspace_objects.using("default")
         .filter(
             organization_id=connection.organization_id,
-            workspace_id=connection.workspace_id,
             deleted=False,
             created_at__gte=floor,
             created_at__lt=sync_to,
         )
         .order_by("created_at", "id")
     )
+    workspace_ids = [connection.workspace_id]
+    if (
+        Workspace.no_workspace_objects.using("default")
+        .filter(
+            pk=connection.workspace_id,
+            organization_id=connection.organization_id,
+            is_default=True,
+        )
+        .exists()
+    ):
+        # Gateway ingestion has no workspace field on its wire records. Like
+        # the app's default-workspace reads, include those org-owned NULL rows
+        # here only; a non-default workspace must never export them.
+        workspace_ids.append(None)
     previous: ScanProgress = connection.sync_cursor.get("datadog_scan", {})
     progress: ScanProgress = dict(previous)
-    fresh = list(
-        _after(source, previous.get("new_after")).values_list("id", "created_at")[
-            :SCAN_PAGE_SIZE
-        ]
-    )
+    fresh = _page(source, previous.get("new_after"), workspace_ids)
     if fresh:
         progress["new_after"] = _position(fresh[-1])
 
@@ -86,11 +111,7 @@ def snapshot_request_ids(
                 output_field=BooleanField(),
             )
         )
-        history = list(
-            _after(history_source, previous.get("reconcile_after")).values_list(
-                "id", "created_at"
-            )[:SCAN_PAGE_SIZE]
-        )
+        history = _page(history_source, previous.get("reconcile_after"), workspace_ids)
         if len(history) == SCAN_PAGE_SIZE and _position(history[-1]) != bound:
             progress["reconcile_after"] = _position(history[-1])
             progress["reconcile_until"] = bound

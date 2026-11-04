@@ -278,3 +278,54 @@ def test_pause_during_delivery_is_not_overwritten_by_worker_cleanup(datadog):
     sync_at(connection, 240)
     assert len(logs_sent(service)) == 1
     service.export_metrics.assert_called_once()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("default_workspace", [True, False])
+def test_unassigned_gateway_logs_belong_only_to_the_org_default_workspace(
+    datadog, default_workspace
+):
+    from accounts.models.organization import Organization
+    from accounts.models.workspace import Workspace
+
+    connection, service = datadog
+    other_workspace = Workspace.objects.create(
+        organization=connection.organization,
+        name="Other export workspace",
+        created_by=connection.created_by,
+    )
+    if not default_workspace:
+        original = connection.workspace
+        connection.workspace = other_workspace
+        connection.save(update_fields=["workspace"])
+        other_workspace = original
+    create_log(connection, "explicit-workspace", arrived=90)
+    legacy = create_log(connection, "unassigned-gateway", arrived=90)
+    AgentccRequestLog.no_workspace_objects.filter(pk=legacy.pk).update(workspace=None)
+    excluded = create_log(connection, "different-workspace", arrived=90)
+    AgentccRequestLog.no_workspace_objects.filter(pk=excluded.pk).update(
+        workspace=other_workspace
+    )
+    foreign = create_log(connection, "foreign-org-unassigned", arrived=90)
+    other_org = Organization.objects.create(name="Other Datadog organization")
+    AgentccRequestLog.no_workspace_objects.filter(pk=foreign.pk).update(
+        organization=other_org, workspace=None
+    )
+    sync_at(connection, 120)
+    sync_at(connection, 180)
+    expected = (
+        ["explicit-workspace", "unassigned-gateway"]
+        if default_workspace
+        else ["explicit-workspace"]
+    )
+    assert (
+        sorted(row["attributes"]["request_id"] for row in logs_sent(service))
+        == expected
+    )
+    counts = [
+        series["points"][0]["value"]
+        for call in service.export_metrics.call_args_list
+        for series in call.args[1]
+        if series["metric"] == "agentcc.gateway.requests"
+    ]
+    assert counts == [len(expected)]
