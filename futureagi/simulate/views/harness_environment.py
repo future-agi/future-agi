@@ -419,38 +419,17 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        if op == "delete":
-            actor, revision = (
-                None,
-                request.validated_query_data.get("expected_revision"),
-            )
-        else:
-            actor = dict(request.validated_data["actor"])
-            revision = request.validated_data.get("expected_revision")
-            given = actor.pop("id", None) or actor_id
-            if not given:
-                return Response(
-                    {"error": "actor_id_missing", "message": "give the actor an id"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if actor_id is None:
-                actor_id = given
-            elif given != actor_id:
-                return Response(
-                    {
-                        "error": "actor_id_mismatch",
-                        "message": "an actor's id never changes",
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+        data = (
+            request.validated_query_data if op == "delete" else request.validated_data
+        )
         return Response(
             write_actor_edit(
                 job,
                 op=op,
                 actor_id=actor_id,
-                body=actor,
+                body=data.get("actor"),
                 user=request.user,
-                expected_revision=revision,
+                expected_revision=data.get("expected_revision"),
             )
         )
 

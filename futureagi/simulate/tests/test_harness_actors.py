@@ -871,10 +871,18 @@ def test_a_bad_actor_written_elsewhere_never_blocks_an_edit_to_another(
 
     assert added.status_code == 200, added.content
     assert [one["id"] for one in added.json()["actors"]] == ["Old Id", "manager"]
+    # Its id is kept as it is; only the empty name it was sent with is refused.
     assert (edited_bad.status_code, edited_bad.json()["error"]) == (
         400,
         "actor_invalid",
     )
+    assert edited_bad.json()["message"] == "Old Id's name: it cannot be empty."
+    renamed = auth_client.put(
+        f"{BASE}/{environment.id}/actors/Old Id/",
+        {"actor": {"name": "Pat"}},
+        format="json",
+    )
+    assert renamed.status_code == 200, renamed.content
 
 
 @pytest.mark.parametrize(
@@ -982,8 +990,9 @@ def test_a_cycle_of_parents_and_a_removal_that_leaves_a_parent_dangling_are_refu
     assert "lead's parent is boss; change it first." in dangling.json()["message"]
 
 
-def test_a_version_whose_files_are_gone_keeps_its_cast_unknown(
-    user, workspace, storage
+@pytest.mark.parametrize("failure", ["gone", "unreadable"])
+def test_a_version_whose_files_are_gone_or_unreadable_keeps_its_cast_unknown(
+    failure, user, workspace, storage
 ):
     from unittest.mock import patch
 
@@ -991,11 +1000,16 @@ def test_a_version_whose_files_are_gone_keeps_its_cast_unknown(
 
     from simulate.services.harness_versioning import versions
 
-    environment = _built(user, workspace, "actors-files-gone")
+    environment = _built(user, workspace, f"actors-files-{failure}")
     version = environment.environment_version
-    gone = S3Error("NoSuchKey", "gone", "key", "request", "host", None)
+    raised = {
+        "gone": {
+            "side_effect": S3Error("NoSuchKey", "gone", "key", "request", "host", None)
+        },
+        "unreadable": {"return_value": b"not an archive"},
+    }[failure]
 
-    with patch.object(versions.archives, "get_archive", side_effect=gone):
+    with patch.object(versions.archives, "get_archive", **raised):
         documents = versions.with_actor_digests(version, {"contract": {}})
 
     assert documents == {"contract": {}}

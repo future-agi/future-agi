@@ -340,7 +340,9 @@ def _record_schema(actor: ActorRecord, rules: ActorRules) -> dict[str, Any]:
     }
 
 
-def _record_problems(actor: ActorRecord, rules: ActorRules) -> list[str]:
+def _record_problems(
+    actor: ActorRecord, rules: ActorRules, *, new_id: bool
+) -> list[str]:
     actor_id = str(actor.get("id") or "")
     sub_actor = _is_sub_actor(actor)
     file = SUB_ACTORS_FILE if sub_actor else ACTORS_FILE
@@ -363,6 +365,9 @@ def _record_problems(actor: ActorRecord, rules: ActorRules) -> list[str]:
     }
     for error in jsonschema.Draft202012Validator(schema).iter_errors(checked):
         where = ".".join(str(part) for part in error.absolute_path)
+        # An id never changes, so one already in the cast is kept as it is.
+        if where == "id" and not new_id:
+            continue
         # A bad id cannot name its own actor, so the sentence names the field instead.
         subject = (
             "The id"
@@ -372,7 +377,7 @@ def _record_problems(actor: ActorRecord, rules: ActorRules) -> list[str]:
             else f"{actor_id}:"
         )
         problems.append(f"{subject} {_reason(error)}.")
-    if actor_id in rules.get("reserved_ids", []):
+    if new_id and actor_id in rules.get("reserved_ids", []):
         problems.append(f"{actor_id!r} is reserved; give the actor another id.")
     return problems
 
@@ -402,7 +407,7 @@ def _in_a_cycle(actor_id: str, actors: list[ActorRecord], path: str) -> bool:
 
 
 def actor_problems(
-    actors: list[ActorRecord], actor_id: str, rules: ActorRules
+    actors: list[ActorRecord], actor_id: str, rules: ActorRules, *, new_id: bool
 ) -> list[str]:
     """The edited record checked against the sealing release's rules, one sentence each with its fix.
 
@@ -411,7 +416,7 @@ def actor_problems(
     """
     known = {str(one.get("id") or "") for one in actors}
     actor = next(one for one in actors if one.get("id") == actor_id)
-    problems = _record_problems(actor, rules)
+    problems = _record_problems(actor, rules, new_id=new_id)
     problems += [
         f"{actor_id}'s {path} {other!r} is not another listed actor."
         for path, other in _broken_references(actor, known, rules)
@@ -519,7 +524,7 @@ def write_actor_edit(
     environment: HostedHarnessJob,
     *,
     op: str,
-    actor_id: str,
+    actor_id: str | None,
     body: ActorRecord | None,
     user: User | None,
     expected_revision: int | None,
@@ -528,8 +533,21 @@ def write_actor_edit(
 
     `expected_revision` is the draft revision the caller read; an edit made elsewhere since is refused with
     `draft_changed` (409). Also refuses `actor_exists`, `actor_in_use` (409), `actor_not_found` (404) and
-    `actor_invalid` (400), and retires the builder chat's runtime once the draft is written.
+    `actor_invalid` (400), `actor_id_missing` and `actor_id_mismatch` (400), and retires the builder chat's runtime
+    once the draft is written. `actor_id` is the id in the address, if any; a create may give it in the body instead.
     """
+    # The scenario count is read-side only; it is never written into a record.
+    body = {name: value for name, value in (body or {}).items() if name != "scenarios"}
+    given = body.pop("id", None) or actor_id
+    if op != "delete" and not given:
+        raise HostedHarnessError(
+            "actor_id_missing", "give the actor an id", status_code=400
+        )
+    if op != "delete" and actor_id is not None and given != actor_id:
+        raise HostedHarnessError(
+            "actor_id_mismatch", "an actor's id never changes", status_code=400
+        )
+    actor_id = given
     sides = drafts.edit_sides(environment)
     environment_files, suite_files = sides["environment"], sides["suite"]
     draft = drafts.fresh_draft(environment, "environment")
@@ -542,8 +560,6 @@ def write_actor_edit(
             status_code=409,
         )
     before = _cast(environment_files)
-    # The scenario count is read-side only; it is never written into a record.
-    body = {name: value for name, value in (body or {}).items() if name != "scenarios"}
     actors = _edited(
         before, op=op, actor_id=actor_id, body=body, user=user, suite_files=suite_files
     )
@@ -551,7 +567,9 @@ def write_actor_edit(
     if op == "delete":
         problems = _removal_problems(actors, actor_id, rules)
     else:
-        problems = actor_problems(actors, actor_id, rules) + _new_choices(
+        problems = actor_problems(
+            actors, actor_id, rules, new_id=op == "create"
+        ) + _new_choices(
             next((one for one in before if one.get("id") == actor_id), None),
             next(one for one in actors if one.get("id") == actor_id),
             environment_files,
